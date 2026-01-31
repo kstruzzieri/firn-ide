@@ -22,8 +22,7 @@ Thumbs.db
 *.so
 *.dylib
 
-# Wails dev
-frontend/wailsjs/
+# Wails dev (wailsjs bindings are committed to avoid CI chicken-and-egg issues)
 
 # Misc
 *.log
