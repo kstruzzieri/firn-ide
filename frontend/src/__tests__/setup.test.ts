@@ -5,6 +5,8 @@
  * TDD: Written first to define expected behavior.
  */
 
+export {};
+
 describe('Jest Configuration', () => {
   it('should run TypeScript tests', () => {
     const add = (a: number, b: number): number => a + b;
