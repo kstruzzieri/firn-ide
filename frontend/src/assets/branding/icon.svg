@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <!-- Primary gradient: blue→cyan -->
+    <linearGradient id="fluxMain" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="50%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Accent gradient -->
+    <linearGradient id="fluxAccent" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+
+    <!-- Spark gradient -->
+    <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+
+    <!-- Glow filter -->
+    <filter id="glowFx" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Spark glow -->
+    <filter id="sparkGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Main Flux symbol -->
+  <g transform="translate(50, 50)">
+    <!-- Outer flow arc -->
+    <path d="M-2 -36 Q40 -36 40 4 Q40 42 -2 42"
+          fill="none"
+          stroke="url(#fluxMain)"
+          stroke-width="7"
+          stroke-linecap="round"
+          filter="url(#glowFx)"/>
+
+    <!-- Inner arc - bracket shape -->
+    <path d="M4 -24 Q-26 -24 -26 4 Q-26 30 4 30"
+          fill="none"
+          stroke="url(#fluxAccent)"
+          stroke-width="5"
+          stroke-linecap="round"
+          filter="url(#glowFx)"/>
+
+    <!-- Central node -->
+    <circle cx="4" cy="4" r="12" fill="url(#fluxMain)" filter="url(#glowFx)"/>
+    <circle cx="4" cy="4" r="6" fill="#F0F6FC"/>
+
+    <!-- Energy spark at arc terminus -->
+    <circle cx="-2" cy="42" r="4" fill="url(#sparkGrad)" filter="url(#sparkGlow)"/>
+  </g>
+</svg>

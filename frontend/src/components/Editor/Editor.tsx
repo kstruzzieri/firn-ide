@@ -12,6 +12,7 @@ import { FileIcon } from '../icons';
 import { formatShortcut } from '../../utils/platform';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { getLanguageName } from './codemirror';
+import fluxLogo from '../../assets/branding/logo-light.svg';
 
 export function Editor() {
   const openFiles = useOpenFiles();
@@ -43,11 +44,7 @@ export function Editor() {
     return (
       <div className={styles.editor}>
         <div className={styles.welcome}>
-          <div className={styles.welcomeLogo}>
-            <FluxWelcomeLogo />
-          </div>
-          <h1>Welcome to Flux</h1>
-          <p>A lightweight, workspace-focused IDE</p>
+          <img src={fluxLogo} alt="Flux IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
             <div className={styles.shortcutItem}>
               <span className={styles.shortcutLabel}>Open File</span>
@@ -136,31 +133,6 @@ function CloseIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M18 6L6 18M6 6l12 12" />
-    </svg>
-  );
-}
-
-/**
- * Flux logo for the welcome screen.
- */
-function FluxWelcomeLogo() {
-  return (
-    <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="48" height="48" rx="12" fill="url(#flux-gradient)" />
-      <path d="M14 16h20M14 24h14M14 32h8" stroke="white" strokeWidth="3" strokeLinecap="round" />
-      <defs>
-        <linearGradient
-          id="flux-gradient"
-          x1="0"
-          y1="0"
-          x2="48"
-          y2="48"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="var(--accent)" />
-          <stop offset="1" stopColor="var(--accent-dark)" />
-        </linearGradient>
-      </defs>
     </svg>
   );
 }

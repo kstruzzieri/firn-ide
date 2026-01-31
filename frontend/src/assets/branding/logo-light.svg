@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 130">
+  <defs>
+    <!-- Primary gradient: blue→cyan -->
+    <linearGradient id="fluxGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="50%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Accent gradient -->
+    <linearGradient id="accentGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+
+    <!-- Spark gradient -->
+    <linearGradient id="sparkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+
+    <!-- Glow filter -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Text shadow -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#0EA5E9" flood-opacity="0.25"/>
+    </filter>
+
+    <!-- Spark glow -->
+    <filter id="sparkGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Icon -->
+  <g transform="translate(20, 20)">
+    <!-- Outer flow arc -->
+    <path d="M43 8 Q80 8 80 47 Q80 84 43 84"
+          fill="none"
+          stroke="url(#fluxGradient)"
+          stroke-width="4.5"
+          stroke-linecap="round"
+          filter="url(#glow)"/>
+
+    <!-- Inner arc - bracket shape -->
+    <path d="M48 18 Q22 18 22 47 Q22 74 48 74"
+          fill="none"
+          stroke="url(#accentGradient)"
+          stroke-width="3.5"
+          stroke-linecap="round"
+          filter="url(#glow)"/>
+
+    <!-- Central energy node -->
+    <circle cx="48" cy="47" r="8" fill="url(#fluxGradient)" filter="url(#glow)"/>
+    <circle cx="48" cy="47" r="4" fill="#F0F6FC"/>
+
+    <!-- Energy spark at arc terminus -->
+    <circle cx="43" cy="84" r="3" fill="url(#sparkGradient)" filter="url(#sparkGlow)"/>
+  </g>
+
+  <!-- Wordmark: FLUX -->
+  <g transform="translate(118, 40)" filter="url(#shadow)">
+    <text font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
+          font-size="56"
+          font-weight="600"
+          letter-spacing="4"
+          fill="url(#fluxGradient)">
+      <tspan>FLUX</tspan>
+    </text>
+  </g>
+
+  <!-- Tagline -->
+  <text x="121" y="108"
+        font-family="'SF Pro Text', 'Inter', 'Segoe UI', system-ui, sans-serif"
+        font-size="11"
+        font-weight="500"
+        letter-spacing="2"
+        fill="#6E7681">
+    LIGHTWEIGHT IDE, HEAVYWEIGHT FOCUS
+  </text>
+</svg>

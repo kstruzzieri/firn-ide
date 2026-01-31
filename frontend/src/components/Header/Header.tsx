@@ -1,7 +1,8 @@
 import styles from './Header.module.css';
-import { FluxLogo, ChevronDownIcon, SearchIcon } from '../icons';
+import { ChevronDownIcon, SearchIcon } from '../icons';
 import { useWorkspace } from '../../stores/ideStore';
 import { formatShortcut, isMac } from '../../utils/platform';
+import fluxIcon from '../../assets/branding/icon.svg';
 
 export function Header() {
   const workspace = useWorkspace();
@@ -14,9 +15,7 @@ export function Header() {
 
       {/* Logo */}
       <div className={styles.logo}>
-        <div className={styles.logoIcon}>
-          <FluxLogo />
-        </div>
+        <img src={fluxIcon} alt="Flux" className={styles.logoIcon} />
         <span className={styles.logoText}>Flux</span>
       </div>
 
