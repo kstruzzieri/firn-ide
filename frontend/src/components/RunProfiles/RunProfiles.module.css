@@ -1,0 +1,116 @@
+.list {
+  padding: 8px;
+  height: 100%;
+}
+
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  transition: background var(--transition);
+}
+
+.profile:hover {
+  background: var(--surface-hover);
+}
+
+.runButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  transition: all var(--transition);
+}
+
+.runButton:hover:not(:disabled) {
+  background: var(--accent-glow);
+}
+
+.runButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.runButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.runButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.profileInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profileName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.profileCommand {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Empty state */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 20px;
+}
+
+.empty p {
+  margin-bottom: 12px;
+}
+
+.addButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-glow);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  transition: all var(--transition);
+}
+
+.addButton:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+
+.addButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.addButton svg {
+  width: 14px;
+  height: 14px;
+}

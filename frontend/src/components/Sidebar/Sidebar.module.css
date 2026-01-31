@@ -1,0 +1,46 @@
+.activityBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  transition: all var(--transition);
+  position: relative;
+}
+
+.activityBtn:hover {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.activityBtn.active {
+  color: var(--accent);
+}
+
+.activityBtn.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 24px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.activityBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.activityBtn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.spacer {
+  flex: 1;
+}

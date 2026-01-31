@@ -1,0 +1,38 @@
+/**
+ * CodeMirror Editor Container Styles
+ *
+ * Ensures the editor fills its container and integrates
+ * seamlessly with the Deep Ocean theme.
+ */
+
+.container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Ensure CodeMirror fills the container */
+.container :global(.cm-editor) {
+  width: 100%;
+  height: 100%;
+}
+
+/* Ensure the scroller fills available space */
+.container :global(.cm-scroller) {
+  overflow: auto;
+}
+
+/* Remove any default outline on focus */
+.container :global(.cm-editor.cm-focused) {
+  outline: none;
+}
+
+/* Ensure content area has proper padding */
+.container :global(.cm-content) {
+  padding: 8px 0;
+}
+
+/* Smooth scrolling */
+.container :global(.cm-scroller) {
+  scroll-behavior: smooth;
+}

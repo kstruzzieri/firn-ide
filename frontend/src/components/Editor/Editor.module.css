@@ -1,0 +1,219 @@
+/**
+ * Editor Component Styles
+ *
+ * Styles for the editor panel including tab bar, tabs, and content area.
+ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface-panel);
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Tab Bar
+═══════════════════════════════════════════════════════════════ */
+
+.tabBar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  padding: 6px 8px 0;
+  background: var(--surface-tab-bar);
+  flex-shrink: 0;
+  min-height: 38px;
+  overflow-x: auto;
+  border-bottom: none;
+}
+
+.tabBar::-webkit-scrollbar {
+  height: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Tabs
+═══════════════════════════════════════════════════════════════ */
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+  transition: all var(--transition);
+  margin-right: 1px;
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tab.active {
+  color: var(--accent);
+  background: var(--surface-active);
+  border: 1px solid var(--accent-glow);
+  border-bottom: 1px solid var(--surface-panel);
+  border-radius: 6px 6px 0 0;
+  margin-bottom: -1px;
+}
+
+.tabIcon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.tabName {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tabDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-warning);
+  flex-shrink: 0;
+}
+
+.tabClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: all var(--transition);
+}
+
+.tab:hover .tabClose,
+.tab.active .tabClose {
+  opacity: 1;
+}
+
+.tabClose:hover {
+  background: var(--surface-active);
+}
+
+.tabClose:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.tabClose svg {
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Editor Content
+═══════════════════════════════════════════════════════════════ */
+
+.content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  background: var(--surface-panel);
+  outline: none;
+}
+
+.editorContent {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Welcome Screen
+═══════════════════════════════════════════════════════════════ */
+
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-muted);
+  padding: 40px;
+  user-select: none;
+}
+
+.welcomeLogo {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 24px;
+  opacity: 0.8;
+}
+
+.welcomeLogo svg {
+  width: 100%;
+  height: 100%;
+}
+
+.welcome h1 {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+
+.welcome p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 32px;
+}
+
+.shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.shortcutItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  font-size: 14px;
+}
+
+.shortcutLabel {
+  color: var(--text-secondary);
+}
+
+.shortcuts kbd {
+  padding: 6px 12px;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  letter-spacing: 1px;
+}

@@ -1,0 +1,127 @@
+/* ═══════════════════════════════════════════════════════════════
+   IDE Shell Layout
+═══════════════════════════════════════════════════════════════ */
+
+.ide {
+  display: grid;
+  grid-template-rows: var(--header-height) 1fr var(--statusbar-height);
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-areas:
+    "header header"
+    "sidebar content"
+    "statusbar statusbar";
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Header
+═══════════════════════════════════════════════════════════════ */
+
+.header {
+  grid-area: header;
+  background: linear-gradient(180deg, var(--accent-dim) 0%, var(--surface-frame) 100%);
+  border-bottom: 1px solid var(--accent-glow);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 12px;
+  /* Wails drag region */
+  --wails-draggable: drag;
+}
+
+/* Only interactive elements should be non-draggable */
+.header button,
+.header a,
+.header input,
+.header [role="button"] {
+  --wails-draggable: no-drag;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Sidebar
+═══════════════════════════════════════════════════════════════ */
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--surface-frame);
+  border-right: 1px solid var(--surface-border-subtle);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Content Area (Island Panels)
+═══════════════════════════════════════════════════════════════ */
+
+.content {
+  grid-area: content;
+  display: grid;
+  grid-template-columns: var(--panel-left-width) 1fr var(--panel-right-width);
+  gap: var(--panel-gap);
+  padding: var(--content-padding);
+  background: var(--surface-base);
+  overflow: hidden;
+}
+
+.leftPanel {
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.centerArea {
+  display: grid;
+  grid-template-rows: 1fr var(--panel-bottom-height);
+  gap: var(--panel-gap);
+  overflow: hidden;
+}
+
+.centerPanel {
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.bottomPanel {
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.rightPanel {
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Status Bar
+═══════════════════════════════════════════════════════════════ */
+
+.statusBar {
+  grid-area: statusbar;
+  background: var(--surface-frame);
+  border-top: 1px solid var(--surface-border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+}

@@ -1,0 +1,1 @@
+Create a todo list of all issues identified in the codebase regardless of severity. Work through each item systematically, fixing issues one by one. After completing all fixes, perform a verification pass to ensure no regressions were introduced.

@@ -1,0 +1,108 @@
+.viewToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+
+.viewToggle:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
+  border-color: var(--surface-border);
+}
+
+.viewToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.viewToggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.viewToggle svg:last-child {
+  width: 10px;
+  height: 10px;
+  color: var(--text-muted);
+}
+
+.tree {
+  padding: 4px;
+  height: 100%;
+}
+
+/* Empty state */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.empty p {
+  margin-bottom: 12px;
+}
+
+.openButton {
+  padding: 8px 16px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-glow);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  transition: all var(--transition);
+}
+
+.openButton:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+
+.openButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Loading skeleton */
+.skeleton {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeletonItem {
+  height: 20px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-hover) 0%,
+    var(--surface-active) 50%,
+    var(--surface-hover) 100%
+  );
+  background-size: 200% 100%;
+  border-radius: 4px;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

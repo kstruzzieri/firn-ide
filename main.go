@@ -1,0 +1,56 @@
+package main
+
+import (
+	"embed"
+	"log"
+
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
+)
+
+//go:embed all:frontend/dist
+var assets embed.FS
+
+func main() {
+	// Create an instance of the app structure
+	app := NewApp()
+
+	// Create application with options
+	err := wails.Run(&options.App{
+		Title:     "Flux",
+		Width:     1440,
+		Height:    900,
+		MinWidth:  1024,
+		MinHeight: 600,
+		AssetServer: &assetserver.Options{
+			Assets: assets,
+		},
+		// Deep Ocean theme: --surface-base: #141C24
+		BackgroundColour: &options.RGBA{R: 20, G: 28, B: 36, A: 255},
+		OnStartup:        app.startup,
+		Bind: []interface{}{
+			app,
+		},
+		Mac: &mac.Options{
+			TitleBar: &mac.TitleBar{
+				TitlebarAppearsTransparent: true,
+				HideTitle:                  true,
+				HideTitleBar:               false,
+				FullSizeContent:            true,
+				UseToolbar:                 false,
+			},
+			Appearance: mac.NSAppearanceNameDarkAqua,
+			About: &mac.AboutInfo{
+				Title:   "Flux IDE",
+				Message: "A lightweight, workspace-focused IDE",
+			},
+		},
+		Frameless: false,
+	})
+
+	if err != nil {
+		log.Fatalf("Error starting Flux IDE: %v", err)
+	}
+}

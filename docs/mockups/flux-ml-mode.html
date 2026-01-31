@@ -1,0 +1,2547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flux — ML Mode Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* ═══════════════════════════════════════════════════════════════
+       Flux IDE ML MODE — Design Tokens
+    ═══════════════════════════════════════════════════════════════ */
+
+    :root {
+      /* Surface Hierarchy — Deep Ocean (cyan-tinted darks) */
+      --surface-base: #1A2530;
+      --surface-frame: #0F1A22;
+      --surface-panel: #0A1218;
+      --surface-elevated: #06101A;
+      --surface-hover: #162230;
+      --surface-active: #1E3040;
+      --surface-border: #264050;
+      --surface-border-subtle: #1A3040;
+
+      /* Tab bar specific */
+      --surface-tab-bar: #0D1820;
+      --surface-tab-active: #0A1218;
+      --surface-tab-inactive: transparent;
+
+      /* Text */
+      --text-primary: #E6EDF3;
+      --text-secondary: #8B9CAE;
+      --text-muted: #5A7080;
+      --text-disabled: #3A5060;
+
+      /* ML Mode Accent — Cyan/Teal for data science feel */
+      --accent-ml: #06B6D4;
+      --accent-ml-dim: rgba(6, 182, 212, 0.12);
+      --accent-ml-glow: rgba(6, 182, 212, 0.25);
+
+      /* AI Accent */
+      --ai-accent: #D4A574;
+      --ai-accent-dim: rgba(212, 165, 116, 0.12);
+
+      /* Status */
+      --status-success: #22C55E;
+      --status-warning: #F59E0B;
+      --status-error: #EF4444;
+      --status-running: #3B82F6;
+
+      /* Chart Colors */
+      --chart-primary: #06B6D4;
+      --chart-secondary: #22C55E;
+      --chart-tertiary: #F59E0B;
+      --chart-quaternary: #3B82F6;
+      --chart-negative: #EF4444;
+      --chart-positive: #22C55E;
+
+      /* Layout */
+      --header-height: 44px;
+      --statusbar-height: 26px;
+      --sidebar-width: 56px;
+      --panel-left-width: 280px;
+      --panel-right-width: 320px;
+      --panel-bottom-height: 220px;
+      --panel-gap: 6px;
+      --panel-radius: 10px;
+      --content-padding: 6px;
+
+      /* Typography */
+      --font-ui: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+      /* Misc */
+      --transition: 100ms ease-out;
+      --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Reset
+    ═══════════════════════════════════════════════════════════════ */
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--text-primary);
+      background: var(--surface-base);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Layout Structure
+    ═══════════════════════════════════════════════════════════════ */
+
+    .ide {
+      display: grid;
+      grid-template-rows: var(--header-height) 1fr var(--statusbar-height);
+      grid-template-columns: var(--sidebar-width) 1fr;
+      grid-template-areas:
+        "header header"
+        "sidebar content"
+        "statusbar statusbar";
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Header — ML Mode Variant
+    ═══════════════════════════════════════════════════════════════ */
+
+    .header {
+      grid-area: header;
+      background: linear-gradient(180deg, var(--accent-ml-dim) 0%, var(--surface-frame) 100%);
+      border-bottom: 1px solid var(--accent-ml-glow);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 12px;
+      -webkit-app-region: drag;
+    }
+
+    .header > * {
+      -webkit-app-region: no-drag;
+    }
+
+    /* Traffic Lights Spacer (macOS) */
+    .traffic-lights {
+      width: 68px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-left: 4px;
+    }
+
+    .traffic-light {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .traffic-light--close { background: #FF5F57; }
+    .traffic-light--minimize { background: #FFBD2E; }
+    .traffic-light--maximize { background: #28C840; }
+
+    /* Logo */
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo__icon {
+      width: 24px;
+      height: 24px;
+      background: linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo__icon svg {
+      width: 14px;
+      height: 14px;
+      color: white;
+    }
+
+    .logo__text {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .logo__mode {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 3px 8px;
+      background: linear-gradient(135deg, var(--accent-ml) 0%, #0891B2 100%);
+      color: white;
+      border-radius: 4px;
+      margin-left: -4px;
+    }
+
+    /* Header Buttons */
+    .header-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-family: var(--font-ui);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .header-btn:hover {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    .header-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .header-btn__chevron {
+      width: 10px;
+      height: 10px;
+      color: var(--text-muted);
+    }
+
+    /* Backend Status */
+    .backend-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--surface-border);
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .backend-status__dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--status-success);
+      box-shadow: 0 0 8px var(--status-success);
+    }
+
+    .backend-status__dot--disconnected {
+      background: var(--status-error);
+      box-shadow: 0 0 8px var(--status-error);
+    }
+
+    .header-spacer {
+      flex: 1;
+    }
+
+    /* Icon Button */
+    .icon-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .icon-btn:hover {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Activity Bar (Left Sidebar)
+    ═══════════════════════════════════════════════════════════════ */
+
+    .activity-bar {
+      grid-area: sidebar;
+      background: var(--surface-frame);
+      border-right: 1px solid var(--surface-border-subtle);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 0;
+      gap: 4px;
+    }
+
+    .activity-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-muted);
+      cursor: pointer;
+      position: relative;
+      transition: all var(--transition);
+    }
+
+    .activity-btn:hover {
+      background: var(--surface-hover);
+      color: var(--text-secondary);
+    }
+
+    .activity-btn--active {
+      color: var(--text-primary);
+    }
+
+    .activity-btn--active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 24px;
+      background: var(--accent-ml);
+      border-radius: 0 2px 2px 0;
+    }
+
+    .activity-btn--ml.activity-btn--active {
+      color: var(--accent-ml);
+    }
+
+    .activity-btn svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .activity-spacer {
+      flex: 1;
+    }
+
+    .activity-divider {
+      width: 24px;
+      height: 1px;
+      background: var(--surface-border);
+      margin: 8px 0;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Content Area
+    ═══════════════════════════════════════════════════════════════ */
+
+    .content {
+      grid-area: content;
+      display: grid;
+      grid-template-columns: var(--panel-left-width) 1fr var(--panel-right-width);
+      grid-template-rows: 1fr var(--panel-bottom-height);
+      gap: var(--panel-gap);
+      padding: var(--content-padding);
+      background: var(--surface-base);
+    }
+
+    /* Panel Base */
+    .panel {
+      background: var(--surface-panel);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: var(--panel-radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel__header {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      gap: 8px;
+      border-bottom: 1px solid var(--surface-border-subtle);
+      background: var(--surface-elevated);
+      flex-shrink: 0;
+    }
+
+    .panel__title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+
+    .panel__actions {
+      margin-left: auto;
+      display: flex;
+      gap: 2px;
+    }
+
+    .panel__action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .panel__action:hover {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    .panel__action svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .panel__content {
+      flex: 1;
+      overflow: auto;
+    }
+
+    .panel__content::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .panel__content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .panel__content::-webkit-scrollbar-thumb {
+      background: var(--surface-border);
+      border-radius: 4px;
+    }
+
+    .panel__content::-webkit-scrollbar-thumb:hover {
+      background: var(--text-disabled);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Experiments Panel (Left)
+    ═══════════════════════════════════════════════════════════════ */
+
+    .panel--experiments {
+      grid-row: 1 / 3;
+      border-left: 2px solid var(--accent-ml-dim);
+    }
+
+    .panel--experiments .panel__header {
+      background: linear-gradient(180deg, var(--accent-ml-dim) 0%, var(--surface-elevated) 100%);
+      border-bottom: 1px solid var(--accent-ml-glow);
+    }
+
+    .panel--experiments .panel__title {
+      color: var(--accent-ml);
+    }
+
+    .experiments-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--surface-border-subtle);
+    }
+
+    .experiments-toolbar__btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 10px;
+      background: var(--accent-ml);
+      border: none;
+      border-radius: 6px;
+      font-family: var(--font-ui);
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .experiments-toolbar__btn:hover {
+      background: #9333EA;
+    }
+
+    .experiments-toolbar__btn svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .experiments-toolbar__filter {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 8px;
+      background: transparent;
+      border: 1px solid var(--surface-border);
+      border-radius: 4px;
+      font-family: var(--font-ui);
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .experiments-toolbar__filter:hover {
+      border-color: var(--accent-ml);
+      color: var(--text-secondary);
+    }
+
+    .experiments-toolbar__filter svg {
+      width: 10px;
+      height: 10px;
+    }
+
+    .experiments-toolbar__search {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .experiments-toolbar__search-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .experiments-toolbar__search-btn:hover {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    .experiments-toolbar__search-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .experiments-list {
+      padding: 8px;
+    }
+
+    .experiment-item {
+      padding: 12px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .experiment-item:hover {
+      border-color: var(--surface-border);
+      background: var(--surface-hover);
+    }
+
+    .experiment-item--active {
+      border-color: var(--accent-ml);
+      background: var(--accent-ml-dim);
+    }
+
+    .experiment-item--active:hover {
+      background: var(--accent-ml-glow);
+    }
+
+    .experiment-item__header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .experiment-item__status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .experiment-item__status--running {
+      background: var(--status-running);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .experiment-item__status--completed {
+      background: var(--status-success);
+    }
+
+    .experiment-item__status--failed {
+      background: var(--status-error);
+    }
+
+    .experiment-item__status--queued {
+      background: var(--text-disabled);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--status-running); }
+      50% { opacity: 0.6; box-shadow: 0 0 8px var(--status-running); }
+    }
+
+    .experiment-item__name {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .experiment-item__badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .experiment-item__badge--running {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60A5FA;
+    }
+
+    .experiment-item__badge--completed {
+      background: rgba(34, 197, 94, 0.2);
+      color: #86EFAC;
+    }
+
+    .experiment-item__badge--failed {
+      background: rgba(239, 68, 68, 0.2);
+      color: #FCA5A5;
+    }
+
+    .experiment-item__meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .experiment-item__tag {
+      padding: 2px 6px;
+      background: var(--surface-base);
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+    }
+
+    .experiment-item__metrics {
+      display: flex;
+      gap: 12px;
+      font-size: 11px;
+    }
+
+    .experiment-item__metric {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .experiment-item__metric-label {
+      color: var(--text-muted);
+    }
+
+    .experiment-item__metric-value {
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+    }
+
+    .experiment-item__metric-value--positive {
+      color: var(--status-success);
+    }
+
+    .experiment-item__metric-value--negative {
+      color: var(--status-error);
+    }
+
+    .experiment-item__progress {
+      margin-top: 8px;
+    }
+
+    .experiment-item__progress-bar {
+      height: 4px;
+      background: var(--surface-base);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .experiment-item__progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--status-running) 0%, var(--accent-ml) 100%);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    .experiment-item__progress-text {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Experiment Detail Panel (Center)
+    ═══════════════════════════════════════════════════════════════ */
+
+    .panel--detail {
+      grid-column: 2;
+      grid-row: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .detail-tabs {
+      display: flex;
+      align-items: flex-end;
+      gap: 0;
+      padding: 6px 8px 0;
+      background: var(--surface-tab-bar);
+      border-bottom: none;
+      flex-shrink: 0;
+      min-height: 38px;
+    }
+
+    .detail-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: transparent;
+      border: none;
+      border-radius: 6px 6px 0 0;
+      font-family: var(--font-ui);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all var(--transition);
+      position: relative;
+      margin-right: 1px;
+    }
+
+    .detail-tab:hover {
+      color: var(--text-secondary);
+      background: var(--surface-hover);
+    }
+
+    .detail-tab--active {
+      color: var(--text-primary);
+      background: var(--surface-panel);
+      box-shadow: 0 -1px 0 var(--surface-border-subtle);
+    }
+
+    .detail-tab--active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent-ml);
+    }
+
+    .detail-tab svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .detail-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Metrics Cards */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .metric-card {
+      background: var(--surface-elevated);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .metric-card__label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .metric-card__value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .metric-card__change {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .metric-card__change--positive {
+      color: var(--status-success);
+    }
+
+    .metric-card__change--negative {
+      color: var(--status-error);
+    }
+
+    .metric-card__change svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .metric-card__baseline {
+      font-size: 10px;
+      color: var(--text-disabled);
+      margin-top: 4px;
+    }
+
+    /* Chart Container */
+    .chart-container {
+      background: var(--surface-elevated);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .chart-container__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--surface-border-subtle);
+    }
+
+    .chart-container__title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .chart-container__controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .chart-control {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: transparent;
+      border: 1px solid var(--surface-border);
+      border-radius: 4px;
+      font-family: var(--font-ui);
+      font-size: 10px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .chart-control:hover {
+      border-color: var(--accent-ml);
+      color: var(--text-secondary);
+    }
+
+    .chart-control svg {
+      width: 10px;
+      height: 10px;
+    }
+
+    .chart-container__body {
+      padding: 16px;
+      min-height: 200px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    /* Simulated Chart SVG */
+    .equity-chart {
+      width: 100%;
+      height: 180px;
+    }
+
+    .chart-legend {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--surface-border-subtle);
+    }
+
+    .chart-legend__item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .chart-legend__color {
+      width: 12px;
+      height: 3px;
+      border-radius: 2px;
+    }
+
+    /* Feature Importance */
+    .feature-list {
+      padding: 12px 16px;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .feature-item__name {
+      width: 120px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .feature-item__bar-container {
+      flex: 1;
+      height: 16px;
+      background: var(--surface-base);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .feature-item__bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-ml) 0%, var(--chart-primary) 100%);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    .feature-item__value {
+      width: 50px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       AI Tutor Panel (Right)
+    ═══════════════════════════════════════════════════════════════ */
+
+    .panel--ai {
+      grid-column: 3;
+      grid-row: 1 / 3;
+      --ai-accent: #D4A574;
+    }
+
+    .panel--ai .panel__header {
+      background: linear-gradient(180deg, var(--ai-accent-dim) 0%, var(--surface-elevated) 100%);
+      border-bottom: 1px solid rgba(212, 165, 116, 0.2);
+    }
+
+    .panel--ai .panel__title {
+      color: var(--ai-accent);
+    }
+
+    .ai-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .ai-provider {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .ai-provider:hover {
+      border-color: var(--ai-accent);
+    }
+
+    .ai-provider__icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      background: linear-gradient(135deg, var(--ai-accent) 0%, #B8956A 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .ai-context {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border);
+      border-radius: 4px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .ai-context__dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-ml);
+    }
+
+    .ai-chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .ai-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .ai-message {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .ai-message__header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .ai-message__avatar {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .ai-message__avatar--claude {
+      background: linear-gradient(135deg, var(--ai-accent) 0%, #B8956A 100%);
+      color: white;
+    }
+
+    .ai-message__name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .ai-message__content {
+      padding-left: 32px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-primary);
+    }
+
+    .ai-message__content p {
+      margin-bottom: 12px;
+    }
+
+    .ai-message__content p:last-child {
+      margin-bottom: 0;
+    }
+
+    .ai-message__content strong {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .ai-message__content code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 2px 6px;
+      background: var(--surface-base);
+      border-radius: 4px;
+      color: var(--ai-accent);
+    }
+
+    .ai-message__content ul {
+      margin: 8px 0;
+      padding-left: 16px;
+    }
+
+    .ai-message__content li {
+      margin-bottom: 6px;
+      color: var(--text-secondary);
+    }
+
+    .ai-message__section {
+      margin: 12px 0;
+      padding: 12px;
+      background: var(--surface-base);
+      border-radius: 8px;
+      border-left: 3px solid var(--status-success);
+    }
+
+    .ai-message__section--warning {
+      border-left-color: var(--status-warning);
+    }
+
+    .ai-message__section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .ai-message__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding-left: 32px;
+      margin-top: 8px;
+    }
+
+    .ai-action-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border);
+      border-radius: 6px;
+      font-family: var(--font-ui);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .ai-action-btn:hover {
+      background: var(--surface-hover);
+      border-color: var(--ai-accent);
+      color: var(--text-primary);
+    }
+
+    .ai-action-btn svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .ai-action-btn--primary {
+      background: var(--ai-accent);
+      border-color: var(--ai-accent);
+      color: white;
+    }
+
+    .ai-action-btn--primary:hover {
+      background: #C49564;
+      border-color: #C49564;
+    }
+
+    /* Quick Actions */
+    .ai-quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 12px;
+      background: var(--surface-elevated);
+      border-top: 1px solid var(--surface-border-subtle);
+    }
+
+    .ai-quick-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 10px;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border);
+      border-radius: 20px;
+      font-family: var(--font-ui);
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .ai-quick-btn:hover {
+      background: var(--surface-hover);
+      border-color: var(--ai-accent);
+      color: var(--text-primary);
+    }
+
+    .ai-quick-btn svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    /* Code Block */
+    .ai-code-block {
+      margin: 12px 0;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .ai-code-block__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--surface-elevated);
+      border-bottom: 1px solid var(--surface-border-subtle);
+    }
+
+    .ai-code-block__lang {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .ai-code-block__copy {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      font-family: var(--font-ui);
+      font-size: 10px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .ai-code-block__copy:hover {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    .ai-code-block__copy svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .ai-code-block__content {
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-primary);
+      overflow-x: auto;
+    }
+
+    .ai-code-block__content pre {
+      margin: 0;
+      white-space: pre;
+    }
+
+    /* Diff Preview */
+    .ai-diff {
+      margin: 12px 0;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .ai-diff__header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--surface-elevated);
+      border-bottom: 1px solid var(--surface-border-subtle);
+    }
+
+    .ai-diff__file {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .ai-diff__line {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .ai-diff__content {
+      padding: 8px 0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .ai-diff__line-item {
+      padding: 2px 12px;
+    }
+
+    .ai-diff__line-item--removed {
+      background: rgba(239, 68, 68, 0.15);
+      color: #FCA5A5;
+    }
+
+    .ai-diff__line-item--added {
+      background: rgba(34, 197, 94, 0.15);
+      color: #86EFAC;
+    }
+
+    .ai-diff__actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--surface-elevated);
+      border-top: 1px solid var(--surface-border-subtle);
+    }
+
+    .ai-message__time {
+      font-size: 10px;
+      color: var(--text-disabled);
+      margin-left: auto;
+    }
+
+    .ai-message__avatar--user {
+      background: var(--accent-ml);
+      color: white;
+    }
+
+    /* AI Input */
+    .ai-input {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      background: var(--surface-elevated);
+      border-top: 1px solid var(--surface-border-subtle);
+    }
+
+    .ai-input__field {
+      flex: 1;
+      padding: 10px 14px;
+      background: var(--surface-base);
+      border: 1px solid var(--surface-border);
+      border-radius: 8px;
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--text-primary);
+      resize: none;
+      outline: none;
+      transition: border-color var(--transition);
+    }
+
+    .ai-input__field::placeholder {
+      color: var(--text-muted);
+    }
+
+    .ai-input__field:focus {
+      border-color: var(--ai-accent);
+    }
+
+    .ai-input__send {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      background: var(--ai-accent);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      transition: all var(--transition);
+      flex-shrink: 0;
+    }
+
+    .ai-input__send:hover {
+      background: #C49564;
+    }
+
+    .ai-input__send svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Bottom Panel — Data/GPU/Logs Tabs
+    ═══════════════════════════════════════════════════════════════ */
+
+    .panel--bottom {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .bottom-tabs {
+      display: flex;
+      align-items: flex-end;
+      gap: 0;
+      padding: 6px 8px 0;
+      background: var(--surface-tab-bar);
+      border-bottom: none;
+      flex-shrink: 0;
+      min-height: 34px;
+    }
+
+    .bottom-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      border-radius: 6px 6px 0 0;
+      font-family: var(--font-ui);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+      position: relative;
+      margin-right: 1px;
+    }
+
+    .bottom-tab:hover {
+      color: var(--text-secondary);
+      background: var(--surface-hover);
+    }
+
+    .bottom-tab--active {
+      color: var(--text-primary);
+      background: var(--surface-panel);
+      box-shadow: 0 -1px 0 var(--surface-border-subtle);
+    }
+
+    .bottom-tab--active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent-ml);
+    }
+
+    .bottom-tab svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .bottom-tab__badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--status-running);
+      color: white;
+    }
+
+    /* Data Preview Table */
+    .data-preview {
+      padding: 12px;
+    }
+
+    .data-preview__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .data-preview__info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .data-preview__info span {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .data-preview__info strong {
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+
+    .data-preview__actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .data-preview__btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: transparent;
+      border: 1px solid var(--surface-border);
+      border-radius: 4px;
+      font-family: var(--font-ui);
+      font-size: 10px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .data-preview__btn:hover {
+      border-color: var(--accent-ml);
+      color: var(--text-secondary);
+    }
+
+    .data-preview__btn--active {
+      background: var(--accent-ml);
+      border-color: var(--accent-ml);
+      color: white;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .data-table th {
+      text-align: left;
+      padding: 8px 12px;
+      background: var(--surface-elevated);
+      border-bottom: 1px solid var(--surface-border);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      position: sticky;
+      top: 0;
+    }
+
+    .data-table td {
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--surface-border-subtle);
+      color: var(--text-secondary);
+    }
+
+    .data-table tr:hover td {
+      background: var(--surface-hover);
+    }
+
+    .data-table__index {
+      color: var(--text-disabled);
+      width: 40px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       Status Bar
+    ═══════════════════════════════════════════════════════════════ */
+
+    .statusbar {
+      grid-area: statusbar;
+      background: linear-gradient(90deg, var(--accent-ml-dim) 0%, var(--surface-frame) 30%);
+      border-top: 1px solid var(--accent-ml-glow);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 11px;
+      gap: 16px;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: default;
+      transition: all var(--transition);
+    }
+
+    .status-item:hover {
+      background: var(--surface-hover);
+      color: var(--text-secondary);
+    }
+
+    .status-item svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .status-item--accent {
+      color: var(--accent-ml);
+    }
+
+    .status-item--success {
+      color: var(--status-success);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .status-dot--running {
+      background: var(--status-running);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-divider {
+      width: 1px;
+      height: 14px;
+      background: var(--surface-border);
+    }
+
+    .statusbar-spacer {
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="ide">
+
+    <!-- ═══════════════════════════════════════════════════════════
+         Header — ML Mode
+    ═══════════════════════════════════════════════════════════════ -->
+    <header class="header">
+      <div class="traffic-lights">
+        <span class="traffic-light traffic-light--close"></span>
+        <span class="traffic-light traffic-light--minimize"></span>
+        <span class="traffic-light traffic-light--maximize"></span>
+      </div>
+
+      <div class="logo">
+        <div class="logo__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <span class="logo__text">Flux</span>
+        <span class="logo__mode">ML</span>
+      </div>
+
+      <button class="header-btn">
+        <span>momentum-lstm-v3</span>
+        <svg class="header-btn__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+
+      <div class="backend-status">
+        <span class="backend-status__dot"></span>
+        <span>Backend: Connected</span>
+      </div>
+
+      <span class="header-spacer"></span>
+
+      <button class="icon-btn" title="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+      </button>
+
+      <button class="icon-btn" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         Activity Bar — ML Mode Icons
+    ═══════════════════════════════════════════════════════════════ -->
+    <aside class="activity-bar">
+      <button class="activity-btn" title="Code Mode (⌘⇧C)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 18 22 12 16 6"/>
+          <polyline points="8 6 2 12 8 18"/>
+        </svg>
+      </button>
+
+      <button class="activity-btn activity-btn--ml activity-btn--active" title="ML Mode (⌘⇧M)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2v4"/>
+          <path d="M12 18v4"/>
+          <path d="M4.93 4.93l2.83 2.83"/>
+          <path d="M16.24 16.24l2.83 2.83"/>
+          <path d="M2 12h4"/>
+          <path d="M18 12h4"/>
+          <path d="M4.93 19.07l2.83-2.83"/>
+          <path d="M16.24 7.76l2.83-2.83"/>
+          <circle cx="12" cy="12" r="4"/>
+        </svg>
+      </button>
+
+      <div class="activity-divider"></div>
+
+      <button class="activity-btn" title="Experiments">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+      </button>
+
+      <button class="activity-btn" title="Models">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+      </button>
+
+      <button class="activity-btn" title="Datasets">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+        </svg>
+      </button>
+
+      <span class="activity-spacer"></span>
+
+      <button class="activity-btn" title="GPU Jobs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/>
+          <rect x="9" y="9" width="6" height="6"/>
+          <line x1="9" y1="1" x2="9" y2="4"/>
+          <line x1="15" y1="1" x2="15" y2="4"/>
+          <line x1="9" y1="20" x2="9" y2="23"/>
+          <line x1="15" y1="20" x2="15" y2="23"/>
+          <line x1="20" y1="9" x2="23" y2="9"/>
+          <line x1="20" y1="14" x2="23" y2="14"/>
+          <line x1="1" y1="9" x2="4" y2="9"/>
+          <line x1="1" y1="14" x2="4" y2="14"/>
+        </svg>
+      </button>
+
+      <button class="activity-btn" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </aside>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         Content Area — ML Mode Layout
+    ═══════════════════════════════════════════════════════════════ -->
+    <main class="content">
+
+      <!-- Left Panel: Experiments -->
+      <section class="panel panel--experiments">
+        <header class="panel__header">
+          <span class="panel__title">Experiments</span>
+          <div class="panel__actions">
+            <button class="panel__action" title="Refresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="experiments-toolbar">
+          <button class="experiments-toolbar__btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+            New Run
+          </button>
+          <button class="experiments-toolbar__filter">
+            All
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </button>
+          <button class="experiments-toolbar__filter">
+            Recent
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </button>
+          <div class="experiments-toolbar__search">
+            <button class="experiments-toolbar__search-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="panel__content">
+          <div class="experiments-list">
+            <!-- Running Experiment (Active) -->
+            <div class="experiment-item experiment-item--active">
+              <div class="experiment-item__header">
+                <span class="experiment-item__status experiment-item__status--running"></span>
+                <span class="experiment-item__name">momentum-lstm-v3</span>
+                <span class="experiment-item__badge experiment-item__badge--running">Running</span>
+              </div>
+              <div class="experiment-item__meta">
+                <span class="experiment-item__tag">LSTM</span>
+                <span class="experiment-item__tag">AAPL</span>
+                <span class="experiment-item__tag">1h</span>
+                <span>Started 12m ago</span>
+              </div>
+              <div class="experiment-item__progress">
+                <div class="experiment-item__progress-bar">
+                  <div class="experiment-item__progress-fill" style="width: 42%;"></div>
+                </div>
+                <div class="experiment-item__progress-text">
+                  <span>Epoch 42/100</span>
+                  <span>ETA: 1h 30m</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Completed Experiment -->
+            <div class="experiment-item">
+              <div class="experiment-item__header">
+                <span class="experiment-item__status experiment-item__status--completed"></span>
+                <span class="experiment-item__name">mean-rev-v2</span>
+                <span class="experiment-item__badge experiment-item__badge--completed">Completed</span>
+              </div>
+              <div class="experiment-item__meta">
+                <span class="experiment-item__tag">LightGBM</span>
+                <span class="experiment-item__tag">ETH</span>
+                <span class="experiment-item__tag">15m</span>
+                <span>2h ago</span>
+              </div>
+              <div class="experiment-item__metrics">
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-label">Sharpe:</span>
+                  <span class="experiment-item__metric-value">1.82</span>
+                </div>
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-label">Win:</span>
+                  <span class="experiment-item__metric-value">58%</span>
+                </div>
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-value experiment-item__metric-value--positive">↗ +0.3</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Failed Experiment -->
+            <div class="experiment-item">
+              <div class="experiment-item__header">
+                <span class="experiment-item__status experiment-item__status--failed"></span>
+                <span class="experiment-item__name">orb-optuna-sweep</span>
+                <span class="experiment-item__badge experiment-item__badge--failed">Failed</span>
+              </div>
+              <div class="experiment-item__meta">
+                <span class="experiment-item__tag">XGBoost</span>
+                <span class="experiment-item__tag">SPY</span>
+                <span class="experiment-item__tag">5m</span>
+                <span>5h ago</span>
+              </div>
+              <div class="experiment-item__metrics">
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-label">Stopped:</span>
+                  <span class="experiment-item__metric-value experiment-item__metric-value--negative">epoch 23/100</span>
+                </div>
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-value experiment-item__metric-value--negative">OOM Error</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Baseline Experiment -->
+            <div class="experiment-item">
+              <div class="experiment-item__header">
+                <span class="experiment-item__status experiment-item__status--completed"></span>
+                <span class="experiment-item__name">baseline-v1</span>
+                <span class="experiment-item__badge experiment-item__badge--completed">Baseline</span>
+              </div>
+              <div class="experiment-item__meta">
+                <span class="experiment-item__tag">XGBoost</span>
+                <span class="experiment-item__tag">AAPL</span>
+                <span class="experiment-item__tag">1h</span>
+                <span>1d ago</span>
+              </div>
+              <div class="experiment-item__metrics">
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-label">Sharpe:</span>
+                  <span class="experiment-item__metric-value">1.12</span>
+                </div>
+                <div class="experiment-item__metric">
+                  <span class="experiment-item__metric-label">Win:</span>
+                  <span class="experiment-item__metric-value">51%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Queued Experiment -->
+            <div class="experiment-item">
+              <div class="experiment-item__header">
+                <span class="experiment-item__status experiment-item__status--queued"></span>
+                <span class="experiment-item__name">sentiment-model-v1</span>
+              </div>
+              <div class="experiment-item__meta">
+                <span class="experiment-item__tag">Transformer</span>
+                <span class="experiment-item__tag">BTC</span>
+                <span class="experiment-item__tag">4h</span>
+                <span style="color: var(--text-disabled);">Queued</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- Center Panel: Experiment Detail -->
+      <section class="panel panel--detail">
+        <div class="detail-tabs">
+          <button class="detail-tab detail-tab--active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 21H4.6A2.6 2.6 0 0 1 2 18.4V3"/>
+              <path d="M7 14l4-4 4 4 6-6"/>
+            </svg>
+            Metrics
+          </button>
+          <button class="detail-tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20V10"/>
+              <path d="M18 20V4"/>
+              <path d="M6 20v-4"/>
+            </svg>
+            Features
+          </button>
+          <button class="detail-tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            Trade Log
+          </button>
+          <button class="detail-tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            Config
+          </button>
+        </div>
+
+        <div class="detail-content">
+          <!-- Metrics Cards -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-card__label">Sharpe Ratio</div>
+              <div class="metric-card__value">1.94</div>
+              <div class="metric-card__change metric-card__change--positive">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="18 15 12 9 6 15"/>
+                </svg>
+                +0.82
+              </div>
+              <div class="metric-card__baseline">vs baseline</div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-card__label">Win Rate</div>
+              <div class="metric-card__value">62%</div>
+              <div class="metric-card__change metric-card__change--positive">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="18 15 12 9 6 15"/>
+                </svg>
+                +11%
+              </div>
+              <div class="metric-card__baseline">vs baseline</div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-card__label">Max Drawdown</div>
+              <div class="metric-card__value">-8.2%</div>
+              <div class="metric-card__change metric-card__change--positive">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="18 15 12 9 6 15"/>
+                </svg>
+                +4.2%
+              </div>
+              <div class="metric-card__baseline">vs baseline</div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-card__label">Profit Factor</div>
+              <div class="metric-card__value">2.1</div>
+              <div class="metric-card__change metric-card__change--positive">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="18 15 12 9 6 15"/>
+                </svg>
+                +0.8
+              </div>
+              <div class="metric-card__baseline">vs baseline</div>
+            </div>
+          </div>
+
+          <!-- Equity Curve Chart -->
+          <div class="chart-container">
+            <div class="chart-container__header">
+              <span class="chart-container__title">Equity Curve</span>
+              <div class="chart-container__controls">
+                <button class="chart-control">
+                  Model
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </button>
+                <button class="chart-control">
+                  Benchmark
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </button>
+                <button class="chart-control">
+                  Period: 1Y
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="chart-container__body">
+              <svg class="equity-chart" viewBox="0 0 600 180" preserveAspectRatio="none">
+                <!-- Grid lines -->
+                <defs>
+                  <pattern id="grid" width="60" height="36" patternUnits="userSpaceOnUse">
+                    <path d="M 60 0 L 0 0 0 36" fill="none" stroke="rgba(38, 64, 80, 0.3)" stroke-width="1"/>
+                  </pattern>
+                </defs>
+                <rect width="600" height="180" fill="url(#grid)"/>
+
+                <!-- Benchmark line (SPY) -->
+                <path d="M0,140 Q100,130 150,125 T300,110 T450,95 T600,85"
+                      fill="none" stroke="rgba(34, 197, 94, 0.5)" stroke-width="2" stroke-dasharray="4,4"/>
+
+                <!-- Model equity curve -->
+                <path d="M0,150 Q50,145 100,135 T200,120 T300,90 T400,60 T500,45 T600,30"
+                      fill="none" stroke="#06B6D4" stroke-width="2.5"/>
+
+                <!-- Model area fill -->
+                <path d="M0,150 Q50,145 100,135 T200,120 T300,90 T400,60 T500,45 T600,30 L600,180 L0,180 Z"
+                      fill="url(#modelGradient)" opacity="0.3"/>
+
+                <defs>
+                  <linearGradient id="modelGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:0.4"/>
+                    <stop offset="100%" style="stop-color:#06B6D4;stop-opacity:0"/>
+                  </linearGradient>
+                </defs>
+
+                <!-- Current position marker -->
+                <circle cx="600" cy="30" r="4" fill="#06B6D4"/>
+              </svg>
+            </div>
+            <div class="chart-legend">
+              <div class="chart-legend__item">
+                <span class="chart-legend__color" style="background: #06B6D4;"></span>
+                <span>Model (momentum-lstm-v3)</span>
+              </div>
+              <div class="chart-legend__item">
+                <span class="chart-legend__color" style="background: #22C55E;"></span>
+                <span>Benchmark (SPY)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feature Importance -->
+          <div class="chart-container">
+            <div class="chart-container__header">
+              <span class="chart-container__title">Feature Importance (SHAP)</span>
+              <div class="chart-container__controls">
+                <button class="chart-control">
+                  Top 10
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="feature-list">
+              <div class="feature-item">
+                <span class="feature-item__name">rsi_14</span>
+                <div class="feature-item__bar-container">
+                  <div class="feature-item__bar" style="width: 100%;"></div>
+                </div>
+                <span class="feature-item__value">0.234</span>
+              </div>
+              <div class="feature-item">
+                <span class="feature-item__name">macd_signal</span>
+                <div class="feature-item__bar-container">
+                  <div class="feature-item__bar" style="width: 81%;"></div>
+                </div>
+                <span class="feature-item__value">0.189</span>
+              </div>
+              <div class="feature-item">
+                <span class="feature-item__name">volume_sma_20</span>
+                <div class="feature-item__bar-container">
+                  <div class="feature-item__bar" style="width: 61%;"></div>
+                </div>
+                <span class="feature-item__value">0.142</span>
+              </div>
+              <div class="feature-item">
+                <span class="feature-item__name">bb_width</span>
+                <div class="feature-item__bar-container">
+                  <div class="feature-item__bar" style="width: 50%;"></div>
+                </div>
+                <span class="feature-item__value">0.118</span>
+              </div>
+              <div class="feature-item">
+                <span class="feature-item__name">atr_14</span>
+                <div class="feature-item__bar-container">
+                  <div class="feature-item__bar" style="width: 42%;"></div>
+                </div>
+                <span class="feature-item__value">0.098</span>
+              </div>
+              <div class="feature-item">
+                <span class="feature-item__name">close_pct_1d</span>
+                <div class="feature-item__bar-container">
+                  <div class="feature-item__bar" style="width: 32%;"></div>
+                </div>
+                <span class="feature-item__value">0.076</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: AI Tutor -->
+      <section class="panel panel--ai">
+        <header class="panel__header">
+          <div class="ai-header">
+            <button class="ai-provider">
+              <span class="ai-provider__icon">C</span>
+              <span>Claude</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 10px; height: 10px; color: var(--text-muted);">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
+            <div class="ai-context">
+              <span class="ai-context__dot"></span>
+              <span>Context: Experiment</span>
+            </div>
+          </div>
+          <div class="panel__actions">
+            <button class="panel__action" title="Settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="ai-chat">
+          <div class="ai-messages">
+            <!-- User Message -->
+            <div class="ai-message">
+              <div class="ai-message__header">
+                <div class="ai-message__avatar ai-message__avatar--user">Y</div>
+                <span class="ai-message__name">You</span>
+                <span class="ai-message__time">5 min ago</span>
+              </div>
+              <div class="ai-message__content">
+                <p>Why is my model overfitting? The validation loss keeps increasing.</p>
+              </div>
+            </div>
+
+            <!-- Claude Response -->
+            <div class="ai-message">
+              <div class="ai-message__header">
+                <div class="ai-message__avatar ai-message__avatar--claude">C</div>
+                <span class="ai-message__name">Claude</span>
+                <span class="ai-message__time">just now</span>
+              </div>
+              <div class="ai-message__content">
+                <p>Looking at your <code>momentum-lstm-v3</code> config, the walk-forward validation shows a <strong>0.4 Sharpe drop</strong> in the out-of-sample period. This is a classic sign of overfitting.</p>
+
+                <p><strong>The issue:</strong> Your LSTM has 3 layers with 128 units each, but you only have 8,760 training samples. That's too much model capacity.</p>
+
+                <p><strong>Try adding dropout between layers:</strong></p>
+                <div class="ai-code-block">
+                  <div class="ai-code-block__header">
+                    <span class="ai-code-block__lang">Python</span>
+                    <button class="ai-code-block__copy">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                      Copy
+                    </button>
+                  </div>
+                  <div class="ai-code-block__content">
+                    <pre><span class="syn-variable">model</span><span class="syn-punctuation">.</span><span class="syn-function">add</span><span class="syn-punctuation">(</span><span class="syn-type">Dropout</span><span class="syn-punctuation">(</span><span class="syn-number">0.3</span><span class="syn-punctuation">))</span></pre>
+                  </div>
+                </div>
+
+                <!-- Diff Preview -->
+                <div class="ai-diff">
+                  <div class="ai-diff__header">
+                    <span class="ai-diff__file">model_config.py</span>
+                    <span class="ai-diff__line">line 42</span>
+                  </div>
+                  <div class="ai-diff__content">
+                    <div class="ai-diff__line-item ai-diff__line-item--removed">- model.add(LSTM(128, return_sequences=True))</div>
+                    <div class="ai-diff__line-item ai-diff__line-item--added">+ model.add(LSTM(128, return_sequences=True))</div>
+                    <div class="ai-diff__line-item ai-diff__line-item--added">+ model.add(Dropout(0.3))</div>
+                  </div>
+                  <div class="ai-diff__actions">
+                    <button class="ai-action-btn">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                      </svg>
+                      Reject
+                    </button>
+                    <button class="ai-action-btn">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                      </svg>
+                      Edit
+                    </button>
+                    <button class="ai-action-btn ai-action-btn--primary">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions -->
+          <div class="ai-quick-actions">
+            <button class="ai-quick-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              Explain metrics
+            </button>
+            <button class="ai-quick-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 21H4.6A2.6 2.6 0 0 1 2 18.4V3"/>
+                <path d="M7 14l4-4 4 4 6-6"/>
+              </svg>
+              Analyze results
+            </button>
+            <button class="ai-quick-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              Why overfitting?
+            </button>
+            <button class="ai-quick-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="16 18 22 12 16 6"/>
+                <polyline points="8 6 2 12 8 18"/>
+              </svg>
+              Suggest fix
+            </button>
+          </div>
+
+          <!-- Input -->
+          <div class="ai-input">
+            <textarea class="ai-input__field" rows="1" placeholder="Ask Claude anything... (⌘⏎ to send)"></textarea>
+            <button class="ai-input__send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bottom Panel: Data Preview / GPU Jobs / Logs -->
+      <section class="panel panel--bottom">
+        <div class="bottom-tabs">
+          <button class="bottom-tab bottom-tab--active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+            Data Preview
+          </button>
+          <button class="bottom-tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/>
+              <rect x="9" y="9" width="6" height="6"/>
+            </svg>
+            GPU Jobs
+            <span class="bottom-tab__badge">1</span>
+          </button>
+          <button class="bottom-tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"/>
+              <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+            Training Logs
+          </button>
+        </div>
+
+        <div class="panel__content">
+          <div class="data-preview">
+            <div class="data-preview__header">
+              <div class="data-preview__info">
+                <span><strong>Dataset:</strong> AAPL_1h_ohlcv</span>
+                <span><strong>Rows:</strong> 8,760</span>
+                <span><strong>Cols:</strong> 12</span>
+                <span><strong>Period:</strong> 2024-01-01 → 2025-01-01</span>
+              </div>
+              <div class="data-preview__actions">
+                <button class="data-preview__btn data-preview__btn--active">Table</button>
+                <button class="data-preview__btn">Statistics</button>
+                <button class="data-preview__btn">Chart</button>
+                <button class="data-preview__btn">Correlation</button>
+                <button class="data-preview__btn">Export</button>
+              </div>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="data-table__index"></th>
+                  <th>timestamp</th>
+                  <th>open</th>
+                  <th>high</th>
+                  <th>low</th>
+                  <th>close</th>
+                  <th>volume</th>
+                  <th>rsi_14</th>
+                  <th>macd</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="data-table__index">0</td>
+                  <td>2025-01-15 10:00</td>
+                  <td>182.50</td>
+                  <td>183.20</td>
+                  <td>182.10</td>
+                  <td>182.90</td>
+                  <td>1.2M</td>
+                  <td>58.4</td>
+                  <td>1.23</td>
+                </tr>
+                <tr>
+                  <td class="data-table__index">1</td>
+                  <td>2025-01-15 11:00</td>
+                  <td>182.90</td>
+                  <td>184.00</td>
+                  <td>182.80</td>
+                  <td>183.50</td>
+                  <td>1.5M</td>
+                  <td>62.1</td>
+                  <td>1.45</td>
+                </tr>
+                <tr>
+                  <td class="data-table__index">2</td>
+                  <td>2025-01-15 12:00</td>
+                  <td>183.50</td>
+                  <td>183.80</td>
+                  <td>183.00</td>
+                  <td>183.20</td>
+                  <td>0.9M</td>
+                  <td>60.8</td>
+                  <td>1.38</td>
+                </tr>
+                <tr>
+                  <td class="data-table__index">3</td>
+                  <td>2025-01-15 13:00</td>
+                  <td>183.20</td>
+                  <td>184.50</td>
+                  <td>183.10</td>
+                  <td>184.30</td>
+                  <td>1.8M</td>
+                  <td>65.2</td>
+                  <td>1.67</td>
+                </tr>
+                <tr>
+                  <td class="data-table__index">4</td>
+                  <td>2025-01-15 14:00</td>
+                  <td>184.30</td>
+                  <td>185.00</td>
+                  <td>184.00</td>
+                  <td>184.80</td>
+                  <td>2.1M</td>
+                  <td>68.9</td>
+                  <td>1.89</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         Status Bar — ML Mode
+    ═══════════════════════════════════════════════════════════════ -->
+    <footer class="statusbar">
+      <span class="status-item status-item--accent">
+        <span class="status-dot status-dot--running"></span>
+        momentum-lstm-v3
+      </span>
+
+      <span class="status-divider"></span>
+
+      <span class="status-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/>
+          <rect x="9" y="9" width="6" height="6"/>
+        </svg>
+        GPU: vast-gpu-01
+      </span>
+
+      <span class="status-item status-item--success">
+        Epoch 42/100
+      </span>
+
+      <span class="statusbar-spacer"></span>
+
+      <span class="status-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #22C55E;">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        ETA: 1h 30m
+      </span>
+
+      <span class="status-divider"></span>
+
+      <span class="status-item">
+        <svg viewBox="0 0 24 24" fill="currentColor" style="color: #3776AB;">
+          <circle cx="12" cy="12" r="8"/>
+        </svg>
+        Python 3.11
+      </span>
+
+      <span class="status-divider"></span>
+
+      <span class="status-item">
+        Est. Cost: $0.40/hr
+      </span>
+    </footer>
+
+  </div>
+</body>
+</html>
