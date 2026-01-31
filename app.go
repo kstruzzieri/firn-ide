@@ -9,14 +9,17 @@ import (
 // App represents the main application structure for Flux IDE.
 // It holds the application context for Wails runtime interactions.
 type App struct {
-	ctx       context.Context
-	dirReader *filesystem.DirectoryReader
+	ctx        context.Context
+	dirReader  *filesystem.DirectoryReader
+	fileReader *filesystem.FileReader
 }
 
 // NewApp creates and returns a new App instance.
 func NewApp() *App {
+	osFS := filesystem.NewOS()
 	return &App{
-		dirReader: filesystem.NewDirectoryReader(filesystem.NewOS()),
+		dirReader:  filesystem.NewDirectoryReader(osFS),
+		fileReader: filesystem.NewFileReader(osFS),
 	}
 }
 
@@ -46,4 +49,11 @@ type WorkspaceInfo struct {
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ReadDirectory(path string) ([]filesystem.FileEntry, error) {
 	return a.dirReader.ReadDirectory(path)
+}
+
+// ReadFile reads a file and returns its contents with metadata.
+// Detects encoding (UTF-8, UTF-16, Latin-1) and line endings.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ReadFile(path string) (*filesystem.FileContent, error) {
+	return a.fileReader.ReadFileWithMetadata(path)
 }
