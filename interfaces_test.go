@@ -3,7 +3,6 @@ package main
 import (
 	"io/fs"
 	"testing"
-	"time"
 )
 
 // MockFileSystem is a test implementation of the FileSystem interface.
@@ -97,22 +96,6 @@ func (m *MockProcessManager) Start(name string, args ...string) (Process, error)
 	}
 	return &MockProcess{}, nil
 }
-
-// mockFileInfo implements fs.FileInfo for testing
-type mockFileInfo struct {
-	name    string
-	size    int64
-	mode    fs.FileMode
-	modTime time.Time
-	isDir   bool
-}
-
-func (m mockFileInfo) Name() string       { return m.name }
-func (m mockFileInfo) Size() int64        { return m.size }
-func (m mockFileInfo) Mode() fs.FileMode  { return m.mode }
-func (m mockFileInfo) ModTime() time.Time { return m.modTime }
-func (m mockFileInfo) IsDir() bool        { return m.isDir }
-func (m mockFileInfo) Sys() any            { return nil }
 
 // TestMockFileSystemImplementsInterface verifies MockFileSystem implements FileSystem.
 func TestMockFileSystemImplementsInterface(t *testing.T) {
