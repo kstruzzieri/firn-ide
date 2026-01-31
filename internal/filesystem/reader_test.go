@@ -1,4 +1,4 @@
-package main
+package filesystem
 
 import (
 	"errors"
@@ -36,9 +36,29 @@ func (m *mockFileInfo) ModTime() time.Time { return m.modTime }
 func (m *mockFileInfo) IsDir() bool        { return m.isDir }
 func (m *mockFileInfo) Sys() any           { return nil }
 
+func TestMockImplementsInterface(t *testing.T) {
+	var _ FileSystem = (*Mock)(nil)
+}
+
+func TestMockReadFile(t *testing.T) {
+	mock := &Mock{
+		ReadFileFunc: func(path string) ([]byte, error) {
+			return []byte("test content"), nil
+		},
+	}
+
+	content, err := mock.ReadFile("/test/path")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if string(content) != "test content" {
+		t.Errorf("Expected 'test content', got %q", string(content))
+	}
+}
+
 func TestReadDirectory_ReturnsEntries(t *testing.T) {
 	modTime := time.Now()
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			if path == "/test" {
 				return []fs.DirEntry{
@@ -72,7 +92,7 @@ func TestReadDirectory_ReturnsEntries(t *testing.T) {
 
 func TestReadDirectory_IncludesMetadata(t *testing.T) {
 	modTime := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			return []fs.DirEntry{
 				&mockDirEntry{
@@ -124,7 +144,7 @@ func TestReadDirectory_IncludesMetadata(t *testing.T) {
 
 func TestReadDirectory_NestedStructure(t *testing.T) {
 	modTime := time.Now()
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			switch path {
 			case "/test":
@@ -168,7 +188,7 @@ func TestReadDirectory_NestedStructure(t *testing.T) {
 
 func TestReadDirectory_RespectsGitignore(t *testing.T) {
 	modTime := time.Now()
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			if path == "/test" {
 				return []fs.DirEntry{
@@ -223,7 +243,7 @@ func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 	modTime := time.Now()
 	permErr := errors.New("permission denied")
 
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			switch path {
 			case "/test":
@@ -273,7 +293,7 @@ func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 }
 
 func TestReadDirectory_InvalidPath(t *testing.T) {
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			return nil, errors.New("no such file or directory")
 		},
@@ -288,7 +308,7 @@ func TestReadDirectory_InvalidPath(t *testing.T) {
 }
 
 func TestReadDirectory_EmptyDirectory(t *testing.T) {
-	mockFS := &MockFileSystem{
+	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			return []fs.DirEntry{}, nil
 		},

@@ -1,4 +1,5 @@
-package main
+// Package filesystem provides file system operations for Flux IDE.
+package filesystem
 
 import (
 	"io/fs"
@@ -24,23 +25,4 @@ type FileSystem interface {
 
 	// Remove removes a file or empty directory.
 	Remove(path string) error
-}
-
-// ProcessManager defines the interface for managing external processes.
-// This allows for easy mocking in tests.
-type ProcessManager interface {
-	// Start starts a new process with the given command and arguments.
-	Start(name string, args ...string) (Process, error)
-}
-
-// Process represents a running process.
-type Process interface {
-	// Wait waits for the process to exit and returns the exit code.
-	Wait() (int, error)
-
-	// Kill terminates the process.
-	Kill() error
-
-	// Pid returns the process ID.
-	Pid() int
 }
