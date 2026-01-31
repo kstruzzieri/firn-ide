@@ -5,14 +5,14 @@
 :root {
   /* Surface Hierarchy — Deep Ocean (cyan-tinted darks)
      Darkened for greater contrast between panels and base */
-  --surface-base: #141C24;        /* Main background */
-  --surface-frame: #0C1318;       /* Sidebar, frame */
-  --surface-panel: #060A0E;       /* Panel backgrounds - near black */
-  --surface-elevated: #040608;    /* Panel headers - deepest */
-  --surface-hover: #1A2530;       /* Hover states */
-  --surface-active: #1E3040;      /* Active states */
+  --surface-base: #141c24; /* Main background */
+  --surface-frame: #0c1318; /* Sidebar, frame */
+  --surface-panel: #060a0e; /* Panel backgrounds - near black */
+  --surface-elevated: #040608; /* Panel headers - deepest */
+  --surface-hover: #1a2530; /* Hover states */
+  --surface-active: #1e3040; /* Active states */
   --surface-border: #264050;
-  --surface-border-subtle: #1A3040;
+  --surface-border-subtle: #1a3040;
 
   /* Tab bar specific - matches panel headers */
   --surface-tab-bar: var(--surface-elevated);
@@ -20,47 +20,47 @@
   --surface-tab-inactive: transparent;
 
   /* Text */
-  --text-primary: #E6EDF3;
-  --text-secondary: #8B9CAE;
-  --text-muted: #5A7080;
-  --text-disabled: #3A5060;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b9cae;
+  --text-muted: #5a7080;
+  --text-disabled: #3a5060;
 
   /* Workspace Accent Palette */
-  --accent-blue: #2563EB;
-  --accent-green: #22C55E;
-  --accent-cyan: #06B6D4;
-  --accent-orange: #F97316;
-  --accent-purple: #A855F7;
-  --accent-amber: #F59E0B;
+  --accent-blue: #2563eb;
+  --accent-green: #22c55e;
+  --accent-cyan: #06b6d4;
+  --accent-orange: #f97316;
+  --accent-purple: #a855f7;
+  --accent-amber: #f59e0b;
 
   /* Project View Accent — neutral teal/slate that complements Deep Ocean */
-  --accent-project: #4A9CAE;
+  --accent-project: #4a9cae;
 
   /* Active Workspace Accent — change this to swap the entire theme */
   --accent: var(--accent-project);
-  --accent-dark: #2A6070;
+  --accent-dark: #2a6070;
   --accent-dim: rgba(74, 156, 174, 0.12);
   --accent-glow: rgba(74, 156, 174, 0.25);
 
   /* Status */
-  --status-success: #22C55E;
-  --status-warning: #F59E0B;
-  --status-error: #EF4444;
+  --status-success: #22c55e;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
 
   /* File Icons */
-  --icon-ts: #3178C6;
-  --icon-tsx: #3178C6;
-  --icon-js: #F7DF1E;
-  --icon-react: #61DAFB;
-  --icon-json: #F59E0B;
-  --icon-css: #38BDF8;
-  --icon-html: #F97316;
-  --icon-md: #6B7280;
-  --icon-git: #F05032;
-  --icon-go: #00ADD8;
-  --icon-py: #3776AB;
-  --icon-folder: #4A7080;
-  --icon-folder-open: #6A9AB0;
+  --icon-ts: #3178c6;
+  --icon-tsx: #3178c6;
+  --icon-js: #f7df1e;
+  --icon-react: #61dafb;
+  --icon-json: #f59e0b;
+  --icon-css: #38bdf8;
+  --icon-html: #f97316;
+  --icon-md: #6b7280;
+  --icon-git: #f05032;
+  --icon-go: #00add8;
+  --icon-py: #3776ab;
+  --icon-folder: #4a7080;
+  --icon-folder-open: #6a9ab0;
 
   /* Layout */
   --header-height: 44px;
@@ -86,51 +86,51 @@
    Workspace Accent Variants
 ═══════════════════════════════════════════════════════════════ */
 
-[data-accent="project"] {
+[data-accent='project'] {
   --accent: var(--accent-project);
-  --accent-dark: #2A6070;
+  --accent-dark: #2a6070;
   --accent-dim: rgba(74, 156, 174, 0.12);
   --accent-glow: rgba(74, 156, 174, 0.25);
 }
 
-[data-accent="blue"] {
+[data-accent='blue'] {
   --accent: var(--accent-blue);
-  --accent-dark: #1E40AF;
+  --accent-dark: #1e40af;
   --accent-dim: rgba(37, 99, 235, 0.12);
   --accent-glow: rgba(37, 99, 235, 0.25);
 }
 
-[data-accent="green"] {
+[data-accent='green'] {
   --accent: var(--accent-green);
-  --accent-dark: #15803D;
+  --accent-dark: #15803d;
   --accent-dim: rgba(34, 197, 94, 0.12);
   --accent-glow: rgba(34, 197, 94, 0.25);
 }
 
-[data-accent="cyan"] {
+[data-accent='cyan'] {
   --accent: var(--accent-cyan);
-  --accent-dark: #0E7490;
+  --accent-dark: #0e7490;
   --accent-dim: rgba(6, 182, 212, 0.12);
   --accent-glow: rgba(6, 182, 212, 0.25);
 }
 
-[data-accent="orange"] {
+[data-accent='orange'] {
   --accent: var(--accent-orange);
-  --accent-dark: #C2410C;
+  --accent-dark: #c2410c;
   --accent-dim: rgba(249, 115, 22, 0.12);
   --accent-glow: rgba(249, 115, 22, 0.25);
 }
 
-[data-accent="purple"] {
+[data-accent='purple'] {
   --accent: var(--accent-purple);
-  --accent-dark: #7C3AED;
+  --accent-dark: #7c3aed;
   --accent-dim: rgba(168, 85, 247, 0.12);
   --accent-glow: rgba(168, 85, 247, 0.25);
 }
 
-[data-accent="amber"] {
+[data-accent='amber'] {
   --accent: var(--accent-amber);
-  --accent-dark: #B45309;
+  --accent-dark: #b45309;
   --accent-dim: rgba(245, 158, 11, 0.12);
   --accent-glow: rgba(245, 158, 11, 0.25);
 }

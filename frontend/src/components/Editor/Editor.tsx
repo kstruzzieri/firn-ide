@@ -88,9 +88,7 @@ export function Editor() {
             >
               <FileIcon className={styles.tabIcon} aria-hidden="true" />
               <span className={styles.tabName}>{file.name}</span>
-              {file.isModified && (
-                <span className={styles.tabDot} aria-label="Modified" />
-              )}
+              {file.isModified && <span className={styles.tabDot} aria-label="Modified" />}
               <button
                 className={styles.tabClose}
                 onClick={(e) => {
@@ -136,13 +134,7 @@ export function Editor() {
  */
 function CloseIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M18 6L6 18M6 6l12 12" />
     </svg>
   );
@@ -153,19 +145,9 @@ function CloseIcon() {
  */
 function FluxWelcomeLogo() {
   return (
-    <svg
-      viewBox="0 0 48 48"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <rect width="48" height="48" rx="12" fill="url(#flux-gradient)" />
-      <path
-        d="M14 16h20M14 24h14M14 32h8"
-        stroke="white"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
+      <path d="M14 16h20M14 24h14M14 32h8" stroke="white" strokeWidth="3" strokeLinecap="round" />
       <defs>
         <linearGradient
           id="flux-gradient"

@@ -135,13 +135,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     }
   }, [content]);
 
-  return (
-    <div
-      ref={containerRef}
-      className={styles.container}
-      data-testid="codemirror-editor"
-    />
-  );
+  return <div ref={containerRef} className={styles.container} data-testid="codemirror-editor" />;
 });
 
 CodeMirrorEditor.displayName = 'CodeMirrorEditor';

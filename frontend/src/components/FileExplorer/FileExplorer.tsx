@@ -57,11 +57,7 @@ function FileExplorerSkeleton() {
   return (
     <div className={styles.skeleton} aria-busy="true" aria-label="Loading file tree">
       {SKELETON_WIDTHS.map((width, i) => (
-        <div
-          key={i}
-          className={styles.skeletonItem}
-          style={{ width: `${width}%` }}
-        />
+        <div key={i} className={styles.skeletonItem} style={{ width: `${width}%` }} />
       ))}
     </div>
   );

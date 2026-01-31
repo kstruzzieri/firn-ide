@@ -31,18 +31,20 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          backgroundColor: 'var(--surface-base)',
-          color: 'var(--text-primary)',
-          fontFamily: 'var(--font-ui)',
-          padding: '20px',
-          textAlign: 'center',
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            backgroundColor: 'var(--surface-base)',
+            color: 'var(--text-primary)',
+            fontFamily: 'var(--font-ui)',
+            padding: '20px',
+            textAlign: 'center',
+          }}
+        >
           <h1 style={{ fontSize: '24px', marginBottom: '16px', color: 'var(--status-error)' }}>
             Something went wrong
           </h1>
@@ -74,6 +76,8 @@ const buttonFocusStyle: CSSProperties = {
   boxShadow: '0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent)',
 };
 
+// Internal component, not exported - disable fast refresh warning
+// eslint-disable-next-line react-refresh/only-export-components
 function ReloadButton() {
   const [focused, setFocused] = useState(false);
 

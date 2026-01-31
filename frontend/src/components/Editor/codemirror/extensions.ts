@@ -19,12 +19,7 @@ import {
   highlightActiveLineGutter,
   placeholder as placeholderExtension,
 } from '@codemirror/view';
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-  indentWithTab,
-} from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import {
   syntaxHighlighting,
   indentOnInput,

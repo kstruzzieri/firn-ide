@@ -92,18 +92,12 @@ export const useIDEStore = create<IDEStore>()(
 
       // Workspace actions
       setWorkspace: (workspace) =>
-        set(
-          { workspace, workingDirectory: workspace?.path ?? '' },
-          false,
-          'setWorkspace'
-        ),
+        set({ workspace, workingDirectory: workspace?.path ?? '' }, false, 'setWorkspace'),
 
-      setLoading: (isLoading) =>
-        set({ isLoading }, false, 'setLoading'),
+      setLoading: (isLoading) => set({ isLoading }, false, 'setLoading'),
 
       // Sidebar actions
-      setSidebarView: (activeSidebarView) =>
-        set({ activeSidebarView }, false, 'setSidebarView'),
+      setSidebarView: (activeSidebarView) => set({ activeSidebarView }, false, 'setSidebarView'),
 
       // Editor actions
       openFile: (file) =>
@@ -128,7 +122,7 @@ export const useIDEStore = create<IDEStore>()(
             const newFiles = state.openFiles.filter((f) => f.id !== fileId);
             const newActiveId =
               state.activeFileId === fileId
-                ? newFiles[newFiles.length - 1]?.id ?? null
+                ? (newFiles[newFiles.length - 1]?.id ?? null)
                 : state.activeFileId;
             return { openFiles: newFiles, activeFileId: newActiveId };
           },
@@ -136,33 +130,27 @@ export const useIDEStore = create<IDEStore>()(
           'closeFile'
         ),
 
-      setActiveFile: (activeFileId) =>
-        set({ activeFileId }, false, 'setActiveFile'),
+      setActiveFile: (activeFileId) => set({ activeFileId }, false, 'setActiveFile'),
 
-      setCursorPosition: (cursorPosition) =>
-        set({ cursorPosition }, false, 'setCursorPosition'),
+      setCursorPosition: (cursorPosition) => set({ cursorPosition }, false, 'setCursorPosition'),
 
       setFileModified: (fileId, isModified) =>
         set(
           (state) => ({
-            openFiles: state.openFiles.map((f) =>
-              f.id === fileId ? { ...f, isModified } : f
-            ),
+            openFiles: state.openFiles.map((f) => (f.id === fileId ? { ...f, isModified } : f)),
           }),
           false,
           'setFileModified'
         ),
 
       // Terminal actions
-      setTerminalTab: (activeTerminalTab) =>
-        set({ activeTerminalTab }, false, 'setTerminalTab'),
+      setTerminalTab: (activeTerminalTab) => set({ activeTerminalTab }, false, 'setTerminalTab'),
 
       setWorkingDirectory: (workingDirectory) =>
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Status actions
-      setGitBranch: (gitBranch) =>
-        set({ gitBranch }, false, 'setGitBranch'),
+      setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
 
       setDiagnostics: (errorCount, warningCount) =>
         set({ errorCount, warningCount }, false, 'setDiagnostics'),
@@ -181,7 +169,7 @@ export const useActiveFileId = () => useIDEStore((state) => state.activeFileId);
 export const useActiveFile = () =>
   useIDEStore((state) => {
     const activeFileId = state.activeFileId;
-    return activeFileId ? state.openFiles.find((f) => f.id === activeFileId) ?? null : null;
+    return activeFileId ? (state.openFiles.find((f) => f.id === activeFileId) ?? null) : null;
   });
 export const useCursorPosition = () => useIDEStore((state) => state.cursorPosition);
 export const useTerminalTab = () => useIDEStore((state) => state.activeTerminalTab);

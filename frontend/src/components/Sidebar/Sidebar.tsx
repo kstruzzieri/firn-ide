@@ -1,11 +1,5 @@
 import styles from './Sidebar.module.css';
-import {
-  FilesIcon,
-  SearchIcon,
-  GitBranchIcon,
-  PlayIcon,
-  SettingsIcon,
-} from '../icons';
+import { FilesIcon, SearchIcon, GitBranchIcon, PlayIcon, SettingsIcon } from '../icons';
 import { useIDEStore, SidebarView } from '../../stores/ideStore';
 import { formatShortcut } from '../../utils/platform';
 
@@ -42,11 +36,7 @@ export function Sidebar() {
 
       <div className={styles.spacer} />
 
-      <button
-        className={styles.activityBtn}
-        title="Settings"
-        aria-label="Settings"
-      >
+      <button className={styles.activityBtn} title="Settings" aria-label="Settings">
         <SettingsIcon aria-hidden="true" />
       </button>
     </>

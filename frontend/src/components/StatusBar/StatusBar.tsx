@@ -24,10 +24,7 @@ export function StatusBar() {
             <span>{gitBranch}</span>
           </span>
         )}
-        <DiagnosticsIndicator
-          errors={errorCount}
-          warnings={warningCount}
-        />
+        <DiagnosticsIndicator errors={errorCount} warnings={warningCount} />
       </div>
       <div className={styles.spacer} />
       <div className={styles.right}>
@@ -58,7 +55,9 @@ function DiagnosticsIndicator({ errors, warnings }: DiagnosticsIndicatorProps) {
       {hasIssues ? (
         <>
           <AlertCircleIcon aria-hidden="true" />
-          <span>{errors} errors, {warnings} warnings</span>
+          <span>
+            {errors} errors, {warnings} warnings
+          </span>
         </>
       ) : (
         <>

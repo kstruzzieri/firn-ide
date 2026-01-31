@@ -1,0 +1,29 @@
+{
+  "name": "flux-ide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A lightweight, workspace-focused IDE for macOS and Linux",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1"
+  },
+  "lint-staged": {
+    "frontend/src/**/*.{ts,tsx}": [
+      "eslint --config frontend/eslint.config.js --fix",
+      "prettier --config frontend/.prettierrc --write"
+    ],
+    "frontend/src/**/*.css": [
+      "prettier --config frontend/.prettierrc --write"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kstruzzieri/flux-ide.git"
+  },
+  "license": "MIT"
+}

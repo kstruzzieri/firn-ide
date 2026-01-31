@@ -9,21 +9,13 @@ export function RunProfiles() {
   return (
     <Panel
       title="Run Profiles"
-      actions={
-        <PanelAction
-          icon={<PlusIcon />}
-          title="Add Profile"
-          ariaLabel="Add Profile"
-        />
-      }
+      actions={<PanelAction icon={<PlusIcon />} title="Add Profile" ariaLabel="Add Profile" />}
     >
       <div className={styles.list}>
         {profiles.length === 0 ? (
           <RunProfilesEmpty />
         ) : (
-          profiles.map((profile) => (
-            <RunProfileItem key={profile.id} profile={profile} />
-          ))
+          profiles.map((profile) => <RunProfileItem key={profile.id} profile={profile} />)
         )}
       </div>
     </Panel>

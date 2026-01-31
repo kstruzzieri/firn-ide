@@ -21,11 +21,7 @@ export function Header() {
       </div>
 
       {/* Workspace selector */}
-      <button
-        className={styles.workspaceBtn}
-        aria-haspopup="listbox"
-        aria-expanded="false"
-      >
+      <button className={styles.workspaceBtn} aria-haspopup="listbox" aria-expanded="false">
         <span className={styles.workspaceDot} aria-hidden="true" />
         <span className={styles.workspaceName}>{workspaceName}</span>
         <ChevronDownIcon className={styles.chevron} aria-hidden="true" />

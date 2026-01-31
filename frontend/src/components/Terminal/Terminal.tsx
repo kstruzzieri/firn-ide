@@ -46,12 +46,8 @@ export function Terminal() {
         })}
       </div>
       <div className={styles.content} role="tabpanel" tabIndex={0}>
-        {activeTab === 'terminal' && (
-          <TerminalContent workingDirectory={workingDirectory} />
-        )}
-        {activeTab === 'output' && (
-          <OutputContent />
-        )}
+        {activeTab === 'terminal' && <TerminalContent workingDirectory={workingDirectory} />}
+        {activeTab === 'output' && <OutputContent />}
         {activeTab === 'problems' && (
           <ProblemsContent errors={errorCount} warnings={warningCount} />
         )}
@@ -71,7 +67,9 @@ function TerminalContent({ workingDirectory }: TerminalContentProps) {
     <div className={styles.terminalContent}>
       <div className={styles.line}>
         <span className={styles.prompt}>{displayPath}</span>
-        <span className={styles.cursor} aria-hidden="true">▋</span>
+        <span className={styles.cursor} aria-hidden="true">
+          ▋
+        </span>
       </div>
     </div>
   );
@@ -101,9 +99,5 @@ function ProblemsContent({ errors, warnings }: ProblemsContentProps) {
     );
   }
 
-  return (
-    <div className={styles.problemsList}>
-      {/* Problems will be populated dynamically */}
-    </div>
-  );
+  return <div className={styles.problemsList}>{/* Problems will be populated dynamically */}</div>;
 }

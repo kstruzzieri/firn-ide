@@ -38,19 +38,19 @@ const colors = {
   accentGlow: 'rgba(74, 156, 174, 0.25)',
 
   // Syntax highlighting - carefully chosen for readability
-  keyword: '#C678DD',        // Purple for keywords
-  string: '#98C379',         // Green for strings
-  number: '#D19A66',         // Orange for numbers
-  comment: '#5C6370',        // Muted gray for comments
-  function: '#61AFEF',       // Blue for functions
-  variable: '#E5C07B',       // Yellow for variables/properties
-  type: '#E06C75',           // Red/pink for types
-  operator: '#56B6C2',       // Cyan for operators
-  punctuation: '#ABB2BF',    // Light gray for punctuation
-  tag: '#E06C75',            // HTML/JSX tags
-  attribute: '#D19A66',      // HTML/JSX attributes
-  constant: '#D19A66',       // Constants
-  regexp: '#98C379',         // Regular expressions
+  keyword: '#C678DD', // Purple for keywords
+  string: '#98C379', // Green for strings
+  number: '#D19A66', // Orange for numbers
+  comment: '#5C6370', // Muted gray for comments
+  function: '#61AFEF', // Blue for functions
+  variable: '#E5C07B', // Yellow for variables/properties
+  type: '#E06C75', // Red/pink for types
+  operator: '#56B6C2', // Cyan for operators
+  punctuation: '#ABB2BF', // Light gray for punctuation
+  tag: '#E06C75', // HTML/JSX tags
+  attribute: '#D19A66', // HTML/JSX attributes
+  constant: '#D19A66', // Constants
+  regexp: '#98C379', // Regular expressions
 
   // UI States
   selection: 'rgba(74, 156, 174, 0.3)',
@@ -390,7 +390,4 @@ export const deepOceanHighlightStyle = HighlightStyle.define([
 /**
  * Complete Deep Ocean theme extension combining editor theme and syntax highlighting.
  */
-export const deepOcean: Extension = [
-  deepOceanTheme,
-  syntaxHighlighting(deepOceanHighlightStyle),
-];
+export const deepOcean: Extension = [deepOceanTheme, syntaxHighlighting(deepOceanHighlightStyle)];
