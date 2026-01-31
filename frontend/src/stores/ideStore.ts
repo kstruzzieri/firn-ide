@@ -1,9 +1,13 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
+import type { filesystem } from '../../wailsjs/go/models';
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
+
+// Re-export FileEntry for convenience
+export type FileEntry = filesystem.FileEntry;
 
 export interface WorkspaceInfo {
   name: string;
@@ -30,6 +34,12 @@ interface IDEState {
   workspace: WorkspaceInfo | null;
   isLoading: boolean;
 
+  // File Explorer
+  directoryTree: filesystem.FileEntry[];
+  expandedPaths: Set<string>;
+  isLoadingTree: boolean;
+  treeError: string | null;
+
   // Sidebar
   activeSidebarView: SidebarView;
 
@@ -52,6 +62,12 @@ interface IDEActions {
   // Workspace actions
   setWorkspace: (workspace: WorkspaceInfo | null) => void;
   setLoading: (isLoading: boolean) => void;
+
+  // File Explorer actions
+  setDirectoryTree: (tree: filesystem.FileEntry[]) => void;
+  toggleExpanded: (path: string) => void;
+  setTreeLoading: (loading: boolean) => void;
+  setTreeError: (error: string | null) => void;
 
   // Sidebar actions
   setSidebarView: (view: SidebarView) => void;
@@ -80,6 +96,10 @@ export const useIDEStore = create<IDEStore>()(
       // Initial state
       workspace: null,
       isLoading: false,
+      directoryTree: [],
+      expandedPaths: new Set<string>(),
+      isLoadingTree: false,
+      treeError: null,
       activeSidebarView: 'explorer',
       openFiles: [],
       activeFileId: null,
@@ -95,6 +115,29 @@ export const useIDEStore = create<IDEStore>()(
         set({ workspace, workingDirectory: workspace?.path ?? '' }, false, 'setWorkspace'),
 
       setLoading: (isLoading) => set({ isLoading }, false, 'setLoading'),
+
+      // File Explorer actions
+      setDirectoryTree: (directoryTree) =>
+        set({ directoryTree, treeError: null }, false, 'setDirectoryTree'),
+
+      toggleExpanded: (path) =>
+        set(
+          (state) => {
+            const newExpanded = new Set(state.expandedPaths);
+            if (newExpanded.has(path)) {
+              newExpanded.delete(path);
+            } else {
+              newExpanded.add(path);
+            }
+            return { expandedPaths: newExpanded };
+          },
+          false,
+          'toggleExpanded'
+        ),
+
+      setTreeLoading: (isLoadingTree) => set({ isLoadingTree }, false, 'setTreeLoading'),
+
+      setTreeError: (treeError) => set({ treeError, isLoadingTree: false }, false, 'setTreeError'),
 
       // Sidebar actions
       setSidebarView: (activeSidebarView) => set({ activeSidebarView }, false, 'setSidebarView'),
@@ -176,3 +219,7 @@ export const useTerminalTab = () => useIDEStore((state) => state.activeTerminalT
 export const useGitBranch = () => useIDEStore((state) => state.gitBranch);
 export const useErrorCount = () => useIDEStore((state) => state.errorCount);
 export const useWarningCount = () => useIDEStore((state) => state.warningCount);
+export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);
+export const useExpandedPaths = () => useIDEStore((state) => state.expandedPaths);
+export const useIsLoadingTree = () => useIDEStore((state) => state.isLoadingTree);
+export const useTreeError = () => useIDEStore((state) => state.treeError);
