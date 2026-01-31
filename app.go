@@ -12,6 +12,7 @@ type App struct {
 	ctx        context.Context
 	dirReader  *filesystem.DirectoryReader
 	fileReader *filesystem.FileReader
+	fileWriter *filesystem.FileWriter
 }
 
 // NewApp creates and returns a new App instance.
@@ -20,6 +21,7 @@ func NewApp() *App {
 	return &App{
 		dirReader:  filesystem.NewDirectoryReader(osFS),
 		fileReader: filesystem.NewFileReader(osFS),
+		fileWriter: filesystem.NewFileWriter(osFS),
 	}
 }
 
@@ -56,4 +58,16 @@ func (a *App) ReadDirectory(path string) ([]filesystem.FileEntry, error) {
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ReadFile(path string) (*filesystem.FileContent, error) {
 	return a.fileReader.ReadFileWithMetadata(path)
+}
+
+// WriteFile writes content to a file with optional encoding and line ending settings.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) WriteFile(path string, content string, encoding string, lineEndings string, createBackup bool) error {
+	opts := &filesystem.WriteOptions{
+		Encoding:     encoding,
+		LineEndings:  lineEndings,
+		CreateBackup: createBackup,
+		CreateDirs:   true,
+	}
+	return a.fileWriter.WriteFileWithOptions(path, content, opts)
 }
