@@ -1,6 +1,7 @@
+import { useCallback } from 'react';
 import styles from './Sidebar.module.css';
 import { FilesIcon, SearchIcon, GitBranchIcon, PlayIcon, SettingsIcon } from '../icons';
-import { useIDEStore, SidebarView } from '../../stores/ideStore';
+import { useIDEStore, SidebarView, useIsLeftPanelCollapsed } from '../../stores/ideStore';
 import { formatShortcut } from '../../utils/platform';
 
 const SIDEBAR_ITEMS: Array<{
@@ -18,16 +19,35 @@ const SIDEBAR_ITEMS: Array<{
 export function Sidebar() {
   const activeView = useIDEStore((state) => state.activeSidebarView);
   const setSidebarView = useIDEStore((state) => state.setSidebarView);
+  const isLeftPanelCollapsed = useIsLeftPanelCollapsed();
+  const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
+
+  const handleSidebarClick = useCallback(
+    (view: SidebarView) => {
+      if (view === activeView && !isLeftPanelCollapsed) {
+        // Clicking the active view collapses the panel
+        toggleLeftPanel();
+      } else if (isLeftPanelCollapsed) {
+        // If panel is collapsed, expand it and switch to the clicked view
+        toggleLeftPanel();
+        setSidebarView(view);
+      } else {
+        // Just switch views
+        setSidebarView(view);
+      }
+    },
+    [activeView, isLeftPanelCollapsed, toggleLeftPanel, setSidebarView]
+  );
 
   return (
     <>
       {SIDEBAR_ITEMS.map(({ view, icon: Icon, label, shortcut }) => (
         <button
           key={view}
-          className={`${styles.activityBtn} ${activeView === view ? styles.active : ''}`}
+          className={`${styles.activityBtn} ${activeView === view && !isLeftPanelCollapsed ? styles.active : ''}`}
           title={`${label} (${formatShortcut(shortcut)})`}
-          onClick={() => setSidebarView(view)}
-          aria-pressed={activeView === view}
+          onClick={() => handleSidebarClick(view)}
+          aria-pressed={activeView === view && !isLeftPanelCollapsed}
           aria-label={label}
         >
           <Icon aria-hidden="true" />

@@ -9,6 +9,8 @@ export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
 
 export function IsWatching():Promise<boolean>;
 
+export function OpenFolderDialog():Promise<string>;
+
 export function ReadDirectory(arg1:string):Promise<Array<filesystem.FileEntry>>;
 
 export function ReadFile(arg1:string):Promise<filesystem.FileContent>;
@@ -16,5 +18,7 @@ export function ReadFile(arg1:string):Promise<filesystem.FileContent>;
 export function StartWatching(arg1:string):Promise<void>;
 
 export function StopWatching():Promise<void>;
+
+export function ToggleMaximize():Promise<void>;
 
 export function WriteFile(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;

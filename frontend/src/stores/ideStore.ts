@@ -37,11 +37,16 @@ interface IDEState {
   // File Explorer
   directoryTree: filesystem.FileEntry[];
   expandedPaths: Set<string>;
+  selectedPath: string | null;
+  isRootExpanded: boolean;
   isLoadingTree: boolean;
   treeError: string | null;
 
   // Sidebar
   activeSidebarView: SidebarView;
+
+  // Panel visibility
+  isLeftPanelCollapsed: boolean;
 
   // Editor
   openFiles: EditorFile[];
@@ -66,11 +71,16 @@ interface IDEActions {
   // File Explorer actions
   setDirectoryTree: (tree: filesystem.FileEntry[]) => void;
   toggleExpanded: (path: string) => void;
+  setSelectedPath: (path: string | null) => void;
+  toggleRootExpanded: () => void;
   setTreeLoading: (loading: boolean) => void;
   setTreeError: (error: string | null) => void;
 
   // Sidebar actions
   setSidebarView: (view: SidebarView) => void;
+
+  // Panel actions
+  toggleLeftPanel: () => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -98,9 +108,12 @@ export const useIDEStore = create<IDEStore>()(
       isLoading: false,
       directoryTree: [],
       expandedPaths: new Set<string>(),
+      selectedPath: null,
+      isRootExpanded: true,
       isLoadingTree: false,
       treeError: null,
       activeSidebarView: 'explorer',
+      isLeftPanelCollapsed: false,
       openFiles: [],
       activeFileId: null,
       cursorPosition: { line: 1, column: 1 },
@@ -118,7 +131,7 @@ export const useIDEStore = create<IDEStore>()(
 
       // File Explorer actions
       setDirectoryTree: (directoryTree) =>
-        set({ directoryTree, treeError: null }, false, 'setDirectoryTree'),
+        set({ directoryTree, treeError: null, isLoadingTree: false }, false, 'setDirectoryTree'),
 
       toggleExpanded: (path) =>
         set(
@@ -135,12 +148,25 @@ export const useIDEStore = create<IDEStore>()(
           'toggleExpanded'
         ),
 
+      setSelectedPath: (selectedPath) => set({ selectedPath }, false, 'setSelectedPath'),
+
+      toggleRootExpanded: () =>
+        set((state) => ({ isRootExpanded: !state.isRootExpanded }), false, 'toggleRootExpanded'),
+
       setTreeLoading: (isLoadingTree) => set({ isLoadingTree }, false, 'setTreeLoading'),
 
       setTreeError: (treeError) => set({ treeError, isLoadingTree: false }, false, 'setTreeError'),
 
       // Sidebar actions
       setSidebarView: (activeSidebarView) => set({ activeSidebarView }, false, 'setSidebarView'),
+
+      // Panel actions
+      toggleLeftPanel: () =>
+        set(
+          (state) => ({ isLeftPanelCollapsed: !state.isLeftPanelCollapsed }),
+          false,
+          'toggleLeftPanel'
+        ),
 
       // Editor actions
       openFile: (file) =>
@@ -207,6 +233,7 @@ export const useIDEStore = create<IDEStore>()(
 export const useWorkspace = () => useIDEStore((state) => state.workspace);
 export const useIsLoading = () => useIDEStore((state) => state.isLoading);
 export const useSidebarView = () => useIDEStore((state) => state.activeSidebarView);
+export const useIsLeftPanelCollapsed = () => useIDEStore((state) => state.isLeftPanelCollapsed);
 export const useOpenFiles = () => useIDEStore((state) => state.openFiles);
 export const useActiveFileId = () => useIDEStore((state) => state.activeFileId);
 export const useActiveFile = () =>
@@ -221,5 +248,7 @@ export const useErrorCount = () => useIDEStore((state) => state.errorCount);
 export const useWarningCount = () => useIDEStore((state) => state.warningCount);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);
 export const useExpandedPaths = () => useIDEStore((state) => state.expandedPaths);
+export const useSelectedPath = () => useIDEStore((state) => state.selectedPath);
+export const useIsRootExpanded = () => useIDEStore((state) => state.isRootExpanded);
 export const useIsLoadingTree = () => useIDEStore((state) => state.isLoadingTree);
 export const useTreeError = () => useIDEStore((state) => state.treeError);

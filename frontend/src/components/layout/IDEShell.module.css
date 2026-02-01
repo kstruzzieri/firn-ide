@@ -67,6 +67,11 @@
   overflow: hidden;
 }
 
+/* When left panel is collapsed, editor takes its space */
+.ide[data-left-collapsed] .content {
+  grid-template-columns: 1fr var(--panel-right-width);
+}
+
 .leftPanel {
   background: var(--surface-panel);
   border: 1px solid var(--surface-border-subtle);

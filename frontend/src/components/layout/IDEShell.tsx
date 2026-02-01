@@ -1,4 +1,6 @@
-import { ReactNode } from 'react';
+import { ReactNode, useCallback } from 'react';
+import { ToggleMaximize } from '../../../wailsjs/go/main/App';
+import { useIsLeftPanelCollapsed } from '../../stores/ideStore';
 import styles from './IDEShell.module.css';
 
 interface IDEShellProps {
@@ -22,12 +24,24 @@ export function IDEShell({
   statusBar,
   accent = 'project',
 }: IDEShellProps) {
+  const isLeftPanelCollapsed = useIsLeftPanelCollapsed();
+
+  const handleHeaderDoubleClick = useCallback(() => {
+    ToggleMaximize();
+  }, []);
+
   return (
-    <div className={styles.ide} data-accent={accent}>
-      <header className={styles.header}>{header}</header>
+    <div
+      className={styles.ide}
+      data-accent={accent}
+      data-left-collapsed={isLeftPanelCollapsed || undefined}
+    >
+      <header className={styles.header} onDoubleClick={handleHeaderDoubleClick}>
+        {header}
+      </header>
       <aside className={styles.sidebar}>{sidebar}</aside>
       <main className={styles.content}>
-        <section className={styles.leftPanel}>{leftPanel}</section>
+        {!isLeftPanelCollapsed && <section className={styles.leftPanel}>{leftPanel}</section>}
         <div className={styles.centerArea}>
           <section className={styles.centerPanel}>{centerPanel}</section>
           <section className={styles.bottomPanel}>{bottomPanel}</section>

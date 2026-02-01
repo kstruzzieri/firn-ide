@@ -35,6 +35,7 @@ describe('TreeNode', () => {
     isExpanded: false,
     onToggle: jest.fn(),
     onSelect: jest.fn(),
+    onOpen: jest.fn(),
   };
 
   beforeEach(() => {

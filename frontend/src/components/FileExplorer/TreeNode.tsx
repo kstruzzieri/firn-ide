@@ -12,10 +12,14 @@ interface TreeNodeProps {
   isExpanded: boolean;
   /** Set of expanded paths for nested folders */
   expandedPaths?: Set<string>;
+  /** Currently selected path in the tree */
+  selectedPath?: string | null;
   /** Called when a folder's expand/collapse state should toggle */
   onToggle: (path: string) => void;
-  /** Called when a file is selected */
+  /** Called when a file or folder is single-clicked (select) */
   onSelect: (entry: filesystem.FileEntry) => void;
+  /** Called when a file is double-clicked (open) */
+  onOpen: (entry: filesystem.FileEntry) => void;
 }
 
 /**
@@ -27,29 +31,45 @@ export function TreeNode({
   depth,
   isExpanded,
   expandedPaths = new Set(),
+  selectedPath,
   onToggle,
   onSelect,
+  onOpen,
 }: TreeNodeProps) {
   const isFolder = entry.isDir;
   const indentPx = depth * 16;
+  const isSelected = selectedPath === entry.path;
 
   const handleToggleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onToggle(entry.path);
   };
 
+  // Single click: select only (highlight)
   const handleRowClick = () => {
+    onSelect(entry);
+  };
+
+  // Double click: open file OR expand/collapse folder
+  const handleRowDoubleClick = () => {
     if (isFolder) {
       onToggle(entry.path);
     } else {
-      onSelect(entry);
+      onOpen(entry);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      handleRowClick();
+      if (isFolder) {
+        onToggle(entry.path);
+      } else {
+        onOpen(entry);
+      }
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      onSelect(entry);
     }
   };
 
@@ -59,10 +79,11 @@ export function TreeNode({
         className={styles.row}
         style={{ paddingLeft: `${indentPx}px` }}
         onClick={handleRowClick}
+        onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleKeyDown}
         role="treeitem"
         aria-expanded={isFolder ? isExpanded : undefined}
-        aria-selected={false}
+        aria-selected={isSelected}
         tabIndex={0}
       >
         {/* Expand/collapse toggle for folders */}
@@ -85,7 +106,12 @@ export function TreeNode({
         )}
 
         {/* File/folder icon */}
-        <FileIcon name={entry.name} isDir={isFolder} className={styles.icon} />
+        <FileIcon
+          name={entry.name}
+          isDir={isFolder}
+          isExpanded={isExpanded}
+          className={styles.icon}
+        />
 
         {/* Entry name */}
         <span className={styles.name}>{entry.name}</span>
@@ -101,8 +127,10 @@ export function TreeNode({
               depth={depth + 1}
               isExpanded={expandedPaths.has(child.path)}
               expandedPaths={expandedPaths}
+              selectedPath={selectedPath}
               onToggle={onToggle}
               onSelect={onSelect}
+              onOpen={onOpen}
             />
           ))}
         </div>

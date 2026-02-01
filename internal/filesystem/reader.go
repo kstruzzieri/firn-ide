@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -127,5 +128,20 @@ func (d *DirectoryReader) readDirRecursive(path string, ignorePatterns []string)
 		entries = append(entries, entry)
 	}
 
+	// Sort entries: folders first, then alphabetically within each group
+	sortEntries(entries)
+
 	return entries, nil
+}
+
+// sortEntries sorts file entries with folders first, then alphabetically by name.
+func sortEntries(entries []FileEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		// Folders come before files
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		// Within same type, sort alphabetically (case-insensitive)
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
 }

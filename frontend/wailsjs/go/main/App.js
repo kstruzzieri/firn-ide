@@ -14,6 +14,10 @@ export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
 }
 
+export function OpenFolderDialog() {
+  return window['go']['main']['App']['OpenFolderDialog']();
+}
+
 export function ReadDirectory(arg1) {
   return window['go']['main']['App']['ReadDirectory'](arg1);
 }
@@ -28,6 +32,10 @@ export function StartWatching(arg1) {
 
 export function StopWatching() {
   return window['go']['main']['App']['StopWatching']();
+}
+
+export function ToggleMaximize() {
+  return window['go']['main']['App']['ToggleMaximize']();
 }
 
 export function WriteFile(arg1, arg2, arg3, arg4, arg5) {

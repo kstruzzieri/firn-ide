@@ -1,11 +1,13 @@
 .row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 4px 8px;
-  cursor: pointer;
+  cursor: default;
   border-radius: 4px;
+  font-family: var(--font-ui);
   font-size: 13px;
+  font-weight: 600;
   color: var(--text-primary);
   transition: background-color var(--transition);
 }
@@ -33,7 +35,7 @@
   border: none;
   background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
+  cursor: default;
   flex-shrink: 0;
 }
 
@@ -61,4 +63,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Root folder styling */
+.root {
+  margin-bottom: 2px;
+}
+
+.root .name {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.path {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-left: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }

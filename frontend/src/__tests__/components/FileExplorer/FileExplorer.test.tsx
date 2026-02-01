@@ -8,7 +8,10 @@ import { filesystem } from '../../../../wailsjs/go/models';
 jest.mock('../../../../wailsjs/go/main/App', () => ({
   ReadDirectory: jest.fn(),
   ReadFile: jest.fn(),
+  OpenFolderDialog: jest.fn(),
 }));
+
+import { OpenFolderDialog } from '../../../../wailsjs/go/main/App';
 
 // Mock the useDirectoryTree hook to prevent automatic fetching
 const mockRefetch = jest.fn();
@@ -236,6 +239,100 @@ describe('FileExplorer', () => {
       fireEvent.click(retryButton);
 
       expect(mockRefetch).toHaveBeenCalled();
+    });
+  });
+
+  describe('Open Folder', () => {
+    beforeEach(() => {
+      act(() => {
+        useIDEStore.setState({
+          workspace: null,
+          directoryTree: [],
+        });
+      });
+    });
+
+    it('calls OpenFolderDialog when Open Folder button is clicked', async () => {
+      (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
+      (ReadDirectory as jest.Mock).mockResolvedValue([]);
+
+      render(<FileExplorer />);
+
+      const openButton = screen.getByRole('button', { name: /open folder/i });
+      fireEvent.click(openButton);
+
+      await waitFor(() => {
+        expect(OpenFolderDialog).toHaveBeenCalled();
+      });
+    });
+
+    it('sets workspace when folder is selected', async () => {
+      (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/my-project');
+      (ReadDirectory as jest.Mock).mockResolvedValue([]);
+
+      render(<FileExplorer />);
+
+      fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
+
+      await waitFor(() => {
+        const state = useIDEStore.getState();
+        expect(state.workspace).toEqual({
+          name: 'my-project',
+          path: '/Users/test/my-project',
+        });
+      });
+    });
+
+    it('fetches directory tree after folder is opened', async () => {
+      (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
+      (ReadDirectory as jest.Mock).mockResolvedValue([
+        { name: 'src', path: '/Users/test/project/src', isDir: true, size: 0, modTime: '' },
+      ]);
+
+      render(<FileExplorer />);
+
+      fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
+
+      await waitFor(() => {
+        expect(ReadDirectory).toHaveBeenCalledWith('/Users/test/project');
+      });
+    });
+
+    it('shows directory tree after folder is opened', async () => {
+      (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
+      (ReadDirectory as jest.Mock).mockResolvedValue([
+        filesystem.FileEntry.createFrom({
+          name: 'src',
+          path: '/Users/test/project/src',
+          isDir: true,
+          size: 0,
+          modTime: new Date().toISOString(),
+        }),
+      ]);
+
+      render(<FileExplorer />);
+
+      fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('src')).toBeInTheDocument();
+      });
+    });
+
+    it('does nothing when dialog is cancelled', async () => {
+      (OpenFolderDialog as jest.Mock).mockResolvedValue(''); // Empty string = cancelled
+
+      render(<FileExplorer />);
+
+      fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
+
+      await waitFor(() => {
+        expect(OpenFolderDialog).toHaveBeenCalled();
+      });
+
+      // Workspace should remain null
+      const state = useIDEStore.getState();
+      expect(state.workspace).toBeNull();
     });
   });
 });

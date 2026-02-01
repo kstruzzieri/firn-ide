@@ -9,9 +9,9 @@ describe('FileIcon', () => {
       expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'typescript');
     });
 
-    it('renders typescript icon for .tsx files', () => {
+    it('renders react icon for .tsx files', () => {
       render(<FileIcon name="App.tsx" isDir={false} />);
-      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'typescript');
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'react');
     });
 
     it('renders javascript icon for .js files', () => {
@@ -19,9 +19,9 @@ describe('FileIcon', () => {
       expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'javascript');
     });
 
-    it('renders javascript icon for .jsx files', () => {
+    it('renders react icon for .jsx files', () => {
       render(<FileIcon name="Button.jsx" isDir={false} />);
-      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'javascript');
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'react');
     });
 
     it('renders go icon for .go files', () => {

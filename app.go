@@ -110,3 +110,18 @@ func (a *App) IsWatching() bool {
 func (a *App) GetWatchedPath() string {
 	return a.fileWatcher.WatchedPath()
 }
+
+// OpenFolderDialog opens a native folder picker dialog.
+// Returns the selected folder path, or empty string if cancelled.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) OpenFolderDialog() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Open Folder",
+	})
+}
+
+// ToggleMaximize toggles the window between maximized and restored states.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ToggleMaximize() {
+	runtime.WindowToggleMaximise(a.ctx)
+}
