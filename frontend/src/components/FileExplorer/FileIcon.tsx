@@ -39,21 +39,31 @@ export type FolderType =
   | 'dist'
   | 'default';
 
-/** Folder color mapping per design specification */
+/** Folder color mapping — warm, high-contrast palette */
 const FOLDER_TYPE_COLORS: Record<FolderType, string> = {
   src: '#3B82F6',
-  components: '#61DAFB',
-  hooks: '#61DAFB',
-  node_modules: '#339933',
-  test: '#22C55E',
-  docs: '#2563EB',
-  public: '#F59E0B',
+  components: '#a855f7',
+  hooks: '#ec4899',
+  node_modules: '#6B7280',
+  test: '#22c55e',
+  docs: '#06b6d4',
+  public: '#f97316',
   dist: '#6B7280',
-  default: '#4A7080',
+  default: '#d97706',
 };
 
-/** Open folder color - lighter than closed per mockup */
-const FOLDER_OPEN_COLOR = '#6A9AB0';
+/** Open folder colors — lighter variant per folder type */
+const FOLDER_TYPE_OPEN_COLORS: Record<FolderType, string> = {
+  src: '#60a5fa',
+  components: '#c084fc',
+  hooks: '#f472b6',
+  node_modules: '#9ca3af',
+  test: '#4ade80',
+  docs: '#22d3ee',
+  public: '#fb923c',
+  dist: '#9ca3af',
+  default: '#f59e0b',
+};
 
 /** Extension to file type mapping */
 const EXTENSION_MAP: Record<string, FileType> = {
@@ -178,7 +188,9 @@ interface FileIconProps {
 export function FileIcon({ name, isDir, isExpanded, className }: FileIconProps) {
   if (isDir) {
     const folderType = getFolderType(name);
-    const color = isExpanded ? FOLDER_OPEN_COLOR : getFolderIconColor(folderType);
+    const color = isExpanded
+      ? (FOLDER_TYPE_OPEN_COLORS[folderType] ?? FOLDER_TYPE_OPEN_COLORS.default)
+      : getFolderIconColor(folderType);
     const Icon = isExpanded ? FolderOpenIcon : FolderIcon;
 
     return (
