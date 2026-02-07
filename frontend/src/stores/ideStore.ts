@@ -20,6 +20,7 @@ export interface EditorFile {
   path: string;
   language: string;
   encoding: string;
+  lineEndings: string;
   content: string;
   isModified: boolean;
 }
@@ -52,6 +53,9 @@ interface IDEState {
   openFiles: EditorFile[];
   activeFileId: string | null;
   cursorPosition: CursorPosition;
+
+  // Toast
+  toast: { message: string; type: 'error' | 'info' } | null;
 
   // Terminal
   activeTerminalTab: TerminalTab;
@@ -88,6 +92,11 @@ interface IDEActions {
   setActiveFile: (fileId: string | null) => void;
   setCursorPosition: (position: CursorPosition) => void;
   setFileModified: (fileId: string, isModified: boolean) => void;
+  updateFileContent: (fileId: string, content: string) => void;
+
+  // Toast actions
+  showToast: (message: string, type: 'error' | 'info') => void;
+  clearToast: () => void;
 
   // Terminal actions
   setTerminalTab: (tab: TerminalTab) => void;
@@ -117,6 +126,7 @@ export const useIDEStore = create<IDEStore>()(
       openFiles: [],
       activeFileId: null,
       cursorPosition: { line: 1, column: 1 },
+      toast: null,
       activeTerminalTab: 'terminal',
       workingDirectory: '',
       gitBranch: '',
@@ -212,6 +222,24 @@ export const useIDEStore = create<IDEStore>()(
           'setFileModified'
         ),
 
+      updateFileContent: (fileId, content) =>
+        set(
+          (state) => ({
+            openFiles: state.openFiles.map((f) => {
+              if (f.id !== fileId) return f;
+              if (f.content === content) return f;
+              return { ...f, content, isModified: true };
+            }),
+          }),
+          false,
+          'updateFileContent'
+        ),
+
+      // Toast actions
+      showToast: (message, type) => set({ toast: { message, type } }, false, 'showToast'),
+
+      clearToast: () => set({ toast: null }, false, 'clearToast'),
+
       // Terminal actions
       setTerminalTab: (activeTerminalTab) => set({ activeTerminalTab }, false, 'setTerminalTab'),
 
@@ -252,3 +280,4 @@ export const useSelectedPath = () => useIDEStore((state) => state.selectedPath);
 export const useIsRootExpanded = () => useIDEStore((state) => state.isRootExpanded);
 export const useIsLoadingTree = () => useIDEStore((state) => state.isLoadingTree);
 export const useTreeError = () => useIDEStore((state) => state.treeError);
+export const useToast = () => useIDEStore((state) => state.toast);

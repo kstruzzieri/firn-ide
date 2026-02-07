@@ -159,6 +159,7 @@ export function FileExplorer() {
           path: entry.path,
           language: getLanguageFromPath(entry.path),
           encoding: content.encoding,
+          lineEndings: content.lineEndings,
           content: content.content,
           isModified: false,
         });

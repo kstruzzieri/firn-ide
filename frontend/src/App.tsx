@@ -9,8 +9,12 @@ import { Terminal } from './components/Terminal';
 import { RunProfiles } from './components/RunProfiles';
 import { StatusBar } from './components/StatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Toast } from './components/Toast';
+import { useAutosave } from './hooks/useAutosave';
 
 function App() {
+  useAutosave();
+
   return (
     <ErrorBoundary>
       <IDEShell
@@ -23,6 +27,7 @@ function App() {
         rightPanel={<RunProfiles />}
         statusBar={<StatusBar />}
       />
+      <Toast />
     </ErrorBoundary>
   );
 }

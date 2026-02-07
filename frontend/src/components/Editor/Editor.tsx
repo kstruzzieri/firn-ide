@@ -19,16 +19,15 @@ export function Editor() {
   const activeFile = useActiveFile();
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
-  const setFileModified = useIDEStore((state) => state.setFileModified);
+  const updateFileContent = useIDEStore((state) => state.updateFileContent);
   const setCursorPosition = useIDEStore((state) => state.setCursorPosition);
 
   // Handle content changes from the editor
   const handleContentChange = useCallback(
-    (fileId: string, _content: string) => {
-      // Mark file as modified when content changes
-      setFileModified(fileId, true);
+    (fileId: string, content: string) => {
+      updateFileContent(fileId, content);
     },
-    [setFileModified]
+    [updateFileContent]
   );
 
   // Handle cursor position changes
