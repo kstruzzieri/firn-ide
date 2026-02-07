@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { FileIcon, getFileIconColor } from '../../../components/FileExplorer/FileIcon';
+import { FileIcon, getFileIconColor, getFileType } from '../../../components/FileExplorer/FileIcon';
 
 describe('FileIcon', () => {
   describe('file icons', () => {
@@ -58,6 +58,31 @@ describe('FileIcon', () => {
       render(<FileIcon name="file.xyz" isDir={false} />);
       expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'default');
     });
+
+    it('renders image icon for .png files', () => {
+      render(<FileIcon name="photo.png" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'image');
+    });
+
+    it('renders image icon for .svg files', () => {
+      render(<FileIcon name="logo.svg" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'image');
+    });
+
+    it('renders git icon for .gitignore files', () => {
+      render(<FileIcon name=".gitignore" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'git');
+    });
+
+    it('renders text icon for .txt files', () => {
+      render(<FileIcon name="notes.txt" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'text');
+    });
+
+    it('renders text icon for .log files', () => {
+      render(<FileIcon name="server.log" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'text');
+    });
   });
 
   describe('folder icons', () => {
@@ -109,11 +134,43 @@ describe('FileIcon', () => {
     });
 
     it('returns correct color for markdown', () => {
-      expect(getFileIconColor('markdown')).toBe('#083FA1');
+      expect(getFileIconColor('markdown')).toBe('#8b9cae');
+    });
+
+    it('returns correct color for image', () => {
+      expect(getFileIconColor('image')).toBe('#a855f7');
+    });
+
+    it('returns correct color for git', () => {
+      expect(getFileIconColor('git')).toBe('#F05032');
+    });
+
+    it('returns correct color for text', () => {
+      expect(getFileIconColor('text')).toBe('#9ca3af');
     });
 
     it('returns default color for unknown types', () => {
       expect(getFileIconColor('unknown')).toBe('#6B7280');
+    });
+  });
+
+  describe('getFileType', () => {
+    it('maps image extensions correctly', () => {
+      expect(getFileType('photo.jpg')).toBe('image');
+      expect(getFileType('photo.jpeg')).toBe('image');
+      expect(getFileType('icon.gif')).toBe('image');
+      expect(getFileType('icon.webp')).toBe('image');
+      expect(getFileType('favicon.ico')).toBe('image');
+      expect(getFileType('image.bmp')).toBe('image');
+    });
+
+    it('maps git files correctly', () => {
+      expect(getFileType('.gitattributes')).toBe('git');
+      expect(getFileType('.gitmodules')).toBe('git');
+    });
+
+    it('maps text extensions correctly', () => {
+      expect(getFileType('.env')).toBe('text');
     });
   });
 });

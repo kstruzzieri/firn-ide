@@ -1,4 +1,10 @@
-import { FileIcon as FileIconSvg, FolderIcon, FolderOpenIcon } from '../icons';
+import {
+  FileIcon as FileIconSvg,
+  FolderIcon,
+  FolderOpenIcon,
+  ImageIcon,
+  TextFileIcon,
+} from '../icons';
 import {
   TypescriptOriginal,
   JavascriptOriginal,
@@ -10,6 +16,8 @@ import {
   Html5Original,
   RustOriginal,
   ReactOriginal,
+  GitOriginal,
+  YamlOriginal,
 } from 'devicons-react';
 
 /** File type identifier for icon styling */
@@ -25,6 +33,9 @@ export type FileType =
   | 'html'
   | 'yaml'
   | 'rust'
+  | 'image'
+  | 'git'
+  | 'text'
   | 'default';
 
 /** Special folder type identifier */
@@ -88,6 +99,20 @@ const EXTENSION_MAP: Record<string, FileType> = {
   yaml: 'yaml',
   yml: 'yaml',
   rs: 'rust',
+  svg: 'image',
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  gif: 'image',
+  ico: 'image',
+  webp: 'image',
+  bmp: 'image',
+  gitignore: 'git',
+  gitattributes: 'git',
+  gitmodules: 'git',
+  txt: 'text',
+  log: 'text',
+  env: 'text',
 };
 
 /** Special folder name mapping */
@@ -123,8 +148,22 @@ const FILE_TYPE_ICONS: Record<FileType, React.ComponentType<any> | null> = {
   css: Css3Original,
   html: Html5Original,
   rust: RustOriginal,
-  yaml: null, // No devicon for yaml, use default
+  image: null,
+  git: GitOriginal,
+  text: null,
+  yaml: YamlOriginal,
   default: null,
+};
+
+/**
+ * CSS filters for devicons that don't render well on dark backgrounds.
+ * - markdown/yaml: dark fills → invert to white
+ * - go: bright blue/white clash → reduce brightness slightly
+ */
+const DEVICON_FILTERS: Partial<Record<FileType, string>> = {
+  markdown: 'invert(1)',
+  yaml: 'invert(1)',
+  go: 'brightness(0.8) saturate(0.7)',
 };
 
 /**
@@ -153,11 +192,14 @@ export function getFileIconColor(fileType: FileType | string): string {
     go: '#00ADD8',
     python: '#3776AB',
     json: '#F59E0B',
-    markdown: '#083FA1',
+    markdown: '#8b9cae',
     css: '#1572B6',
     html: '#E34F26',
-    yaml: '#CB171E',
+    yaml: '#ef4444',
     rust: '#DEA584',
+    image: '#a855f7',
+    git: '#F05032',
+    text: '#9ca3af',
     default: '#6B7280',
   };
   return FILE_TYPE_COLORS[fileType as FileType] ?? FILE_TYPE_COLORS.default;
@@ -169,6 +211,13 @@ export function getFileIconColor(fileType: FileType | string): string {
 export function getFolderIconColor(folderType: FolderType): string {
   return FOLDER_TYPE_COLORS[folderType] ?? FOLDER_TYPE_COLORS.default;
 }
+
+/** Custom SVG icons for types without devicons */
+const CUSTOM_ICONS: Partial<Record<FileType, React.ComponentType<React.SVGProps<SVGSVGElement>>>> =
+  {
+    image: ImageIcon,
+    text: TextFileIcon,
+  };
 
 interface FileIconProps {
   /** The filename (used to determine type from extension) */
@@ -209,21 +258,42 @@ export function FileIcon({ name, isDir, isExpanded, className }: FileIconProps) 
 
   // Use devicon if available
   if (DevIcon) {
+    const filter = DEVICON_FILTERS[fileType];
     return (
       <span
         data-testid="file-icon"
         data-type={fileType}
         className={className}
         aria-hidden="true"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          filter: filter || undefined,
+        }}
       >
         <DevIcon size={16} />
       </span>
     );
   }
 
-  // Fall back to generic colored file icon
+  // Use custom SVG icon for specific types without devicons
+  const CustomIcon = CUSTOM_ICONS[fileType];
   const color = getFileIconColor(fileType);
+
+  if (CustomIcon) {
+    return (
+      <CustomIcon
+        data-testid="file-icon"
+        data-type={fileType}
+        className={className}
+        style={{ color, width: 16, height: 16 }}
+        aria-hidden="true"
+      />
+    );
+  }
+
+  // Fall back to generic colored file icon
   return (
     <FileIconSvg
       data-testid="file-icon"
