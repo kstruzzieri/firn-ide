@@ -48,6 +48,8 @@ interface IDEState {
 
   // Panel visibility
   isLeftPanelCollapsed: boolean;
+  isRightPanelCollapsed: boolean;
+  isBottomPanelCollapsed: boolean;
 
   // Editor
   openFiles: EditorFile[];
@@ -85,6 +87,8 @@ interface IDEActions {
 
   // Panel actions
   toggleLeftPanel: () => void;
+  toggleRightPanel: () => void;
+  toggleBottomPanel: () => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -123,6 +127,8 @@ export const useIDEStore = create<IDEStore>()(
       treeError: null,
       activeSidebarView: 'explorer',
       isLeftPanelCollapsed: false,
+      isRightPanelCollapsed: true,
+      isBottomPanelCollapsed: true,
       openFiles: [],
       activeFileId: null,
       cursorPosition: { line: 1, column: 1 },
@@ -176,6 +182,20 @@ export const useIDEStore = create<IDEStore>()(
           (state) => ({ isLeftPanelCollapsed: !state.isLeftPanelCollapsed }),
           false,
           'toggleLeftPanel'
+        ),
+
+      toggleRightPanel: () =>
+        set(
+          (state) => ({ isRightPanelCollapsed: !state.isRightPanelCollapsed }),
+          false,
+          'toggleRightPanel'
+        ),
+
+      toggleBottomPanel: () =>
+        set(
+          (state) => ({ isBottomPanelCollapsed: !state.isBottomPanelCollapsed }),
+          false,
+          'toggleBottomPanel'
         ),
 
       // Editor actions
@@ -262,6 +282,8 @@ export const useWorkspace = () => useIDEStore((state) => state.workspace);
 export const useIsLoading = () => useIDEStore((state) => state.isLoading);
 export const useSidebarView = () => useIDEStore((state) => state.activeSidebarView);
 export const useIsLeftPanelCollapsed = () => useIDEStore((state) => state.isLeftPanelCollapsed);
+export const useIsRightPanelCollapsed = () => useIDEStore((state) => state.isRightPanelCollapsed);
+export const useIsBottomPanelCollapsed = () => useIDEStore((state) => state.isBottomPanelCollapsed);
 export const useOpenFiles = () => useIDEStore((state) => state.openFiles);
 export const useActiveFileId = () => useIDEStore((state) => state.activeFileId);
 export const useActiveFile = () =>

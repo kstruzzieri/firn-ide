@@ -67,6 +67,31 @@ describe('ideStore - editor actions', () => {
   });
 });
 
+describe('ideStore - panel collapse', () => {
+  it('should start with right and bottom panels collapsed', () => {
+    const state = useIDEStore.getState();
+    expect(state.isRightPanelCollapsed).toBe(true);
+    expect(state.isBottomPanelCollapsed).toBe(true);
+    expect(state.isLeftPanelCollapsed).toBe(false);
+  });
+
+  it('should toggle right panel', () => {
+    const { toggleRightPanel } = useIDEStore.getState();
+    toggleRightPanel();
+    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    toggleRightPanel();
+    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
+  });
+
+  it('should toggle bottom panel', () => {
+    const { toggleBottomPanel } = useIDEStore.getState();
+    toggleBottomPanel();
+    expect(useIDEStore.getState().isBottomPanelCollapsed).toBe(false);
+    toggleBottomPanel();
+    expect(useIDEStore.getState().isBottomPanelCollapsed).toBe(true);
+  });
+});
+
 describe('ideStore - toast', () => {
   it('should show and clear toast', () => {
     const { showToast } = useIDEStore.getState();
