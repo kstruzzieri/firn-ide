@@ -66,20 +66,18 @@ export function IDEShell({
         />
         <div className={styles.centerArea}>
           <section className={styles.centerPanel}>{centerPanel}</section>
+          <ResizeHandle
+            direction="vertical"
+            cssVar="--panel-bottom-height"
+            min={100}
+            max={500}
+            inverted
+            isCollapsed={isBottomPanelCollapsed}
+            onToggleCollapse={toggleBottomPanel}
+            collapseDirection="down"
+          />
           {!isBottomPanelCollapsed && (
-            <>
-              <ResizeHandle
-                direction="vertical"
-                cssVar="--panel-bottom-height"
-                min={100}
-                max={500}
-                inverted
-                isCollapsed={isBottomPanelCollapsed}
-                onToggleCollapse={toggleBottomPanel}
-                collapseDirection="down"
-              />
-              <section className={styles.bottomPanel}>{bottomPanel}</section>
-            </>
+            <section className={styles.bottomPanel}>{bottomPanel}</section>
           )}
         </div>
         <ResizeHandle
