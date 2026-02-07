@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import {
   FileIcon,
   getFileIconColor,
+  getFolderIconColor,
   getFileType,
   getFolderType,
 } from '../../../components/FileExplorer/FileIcon';
@@ -220,6 +221,28 @@ describe('FileIcon', () => {
 
     it('returns default color for unknown types', () => {
       expect(getFileIconColor('unknown')).toBe('#6B7280');
+    });
+  });
+
+  describe('getFolderIconColor', () => {
+    it('returns correct color for src folder', () => {
+      expect(getFolderIconColor('src')).toBe('#3B82F6');
+    });
+
+    it('returns correct color for components folder', () => {
+      expect(getFolderIconColor('components')).toBe('#a855f7');
+    });
+
+    it('returns correct color for node_modules folder', () => {
+      expect(getFolderIconColor('node_modules')).toBe('#78716c');
+    });
+
+    it('returns correct color for hidden folder', () => {
+      expect(getFolderIconColor('hidden')).toBe('#3f3f46');
+    });
+
+    it('returns default color for unknown folder types', () => {
+      expect(getFolderIconColor('default')).toBe('#d97706');
     });
   });
 

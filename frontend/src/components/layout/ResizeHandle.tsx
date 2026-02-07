@@ -31,7 +31,7 @@ export function ResizeHandle({
   onToggleCollapse,
   collapseDirection = 'left',
 }: ResizeHandleProps) {
-  const { onMouseDown } = useResize({ direction, cssVar, min, max, inverted });
+  const { onMouseDown, onKeyDown } = useResize({ direction, cssVar, min, max, inverted });
 
   const isHorizontal = direction === 'horizontal';
 
@@ -62,9 +62,11 @@ export function ResizeHandle({
       <div
         className={styles.dragZone}
         onMouseDown={isCollapsed ? undefined : onMouseDown}
+        onKeyDown={isCollapsed ? undefined : onKeyDown}
         role="separator"
         aria-orientation={isHorizontal ? 'vertical' : 'horizontal'}
         aria-label={`Resize ${cssVar.replace('--', '').replace(/-/g, ' ')}`}
+        aria-valuenow={undefined}
         tabIndex={0}
       />
       {onToggleCollapse && (

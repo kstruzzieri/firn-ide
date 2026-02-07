@@ -144,6 +144,85 @@ describe('useResize', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('should clean up event listeners on unmount during active drag', () => {
+    const { result, unmount } = renderHook(() =>
+      useResize({
+        direction: 'horizontal',
+        cssVar: '--panel-left-width',
+        min: 150,
+        max: 500,
+      })
+    );
+
+    // Start a drag
+    act(() => {
+      result.current.onMouseDown({
+        clientX: 260,
+        clientY: 0,
+        preventDefault: jest.fn(),
+      } as unknown as React.MouseEvent);
+    });
+
+    setPropertySpy.mockClear();
+
+    // Unmount while drag is active
+    unmount();
+
+    // Further mousemove should not update (listeners cleaned up)
+    act(() => {
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: 400, clientY: 0 }));
+    });
+
+    const calls = setPropertySpy.mock.calls.filter((c) => c[0] === '--panel-left-width');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('should resize via keyboard arrow keys', () => {
+    const { result } = renderHook(() =>
+      useResize({
+        direction: 'horizontal',
+        cssVar: '--panel-left-width',
+        min: 150,
+        max: 500,
+      })
+    );
+
+    // Press ArrowRight to increase size
+    act(() => {
+      result.current.onKeyDown({
+        key: 'ArrowRight',
+        preventDefault: jest.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+
+    // 260 + 20 = 280
+    expect(setPropertySpy).toHaveBeenCalledWith('--panel-left-width', '280px');
+  });
+
+  it('should clamp keyboard resize to min/max', () => {
+    // Set near max
+    document.documentElement.style.setProperty('--panel-left-width', '495px');
+
+    const { result } = renderHook(() =>
+      useResize({
+        direction: 'horizontal',
+        cssVar: '--panel-left-width',
+        min: 150,
+        max: 500,
+      })
+    );
+
+    // Press ArrowRight — 495 + 20 = 515, clamped to 500
+    act(() => {
+      result.current.onKeyDown({
+        key: 'ArrowRight',
+        preventDefault: jest.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+
+    expect(setPropertySpy).toHaveBeenCalledWith('--panel-left-width', '500px');
+  });
+
   it('should invert direction for right panel', () => {
     document.documentElement.style.setProperty('--panel-right-width', '280px');
 

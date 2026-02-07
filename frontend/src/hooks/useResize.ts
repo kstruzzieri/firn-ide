@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 export interface UseResizeOptions {
   /** Drag direction */
@@ -13,10 +13,24 @@ export interface UseResizeOptions {
   inverted?: boolean;
 }
 
+/** Step size in px for keyboard-based resize */
+const KEYBOARD_STEP = 20;
+
 export function useResize({ direction, cssVar, min, max, inverted = false }: UseResizeOptions) {
   const isDragging = useRef(false);
   const startPos = useRef(0);
   const startSize = useRef(0);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Clean up any active drag listeners on unmount
+  useEffect(() => {
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
+    };
+  }, []);
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -39,12 +53,17 @@ export function useResize({ direction, cssVar, min, max, inverted = false }: Use
         document.documentElement.style.setProperty(cssVar, `${clamped}px`);
       };
 
-      const onMouseUp = () => {
+      const cleanup = () => {
         isDragging.current = false;
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
         document.body.style.removeProperty('cursor');
         document.body.style.removeProperty('user-select');
+        cleanupRef.current = null;
+      };
+
+      const onMouseUp = () => {
+        cleanup();
       };
 
       // Set cursor for the entire document during drag
@@ -53,9 +72,36 @@ export function useResize({ direction, cssVar, min, max, inverted = false }: Use
 
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
+
+      // Store cleanup for unmount safety
+      cleanupRef.current = cleanup;
     },
     [direction, cssVar, min, max, inverted]
   );
 
-  return { onMouseDown };
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const isHorizontal = direction === 'horizontal';
+      let delta = 0;
+
+      if (isHorizontal) {
+        if (e.key === 'ArrowLeft') delta = inverted ? KEYBOARD_STEP : -KEYBOARD_STEP;
+        else if (e.key === 'ArrowRight') delta = inverted ? -KEYBOARD_STEP : KEYBOARD_STEP;
+      } else {
+        if (e.key === 'ArrowUp') delta = inverted ? KEYBOARD_STEP : -KEYBOARD_STEP;
+        else if (e.key === 'ArrowDown') delta = inverted ? -KEYBOARD_STEP : KEYBOARD_STEP;
+      }
+
+      if (delta === 0) return;
+
+      e.preventDefault();
+      const currentValue = getComputedStyle(document.documentElement).getPropertyValue(cssVar);
+      const currentSize = parseInt(currentValue, 10) || 0;
+      const clamped = Math.min(max, Math.max(min, currentSize + delta));
+      document.documentElement.style.setProperty(cssVar, `${clamped}px`);
+    },
+    [direction, cssVar, min, max, inverted]
+  );
+
+  return { onMouseDown, onKeyDown };
 }

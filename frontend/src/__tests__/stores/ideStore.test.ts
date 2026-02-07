@@ -75,6 +75,14 @@ describe('ideStore - panel collapse', () => {
     expect(state.isBottomPanelCollapsed).toBe(false);
   });
 
+  it('should toggle left panel', () => {
+    const { toggleLeftPanel } = useIDEStore.getState();
+    toggleLeftPanel();
+    expect(useIDEStore.getState().isLeftPanelCollapsed).toBe(true);
+    toggleLeftPanel();
+    expect(useIDEStore.getState().isLeftPanelCollapsed).toBe(false);
+  });
+
   it('should toggle right panel', () => {
     const { toggleRightPanel } = useIDEStore.getState();
     toggleRightPanel();
