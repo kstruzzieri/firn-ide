@@ -4,6 +4,11 @@ import {
   FolderOpenIcon,
   ImageIcon,
   TextFileIcon,
+  ExecutableIcon,
+  LibraryIcon,
+  CompiledIcon,
+  BinaryIcon,
+  ArchiveIcon,
 } from '../icons';
 import {
   TypescriptOriginal,
@@ -18,6 +23,7 @@ import {
   ReactOriginal,
   GitOriginal,
   YamlOriginal,
+  XmlOriginal,
 } from 'devicons-react';
 
 /** File type identifier for icon styling */
@@ -36,6 +42,12 @@ export type FileType =
   | 'image'
   | 'git'
   | 'text'
+  | 'xml'
+  | 'executable'
+  | 'library'
+  | 'compiled'
+  | 'binary'
+  | 'archive'
   | 'default';
 
 /** Special folder type identifier */
@@ -48,6 +60,7 @@ export type FolderType =
   | 'docs'
   | 'public'
   | 'dist'
+  | 'hidden'
   | 'default';
 
 /** Folder color mapping — warm, high-contrast palette */
@@ -55,11 +68,12 @@ const FOLDER_TYPE_COLORS: Record<FolderType, string> = {
   src: '#3B82F6',
   components: '#a855f7',
   hooks: '#ec4899',
-  node_modules: '#6B7280',
+  node_modules: '#78716c',
   test: '#22c55e',
   docs: '#06b6d4',
   public: '#f97316',
-  dist: '#6B7280',
+  dist: '#737373',
+  hidden: '#3f3f46',
   default: '#d97706',
 };
 
@@ -68,11 +82,12 @@ const FOLDER_TYPE_OPEN_COLORS: Record<FolderType, string> = {
   src: '#60a5fa',
   components: '#c084fc',
   hooks: '#f472b6',
-  node_modules: '#9ca3af',
+  node_modules: '#a8a29e',
   test: '#4ade80',
   docs: '#22d3ee',
   public: '#fb923c',
-  dist: '#9ca3af',
+  dist: '#a3a3a3',
+  hidden: '#52525b',
   default: '#f59e0b',
 };
 
@@ -113,6 +128,36 @@ const EXTENSION_MAP: Record<string, FileType> = {
   txt: 'text',
   log: 'text',
   env: 'text',
+  xml: 'xml',
+  xsl: 'xml',
+  xslt: 'xml',
+  plist: 'xml',
+  exe: 'executable',
+  app: 'executable',
+  dll: 'library',
+  so: 'library',
+  dylib: 'library',
+  a: 'library',
+  lib: 'library',
+  o: 'compiled',
+  obj: 'compiled',
+  class: 'compiled',
+  pyc: 'compiled',
+  pyo: 'compiled',
+  bin: 'binary',
+  dat: 'binary',
+  wasm: 'binary',
+  zip: 'archive',
+  tar: 'archive',
+  gz: 'archive',
+  tgz: 'archive',
+  bz2: 'archive',
+  xz: 'archive',
+  rar: 'archive',
+  '7z': 'archive',
+  jar: 'archive',
+  dmg: 'archive',
+  iso: 'archive',
 };
 
 /** Special folder name mapping */
@@ -151,6 +196,12 @@ const FILE_TYPE_ICONS: Record<FileType, React.ComponentType<any> | null> = {
   image: null,
   git: GitOriginal,
   text: null,
+  xml: XmlOriginal,
+  executable: null,
+  library: null,
+  compiled: null,
+  binary: null,
+  archive: null,
   yaml: YamlOriginal,
   default: null,
 };
@@ -163,6 +214,7 @@ const FILE_TYPE_ICONS: Record<FileType, React.ComponentType<any> | null> = {
 const DEVICON_FILTERS: Partial<Record<FileType, string>> = {
   markdown: 'invert(1)',
   yaml: 'invert(1)',
+  xml: 'invert(1)',
   go: 'brightness(0.8) saturate(0.7)',
 };
 
@@ -170,6 +222,8 @@ const DEVICON_FILTERS: Partial<Record<FileType, string>> = {
  * Gets the file type from a filename based on its extension.
  */
 export function getFileType(name: string): FileType {
+  // No dot at all → extensionless file (treat as executable)
+  if (!name.includes('.')) return 'executable';
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
   return EXTENSION_MAP[ext] ?? 'default';
 }
@@ -178,7 +232,10 @@ export function getFileType(name: string): FileType {
  * Gets the folder type from a folder name.
  */
 export function getFolderType(name: string): FolderType {
-  return FOLDER_NAME_MAP[name.toLowerCase()] ?? 'default';
+  const mapped = FOLDER_NAME_MAP[name.toLowerCase()];
+  if (mapped) return mapped;
+  if (name.startsWith('.')) return 'hidden';
+  return 'default';
 }
 
 /**
@@ -200,6 +257,12 @@ export function getFileIconColor(fileType: FileType | string): string {
     image: '#a855f7',
     git: '#F05032',
     text: '#9ca3af',
+    xml: '#e36209',
+    executable: '#10b981',
+    library: '#8b5cf6',
+    compiled: '#f59e0b',
+    binary: '#ef4444',
+    archive: '#0ea5e9',
     default: '#6B7280',
   };
   return FILE_TYPE_COLORS[fileType as FileType] ?? FILE_TYPE_COLORS.default;
@@ -217,6 +280,11 @@ const CUSTOM_ICONS: Partial<Record<FileType, React.ComponentType<React.SVGProps<
   {
     image: ImageIcon,
     text: TextFileIcon,
+    executable: ExecutableIcon,
+    library: LibraryIcon,
+    compiled: CompiledIcon,
+    binary: BinaryIcon,
+    archive: ArchiveIcon,
   };
 
 interface FileIconProps {

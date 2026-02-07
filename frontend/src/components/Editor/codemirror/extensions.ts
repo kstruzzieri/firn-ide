@@ -47,6 +47,9 @@ import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
+import { xml } from '@codemirror/lang-xml';
+import { yaml } from '@codemirror/lang-yaml';
+import { rust } from '@codemirror/lang-rust';
 
 import { deepOcean } from './theme';
 
@@ -108,6 +111,23 @@ export function getLanguageExtension(filename: string): LanguageSupport | null {
     case 'md':
     case 'markdown':
       return markdown();
+
+    // XML
+    case 'xml':
+    case 'xsl':
+    case 'xslt':
+    case 'svg':
+    case 'plist':
+      return xml();
+
+    // YAML
+    case 'yml':
+    case 'yaml':
+      return yaml();
+
+    // Rust
+    case 'rs':
+      return rust();
 
     default:
       return null;

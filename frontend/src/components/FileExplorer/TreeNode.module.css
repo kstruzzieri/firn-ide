@@ -65,6 +65,12 @@
   white-space: nowrap;
 }
 
+/* Dim hidden (dot-prefix) folder names */
+.row[data-hidden] .name {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
 /* Root folder styling */
 .root {
   margin-bottom: 2px;

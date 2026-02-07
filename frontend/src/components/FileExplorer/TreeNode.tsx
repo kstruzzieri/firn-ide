@@ -1,5 +1,5 @@
 import { ChevronRightIcon, ChevronDownIcon } from '../icons';
-import { FileIcon } from './FileIcon';
+import { FileIcon, getFolderType } from './FileIcon';
 import type { filesystem } from '../../../wailsjs/go/models';
 import styles from './TreeNode.module.css';
 
@@ -39,6 +39,7 @@ export function TreeNode({
   const isFolder = entry.isDir;
   const indentPx = depth * 16;
   const isSelected = selectedPath === entry.path;
+  const isHidden = isFolder && getFolderType(entry.name) === 'hidden';
 
   const handleToggleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -77,6 +78,7 @@ export function TreeNode({
     <div data-testid="tree-node" data-depth={depth}>
       <div
         className={styles.row}
+        data-hidden={isHidden || undefined}
         style={{ paddingLeft: `${indentPx}px` }}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
