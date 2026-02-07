@@ -56,6 +56,7 @@ Lightweight run configurations as first-class citizens:
 - Only one workspace's language servers run at a time
 
 ## Development Principles
+- Reference .claude/workflow.md regarding workflow orchestration
 
 From `commands/code-review.md`:
 - No hard-coded, fallback, stub, or placeholder data - all values must be dynamically derived
