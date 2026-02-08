@@ -47,21 +47,6 @@
   --status-warning: #f59e0b;
   --status-error: #ef4444;
 
-  /* File Icons */
-  --icon-ts: #3178c6;
-  --icon-tsx: #3178c6;
-  --icon-js: #f7df1e;
-  --icon-react: #61dafb;
-  --icon-json: #f59e0b;
-  --icon-css: #38bdf8;
-  --icon-html: #f97316;
-  --icon-md: #6b7280;
-  --icon-git: #f05032;
-  --icon-go: #00add8;
-  --icon-py: #3776ab;
-  --icon-folder: #4a7080;
-  --icon-folder-open: #6a9ab0;
-
   /* Layout */
   --header-height: 44px;
   --statusbar-height: 26px;

@@ -1,0 +1,103 @@
+/* Resize Handle — sits in the gap between panels */
+
+.handle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.horizontal {
+  width: var(--panel-gap);
+  cursor: col-resize;
+}
+
+.vertical {
+  height: var(--panel-gap);
+  cursor: row-resize;
+}
+
+/* Invisible drag zone with hover indicator */
+.dragZone {
+  position: absolute;
+}
+
+.horizontal .dragZone {
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  right: -2px;
+  cursor: col-resize;
+}
+
+.vertical .dragZone {
+  left: 0;
+  right: 0;
+  top: -2px;
+  bottom: -2px;
+  cursor: row-resize;
+}
+
+.dragZone::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 150ms ease;
+}
+
+.horizontal .dragZone::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+}
+
+.vertical .dragZone::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 2px;
+}
+
+.dragZone:hover::after {
+  background: var(--accent);
+}
+
+/* Collapse/expand chevron button */
+.collapseBtn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--surface-border-subtle);
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 11;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.handle:hover .collapseBtn {
+  opacity: 1;
+}
+
+.collapseBtn:hover {
+  background: var(--accent);
+  color: var(--text-primary);
+}
+
+.collapseBtn svg {
+  width: 12px;
+  height: 12px;
+}

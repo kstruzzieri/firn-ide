@@ -1,5 +1,11 @@
 import { render, screen } from '@testing-library/react';
-import { FileIcon, getFileIconColor } from '../../../components/FileExplorer/FileIcon';
+import {
+  FileIcon,
+  getFileIconColor,
+  getFolderIconColor,
+  getFileType,
+  getFolderType,
+} from '../../../components/FileExplorer/FileIcon';
 
 describe('FileIcon', () => {
   describe('file icons', () => {
@@ -58,6 +64,61 @@ describe('FileIcon', () => {
       render(<FileIcon name="file.xyz" isDir={false} />);
       expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'default');
     });
+
+    it('renders image icon for .png files', () => {
+      render(<FileIcon name="photo.png" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'image');
+    });
+
+    it('renders image icon for .svg files', () => {
+      render(<FileIcon name="logo.svg" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'image');
+    });
+
+    it('renders git icon for .gitignore files', () => {
+      render(<FileIcon name=".gitignore" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'git');
+    });
+
+    it('renders text icon for .txt files', () => {
+      render(<FileIcon name="notes.txt" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'text');
+    });
+
+    it('renders text icon for .log files', () => {
+      render(<FileIcon name="server.log" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'text');
+    });
+
+    it('renders xml icon for .xml files', () => {
+      render(<FileIcon name="config.xml" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'xml');
+    });
+
+    it('renders executable icon for .exe files', () => {
+      render(<FileIcon name="app.exe" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'executable');
+    });
+
+    it('renders library icon for .dll files', () => {
+      render(<FileIcon name="lib.dll" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'library');
+    });
+
+    it('renders compiled icon for .o files', () => {
+      render(<FileIcon name="main.o" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'compiled');
+    });
+
+    it('renders binary icon for .wasm files', () => {
+      render(<FileIcon name="module.wasm" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'binary');
+    });
+
+    it('renders archive icon for .zip files', () => {
+      render(<FileIcon name="package.zip" isDir={false} />);
+      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'archive');
+    });
   });
 
   describe('folder icons', () => {
@@ -85,6 +146,22 @@ describe('FileIcon', () => {
       render(<FileIcon name="myFolder" isDir={true} />);
       expect(screen.getByTestId('folder-icon')).toHaveAttribute('data-folder', 'default');
     });
+
+    it('renders hidden folder icon for dot-prefix folders', () => {
+      render(<FileIcon name=".vscode" isDir={true} />);
+      expect(screen.getByTestId('folder-icon')).toHaveAttribute('data-folder', 'hidden');
+    });
+
+    it('renders hidden folder icon for .github folder', () => {
+      render(<FileIcon name=".github" isDir={true} />);
+      expect(screen.getByTestId('folder-icon')).toHaveAttribute('data-folder', 'hidden');
+    });
+
+    it('renders open folder icon when expanded', () => {
+      render(<FileIcon name="src" isDir={true} isExpanded={true} />);
+      expect(screen.getByTestId('folder-open-icon')).toBeInTheDocument();
+      expect(screen.getByTestId('folder-open-icon')).toHaveAttribute('data-folder', 'src');
+    });
   });
 
   describe('getFileIconColor', () => {
@@ -109,11 +186,160 @@ describe('FileIcon', () => {
     });
 
     it('returns correct color for markdown', () => {
-      expect(getFileIconColor('markdown')).toBe('#083FA1');
+      expect(getFileIconColor('markdown')).toBe('#8b9cae');
+    });
+
+    it('returns correct color for image', () => {
+      expect(getFileIconColor('image')).toBe('#a855f7');
+    });
+
+    it('returns correct color for git', () => {
+      expect(getFileIconColor('git')).toBe('#F05032');
+    });
+
+    it('returns correct color for text', () => {
+      expect(getFileIconColor('text')).toBe('#9ca3af');
+    });
+
+    it('returns correct color for xml', () => {
+      expect(getFileIconColor('xml')).toBe('#e36209');
+    });
+
+    it('returns correct color for executable', () => {
+      expect(getFileIconColor('executable')).toBe('#10b981');
+    });
+
+    it('returns correct color for library', () => {
+      expect(getFileIconColor('library')).toBe('#8b5cf6');
+    });
+
+    it('returns correct color for compiled', () => {
+      expect(getFileIconColor('compiled')).toBe('#f59e0b');
+    });
+
+    it('returns correct color for binary', () => {
+      expect(getFileIconColor('binary')).toBe('#ef4444');
+    });
+
+    it('returns correct color for archive', () => {
+      expect(getFileIconColor('archive')).toBe('#0ea5e9');
     });
 
     it('returns default color for unknown types', () => {
       expect(getFileIconColor('unknown')).toBe('#6B7280');
+    });
+  });
+
+  describe('getFolderIconColor', () => {
+    it('returns correct color for src folder', () => {
+      expect(getFolderIconColor('src')).toBe('#3B82F6');
+    });
+
+    it('returns correct color for components folder', () => {
+      expect(getFolderIconColor('components')).toBe('#a855f7');
+    });
+
+    it('returns correct color for node_modules folder', () => {
+      expect(getFolderIconColor('node_modules')).toBe('#78716c');
+    });
+
+    it('returns correct color for hidden folder', () => {
+      expect(getFolderIconColor('hidden')).toBe('#3f3f46');
+    });
+
+    it('returns default color for unknown folder types', () => {
+      expect(getFolderIconColor('default')).toBe('#d97706');
+    });
+  });
+
+  describe('getFolderType', () => {
+    it('returns hidden for dot-prefix folders', () => {
+      expect(getFolderType('.vscode')).toBe('hidden');
+      expect(getFolderType('.config')).toBe('hidden');
+      expect(getFolderType('.cache')).toBe('hidden');
+    });
+
+    it('returns mapped type over hidden for known dot folders', () => {
+      // node_modules is not dot-prefixed, just checking known names still work
+      expect(getFolderType('node_modules')).toBe('node_modules');
+      expect(getFolderType('src')).toBe('src');
+    });
+  });
+
+  describe('getFileType', () => {
+    it('maps image extensions correctly', () => {
+      expect(getFileType('photo.jpg')).toBe('image');
+      expect(getFileType('photo.jpeg')).toBe('image');
+      expect(getFileType('icon.gif')).toBe('image');
+      expect(getFileType('icon.webp')).toBe('image');
+      expect(getFileType('favicon.ico')).toBe('image');
+      expect(getFileType('image.bmp')).toBe('image');
+    });
+
+    it('maps git files correctly', () => {
+      expect(getFileType('.gitattributes')).toBe('git');
+      expect(getFileType('.gitmodules')).toBe('git');
+    });
+
+    it('maps text extensions correctly', () => {
+      expect(getFileType('.env')).toBe('text');
+    });
+
+    it('maps xml extensions correctly', () => {
+      expect(getFileType('config.xml')).toBe('xml');
+      expect(getFileType('style.xsl')).toBe('xml');
+      expect(getFileType('Info.plist')).toBe('xml');
+    });
+
+    it('treats unknown extensionless files as default', () => {
+      expect(getFileType('flux')).toBe('default');
+      expect(getFileType('node')).toBe('default');
+      expect(getFileType('CODEOWNERS')).toBe('default');
+    });
+
+    it('maps known extensionless filenames to executable', () => {
+      expect(getFileType('Makefile')).toBe('executable');
+      expect(getFileType('Dockerfile')).toBe('executable');
+      expect(getFileType('Procfile')).toBe('executable');
+      expect(getFileType('Rakefile')).toBe('executable');
+      expect(getFileType('Vagrantfile')).toBe('executable');
+    });
+
+    it('maps known extensionless filenames to text', () => {
+      expect(getFileType('README')).toBe('text');
+      expect(getFileType('LICENSE')).toBe('text');
+      expect(getFileType('LICENCE')).toBe('text');
+      expect(getFileType('AUTHORS')).toBe('text');
+      expect(getFileType('CHANGELOG')).toBe('text');
+      expect(getFileType('CONTRIBUTING')).toBe('text');
+      expect(getFileType('COPYING')).toBe('text');
+      expect(getFileType('NOTICE')).toBe('text');
+      expect(getFileType('Gemfile')).toBe('text');
+    });
+
+    it('handles case-insensitive extensionless filename matching', () => {
+      expect(getFileType('makefile')).toBe('executable');
+      expect(getFileType('MAKEFILE')).toBe('executable');
+      expect(getFileType('readme')).toBe('text');
+      expect(getFileType('Readme')).toBe('text');
+    });
+
+    it('maps binary-related extensions correctly', () => {
+      expect(getFileType('app.exe')).toBe('executable');
+      expect(getFileType('game.app')).toBe('executable');
+      expect(getFileType('lib.so')).toBe('library');
+      expect(getFileType('lib.dylib')).toBe('library');
+      expect(getFileType('lib.a')).toBe('library');
+      expect(getFileType('main.o')).toBe('compiled');
+      expect(getFileType('Main.class')).toBe('compiled');
+      expect(getFileType('module.pyc')).toBe('compiled');
+      expect(getFileType('data.bin')).toBe('binary');
+      expect(getFileType('app.wasm')).toBe('binary');
+      expect(getFileType('files.tar')).toBe('archive');
+      expect(getFileType('files.gz')).toBe('archive');
+      expect(getFileType('files.7z')).toBe('archive');
+      expect(getFileType('app.dmg')).toBe('archive');
+      expect(getFileType('disk.iso')).toBe('archive');
     });
   });
 });

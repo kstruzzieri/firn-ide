@@ -59,36 +59,35 @@
 
 .content {
   grid-area: content;
-  display: grid;
-  grid-template-columns: var(--panel-left-width) 1fr var(--panel-right-width);
-  gap: var(--panel-gap);
+  display: flex;
   padding: var(--content-padding);
   background: var(--surface-base);
   overflow: hidden;
 }
 
-/* When left panel is collapsed, editor takes its space */
-.ide[data-left-collapsed] .content {
-  grid-template-columns: 1fr var(--panel-right-width);
-}
-
 .leftPanel {
+  width: var(--panel-left-width);
+  min-width: 0;
   background: var(--surface-panel);
   border: 1px solid var(--surface-border-subtle);
   border-radius: var(--panel-radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 
 .centerArea {
-  display: grid;
-  grid-template-rows: 1fr var(--panel-bottom-height);
-  gap: var(--panel-gap);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .centerPanel {
+  flex: 1;
+  min-height: 0;
   background: var(--surface-panel);
   border: 1px solid var(--surface-border-subtle);
   border-radius: var(--panel-radius);
@@ -98,21 +97,27 @@
 }
 
 .bottomPanel {
+  height: var(--panel-bottom-height);
+  min-height: 0;
   background: var(--surface-panel);
   border: 1px solid var(--surface-border-subtle);
   border-radius: var(--panel-radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 
 .rightPanel {
+  width: var(--panel-right-width);
+  min-width: 0;
   background: var(--surface-panel);
   border: 1px solid var(--surface-border-subtle);
   border-radius: var(--panel-radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════

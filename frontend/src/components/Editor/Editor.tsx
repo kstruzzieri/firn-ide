@@ -8,7 +8,7 @@
 import { useCallback } from 'react';
 import styles from './Editor.module.css';
 import { useOpenFiles, useActiveFile, useIDEStore } from '../../stores/ideStore';
-import { FileIcon } from '../icons';
+import { FileIcon } from '../FileExplorer/FileIcon';
 import { formatShortcut } from '../../utils/platform';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { getLanguageName } from './codemirror';
@@ -82,7 +82,7 @@ export function Editor() {
               title={`${file.path}\n${languageName}`}
               onClick={() => setActiveFile(file.id)}
             >
-              <FileIcon className={styles.tabIcon} aria-hidden="true" />
+              <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
               <span className={styles.tabName}>{file.name}</span>
               {file.isModified && <span className={styles.tabDot} aria-label="Modified" />}
               <button
