@@ -156,6 +156,12 @@ describe('FileIcon', () => {
       render(<FileIcon name=".github" isDir={true} />);
       expect(screen.getByTestId('folder-icon')).toHaveAttribute('data-folder', 'hidden');
     });
+
+    it('renders open folder icon when expanded', () => {
+      render(<FileIcon name="src" isDir={true} isExpanded={true} />);
+      expect(screen.getByTestId('folder-open-icon')).toBeInTheDocument();
+      expect(screen.getByTestId('folder-open-icon')).toHaveAttribute('data-folder', 'src');
+    });
   });
 
   describe('getFileIconColor', () => {
@@ -285,10 +291,37 @@ describe('FileIcon', () => {
       expect(getFileType('Info.plist')).toBe('xml');
     });
 
-    it('treats extensionless files as executable', () => {
-      expect(getFileType('flux')).toBe('executable');
-      expect(getFileType('node')).toBe('executable');
+    it('treats unknown extensionless files as default', () => {
+      expect(getFileType('flux')).toBe('default');
+      expect(getFileType('node')).toBe('default');
+      expect(getFileType('CODEOWNERS')).toBe('default');
+    });
+
+    it('maps known extensionless filenames to executable', () => {
       expect(getFileType('Makefile')).toBe('executable');
+      expect(getFileType('Dockerfile')).toBe('executable');
+      expect(getFileType('Procfile')).toBe('executable');
+      expect(getFileType('Rakefile')).toBe('executable');
+      expect(getFileType('Vagrantfile')).toBe('executable');
+    });
+
+    it('maps known extensionless filenames to text', () => {
+      expect(getFileType('README')).toBe('text');
+      expect(getFileType('LICENSE')).toBe('text');
+      expect(getFileType('LICENCE')).toBe('text');
+      expect(getFileType('AUTHORS')).toBe('text');
+      expect(getFileType('CHANGELOG')).toBe('text');
+      expect(getFileType('CONTRIBUTING')).toBe('text');
+      expect(getFileType('COPYING')).toBe('text');
+      expect(getFileType('NOTICE')).toBe('text');
+      expect(getFileType('Gemfile')).toBe('text');
+    });
+
+    it('handles case-insensitive extensionless filename matching', () => {
+      expect(getFileType('makefile')).toBe('executable');
+      expect(getFileType('MAKEFILE')).toBe('executable');
+      expect(getFileType('readme')).toBe('text');
+      expect(getFileType('Readme')).toBe('text');
     });
 
     it('maps binary-related extensions correctly', () => {

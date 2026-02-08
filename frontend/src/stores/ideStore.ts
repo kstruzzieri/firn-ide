@@ -46,10 +46,11 @@ interface IDEState {
   // Sidebar
   activeSidebarView: SidebarView;
 
-  // Panel visibility
+  // Panel visibility and sizes
   isLeftPanelCollapsed: boolean;
   isRightPanelCollapsed: boolean;
   isBottomPanelCollapsed: boolean;
+  panelSizes: { left: number; right: number; bottom: number };
 
   // Editor
   openFiles: EditorFile[];
@@ -89,6 +90,7 @@ interface IDEActions {
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
   toggleBottomPanel: () => void;
+  setPanelSize: (panel: 'left' | 'right' | 'bottom', size: number) => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -129,6 +131,7 @@ export const useIDEStore = create<IDEStore>()(
       isLeftPanelCollapsed: false,
       isRightPanelCollapsed: false,
       isBottomPanelCollapsed: false,
+      panelSizes: { left: 260, right: 280, bottom: 200 },
       openFiles: [],
       activeFileId: null,
       cursorPosition: { line: 1, column: 1 },
@@ -197,6 +200,18 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'toggleBottomPanel'
         ),
+
+      setPanelSize: (panel, size) => {
+        const clamped = Math.max(0, Math.round(size));
+        if (!Number.isFinite(clamped)) return;
+        set(
+          (state) => ({
+            panelSizes: { ...state.panelSizes, [panel]: clamped },
+          }),
+          false,
+          'setPanelSize'
+        );
+      },
 
       // Editor actions
       openFile: (file) =>

@@ -160,6 +160,24 @@ const EXTENSION_MAP: Record<string, FileType> = {
   iso: 'archive',
 };
 
+/** Known extensionless filenames → file type */
+const FILENAME_MAP: Record<string, FileType> = {
+  makefile: 'executable',
+  dockerfile: 'executable',
+  procfile: 'executable',
+  rakefile: 'executable',
+  vagrantfile: 'executable',
+  gemfile: 'text',
+  readme: 'text',
+  license: 'text',
+  licence: 'text',
+  authors: 'text',
+  changelog: 'text',
+  contributing: 'text',
+  copying: 'text',
+  notice: 'text',
+};
+
 /** Special folder name mapping */
 const FOLDER_NAME_MAP: Record<string, FolderType> = {
   src: 'src',
@@ -222,8 +240,10 @@ const DEVICON_FILTERS: Partial<Record<FileType, string>> = {
  * Gets the file type from a filename based on its extension.
  */
 export function getFileType(name: string): FileType {
-  // No dot at all → extensionless file (treat as executable)
-  if (!name.includes('.')) return 'executable';
+  // No dot at all → check known filenames, then fall back to default icon
+  if (!name.includes('.')) {
+    return FILENAME_MAP[name.toLowerCase()] ?? 'default';
+  }
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
   return EXTENSION_MAP[ext] ?? 'default';
 }
@@ -238,33 +258,35 @@ export function getFolderType(name: string): FolderType {
   return 'default';
 }
 
+/** File type to color mapping */
+const FILE_TYPE_COLORS: Record<FileType, string> = {
+  typescript: '#3178C6',
+  javascript: '#F7DF1E',
+  react: '#61DAFB',
+  go: '#00ADD8',
+  python: '#3776AB',
+  json: '#F59E0B',
+  markdown: '#8b9cae',
+  css: '#1572B6',
+  html: '#E34F26',
+  yaml: '#ef4444',
+  rust: '#DEA584',
+  image: '#a855f7',
+  git: '#F05032',
+  text: '#9ca3af',
+  xml: '#e36209',
+  executable: '#10b981',
+  library: '#8b5cf6',
+  compiled: '#f59e0b',
+  binary: '#ef4444',
+  archive: '#0ea5e9',
+  default: '#6B7280',
+};
+
 /**
  * Gets the color for a file type per design specification.
  */
 export function getFileIconColor(fileType: FileType | string): string {
-  const FILE_TYPE_COLORS: Record<FileType, string> = {
-    typescript: '#3178C6',
-    javascript: '#F7DF1E',
-    react: '#61DAFB',
-    go: '#00ADD8',
-    python: '#3776AB',
-    json: '#F59E0B',
-    markdown: '#8b9cae',
-    css: '#1572B6',
-    html: '#E34F26',
-    yaml: '#ef4444',
-    rust: '#DEA584',
-    image: '#a855f7',
-    git: '#F05032',
-    text: '#9ca3af',
-    xml: '#e36209',
-    executable: '#10b981',
-    library: '#8b5cf6',
-    compiled: '#f59e0b',
-    binary: '#ef4444',
-    archive: '#0ea5e9',
-    default: '#6B7280',
-  };
   return FILE_TYPE_COLORS[fileType as FileType] ?? FILE_TYPE_COLORS.default;
 }
 

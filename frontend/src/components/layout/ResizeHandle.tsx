@@ -2,6 +2,9 @@ import { useResize } from '../../hooks/useResize';
 import { ChevronRightIcon, ChevronDownIcon } from '../icons';
 import styles from './ResizeHandle.module.css';
 
+/** Stable style objects to avoid creating new references on each render */
+const ROTATE_180 = { transform: 'rotate(180deg)' } as const;
+
 interface ResizeHandleProps {
   /** Which boundary this handle controls */
   direction: 'horizontal' | 'vertical';
@@ -19,6 +22,10 @@ interface ResizeHandleProps {
   onToggleCollapse?: () => void;
   /** Collapse chevron direction when panel is visible */
   collapseDirection?: 'left' | 'right' | 'up' | 'down';
+  /** Callback fired when drag ends with the final size */
+  onResizeEnd?: (size: number) => void;
+  /** Current panel size from store (used for aria-valuenow) */
+  panelSize?: number;
 }
 
 export function ResizeHandle({
@@ -30,8 +37,17 @@ export function ResizeHandle({
   isCollapsed = false,
   onToggleCollapse,
   collapseDirection = 'left',
+  onResizeEnd,
+  panelSize = 0,
 }: ResizeHandleProps) {
-  const { onMouseDown, onKeyDown } = useResize({ direction, cssVar, min, max, inverted });
+  const { onMouseDown, onKeyDown } = useResize({
+    direction,
+    cssVar,
+    min,
+    max,
+    inverted,
+    onResizeEnd,
+  });
 
   const isHorizontal = direction === 'horizontal';
 
@@ -40,19 +56,18 @@ export function ResizeHandle({
     if (isCollapsed) {
       // When collapsed, point toward the hidden panel (to expand)
       if (collapseDirection === 'left') return <ChevronRightIcon />;
-      if (collapseDirection === 'right')
-        return <ChevronRightIcon style={{ transform: 'rotate(180deg)' }} />;
-      if (collapseDirection === 'up')
-        return <ChevronDownIcon style={{ transform: 'rotate(180deg)' }} />;
+      if (collapseDirection === 'right') return <ChevronRightIcon style={ROTATE_180} />;
+      if (collapseDirection === 'up') return <ChevronDownIcon style={ROTATE_180} />;
       return <ChevronDownIcon />;
     }
     // When visible, point away from panel (to collapse)
-    if (collapseDirection === 'left')
-      return <ChevronRightIcon style={{ transform: 'rotate(180deg)' }} />;
+    if (collapseDirection === 'left') return <ChevronRightIcon style={ROTATE_180} />;
     if (collapseDirection === 'right') return <ChevronRightIcon />;
     if (collapseDirection === 'up') return <ChevronDownIcon />;
-    return <ChevronDownIcon style={{ transform: 'rotate(180deg)' }} />;
+    return <ChevronDownIcon style={ROTATE_180} />;
   };
+
+  const currentSize = isCollapsed ? 0 : panelSize;
 
   return (
     <div
@@ -66,8 +81,10 @@ export function ResizeHandle({
         role="separator"
         aria-orientation={isHorizontal ? 'vertical' : 'horizontal'}
         aria-label={`Resize ${cssVar.replace('--', '').replace(/-/g, ' ')}`}
-        aria-valuenow={undefined}
-        tabIndex={0}
+        aria-valuenow={currentSize}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        tabIndex={isCollapsed ? -1 : 0}
       />
       {onToggleCollapse && (
         <button

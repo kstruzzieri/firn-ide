@@ -6,6 +6,10 @@ beforeEach(() => {
     openFiles: [],
     activeFileId: null,
     toast: null,
+    isLeftPanelCollapsed: false,
+    isRightPanelCollapsed: false,
+    isBottomPanelCollapsed: false,
+    panelSizes: { left: 260, right: 280, bottom: 200 },
   });
 });
 
@@ -97,6 +101,48 @@ describe('ideStore - panel collapse', () => {
     expect(useIDEStore.getState().isBottomPanelCollapsed).toBe(true);
     toggleBottomPanel();
     expect(useIDEStore.getState().isBottomPanelCollapsed).toBe(false);
+  });
+});
+
+describe('ideStore - setPanelSize', () => {
+  it('should set individual panel sizes', () => {
+    const { setPanelSize } = useIDEStore.getState();
+    setPanelSize('left', 300);
+    expect(useIDEStore.getState().panelSizes.left).toBe(300);
+    expect(useIDEStore.getState().panelSizes.right).toBe(280);
+    expect(useIDEStore.getState().panelSizes.bottom).toBe(200);
+  });
+
+  it('should preserve other panel sizes when one changes', () => {
+    const { setPanelSize } = useIDEStore.getState();
+    setPanelSize('right', 350);
+    setPanelSize('bottom', 150);
+    const sizes = useIDEStore.getState().panelSizes;
+    expect(sizes).toEqual({ left: 260, right: 350, bottom: 150 });
+  });
+
+  it('should clamp negative values to zero', () => {
+    const { setPanelSize } = useIDEStore.getState();
+    setPanelSize('left', -100);
+    expect(useIDEStore.getState().panelSizes.left).toBe(0);
+  });
+
+  it('should round fractional values', () => {
+    const { setPanelSize } = useIDEStore.getState();
+    setPanelSize('left', 250.7);
+    expect(useIDEStore.getState().panelSizes.left).toBe(251);
+  });
+
+  it('should ignore NaN values', () => {
+    const { setPanelSize } = useIDEStore.getState();
+    setPanelSize('left', NaN);
+    expect(useIDEStore.getState().panelSizes.left).toBe(260);
+  });
+
+  it('should ignore Infinity values', () => {
+    const { setPanelSize } = useIDEStore.getState();
+    setPanelSize('left', Infinity);
+    expect(useIDEStore.getState().panelSizes.left).toBe(260);
   });
 });
 
