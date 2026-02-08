@@ -382,7 +382,7 @@ arc-ide/
 │   └── package.json
 ├── build/                  # Build output
 ├── docs/
-│   ├── ARCHITECTURE.md    # This file
+│   ├── architecture.md    # This file
 │   └── tdd/               # TDD documentation per issue
 └── .github/workflows/     # CI/CD configuration
 ```

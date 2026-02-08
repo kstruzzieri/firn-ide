@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 130">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 130">
   <defs>
-    <!-- Primary gradient: blue→cyan -->
+    <!-- Primary gradient: blue to cyan -->
     <linearGradient id="arcGradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#2563EB"/>
       <stop offset="50%" stop-color="#0EA5E9"/>
@@ -21,7 +21,7 @@
 
     <!-- Glow filter -->
     <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
       <feMerge>
         <feMergeNode in="coloredBlur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -35,7 +35,7 @@
 
     <!-- Spark glow -->
     <filter id="sparkGlow" x="-100%" y="-100%" width="300%" height="300%">
-      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -43,45 +43,52 @@
     </filter>
   </defs>
 
-  <!-- Icon -->
-  <g transform="translate(20, 20)">
-    <!-- Outer flow arc -->
-    <path d="M43 8 Q80 8 80 47 Q80 84 43 84"
+  <!-- "A" letter -->
+  <text x="30" y="78"
+        font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
+        font-size="60"
+        font-weight="600"
+        letter-spacing="12"
+        fill="url(#arcGradient)"
+        filter="url(#shadow)">A</text>
+
+  <!-- "R" letter -->
+  <text x="86" y="78"
+        font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
+        font-size="60"
+        font-weight="600"
+        letter-spacing="12"
+        fill="url(#arcGradient)"
+        filter="url(#shadow)">R</text>
+
+  <!-- Logo icon as the "C" -->
+  <g transform="translate(166, 54) scale(0.48)">
+    <!-- Outer flow arc - forms the C shape -->
+    <path d="M-4 -60 Q66 -60 66 8 Q66 72 -4 72"
           fill="none"
           stroke="url(#arcGradient)"
-          stroke-width="4.5"
+          stroke-width="12"
           stroke-linecap="round"
           filter="url(#glow)"/>
 
-    <!-- Inner arc - bracket shape -->
-    <path d="M48 18 Q22 18 22 47 Q22 74 48 74"
+    <!-- Inner arc - deep C curve matching banner -->
+    <path d="M6 -40 Q-46 -40 -46 8 Q-46 52 6 52"
           fill="none"
           stroke="url(#accentGradient)"
-          stroke-width="3.5"
+          stroke-width="11"
           stroke-linecap="round"
           filter="url(#glow)"/>
 
     <!-- Central energy node -->
-    <circle cx="48" cy="47" r="8" fill="url(#arcGradient)" filter="url(#glow)"/>
-    <circle cx="48" cy="47" r="4" fill="#F0F6FC"/>
+    <circle cx="6" cy="6" r="20" fill="url(#arcGradient)" filter="url(#glow)"/>
+    <circle cx="6" cy="6" r="10" fill="#F0F6FC"/>
 
     <!-- Energy spark at arc terminus -->
-    <circle cx="43" cy="84" r="3" fill="url(#sparkGradient)" filter="url(#sparkGlow)"/>
-  </g>
-
-  <!-- Wordmark: ARC -->
-  <g transform="translate(118, 40)" filter="url(#shadow)">
-    <text font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
-          font-size="56"
-          font-weight="600"
-          letter-spacing="4"
-          fill="url(#arcGradient)">
-      <tspan>ARC</tspan>
-    </text>
+    <circle cx="-4" cy="72" r="7" fill="url(#sparkGradient)" filter="url(#sparkGlow)"/>
   </g>
 
   <!-- Tagline -->
-  <text x="121" y="108"
+  <text x="33" y="115"
         font-family="'SF Pro Text', 'Inter', 'Segoe UI', system-ui, sans-serif"
         font-size="11"
         font-weight="500"

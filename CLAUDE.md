@@ -17,9 +17,9 @@ arc-ide/
 ├── wails.json               # Wails configuration
 ├── frontend/                # React + Vite frontend (TypeScript)
 ├── docs/                    # Design documentation
-│   ├── ROADMAP.md               # Consolidated roadmap with all issues
+│   ├── roadmap.md               # Consolidated roadmap with all issues
 │   ├── design-specification.md  # Technical specification
-│   └── ARCHITECTURE.md          # System architecture guide
+│   └── architecture.md          # System architecture guide
 └── .claude/                 # Claude Code configuration
     ├── settings.json            # Shared project settings
     ├── agents/                  # 12 project-specific agents

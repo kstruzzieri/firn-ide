@@ -1,11 +1,5 @@
-# Arc IDE
-
 <p align="center">
-  <img src="banner.svg" alt="Arc IDE - Lightweight IDE, Heavyweight Focus" width="800">
-</p>
-
-<p align="center">
-  <strong>A lightweight, workspace-focused desktop IDE built with Go and React.</strong>
+  <img src="docs/logos/banner.svg" alt="Arc IDE - Lightweight IDE, Heavyweight Focus" width="800">
 </p>
 
 <p align="center">
@@ -15,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" alt="React">
+  <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Wails-2-DF0000?logo=wails&logoColor=white" alt="Wails">
 </p>
@@ -79,8 +73,8 @@ Built-in AI assistant panel with:
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Go 1.21+ (layered package structure) |
-| Frontend | React 18 + Vite + TypeScript |
+| Backend | Go 1.23+ (layered package structure) |
+| Frontend | React 19 + Vite + TypeScript |
 | State | Zustand |
 | Editor | CodeMirror 6 |
 | File Watching | fsnotify with debounce |
@@ -143,9 +137,9 @@ arc-ide/
 │   │   └── assets/             # Icons, logos
 │   └── wailsjs/                # Generated Go bindings
 └── docs/
-    ├── ROADMAP.md              # Consolidated roadmap with all issues
+    ├── roadmap.md              # Consolidated roadmap with all issues
     ├── design-specification.md # Full UI/UX specification
-    ├── ARCHITECTURE.md         # System architecture guide
+    ├── architecture.md         # System architecture guide
     └── tdd/                    # Technical design documents
 ```
 
@@ -153,7 +147,7 @@ arc-ide/
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.23+
 - Node.js 18+
 - Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
 
@@ -183,7 +177,7 @@ The [Design Specification](docs/design-specification.md) contains the complete U
 - AI Chat Panel design
 - Keyboard shortcuts
 
-See the [Roadmap](docs/ROADMAP.md) for implementation progress and all tracked issues.
+See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked issues.
 
 ## Contributing
 
