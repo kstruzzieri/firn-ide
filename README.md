@@ -1,7 +1,7 @@
-# Flux IDE
+# Arc IDE
 
 <p align="center">
-  <img src="banner.svg" alt="Flux IDE - Lightweight IDE, Heavyweight Focus" width="800">
+  <img src="banner.svg" alt="Arc IDE - Lightweight IDE, Heavyweight Focus" width="800">
 </p>
 
 <p align="center">
@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-in%20development-blue" alt="Status">
-  <img src="https://img.shields.io/badge/platform-desktop-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
 
@@ -23,14 +23,14 @@
 
 ---
 
-## Why Flux?
+## Why Arc?
 
 Modern monorepos contain frontend (React/TypeScript), backend services (Python, Go), and infrastructure code. Traditional IDEs either:
 
 - **Load everything at once** — consuming 4-8GB+ RAM with all language servers running
 - **Require separate windows** — losing context when switching between frontend and backend
 
-**Flux takes a different approach:** One repo, multiple focused workspaces.
+**Arc takes a different approach:** One repo, multiple focused workspaces.
 
 Each workspace has independent layout state, scoped language servers (only the active workspace runs LSP), and workspace-specific Run Profiles. Switching workspaces is instant—like changing perspectives, not opening a new app.
 
@@ -38,7 +38,7 @@ Each workspace has independent layout state, scoped language servers (only the a
 
 ### Wails over Electron
 
-Flux uses [Wails](https://wails.io) (Go backend + system WebView) instead of Electron:
+Arc uses [Wails](https://wails.io) (Go backend + system WebView) instead of Electron:
 
 | Aspect | Electron | Wails |
 |--------|----------|-------|
@@ -48,20 +48,6 @@ Flux uses [Wails](https://wails.io) (Go backend + system WebView) instead of Ele
 | Bundled runtime | Chromium + Node.js | System WebView |
 
 The trade-off: Fewer npm packages that rely on Node.js APIs work out-of-the-box. Worth it for a lightweight, fast IDE.
-
-### ML Mode
-
-Flux includes a dedicated **ML Mode**—a separate UI perspective for machine learning workflows:
-
-- Experiment tracking and comparison
-- Backtest visualization with equity curves
-- Feature importance (SHAP) displays
-- GPU job monitoring
-- AI-powered ML tutor integration
-
-This connects to external ML backends via a **Service Adapter Pattern**, supporting custom gRPC services, MLflow, or Weights & Biases.
-
-*See the [Design Specification](docs/design-specification.md) for full details.*
 
 ### AI Integration
 
@@ -85,7 +71,7 @@ Built-in AI assistant panel with:
 │  │  • FS Watcher   │              │  • Zustand State        │  │
 │  │  • LSP Client   │              │  • Panel System         │  │
 │  │  • Run Profiles │              │  • Theme Engine         │  │
-│  │  • Git Ops      │              │  • ML Mode Views        │  │
+│  │  • Git Ops      │              │                         │  │
 │  └─────────────────┘              └─────────────────────────┘  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -123,36 +109,33 @@ Built-in AI assistant panel with:
 - [x] CodeMirror 6 editor with Deep Ocean theme
 - [x] Syntax highlighting (JS, TS, Python, Go, CSS, HTML, JSON, Markdown)
 - [x] Tab-based editing with modified indicators
+- [x] JetBrains-style autosave (debounced idle + focus loss)
 - [x] File explorer with tree navigation
 - [x] Workspace accent color system (7 theme variants)
-- [x] Panel layout system (sidebar, terminal, run output)
+- [x] Panel layout system with drag-to-resize and collapse/expand
+- [x] Icon system with currentColor SVGs
 - [x] Status bar (cursor position, language, git branch)
-
-### In Progress
-
-- [ ] File explorer tree display (#11)
 
 ### Planned
 
-- [ ] LSP client integration
-- [ ] Terminal emulation
+- [ ] Terminal emulation (xterm.js + PTY)
+- [ ] Workspace management (open folder, persistence, recent projects)
 - [ ] Run profile execution
+- [ ] LSP client integration
 - [ ] Git integration
 - [ ] Search with ripgrep
 - [ ] AI Chat Panel
-- [ ] ML Mode
 
 ## Project Structure
 
 ```
-flux-ide/
+arc-ide/
 ├── main.go                     # Application entry
 ├── app.go                      # Wails bindings
 ├── internal/
-│   ├── domain/                 # Core types and interfaces
-│   ├── application/            # Business logic services
-│   ├── infrastructure/         # External integrations
-│   └── interfaces/             # Wails API handlers
+│   ├── filesystem/             # File read/write/watch
+│   ├── watcher/                # FS event watcher
+│   └── process/                # Process management
 ├── frontend/
 │   ├── src/
 │   │   ├── components/         # React components
@@ -160,7 +143,9 @@ flux-ide/
 │   │   └── assets/             # Icons, logos
 │   └── wailsjs/                # Generated Go bindings
 └── docs/
+    ├── ROADMAP.md              # Consolidated roadmap with all issues
     ├── design-specification.md # Full UI/UX specification
+    ├── ARCHITECTURE.md         # System architecture guide
     └── tdd/                    # Technical design documents
 ```
 
@@ -196,9 +181,9 @@ The [Design Specification](docs/design-specification.md) contains the complete U
 - Workspace model and multi-workspace editing
 - Run Profiles system
 - AI Chat Panel design
-- ML Mode panels and layouts
-- ML Service adapter interface
 - Keyboard shortcuts
+
+See the [Roadmap](docs/ROADMAP.md) for implementation progress and all tracked issues.
 
 ## Contributing
 

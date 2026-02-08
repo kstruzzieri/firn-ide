@@ -124,7 +124,7 @@ Update `.github/workflows/test.yml` to:
 === RUN   TestMockProcessManagerStart
 --- PASS: TestMockProcessManagerStart (0.00s)
 PASS
-ok  	flux	0.010s	coverage: 42.9% of statements
+ok  	arc	0.010s	coverage: 42.9% of statements
 ```
 
 All acceptance criteria met:

@@ -88,7 +88,7 @@ Key changes:
 
 ### Sidebar Active Indicator
 
-Already implemented — `Sidebar.module.css` has the `::before` pseudo-element with accent-colored 3px bar, matching flux-ml's pattern.
+Already implemented — `Sidebar.module.css` has the `::before` pseudo-element with accent-colored 3px bar, matching arc-ml's pattern.
 
 ### Devicon Dark Background Fixes
 

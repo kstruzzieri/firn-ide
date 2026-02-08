@@ -1,4 +1,4 @@
-# Flux IDE UI/UX Comprehensive Review Report
+# Arc IDE UI/UX Comprehensive Review Report
 
 **Date:** January 31, 2026
 **Reviewers:** DX Optimizer, Frontend Developer, Performance Engineer, React Specialist, UI Designer
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This report consolidates findings from five specialized agents who analyzed the Flux IDE application for UI/UX quality, code patterns, performance, developer experience, and visual design. The Flux IDE is a Wails-based IDE (Go + React/Vite) targeting macOS and Linux with a lightweight footprint.
+This report consolidates findings from five specialized agents who analyzed the Arc IDE application for UI/UX quality, code patterns, performance, developer experience, and visual design. The Arc IDE is a Wails-based IDE (Go + React/Vite) targeting macOS and Linux with a lightweight footprint.
 
 **Overall Assessment:** The codebase demonstrates solid foundational architecture with modern tooling choices and a well-designed Deep Ocean theme system. However, there are critical gaps in core IDE features and several opportunities for enhancement across performance, accessibility, and developer experience.
 
@@ -453,7 +453,7 @@ Establish baselines with test projects:
 
 ### C. IDE Comparison Matrix
 
-| Feature | VS Code | JetBrains | Zed | Flux (Current) |
+| Feature | VS Code | JetBrains | Zed | Arc (Current) |
 |---------|---------|-----------|-----|----------------|
 | Command Palette | ✓ | ✓ | ✓ | ✗ |
 | File Search | ✓ | ✓ | ✓ | ✗ |

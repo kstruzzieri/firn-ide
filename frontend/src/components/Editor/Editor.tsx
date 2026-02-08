@@ -12,7 +12,7 @@ import { FileIcon } from '../FileExplorer/FileIcon';
 import { formatShortcut } from '../../utils/platform';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { getLanguageName } from './codemirror';
-import fluxLogo from '../../assets/branding/logo-light.svg';
+import arcLogo from '../../assets/branding/logo-light.svg';
 
 export function Editor() {
   const openFiles = useOpenFiles();
@@ -43,7 +43,7 @@ export function Editor() {
     return (
       <div className={styles.editor}>
         <div className={styles.welcome}>
-          <img src={fluxLogo} alt="Flux IDE" className={styles.welcomeLogo} />
+          <img src={arcLogo} alt="Arc IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
             <div className={styles.shortcutItem}>
               <span className={styles.shortcutLabel}>Open File</span>

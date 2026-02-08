@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 
-	"flux/internal/filesystem"
-	"flux/internal/watcher"
+	"arc/internal/filesystem"
+	"arc/internal/watcher"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// App represents the main application structure for Flux IDE.
+// App represents the main application structure for Arc IDE.
 // It holds the application context for Wails runtime interactions.
 type App struct {
 	ctx         context.Context

@@ -7,7 +7,7 @@
     </linearGradient>
 
     <!-- Primary gradient: blue→cyan -->
-    <linearGradient id="fluxGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="arcGradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#2563EB"/>
       <stop offset="50%" stop-color="#0EA5E9"/>
       <stop offset="100%" stop-color="#06B6D4"/>
@@ -58,7 +58,7 @@
     <!-- Outer flow arc -->
     <path d="M43 8 Q80 8 80 47 Q80 84 43 84"
           fill="none"
-          stroke="url(#fluxGradient)"
+          stroke="url(#arcGradient)"
           stroke-width="4.5"
           stroke-linecap="round"
           filter="url(#glow)"/>
@@ -72,21 +72,21 @@
           filter="url(#glow)"/>
 
     <!-- Central energy node -->
-    <circle cx="48" cy="47" r="8" fill="url(#fluxGradient)" filter="url(#glow)"/>
+    <circle cx="48" cy="47" r="8" fill="url(#arcGradient)" filter="url(#glow)"/>
     <circle cx="48" cy="47" r="4" fill="#F0F6FC"/>
 
     <!-- Energy spark at arc terminus -->
     <circle cx="43" cy="84" r="3" fill="url(#sparkGradient)" filter="url(#sparkGlow)"/>
   </g>
 
-  <!-- Wordmark: FLUX -->
+  <!-- Wordmark: ARC -->
   <g transform="translate(128, 50)" filter="url(#shadow)">
     <text font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
           font-size="56"
           font-weight="600"
           letter-spacing="4"
-          fill="url(#fluxGradient)">
-      <tspan>FLUX</tspan>
+          fill="url(#arcGradient)">
+      <tspan>ARC</tspan>
     </text>
   </g>
 

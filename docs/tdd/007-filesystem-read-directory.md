@@ -57,7 +57,7 @@ The file system reader is tested using:
 --- FAIL: TestReadDirectory_EmptyDirectory (0.00s)
 FAIL
 exit status 1
-FAIL    flux    0.012s
+FAIL    arc    0.012s
 ```
 
 ## Implementation Notes
@@ -105,7 +105,7 @@ Use `github.com/go-git/go-git/v5/plumbing/format/gitignore` or similar library t
 === RUN   TestReadDirectory_EmptyDirectory
 --- PASS: TestReadDirectory_EmptyDirectory (0.00s)
 PASS
-ok      flux    0.023s
+ok      arc    0.023s
 ```
 
 ## Verification

@@ -14,14 +14,14 @@
     </radialGradient>
 
     <!-- Primary gradient: blue→cyan -->
-    <linearGradient id="fluxPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="arcPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#2563EB"/>
       <stop offset="50%" stop-color="#0EA5E9"/>
       <stop offset="100%" stop-color="#06B6D4"/>
     </linearGradient>
 
     <!-- Accent gradient -->
-    <linearGradient id="fluxSecondary" x1="0%" y1="100%" x2="100%" y2="0%">
+    <linearGradient id="arcSecondary" x1="0%" y1="100%" x2="100%" y2="0%">
       <stop offset="0%" stop-color="#38BDF8"/>
       <stop offset="100%" stop-color="#818CF8"/>
     </linearGradient>
@@ -64,12 +64,12 @@
 
   <!-- Main content group - centered -->
   <g transform="translate(640, 280)">
-    <!-- Main Flux symbol -->
+    <!-- Main Arc symbol -->
     <g transform="translate(-260, -50)">
       <!-- Outer flow arc -->
       <path d="M-4 -60 Q66 -60 66 8 Q66 72 -4 72"
             fill="none"
-            stroke="url(#fluxPrimary)"
+            stroke="url(#arcPrimary)"
             stroke-width="12"
             stroke-linecap="round"
             filter="url(#mainGlow)"/>
@@ -77,13 +77,13 @@
       <!-- Inner arc - bracket shape -->
       <path d="M6 -40 Q-46 -40 -46 8 Q-46 52 6 52"
             fill="none"
-            stroke="url(#fluxSecondary)"
+            stroke="url(#arcSecondary)"
             stroke-width="9"
             stroke-linecap="round"
             filter="url(#mainGlow)"/>
 
       <!-- Central node -->
-      <circle cx="6" cy="6" r="20" fill="url(#fluxPrimary)" filter="url(#mainGlow)"/>
+      <circle cx="6" cy="6" r="20" fill="url(#arcPrimary)" filter="url(#mainGlow)"/>
       <circle cx="6" cy="6" r="10" fill="#F0F6FC"/>
 
       <!-- Energy spark at terminus -->
@@ -96,9 +96,9 @@
           font-size="120"
           font-weight="600"
           letter-spacing="8"
-          fill="url(#fluxPrimary)"
+          fill="url(#arcPrimary)"
           filter="url(#textGlow)">
-      FLUX
+      ARC
     </text>
   </g>
 
@@ -122,7 +122,7 @@
     </g>
     <g transform="translate(-95, 0)">
       <rect x="-55" y="-16" width="110" height="32" rx="16" fill="#161B22" stroke="#30363D" stroke-width="1"/>
-      <text text-anchor="middle" y="5" fill="#38BDF8" letter-spacing="1">ML MODE</text>
+      <text text-anchor="middle" y="5" fill="#38BDF8" letter-spacing="1">WORKSPACES</text>
     </g>
     <g transform="translate(95, 0)">
       <rect x="-65" y="-16" width="130" height="32" rx="16" fill="#161B22" stroke="#30363D" stroke-width="1"/>

@@ -19,7 +19,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:     "Flux",
+		Title:     "Arc",
 		Width:     1440,
 		Height:    900,
 		MinWidth:  1024,
@@ -43,14 +43,14 @@ func main() {
 			},
 			Appearance: mac.NSAppearanceNameDarkAqua,
 			About: &mac.AboutInfo{
-				Title:   "Flux IDE",
-				Message: "A lightweight, workspace-focused IDE",
+				Title:   "Arc IDE",
+				Message: "A lightweight, workspace-focused IDE for macOS, Linux, and Windows",
 			},
 		},
 		Frameless: false,
 	})
 
 	if err != nil {
-		log.Fatalf("Error starting Flux IDE: %v", err)
+		log.Fatalf("Error starting Arc IDE: %v", err)
 	}
 }

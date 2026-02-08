@@ -10,7 +10,7 @@ import { Header } from '../components/Header';
 describe('Header Component', () => {
   it('should render the app name', () => {
     render(<Header />);
-    expect(screen.getByText('Flux')).toBeInTheDocument();
+    expect(screen.getByText('Arc')).toBeInTheDocument();
   });
 
   it('should render navigation buttons', () => {

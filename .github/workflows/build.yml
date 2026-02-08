@@ -45,4 +45,4 @@ jobs:
 
       - name: Verify build output
         run: |
-          test -f build/bin/Flux || test -f build/bin/flux
+          test -f build/bin/Arc || test -f build/bin/arc
