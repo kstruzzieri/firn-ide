@@ -50,13 +50,13 @@ jobs:
           BUILD_ARCH: ${{ matrix.arch }}
         run: |
           cd build/bin
-          zip -r "Flux-macos-${BUILD_ARCH}.zip" Flux.app
+          zip -r "Arc-macos-${BUILD_ARCH}.zip" Arc.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flux-macos-${{ matrix.arch }}
-          path: build/bin/Flux-macos-${{ matrix.arch }}.zip
+          name: Arc-macos-${{ matrix.arch }}
+          path: build/bin/Arc-macos-${{ matrix.arch }}.zip
 
   build-linux:
     name: Build Linux
@@ -97,13 +97,13 @@ jobs:
       - name: Package application
         run: |
           cd build/bin
-          tar -czvf Flux-linux-amd64.tar.gz flux
+          tar -czvf Arc-linux-amd64.tar.gz arc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flux-linux-amd64
-          path: build/bin/Flux-linux-amd64.tar.gz
+          name: Arc-linux-amd64
+          path: build/bin/Arc-linux-amd64.tar.gz
 
   release:
     name: Create Release

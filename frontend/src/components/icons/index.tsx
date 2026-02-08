@@ -2,7 +2,7 @@ import { SVGProps } from 'react';
 
 type IconProps = SVGProps<SVGSVGElement>;
 
-export function FluxLogo(props: IconProps) {
+export function ArcLogo(props: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"

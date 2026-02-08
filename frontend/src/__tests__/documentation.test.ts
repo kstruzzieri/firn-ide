@@ -5,9 +5,9 @@ describe('Architecture Documentation', () => {
   // __dirname = frontend/src/__tests__
   // Go up 3 levels to reach project root, then into docs
   const docsDir = path.join(__dirname, '../../..', 'docs');
-  const architecturePath = path.join(docsDir, 'ARCHITECTURE.md');
+  const architecturePath = path.join(docsDir, 'architecture.md');
 
-  it('should have ARCHITECTURE.md', () => {
+  it('should have architecture.md', () => {
     const exists = fs.existsSync(architecturePath);
     expect(exists).toBe(true);
   });

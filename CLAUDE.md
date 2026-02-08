@@ -4,22 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Flux IDE is a lightweight, workspace-focused IDE for macOS and Linux built with Wails (Go + React/Vite).
+Arc IDE is a lightweight, workspace-focused IDE for macOS, Linux, and Windows built with Wails (Go + React/Vite).
 
 **Architecture**: Wails framework using system webview for a lightweight binary (~15MB), avoiding Electron bloat.
 
 ## Project Structure
 
 ```
-flux-ide/
+arc-ide/
 ├── main.go                  # Application entry point
 ├── app.go                   # Wails application logic
 ├── wails.json               # Wails configuration
 ├── frontend/                # React + Vite frontend (TypeScript)
 ├── docs/                    # Design documentation
-│   ├── ide_plan.md              # Product design document
+│   ├── roadmap.md               # Consolidated roadmap with all issues
 │   ├── design-specification.md  # Technical specification
-│   └── mockups/                 # UI mockups
+│   └── architecture.md          # System architecture guide
 └── .claude/                 # Claude Code configuration
     ├── settings.json            # Shared project settings
     ├── agents/                  # 12 project-specific agents

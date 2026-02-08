@@ -1,4 +1,4 @@
-// Package watcher provides file system watching capabilities for Flux IDE.
+// Package watcher provides file system watching capabilities for Arc IDE.
 package watcher
 
 import "time"

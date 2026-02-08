@@ -8,20 +8,20 @@
     </linearGradient>
 
     <!-- Ambient glow -->
-    <radialGradient id="ambientGlow" cx="40%" cy="45%" r="50%">
+    <radialGradient id="ambientGlow" cx="50%" cy="40%" r="45%">
       <stop offset="0%" stop-color="#0EA5E9" stop-opacity="0.06"/>
       <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Primary gradient: blue→cyan -->
-    <linearGradient id="fluxPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
+    <!-- Primary gradient: blue to cyan -->
+    <linearGradient id="arcPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#2563EB"/>
       <stop offset="50%" stop-color="#0EA5E9"/>
       <stop offset="100%" stop-color="#06B6D4"/>
     </linearGradient>
 
     <!-- Accent gradient -->
-    <linearGradient id="fluxSecondary" x1="0%" y1="100%" x2="100%" y2="0%">
+    <linearGradient id="arcSecondary" x1="0%" y1="100%" x2="100%" y2="0%">
       <stop offset="0%" stop-color="#38BDF8"/>
       <stop offset="100%" stop-color="#818CF8"/>
     </linearGradient>
@@ -34,7 +34,7 @@
 
     <!-- Glow filter -->
     <filter id="mainGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feGaussianBlur stdDeviation="4" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -50,7 +50,7 @@
     </filter>
 
     <filter id="sparkGlow" x="-100%" y="-100%" width="300%" height="300%">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feGaussianBlur stdDeviation="5" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -64,12 +64,37 @@
 
   <!-- Main content group - centered -->
   <g transform="translate(640, 280)">
-    <!-- Main Flux symbol -->
-    <g transform="translate(-260, -50)">
-      <!-- Outer flow arc -->
+
+    <!-- "A" letter -->
+    <text x="-230" y="25"
+          font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
+          font-size="130"
+          font-weight="600"
+          letter-spacing="8"
+          fill="url(#arcPrimary)"
+          filter="url(#textGlow)">A</text>
+
+    <!-- "R" letter -->
+    <text x="-120" y="25"
+          font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
+          font-size="130"
+          font-weight="600"
+          letter-spacing="8"
+          fill="url(#arcPrimary)"
+          filter="url(#textGlow)">R</text>
+
+    <!--
+      Logo icon as the "C"
+      The text cap-height for 130px font is ~95px (roughly y=-70 to y=25).
+      The original icon spans 132px (y=-60 to y=72). Scale to 0.72 to fit
+      cap-height, then translate so the icon's visual center aligns with
+      the text center at roughly y=-22.
+    -->
+    <g transform="translate(42, -25) scale(1)">
+      <!-- Outer flow arc - forms the C shape -->
       <path d="M-4 -60 Q66 -60 66 8 Q66 72 -4 72"
             fill="none"
-            stroke="url(#fluxPrimary)"
+            stroke="url(#arcPrimary)"
             stroke-width="12"
             stroke-linecap="round"
             filter="url(#mainGlow)"/>
@@ -77,29 +102,18 @@
       <!-- Inner arc - bracket shape -->
       <path d="M6 -40 Q-46 -40 -46 8 Q-46 52 6 52"
             fill="none"
-            stroke="url(#fluxSecondary)"
-            stroke-width="9"
+            stroke="url(#arcSecondary)"
+            stroke-width="11"
             stroke-linecap="round"
             filter="url(#mainGlow)"/>
 
       <!-- Central node -->
-      <circle cx="6" cy="6" r="20" fill="url(#fluxPrimary)" filter="url(#mainGlow)"/>
+      <circle cx="6" cy="6" r="20" fill="url(#arcPrimary)" filter="url(#mainGlow)"/>
       <circle cx="6" cy="6" r="10" fill="#F0F6FC"/>
 
       <!-- Energy spark at terminus -->
       <circle cx="-4" cy="72" r="7" fill="url(#sparkGrad)" filter="url(#sparkGlow)"/>
     </g>
-
-    <!-- Wordmark -->
-    <text x="-90" y="20"
-          font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
-          font-size="120"
-          font-weight="600"
-          letter-spacing="8"
-          fill="url(#fluxPrimary)"
-          filter="url(#textGlow)">
-      FLUX
-    </text>
   </g>
 
   <!-- Tagline -->
@@ -122,7 +136,7 @@
     </g>
     <g transform="translate(-95, 0)">
       <rect x="-55" y="-16" width="110" height="32" rx="16" fill="#161B22" stroke="#30363D" stroke-width="1"/>
-      <text text-anchor="middle" y="5" fill="#38BDF8" letter-spacing="1">ML MODE</text>
+      <text text-anchor="middle" y="5" fill="#38BDF8" letter-spacing="1">WORKSPACES</text>
     </g>
     <g transform="translate(95, 0)">
       <rect x="-65" y="-16" width="130" height="32" rx="16" fill="#161B22" stroke="#30363D" stroke-width="1"/>

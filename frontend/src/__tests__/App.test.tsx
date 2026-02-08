@@ -29,9 +29,9 @@ describe('App Component', () => {
     expect(document.body).toBeInTheDocument();
   });
 
-  it('should render the Flux IDE header', () => {
+  it('should render the Arc IDE header', () => {
     render(<App />);
     // Look for the app name in the header
-    expect(screen.getByText('Flux')).toBeInTheDocument();
+    expect(screen.getByText('Arc')).toBeInTheDocument();
   });
 });

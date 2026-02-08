@@ -54,7 +54,7 @@ The file writer is tested using:
 ... (12 tests fail)
 FAIL
 exit status 1
-FAIL    flux/internal/filesystem    0.010s
+FAIL    arc/internal/filesystem    0.010s
 ```
 
 ## Implementation Notes
@@ -110,7 +110,7 @@ type WriteOptions struct {
 === RUN   TestWriteFile_CreatesParentDirectories
 --- PASS: TestWriteFile_CreatesParentDirectories (0.00s)
 PASS
-ok      flux/internal/filesystem    0.010s
+ok      arc/internal/filesystem    0.010s
 ```
 
 ## Verification

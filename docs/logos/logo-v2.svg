@@ -43,6 +43,15 @@
     </filter>
   </defs>
 
+  <!--
+    Layout strategy:
+    - Icon at scale 0.75 is ~45px wide visually (inner arc left to outer arc right)
+    - At 60px font, A is ~38px wide, R is ~35px wide
+    - Use consistent ~14px visual gaps between all three elements
+    - A right edge ~58, gap 14px, R at 72, R right edge ~107, gap 14px, icon left at ~121
+    - Total width ~185px, centered in 340px viewBox → offset ~78
+  -->
+
   <!-- "A" letter -->
   <text x="30" y="78"
         font-family="'SF Pro Display', 'Inter', 'Segoe UI', system-ui, sans-serif"
@@ -61,7 +70,22 @@
         fill="url(#arcGradient)"
         filter="url(#shadow)">R</text>
 
-  <!-- Logo icon as the "C" -->
+  <!--
+    Logo icon as the "C"
+    Scale 0.75 to match letter height.
+    The outer arc right edge (x=80) at scale 0.75 = 60px from translate origin.
+    The inner arc left curve (x=22) at scale 0.75 = 16.5px from origin.
+    Position so visual left edge aligns with consistent letter spacing.
+  -->
+  <!--
+    Uses the same icon geometry as the banner version (centered at 0,0)
+    scaled to 0.55 to fit the 60px text cap-height.
+    Banner icon: outer arc y=-60..72 (132px), inner arc swings to x=-46.
+    At 0.55 scale: 132*0.55 = 72.6px height ≈ matches ~44px cap + descender room.
+    Node at (6,6) with r=20 → scaled r=11, good visual weight.
+    Inner arc deep curve to x=-46 gives proper C shape.
+    More space between node (x=6) and inner arc (x=-46) for breathing room.
+  -->
   <g transform="translate(166, 54) scale(0.48)">
     <!-- Outer flow arc - forms the C shape -->
     <path d="M-4 -60 Q66 -60 66 8 Q66 72 -4 72"

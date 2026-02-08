@@ -1,14 +1,14 @@
-# Flux IDE Architecture
+# Arc IDE Architecture
 
-This document describes the system architecture of Flux IDE for contributors and maintainers.
+This document describes the system architecture of Arc IDE for contributors and maintainers.
 
 ## Component Overview
 
-Flux IDE uses a hybrid architecture: a **Go backend** for system operations and a **React frontend** for the user interface, connected via the Wails framework.
+Arc IDE uses a hybrid architecture: a **Go backend** for system operations and a **React frontend** for the user interface, connected via the Wails framework.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Flux IDE Application                         │
+│                         Arc IDE Application                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐ │
@@ -104,7 +104,7 @@ Data flows through the application in a unidirectional pattern:
 
 ## State Management
 
-Flux uses **Zustand** for state management with a single store pattern.
+Arc uses **Zustand** for state management with a single store pattern.
 
 ### Store Structure
 
@@ -194,7 +194,7 @@ store.setDiagnostics(2, 5);
 
 ## Adding New Features
 
-Follow this guide when adding new functionality to Flux IDE.
+Follow this guide when adding new functionality to Arc IDE.
 
 ### 1. Create the Go Backend (if needed)
 
@@ -364,7 +364,7 @@ async function handleSave() {
 ## Project Structure
 
 ```
-flux-ide/
+arc-ide/
 ├── main.go                 # Application entry point
 ├── app.go                  # App struct and business logic
 ├── interfaces.go           # Testable interfaces
@@ -382,7 +382,7 @@ flux-ide/
 │   └── package.json
 ├── build/                  # Build output
 ├── docs/
-│   ├── ARCHITECTURE.md    # This file
+│   ├── architecture.md    # This file
 │   └── tdd/               # TDD documentation per issue
 └── .github/workflows/     # CI/CD configuration
 ```

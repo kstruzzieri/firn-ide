@@ -1,7 +1,7 @@
 /**
  * Deep Ocean Theme for CodeMirror 6
  *
- * A custom dark theme that matches Flux IDE's Deep Ocean design system.
+ * A custom dark theme that matches Arc IDE's Deep Ocean design system.
  * Inspired by JetBrains' Island Dark and Deep Ocean themes.
  */
 

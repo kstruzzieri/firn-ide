@@ -292,7 +292,7 @@ describe('FileIcon', () => {
     });
 
     it('treats unknown extensionless files as default', () => {
-      expect(getFileType('flux')).toBe('default');
+      expect(getFileType('arc')).toBe('default');
       expect(getFileType('node')).toBe('default');
       expect(getFileType('CODEOWNERS')).toBe('default');
     });

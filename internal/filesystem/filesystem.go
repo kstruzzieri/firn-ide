@@ -1,4 +1,4 @@
-// Package filesystem provides file system operations for Flux IDE.
+// Package filesystem provides file system operations for Arc IDE.
 package filesystem
 
 import (

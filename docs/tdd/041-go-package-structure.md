@@ -32,7 +32,7 @@ This is a refactoring task - the "test" is that all existing functionality conti
 ## Before Structure
 
 ```
-flux-ide/
+arc-ide/
 ├── main.go
 ├── app.go
 ├── app_test.go
@@ -45,7 +45,7 @@ flux-ide/
 ## After Structure
 
 ```
-flux-ide/
+arc-ide/
 ├── main.go                       # Entry point + embed
 ├── app.go                        # Wails bindings (thin layer)
 ├── app_test.go                   # App tests
@@ -70,7 +70,7 @@ flux-ide/
 --- PASS: TestStartup (0.00s)
 ... (16 Go tests pass)
 PASS
-ok      flux    0.023s
+ok      arc0.023s
 ```
 
 ## TDD: After (All Tests Still Pass)
@@ -85,7 +85,7 @@ ok      flux    0.023s
 === RUN   TestWorkspaceInfoStruct
 --- PASS: TestWorkspaceInfoStruct (0.00s)
 PASS
-ok      flux    0.019s
+ok      arc0.019s
 === RUN   TestMockImplementsInterface
 --- PASS: TestMockImplementsInterface (0.00s)
 === RUN   TestMockReadFile
@@ -105,7 +105,7 @@ ok      flux    0.019s
 === RUN   TestReadDirectory_EmptyDirectory
 --- PASS: TestReadDirectory_EmptyDirectory (0.00s)
 PASS
-ok      flux/internal/filesystem    0.013s
+ok      arc/internal/filesystem    0.013s
 === RUN   TestMockManagerImplementsInterface
 --- PASS: TestMockManagerImplementsInterface (0.00s)
 === RUN   TestMockProcessImplementsInterface
@@ -113,7 +113,7 @@ ok      flux/internal/filesystem    0.013s
 === RUN   TestMockManagerStart
 --- PASS: TestMockManagerStart (0.00s)
 PASS
-ok      flux/internal/process    0.012s
+ok      arc/internal/process    0.012s
 ```
 
 ## Implementation Notes

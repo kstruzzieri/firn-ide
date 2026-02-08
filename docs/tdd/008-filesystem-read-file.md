@@ -56,7 +56,7 @@ panic: runtime error: invalid memory address or nil pointer dereference
 ... (13 tests fail)
 FAIL
 exit status 1
-FAIL    flux/internal/filesystem    0.009s
+FAIL    arc/internal/filesystem    0.009s
 ```
 
 ## Implementation Notes
@@ -118,7 +118,7 @@ A file is considered binary if it contains null bytes (0x00) in the first 8KB.
 === RUN   TestReadFileWithMetadata_EmptyFile
 --- PASS: TestReadFileWithMetadata_EmptyFile (0.00s)
 PASS
-ok      flux/internal/filesystem    0.011s
+ok      arc/internal/filesystem    0.011s
 ```
 
 ## Verification

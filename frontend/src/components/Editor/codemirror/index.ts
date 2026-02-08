@@ -1,5 +1,5 @@
 /**
- * CodeMirror 6 Integration for Flux IDE
+ * CodeMirror 6 Integration for Arc IDE
  *
  * Re-exports all CodeMirror utilities and components for use throughout the app.
  */
