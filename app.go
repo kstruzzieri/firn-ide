@@ -1,10 +1,10 @@
 package main
 
 import (
-	"context"
-
 	"arc/internal/filesystem"
+	"arc/internal/terminal"
 	"arc/internal/watcher"
+	"context"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -17,6 +17,7 @@ type App struct {
 	fileReader  *filesystem.FileReader
 	fileWriter  *filesystem.FileWriter
 	fileWatcher watcher.Watcher
+	termManager *terminal.Manager
 }
 
 // NewApp creates and returns a new App instance.
@@ -34,6 +35,7 @@ func NewApp() *App {
 		fileReader:  filesystem.NewFileReader(osFS),
 		fileWriter:  filesystem.NewFileWriter(osFS),
 		fileWatcher: fw,
+		termManager: terminal.NewManager(),
 	}
 }
 
@@ -124,4 +126,38 @@ func (a *App) OpenFolderDialog() (string, error) {
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ToggleMaximize() {
 	runtime.WindowToggleMaximise(a.ctx)
+}
+
+// CreateTerminal creates a new terminal
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CreateTerminal() (string, error) {
+	id, err := a.termManager.Create()
+	if err != nil {
+		return "", err
+	}
+
+	session, _ := a.termManager.Get(id)
+	go session.ReadLoop(func(data string) {
+		runtime.EventsEmit(a.ctx, "terminal:output", id, data)
+	})
+
+	return id, nil
+}
+
+// WriteTerminal passes strings from JS
+// This is exposed to the frontend via Wails bindings.
+func (a *App) WriteTerminal(id string, data string) error {
+	return a.termManager.Write(id, []byte(data))
+}
+
+// ResizeTerminal passes the new dimensions of the terminal window
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ResizeTerminal(id string, rows uint16, cols uint16) error {
+	return a.termManager.Resize(id, rows, cols)
+}
+
+// CloseTerminal terminates the terminal session and removes it from the manager.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CloseTerminal(id string) error {
+	return a.termManager.Close(id)
 }
