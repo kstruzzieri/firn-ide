@@ -3,6 +3,10 @@
 import {main} from '../models';
 import {filesystem} from '../models';
 
+export function CloseTerminal(arg1:string):Promise<void>;
+
+export function CreateTerminal():Promise<string>;
+
 export function GetWatchedPath():Promise<string>;
 
 export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
@@ -15,6 +19,8 @@ export function ReadDirectory(arg1:string):Promise<Array<filesystem.FileEntry>>;
 
 export function ReadFile(arg1:string):Promise<filesystem.FileContent>;
 
+export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function StartWatching(arg1:string):Promise<void>;
 
 export function StopWatching():Promise<void>;
@@ -22,3 +28,5 @@ export function StopWatching():Promise<void>;
 export function ToggleMaximize():Promise<void>;
 
 export function WriteFile(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
+
+export function WriteTerminal(arg1:string,arg2:string):Promise<void>;
