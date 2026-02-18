@@ -15,6 +15,10 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   WriteFile: jest.fn(),
   GetWatchedPath: jest.fn(),
   SetWatchedPath: jest.fn(),
+  CreateTerminal: jest.fn(() => Promise.resolve('term-1')),
+  WriteTerminal: jest.fn(),
+  CloseTerminal: jest.fn(),
+  ResizeTerminal: jest.fn(),
 }));
 
 // Mock useDirectoryTree to prevent automatic fetching

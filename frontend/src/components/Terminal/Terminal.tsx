@@ -1,6 +1,17 @@
 import styles from './Terminal.module.css';
 import { TerminalIcon, OutputIcon, AlertCircleIcon } from '../icons';
 import { useIDEStore, TerminalTab, useErrorCount, useWarningCount } from '../../stores/ideStore';
+import { useEffect, useRef } from 'react';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import {
+  CreateTerminal,
+  WriteTerminal,
+  CloseTerminal,
+  ResizeTerminal,
+} from '../../../wailsjs/go/main/App';
+import { EventsOn } from '../../../wailsjs/runtime';
 
 const TERMINAL_TABS: Array<{
   id: TerminalTab;
@@ -15,7 +26,6 @@ const TERMINAL_TABS: Array<{
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
-  const workingDirectory = useIDEStore((state) => state.workingDirectory);
   const errorCount = useErrorCount();
   const warningCount = useWarningCount();
 
@@ -46,7 +56,12 @@ export function Terminal() {
         })}
       </div>
       <div className={styles.content} role="tabpanel" tabIndex={0}>
-        {activeTab === 'terminal' && <TerminalContent workingDirectory={workingDirectory} />}
+        <div
+          className={styles.tabContent}
+          style={{ display: activeTab === 'terminal' ? 'block' : 'none' }}
+        >
+          <TerminalContent />
+        </div>
         {activeTab === 'output' && <OutputContent />}
         {activeTab === 'problems' && (
           <ProblemsContent errors={errorCount} warnings={warningCount} />
@@ -56,23 +71,89 @@ export function Terminal() {
   );
 }
 
-interface TerminalContentProps {
-  workingDirectory: string;
-}
+function TerminalContent() {
+  const containerDiv = useRef<HTMLDivElement>(null);
 
-function TerminalContent({ workingDirectory }: TerminalContentProps) {
-  const displayPath = workingDirectory || '~';
+  useEffect(() => {
+    if (!containerDiv.current) return;
 
-  return (
-    <div className={styles.terminalContent}>
-      <div className={styles.line}>
-        <span className={styles.prompt}>{displayPath}</span>
-        <span className={styles.cursor} aria-hidden="true">
-          ▋
-        </span>
-      </div>
-    </div>
-  );
+    const term = new XTerm({
+      theme: {
+        background: '#141C24',
+        foreground: '#E0E4EA',
+        cursor: '#4FC3F7',
+        cursorAccent: '#141C24',
+        selectionBackground: '#4FC3F733',
+        // ANSI colors — matched to Deep Ocean
+        black: '#1A2332',
+        red: '#FF6B6B',
+        green: '#69DB7C',
+        yellow: '#FFD43B',
+        blue: '#4FC3F7',
+        magenta: '#DA77F2',
+        cyan: '#66D9E8',
+        white: '#E0E4EA',
+        // Bright variants
+        brightBlack: '#3D5166',
+        brightRed: '#FF8787',
+        brightGreen: '#8CE99A',
+        brightYellow: '#FFE066',
+        brightBlue: '#74D0F7',
+        brightMagenta: '#E599F7',
+        brightCyan: '#99E9F2',
+        brightWhite: '#FFFFFF',
+      },
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: 13,
+      lineHeight: 1.2,
+      letterSpacing: -0.5,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(containerDiv.current);
+    fitAddon.fit();
+
+    let sessionId = '';
+
+    // Subscribe to terminal output BEFORE creating the terminal
+    // to avoid losing early output (e.g., the initial shell prompt).
+    const cancelOutput = EventsOn('terminal:output', (termId: string, data: string) => {
+      if (termId === sessionId) {
+        term.write(data);
+      }
+    });
+
+    CreateTerminal().then((id) => {
+      sessionId = id;
+
+      // Send correct dimensions to PTY
+      void ResizeTerminal(id, term.rows, term.cols);
+
+      term.onData((data) => {
+        void WriteTerminal(id, data);
+      });
+    });
+
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+      if (sessionId) {
+        void ResizeTerminal(sessionId, term.rows, term.cols);
+      }
+    });
+    resizeObserver.observe(containerDiv.current);
+
+    return () => {
+      cancelOutput();
+      if (sessionId) {
+        void CloseTerminal(sessionId);
+      }
+      resizeObserver.disconnect();
+      term.dispose();
+    };
+  }, []);
+
+  return <div ref={containerDiv} className={styles.terminalContent} />;
 }
 
 function OutputContent() {

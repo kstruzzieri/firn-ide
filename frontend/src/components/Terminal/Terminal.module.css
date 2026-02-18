@@ -67,35 +67,34 @@
 
 .content {
   flex: 1;
+  background: var(--surface-tab-bar);
+  overflow: hidden;
+  padding: 1px 8px 0;
+}
+
+.content > * {
   background: var(--surface-panel);
-  overflow: auto;
+  height: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tabContent {
+  height: 100%;
+  width: 100%;
 }
 
 .terminalContent {
-  padding: 12px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #141c24;
 }
 
-.line {
-  display: flex;
-  gap: 8px;
-}
-
-.prompt {
-  color: var(--accent);
-}
-
-.cursor {
-  color: var(--text-primary);
-  animation: blink 1s step-end infinite;
-}
-
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
+.terminalContent :global(.xterm-viewport),
+.terminalContent :global(.xterm-screen) {
+  padding-left: 8px !important;
+  padding-top: 4px !important;
 }
 
 .emptyState {
