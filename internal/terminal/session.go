@@ -3,6 +3,7 @@ package terminal
 import (
 	"os"
 	"os/exec"
+	"runtime"
 
 	"github.com/creack/pty"
 )
@@ -13,10 +14,20 @@ type Session struct {
 	running bool
 }
 
+func defaultShell() string {
+	if runtime.GOOS == "windows" {
+		if ps, err := exec.LookPath("powershell.exe"); err == nil {
+			return ps
+		}
+		return "cmd.exe"
+	}
+	return "/bin/sh"
+}
+
 func NewSession() (*Session, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
-		shell = "/bin/sh"
+		shell = defaultShell()
 	}
 	cmd := exec.Command(shell)
 	ptmx, err := pty.Start(cmd)

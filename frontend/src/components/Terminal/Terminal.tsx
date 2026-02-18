@@ -116,23 +116,22 @@ function TerminalContent() {
 
     let sessionId = '';
 
+    // Subscribe to terminal output BEFORE creating the terminal
+    // to avoid losing early output (e.g., the initial shell prompt).
+    const cancelOutput = EventsOn('terminal:output', (termId: string, data: string) => {
+      if (termId === sessionId) {
+        term.write(data);
+      }
+    });
+
     CreateTerminal().then((id) => {
       sessionId = id;
 
-      // Send correct dimensions to PTY before it draws the prompt
+      // Send correct dimensions to PTY
       void ResizeTerminal(id, term.rows, term.cols);
-
-      // Clear the stale initial prompt
-      term.clear();
 
       term.onData((data) => {
         void WriteTerminal(id, data);
-      });
-
-      EventsOn('terminal:output', (termId: string, data: string) => {
-        if (termId === id) {
-          term.write(data);
-        }
       });
     });
 
@@ -145,6 +144,7 @@ function TerminalContent() {
     resizeObserver.observe(containerDiv.current);
 
     return () => {
+      cancelOutput();
       if (sessionId) {
         void CloseTerminal(sessionId);
       }
