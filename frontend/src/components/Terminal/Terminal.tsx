@@ -56,6 +56,53 @@ const XTERM_THEME = {
   brightWhite: '#F5E6D3',
 };
 
+// Buffers terminal output per session until TerminalContent mounts and attaches.
+// This prevents losing early output (shell prompt, rc output) that the backend
+// emits before the React component has subscribed.
+const outputBuffers = new Map<string, string[]>();
+const outputListeners = new Map<string, (data: string) => void>();
+
+let globalOutputCleanup: (() => void) | null = null;
+
+function ensureGlobalOutputListener() {
+  if (globalOutputCleanup) return;
+  globalOutputCleanup = EventsOn('terminal:output', (termId: string, data: string) => {
+    const listener = outputListeners.get(termId);
+    if (listener) {
+      listener(data);
+    } else {
+      // Buffer output until a listener attaches
+      let buf = outputBuffers.get(termId);
+      if (!buf) {
+        buf = [];
+        outputBuffers.set(termId, buf);
+      }
+      buf.push(data);
+    }
+  });
+}
+
+function attachSessionListener(sessionId: string, onData: (data: string) => void) {
+  outputListeners.set(sessionId, onData);
+  // Replay any buffered output
+  const buf = outputBuffers.get(sessionId);
+  if (buf) {
+    for (const chunk of buf) {
+      onData(chunk);
+    }
+    outputBuffers.delete(sessionId);
+  }
+}
+
+function detachSessionListener(sessionId: string) {
+  outputListeners.delete(sessionId);
+}
+
+function cleanupSessionBuffers(sessionId: string) {
+  outputBuffers.delete(sessionId);
+  outputListeners.delete(sessionId);
+}
+
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
@@ -81,10 +128,17 @@ export function Terminal() {
     y: number;
   } | null>(null);
 
+  // Ensure the global output listener is active so no output is lost
+  useEffect(() => {
+    ensureGlobalOutputListener();
+  }, []);
+
   const createNewSession = useCallback(async () => {
     if (isCreatingRef.current) return;
     isCreatingRef.current = true;
     try {
+      // Register global listener before creating the PTY so early output is buffered
+      ensureGlobalOutputListener();
       const id = await CreateTerminal();
       sessionCountRef.current += 1;
       addSession({ id, title: `Terminal ${sessionCountRef.current}` });
@@ -106,6 +160,7 @@ export function Terminal() {
   const handleCloseSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
+      cleanupSessionBuffers(sessionId);
       void CloseTerminal(sessionId);
       removeSession(sessionId);
     },
@@ -295,6 +350,7 @@ export function Terminal() {
             closeContextMenu();
           }}
           onClose={() => {
+            cleanupSessionBuffers(contextMenu.sessionId);
             void CloseTerminal(contextMenu.sessionId);
             removeSession(contextMenu.sessionId);
             closeContextMenu();
@@ -315,8 +371,6 @@ interface SessionContextMenuProps {
 }
 
 function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionContextMenuProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onDismiss();
@@ -325,22 +379,26 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onDismiss]);
 
-  // Adjust position if menu would overflow viewport
-  useEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-      menuRef.current.style.left = `${window.innerWidth - rect.width - 4}px`;
-    }
-    if (rect.bottom > window.innerHeight) {
-      menuRef.current.style.top = `${window.innerHeight - rect.height - 4}px`;
-    }
-  }, []);
+  // Clamp menu position to viewport on mount via callback ref.
+  // The context menu remounts each time it opens, so this runs with fresh x/y.
+  const clampRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      if (rect.right > window.innerWidth) {
+        node.style.left = `${window.innerWidth - rect.width - 4}px`;
+      }
+      if (rect.bottom > window.innerHeight) {
+        node.style.top = `${window.innerHeight - rect.height - 4}px`;
+      }
+    },
+    [x, y]
+  );
 
   return (
     <>
       <div className={styles.contextMenuOverlay} onClick={onDismiss} />
-      <div ref={menuRef} className={styles.contextMenu} style={{ left: x, top: y }}>
+      <div ref={clampRef} className={styles.contextMenu} style={{ left: x, top: y }}>
         <button className={styles.contextMenuItem} onClick={onRename}>
           <svg
             width="12"
@@ -410,11 +468,9 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Subscribe to terminal output for this session
-    const cancelOutput = EventsOn('terminal:output', (termId: string, data: string) => {
-      if (termId === sessionId) {
-        term.write(data);
-      }
+    // Attach to the buffered output system - replays any early output automatically
+    attachSessionListener(sessionId, (data: string) => {
+      term.write(data);
     });
 
     // Send correct dimensions to PTY
@@ -431,7 +487,11 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
     resizeObserver.observe(containerDiv.current);
 
     return () => {
-      cancelOutput();
+      // Detach listener — output will be buffered until remount (e.g., panel un-collapse).
+      // We intentionally do NOT close the backend PTY here because TerminalContent unmounts
+      // when the bottom panel collapses, and users expect their sessions to persist.
+      // Backend sessions are only closed via explicit close button/context menu actions.
+      detachSessionListener(sessionId);
       resizeObserver.disconnect();
       term.dispose();
       termRef.current = null;

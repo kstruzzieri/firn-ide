@@ -196,12 +196,13 @@ describe('ideStore - terminal sessions', () => {
     addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
     addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
     addTerminalSession({ id: 'term-3', title: 'Terminal 3' });
+    addTerminalSession({ id: 'term-4', title: 'Terminal 4' });
     setActiveTerminalSession('term-2');
 
     removeTerminalSession('term-2');
 
-    // Should fall back to term-3 (same index position), not term-3 (last)
-    // Both happen to be term-3 here, so add a 4th to make it clear
+    // With [term-1, term-2 (active), term-3, term-4], removing term-2 should fall back
+    // to term-3 (the session now at the same index position), not term-4 (the last one).
     expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-3');
   });
 

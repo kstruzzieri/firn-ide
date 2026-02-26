@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -76,8 +77,8 @@ func (m *Manager) Close(id string) error {
 	return session.Close()
 }
 
-// CloseAll terminates all terminal sessions.
-func (m *Manager) CloseAll() {
+// CloseAll terminates all terminal sessions and returns any errors encountered.
+func (m *Manager) CloseAll() error {
 	m.mu.Lock()
 	sessions := make(map[string]*Session, len(m.sessions))
 	for k, v := range m.sessions {
@@ -86,7 +87,11 @@ func (m *Manager) CloseAll() {
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
-	for _, session := range sessions {
-		session.Close()
+	var errs []error
+	for id, session := range sessions {
+		if err := session.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing session %s: %w", id, err))
+		}
 	}
+	return errors.Join(errs...)
 }

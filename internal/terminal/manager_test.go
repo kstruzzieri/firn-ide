@@ -128,7 +128,9 @@ func TestManagerCloseAll(t *testing.T) {
 		t.Fatalf("Create() returned error: %v", err)
 	}
 
-	mgr.CloseAll()
+	if err := mgr.CloseAll(); err != nil {
+		t.Fatalf("CloseAll() returned error: %v", err)
+	}
 
 	// Creating after CloseAll should still work
 	id, err := mgr.Create()
