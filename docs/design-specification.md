@@ -101,7 +101,7 @@ The entire IDE accent cascades from a single CSS custom property, making workspa
 - Activity bar active indicator
 - Scrollbar thumbs
 - Editor current line highlight
-- Terminal prompt color
+- Terminal prompt color (note: the bottom tool panel currently uses a fixed orange accent via scoped `data-accent="orange"`, independent of workspace accent)
 - Status bar workspace label
 
 **CSS Implementation:**
@@ -843,8 +843,11 @@ Contents adapt to workspace type (Python workspace shows Python files first, etc
 
 - Default height: 200px
 - Min height: 100px
-- Background: `#161B22`
-- Tab bar for panel switching (Terminal, Problems, Run, etc.)
+- Background: `var(--surface-panel)` (`#060A0E`)
+- **Unified tab bar**: Single row with panel tabs (Output, Problems, Terminal) on the left and session tabs on the right, separated by a vertical divider. Session tabs only appear when the Terminal panel is active.
+- **Fixed orange accent** (`#F97316`): The bottom panel uses `data-accent="orange"` to scope its own accent independently of the workspace accent. This gives the terminal a consistent identity across all workspaces. The CSS uses `color-mix(in srgb, var(--accent) N%, transparent)` for all opacity variants, so if this decision changes later, removing the scoped `data-accent` will make it follow the workspace accent automatically.
+- **Terminal session features**: Multi-session tabs with drag-and-drop reorder, double-click rename, right-click context menu (Rename, Close Terminal), inline rename input, and a "+" button for new sessions.
+- **xterm.js theme**: Near-black background (`#0A0A0C`), warm parchment foreground (`#D4C4B0`), orange cursor and selection highlight. ANSI colors are neutral and do not change with accent.
 
 ### Status Bar
 

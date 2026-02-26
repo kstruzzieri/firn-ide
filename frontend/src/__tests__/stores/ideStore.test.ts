@@ -10,6 +10,8 @@ beforeEach(() => {
     isRightPanelCollapsed: false,
     isBottomPanelCollapsed: false,
     panelSizes: { left: 260, right: 280, bottom: 200 },
+    terminalSessions: [],
+    activeTerminalSessionId: null,
   });
 });
 
@@ -143,6 +145,144 @@ describe('ideStore - setPanelSize', () => {
     const { setPanelSize } = useIDEStore.getState();
     setPanelSize('left', Infinity);
     expect(useIDEStore.getState().panelSizes.left).toBe(260);
+  });
+});
+
+describe('ideStore - terminal sessions', () => {
+  it('should add a terminal session and set it active', () => {
+    const { addTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+
+    const state = useIDEStore.getState();
+    expect(state.terminalSessions).toHaveLength(1);
+    expect(state.terminalSessions[0]).toEqual({ id: 'term-1', title: 'Terminal 1' });
+    expect(state.activeTerminalSessionId).toBe('term-1');
+  });
+
+  it('should switch active to the newly added session', () => {
+    const { addTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-2');
+  });
+
+  it('should remove a session and fall back active to last remaining', () => {
+    const { addTerminalSession, removeTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+
+    removeTerminalSession('term-2');
+
+    const state = useIDEStore.getState();
+    expect(state.terminalSessions).toHaveLength(1);
+    expect(state.activeTerminalSessionId).toBe('term-1');
+  });
+
+  it('should set activeTerminalSessionId to null when last session is removed', () => {
+    const { addTerminalSession, removeTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+
+    removeTerminalSession('term-1');
+
+    const state = useIDEStore.getState();
+    expect(state.terminalSessions).toHaveLength(0);
+    expect(state.activeTerminalSessionId).toBeNull();
+  });
+
+  it('should fall back to adjacent session when removing middle active session', () => {
+    const { addTerminalSession, setActiveTerminalSession, removeTerminalSession } =
+      useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+    addTerminalSession({ id: 'term-3', title: 'Terminal 3' });
+    addTerminalSession({ id: 'term-4', title: 'Terminal 4' });
+    setActiveTerminalSession('term-2');
+
+    removeTerminalSession('term-2');
+
+    // With [term-1, term-2 (active), term-3, term-4], removing term-2 should fall back
+    // to term-3 (the session now at the same index position), not term-4 (the last one).
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-3');
+  });
+
+  it('should fall back to left neighbor when removing last-position active session', () => {
+    const { addTerminalSession, removeTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+    addTerminalSession({ id: 'term-3', title: 'Terminal 3' });
+    // term-3 is active (last added)
+
+    removeTerminalSession('term-3');
+
+    // Should fall back to term-2 (left neighbor), not term-1
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-2');
+  });
+
+  it('should not change active when removing a non-active session', () => {
+    const { addTerminalSession, setActiveTerminalSession, removeTerminalSession } =
+      useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+    setActiveTerminalSession('term-1');
+
+    removeTerminalSession('term-2');
+
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-1');
+  });
+
+  it('should set active terminal session', () => {
+    const { addTerminalSession, setActiveTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+
+    setActiveTerminalSession('term-1');
+
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-1');
+  });
+
+  it('should rename a terminal session', () => {
+    const { addTerminalSession, renameTerminalSession } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+
+    renameTerminalSession('term-1', 'My Shell');
+
+    expect(useIDEStore.getState().terminalSessions[0].title).toBe('My Shell');
+  });
+
+  it('should reorder terminal sessions', () => {
+    const { addTerminalSession, reorderTerminalSessions } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+    addTerminalSession({ id: 'term-3', title: 'Terminal 3' });
+
+    reorderTerminalSessions(0, 2);
+
+    const sessions = useIDEStore.getState().terminalSessions;
+    expect(sessions.map((s) => s.id)).toEqual(['term-2', 'term-3', 'term-1']);
+  });
+
+  it('should handle reorder with same index (no-op)', () => {
+    const { addTerminalSession, reorderTerminalSessions } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+
+    reorderTerminalSessions(0, 0);
+
+    const sessions = useIDEStore.getState().terminalSessions;
+    expect(sessions.map((s) => s.id)).toEqual(['term-1', 'term-2']);
+  });
+
+  it('should ignore out-of-bounds reorder indices', () => {
+    const { addTerminalSession, reorderTerminalSessions } = useIDEStore.getState();
+    addTerminalSession({ id: 'term-1', title: 'Terminal 1' });
+    addTerminalSession({ id: 'term-2', title: 'Terminal 2' });
+
+    reorderTerminalSessions(-1, 0);
+    reorderTerminalSessions(0, 5);
+
+    const sessions = useIDEStore.getState().terminalSessions;
+    expect(sessions.map((s) => s.id)).toEqual(['term-1', 'term-2']);
   });
 });
 
