@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logos/banner.svg" alt="Arc IDE - Lightweight IDE, Heavyweight Focus" width="800">
+  <img src="docs/screenshots/terminal-unified-tabbar.png" alt="Arc IDE - Lightweight IDE, Heavyweight Focus" width="800">
 </p>
 
 <p align="center">
