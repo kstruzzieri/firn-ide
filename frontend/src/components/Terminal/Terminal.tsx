@@ -1,7 +1,14 @@
 import styles from './Terminal.module.css';
-import { TerminalIcon, OutputIcon, AlertCircleIcon } from '../icons';
-import { useIDEStore, TerminalTab, useErrorCount, useWarningCount } from '../../stores/ideStore';
-import { useEffect, useRef } from 'react';
+import { TerminalIcon, OutputIcon, AlertCircleIcon, PlusIcon } from '../icons';
+import {
+  useIDEStore,
+  TerminalTab,
+  useErrorCount,
+  useWarningCount,
+  useTerminalSessions,
+  useActiveTerminalSessionId,
+} from '../../stores/ideStore';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -18,19 +25,153 @@ const TERMINAL_TABS: Array<{
   icon: typeof TerminalIcon;
   label: string;
 }> = [
-  { id: 'terminal', icon: TerminalIcon, label: 'Terminal' },
   { id: 'output', icon: OutputIcon, label: 'Output' },
   { id: 'problems', icon: AlertCircleIcon, label: 'Problems' },
+  { id: 'terminal', icon: TerminalIcon, label: 'Terminal' },
 ];
+
+const TERMINAL_ACCENT = '#f97316';
+
+const XTERM_THEME = {
+  background: '#0A0A0C',
+  foreground: '#D4C4B0',
+  cursor: TERMINAL_ACCENT,
+  cursorAccent: '#0A0A0C',
+  selectionBackground: `${TERMINAL_ACCENT}33`,
+  black: '#0A0A0C',
+  red: '#FF6B6B',
+  green: '#69DB7C',
+  yellow: '#FFD43B',
+  blue: '#4FC3F7',
+  magenta: '#DA77F2',
+  cyan: '#66D9E8',
+  white: '#D4C4B0',
+  brightBlack: '#4A3F35',
+  brightRed: '#FF8787',
+  brightGreen: '#8CE99A',
+  brightYellow: '#FFE066',
+  brightBlue: '#74D0F7',
+  brightMagenta: '#E599F7',
+  brightCyan: '#99E9F2',
+  brightWhite: '#F5E6D3',
+};
 
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
   const errorCount = useErrorCount();
   const warningCount = useWarningCount();
+  const terminalSessions = useTerminalSessions();
+  const activeSessionId = useActiveTerminalSessionId();
+  const addSession = useIDEStore((state) => state.addTerminalSession);
+  const removeSession = useIDEStore((state) => state.removeTerminalSession);
+  const setActiveSession = useIDEStore((state) => state.setActiveTerminalSession);
+  const renameSession = useIDEStore((state) => state.renameTerminalSession);
+  const reorderSessions = useIDEStore((state) => state.reorderTerminalSessions);
+  const showToast = useIDEStore((state) => state.showToast);
+
+  const sessionCountRef = useRef(0);
+  const isCreatingRef = useRef(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    sessionId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const createNewSession = useCallback(async () => {
+    if (isCreatingRef.current) return;
+    isCreatingRef.current = true;
+    try {
+      const id = await CreateTerminal();
+      sessionCountRef.current += 1;
+      addSession({ id, title: `Terminal ${sessionCountRef.current}` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      showToast(`Failed to create terminal: ${message}`, 'error');
+    } finally {
+      isCreatingRef.current = false;
+    }
+  }, [addSession, showToast]);
+
+  // Auto-create a session when switching to the terminal tab with no sessions
+  useEffect(() => {
+    if (activeTab === 'terminal' && terminalSessions.length === 0) {
+      createNewSession();
+    }
+  }, [activeTab, terminalSessions.length, createNewSession]);
+
+  const handleCloseSession = useCallback(
+    (e: React.MouseEvent, sessionId: string) => {
+      e.stopPropagation();
+      void CloseTerminal(sessionId);
+      removeSession(sessionId);
+    },
+    [removeSession]
+  );
+
+  const startRename = (session: { id: string; title: string }) => {
+    setRenamingId(session.id);
+    setRenameValue(session.title);
+  };
+
+  const commitRename = () => {
+    if (renamingId && renameValue.trim()) {
+      renameSession(renamingId, renameValue.trim());
+    }
+    setRenamingId(null);
+  };
+
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingId]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string) => {
+    e.preventDefault();
+    setContextMenu({ sessionId, x: e.clientX, y: e.clientY });
+  }, []);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent, toIndex: number) => {
+      e.preventDefault();
+      if (dragIndex !== null && dragIndex !== toIndex) {
+        reorderSessions(dragIndex, toIndex);
+      }
+      setDragIndex(null);
+      setDragOverIndex(null);
+    },
+    [dragIndex, reorderSessions]
+  );
+
+  const handleDragEnd = useCallback(() => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }, []);
 
   return (
-    <div className={styles.terminal}>
+    <div className={styles.terminal} data-accent="orange">
       <div className={styles.tabBar} role="tablist" aria-label="Terminal panels">
         {TERMINAL_TABS.map(({ id, icon: Icon, label }) => {
           const isActive = id === activeTab;
@@ -54,59 +195,211 @@ export function Terminal() {
             </button>
           );
         })}
+        {activeTab === 'terminal' && terminalSessions.length > 0 && (
+          <>
+            <div className={styles.divider} />
+            {terminalSessions.map((session, index) => {
+              const isActive = session.id === activeSessionId;
+              const isRenaming = session.id === renamingId;
+              const isDragging = dragIndex === index;
+              const isDragOver = dragOverIndex === index && dragIndex !== index;
+
+              return (
+                <div
+                  key={session.id}
+                  className={`${styles.sessionTab} ${isActive ? styles.active : ''} ${isDragging ? styles.dragging : ''} ${isDragOver ? styles.dragOver : ''}`}
+                  role="tab"
+                  tabIndex={0}
+                  aria-selected={isActive}
+                  onClick={() => setActiveSession(session.id)}
+                  onDoubleClick={() => startRename(session)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setActiveSession(session.id);
+                    }
+                  }}
+                  onContextMenu={(e) => handleContextMenu(e, session.id)}
+                  draggable={!isRenaming}
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDrop={(e) => handleDrop(e, index)}
+                  onDragEnd={handleDragEnd}
+                  title={session.title}
+                >
+                  <TerminalIcon aria-hidden="true" />
+                  {isRenaming ? (
+                    <input
+                      ref={renameInputRef}
+                      className={styles.sessionTabInput}
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename();
+                        if (e.key === 'Escape') setRenamingId(null);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className={styles.sessionTabLabel}>{session.title}</span>
+                  )}
+                  <button
+                    className={styles.sessionTabClose}
+                    onClick={(e) => handleCloseSession(e, session.id)}
+                    aria-label={`Close ${session.title}`}
+                  >
+                    &times;
+                  </button>
+                </div>
+              );
+            })}
+            <button
+              className={styles.newSessionButton}
+              onClick={createNewSession}
+              aria-label="New terminal session"
+              title="New Terminal"
+            >
+              <PlusIcon aria-hidden="true" />
+            </button>
+          </>
+        )}
       </div>
       <div className={styles.content} role="tabpanel" tabIndex={0}>
         <div
           className={styles.tabContent}
-          style={{ display: activeTab === 'terminal' ? 'block' : 'none' }}
+          style={{ display: activeTab === 'terminal' ? 'flex' : 'none' }}
         >
-          <TerminalContent />
+          <div className={styles.sessionsContainer}>
+            {terminalSessions.map((session) => (
+              <TerminalContent
+                key={session.id}
+                sessionId={session.id}
+                isVisible={session.id === activeSessionId}
+              />
+            ))}
+          </div>
         </div>
         {activeTab === 'output' && <OutputContent />}
         {activeTab === 'problems' && (
           <ProblemsContent errors={errorCount} warnings={warningCount} />
         )}
       </div>
+      {contextMenu && (
+        <SessionContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onRename={() => {
+            const session = terminalSessions.find((s) => s.id === contextMenu.sessionId);
+            if (session) startRename(session);
+            closeContextMenu();
+          }}
+          onClose={() => {
+            void CloseTerminal(contextMenu.sessionId);
+            removeSession(contextMenu.sessionId);
+            closeContextMenu();
+          }}
+          onDismiss={closeContextMenu}
+        />
+      )}
     </div>
   );
 }
 
-function TerminalContent() {
+interface SessionContextMenuProps {
+  x: number;
+  y: number;
+  onRename: () => void;
+  onClose: () => void;
+  onDismiss: () => void;
+}
+
+function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onDismiss();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onDismiss]);
+
+  // Adjust position if menu would overflow viewport
+  useEffect(() => {
+    if (!menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      menuRef.current.style.left = `${window.innerWidth - rect.width - 4}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+      menuRef.current.style.top = `${window.innerHeight - rect.height - 4}px`;
+    }
+  }, []);
+
+  return (
+    <>
+      <div className={styles.contextMenuOverlay} onClick={onDismiss} />
+      <div ref={menuRef} className={styles.contextMenu} style={{ left: x, top: y }}>
+        <button className={styles.contextMenuItem} onClick={onRename}>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+          </svg>
+          Rename
+        </button>
+        <div className={styles.contextMenuDivider} />
+        <button
+          className={`${styles.contextMenuItem} ${styles.contextMenuItemDanger}`}
+          onClick={onClose}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+          Close Terminal
+        </button>
+      </div>
+    </>
+  );
+}
+
+interface TerminalContentProps {
+  sessionId: string;
+  isVisible: boolean;
+}
+
+function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
   const containerDiv = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     if (!containerDiv.current) return;
 
     const term = new XTerm({
-      theme: {
-        background: '#141C24',
-        foreground: '#E0E4EA',
-        cursor: '#4FC3F7',
-        cursorAccent: '#141C24',
-        selectionBackground: '#4FC3F733',
-        // ANSI colors — matched to Deep Ocean
-        black: '#1A2332',
-        red: '#FF6B6B',
-        green: '#69DB7C',
-        yellow: '#FFD43B',
-        blue: '#4FC3F7',
-        magenta: '#DA77F2',
-        cyan: '#66D9E8',
-        white: '#E0E4EA',
-        // Bright variants
-        brightBlack: '#3D5166',
-        brightRed: '#FF8787',
-        brightGreen: '#8CE99A',
-        brightYellow: '#FFE066',
-        brightBlue: '#74D0F7',
-        brightMagenta: '#E599F7',
-        brightCyan: '#99E9F2',
-        brightWhite: '#FFFFFF',
-      },
+      theme: XTERM_THEME,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: 13,
       lineHeight: 1.2,
-      letterSpacing: -0.5,
+      letterSpacing: -1,
     });
 
     const fitAddon = new FitAddon();
@@ -114,46 +407,58 @@ function TerminalContent() {
     term.open(containerDiv.current);
     fitAddon.fit();
 
-    let sessionId = '';
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
 
-    // Subscribe to terminal output BEFORE creating the terminal
-    // to avoid losing early output (e.g., the initial shell prompt).
+    // Subscribe to terminal output for this session
     const cancelOutput = EventsOn('terminal:output', (termId: string, data: string) => {
       if (termId === sessionId) {
         term.write(data);
       }
     });
 
-    CreateTerminal().then((id) => {
-      sessionId = id;
+    // Send correct dimensions to PTY
+    void ResizeTerminal(sessionId, term.rows, term.cols);
 
-      // Send correct dimensions to PTY
-      void ResizeTerminal(id, term.rows, term.cols);
-
-      term.onData((data) => {
-        void WriteTerminal(id, data);
-      });
+    term.onData((data) => {
+      void WriteTerminal(sessionId, data);
     });
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
-      if (sessionId) {
-        void ResizeTerminal(sessionId, term.rows, term.cols);
-      }
+      void ResizeTerminal(sessionId, term.rows, term.cols);
     });
     resizeObserver.observe(containerDiv.current);
 
     return () => {
       cancelOutput();
-      if (sessionId) {
-        void CloseTerminal(sessionId);
-      }
       resizeObserver.disconnect();
       term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
     };
-  }, []);
+  }, [sessionId]);
 
-  return <div ref={containerDiv} className={styles.terminalContent} />;
+  // Refit when visibility changes (tab switch)
+  useEffect(() => {
+    if (isVisible && fitAddonRef.current && termRef.current) {
+      // Delay fit slightly so the container has its correct dimensions
+      requestAnimationFrame(() => {
+        fitAddonRef.current?.fit();
+        if (termRef.current) {
+          void ResizeTerminal(sessionId, termRef.current.rows, termRef.current.cols);
+        }
+      });
+    }
+  }, [isVisible, sessionId]);
+
+  return (
+    <div
+      ref={containerDiv}
+      className={styles.terminalContent}
+      style={{ display: isVisible ? 'block' : 'none' }}
+    />
+  );
 }
 
 function OutputContent() {

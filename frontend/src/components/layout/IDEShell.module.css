@@ -100,7 +100,7 @@
   height: var(--panel-bottom-height);
   min-height: 0;
   background: var(--surface-panel);
-  border: 1px solid var(--surface-border-subtle);
+  border: 1px solid color-mix(in srgb, var(--accent-orange) 20%, transparent);
   border-radius: var(--panel-radius);
   overflow: hidden;
   display: flex;

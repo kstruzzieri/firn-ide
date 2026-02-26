@@ -30,6 +30,11 @@ export interface CursorPosition {
   column: number;
 }
 
+export interface TerminalSession {
+  id: string;
+  title: string;
+}
+
 interface IDEState {
   // Workspace
   workspace: WorkspaceInfo | null;
@@ -62,6 +67,8 @@ interface IDEState {
 
   // Terminal
   activeTerminalTab: TerminalTab;
+  terminalSessions: TerminalSession[];
+  activeTerminalSessionId: string | null;
   workingDirectory: string;
 
   // Status
@@ -106,6 +113,11 @@ interface IDEActions {
 
   // Terminal actions
   setTerminalTab: (tab: TerminalTab) => void;
+  addTerminalSession: (session: TerminalSession) => void;
+  removeTerminalSession: (sessionId: string) => void;
+  setActiveTerminalSession: (sessionId: string) => void;
+  renameTerminalSession: (sessionId: string, title: string) => void;
+  reorderTerminalSessions: (fromIndex: number, toIndex: number) => void;
   setWorkingDirectory: (path: string) => void;
 
   // Status actions
@@ -137,6 +149,8 @@ export const useIDEStore = create<IDEStore>()(
       cursorPosition: { line: 1, column: 1 },
       toast: null,
       activeTerminalTab: 'terminal',
+      terminalSessions: [],
+      activeTerminalSessionId: null,
       workingDirectory: '',
       gitBranch: '',
       errorCount: 0,
@@ -278,6 +292,68 @@ export const useIDEStore = create<IDEStore>()(
       // Terminal actions
       setTerminalTab: (activeTerminalTab) => set({ activeTerminalTab }, false, 'setTerminalTab'),
 
+      addTerminalSession: (session) =>
+        set(
+          (state) => ({
+            terminalSessions: [...state.terminalSessions, session],
+            activeTerminalSessionId: session.id,
+          }),
+          false,
+          'addTerminalSession'
+        ),
+
+      removeTerminalSession: (sessionId) =>
+        set(
+          (state) => {
+            const oldIndex = state.terminalSessions.findIndex((s) => s.id === sessionId);
+            const newSessions = state.terminalSessions.filter((s) => s.id !== sessionId);
+            let newActiveId = state.activeTerminalSessionId;
+            if (state.activeTerminalSessionId === sessionId) {
+              // Fall back to adjacent session: prefer left neighbor, then right, then null
+              const fallbackIndex = Math.min(oldIndex, newSessions.length - 1);
+              newActiveId = fallbackIndex >= 0 ? newSessions[fallbackIndex].id : null;
+            }
+            return { terminalSessions: newSessions, activeTerminalSessionId: newActiveId };
+          },
+          false,
+          'removeTerminalSession'
+        ),
+
+      setActiveTerminalSession: (sessionId) =>
+        set({ activeTerminalSessionId: sessionId }, false, 'setActiveTerminalSession'),
+
+      renameTerminalSession: (sessionId, title) =>
+        set(
+          (state) => ({
+            terminalSessions: state.terminalSessions.map((s) =>
+              s.id === sessionId ? { ...s, title } : s
+            ),
+          }),
+          false,
+          'renameTerminalSession'
+        ),
+
+      reorderTerminalSessions: (fromIndex, toIndex) =>
+        set(
+          (state) => {
+            if (
+              fromIndex === toIndex ||
+              fromIndex < 0 ||
+              toIndex < 0 ||
+              fromIndex >= state.terminalSessions.length ||
+              toIndex >= state.terminalSessions.length
+            ) {
+              return state;
+            }
+            const sessions = [...state.terminalSessions];
+            const [moved] = sessions.splice(fromIndex, 1);
+            sessions.splice(toIndex, 0, moved);
+            return { terminalSessions: sessions };
+          },
+          false,
+          'reorderTerminalSessions'
+        ),
+
       setWorkingDirectory: (workingDirectory) =>
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
@@ -308,6 +384,14 @@ export const useActiveFile = () =>
   });
 export const useCursorPosition = () => useIDEStore((state) => state.cursorPosition);
 export const useTerminalTab = () => useIDEStore((state) => state.activeTerminalTab);
+export const useTerminalSessions = () => useIDEStore((state) => state.terminalSessions);
+export const useActiveTerminalSessionId = () =>
+  useIDEStore((state) => state.activeTerminalSessionId);
+export const useActiveTerminalSession = () =>
+  useIDEStore((state) => {
+    const id = state.activeTerminalSessionId;
+    return id ? (state.terminalSessions.find((s) => s.id === id) ?? null) : null;
+  });
 export const useGitBranch = () => useIDEStore((state) => state.gitBranch);
 export const useErrorCount = () => useIDEStore((state) => state.errorCount);
 export const useWarningCount = () => useIDEStore((state) => state.warningCount);

@@ -77,10 +77,15 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 - [ ] Send keyboard input to backend
 - [ ] Handle resize events, match Deep Ocean theme
 
-### Issue #10: Terminal - Multiple Sessions
-- [ ] Create/switch/close terminal tabs
-- [ ] Rename terminal tabs
-- [ ] Kill process on tab close
+### Issue #10: Terminal - Multiple Sessions & Unified Tab Bar
+- [x] Unified single-row tab bar (Output/Problems/Terminal + session tabs)
+- [x] Create/switch/close terminal session tabs
+- [x] Rename terminal tabs (double-click or right-click context menu)
+- [x] Drag-and-drop tab reorder
+- [x] Right-click context menu (Rename, Close Terminal)
+- [x] Fixed orange accent for bottom panel (`data-accent="orange"`)
+- [x] xterm.js theme: near-black bg, warm foreground, orange cursor
+- [ ] Kill process on tab close (backend: sends SIGHUP on CloseTerminal)
 
 ---
 
