@@ -7,7 +7,7 @@ import (
 
 func TestManagerCreateUniqueIDs(t *testing.T) {
 	mgr := NewManager()
-	defer mgr.CloseAll()
+	defer func() { _ = mgr.CloseAll() }()
 
 	id1, err := mgr.Create()
 	if err != nil {
@@ -26,7 +26,7 @@ func TestManagerCreateUniqueIDs(t *testing.T) {
 
 func TestManagerIDUniquenessAfterDeletion(t *testing.T) {
 	mgr := NewManager()
-	defer mgr.CloseAll()
+	defer func() { _ = mgr.CloseAll() }()
 
 	id1, err := mgr.Create()
 	if err != nil {
@@ -78,7 +78,7 @@ func TestManagerResizeNotFound(t *testing.T) {
 
 func TestManagerConcurrentAccess(t *testing.T) {
 	mgr := NewManager()
-	defer mgr.CloseAll()
+	defer func() { _ = mgr.CloseAll() }()
 
 	const n = 5
 	var wg sync.WaitGroup
