@@ -21,7 +21,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error('Arc IDE Error:', error, errorInfo);
+    console.error('Firn IDE Error:', error, errorInfo);
   }
 
   render(): ReactNode {

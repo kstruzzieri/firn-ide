@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firn — Rounded Font Exploration</title>
+  <!-- Google Fonts: rounded/soft options -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700&family=Varela+Round&family=Quicksand:wght@300;400;500;600;700&family=Comfortaa:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0A0E14;
+      color: #E6EDF3;
+      font-family: 'SF Pro Display', 'Inter', system-ui, sans-serif;
+      padding: 40px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 300;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #8B949E;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #6E7681;
+      margin-bottom: 60px;
+      letter-spacing: 1px;
+    }
+
+    .font-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      max-width: 1200px;
+    }
+
+    .font-card {
+      background: #0D1117;
+      border: 1px solid #21262D;
+      border-radius: 12px;
+      padding: 40px;
+      position: relative;
+    }
+
+    .font-card:hover { border-color: #30363D; }
+
+    .font-label {
+      display: inline-block;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #0EA5E9;
+      background: rgba(14, 165, 233, 0.1);
+      border: 1px solid rgba(14, 165, 233, 0.2);
+      padding: 4px 10px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+
+    .font-name {
+      font-size: 18px;
+      font-weight: 500;
+      color: #E6EDF3;
+      margin-bottom: 6px;
+    }
+
+    .font-desc {
+      font-size: 12px;
+      color: #6E7681;
+      margin-bottom: 32px;
+      line-height: 1.5;
+    }
+
+    .logo-row {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .logo-showcase {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100px;
+      margin-bottom: 12px;
+    }
+
+    /* The FIRN wordmark rendered as HTML for real font rendering */
+    .firn-wordmark {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      user-select: none;
+    }
+
+    .firn-wordmark .letter {
+      color: #38BDF8;
+      line-height: 1;
+    }
+
+    .firn-wordmark .bars-i {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin: 0 2px;
+    }
+
+    .firn-wordmark .bar {
+      border-radius: 99px;
+    }
+
+    /* Size: Large (for showcase) */
+    .firn-large .letter { font-size: 64px; }
+    .firn-large .bars-i { gap: 3px; padding: 8px 0; }
+    .firn-large .bar-1 { width: 18px; height: 4px; background: #BAE6FD; opacity: 0.5; }
+    .firn-large .bar-2 { width: 22px; height: 6px; background: #7DD3FC; opacity: 0.65; }
+    .firn-large .bar-3 { width: 26px; height: 8px; background: #38BDF8; opacity: 0.8; }
+    .firn-large .bar-4 { width: 28px; height: 10px; background: #0EA5E9; opacity: 0.9; }
+    .firn-large .bar-5 { width: 30px; height: 12px; background: #0284C7; }
+
+    /* Size: Small (for header preview) */
+    .firn-small .letter { font-size: 15px; }
+    .firn-small .bars-i { gap: 1px; padding: 2px 0; }
+    .firn-small .bar-1 { width: 5px; height: 1.5px; background: #BAE6FD; opacity: 0.5; }
+    .firn-small .bar-2 { width: 6px; height: 2px; background: #7DD3FC; opacity: 0.65; }
+    .firn-small .bar-3 { width: 7px; height: 2.5px; background: #38BDF8; opacity: 0.8; }
+    .firn-small .bar-4 { width: 8px; height: 3px; background: #0EA5E9; opacity: 0.9; }
+    .firn-small .bar-5 { width: 8.5px; height: 3.5px; background: #0284C7; }
+
+    /* Size: Medium (for weight comparison) */
+    .firn-med .letter { font-size: 36px; }
+    .firn-med .bars-i { gap: 2px; padding: 4px 0; }
+    .firn-med .bar-1 { width: 10px; height: 2.5px; background: #BAE6FD; opacity: 0.5; }
+    .firn-med .bar-2 { width: 12px; height: 3.5px; background: #7DD3FC; opacity: 0.65; }
+    .firn-med .bar-3 { width: 14px; height: 5px; background: #38BDF8; opacity: 0.8; }
+    .firn-med .bar-4 { width: 16px; height: 6px; background: #0EA5E9; opacity: 0.9; }
+    .firn-med .bar-5 { width: 17px; height: 7px; background: #0284C7; }
+
+    .header-preview {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #161B22;
+      border: 1px solid #21262D;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+
+    .header-sep {
+      width: 1px;
+      height: 18px;
+      background: #30363D;
+    }
+
+    .header-workspace {
+      color: #8B949E;
+      font-size: 12px;
+    }
+
+    .ws-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background: #0EA5E9;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .header-spacer { flex: 1; }
+
+    .header-action {
+      color: #484F58;
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+
+    .weights-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #21262D;
+    }
+
+    .weight-label {
+      font-size: 10px;
+      color: #484F58;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .weight-row {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+
+    .weight-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .weight-name {
+      font-size: 9px;
+      color: #484F58;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .section {
+      margin-top: 80px;
+      padding-top: 40px;
+      border-top: 1px solid #21262D;
+      max-width: 1200px;
+    }
+
+    h2 {
+      font-size: 16px;
+      font-weight: 400;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #8B949E;
+      margin-bottom: 24px;
+    }
+
+    .comparison-row {
+      display: flex;
+      align-items: center;
+      gap: 48px;
+      flex-wrap: wrap;
+    }
+
+    .comparison-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .comparison-label {
+      font-size: 10px;
+      color: #484F58;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Firn — Rounded Font Exploration</h1>
+  <p class="subtitle">Finding a font whose curves harmonize with the layered compression bars</p>
+
+  <div class="font-grid">
+
+    <!-- ====== NUNITO ====== -->
+    <div class="font-card">
+      <span class="font-label">Option A</span>
+      <h3 class="font-name">Nunito</h3>
+      <p class="font-desc">Rounded terminals on every stroke. Warm and approachable while still clean. The rounded ends of F, R, N echo the pill-shaped bars directly.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-wordmark firn-large">
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">N</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-wordmark firn-small">
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 300;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 300;">R</span>
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 300;">N</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 500;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 500;">R</span>
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 500;">N</span>
+            </div>
+            <span class="weight-name">Medium 500</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 700;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 700;">R</span>
+              <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 700;">N</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== VARELA ROUND ====== -->
+    <div class="font-card">
+      <span class="font-label">Option B</span>
+      <h3 class="font-name">Varela Round</h3>
+      <p class="font-desc">Fully rounded geometric sans. Every terminal and corner is rounded — the closest match to the pill-shaped bars. Only comes in one weight (400).</p>
+
+      <div class="logo-showcase">
+        <div class="firn-wordmark firn-large">
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">N</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-wordmark firn-small">
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Single weight only</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">R</span>
+              <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">N</span>
+            </div>
+            <span class="weight-name">Regular 400</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== QUICKSAND ====== -->
+    <div class="font-card">
+      <span class="font-label">Option C</span>
+      <h3 class="font-name">Quicksand</h3>
+      <p class="font-desc">Geometric rounded sans-serif with a wider, more open feel. The perfectly circular bowls in R create a nice echo with the rounded bar ends. Multiple weights available.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-wordmark firn-large">
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">N</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-wordmark firn-small">
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 300;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 300;">R</span>
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 300;">N</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 500;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 500;">R</span>
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 500;">N</span>
+            </div>
+            <span class="weight-name">Medium 500</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 700;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 700;">R</span>
+              <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 700;">N</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== COMFORTAA ====== -->
+    <div class="font-card">
+      <span class="font-label">Option D</span>
+      <h3 class="font-name">Comfortaa</h3>
+      <p class="font-desc">Ultra-rounded geometric font. Strokes are thin and every terminus is a perfect circle. Feels futuristic and minimal — the most bar-like letterforms of any option.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-wordmark firn-large">
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">N</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-wordmark firn-small">
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 300;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 300;">R</span>
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 300;">N</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 500;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 500;">R</span>
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 500;">N</span>
+            </div>
+            <span class="weight-name">Medium 500</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 700;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 700;">R</span>
+              <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 700;">N</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== PLUS JAKARTA SANS ====== -->
+    <div class="font-card">
+      <span class="font-label">Option E</span>
+      <h3 class="font-name">Plus Jakarta Sans</h3>
+      <p class="font-desc">Modern geometric with softened terminals — not fully rounded like Nunito, but softer than Inter/SF Pro. Professional yet warm. Popular in modern SaaS.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-wordmark firn-large">
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">N</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-wordmark firn-small">
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 300;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 300;">R</span>
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 300;">N</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 500;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 500;">R</span>
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 500;">N</span>
+            </div>
+            <span class="weight-name">Medium 500</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700;">R</span>
+              <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700;">N</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== POPPINS ====== -->
+    <div class="font-card">
+      <span class="font-label">Option F</span>
+      <h3 class="font-name">Poppins</h3>
+      <p class="font-desc">Geometric sans with subtle rounding. More structured than Nunito/Quicksand but softer than system fonts. Very widely used — recognizable, trustworthy, clean.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-wordmark firn-large">
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">N</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-wordmark firn-small">
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 300;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 300;">R</span>
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 300;">N</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 500;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 500;">R</span>
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 500;">N</span>
+            </div>
+            <span class="weight-name">Medium 500</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-wordmark firn-med">
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 700;">F</span>
+              <div class="bars-i">
+                <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+              </div>
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 700;">R</span>
+              <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 700;">N</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ====== SIDE-BY-SIDE COMPARISON ====== -->
+  <div class="section">
+    <h2>Side-by-Side at 32px</h2>
+    <div class="comparison-row">
+      <div class="comparison-item">
+        <div class="firn-wordmark firn-med">
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Nunito', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="comparison-label">Nunito</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-wordmark firn-med">
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Varela Round', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="comparison-label">Varela Round</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-wordmark firn-med">
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Quicksand', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="comparison-label">Quicksand</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-wordmark firn-med">
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Comfortaa', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="comparison-label">Comfortaa</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-wordmark firn-med">
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="comparison-label">Jakarta Sans</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-wordmark firn-med">
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">F</span>
+          <div class="bars-i"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">R</span>
+          <span class="letter" style="font-family: 'Poppins', sans-serif; font-weight: 400;">N</span>
+        </div>
+        <span class="comparison-label">Poppins</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

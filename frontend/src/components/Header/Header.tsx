@@ -2,7 +2,7 @@ import styles from './Header.module.css';
 import { ChevronDownIcon, SearchIcon } from '../icons';
 import { useWorkspace } from '../../stores/ideStore';
 import { formatShortcut, isMac } from '../../utils/platform';
-import arcIcon from '../../assets/branding/icon.svg';
+import firnIcon from '../../assets/branding/icon.svg';
 
 export function Header() {
   const workspace = useWorkspace();
@@ -15,8 +15,8 @@ export function Header() {
 
       {/* Logo */}
       <div className={styles.logo}>
-        <img src={arcIcon} alt="Arc" className={styles.logoIcon} />
-        <span className={styles.logoText}>Arc</span>
+        <img src={firnIcon} alt="Firn" className={styles.logoIcon} />
+        <span className={styles.logoText}>Firn</span>
       </div>
 
       {/* Workspace selector */}

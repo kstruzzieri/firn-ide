@@ -1,4 +1,4 @@
-module arc
+module firn
 
 go 1.23
 

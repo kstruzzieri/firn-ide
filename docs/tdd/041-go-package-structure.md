@@ -32,7 +32,7 @@ This is a refactoring task - the "test" is that all existing functionality conti
 ## Before Structure
 
 ```
-arc-ide/
+firn-ide/
 ├── main.go
 ├── app.go
 ├── app_test.go
@@ -45,7 +45,7 @@ arc-ide/
 ## After Structure
 
 ```
-arc-ide/
+firn-ide/
 ├── main.go                       # Entry point + embed
 ├── app.go                        # Wails bindings (thin layer)
 ├── app_test.go                   # App tests

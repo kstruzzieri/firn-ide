@@ -1,11 +1,11 @@
-# Arc IDE — Roadmap
+# Firn IDE — Roadmap
 
 > A lightweight, workspace-focused desktop IDE for macOS, Linux, and Windows.
 > Built with [Wails](https://wails.io) (Go backend + system WebView + React frontend).
 
 ## Vision
 
-Arc IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a lightweight, open-source package. Instead of loading an entire monorepo into one IDE instance, Arc lets you define **multiple workspaces** within a single repository — each with its own layout state, language servers, and run profiles.
+Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a lightweight, open-source package. Instead of loading an entire monorepo into one IDE instance, Firn lets you define **multiple workspaces** within a single repository — each with its own layout state, language servers, and run profiles.
 
 **Key Differentiators:**
 - **Workspace-first design** — One repo, multiple focused workspaces (frontend, backend, infra)
@@ -101,7 +101,7 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 - [ ] Save/restore open files, cursor positions, scroll state
 - [ ] Save panel sizes and layout
 - [ ] Save active workspace/folder
-- [ ] Store in `~/.arc/workspaces/`
+- [ ] Store in `~/.firn/workspaces/`
 
 ### Issue #13: Workspace - Recent Projects
 - [ ] Store last 10 opened folders

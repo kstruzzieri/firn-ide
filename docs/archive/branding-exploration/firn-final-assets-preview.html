@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Firn — Final SVG Assets Preview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0A0E14; color: #E6EDF3; font-family: system-ui, sans-serif; padding: 40px; }
+    h1 { font-size: 28px; font-weight: 300; letter-spacing: 4px; text-transform: uppercase; color: #8B949E; margin-bottom: 8px; }
+    .subtitle { font-size: 14px; color: #6E7681; margin-bottom: 60px; }
+    h2 { font-size: 16px; font-weight: 400; letter-spacing: 3px; text-transform: uppercase; color: #8B949E; margin-bottom: 16px; }
+    .section { margin-bottom: 60px; }
+    .asset-card {
+      background: #0D1117;
+      border: 1px solid #21262D;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .asset-card.light-bg {
+      background: #F6F8FA;
+      border-color: #D0D7DE;
+    }
+    .asset-label {
+      font-size: 11px;
+      color: #484F58;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .asset-card.light-bg .asset-label { color: #656D76; }
+    .row { display: flex; gap: 20px; max-width: 1200px; }
+    .row > * { flex: 1; }
+    .icon-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 32px;
+      justify-content: center;
+    }
+    .icon-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .size-label { font-size: 10px; color: #484F58; }
+    .file-path {
+      font-family: 'SF Mono', monospace;
+      font-size: 11px;
+      color: #0EA5E9;
+      background: rgba(14, 165, 233, 0.08);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Firn — Final SVG Assets</h1>
+  <p class="subtitle">Production-ready branding assets from frontend/src/assets/branding/</p>
+
+  <!-- icon.svg -->
+  <div class="section">
+    <h2>icon.svg — App Icon</h2>
+    <span class="file-path">frontend/src/assets/branding/icon.svg</span>
+    <div class="row" style="margin-top: 16px;">
+      <div class="asset-card">
+        <div class="icon-row">
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="16" height="16">
+            <span class="size-label">16px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="24" height="24">
+            <span class="size-label">24px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="32" height="32">
+            <span class="size-label">32px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="48" height="48">
+            <span class="size-label">48px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="64" height="64">
+            <span class="size-label">64px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="128" height="128">
+            <span class="size-label">128px</span>
+          </div>
+        </div>
+        <span class="asset-label">Dark background</span>
+      </div>
+      <div class="asset-card light-bg">
+        <div class="icon-row">
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="16" height="16">
+            <span class="size-label">16px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="32" height="32">
+            <span class="size-label">32px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="64" height="64">
+            <span class="size-label">64px</span>
+          </div>
+          <div class="icon-item">
+            <img src="../../frontend/src/assets/branding/icon.svg" width="128" height="128">
+            <span class="size-label">128px</span>
+          </div>
+        </div>
+        <span class="asset-label">Light background</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- logo.svg -->
+  <div class="section">
+    <h2>logo.svg — Primary Logo (transparent bg, dark-mode text)</h2>
+    <span class="file-path">frontend/src/assets/branding/logo.svg</span>
+    <div class="asset-card" style="margin-top: 16px;">
+      <img src="../../frontend/src/assets/branding/logo.svg" width="340" height="100">
+      <span class="asset-label">logo.svg — for use on dark backgrounds</span>
+    </div>
+  </div>
+
+  <!-- logo-light.svg -->
+  <div class="section">
+    <h2>logo-light.svg — Light Background Variant</h2>
+    <span class="file-path">frontend/src/assets/branding/logo-light.svg</span>
+    <div class="asset-card light-bg" style="margin-top: 16px;">
+      <img src="../../frontend/src/assets/branding/logo-light.svg" width="340" height="100">
+      <span class="asset-label">logo-light.svg — for use on light backgrounds</span>
+    </div>
+  </div>
+
+  <!-- logo-dark.svg -->
+  <div class="section">
+    <h2>logo-dark.svg — Self-Contained Dark (README / Social)</h2>
+    <span class="file-path">frontend/src/assets/branding/logo-dark.svg</span>
+    <div class="asset-card" style="margin-top: 16px;">
+      <img src="../../frontend/src/assets/branding/logo-dark.svg" width="380" height="130">
+      <span class="asset-label">logo-dark.svg — background baked in, for README and social</span>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firn — Icon + Wordmark</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700&family=Varela+Round&family=Quicksand:wght@300;400;500;600;700&family=Comfortaa:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0A0E14;
+      color: #E6EDF3;
+      font-family: 'SF Pro Display', 'Inter', system-ui, sans-serif;
+      padding: 40px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 300;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #8B949E;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #6E7681;
+      margin-bottom: 60px;
+      letter-spacing: 1px;
+    }
+
+    .concepts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      max-width: 1200px;
+    }
+
+    .concept-card {
+      background: #0D1117;
+      border: 1px solid #21262D;
+      border-radius: 12px;
+      padding: 40px;
+      position: relative;
+    }
+
+    .concept-card:hover { border-color: #30363D; }
+
+    .concept-label {
+      display: inline-block;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #0EA5E9;
+      background: rgba(14, 165, 233, 0.1);
+      border: 1px solid rgba(14, 165, 233, 0.2);
+      padding: 4px 10px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+
+    .concept-name {
+      font-size: 18px;
+      font-weight: 500;
+      color: #E6EDF3;
+      margin-bottom: 6px;
+    }
+
+    .concept-desc {
+      font-size: 12px;
+      color: #6E7681;
+      margin-bottom: 32px;
+      line-height: 1.5;
+    }
+
+    .logo-showcase {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100px;
+      margin-bottom: 24px;
+    }
+
+    /* Icon + Word combo */
+    .firn-combo {
+      display: flex;
+      align-items: center;
+      user-select: none;
+    }
+
+    .firn-combo .bars-icon {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .firn-combo .bar {
+      border-radius: 99px;
+    }
+
+    .firn-combo .word {
+      color: #38BDF8;
+      line-height: 1;
+    }
+
+    /* Large showcase */
+    .firn-large .bars-icon { gap: 3px; }
+    .firn-large .bar-1 { width: 14px; height: 4px; background: #BAE6FD; opacity: 0.5; }
+    .firn-large .bar-2 { width: 19px; height: 6px; background: #7DD3FC; opacity: 0.65; }
+    .firn-large .bar-3 { width: 24px; height: 8px; background: #38BDF8; opacity: 0.8; }
+    .firn-large .bar-4 { width: 28px; height: 10px; background: #0EA5E9; opacity: 0.9; }
+    .firn-large .bar-5 { width: 32px; height: 12px; background: #0284C7; }
+    .firn-large .word { font-size: 64px; }
+    .firn-large .icon-gap { width: 16px; }
+
+    /* Medium */
+    .firn-med .bars-icon { gap: 2px; }
+    .firn-med .bar-1 { width: 8px; height: 2.5px; background: #BAE6FD; opacity: 0.5; }
+    .firn-med .bar-2 { width: 11px; height: 3.5px; background: #7DD3FC; opacity: 0.65; }
+    .firn-med .bar-3 { width: 14px; height: 5px; background: #38BDF8; opacity: 0.8; }
+    .firn-med .bar-4 { width: 16px; height: 6px; background: #0EA5E9; opacity: 0.9; }
+    .firn-med .bar-5 { width: 18px; height: 7px; background: #0284C7; }
+    .firn-med .word { font-size: 36px; }
+    .firn-med .icon-gap { width: 10px; }
+
+    /* Small (header) */
+    .firn-small .bars-icon { gap: 1px; }
+    .firn-small .bar-1 { width: 4px; height: 1.5px; background: #BAE6FD; opacity: 0.5; }
+    .firn-small .bar-2 { width: 5.5px; height: 2px; background: #7DD3FC; opacity: 0.65; }
+    .firn-small .bar-3 { width: 7px; height: 2.5px; background: #38BDF8; opacity: 0.8; }
+    .firn-small .bar-4 { width: 8px; height: 3px; background: #0EA5E9; opacity: 0.9; }
+    .firn-small .bar-5 { width: 9px; height: 3.5px; background: #0284C7; }
+    .firn-small .word { font-size: 15px; }
+    .firn-small .icon-gap { width: 5px; }
+
+    /* Tiny (favicon-size) */
+    .firn-tiny .bars-icon { gap: 0.5px; }
+    .firn-tiny .bar-1 { width: 3px; height: 1px; background: #BAE6FD; opacity: 0.5; }
+    .firn-tiny .bar-2 { width: 4px; height: 1.5px; background: #7DD3FC; opacity: 0.65; }
+    .firn-tiny .bar-3 { width: 5px; height: 2px; background: #38BDF8; opacity: 0.8; }
+    .firn-tiny .bar-4 { width: 6px; height: 2.5px; background: #0EA5E9; opacity: 0.9; }
+    .firn-tiny .bar-5 { width: 6.5px; height: 3px; background: #0284C7; }
+    .firn-tiny .word { font-size: 11px; }
+    .firn-tiny .icon-gap { width: 3px; }
+
+    .header-preview {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #161B22;
+      border: 1px solid #21262D;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+
+    .header-sep {
+      width: 1px;
+      height: 18px;
+      background: #30363D;
+    }
+
+    .header-workspace {
+      color: #8B949E;
+      font-size: 12px;
+    }
+
+    .ws-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background: #0EA5E9;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .header-spacer { flex: 1; }
+
+    .header-action {
+      color: #484F58;
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+
+    .weights-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #21262D;
+    }
+
+    .weight-label {
+      font-size: 10px;
+      color: #484F58;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .weight-row {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+
+    .weight-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .weight-name {
+      font-size: 9px;
+      color: #484F58;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .section {
+      margin-top: 80px;
+      padding-top: 40px;
+      border-top: 1px solid #21262D;
+      max-width: 1200px;
+    }
+
+    h2 {
+      font-size: 16px;
+      font-weight: 400;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #8B949E;
+      margin-bottom: 24px;
+    }
+
+    .comparison-row {
+      display: flex;
+      align-items: center;
+      gap: 48px;
+      flex-wrap: wrap;
+    }
+
+    .comparison-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .comparison-label {
+      font-size: 10px;
+      color: #484F58;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    .icon-sizes-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 40px;
+      background: #0D1117;
+      border: 1px solid #21262D;
+      border-radius: 12px;
+      padding: 40px;
+    }
+
+    .icon-size-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .icon-size-label {
+      font-size: 10px;
+      color: #484F58;
+      letter-spacing: 1px;
+    }
+
+    /* Standalone icon sizes */
+    .icon-only { display: flex; flex-direction: column; align-items: center; }
+
+    .icon-16 .bars-icon { gap: 0.5px; }
+    .icon-16 .bar-1 { width: 5px; height: 1.5px; background: #BAE6FD; opacity: 0.5; border-radius: 99px; }
+    .icon-16 .bar-2 { width: 7px; height: 2px; background: #7DD3FC; opacity: 0.65; border-radius: 99px; }
+    .icon-16 .bar-3 { width: 9px; height: 2.5px; background: #38BDF8; opacity: 0.8; border-radius: 99px; }
+    .icon-16 .bar-4 { width: 11px; height: 3px; background: #0EA5E9; opacity: 0.9; border-radius: 99px; }
+    .icon-16 .bar-5 { width: 12px; height: 3.5px; background: #0284C7; border-radius: 99px; }
+
+    .icon-24 .bars-icon { gap: 1px; }
+    .icon-24 .bar-1 { width: 8px; height: 2px; background: #BAE6FD; opacity: 0.5; border-radius: 99px; }
+    .icon-24 .bar-2 { width: 11px; height: 3px; background: #7DD3FC; opacity: 0.65; border-radius: 99px; }
+    .icon-24 .bar-3 { width: 14px; height: 4px; background: #38BDF8; opacity: 0.8; border-radius: 99px; }
+    .icon-24 .bar-4 { width: 16px; height: 5px; background: #0EA5E9; opacity: 0.9; border-radius: 99px; }
+    .icon-24 .bar-5 { width: 18px; height: 6px; background: #0284C7; border-radius: 99px; }
+
+    .icon-32 .bars-icon { gap: 1.5px; }
+    .icon-32 .bar-1 { width: 10px; height: 3px; background: #BAE6FD; opacity: 0.5; border-radius: 99px; }
+    .icon-32 .bar-2 { width: 14px; height: 4px; background: #7DD3FC; opacity: 0.65; border-radius: 99px; }
+    .icon-32 .bar-3 { width: 18px; height: 5px; background: #38BDF8; opacity: 0.8; border-radius: 99px; }
+    .icon-32 .bar-4 { width: 21px; height: 6.5px; background: #0EA5E9; opacity: 0.9; border-radius: 99px; }
+    .icon-32 .bar-5 { width: 24px; height: 8px; background: #0284C7; border-radius: 99px; }
+
+    .icon-48 .bars-icon { gap: 2px; }
+    .icon-48 .bar-1 { width: 16px; height: 4px; background: #BAE6FD; opacity: 0.5; border-radius: 99px; }
+    .icon-48 .bar-2 { width: 21px; height: 6px; background: #7DD3FC; opacity: 0.65; border-radius: 99px; }
+    .icon-48 .bar-3 { width: 26px; height: 8px; background: #38BDF8; opacity: 0.8; border-radius: 99px; }
+    .icon-48 .bar-4 { width: 30px; height: 10px; background: #0EA5E9; opacity: 0.9; border-radius: 99px; }
+    .icon-48 .bar-5 { width: 34px; height: 12px; background: #0284C7; border-radius: 99px; }
+
+    .icon-64 .bars-icon { gap: 3px; }
+    .icon-64 .bar-1 { width: 20px; height: 5px; background: #BAE6FD; opacity: 0.5; border-radius: 99px; }
+    .icon-64 .bar-2 { width: 27px; height: 7px; background: #7DD3FC; opacity: 0.65; border-radius: 99px; }
+    .icon-64 .bar-3 { width: 34px; height: 10px; background: #38BDF8; opacity: 0.8; border-radius: 99px; }
+    .icon-64 .bar-4 { width: 40px; height: 13px; background: #0EA5E9; opacity: 0.9; border-radius: 99px; }
+    .icon-64 .bar-5 { width: 46px; height: 16px; background: #0284C7; border-radius: 99px; }
+
+    .icon-128 .bars-icon { gap: 5px; }
+    .icon-128 .bar-1 { width: 40px; height: 10px; background: #BAE6FD; opacity: 0.5; border-radius: 99px; }
+    .icon-128 .bar-2 { width: 54px; height: 14px; background: #7DD3FC; opacity: 0.65; border-radius: 99px; }
+    .icon-128 .bar-3 { width: 68px; height: 19px; background: #38BDF8; opacity: 0.8; border-radius: 99px; }
+    .icon-128 .bar-4 { width: 80px; height: 24px; background: #0EA5E9; opacity: 0.9; border-radius: 99px; }
+    .icon-128 .bar-5 { width: 92px; height: 30px; background: #0284C7; border-radius: 99px; }
+
+    .tagline-row {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .tagline-card {
+      background: #0D1117;
+      border: 1px solid #21262D;
+      border-radius: 8px;
+      padding: 20px 28px;
+      text-align: center;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .tagline-text {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #E6EDF3;
+      margin-bottom: 6px;
+    }
+
+    .tagline-note {
+      font-size: 11px;
+      color: #484F58;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Firn — Icon + Wordmark</h1>
+  <p class="subtitle">Bars as a standalone brand mark beside the full word FIRN — no E/FERN ambiguity</p>
+
+  <div class="concepts-grid">
+
+    <!-- ====== Nunito ====== -->
+    <div class="concept-card">
+      <span class="concept-label">Nunito</span>
+      <h3 class="concept-name">Rounded + Warm</h3>
+      <p class="concept-desc">Rounded terminals echo the pill-shaped bars. Warm and approachable. The icon sits as a distinct mark — no risk of reading as a letter.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-combo firn-large">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Nunito', sans-serif; font-weight: 400; letter-spacing: 6px;">FIRN</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-combo firn-small">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Nunito', sans-serif; font-weight: 400; letter-spacing: 2px;">FIRN</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Nunito', sans-serif; font-weight: 300; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Nunito', sans-serif; font-weight: 600; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Semi 600</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Nunito', sans-serif; font-weight: 700; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Quicksand ====== -->
+    <div class="concept-card">
+      <span class="concept-label">Quicksand</span>
+      <h3 class="concept-name">Geometric + Open</h3>
+      <p class="concept-desc">Wide geometric rounded letterforms. The circular R bowl echoes the bar curvature. Clean and airy — feels like a modern creative tool.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-combo firn-large">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Quicksand', sans-serif; font-weight: 400; letter-spacing: 6px;">FIRN</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-combo firn-small">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Quicksand', sans-serif; font-weight: 400; letter-spacing: 2px;">FIRN</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Quicksand', sans-serif; font-weight: 300; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Quicksand', sans-serif; font-weight: 600; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Semi 600</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Quicksand', sans-serif; font-weight: 700; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Comfortaa ====== -->
+    <div class="concept-card">
+      <span class="concept-label">Comfortaa</span>
+      <h3 class="concept-name">Ultra-Rounded + Minimal</h3>
+      <p class="concept-desc">Every stroke terminus is a perfect circle. Thin, futuristic, and the most visually cohesive with the rounded bars. The F's horizontal strokes mirror the bar shapes.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-combo firn-large">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Comfortaa', sans-serif; font-weight: 400; letter-spacing: 6px;">FIRN</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-combo firn-small">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Comfortaa', sans-serif; font-weight: 400; letter-spacing: 2px;">FIRN</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Comfortaa', sans-serif; font-weight: 300; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Comfortaa', sans-serif; font-weight: 600; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Semi 600</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Comfortaa', sans-serif; font-weight: 700; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Plus Jakarta Sans ====== -->
+    <div class="concept-card">
+      <span class="concept-label">Plus Jakarta Sans</span>
+      <h3 class="concept-name">Modern + Professional</h3>
+      <p class="concept-desc">Softened terminals without being fully rounded. The most "professional IDE" feeling — modern SaaS aesthetic with enough softness to harmonize with the bars.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-combo firn-large">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400; letter-spacing: 6px;">FIRN</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-combo firn-small">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400; letter-spacing: 2px;">FIRN</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 300; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 600; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Semi 600</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Poppins ====== -->
+    <div class="concept-card">
+      <span class="concept-label">Poppins</span>
+      <h3 class="concept-name">Geometric + Structured</h3>
+      <p class="concept-desc">Subtle rounding with geometric precision. More structured than the others — feels authoritative. The I's dot-less uppercase pairs well with the icon sitting beside it.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-combo firn-large">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Poppins', sans-serif; font-weight: 400; letter-spacing: 6px;">FIRN</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-combo firn-small">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Poppins', sans-serif; font-weight: 400; letter-spacing: 2px;">FIRN</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+
+      <div class="weights-section">
+        <div class="weight-label">Weight variants</div>
+        <div class="weight-row">
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Poppins', sans-serif; font-weight: 300; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Light 300</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Poppins', sans-serif; font-weight: 600; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Semi 600</span>
+          </div>
+          <div class="weight-item">
+            <div class="firn-combo firn-med">
+              <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+              <div class="icon-gap"></div>
+              <span class="word" style="font-family: 'Poppins', sans-serif; font-weight: 700; letter-spacing: 4px;">FIRN</span>
+            </div>
+            <span class="weight-name">Bold 700</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Varela Round ====== -->
+    <div class="concept-card">
+      <span class="concept-label">Varela Round</span>
+      <h3 class="concept-name">Fully Rounded + Friendly</h3>
+      <p class="concept-desc">Every terminal and corner is fully rounded — the closest visual match to the pill bars. Single weight only, but that weight hits a sweet spot between light and medium.</p>
+
+      <div class="logo-showcase">
+        <div class="firn-combo firn-large">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div>
+            <div class="bar bar-2"></div>
+            <div class="bar bar-3"></div>
+            <div class="bar bar-4"></div>
+            <div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Varela Round', sans-serif; font-weight: 400; letter-spacing: 6px;">FIRN</span>
+        </div>
+      </div>
+
+      <div class="header-preview">
+        <div class="firn-combo firn-small">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Varela Round', sans-serif; font-weight: 400; letter-spacing: 2px;">FIRN</span>
+        </div>
+        <span class="header-sep"></span>
+        <span class="header-workspace"><span class="ws-dot"></span> Frontend</span>
+        <span class="header-spacer"></span>
+        <span class="header-action">⌘⇧P</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ====== SIDE-BY-SIDE ====== -->
+  <div class="section">
+    <h2>Side-by-Side at 32px</h2>
+    <div class="comparison-row">
+      <div class="comparison-item">
+        <div class="firn-combo firn-med">
+          <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Nunito', sans-serif; font-weight: 400; letter-spacing: 4px;">FIRN</span>
+        </div>
+        <span class="comparison-label">Nunito</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-combo firn-med">
+          <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Quicksand', sans-serif; font-weight: 400; letter-spacing: 4px;">FIRN</span>
+        </div>
+        <span class="comparison-label">Quicksand</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-combo firn-med">
+          <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Comfortaa', sans-serif; font-weight: 400; letter-spacing: 4px;">FIRN</span>
+        </div>
+        <span class="comparison-label">Comfortaa</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-combo firn-med">
+          <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400; letter-spacing: 4px;">FIRN</span>
+        </div>
+        <span class="comparison-label">Jakarta Sans</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-combo firn-med">
+          <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Poppins', sans-serif; font-weight: 400; letter-spacing: 4px;">FIRN</span>
+        </div>
+        <span class="comparison-label">Poppins</span>
+      </div>
+      <div class="comparison-item">
+        <div class="firn-combo firn-med">
+          <div class="bars-icon"><div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div></div>
+          <div class="icon-gap"></div>
+          <span class="word" style="font-family: 'Varela Round', sans-serif; font-weight: 400; letter-spacing: 4px;">FIRN</span>
+        </div>
+        <span class="comparison-label">Varela Round</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== STANDALONE ICON ====== -->
+  <div class="section">
+    <h2>Standalone Icon (app icon, favicon)</h2>
+    <p style="font-size: 13px; color: #6E7681; margin-bottom: 24px;">The bars work alone at all sizes — center-aligned, no "E" reading.</p>
+
+    <div class="icon-sizes-row">
+      <div class="icon-size-item">
+        <div class="icon-only icon-16">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+        </div>
+        <span class="icon-size-label">16px</span>
+      </div>
+      <div class="icon-size-item">
+        <div class="icon-only icon-24">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+        </div>
+        <span class="icon-size-label">24px</span>
+      </div>
+      <div class="icon-size-item">
+        <div class="icon-only icon-32">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+        </div>
+        <span class="icon-size-label">32px</span>
+      </div>
+      <div class="icon-size-item">
+        <div class="icon-only icon-48">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+        </div>
+        <span class="icon-size-label">48px</span>
+      </div>
+      <div class="icon-size-item">
+        <div class="icon-only icon-64">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+        </div>
+        <span class="icon-size-label">64px</span>
+      </div>
+      <div class="icon-size-item">
+        <div class="icon-only icon-128">
+          <div class="bars-icon">
+            <div class="bar bar-1"></div><div class="bar bar-2"></div><div class="bar bar-3"></div><div class="bar bar-4"></div><div class="bar bar-5"></div>
+          </div>
+        </div>
+        <span class="icon-size-label">128px</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== TAGLINES ====== -->
+  <div class="section">
+    <h2>Tagline Options</h2>
+    <div class="tagline-row">
+      <div class="tagline-card">
+        <div class="tagline-text">Light Core, Deep Focus</div>
+        <div class="tagline-note">Light footprint, deep development capabilities</div>
+      </div>
+      <div class="tagline-card">
+        <div class="tagline-text">Depth Without Weight</div>
+        <div class="tagline-note">Light footprint, deep capabilities</div>
+      </div>
+      <div class="tagline-card">
+        <div class="tagline-text">Crystallized Focus</div>
+        <div class="tagline-note">Focus that's solidified into power</div>
+      </div>
+      <div class="tagline-card">
+        <div class="tagline-text">Focus, Compressed</div>
+        <div class="tagline-note">Complexity compressed into clarity</div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

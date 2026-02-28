@@ -1,4 +1,4 @@
-// Package watcher provides file system watching capabilities for Arc IDE.
+// Package watcher provides file system watching capabilities for Firn IDE.
 package watcher
 
 import "time"

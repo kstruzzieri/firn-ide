@@ -19,7 +19,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:     "Arc",
+		Title:     "Firn",
 		Width:     1440,
 		Height:    900,
 		MinWidth:  1024,
@@ -43,7 +43,7 @@ func main() {
 			},
 			Appearance: mac.NSAppearanceNameDarkAqua,
 			About: &mac.AboutInfo{
-				Title:   "Arc IDE",
+				Title:   "Firn IDE",
 				Message: "A lightweight, workspace-focused IDE for macOS, Linux, and Windows",
 			},
 		},
@@ -51,6 +51,6 @@ func main() {
 	})
 
 	if err != nil {
-		log.Fatalf("Error starting Arc IDE: %v", err)
+		log.Fatalf("Error starting Firn IDE: %v", err)
 	}
 }

@@ -1,5 +1,5 @@
 {
-  "name": "arc-ide",
+  "name": "firn-ide",
   "version": "0.1.0",
   "private": true,
   "description": "A lightweight, workspace-focused IDE for macOS, Linux, and Windows",
@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kstruzzieri/arc-ide.git"
+    "url": "git+https://github.com/kstruzzieri/firn-ide.git"
   },
   "license": "MIT"
 }

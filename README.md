@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/screenshots/terminal-unified-tabbar.png" alt="Arc IDE - Lightweight IDE, Heavyweight Focus" width="800">
+  <img src="frontend/src/assets/branding/banner.svg" alt="Firn IDE - Lightweight IDE, Heavyweight Focus" width="800">
 </p>
 
 <p align="center">
@@ -17,14 +17,14 @@
 
 ---
 
-## Why Arc?
+## Why Firn?
 
 Modern monorepos contain frontend (React/TypeScript), backend services (Python, Go), and infrastructure code. Traditional IDEs either:
 
 - **Load everything at once** — consuming 4-8GB+ RAM with all language servers running
 - **Require separate windows** — losing context when switching between frontend and backend
 
-**Arc takes a different approach:** One repo, multiple focused workspaces.
+**Firn takes a different approach:** One repo, multiple focused workspaces.
 
 Each workspace has independent layout state, scoped language servers (only the active workspace runs LSP), and workspace-specific Run Profiles. Switching workspaces is instant—like changing perspectives, not opening a new app.
 
@@ -32,7 +32,7 @@ Each workspace has independent layout state, scoped language servers (only the a
 
 ### Wails over Electron
 
-Arc uses [Wails](https://wails.io) (Go backend + system WebView) instead of Electron:
+Firn uses [Wails](https://wails.io) (Go backend + system WebView) instead of Electron:
 
 | Aspect | Electron | Wails |
 |--------|----------|-------|
@@ -123,7 +123,7 @@ Built-in AI assistant panel with:
 ## Project Structure
 
 ```
-arc-ide/
+firn-ide/
 ├── main.go                     # Application entry
 ├── app.go                      # Wails bindings
 ├── internal/

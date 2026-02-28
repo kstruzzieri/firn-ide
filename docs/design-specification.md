@@ -1,6 +1,6 @@
-# Arc IDE — Design Specification v2
+# Firn IDE — Design Specification v2
 
-This document consolidates all UI/UX decisions for Arc IDE, serving as the blueprint for hi-fi mockup creation and implementation.
+This document consolidates all UI/UX decisions for Firn IDE, serving as the blueprint for hi-fi mockup creation and implementation.
 
 ---
 
@@ -124,7 +124,7 @@ The entire IDE accent cascades from a single CSS custom property, making workspa
 
 **Available Accents:** `blue`, `green`, `cyan`, `orange`, `purple`, `amber`
 
-**Note:** The Arc logo maintains consistent branding (blue→purple gradient) regardless of workspace accent.
+**Note:** The Firn logo maintains consistent branding (blue→purple gradient) regardless of workspace accent.
 
 ---
 
@@ -437,7 +437,7 @@ Location: Top-left, after app logo (only in Workspace View)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ [◇ Arc] [● Frontend ▾]  [▶ Profile ▾] [env ▾]   [Search]       │
+│ [◇ Firn] [● Frontend ▾]  [▶ Profile ▾] [env ▾]   [Search]       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

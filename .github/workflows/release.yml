@@ -50,13 +50,13 @@ jobs:
           BUILD_ARCH: ${{ matrix.arch }}
         run: |
           cd build/bin
-          zip -r "Arc-macos-${BUILD_ARCH}.zip" Arc.app
+          zip -r "Firn-macos-${BUILD_ARCH}.zip" Firn.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Arc-macos-${{ matrix.arch }}
-          path: build/bin/Arc-macos-${{ matrix.arch }}.zip
+          name: Firn-macos-${{ matrix.arch }}
+          path: build/bin/Firn-macos-${{ matrix.arch }}.zip
 
   build-linux:
     name: Build Linux
@@ -97,13 +97,13 @@ jobs:
       - name: Package application
         run: |
           cd build/bin
-          tar -czvf Arc-linux-amd64.tar.gz arc
+          tar -czvf Firn-linux-amd64.tar.gz firn
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Arc-linux-amd64
-          path: build/bin/Arc-linux-amd64.tar.gz
+          name: Firn-linux-amd64
+          path: build/bin/Firn-linux-amd64.tar.gz
 
   release:
     name: Create Release

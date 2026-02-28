@@ -23,7 +23,7 @@ Per design mockup (`docs/mockups/arc.html`):
 - [ ] **Open folder icon** - Expanded folders show open folder icon (`--icon-folder-open: #6A9AB0`)
 - [ ] **Selection highlight** - Selected file has accent background (`--accent-dim`)
 - [ ] **File type icons** - Each file type has colored icon (TS: #3178C6, JS: #F7DF1E, JSON: #F59E0B, etc.)
-- [ ] **Root folder with path** - Top of tree shows project name + path label (e.g., "arc-ide ~/projects/...")
+- [ ] **Root folder with path** - Top of tree shows project name + path label (e.g., "firn-ide ~/projects/...")
 
 ## TDD: Before (Failing Tests)
 

@@ -45,4 +45,4 @@ jobs:
 
       - name: Verify build output
         run: |
-          test -f build/bin/Arc || test -f build/bin/arc
+          test -f build/bin/Firn || test -f build/bin/firn

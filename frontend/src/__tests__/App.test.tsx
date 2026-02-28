@@ -33,9 +33,9 @@ describe('App Component', () => {
     expect(document.body).toBeInTheDocument();
   });
 
-  it('should render the Arc IDE header', () => {
+  it('should render the Firn IDE header', () => {
     render(<App />);
     // Look for the app name in the header
-    expect(screen.getByText('Arc')).toBeInTheDocument();
+    expect(screen.getByText('Firn')).toBeInTheDocument();
   });
 });

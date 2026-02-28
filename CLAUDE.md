@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Arc IDE is a lightweight, workspace-focused IDE for macOS, Linux, and Windows built with Wails (Go + React/Vite).
+Firn IDE is a lightweight, workspace-focused IDE for macOS, Linux, and Windows built with Wails (Go + React/Vite).
 
 **Architecture**: Wails framework using system webview for a lightweight binary (~15MB), avoiding Electron bloat.
 
 ## Project Structure
 
 ```
-arc-ide/
+firn-ide/
 ├── main.go                  # Application entry point
 ├── app.go                   # Wails application logic
 ├── wails.json               # Wails configuration
