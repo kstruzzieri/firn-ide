@@ -12,7 +12,7 @@ import { FileIcon } from '../FileExplorer/FileIcon';
 import { formatShortcut } from '../../utils/platform';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { getLanguageName } from './codemirror';
-import firnLogo from '../../assets/branding/logo-light.svg';
+import firnLogo from '../../assets/branding/banner-transparent.svg';
 
 export function Editor() {
   const openFiles = useOpenFiles();
