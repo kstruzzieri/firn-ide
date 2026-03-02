@@ -21,8 +21,8 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Infrastructure | **COMPLETE** | #26-30 |
 | Milestone 1: Core File Operations | **COMPLETE** | #1-7 |
 | UI/UX Polish | **COMPLETE** | #33-34 |
-| **Milestone 2: Terminal Integration** | **NEXT** | #8-10 |
-| Milestone 3: Workspace Management | Not started | #11-13 |
+| **Milestone 2: Terminal Integration** | **COMPLETE** | #8-10 |
+| **Milestone 3: Workspace Management** | **NEXT** | #11-13 |
 | Milestone 4: Run Profiles | Not started | #14-16 |
 | Milestone 5: Language Server Protocol | Not started | #17-20 |
 | Milestone 6: Search | Not started | #21-23 |
@@ -61,21 +61,21 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 
 ---
 
-## Milestone 2: Terminal Integration (NEXT)
+## Milestone 2: Terminal Integration (COMPLETE)
 
-### Issue #8: Terminal - PTY Backend
-- [ ] Create PTY session with shell (bash/zsh)
-- [ ] Bidirectional communication (stdin/stdout)
-- [ ] Handle terminal resize (SIGWINCH)
-- [ ] Support ANSI escape codes
-- [ ] Clean session termination
+### Issue #8: Terminal - PTY Backend ✅
+- [x] Create PTY session with shell (bash/zsh)
+- [x] Bidirectional communication (stdin/stdout)
+- [x] Handle terminal resize (SIGWINCH)
+- [x] Support ANSI escape codes
+- [x] Clean session termination
 
-### Issue #9: Terminal - xterm.js Integration
-- [ ] Install and configure xterm.js
-- [ ] Connect to backend PTY via Wails bindings
-- [ ] Render terminal output with ANSI colors
-- [ ] Send keyboard input to backend
-- [ ] Handle resize events, match Firn Glacier theme
+### Issue #9: Terminal - xterm.js Integration ✅
+- [x] Install and configure xterm.js
+- [x] Connect to backend PTY via Wails bindings
+- [x] Render terminal output with ANSI colors
+- [x] Send keyboard input to backend
+- [x] Handle resize events, match Firn Glacier theme
 
 ### Issue #10: Terminal - Multiple Sessions & Unified Tab Bar
 - [x] Unified single-row tab bar (Output/Problems/Terminal + session tabs)
@@ -85,7 +85,7 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 - [x] Right-click context menu (Rename, Close Terminal)
 - [x] Fixed orange accent for bottom panel (`data-accent="orange"`)
 - [x] xterm.js theme: near-black bg, warm foreground, orange cursor
-- [ ] Kill process on tab close (backend: sends SIGHUP on CloseTerminal)
+- [x] Kill process on tab close (graceful SIGHUP via PTY close + SIGKILL fallback)
 
 ---
 

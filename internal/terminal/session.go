@@ -1,9 +1,12 @@
 package terminal
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -46,17 +49,28 @@ func (s *Session) Read(buf []byte) (int, error) {
 // Write sends input to the shell.
 func (s *Session) Write(data []byte) (int, error) { return s.pty.Write(data) }
 
-// Close terminates the PTY and kills the process.
+// Close terminates the PTY session gracefully. Closing the PTY master fd
+// causes the kernel to send SIGHUP to the shell process group. We wait
+// briefly for the process to exit, then force-kill as a fallback.
 func (s *Session) Close() error {
-	err := s.pty.Close()
-	if err != nil {
-		return err
+	if err := s.pty.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return fmt.Errorf("closing pty: %w", err)
 	}
 
-	_ = s.cmd.Process.Kill()
-	_ = s.cmd.Wait()
-	s.running = false
+	done := make(chan error, 1)
+	go func() { done <- s.cmd.Wait() }()
 
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		_ = s.cmd.Process.Kill()
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+		}
+	}
+
+	s.running = false
 	return nil
 }
 

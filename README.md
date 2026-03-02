@@ -110,9 +110,14 @@ Built-in AI assistant panel with:
 - [x] Icon system with currentColor SVGs
 - [x] Status bar (cursor position, language, git branch)
 
+**Terminal Integration**
+- [x] PTY backend — shell sessions with bidirectional I/O and ANSI support
+- [x] xterm.js frontend — themed terminal with Firn Glacier colors
+- [x] Multiple terminal sessions — create, switch, close, rename, drag-to-reorder
+- [x] Graceful process termination — SIGHUP via PTY close with SIGKILL fallback
+
 ### Planned
 
-- [ ] Terminal emulation (xterm.js + PTY)
 - [ ] Workspace management (open folder, persistence, recent projects)
 - [ ] Run profile execution
 - [ ] LSP client integration
@@ -128,6 +133,7 @@ firn-ide/
 ├── app.go                      # Wails bindings
 ├── internal/
 │   ├── filesystem/             # File read/write/watch
+│   ├── terminal/               # PTY session management
 │   ├── watcher/                # FS event watcher
 │   └── process/                # Process management
 ├── frontend/
