@@ -5,7 +5,7 @@
  */
 
 // Theme
-export { deepOcean, deepOceanTheme, deepOceanHighlightStyle } from './theme';
+export { firnGlacier, firnGlacierTheme, firnGlacierHighlightStyle } from './theme';
 
 // Extensions and utilities
 export {

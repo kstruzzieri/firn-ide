@@ -27,8 +27,8 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		// Deep Ocean theme: --surface-base: #141C24
-		BackgroundColour: &options.RGBA{R: 20, G: 28, B: 36, A: 255},
+		// Firn Glacier theme: --surface-base: #020617
+		BackgroundColour: &options.RGBA{R: 2, G: 6, B: 23, A: 255},
 		OnStartup:        app.startup,
 		Bind: []interface{}{
 			app,

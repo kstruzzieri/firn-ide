@@ -43,7 +43,7 @@ This document consolidates all UI/UX decisions for Firn IDE, serving as the blue
 
 ### Base Theme
 
-**Inspiration:** Deep Ocean Theme + JetBrains Island Dark
+**Inspiration:** Firn Glacier Theme + JetBrains Island Dark
 
 **Key Characteristic:** Layered depth with clear editor/chrome contrast
 

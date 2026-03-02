@@ -51,7 +51,7 @@ import { xml } from '@codemirror/lang-xml';
 import { yaml } from '@codemirror/lang-yaml';
 import { rust } from '@codemirror/lang-rust';
 
-import { deepOcean } from './theme';
+import { firnGlacier } from './theme';
 
 /**
  * Compartments for dynamic extension reconfiguration.
@@ -336,7 +336,7 @@ export function createEditorExtensions(options: {
 
   const extensions: Extension[] = [
     // Theme
-    themeCompartment.of(deepOcean),
+    themeCompartment.of(firnGlacier),
 
     // Core functionality
     ...coreExtensions(),

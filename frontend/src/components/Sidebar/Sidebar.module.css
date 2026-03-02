@@ -17,18 +17,20 @@
 
 .activityBtn.active {
   color: var(--accent);
+  background: radial-gradient(circle at center, var(--accent-glow) 0%, transparent 70%);
 }
 
-.activityBtn.active::before {
+.activityBtn.active::after {
   content: '';
   position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 24px;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
   background: var(--accent);
-  border-radius: 0 2px 2px 0;
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 
 .activityBtn:focus-visible {

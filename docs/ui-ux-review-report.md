@@ -10,7 +10,7 @@
 
 This report consolidates findings from five specialized agents who analyzed the Firn IDE application for UI/UX quality, code patterns, performance, developer experience, and visual design. The Firn IDE is a Wails-based IDE (Go + React/Vite) targeting macOS and Linux with a lightweight footprint.
 
-**Overall Assessment:** The codebase demonstrates solid foundational architecture with modern tooling choices and a well-designed Deep Ocean theme system. However, there are critical gaps in core IDE features and several opportunities for enhancement across performance, accessibility, and developer experience.
+**Overall Assessment:** The codebase demonstrates solid foundational architecture with modern tooling choices and a well-designed Firn Glacier theme system. However, there are critical gaps in core IDE features and several opportunities for enhancement across performance, accessibility, and developer experience.
 
 ---
 
@@ -300,7 +300,7 @@ export default defineConfig({
 
 ### Design System Strengths
 
-- Deep Ocean theme with comprehensive token system
+- Firn Glacier theme with comprehensive token system
 - Workspace accent system (7 variants)
 - Consistent typography (Geist + JetBrains Mono)
 - Panel "island" layout aesthetic

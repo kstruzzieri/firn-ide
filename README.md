@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/src/assets/branding/banner.svg" alt="Firn IDE - Lightweight IDE, Heavyweight Focus" width="800">
+  <img src="docs/screenshots/firn-ide.png" alt="Firn IDE - Light Core, Deep Focus" width="800">
 </p>
 
 <p align="center">
@@ -100,7 +100,7 @@ Built-in AI assistant panel with:
 - [x] File system watcher — real-time external change detection with debounced events
 
 **Frontend (React/TypeScript)**
-- [x] CodeMirror 6 editor with Deep Ocean theme
+- [x] CodeMirror 6 editor with Firn Glacier theme
 - [x] Syntax highlighting (JS, TS, Python, Go, CSS, HTML, JSON, Markdown)
 - [x] Tab-based editing with modified indicators
 - [x] JetBrains-style autosave (debounced idle + focus loss)

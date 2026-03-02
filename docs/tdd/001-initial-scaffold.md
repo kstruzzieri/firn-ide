@@ -9,7 +9,7 @@ Set up the foundational Wails application with React frontend, establishing the 
 - [x] Wails v2 project initialized
 - [x] React + TypeScript + Vite frontend
 - [x] CodeMirror 6 editor integration
-- [x] Deep Ocean theme implementation
+- [x] Firn Glacier theme implementation
 - [x] Zustand state management
 - [x] Core layout components (Header, Sidebar, Editor, Terminal, StatusBar)
 - [x] CSS design system with tokens
@@ -45,7 +45,7 @@ For the initial scaffold, testing was deferred to Issue #3 (Jest setup) since no
 
 ### Theme System
 
-Deep Ocean theme implemented via CSS custom properties in `tokens.css`, allowing:
+Firn Glacier theme implemented via CSS custom properties in `tokens.css`, allowing:
 - Consistent colors across all components
 - Easy theme switching (future)
 - Workspace accent color variants

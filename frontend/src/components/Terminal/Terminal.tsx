@@ -30,30 +30,30 @@ const TERMINAL_TABS: Array<{
   { id: 'terminal', icon: TerminalIcon, label: 'Terminal' },
 ];
 
-const TERMINAL_ACCENT = '#f97316';
+const TERMINAL_ACCENT = '#38BDF8'; // Glacier blue — brand anchor
 
 const XTERM_THEME = {
-  background: '#0A0A0C',
-  foreground: '#D4C4B0',
+  background: '#040406', // Near-black void (glacier glow)
+  foreground: '#E2E8F0', // slate-200
   cursor: TERMINAL_ACCENT,
-  cursorAccent: '#0A0A0C',
+  cursorAccent: '#040406',
   selectionBackground: `${TERMINAL_ACCENT}33`,
-  black: '#0A0A0C',
-  red: '#FF6B6B',
-  green: '#69DB7C',
-  yellow: '#FFD43B',
-  blue: '#4FC3F7',
-  magenta: '#DA77F2',
-  cyan: '#66D9E8',
-  white: '#D4C4B0',
-  brightBlack: '#4A3F35',
-  brightRed: '#FF8787',
-  brightGreen: '#8CE99A',
-  brightYellow: '#FFE066',
-  brightBlue: '#74D0F7',
-  brightMagenta: '#E599F7',
-  brightCyan: '#99E9F2',
-  brightWhite: '#F5E6D3',
+  black: '#030712', // gray-950
+  red: '#FCA5A5', // red-300
+  green: '#86EFAC', // green-300
+  yellow: '#FDE68A', // amber-200
+  blue: '#7DD3FC', // sky-300
+  magenta: '#D8B4FE', // purple-300
+  cyan: '#67E8F9', // cyan-300
+  white: '#E2E8F0', // slate-200
+  brightBlack: '#64748B', // slate-500
+  brightRed: '#FDA4AF', // rose-300
+  brightGreen: '#A7F3D0', // emerald-200
+  brightYellow: '#FEF3C7', // amber-100
+  brightBlue: '#BAE6FD', // sky-200
+  brightMagenta: '#E9D5FF', // purple-200
+  brightCyan: '#A5F3FC', // cyan-200
+  brightWhite: '#F8FAFC', // slate-50
 };
 
 // Buffers terminal output per session until TerminalContent mounts and attaches.
@@ -226,7 +226,7 @@ export function Terminal() {
   }, []);
 
   return (
-    <div className={styles.terminal} data-accent="orange">
+    <div className={styles.terminal} data-accent="project">
       <div className={styles.tabBar} role="tablist" aria-label="Terminal panels">
         {TERMINAL_TABS.map(({ id, icon: Icon, label }) => {
           const isActive = id === activeTab;
@@ -455,9 +455,10 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
     const term = new XTerm({
       theme: XTERM_THEME,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      fontSize: 13,
-      lineHeight: 1.2,
-      letterSpacing: -1,
+      fontSize: 13.5,
+      fontWeight: 500,
+      lineHeight: 1.3,
+      letterSpacing: 0,
     });
 
     const fitAddon = new FitAddon();
