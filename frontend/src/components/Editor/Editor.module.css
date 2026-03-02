@@ -170,9 +170,10 @@
 }
 
 .welcomeLogo {
-  width: 480px;
+  width: 736px;
   height: auto;
-  margin-bottom: 40px;
+  margin-bottom: 48px;
+  filter: drop-shadow(0 0 24px rgba(56, 189, 248, 0.45));
 }
 
 .welcome p {
