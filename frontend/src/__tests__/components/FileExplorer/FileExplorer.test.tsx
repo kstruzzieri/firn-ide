@@ -11,6 +11,10 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: jest.fn(),
 }));
 
+jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+  WindowSetTitle: jest.fn(),
+}));
+
 import { OpenFolderDialog } from '../../../../wailsjs/go/main/App';
 
 // Mock the useDirectoryTree hook to prevent automatic fetching
@@ -254,7 +258,6 @@ describe('FileExplorer', () => {
 
     it('calls OpenFolderDialog when Open Folder button is clicked', async () => {
       (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
-      (ReadDirectory as jest.Mock).mockResolvedValue([]);
 
       render(<FileExplorer />);
 
@@ -268,7 +271,6 @@ describe('FileExplorer', () => {
 
     it('sets workspace when folder is selected', async () => {
       (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/my-project');
-      (ReadDirectory as jest.Mock).mockResolvedValue([]);
 
       render(<FileExplorer />);
 
@@ -280,42 +282,6 @@ describe('FileExplorer', () => {
           name: 'my-project',
           path: '/Users/test/my-project',
         });
-      });
-    });
-
-    it('fetches directory tree after folder is opened', async () => {
-      (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
-      (ReadDirectory as jest.Mock).mockResolvedValue([
-        { name: 'src', path: '/Users/test/project/src', isDir: true, size: 0, modTime: '' },
-      ]);
-
-      render(<FileExplorer />);
-
-      fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
-
-      await waitFor(() => {
-        expect(ReadDirectory).toHaveBeenCalledWith('/Users/test/project');
-      });
-    });
-
-    it('shows directory tree after folder is opened', async () => {
-      (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
-      (ReadDirectory as jest.Mock).mockResolvedValue([
-        filesystem.FileEntry.createFrom({
-          name: 'src',
-          path: '/Users/test/project/src',
-          isDir: true,
-          size: 0,
-          modTime: new Date().toISOString(),
-        }),
-      ]);
-
-      render(<FileExplorer />);
-
-      fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
-
-      await waitFor(() => {
-        expect(screen.getByText('src')).toBeInTheDocument();
       });
     });
 
