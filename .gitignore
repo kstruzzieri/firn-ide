@@ -24,6 +24,10 @@ Thumbs.db
 
 # Wails dev (wailsjs bindings are committed to avoid CI chicken-and-egg issues)
 
+# Mockups & archive (design exploration, not production)
+docs/mockups/
+docs/archive/
+
 # Misc
 *.log
 *.md5

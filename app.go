@@ -1,15 +1,15 @@
 package main
 
 import (
-	"arc/internal/filesystem"
-	"arc/internal/terminal"
-	"arc/internal/watcher"
+	"firn/internal/filesystem"
+	"firn/internal/terminal"
+	"firn/internal/watcher"
 	"context"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// App represents the main application structure for Arc IDE.
+// App represents the main application structure for Firn IDE.
 // It holds the application context for Wails runtime interactions.
 type App struct {
 	ctx         context.Context

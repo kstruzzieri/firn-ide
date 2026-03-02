@@ -1,14 +1,14 @@
-# Arc IDE Architecture
+# Firn IDE Architecture
 
-This document describes the system architecture of Arc IDE for contributors and maintainers.
+This document describes the system architecture of Firn IDE for contributors and maintainers.
 
 ## Component Overview
 
-Arc IDE uses a hybrid architecture: a **Go backend** for system operations and a **React frontend** for the user interface, connected via the Wails framework.
+Firn IDE uses a hybrid architecture: a **Go backend** for system operations and a **React frontend** for the user interface, connected via the Wails framework.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Arc IDE Application                         │
+│                         Firn IDE Application                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐ │
@@ -104,7 +104,7 @@ Data flows through the application in a unidirectional pattern:
 
 ## State Management
 
-Arc uses **Zustand** for state management with a single store pattern.
+Firn uses **Zustand** for state management with a single store pattern.
 
 ### Store Structure
 
@@ -194,7 +194,7 @@ store.setDiagnostics(2, 5);
 
 ## Adding New Features
 
-Follow this guide when adding new functionality to Arc IDE.
+Follow this guide when adding new functionality to Firn IDE.
 
 ### 1. Create the Go Backend (if needed)
 
@@ -364,7 +364,7 @@ async function handleSave() {
 ## Project Structure
 
 ```
-arc-ide/
+firn-ide/
 ├── main.go                 # Application entry point
 ├── app.go                  # App struct and business logic
 ├── interfaces.go           # Testable interfaces

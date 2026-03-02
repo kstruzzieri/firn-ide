@@ -1,4 +1,4 @@
-# Arc IDE - Current Tasks
+# Firn IDE - Current Tasks
 
 ## Completed
 - [x] **Issue #7: Editor - Autosave (JetBrains-style)** — merged

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial application scaffold with Wails v2 (#1)
-- CodeMirror 6 editor integration with Deep Ocean theme
+- CodeMirror 6 editor integration with Firn Glacier theme
 - React + TypeScript + Vite frontend
 - Zustand state management
 - Core layout components (Header, Sidebar, Editor, Terminal, StatusBar)

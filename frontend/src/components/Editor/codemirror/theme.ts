@@ -1,8 +1,8 @@
 /**
- * Deep Ocean Theme for CodeMirror 6
+ * Firn Glacier Theme for CodeMirror 6
  *
- * A custom dark theme that matches Arc IDE's Deep Ocean design system.
- * Inspired by JetBrains' Island Dark and Deep Ocean themes.
+ * A custom dark theme with blue-tinted gradient depth surfaces
+ * and vivid syntax highlighting. Matches Firn IDE's Firn Glacier design system.
  */
 
 import { EditorView } from '@codemirror/view';
@@ -11,59 +11,59 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 
 /**
- * Deep Ocean color palette extracted from design tokens.
- * These values match the CSS custom properties in tokens.css.
+ * Firn Glacier color palette extracted from design tokens.
+ * Blue-tinted gradient depth surfaces with vivid -300 Tailwind syntax tones.
  */
 const colors = {
-  // Surfaces
-  background: '#060A0E',
-  backgroundHighlight: '#0C1318',
-  surface: '#141C24',
-  surfaceHover: '#1A2530',
-  surfaceActive: '#1E3040',
+  // Surfaces (Approach C — blue-tinted gradient depth)
+  background: '#0F172A', // Panel background (slate-900)
+  backgroundHighlight: '#152035', // Elevated/tab bars
+  surface: '#1E293B', // Hover state (slate-800)
+  surfaceHover: '#1E293B', // Hover states
+  surfaceActive: '#243147', // Active/pressed
 
   // Borders
-  border: '#264050',
-  borderSubtle: '#1A3040',
+  border: '#1E3A5F', // Subtle blue border
+  borderSubtle: '#162D4A', // Softer border
 
   // Text
-  foreground: '#E6EDF3',
-  foregroundSecondary: '#8B9CAE',
-  foregroundMuted: '#5A7080',
-  foregroundDisabled: '#3A5060',
+  foreground: '#F1F5F9', // slate-100
+  foregroundSecondary: '#94A3B8', // slate-400
+  foregroundMuted: '#64748B', // slate-500
+  foregroundDisabled: '#475569', // slate-600
 
-  // Accent (Project teal)
-  accent: '#4A9CAE',
-  accentDim: 'rgba(74, 156, 174, 0.12)',
-  accentGlow: 'rgba(74, 156, 174, 0.25)',
+  // Accent (Glacier Blue)
+  accent: '#38BDF8', // sky-400
+  accentDim: 'rgba(56, 189, 248, 0.12)',
+  accentGlow: 'rgba(56, 189, 248, 0.25)',
 
-  // Syntax highlighting - carefully chosen for readability
-  keyword: '#C678DD', // Purple for keywords
-  string: '#98C379', // Green for strings
-  number: '#D19A66', // Orange for numbers
-  comment: '#5C6370', // Muted gray for comments
-  function: '#61AFEF', // Blue for functions
-  variable: '#E5C07B', // Yellow for variables/properties
-  type: '#E06C75', // Red/pink for types
-  operator: '#56B6C2', // Cyan for operators
-  punctuation: '#ABB2BF', // Light gray for punctuation
-  tag: '#E06C75', // HTML/JSX tags
-  attribute: '#D19A66', // HTML/JSX attributes
-  constant: '#D19A66', // Constants
-  regexp: '#98C379', // Regular expressions
+  // Syntax highlighting — vivid -300 Tailwind tones
+  keyword: '#C4B5FD', // violet-300 (icier)
+  string: '#86EFAC', // green-300 (brighter)
+  number: '#FCD34D', // amber-300 (gold)
+  comment: '#64748B', // slate-500
+  function: '#7DD3FC', // sky-300 (glacier family)
+  variable: '#FDE68A', // amber-200
+  type: '#FDA4AF', // rose-300 (softer)
+  operator: '#67E8F9', // cyan-300 (brighter)
+  punctuation: '#CBD5E1', // slate-300
+  tag: '#FDA4AF', // rose-300
+  attribute: '#FCD34D', // amber-300
+  constant: '#FCD34D', // amber-300
+  regexp: '#86EFAC', // green-300
 
   // UI States
-  selection: 'rgba(74, 156, 174, 0.3)',
-  selectionMatch: 'rgba(74, 156, 174, 0.15)',
-  cursor: '#4A9CAE',
-  activeLine: 'rgba(26, 48, 64, 0.5)',
-  matchingBracket: 'rgba(74, 156, 174, 0.4)',
+  selection: 'rgba(56, 189, 248, 0.3)',
+  selectionMatch: 'rgba(56, 189, 248, 0.15)',
+  cursor: '#38BDF8',
+  activeLine: 'rgba(56, 189, 248, 0.06)',
+  matchingBracket: 'rgba(56, 189, 248, 0.4)',
   searchMatch: 'rgba(245, 158, 11, 0.3)',
 
   // Gutter
-  gutterBackground: '#060A0E',
-  gutterForeground: '#3A5060',
-  gutterActiveForeground: '#5A7080',
+  gutterBackground: '#0F172A',
+  gutterForeground: '#475569',
+  gutterActiveForeground: '#64748B',
 
   // Status
   error: '#EF4444',
@@ -74,7 +74,7 @@ const colors = {
 /**
  * Editor theme - controls the visual appearance of the editor chrome.
  */
-export const deepOceanTheme = EditorView.theme(
+export const firnGlacierTheme = EditorView.theme(
   {
     // Root editor styling
     '&': {
@@ -291,10 +291,10 @@ export const deepOceanTheme = EditorView.theme(
 );
 
 /**
- * Syntax highlighting styles for the Deep Ocean theme.
+ * Syntax highlighting styles for the Firn Glacier theme.
  * Uses semantic token types from @lezer/highlight.
  */
-export const deepOceanHighlightStyle = HighlightStyle.define([
+export const firnGlacierHighlightStyle = HighlightStyle.define([
   // Comments
   { tag: t.comment, color: colors.comment, fontStyle: 'italic' },
   { tag: t.lineComment, color: colors.comment, fontStyle: 'italic' },
@@ -388,6 +388,9 @@ export const deepOceanHighlightStyle = HighlightStyle.define([
 ]);
 
 /**
- * Complete Deep Ocean theme extension combining editor theme and syntax highlighting.
+ * Complete Firn Glacier theme extension combining editor theme and syntax highlighting.
  */
-export const deepOcean: Extension = [deepOceanTheme, syntaxHighlighting(deepOceanHighlightStyle)];
+export const firnGlacier: Extension = [
+  firnGlacierTheme,
+  syntaxHighlighting(firnGlacierHighlightStyle),
+];

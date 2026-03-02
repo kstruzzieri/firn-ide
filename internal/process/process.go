@@ -1,4 +1,4 @@
-// Package process provides process management interfaces for Arc IDE.
+// Package process provides process management interfaces for Firn IDE.
 package process
 
 // Manager defines the interface for managing external processes.

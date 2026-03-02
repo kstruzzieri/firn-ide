@@ -58,13 +58,13 @@ export function ResizeHandle({
       if (collapseDirection === 'left') return <ChevronRightIcon />;
       if (collapseDirection === 'right') return <ChevronRightIcon style={ROTATE_180} />;
       if (collapseDirection === 'up') return <ChevronDownIcon style={ROTATE_180} />;
-      return <ChevronDownIcon />;
+      return <ChevronDownIcon style={ROTATE_180} />;
     }
-    // When visible, point away from panel (to collapse)
+    // When visible, point in collapse direction (to collapse)
     if (collapseDirection === 'left') return <ChevronRightIcon style={ROTATE_180} />;
     if (collapseDirection === 'right') return <ChevronRightIcon />;
     if (collapseDirection === 'up') return <ChevronDownIcon />;
-    return <ChevronDownIcon style={ROTATE_180} />;
+    return <ChevronDownIcon />;
   };
 
   const currentSize = isCollapsed ? 0 : panelSize;

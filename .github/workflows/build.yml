@@ -24,7 +24,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.23'
           cache-dependency-path: go.sum
 
       - name: Install Wails
@@ -45,4 +45,4 @@ jobs:
 
       - name: Verify build output
         run: |
-          test -f build/bin/Arc || test -f build/bin/arc
+          test -f build/bin/Firn || test -f build/bin/firn

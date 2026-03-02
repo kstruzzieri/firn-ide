@@ -253,7 +253,7 @@
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: #0a0a0c;
+  background: #040406; /* Glacier glow — near-black void */
 }
 
 .terminalContent :global(.xterm-viewport),
@@ -297,7 +297,7 @@
   z-index: 1000;
   min-width: 160px;
   padding: 4px 0;
-  background: var(--surface-elevated, #040608);
+  background: var(--surface-elevated, #152035);
   border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
   border-radius: 6px;
   box-shadow:

@@ -1,11 +1,11 @@
 /**
- * CodeMirror 6 Integration for Arc IDE
+ * CodeMirror 6 Integration for Firn IDE
  *
  * Re-exports all CodeMirror utilities and components for use throughout the app.
  */
 
 // Theme
-export { deepOcean, deepOceanTheme, deepOceanHighlightStyle } from './theme';
+export { firnGlacier, firnGlacierTheme, firnGlacierHighlightStyle } from './theme';
 
 // Extensions and utilities
 export {

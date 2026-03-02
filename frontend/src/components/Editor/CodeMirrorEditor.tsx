@@ -3,7 +3,7 @@
  *
  * A React wrapper for CodeMirror 6 that provides:
  * - Automatic language detection based on filename
- * - Deep Ocean theme integration
+ * - Firn Glacier theme integration
  * - Content change notifications
  * - Cursor position tracking
  * - Proper cleanup on unmount

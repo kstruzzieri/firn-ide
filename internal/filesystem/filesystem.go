@@ -1,4 +1,4 @@
-// Package filesystem provides file system operations for Arc IDE.
+// Package filesystem provides file system operations for Firn IDE.
 package filesystem
 
 import (

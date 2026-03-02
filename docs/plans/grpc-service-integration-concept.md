@@ -1,16 +1,16 @@
 # gRPC Service Integration — Concept (v2.0+)
 
-> Preserved from the original design specification. This concept describes a future Service Adapter Pattern for integrating Arc IDE with external backends (ML platforms, custom services, etc.) via gRPC and REST adapters.
+> Preserved from the original design specification. This concept describes a future Service Adapter Pattern for integrating Firn IDE with external backends (ML platforms, custom services, etc.) via gRPC and REST adapters.
 
 ---
 
 ## Architecture
 
-Arc IDE uses a **Service Adapter Pattern** to integrate with any external backend:
+Firn IDE uses a **Service Adapter Pattern** to integrate with any external backend:
 
 ```
 +--------------------------------------------------+
-|                    Arc IDE                        |
+|                    Firn IDE                        |
 |                                                   |
 |  Experiments | Training | Models | Backtesting    |
 +--------------------------------------------------+
@@ -126,4 +126,4 @@ interface ServiceAdapter {
 - The adapter interface is intentionally broad to support various use cases
 - Initial implementation should focus on the Custom gRPC adapter
 - Each adapter is a separate package that implements the ServiceAdapter interface
-- Connection configuration stored per-workspace in `.arc/adapters/`
+- Connection configuration stored per-workspace in `.firn/adapters/`

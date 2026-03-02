@@ -1,18 +1,19 @@
 /* ═══════════════════════════════════════════════════════════════
-   ARC IDE — Design Tokens
+   FIRN IDE — Design Tokens — Firn Glacier Theme
 ═══════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Surface Hierarchy — Deep Ocean (cyan-tinted darks)
-     Darkened for greater contrast between panels and base */
-  --surface-base: #141c24; /* Main background */
-  --surface-frame: #0c1318; /* Sidebar, frame */
-  --surface-panel: #060a0e; /* Panel backgrounds - near black */
-  --surface-elevated: #040608; /* Panel headers - deepest */
-  --surface-hover: #1a2530; /* Hover states */
-  --surface-active: #1e3040; /* Active states */
-  --surface-border: #264050;
-  --surface-border-subtle: #1a3040;
+  /* Surface Hierarchy — Firn Glacier (blue-tinted gradient depth)
+     Approach C: deep navy canvas → lighter blue-slate panels
+     Islands float on the deepest canvas, creating glacial depth */
+  --surface-base: #020617; /* Canvas between islands — deepest */
+  --surface-frame: #0b1120; /* Header/sidebar/statusbar chrome */
+  --surface-panel: #0f172a; /* Island card backgrounds (slate-900) */
+  --surface-elevated: #152035; /* Tab bars within panels */
+  --surface-hover: #1e293b; /* Hover states (slate-800) */
+  --surface-active: #243147; /* Active/pressed */
+  --surface-border: #1e3a5f; /* Panel borders — subtle blue */
+  --surface-border-subtle: #162d4a; /* Softer border */
 
   /* Tab bar specific - matches panel headers */
   --surface-tab-bar: var(--surface-elevated);
@@ -20,10 +21,10 @@
   --surface-tab-inactive: transparent;
 
   /* Text */
-  --text-primary: #e6edf3;
-  --text-secondary: #8b9cae;
-  --text-muted: #5a7080;
-  --text-disabled: #3a5060;
+  --text-primary: #f1f5f9; /* slate-100 */
+  --text-secondary: #94a3b8; /* slate-400 */
+  --text-muted: #64748b; /* slate-500 */
+  --text-disabled: #475569; /* slate-600 */
 
   /* Workspace Accent Palette */
   --accent-blue: #2563eb;
@@ -33,14 +34,23 @@
   --accent-purple: #a855f7;
   --accent-amber: #f59e0b;
 
-  /* Project View Accent — neutral teal/slate that complements Deep Ocean */
-  --accent-project: #4a9cae;
+  /* Project/Default Accent — Glacier Blue (matches FIRN wordmark) */
+  --accent-project: #38bdf8;
 
   /* Active Workspace Accent — change this to swap the entire theme */
   --accent: var(--accent-project);
-  --accent-dark: #2a6070;
-  --accent-dim: rgba(74, 156, 174, 0.12);
-  --accent-glow: rgba(74, 156, 174, 0.25);
+  --accent-dark: #0284c7; /* sky-600 */
+  --accent-dim: rgba(56, 189, 248, 0.12);
+  --accent-glow: rgba(56, 189, 248, 0.25);
+
+  /* Terminal — Glacier Glow (fixed, workspace-agnostic)
+     Near-black void with glacier blue luminescence */
+  --term-bg: #040406;
+  --term-elevated: #0a0b10;
+  --term-border: #0e1b2e;
+  --term-accent: #38bdf8;
+  --term-accent-dim: rgba(56, 189, 248, 0.1);
+  --term-accent-muted: rgba(56, 189, 248, 0.4);
 
   /* Status */
   --status-success: #22c55e;
@@ -73,9 +83,9 @@
 
 [data-accent='project'] {
   --accent: var(--accent-project);
-  --accent-dark: #2a6070;
-  --accent-dim: rgba(74, 156, 174, 0.12);
-  --accent-glow: rgba(74, 156, 174, 0.25);
+  --accent-dark: #0284c7;
+  --accent-dim: rgba(56, 189, 248, 0.12);
+  --accent-glow: rgba(56, 189, 248, 0.25);
 }
 
 [data-accent='blue'] {
