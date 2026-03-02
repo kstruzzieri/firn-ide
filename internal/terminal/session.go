@@ -1,6 +1,8 @@
 package terminal
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -51,7 +53,9 @@ func (s *Session) Write(data []byte) (int, error) { return s.pty.Write(data) }
 // causes the kernel to send SIGHUP to the shell process group. We wait
 // briefly for the process to exit, then force-kill as a fallback.
 func (s *Session) Close() error {
-	s.pty.Close()
+	if err := s.pty.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return fmt.Errorf("closing pty: %w", err)
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- s.cmd.Wait() }()
@@ -60,7 +64,10 @@ func (s *Session) Close() error {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		_ = s.cmd.Process.Kill()
-		<-done
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+		}
 	}
 
 	s.running = false
