@@ -20,8 +20,9 @@ import {
   useActiveFileId,
 } from '../../stores/ideStore';
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
+import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { TreeNode } from './TreeNode';
-import { ReadFile, OpenFolderDialog, ReadDirectory } from '../../../wailsjs/go/main/App';
+import { ReadFile } from '../../../wailsjs/go/main/App';
 import type { filesystem } from '../../../wailsjs/go/models';
 import styles from './FileExplorer.module.css';
 import treeStyles from './TreeNode.module.css';
@@ -100,36 +101,11 @@ export function FileExplorer() {
       }
     }
   }, [activeFileId, selectedPath, setSelectedPath, workspace, expandedPaths]);
-  const setWorkspace = useIDEStore((state) => state.setWorkspace);
-  const setDirectoryTree = useIDEStore((state) => state.setDirectoryTree);
-  const setTreeLoading = useIDEStore((state) => state.setTreeLoading);
-  const setTreeError = useIDEStore((state) => state.setTreeError);
+
+  const { openFolder } = useOpenFolder();
 
   // Fetch directory tree on workspace change
   const { refetch } = useFetchDirectoryTree();
-
-  const handleOpenFolder = useCallback(async () => {
-    try {
-      const folderPath = await OpenFolderDialog();
-
-      // User cancelled
-      if (!folderPath) return;
-
-      // Extract folder name from path
-      const folderName = folderPath.split('/').pop() || folderPath;
-
-      // Set workspace
-      setWorkspace({ name: folderName, path: folderPath });
-
-      // Load directory tree
-      setTreeLoading(true);
-      const tree = await ReadDirectory(folderPath);
-      setDirectoryTree(tree);
-    } catch (err) {
-      console.error('Failed to open folder:', err);
-      setTreeError(err instanceof Error ? err.message : 'Failed to open folder');
-    }
-  }, [setWorkspace, setDirectoryTree, setTreeLoading, setTreeError]);
 
   const handleToggle = useCallback(
     (path: string) => {
@@ -187,14 +163,12 @@ export function FileExplorer() {
 
     // No workspace
     if (!workspace) {
-      return (
-        <FileExplorerEmpty message="Open a folder to get started" onOpenFolder={handleOpenFolder} />
-      );
+      return <FileExplorerEmpty message="Open a folder to get started" onOpenFolder={openFolder} />;
     }
 
     // Empty workspace
     if (directoryTree.length === 0) {
-      return <FileExplorerEmpty message="No files in workspace" onOpenFolder={handleOpenFolder} />;
+      return <FileExplorerEmpty message="No files in workspace" onOpenFolder={openFolder} />;
     }
 
     // Render tree with root folder

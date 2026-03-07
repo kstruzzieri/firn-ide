@@ -13,12 +13,17 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   ReadDirectory: jest.fn(),
   ReadFile: jest.fn(),
   WriteFile: jest.fn(),
+  OpenFolderDialog: jest.fn(),
   GetWatchedPath: jest.fn(),
   SetWatchedPath: jest.fn(),
   CreateTerminal: jest.fn(() => Promise.resolve('term-1')),
   WriteTerminal: jest.fn(),
   CloseTerminal: jest.fn(),
   ResizeTerminal: jest.fn(),
+}));
+
+jest.mock('../../wailsjs/runtime/runtime', () => ({
+  WindowSetTitle: jest.fn(),
 }));
 
 // Mock useDirectoryTree to prevent automatic fetching

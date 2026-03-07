@@ -7,6 +7,7 @@ import {
   useIsBottomPanelCollapsed,
 } from '../../stores/ideStore';
 import { ResizeHandle } from './ResizeHandle';
+import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import styles from './IDEShell.module.css';
 
 /** Maximum fraction of viewport a single panel may occupy */
@@ -63,6 +64,9 @@ export function IDEShell({
   const leftPanelSize = useIDEStore((s) => s.panelSizes.left);
   const rightPanelSize = useIDEStore((s) => s.panelSizes.right);
   const bottomPanelSize = useIDEStore((s) => s.panelSizes.bottom);
+
+  // Global keyboard shortcuts (Cmd+O, etc.) — registered once here
+  useKeyboardShortcuts();
 
   // Track viewport dimensions for dynamic max constraints
   const [viewport, setViewport] = useState(() => ({
