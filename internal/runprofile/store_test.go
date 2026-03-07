@@ -1,0 +1,249 @@
+package runprofile
+
+import (
+	"encoding/json"
+	"firn/internal/filesystem"
+	"io/fs"
+	"os"
+	"strings"
+	"testing"
+)
+
+func newMockFS() *filesystem.Mock {
+	files := map[string][]byte{}
+	dirs := map[string]bool{}
+
+	return &filesystem.Mock{
+		ReadFileFunc: func(path string) ([]byte, error) {
+			data, ok := files[path]
+			if !ok {
+				return nil, os.ErrNotExist
+			}
+			return data, nil
+		},
+		WriteFileFunc: func(path string, data []byte, perm fs.FileMode) error {
+			files[path] = data
+			return nil
+		},
+		MkdirAllFunc: func(path string, perm fs.FileMode) error {
+			dirs[path] = true
+			return nil
+		},
+	}
+}
+
+func TestStoreLoadNoFile(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	profiles, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if len(profiles) != 0 {
+		t.Errorf("expected empty list, got %d profiles", len(profiles))
+	}
+}
+
+func TestStoreLoadUnsupportedVersion(t *testing.T) {
+	mockFS := newMockFS()
+	pf := ProfilesFile{
+		Version:  99,
+		Profiles: []RunProfile{},
+	}
+	data, _ := json.Marshal(pf)
+	_ = mockFS.WriteFile("/workspace/.firn/run-profiles.json", data, 0o644)
+
+	store := NewStore(mockFS, "/workspace")
+	_, err := store.Load()
+	if err == nil {
+		t.Fatal("expected error for unsupported version")
+	}
+	if !strings.Contains(err.Error(), "unsupported profiles file version") {
+		t.Errorf("expected version error, got: %v", err)
+	}
+}
+
+func TestStoreLoadValidFile(t *testing.T) {
+	mockFS := newMockFS()
+	pf := ProfilesFile{
+		Version: 1,
+		Profiles: []RunProfile{
+			{ID: "p1", Name: "Build", Type: ProfileTypeSingle, Source: ProfileSourceUser, Command: "make build"},
+		},
+	}
+	data, _ := json.Marshal(pf)
+	// Pre-populate test data through the mock's WriteFile method
+	_ = mockFS.WriteFile("/workspace/.firn/run-profiles.json", data, 0o644)
+
+	store := NewStore(mockFS, "/workspace")
+	profiles, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(profiles))
+	}
+	if profiles[0].ID != "p1" {
+		t.Errorf("expected ID 'p1', got %q", profiles[0].ID)
+	}
+}
+
+func TestStoreSaveCreatesNewProfile(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	profile := RunProfile{
+		ID:      "p1",
+		Name:    "Build",
+		Type:    ProfileTypeSingle,
+		Source:  ProfileSourceUser,
+		Command: "make build",
+	}
+	if err := store.Save(profile); err != nil {
+		t.Fatalf("Save() returned error: %v", err)
+	}
+
+	all := store.GetAll()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(all))
+	}
+	if all[0].Name != "Build" {
+		t.Errorf("expected name 'Build', got %q", all[0].Name)
+	}
+}
+
+func TestStoreSaveUpdatesExisting(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	profile := RunProfile{
+		ID:      "p1",
+		Name:    "Build",
+		Type:    ProfileTypeSingle,
+		Source:  ProfileSourceUser,
+		Command: "make build",
+	}
+	_ = store.Save(profile)
+
+	profile.Name = "Build (updated)"
+	_ = store.Save(profile)
+
+	all := store.GetAll()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 profile after upsert, got %d", len(all))
+	}
+	if all[0].Name != "Build (updated)" {
+		t.Errorf("expected updated name, got %q", all[0].Name)
+	}
+}
+
+func TestStoreDelete(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	_ = store.Save(RunProfile{ID: "p1", Name: "Build", Type: ProfileTypeSingle, Source: ProfileSourceUser, Command: "make"})
+	_ = store.Save(RunProfile{ID: "p2", Name: "Test", Type: ProfileTypeSingle, Source: ProfileSourceUser, Command: "make test"})
+
+	if err := store.Delete("p1"); err != nil {
+		t.Fatalf("Delete() returned error: %v", err)
+	}
+
+	all := store.GetAll()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 profile after delete, got %d", len(all))
+	}
+	if all[0].ID != "p2" {
+		t.Errorf("expected remaining profile 'p2', got %q", all[0].ID)
+	}
+}
+
+func TestStoreDeleteNotFound(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	err := store.Delete("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for deleting nonexistent profile")
+	}
+}
+
+func TestStorePin(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	detected := RunProfile{
+		ID:           "detected-pkg-build",
+		Name:         "npm run build",
+		Type:         ProfileTypeSingle,
+		Source:       ProfileSourceDetected,
+		Command:      "npm run build",
+		DetectedFrom: "package.json",
+	}
+
+	if err := store.Pin(detected); err != nil {
+		t.Fatalf("Pin() returned error: %v", err)
+	}
+
+	all := store.GetAll()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(all))
+	}
+	if all[0].Source != ProfileSourceUser {
+		t.Errorf("expected source 'user' after pin, got %q", all[0].Source)
+	}
+	if all[0].DetectedFrom != "" {
+		t.Errorf("expected DetectedFrom cleared after pin, got %q", all[0].DetectedFrom)
+	}
+}
+
+func TestStoreGetAllReturnsCopy(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	_ = store.Save(RunProfile{ID: "p1", Name: "Build", Type: ProfileTypeSingle, Source: ProfileSourceUser, Command: "make"})
+
+	all := store.GetAll()
+	all[0].Name = "mutated"
+
+	// Verify internal state is not affected
+	internal := store.GetAll()
+	if internal[0].Name != "Build" {
+		t.Errorf("GetAll() should return a copy; internal was mutated to %q", internal[0].Name)
+	}
+}
+
+func TestStoreGetAllReturnsCopyDeepFields(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+
+	_ = store.Save(RunProfile{
+		ID:      "p1",
+		Name:    "Build",
+		Type:    ProfileTypeSingle,
+		Source:  ProfileSourceUser,
+		Command: "make",
+		Env:     map[string]string{"KEY": "original"},
+		Tags:    []ProfileTag{TagBuild},
+		Steps:   []string{"step1"},
+	})
+
+	all := store.GetAll()
+
+	// Mutate the returned map
+	all[0].Env["KEY"] = "mutated"
+	all[0].Tags[0] = TagTest
+	all[0].Steps[0] = "mutated-step"
+
+	// Verify internal state is not affected
+	internal := store.GetAll()
+	if internal[0].Env["KEY"] != "original" {
+		t.Errorf("GetAll() Env should be a deep copy; internal was mutated to %q", internal[0].Env["KEY"])
+	}
+	if internal[0].Tags[0] != TagBuild {
+		t.Errorf("GetAll() Tags should be a deep copy; internal was mutated to %q", internal[0].Tags[0])
+	}
+	if internal[0].Steps[0] != "step1" {
+		t.Errorf("GetAll() Steps should be a deep copy; internal was mutated to %q", internal[0].Steps[0])
+	}
+}
