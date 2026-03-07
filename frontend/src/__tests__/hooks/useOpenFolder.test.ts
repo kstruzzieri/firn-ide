@@ -1,5 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
+import { filesystem } from '../../../wailsjs/go/models';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
@@ -12,10 +13,11 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
   WindowSetTitle: (...args: unknown[]) => mockWindowSetTitle(...args),
 }));
 
-import { useOpenFolder } from '../../hooks/useOpenFolder';
+import { useOpenFolder, _resetOpeningLock } from '../../hooks/useOpenFolder';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  _resetOpeningLock();
   useIDEStore.setState({
     workspace: null,
     directoryTree: [],
@@ -84,23 +86,25 @@ describe('useOpenFolder', () => {
     });
   });
 
-  it('should guard against concurrent invocations', async () => {
+  it('should guard against concurrent invocations across hook instances', async () => {
     // First call blocks on the dialog
     let resolveFirst: (value: string) => void;
     mockOpenFolderDialog.mockImplementationOnce(
       () => new Promise<string>((resolve) => (resolveFirst = resolve))
     );
 
-    const { result } = renderHook(() => useOpenFolder());
+    // Mount two independent instances (simulates Header + keyboard shortcut)
+    const { result: instance1 } = renderHook(() => useOpenFolder());
+    const { result: instance2 } = renderHook(() => useOpenFolder());
 
-    // Start first call (won't resolve yet)
+    // Start first call from instance1 (won't resolve yet)
     const first = act(async () => {
-      await result.current.openFolder();
+      await instance1.current.openFolder();
     });
 
-    // Second call should be a no-op
+    // Second call from instance2 should be a no-op (shared lock)
     await act(async () => {
-      await result.current.openFolder();
+      await instance2.current.openFolder();
     });
 
     // Only one dialog call
@@ -109,6 +113,29 @@ describe('useOpenFolder', () => {
     // Resolve first to clean up
     resolveFirst!('');
     await first;
+  });
+
+  it('should clear stale tree and set loading before setting workspace', async () => {
+    // Simulate an already-loaded workspace with tree data
+    useIDEStore.setState({
+      workspace: { name: 'old-project', path: '/old' },
+      directoryTree: [{ name: 'stale.ts' }] as unknown as filesystem.FileEntry[],
+      isLoadingTree: false,
+    });
+
+    mockOpenFolderDialog.mockResolvedValue('/Users/test/new-project');
+
+    const { result } = renderHook(() => useOpenFolder());
+
+    await act(async () => {
+      await result.current.openFolder();
+    });
+
+    const state = useIDEStore.getState();
+    // Workspace should be updated
+    expect(state.workspace?.name).toBe('new-project');
+    // Tree should have been cleared (setDirectoryTree([]) resets isLoadingTree to false via store action)
+    expect(state.directoryTree).toEqual([]);
   });
 
   it('should handle Windows path separators', async () => {

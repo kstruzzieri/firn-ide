@@ -1,7 +1,12 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { useIDEStore } from '../stores/ideStore';
 import { OpenFolderDialog } from '../../wailsjs/go/main/App';
 import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
+
+// Module-level lock shared across all hook instances (Header, FileExplorer,
+// useKeyboardShortcuts) so concurrent triggers from different entry points
+// are properly guarded.
+let isOpening = false;
 
 /**
  * Shared hook for opening a folder via the native dialog.
@@ -15,12 +20,13 @@ import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
  */
 export function useOpenFolder() {
   const setWorkspace = useIDEStore((state) => state.setWorkspace);
-  const isOpeningRef = useRef(false);
+  const setTreeLoading = useIDEStore((state) => state.setTreeLoading);
+  const setDirectoryTree = useIDEStore((state) => state.setDirectoryTree);
 
   const openFolder = useCallback(async () => {
     // Guard against concurrent invocations (e.g., rapid double-click)
-    if (isOpeningRef.current) return;
-    isOpeningRef.current = true;
+    if (isOpening) return;
+    isOpening = true;
 
     try {
       const folderPath = await OpenFolderDialog();
@@ -31,6 +37,11 @@ export function useOpenFolder() {
       // Extract folder name from path
       const separator = folderPath.includes('\\') ? '\\' : '/';
       const folderName = folderPath.split(separator).pop() || folderPath;
+
+      // Clear stale tree and mark loading *before* setting workspace so the
+      // UI never briefly shows old files under the new workspace name.
+      setDirectoryTree([]);
+      setTreeLoading(true);
 
       // Set workspace — this triggers useDirectoryTree to fetch the tree
       setWorkspace({ name: folderName, path: folderPath });
@@ -46,9 +57,14 @@ export function useOpenFolder() {
           'error'
         );
     } finally {
-      isOpeningRef.current = false;
+      isOpening = false;
     }
-  }, [setWorkspace]);
+  }, [setWorkspace, setTreeLoading, setDirectoryTree]);
 
   return { openFolder };
+}
+
+// Exported for testing only
+export function _resetOpeningLock() {
+  isOpening = false;
 }
