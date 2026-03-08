@@ -10,6 +10,18 @@ export function CreateTerminal() {
   return window['go']['main']['App']['CreateTerminal']();
 }
 
+export function DeleteRunProfile(arg1) {
+  return window['go']['main']['App']['DeleteRunProfile'](arg1);
+}
+
+export function DetectRunProfiles() {
+  return window['go']['main']['App']['DetectRunProfiles']();
+}
+
+export function GetAllRunProfiles() {
+  return window['go']['main']['App']['GetAllRunProfiles']();
+}
+
 export function GetWatchedPath() {
   return window['go']['main']['App']['GetWatchedPath']();
 }
@@ -22,8 +34,16 @@ export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
 }
 
+export function LoadRunProfiles(arg1) {
+  return window['go']['main']['App']['LoadRunProfiles'](arg1);
+}
+
 export function OpenFolderDialog() {
   return window['go']['main']['App']['OpenFolderDialog']();
+}
+
+export function PinRunProfile(arg1) {
+  return window['go']['main']['App']['PinRunProfile'](arg1);
 }
 
 export function ReadDirectory(arg1) {
@@ -38,6 +58,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function SaveRunProfile(arg1) {
+  return window['go']['main']['App']['SaveRunProfile'](arg1);
+}
+
 export function StartWatching(arg1) {
   return window['go']['main']['App']['StartWatching'](arg1);
 }
@@ -48,6 +72,10 @@ export function StopWatching() {
 
 export function ToggleMaximize() {
   return window['go']['main']['App']['ToggleMaximize']();
+}
+
+export function ValidateRunProfile(arg1) {
+  return window['go']['main']['App']['ValidateRunProfile'](arg1);
 }
 
 export function WriteFile(arg1, arg2, arg3, arg4, arg5) {

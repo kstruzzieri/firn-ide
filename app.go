@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"firn/internal/filesystem"
+	"firn/internal/runprofile"
 	"firn/internal/terminal"
 	"firn/internal/watcher"
-	"context"
+	"fmt"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -12,12 +15,15 @@ import (
 // App represents the main application structure for Firn IDE.
 // It holds the application context for Wails runtime interactions.
 type App struct {
-	ctx         context.Context
-	dirReader   *filesystem.DirectoryReader
-	fileReader  *filesystem.FileReader
-	fileWriter  *filesystem.FileWriter
-	fileWatcher watcher.Watcher
-	termManager *terminal.Manager
+	ctx            context.Context
+	dirReader      *filesystem.DirectoryReader
+	fileReader     *filesystem.FileReader
+	fileWriter     *filesystem.FileWriter
+	fileWatcher    watcher.Watcher
+	termManager    *terminal.Manager
+	profileMu      sync.RWMutex
+	profileManager *runprofile.Manager
+	osFS           filesystem.FileSystem
 }
 
 // NewApp creates and returns a new App instance.
@@ -36,6 +42,7 @@ func NewApp() *App {
 		fileWriter:  filesystem.NewFileWriter(osFS),
 		fileWatcher: fw,
 		termManager: terminal.NewManager(),
+		osFS:        osFS,
 	}
 }
 
@@ -92,6 +99,24 @@ func (a *App) WriteFile(path string, content string, encoding string, lineEnding
 func (a *App) StartWatching(path string) error {
 	return a.fileWatcher.Watch(a.ctx, path, func(event watcher.FileEvent) {
 		runtime.EventsEmit(a.ctx, "file:changed", event)
+
+		// Reactive run profile re-detection on config file changes
+		a.profileMu.RLock()
+		if a.profileManager == nil {
+			a.profileMu.RUnlock()
+			return
+		}
+
+		changed := a.profileManager.HandleFileChange(event.Path)
+		var profiles []runprofile.RunProfile
+		if changed {
+			profiles = a.profileManager.GetAllProfiles()
+		}
+		a.profileMu.RUnlock()
+
+		if changed {
+			runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
+		}
 	})
 }
 
@@ -160,4 +185,97 @@ func (a *App) ResizeTerminal(id string, rows uint16, cols uint16) error {
 // This is exposed to the frontend via Wails bindings.
 func (a *App) CloseTerminal(id string) error {
 	return a.termManager.Close(id)
+}
+
+// LoadRunProfiles initializes or reinitializes the run profile manager for the given workspace path.
+// The entire operation (create/reset + load) runs under the lock to prevent concurrent
+// LoadRunProfiles calls from interleaving.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LoadRunProfiles(workspacePath string) error {
+	a.profileMu.Lock()
+	defer a.profileMu.Unlock()
+
+	if a.profileManager == nil {
+		a.profileManager = runprofile.NewManager(a.osFS, workspacePath)
+	} else {
+		a.profileManager.SetWorkspaceRoot(workspacePath)
+	}
+	return a.profileManager.Load()
+}
+
+// GetAllRunProfiles returns all run profiles (saved + detected, deduplicated).
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GetAllRunProfiles() []runprofile.RunProfile {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+
+	if a.profileManager == nil {
+		return []runprofile.RunProfile{}
+	}
+	return a.profileManager.GetAllProfiles()
+}
+
+// SaveRunProfile validates and saves a run profile.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) SaveRunProfile(profile runprofile.RunProfile) (runprofile.ValidationResult, error) {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+
+	if a.profileManager == nil {
+		return runprofile.ValidationResult{Valid: false, Errors: []runprofile.ValidationError{
+			{Field: "workspace", Message: "no workspace loaded"},
+		}}, nil
+	}
+	return a.profileManager.SaveProfile(profile)
+}
+
+// DeleteRunProfile removes a saved run profile by ID.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) DeleteRunProfile(id string) error {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+
+	if a.profileManager == nil {
+		return fmt.Errorf("no workspace loaded")
+	}
+	return a.profileManager.DeleteProfile(id)
+}
+
+// PinRunProfile converts a detected profile to a saved profile and emits an update event.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) PinRunProfile(id string) error {
+	a.profileMu.RLock()
+	if a.profileManager == nil {
+		a.profileMu.RUnlock()
+		return fmt.Errorf("no workspace loaded")
+	}
+
+	if err := a.profileManager.PinProfile(id); err != nil {
+		a.profileMu.RUnlock()
+		return err
+	}
+
+	// Emit updated profiles so frontend reflects the pin immediately
+	profiles := a.profileManager.GetAllProfiles()
+	a.profileMu.RUnlock()
+	runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
+	return nil
+}
+
+// ValidateRunProfile validates a run profile without saving it.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ValidateRunProfile(profile runprofile.RunProfile) runprofile.ValidationResult {
+	return runprofile.Validate(profile)
+}
+
+// DetectRunProfiles re-runs auto-detection and returns detected profiles.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) DetectRunProfiles() []runprofile.RunProfile {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+
+	if a.profileManager == nil {
+		return []runprofile.RunProfile{}
+	}
+	return a.profileManager.ReDetect()
 }

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
+import { useShallow } from 'zustand/react/shallow';
 import type { filesystem } from '../../wailsjs/go/models';
+import type { RunProfile } from '../types/runProfile';
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
@@ -71,6 +73,11 @@ interface IDEState {
   activeTerminalSessionId: string | null;
   workingDirectory: string;
 
+  // Run Profiles
+  runProfiles: RunProfile[];
+  isLoadingProfiles: boolean;
+  profilesError: string | null;
+
   // Status
   gitBranch: string;
   errorCount: number;
@@ -120,6 +127,13 @@ interface IDEActions {
   reorderTerminalSessions: (fromIndex: number, toIndex: number) => void;
   setWorkingDirectory: (path: string) => void;
 
+  // Run Profile actions
+  setRunProfiles: (profiles: RunProfile[]) => void;
+  setProfilesLoading: (loading: boolean) => void;
+  setProfilesError: (error: string | null) => void;
+  addOrUpdateProfile: (profile: RunProfile) => void;
+  removeProfile: (id: string) => void;
+
   // Status actions
   setGitBranch: (branch: string) => void;
   setDiagnostics: (errors: number, warnings: number) => void;
@@ -152,6 +166,9 @@ export const useIDEStore = create<IDEStore>()(
       terminalSessions: [],
       activeTerminalSessionId: null,
       workingDirectory: '',
+      runProfiles: [],
+      isLoadingProfiles: false,
+      profilesError: null,
       gitBranch: '',
       errorCount: 0,
       warningCount: 0,
@@ -357,6 +374,44 @@ export const useIDEStore = create<IDEStore>()(
       setWorkingDirectory: (workingDirectory) =>
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
+      // Run Profile actions
+      setRunProfiles: (runProfiles) =>
+        set(
+          { runProfiles, profilesError: null, isLoadingProfiles: false },
+          false,
+          'setRunProfiles'
+        ),
+
+      setProfilesLoading: (isLoadingProfiles) =>
+        set({ isLoadingProfiles }, false, 'setProfilesLoading'),
+
+      setProfilesError: (profilesError) =>
+        set({ profilesError, isLoadingProfiles: false }, false, 'setProfilesError'),
+
+      addOrUpdateProfile: (profile) =>
+        set(
+          (state) => {
+            const exists = state.runProfiles.some((p) => p.id === profile.id);
+            if (exists) {
+              return {
+                runProfiles: state.runProfiles.map((p) => (p.id === profile.id ? profile : p)),
+              };
+            }
+            return { runProfiles: [...state.runProfiles, profile] };
+          },
+          false,
+          'addOrUpdateProfile'
+        ),
+
+      removeProfile: (id) =>
+        set(
+          (state) => ({
+            runProfiles: state.runProfiles.filter((p) => p.id !== id),
+          }),
+          false,
+          'removeProfile'
+        ),
+
       // Status actions
       setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
 
@@ -402,3 +457,10 @@ export const useIsRootExpanded = () => useIDEStore((state) => state.isRootExpand
 export const useIsLoadingTree = () => useIDEStore((state) => state.isLoadingTree);
 export const useTreeError = () => useIDEStore((state) => state.treeError);
 export const useToast = () => useIDEStore((state) => state.toast);
+export const useRunProfiles = () => useIDEStore((state) => state.runProfiles);
+export const useDetectedProfiles = () =>
+  useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'detected')));
+export const useSavedProfiles = () =>
+  useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'user')));
+export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoadingProfiles);
+export const useProfilesError = () => useIDEStore((state) => state.profilesError);
