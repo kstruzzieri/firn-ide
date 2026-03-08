@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"firn/internal/filesystem"
 	"io/fs"
-	"os"
 	"strings"
 	"testing"
 )
@@ -17,7 +16,7 @@ func newMockFS() *filesystem.Mock {
 		ReadFileFunc: func(path string) ([]byte, error) {
 			data, ok := files[path]
 			if !ok {
-				return nil, os.ErrNotExist
+				return nil, fs.ErrNotExist
 			}
 			return data, nil
 		},
