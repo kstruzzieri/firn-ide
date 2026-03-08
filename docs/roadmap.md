@@ -16,68 +16,70 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Progress Summary
 
-| Milestone | Status | Issues |
-|-----------|--------|--------|
-| Infrastructure | **COMPLETE** | #26-30 |
-| Milestone 1: Core File Operations | **COMPLETE** | #1-7 |
-| UI/UX Polish | **COMPLETE** | #33-34 |
-| **Milestone 2: Terminal Integration** | **COMPLETE** | #8-10 |
-| **Milestone 3: Workspace Management** | **NEXT** | #11-13 |
-| Milestone 4: Run Profiles | Not started | #14-16 |
-| Milestone 5: Language Server Protocol | Not started | #17-20 |
-| Milestone 6: Search | Not started | #21-23 |
-| Milestone 7: Git Integration | Not started | #24-25 |
-| Performance | Not started | #35-37 |
-| Dependency Upgrades | Not started | #38 |
-| Code Quality | Not started | #39-40 |
-| Accessibility | Not started | #41 |
-| Future Features | Not started | #42-44 |
-| Bug Fixes | Not started | #31-32 |
+> **Note:** Issue numbers below are **GitHub issue numbers**. See the [design specification](design-specification.md) for detailed UI/UX requirements.
+
+| Milestone | Status | GitHub Issues |
+|-----------|--------|---------------|
+| Infrastructure | **COMPLETE** | #28-32 |
+| Milestone 1: Core File Operations | **COMPLETE** | #3-9 |
+| UI/UX Polish | **COMPLETE** | #35-36 |
+| Milestone 2: Terminal Integration | **COMPLETE** | #10-12, #47 |
+| Milestone 3: Workspace Management | **IN PROGRESS** | #13-15, #53, #54 |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16-18 |
+| Milestone 5: Language Server Protocol | Not started | #19-22 |
+| Milestone 6: Search | Not started | #23-25 |
+| Milestone 7: Git Integration | Not started | #26-27 |
+| Performance | Not started | #37-39 |
+| Dependency Upgrades | **COMPLETE** | #40 |
+| Code Quality | Not started | #41-42 |
+| Accessibility | Not started | #43 |
+| Future Features | Not started | #44-46 |
+| Bug Fixes | Not started | #33-34 |
 
 ---
 
 ## Milestone 1: Core File Operations (COMPLETE)
 
-### Issue #1: File System - Read Directory Tree ✅
+### #3: File System - Read Directory Tree ✅
 `ReadDirectory(path string)` returns nested file/folder structure with .gitignore support, file metadata, graceful error handling.
 
-### Issue #2: File System - Read File Contents ✅
+### #4: File System - Read File Contents ✅
 `ReadFile(path string)` with UTF-8/UTF-16/Latin-1 encoding detection, binary file handling, metadata.
 
-### Issue #3: File System - Write File Contents ✅
+### #5: File System - Write File Contents ✅
 `WriteFile(path, content)` with encoding preservation, backup creation, error handling.
 
-### Issue #4: File System - Watch for Changes ✅
+### #6: File System - Watch for Changes ✅
 OS-native file watcher with 100ms debounce, create/modify/delete/rename events.
 
-### Issue #5: File Explorer - Display Directory Tree ✅
+### #7: File Explorer - Display Directory Tree ✅
 Tree UI with expand/collapse, file type icons, loading states, click-to-open.
 
-### Issue #6: Editor - Open Files from Explorer ✅
+### #8: Editor - Open Files from Explorer ✅
 Double-click opens in CodeMirror, tab created, language detection from extension.
 
-### Issue #7: Editor - Autosave (JetBrains-style) ✅
+### #9: Editor - Autosave (JetBrains-style) ✅
 Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error toast on failure.
 
 ---
 
 ## Milestone 2: Terminal Integration (COMPLETE)
 
-### Issue #8: Terminal - PTY Backend ✅
+### #10: Terminal - PTY Backend ✅
 - [x] Create PTY session with shell (bash/zsh)
 - [x] Bidirectional communication (stdin/stdout)
 - [x] Handle terminal resize (SIGWINCH)
 - [x] Support ANSI escape codes
 - [x] Clean session termination
 
-### Issue #9: Terminal - xterm.js Integration ✅
+### #11: Terminal - xterm.js Integration ✅
 - [x] Install and configure xterm.js
 - [x] Connect to backend PTY via Wails bindings
 - [x] Render terminal output with ANSI colors
 - [x] Send keyboard input to backend
 - [x] Handle resize events, match Firn Glacier theme
 
-### Issue #10: Terminal - Multiple Sessions & Unified Tab Bar
+### #12: Terminal - Multiple Sessions & Unified Tab Bar ✅
 - [x] Unified single-row tab bar (Output/Problems/Terminal + session tabs)
 - [x] Create/switch/close terminal session tabs
 - [x] Rename terminal tabs (double-click or right-click context menu)
@@ -87,68 +89,106 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 - [x] xterm.js theme: near-black bg, warm foreground, orange cursor
 - [x] Kill process on tab close (graceful SIGHUP via PTY close + SIGKILL fallback)
 
+### #47: Terminal - Shell Integration (Error Markers & Command Separators)
+- [ ] Error markers on failed commands
+- [ ] Visual command separators
+
 ---
 
 ## Milestone 3: Workspace Management
 
-### Issue #11: Workspace - Open Folder Dialog
-- [ ] Menu item and keyboard shortcut (Cmd+O)
-- [ ] Native folder picker dialog
-- [ ] Load selected folder into file explorer
-- [ ] Update window title with folder name
+### #13: Workspace - Open Folder Dialog ✅
+- [x] Menu item and keyboard shortcut (Cmd+O)
+- [x] Native folder picker dialog
+- [x] Load selected folder into file explorer
+- [x] Update window title with folder name
 
-### Issue #12: Workspace - Persistence
+### #14: Workspace - Persistence
 - [ ] Save/restore open files, cursor positions, scroll state
 - [ ] Save panel sizes and layout
 - [ ] Save active workspace/folder
 - [ ] Store in `~/.firn/workspaces/`
 
-### Issue #13: Workspace - Recent Projects
+### #15: Workspace - Recent Projects
 - [ ] Store last 10 opened folders
 - [ ] Display in welcome screen and File menu
 - [ ] Click to reopen project
+
+### #53: Workspace - Identity & Accent System (NEW)
+Defines workspace identity: type, accent color, and how workspaces are configured within a repo.
+- [ ] Workspace configuration schema (name, root dir, type, accent color)
+- [ ] Store workspace definitions in `.firn/workspaces.json`
+- [ ] Auto-detect workspace type from content (package.json → Frontend, go.mod → Go, etc.)
+- [ ] CSS accent system wired to active workspace (`.ide--accent-blue`, `.ide--accent-green`, etc.)
+- [ ] Workspace selector dropdown in header (with accent dot per workspace)
+- [ ] `⌘⇧W` keyboard shortcut for quick workspace switching
+
+> **Design spec ref:** Sections 2 (Accent Colors), 4 (Workspace Model & Multi-Workspace Editing)
+
+### #54: Workspace - File Tree Views (NEW)
+Project View (unified) vs Workspace View (focused) with color-coded regions.
+- [ ] Toggle dropdown: "PROJECT" vs "WORKSPACE" at top of file tree panel
+- [ ] Project View: full repo tree with color-coded workspace regions (~4% accent tint)
+- [ ] Workspace View: scoped tree with workspace tabs for switching
+- [ ] File type association for tinting (e.g., `docker-compose.yml` gets Infrastructure tint at root)
+
+> **Design spec ref:** Section 4 (File Tree Views)
 
 ---
 
 ## Milestone 4: Run Profiles
 
-### Issue #14: Run Profiles - Configuration Schema
-- [ ] JSON/YAML schema (name, command, cwd, env, envFile)
-- [ ] Auto-detect from package.json, go.mod, Makefile
-- [ ] Validate profile configuration
+### #16: Run Profiles - Configuration Schema ✅
+- [x] JSON schema (name, command, cwd, env, envFile, envVariants, tags, steps)
+- [x] Auto-detect from package.json, go.mod, Makefile, pyproject.toml, docker-compose
+- [x] Validate profile configuration
+- [x] Persistent storage in `.firn/run-profiles.json`
+- [x] Reactive re-detection on config file changes via file watcher
+- [x] Pin detected profiles to saved profiles
+- [x] Backend: 7 Wails bindings (Load/GetAll/Save/Delete/Pin/Validate/Detect)
+- [x] Frontend: Zustand store slice, useRunProfiles hook, basic sidebar panel
 
-### Issue #15: Run Profiles - Execution Engine
+### #17: Run Profiles - Execution Engine
 - [ ] Start process with configured env/cwd
 - [ ] Stream stdout/stderr to frontend
 - [ ] Handle process termination, support stop/restart
 - [ ] Parse clickable file:line:col references
+- [ ] Compound profile sequential execution
 
-### Issue #16: Run Profiles - UI Integration
-- [ ] Display configured profiles with play/stop buttons
-- [ ] Show running status indicator
-- [ ] Output panel with streaming logs
+### #18: Run Profiles - UI Integration
+- [ ] Profile selector dropdown in header toolbar (`[▶ Profile ▾]`)
+- [ ] Play/stop/restart controls
+- [ ] Running status indicator (green dot running, red dot failed)
+- [ ] Output panel with streaming logs and clickable file:line:col
+- [ ] Compound execution view with stage indicators
+- [ ] Environment variant selector (`[env: dev ▾]`)
+- [ ] Edit profile form (create/modify saved profiles)
+- [ ] Profiles grouped by workspace with accent colors (depends on #48)
+- [ ] Status bar: click running profile → opens output panel
+
+> **Design spec ref:** Section 5 (Run Profiles UI)
 
 ---
 
 ## Milestone 5: Language Server Protocol
 
-### Issue #17: LSP - Client Implementation
+### #19: LSP - Client Implementation
 - [ ] JSON-RPC 2.0 message handling
 - [ ] Initialize/shutdown lifecycle
 - [ ] textDocument/didOpen, didChange, didSave
 - [ ] Support stdio and TCP transports
 
-### Issue #18: LSP - TypeScript Integration
+### #20: LSP - TypeScript Integration
 - [ ] Auto-detect TypeScript projects
 - [ ] Start/stop tsserver appropriately
 - [ ] Diagnostics, hover, go-to-definition
 
-### Issue #19: LSP - Diagnostics Display
+### #21: LSP - Diagnostics Display
 - [ ] Underline errors/warnings in editor
 - [ ] Gutter icons, problems panel
 - [ ] Click to navigate to issue
 
-### Issue #20: LSP - Autocomplete
+### #22: LSP - Autocomplete
 - [ ] Trigger on typing (configurable)
 - [ ] Display completion items with icons and docs
 - [ ] Insert with Tab/Enter, support snippets
@@ -157,17 +197,17 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 
 ## Milestone 6: Search
 
-### Issue #21: Search - ripgrep Integration
+### #23: Search - ripgrep Integration
 - [ ] Call rg binary with search parameters
 - [ ] Parse structured results, respect .gitignore
 - [ ] Support regex, case sensitivity, whole word
 
-### Issue #22: Search - UI Panel
+### #24: Search - UI Panel
 - [ ] Search input with options (regex, case, whole word)
 - [ ] Results grouped by file with context
 - [ ] Click result to open file at location (Cmd+Shift+F)
 
-### Issue #23: Search - Find in File
+### #25: Search - Find in File
 - [ ] Cmd+F opens search bar in editor
 - [ ] Highlight all matches, navigate between
 - [ ] Replace and Replace All, regex support
@@ -176,12 +216,12 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 
 ## Milestone 7: Git Integration
 
-### Issue #24: Git - Status Display
+### #26: Git - Status Display
 - [ ] Show current branch in status bar
 - [ ] Color-code modified/added/deleted files in explorer
 - [ ] Refresh on file system changes
 
-### Issue #25: Git - Basic Operations
+### #27: Git - Basic Operations
 - [ ] Stage/unstage files, commit with message
 - [ ] Pull/push, branch switching
 - [ ] Error handling for conflicts
@@ -190,60 +230,60 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 
 ## UI/UX Polish (COMPLETE)
 
-### Issue #33: Panel Resize & Collapse System ✅
+### #35: Panel Resize & Collapse System ✅
 Drag-to-resize handles between all panel junctions, collapse/expand chevrons, CSS variable-driven sizing, min-size constraints.
 
-### Issue #34: Icon System & Dark Background Fixes ✅
+### #36: Icon System & Dark Background Fixes ✅
 currentColor SVGs, sidebar active indicators, devicons light fills for dark backgrounds, binary file type icons.
 
 ---
 
 ## Performance
 
-### Issue #35: File Tree Virtualization & Lazy Loading
+### #37: File Tree Virtualization & Lazy Loading
 Virtual scrolling for 10k+ file trees, lazy-load directory children on expand.
 
-### Issue #36: TreeNode Memoization
+### #38: TreeNode Memoization
 `React.memo` with custom comparison to prevent re-renders of unchanged tree nodes.
 
-### Issue #37: Dynamic CodeMirror Language Loading
+### #39: Dynamic CodeMirror Language Loading
 Dynamic `import()` for language extensions per file type to reduce initial bundle.
 
 ---
 
-## Dependency Upgrades
+## Dependency Upgrades (COMPLETE)
 
-### Issue #38: Upgrade TypeScript, Vite & Test Tooling
+### #40: Upgrade TypeScript, Vite & Test Tooling ✅
 TypeScript 5.7+, Vite 6.x, @swc/jest, path aliases, optimizeDeps.
 
 ---
 
 ## Code Quality
 
-### Issue #39: Split Zustand Store into Domain Slices
-Split 255-line monolithic store into workspace/fileTree/editor/terminal/ui slices.
+### #41: Split Zustand Store into Domain Slices
+Split monolithic store into workspace/fileTree/editor/terminal/ui slices.
 
-### Issue #40: Fix Hardcoded macOS Paths
+### #42: Fix Hardcoded macOS Paths
 Cross-platform path handling for macOS, Linux, and Windows support.
 
 ---
 
 ## Accessibility
 
-### Issue #41: Accessibility Improvements (WCAG AA)
+### #43: Accessibility Improvements (WCAG AA)
 Fix contrast ratios, skip-to-content link, aria-busy, roving tabindex for tree, aria-live regions.
 
 ---
 
 ## Future Features
 
-### Issue #42: Command Palette
+### #44: Command Palette
 Cmd+Shift+P opens fuzzy-search command palette with keyboard shortcuts display.
 
-### Issue #43: Context Menus
+### #45: Context Menus
 Right-click menus for file explorer (new/rename/delete/copy path) and editor tabs (close/close others).
 
-### Issue #44: Breadcrumb Navigation
+### #46: Breadcrumb Navigation
 Clickable file path breadcrumbs above editor with sibling dropdown navigation.
 
 ### AI Chat Panel (v1.5)
@@ -256,18 +296,18 @@ Service Adapter Pattern for connecting to external backends. See `docs/plans/grp
 
 ## Bug Fixes
 
-### Issue #31: Window Dragging Not Working
+### #33: Window Dragging Not Working
 Window cannot be dragged from header area on macOS.
 
-### Issue #32: Add Button Type Attributes
+### #34: Add Button Type Attributes
 Missing explicit `type` attributes on non-submit buttons.
 
 ---
 
 ## Infrastructure (COMPLETE)
 
-### Issue #26: Testing - Setup Jest + React Testing Library ✅
-### Issue #27: Testing - Setup Go Tests ✅
-### Issue #28: CI/CD - GitHub Actions ✅
-### Issue #29: Code Quality - ESLint + Prettier ✅
-### Issue #30: Documentation - Architecture Guide ✅
+### #28: Testing - Setup Jest + React Testing Library ✅
+### #29: Testing - Setup Go Tests ✅
+### #30: CI/CD - GitHub Actions ✅
+### #31: Code Quality - ESLint + Prettier ✅
+### #32: Documentation - Architecture Guide ✅
