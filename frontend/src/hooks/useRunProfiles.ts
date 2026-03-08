@@ -77,6 +77,7 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       return;
     }
 
+    let cancelled = false;
     const { setProfilesLoading, setRunProfiles, setProfilesError } = useIDEStore.getState();
 
     setProfilesLoading(true);
@@ -84,19 +85,29 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     LoadRunProfiles(workspacePath)
       .then(() => GetAllRunProfiles())
       .then((profiles: runprofile.RunProfile[]) => {
-        setRunProfiles(normalizeRunProfiles(profiles));
+        if (!cancelled) {
+          setRunProfiles(normalizeRunProfiles(profiles));
+        }
       })
       .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        setProfilesError(message);
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          setProfilesError(message);
+        }
       });
 
-    // Subscribe to reactive profile updates from file watcher
+    // Subscribe to reactive profile updates from the backend file watcher.
+    // These events are emitted by the StartWatching callback in app.go when
+    // a config file (package.json, go.mod, etc.) changes. The watcher must
+    // be started separately (e.g., via useFileWatcher) for events to fire.
     const cleanup = EventsOn('runprofiles:changed', (profiles: unknown) => {
-      setRunProfiles(normalizeRunProfiles(profiles));
+      if (!cancelled) {
+        setRunProfiles(normalizeRunProfiles(profiles));
+      }
     });
 
     return () => {
+      cancelled = true;
       cleanup();
     };
   }, [workspacePath]);

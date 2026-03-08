@@ -98,6 +98,50 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().isLoadingProfiles).toBe(false);
   });
 
+  it('should discard stale load when workspace changes', async () => {
+    // First render with workspace A — make it resolve slowly
+    let resolveA: () => void = () => {};
+    mockLoadRunProfiles.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveA = resolve;
+        })
+    );
+
+    const { rerender } = renderHook(
+      ({ path }: { path: string | null }) => useRunProfilesLoader(path),
+      { initialProps: { path: '/workspace-a' } }
+    );
+
+    // Switch to workspace B before A resolves
+    const profilesB: RunProfile[] = [
+      { id: 'b1', name: 'B profile', type: 'single', source: 'user', command: 'echo b' },
+    ];
+    mockLoadRunProfiles.mockResolvedValueOnce(undefined);
+    mockGetAllRunProfiles.mockResolvedValueOnce(profilesB);
+
+    rerender({ path: '/workspace-b' });
+
+    // Let workspace B resolve
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useIDEStore.getState().runProfiles).toEqual(profilesB);
+
+    // Now let workspace A resolve — it should be discarded
+    mockGetAllRunProfiles.mockResolvedValueOnce(sampleProfiles);
+    resolveA();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Store should still have workspace B's profiles
+    expect(useIDEStore.getState().runProfiles).toEqual(profilesB);
+  });
+
   it('should update profiles when reactive event fires', async () => {
     let eventCallback: (profiles: RunProfile[]) => void = () => {};
     mockEventsOn.mockImplementationOnce((_event: string, cb: (profiles: unknown) => void) => {
