@@ -12,12 +12,12 @@ type mockFileInfo struct {
 	dir  bool
 }
 
-func (m mockFileInfo) Name() string        { return m.name }
-func (m mockFileInfo) Size() int64         { return 0 }
-func (m mockFileInfo) Mode() fs.FileMode   { return 0o644 }
-func (m mockFileInfo) ModTime() time.Time  { return time.Time{} }
-func (m mockFileInfo) IsDir() bool         { return m.dir }
-func (m mockFileInfo) Sys() interface{}    { return nil }
+func (m mockFileInfo) Name() string       { return m.name }
+func (m mockFileInfo) Size() int64        { return 0 }
+func (m mockFileInfo) Mode() fs.FileMode  { return 0o644 }
+func (m mockFileInfo) ModTime() time.Time { return time.Time{} }
+func (m mockFileInfo) IsDir() bool        { return m.dir }
+func (m mockFileInfo) Sys() interface{}   { return nil }
 
 func newDetectorMockFS(files map[string][]byte) *filesystem.Mock {
 	return &filesystem.Mock{
@@ -174,6 +174,33 @@ func TestDetectNoConfigFiles(t *testing.T) {
 	}
 }
 
+func TestDetectPyproject(t *testing.T) {
+	files := map[string][]byte{
+		"/workspace/pyproject.toml": []byte(`[project]
+name = "demo"
+version = "0.1.0"
+`),
+	}
+	mockFS := newDetectorMockFS(files)
+	detector := NewDetector(mockFS, "/workspace")
+
+	profiles := detector.DetectAll()
+	if len(profiles) != 2 {
+		t.Fatalf("expected 2 profiles for pyproject.toml, got %d", len(profiles))
+	}
+
+	commands := map[string]bool{}
+	for _, p := range profiles {
+		commands[p.Command] = true
+	}
+	if !commands["pytest"] {
+		t.Error("expected pytest profile for pyproject.toml")
+	}
+	if !commands["python ."] {
+		t.Error("expected 'python .' profile for pyproject.toml")
+	}
+}
+
 func TestIsConfigFile(t *testing.T) {
 	tests := []struct {
 		filename string
@@ -209,6 +236,15 @@ func TestGenerateIDIsDeterministic(t *testing.T) {
 	id3 := generateID("package.json", "test")
 	if id1 == id3 {
 		t.Error("generateID should produce different IDs for different names")
+	}
+}
+
+func TestGenerateIDDisambiguatesNormalizedCollisions(t *testing.T) {
+	idDash := generateID("package.json", "lint-fix")
+	idColon := generateID("package.json", "lint:fix")
+
+	if idDash == idColon {
+		t.Fatalf("expected distinct IDs for lint-fix and lint:fix, got %q", idDash)
 	}
 }
 
@@ -260,11 +296,11 @@ func TestInferTagsNoFalsePositives(t *testing.T) {
 		name     string
 		expected ProfileTag
 	}{
-		{"pre-build", TagBuild},   // "build" after separator
-		{"build-all", TagBuild},   // "build" before separator
-		{"lint:fix", TagLint},     // "lint" before separator
-		{"test/unit", TagTest},    // "test" before separator
-		{"dev-server", TagDev},    // "dev" before separator
+		{"pre-build", TagBuild}, // "build" after separator
+		{"build-all", TagBuild}, // "build" before separator
+		{"lint:fix", TagLint},   // "lint" before separator
+		{"test/unit", TagTest},  // "test" before separator
+		{"dev-server", TagDev},  // "dev" before separator
 	}
 
 	for _, tc := range yesMatch {

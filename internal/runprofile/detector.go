@@ -1,6 +1,8 @@
 package runprofile
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"firn/internal/filesystem"
@@ -235,7 +237,7 @@ func (d *Detector) detectPyproject() []RunProfile {
 			Name:         "python -m",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
-			Command:      "python -m .",
+			Command:      "python .",
 			DetectedFrom: "pyproject.toml",
 			Tags:         []ProfileTag{TagDev},
 			Order:        2,
@@ -280,14 +282,31 @@ func (d *Detector) detectDockerCompose(filename string) []RunProfile {
 
 // generateID produces a deterministic ID for a detected profile.
 func generateID(source, name string) string {
+	normalizedName := strings.ToLower(strings.TrimSpace(name))
 	sanitized := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
 			return r
 		}
 		return '-'
-	}, name)
+	}, normalizedName)
 	sanitized = strings.ToLower(sanitized)
-	return "detected-" + sanitizeDashes(source) + "-" + sanitizeDashes(sanitized)
+	slug := sanitizeDashes(sanitized)
+	if slug == "" {
+		slug = "profile"
+	}
+
+	// If normalization changed the name, append a short hash of the original
+	// to prevent collisions such as "lint-fix" and "lint:fix".
+	if slug != normalizedName {
+		return "detected-" + sanitizeDashes(source) + "-" + slug + "-" + shortHash(name)
+	}
+
+	return "detected-" + sanitizeDashes(source) + "-" + slug
+}
+
+func shortHash(s string) string {
+	sum := sha1.Sum([]byte(s))
+	return hex.EncodeToString(sum[:4])
 }
 
 // sanitizeDashes collapses consecutive dashes and trims leading/trailing dashes.

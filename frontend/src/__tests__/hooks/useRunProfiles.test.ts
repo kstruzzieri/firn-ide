@@ -3,17 +3,19 @@ import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
 
 // Mock Wails App bindings
-const mockLoadRunProfiles = jest.fn().mockResolvedValue(undefined);
-const mockGetAllRunProfiles = jest.fn().mockResolvedValue([]);
+const mockLoadRunProfiles = jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined);
+const mockGetAllRunProfiles = jest.fn<Promise<RunProfile[]>, []>().mockResolvedValue([]);
 jest.mock('../../../wailsjs/go/main/App', () => ({
-  LoadRunProfiles: (...args: unknown[]) => mockLoadRunProfiles(...args),
-  GetAllRunProfiles: (...args: unknown[]) => mockGetAllRunProfiles(...args),
+  LoadRunProfiles: mockLoadRunProfiles,
+  GetAllRunProfiles: mockGetAllRunProfiles,
 }));
 
 // Mock Wails runtime
-const mockEventsOn = jest.fn(() => jest.fn());
+const mockEventsOn = jest
+  .fn<() => void, [string, (profiles: unknown) => void]>()
+  .mockImplementation(() => jest.fn());
 jest.mock('../../../wailsjs/runtime/runtime', () => ({
-  EventsOn: (...args: unknown[]) => mockEventsOn(...args),
+  EventsOn: mockEventsOn,
 }));
 
 // Import after mocks
@@ -98,8 +100,8 @@ describe('useRunProfilesLoader', () => {
 
   it('should update profiles when reactive event fires', async () => {
     let eventCallback: (profiles: RunProfile[]) => void = () => {};
-    mockEventsOn.mockImplementationOnce((_event: string, cb: (profiles: RunProfile[]) => void) => {
-      eventCallback = cb;
+    mockEventsOn.mockImplementationOnce((_event: string, cb: (profiles: unknown) => void) => {
+      eventCallback = cb as (profiles: RunProfile[]) => void;
       return jest.fn();
     });
 

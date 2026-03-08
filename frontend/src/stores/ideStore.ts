@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import type { filesystem } from '../../wailsjs/go/models';
 import type { RunProfile } from '../types/runProfile';
 
@@ -459,8 +459,8 @@ export const useTreeError = () => useIDEStore((state) => state.treeError);
 export const useToast = () => useIDEStore((state) => state.toast);
 export const useRunProfiles = () => useIDEStore((state) => state.runProfiles);
 export const useDetectedProfiles = () =>
-  useIDEStore((state) => state.runProfiles.filter((p) => p.source === 'detected'), shallow);
+  useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'detected')));
 export const useSavedProfiles = () =>
-  useIDEStore((state) => state.runProfiles.filter((p) => p.source === 'user'), shallow);
+  useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'user')));
 export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoadingProfiles);
 export const useProfilesError = () => useIDEStore((state) => state.profilesError);
