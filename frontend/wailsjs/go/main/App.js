@@ -6,6 +6,10 @@ export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
 }
 
+export function ConfirmBeforeCloseReady() {
+  return window['go']['main']['App']['ConfirmBeforeCloseReady']();
+}
+
 export function CreateTerminal() {
   return window['go']['main']['App']['CreateTerminal']();
 }
@@ -34,8 +38,16 @@ export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
 }
 
+export function ListRecentWorkspaces() {
+  return window['go']['main']['App']['ListRecentWorkspaces']();
+}
+
 export function LoadRunProfiles(arg1) {
   return window['go']['main']['App']['LoadRunProfiles'](arg1);
+}
+
+export function LoadWorkspaceState(arg1) {
+  return window['go']['main']['App']['LoadWorkspaceState'](arg1);
 }
 
 export function OpenFolderDialog() {
@@ -60,6 +72,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
 
 export function SaveRunProfile(arg1) {
   return window['go']['main']['App']['SaveRunProfile'](arg1);
+}
+
+export function SaveWorkspaceState(arg1) {
+  return window['go']['main']['App']['SaveWorkspaceState'](arg1);
 }
 
 export function StartWatching(arg1) {

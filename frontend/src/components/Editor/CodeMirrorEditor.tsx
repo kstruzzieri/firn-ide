@@ -32,6 +32,14 @@ interface CodeMirrorEditorProps {
   onFocus?: () => void;
   /** Callback when editor is blurred */
   onBlur?: () => void;
+  /** Callback when scroll position changes */
+  onScrollChange?: (scrollTop: number) => void;
+  /** Initial cursor line to set on mount (for workspace restore) */
+  initialCursorLine?: number;
+  /** Initial cursor column to set on mount (for workspace restore) */
+  initialCursorColumn?: number;
+  /** Initial scroll top to set on mount (for workspace restore) */
+  initialScrollTop?: number;
 }
 
 /**
@@ -48,10 +56,16 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   onCursorChange,
   onFocus,
   onBlur,
+  onScrollChange,
+  initialCursorLine,
+  initialCursorColumn,
+  initialScrollTop,
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<EditorView | null>(null);
   const fileIdRef = useRef(fileId);
+  const hasAppliedInitialCursorRef = useRef(false);
+  const hasAppliedInitialScrollRef = useRef(false);
   // Flag to skip onChange during external content sync
   const isSyncingRef = useRef(false);
 
@@ -69,6 +83,36 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     },
     [onContentChange]
   );
+
+  const applyInitialCursor = useCallback(() => {
+    const view = editorRef.current;
+    if (!view || initialCursorLine === undefined || initialCursorLine <= 0) return;
+
+    const lineNum = Math.min(initialCursorLine, view.state.doc.lines);
+    const line = view.state.doc.line(lineNum);
+    const col = Math.min((initialCursorColumn ?? 1) - 1, line.length);
+    view.dispatch({
+      selection: { anchor: line.from + col },
+      scrollIntoView: false,
+    });
+    hasAppliedInitialCursorRef.current = true;
+  }, [initialCursorColumn, initialCursorLine]);
+
+  const applyInitialScroll = useCallback(() => {
+    const view = editorRef.current;
+    if (!view || initialScrollTop === undefined || initialScrollTop < 0) return;
+
+    requestAnimationFrame(() => {
+      if (!editorRef.current) return;
+      editorRef.current.scrollDOM.scrollTop = initialScrollTop;
+      hasAppliedInitialScrollRef.current = true;
+    });
+  }, [initialScrollTop]);
+
+  useEffect(() => {
+    hasAppliedInitialCursorRef.current = false;
+    hasAppliedInitialScrollRef.current = false;
+  }, [fileId]);
 
   // Initialize editor
   useEffect(() => {
@@ -97,23 +141,41 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 
     editorRef.current = view;
 
+    applyInitialCursor();
+    applyInitialScroll();
+
     // Focus/blur event handlers
     const handleFocusEvent = () => onFocus?.();
     const handleBlurEvent = () => onBlur?.();
+    const handleScroll = () => {
+      onScrollChange?.(view.scrollDOM.scrollTop);
+    };
 
     view.contentDOM.addEventListener('focus', handleFocusEvent);
     view.contentDOM.addEventListener('blur', handleBlurEvent);
+    view.scrollDOM.addEventListener('scroll', handleScroll);
 
     // Cleanup on unmount
     return () => {
       view.contentDOM.removeEventListener('focus', handleFocusEvent);
       view.contentDOM.removeEventListener('blur', handleBlurEvent);
+      view.scrollDOM.removeEventListener('scroll', handleScroll);
       view.destroy();
       editorRef.current = null;
     };
     // Only re-create editor when fileId changes (new file opened)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  useEffect(() => {
+    if (hasAppliedInitialCursorRef.current) return;
+    applyInitialCursor();
+  }, [applyInitialCursor]);
+
+  useEffect(() => {
+    if (hasAppliedInitialScrollRef.current) return;
+    applyInitialScroll();
+  }, [applyInitialScroll]);
 
   // Update content when it changes externally (e.g., file reload)
   useEffect(() => {

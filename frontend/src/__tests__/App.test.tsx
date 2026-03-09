@@ -20,10 +20,14 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   WriteTerminal: jest.fn(),
   CloseTerminal: jest.fn(),
   ResizeTerminal: jest.fn(),
+  ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
+  SaveWorkspaceState: jest.fn(() => Promise.resolve()),
+  LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
   WindowSetTitle: jest.fn(),
+  EventsOn: jest.fn(() => jest.fn()),
 }));
 
 // Mock useDirectoryTree to prevent automatic fetching

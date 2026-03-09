@@ -11,11 +11,13 @@ import { StatusBar } from './components/StatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Toast } from './components/Toast';
 import { useAutosave } from './hooks/useAutosave';
+import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { useWorkspace } from './stores/ideStore';
 
 function App() {
   useAutosave();
+  useWorkspacePersistence();
   const workspace = useWorkspace();
   useRunProfilesLoader(workspace?.path);
 

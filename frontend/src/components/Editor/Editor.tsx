@@ -21,6 +21,10 @@ export function Editor() {
   const closeFile = useIDEStore((state) => state.closeFile);
   const updateFileContent = useIDEStore((state) => state.updateFileContent);
   const setCursorPosition = useIDEStore((state) => state.setCursorPosition);
+  const setFileCursorPosition = useIDEStore((state) => state.setFileCursorPosition);
+  const setScrollPosition = useIDEStore((state) => state.setScrollPosition);
+  const scrollPositions = useIDEStore((state) => state.scrollPositions);
+  const cursorPositions = useIDEStore((state) => state.cursorPositions);
 
   // Handle content changes from the editor
   const handleContentChange = useCallback(
@@ -30,12 +34,25 @@ export function Editor() {
     [updateFileContent]
   );
 
-  // Handle cursor position changes
+  // Handle cursor position changes — updates both global (status bar) and per-file (persistence)
   const handleCursorChange = useCallback(
     (line: number, column: number) => {
       setCursorPosition({ line, column });
+      if (activeFile) {
+        setFileCursorPosition(activeFile.id, { line, column });
+      }
     },
-    [setCursorPosition]
+    [setCursorPosition, setFileCursorPosition, activeFile]
+  );
+
+  // Handle scroll position changes
+  const handleScrollChange = useCallback(
+    (scrollTop: number) => {
+      if (activeFile) {
+        setScrollPosition(activeFile.id, scrollTop);
+      }
+    },
+    [activeFile, setScrollPosition]
   );
 
   // Welcome screen when no files are open
@@ -117,6 +134,10 @@ export function Editor() {
               content={activeFile.content || ''}
               onContentChange={handleContentChange}
               onCursorChange={handleCursorChange}
+              onScrollChange={handleScrollChange}
+              initialScrollTop={scrollPositions[activeFile.id]}
+              initialCursorLine={cursorPositions[activeFile.id]?.line}
+              initialCursorColumn={cursorPositions[activeFile.id]?.column}
             />
           </div>
         )}

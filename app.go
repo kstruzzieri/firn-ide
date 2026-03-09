@@ -6,8 +6,12 @@ import (
 	"firn/internal/runprofile"
 	"firn/internal/terminal"
 	"firn/internal/watcher"
+	"firn/internal/workspace"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -24,6 +28,10 @@ type App struct {
 	profileMu      sync.RWMutex
 	profileManager *runprofile.Manager
 	osFS           filesystem.FileSystem
+	workspaceStore *workspace.Store
+	closeMu        sync.Mutex
+	isClosing      bool
+	closeReady     chan struct{}
 }
 
 // NewApp creates and returns a new App instance.
@@ -36,13 +44,17 @@ func NewApp() *App {
 	}
 	fw, _ := watcher.NewFSNotifyWatcher(watcherConfig)
 
+	homeDir, _ := os.UserHomeDir()
+	workspaceBaseDir := filepath.Join(homeDir, ".firn", "workspaces")
+
 	return &App{
-		dirReader:   filesystem.NewDirectoryReader(osFS),
-		fileReader:  filesystem.NewFileReader(osFS),
-		fileWriter:  filesystem.NewFileWriter(osFS),
-		fileWatcher: fw,
-		termManager: terminal.NewManager(),
-		osFS:        osFS,
+		dirReader:      filesystem.NewDirectoryReader(osFS),
+		fileReader:     filesystem.NewFileReader(osFS),
+		fileWriter:     filesystem.NewFileWriter(osFS),
+		fileWatcher:    fw,
+		termManager:    terminal.NewManager(),
+		osFS:           osFS,
+		workspaceStore: workspace.NewStore(osFS, workspaceBaseDir),
 	}
 }
 
@@ -50,6 +62,36 @@ func NewApp() *App {
 // It stores the context for later use with runtime methods.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+// beforeClose is called by Wails before the application window closes.
+// On the first call it prevents close, emits an event so the frontend can
+// perform a final state save, then schedules a forced quit after 500ms.
+// When the forced quit triggers OnBeforeClose again, the isClosing flag
+// is already set so it returns false immediately, allowing the close.
+func (a *App) beforeClose(ctx context.Context) (prevent bool) {
+	a.closeMu.Lock()
+	if a.isClosing {
+		a.closeMu.Unlock()
+		return false
+	}
+	a.isClosing = true
+	a.closeReady = make(chan struct{})
+	closeReady := a.closeReady
+	a.closeMu.Unlock()
+
+	runtime.EventsEmit(a.ctx, "app:beforeclose")
+
+	go func() {
+		// Give the frontend a chance to flush workspace state before forcing quit.
+		select {
+		case <-closeReady:
+		case <-time.After(2 * time.Second):
+		}
+		runtime.Quit(a.ctx)
+	}()
+
+	return true
 }
 
 // GetWorkspaceInfo returns information about the current workspace.
@@ -278,4 +320,41 @@ func (a *App) DetectRunProfiles() []runprofile.RunProfile {
 		return []runprofile.RunProfile{}
 	}
 	return a.profileManager.ReDetect()
+}
+
+// SaveWorkspaceState saves workspace state for session restore.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) SaveWorkspaceState(state workspace.State) error {
+	return a.workspaceStore.Save(state)
+}
+
+// LoadWorkspaceState loads saved state for a workspace path.
+// Returns nil if no saved state exists (first time opening).
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LoadWorkspaceState(workspacePath string) (*workspace.State, error) {
+	return a.workspaceStore.Load(workspacePath)
+}
+
+// ListRecentWorkspaces returns summaries of recently opened workspaces.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ListRecentWorkspaces() ([]workspace.Summary, error) {
+	return a.workspaceStore.ListRecent(0)
+}
+
+// ConfirmBeforeCloseReady signals that the frontend finished its final flush
+// and the app can proceed with shutdown immediately.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ConfirmBeforeCloseReady() {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+
+	if a.closeReady == nil {
+		return
+	}
+
+	select {
+	case <-a.closeReady:
+	default:
+		close(a.closeReady)
+	}
 }
