@@ -9,10 +9,10 @@ const mockReadFile = jest.fn();
 let beforeCloseHandler: (() => void) | null = null;
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
-  ConfirmBeforeCloseReady: (...args: unknown[]) => mockConfirmBeforeCloseReady(...args),
-  SaveWorkspaceState: (...args: unknown[]) => mockSaveWorkspaceState(...args),
-  LoadWorkspaceState: (...args: unknown[]) => mockLoadWorkspaceState(...args),
-  ReadFile: (...args: unknown[]) => mockReadFile(...args),
+  ConfirmBeforeCloseReady: mockConfirmBeforeCloseReady,
+  SaveWorkspaceState: mockSaveWorkspaceState,
+  LoadWorkspaceState: mockLoadWorkspaceState,
+  ReadFile: mockReadFile,
 }));
 
 jest.mock('../../../wailsjs/runtime/runtime', () => ({
