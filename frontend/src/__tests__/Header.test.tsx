@@ -10,6 +10,7 @@ import { useIDEStore } from '../stores/ideStore';
 
 jest.mock('../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: jest.fn(),
+  ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
@@ -24,6 +25,7 @@ describe('Header Component', () => {
     jest.clearAllMocks();
     useIDEStore.setState({
       workspace: null,
+      recentWorkspaces: [],
     });
   });
 
@@ -56,13 +58,16 @@ describe('Header Component', () => {
     expect(screen.getByText('my-project')).toBeInTheDocument();
   });
 
-  it('should call OpenFolderDialog when workspace button is clicked', async () => {
+  it('should call OpenFolderDialog when Open Folder menu item is clicked', async () => {
     (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
 
     render(<Header />);
 
-    const workspaceBtn = screen.getByRole('button', { name: /open folder/i });
-    fireEvent.click(workspaceBtn);
+    // Open the workspace dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+
+    // Click "Open Folder..." in the dropdown
+    fireEvent.click(screen.getByText('Open Folder...'));
 
     await waitFor(() => {
       expect(OpenFolderDialog).toHaveBeenCalled();
@@ -74,7 +79,11 @@ describe('Header Component', () => {
 
     render(<Header />);
 
-    fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
+    // Open the workspace dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+
+    // Click "Open Folder..." in the dropdown
+    fireEvent.click(screen.getByText('Open Folder...'));
 
     await waitFor(() => {
       const state = useIDEStore.getState();
@@ -82,7 +91,30 @@ describe('Header Component', () => {
         name: 'my-app',
         path: '/Users/test/my-app',
       });
-      expect(WindowSetTitle).toHaveBeenCalledWith('my-app — Firn');
+      expect(WindowSetTitle).toHaveBeenCalledWith('my-app \u2014 Firn');
     });
+  });
+
+  it('should show recent projects in the dropdown menu', () => {
+    useIDEStore.setState({
+      workspace: { name: 'current', path: '/Users/test/current' },
+      recentWorkspaces: [
+        { name: 'current', path: '/Users/test/current', lastOpened: '2026-01-01T00:00:00Z' },
+        {
+          name: 'other-project',
+          path: '/Users/test/other-project',
+          lastOpened: '2025-12-31T00:00:00Z',
+        },
+      ],
+    });
+
+    render(<Header />);
+
+    // Open the workspace dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+
+    // Current workspace should be filtered out, only "other-project" should appear
+    expect(screen.getByText('other-project')).toBeInTheDocument();
+    expect(screen.getByText('Recent Projects')).toBeInTheDocument();
   });
 });

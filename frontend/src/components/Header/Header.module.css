@@ -74,6 +74,10 @@
 }
 
 /* Workspace Selector */
+.workspaceWrapper {
+  position: relative;
+}
+
 .workspaceBtn {
   display: flex;
   align-items: center;
@@ -126,6 +130,87 @@
   border-radius: 4px;
   color: var(--text-muted);
   letter-spacing: 0.5px;
+}
+
+/* Workspace Dropdown Menu */
+.workspaceMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 100;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.menuItem:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.menuItem:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.menuItemName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menuIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.menuShortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-disabled);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.menuDivider {
+  height: 1px;
+  background: var(--surface-border-subtle);
+  margin: 4px 6px;
+}
+
+.menuLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 6px 10px 4px;
 }
 
 /* Spacer */

@@ -7,9 +7,17 @@
 
 import { useCallback } from 'react';
 import styles from './Editor.module.css';
-import { useOpenFiles, useActiveFile, useIDEStore } from '../../stores/ideStore';
+import {
+  useOpenFiles,
+  useActiveFile,
+  useIDEStore,
+  useRecentWorkspaces,
+  useWorkspace,
+} from '../../stores/ideStore';
 import { FileIcon } from '../FileExplorer/FileIcon';
+import { FolderOutlineIcon } from '../icons';
 import { formatShortcut } from '../../utils/platform';
+import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { getLanguageName } from './codemirror';
 import firnLogo from '../../assets/branding/banner-transparent.svg';
@@ -17,6 +25,8 @@ import firnLogo from '../../assets/branding/banner-transparent.svg';
 export function Editor() {
   const openFiles = useOpenFiles();
   const activeFile = useActiveFile();
+  const workspace = useWorkspace();
+  const recentWorkspaces = useRecentWorkspaces();
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
   const updateFileContent = useIDEStore((state) => state.updateFileContent);
@@ -57,6 +67,9 @@ export function Editor() {
 
   // Welcome screen when no files are open
   if (openFiles.length === 0) {
+    // Filter out the currently open workspace from recent list
+    const recentProjects = recentWorkspaces.filter((w) => w.path !== workspace?.path);
+
     return (
       <div className={styles.editor}>
         <div className={styles.welcome}>
@@ -64,17 +77,39 @@ export function Editor() {
           <div className={styles.shortcuts}>
             <div className={styles.shortcutItem}>
               <span className={styles.shortcutLabel}>Open File</span>
-              <kbd>{formatShortcut('⌘O')}</kbd>
+              <kbd>{formatShortcut('\u2318O')}</kbd>
             </div>
             <div className={styles.shortcutItem}>
               <span className={styles.shortcutLabel}>Command Palette</span>
-              <kbd>{formatShortcut('⌘⇧P')}</kbd>
+              <kbd>{formatShortcut('\u2318\u21e7P')}</kbd>
             </div>
             <div className={styles.shortcutItem}>
               <span className={styles.shortcutLabel}>Quick Search</span>
-              <kbd>{formatShortcut('⌘K')}</kbd>
+              <kbd>{formatShortcut('\u2318K')}</kbd>
             </div>
           </div>
+          {recentProjects.length > 0 && (
+            <div className={styles.recentProjects}>
+              <h3 className={styles.recentTitle}>Recent Projects</h3>
+              <ul className={styles.recentList}>
+                {recentProjects.map((project) => (
+                  <li key={project.path}>
+                    <button
+                      className={styles.recentItem}
+                      onClick={() => openWorkspaceByPath(project.path)}
+                      title={project.path}
+                    >
+                      <FolderOutlineIcon className={styles.recentIcon} aria-hidden="true" />
+                      <div className={styles.recentItemText}>
+                        <span className={styles.recentName}>{project.name}</span>
+                        <span className={styles.recentPath}>{shortenPath(project.path)}</span>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     );

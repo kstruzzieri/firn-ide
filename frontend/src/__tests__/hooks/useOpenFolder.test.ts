@@ -14,6 +14,7 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
 }));
 
 import { useOpenFolder, _resetOpeningLock } from '../../hooks/useOpenFolder';
+import { openWorkspaceByPath } from '../../utils/workspace';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -24,6 +25,7 @@ beforeEach(() => {
     isLoadingTree: false,
     treeError: null,
     toast: null,
+    recentWorkspaces: [],
   });
 });
 
@@ -153,5 +155,79 @@ describe('useOpenFolder', () => {
       path: 'C:\\Users\\test\\my-project',
     });
     expect(mockWindowSetTitle).toHaveBeenCalledWith('my-project — Firn');
+  });
+});
+
+describe('openWorkspaceByPath', () => {
+  it('should set workspace state and update window title', () => {
+    openWorkspaceByPath('/Users/test/my-app');
+
+    const state = useIDEStore.getState();
+    expect(state.workspace).toEqual({
+      name: 'my-app',
+      path: '/Users/test/my-app',
+    });
+    expect(mockWindowSetTitle).toHaveBeenCalledWith('my-app — Firn');
+  });
+
+  it('should clear stale directory tree and set loading', () => {
+    useIDEStore.setState({
+      directoryTree: [{ name: 'old.ts' }] as unknown as filesystem.FileEntry[],
+      isLoadingTree: false,
+    });
+
+    openWorkspaceByPath('/Users/test/new-project');
+
+    const state = useIDEStore.getState();
+    expect(state.directoryTree).toEqual([]);
+    expect(state.workspace?.name).toBe('new-project');
+  });
+
+  it('should handle Windows paths', () => {
+    openWorkspaceByPath('C:\\Users\\test\\win-project');
+
+    const state = useIDEStore.getState();
+    expect(state.workspace).toEqual({
+      name: 'win-project',
+      path: 'C:\\Users\\test\\win-project',
+    });
+    expect(mockWindowSetTitle).toHaveBeenCalledWith('win-project — Firn');
+  });
+
+  it('should ignore empty paths', () => {
+    openWorkspaceByPath('');
+    expect(useIDEStore.getState().workspace).toBeNull();
+    expect(mockWindowSetTitle).not.toHaveBeenCalled();
+
+    openWorkspaceByPath('   ');
+    expect(useIDEStore.getState().workspace).toBeNull();
+    expect(mockWindowSetTitle).not.toHaveBeenCalled();
+  });
+
+  it('should skip if already on the same workspace', () => {
+    useIDEStore.setState({
+      workspace: { name: 'my-app', path: '/Users/test/my-app' },
+    });
+
+    openWorkspaceByPath('/Users/test/my-app');
+
+    // WindowSetTitle should not be called again
+    expect(mockWindowSetTitle).not.toHaveBeenCalled();
+  });
+
+  it('should optimistically update the recent workspaces list', () => {
+    useIDEStore.setState({
+      recentWorkspaces: [
+        { name: 'old-project', path: '/projects/old', lastOpened: '2025-01-01T00:00:00Z' },
+      ],
+    });
+
+    openWorkspaceByPath('/Users/test/new-project');
+
+    const { recentWorkspaces } = useIDEStore.getState();
+    expect(recentWorkspaces).toHaveLength(2);
+    expect(recentWorkspaces[0].name).toBe('new-project');
+    expect(recentWorkspaces[0].path).toBe('/Users/test/new-project');
+    expect(recentWorkspaces[1].name).toBe('old-project');
   });
 });

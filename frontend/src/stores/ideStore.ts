@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import type { filesystem } from '../../wailsjs/go/models';
+import type { filesystem, workspace } from '../../wailsjs/go/models';
 import type { RunProfile } from '../types/runProfile';
 
 // Types
@@ -105,6 +105,9 @@ interface IDEState {
   // Workspace persistence
   isRestoringWorkspace: boolean;
 
+  // Recent workspaces
+  recentWorkspaces: workspace.Summary[];
+
   // Status
   gitBranch: string;
   errorCount: number;
@@ -169,6 +172,9 @@ interface IDEActions {
   setRestoringWorkspace: (restoring: boolean) => void;
   resetWorkspaceSession: () => void;
 
+  // Recent workspaces actions
+  setRecentWorkspaces: (workspaces: workspace.Summary[]) => void;
+
   // Status actions
   setGitBranch: (branch: string) => void;
   setDiagnostics: (errors: number, warnings: number) => void;
@@ -195,6 +201,7 @@ export const useIDEStore = create<IDEStore>()(
       isLoadingProfiles: false,
       profilesError: null,
       isRestoringWorkspace: false,
+      recentWorkspaces: [],
       gitBranch: '',
       errorCount: 0,
       warningCount: 0,
@@ -464,6 +471,10 @@ export const useIDEStore = create<IDEStore>()(
       resetWorkspaceSession: () =>
         set(createDefaultWorkspaceSessionState(), false, 'resetWorkspaceSession'),
 
+      // Recent workspaces actions
+      setRecentWorkspaces: (recentWorkspaces) =>
+        set({ recentWorkspaces }, false, 'setRecentWorkspaces'),
+
       // Status actions
       setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
 
@@ -516,3 +527,4 @@ export const useSavedProfiles = () =>
   useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'user')));
 export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoadingProfiles);
 export const useProfilesError = () => useIDEStore((state) => state.profilesError);
+export const useRecentWorkspaces = () => useIDEStore((state) => state.recentWorkspaces);
