@@ -60,8 +60,10 @@ function collectWorkspaceState(overrideIdentity?: WorkspaceIdentity): workspace.
 
 /**
  * Restores workspace state from the backend after a folder is opened.
+ * Accepts an AbortSignal so the caller can cancel a stale restore when
+ * the user switches workspaces before the previous restore completes.
  */
-async function restoreWorkspaceState(workspacePath: string): Promise<void> {
+async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal): Promise<void> {
   const store = useIDEStore.getState();
   store.setRestoringWorkspace(true);
 
@@ -70,6 +72,7 @@ async function restoreWorkspaceState(workspacePath: string): Promise<void> {
     store.resetWorkspaceSession();
 
     const state = await LoadWorkspaceState(workspacePath);
+    if (signal.aborted) return;
     if (!state) return; // first time opening, use defaults
 
     // Restore layout
@@ -111,14 +114,18 @@ async function restoreWorkspaceState(workspacePath: string): Promise<void> {
       }
     }
 
+    if (signal.aborted) return;
+
     // Restore open files
     if (state.editor?.openFiles?.length) {
       const scrollPositions: Record<string, number> = {};
       const cursorPositions: Record<string, { line: number; column: number }> = {};
 
       for (const fileState of state.editor.openFiles) {
+        if (signal.aborted) return;
         try {
           const fileContent = await ReadFile(fileState.path);
+          if (signal.aborted) return;
           if (fileContent.isBinary) continue;
 
           const fileName =
@@ -151,6 +158,8 @@ async function restoreWorkspaceState(workspacePath: string): Promise<void> {
         }
       }
 
+      if (signal.aborted) return;
+
       // Apply saved view state in bulk
       useIDEStore.setState((prev) => ({
         scrollPositions: { ...prev.scrollPositions, ...scrollPositions },
@@ -169,7 +178,9 @@ async function restoreWorkspaceState(workspacePath: string): Promise<void> {
   } catch (err) {
     console.warn('Failed to restore workspace state:', err);
   } finally {
-    useIDEStore.getState().setRestoringWorkspace(false);
+    if (!signal.aborted) {
+      useIDEStore.getState().setRestoringWorkspace(false);
+    }
   }
 }
 
@@ -182,32 +193,41 @@ async function restoreWorkspaceState(workspacePath: string): Promise<void> {
 export function useWorkspacePersistence() {
   const workspace = useIDEStore((state) => state.workspace);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isSavingRef = useRef(false);
+  const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const prevWorkspaceRef = useRef<WorkspaceIdentity | null>(null);
 
   /**
    * Flush save — optionally for a specific workspace identity.
    * When switching workspaces, the caller passes the OLD identity
    * so the current editor state is saved under the correct path.
+   *
+   * If a save is already in flight, waits for it to finish and then
+   * saves a fresh snapshot so recent changes are never dropped.
    */
   const flushSave = useCallback(async (identityOverride?: WorkspaceIdentity) => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    if (isSavingRef.current) return;
+
+    // Wait for any in-flight save to complete before collecting a fresh snapshot.
+    await savePromiseRef.current;
 
     const state = collectWorkspaceState(identityOverride);
     if (!state) return;
 
-    isSavingRef.current = true;
-    try {
-      await SaveWorkspaceState(state);
-    } catch (err) {
-      console.error('Failed to save workspace state:', err);
-    } finally {
-      isSavingRef.current = false;
-    }
+    const promise = SaveWorkspaceState(state)
+      .catch((err) => {
+        console.error('Failed to save workspace state:', err);
+      })
+      .finally(() => {
+        if (savePromiseRef.current === promise) {
+          savePromiseRef.current = Promise.resolve();
+        }
+      });
+
+    savePromiseRef.current = promise;
+    await promise;
   }, []);
 
   const scheduleSave = useCallback(() => {
@@ -250,7 +270,9 @@ export function useWorkspacePersistence() {
     };
   }, [workspace, scheduleSave]);
 
-  // Restore state when workspace changes
+  // Restore state when workspace changes.
+  // An AbortController cancels any in-flight restore when the workspace
+  // changes again, preventing stale state from leaking into the new session.
   useEffect(() => {
     if (!workspace?.path) return;
 
@@ -265,7 +287,13 @@ export function useWorkspacePersistence() {
     }
 
     prevWorkspaceRef.current = { path: workspace.path, name: workspace.name };
-    restoreWorkspaceState(workspace.path);
+
+    const controller = new AbortController();
+    restoreWorkspaceState(workspace.path, controller.signal);
+
+    return () => {
+      controller.abort();
+    };
   }, [workspace?.path, workspace?.name, flushSave]);
 
   // Flush on visibility change and window blur
