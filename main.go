@@ -30,6 +30,7 @@ func main() {
 		// Firn Glacier theme: --surface-base: #020617
 		BackgroundColour: &options.RGBA{R: 2, G: 6, B: 23, A: 255},
 		OnStartup:        app.startup,
+		OnBeforeClose:    app.beforeClose,
 		Bind: []interface{}{
 			app,
 		},

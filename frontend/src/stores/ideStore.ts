@@ -37,6 +37,26 @@ export interface TerminalSession {
   title: string;
 }
 
+const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
+
+function createDefaultWorkspaceSessionState() {
+  return {
+    activeSidebarView: 'explorer' as SidebarView,
+    isLeftPanelCollapsed: false,
+    isRightPanelCollapsed: false,
+    isBottomPanelCollapsed: false,
+    panelSizes: { ...defaultPanelSizes },
+    openFiles: [] as EditorFile[],
+    activeFileId: null as string | null,
+    cursorPosition: { line: 1, column: 1 },
+    scrollPositions: {} as Record<string, number>,
+    cursorPositions: {} as Record<string, CursorPosition>,
+    expandedPaths: new Set<string>(),
+    selectedPath: null as string | null,
+    isRootExpanded: true,
+  };
+}
+
 interface IDEState {
   // Workspace
   workspace: WorkspaceInfo | null;
@@ -77,6 +97,13 @@ interface IDEState {
   runProfiles: RunProfile[];
   isLoadingProfiles: boolean;
   profilesError: string | null;
+
+  // Per-file view state (for persistence)
+  scrollPositions: Record<string, number>; // fileId -> scrollTop
+  cursorPositions: Record<string, CursorPosition>; // fileId -> cursor
+
+  // Workspace persistence
+  isRestoringWorkspace: boolean;
 
   // Status
   gitBranch: string;
@@ -134,6 +161,14 @@ interface IDEActions {
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
 
+  // Per-file view state actions
+  setScrollPosition: (fileId: string, scrollTop: number) => void;
+  setFileCursorPosition: (fileId: string, position: CursorPosition) => void;
+
+  // Workspace persistence actions
+  setRestoringWorkspace: (restoring: boolean) => void;
+  resetWorkspaceSession: () => void;
+
   // Status actions
   setGitBranch: (branch: string) => void;
   setDiagnostics: (errors: number, warnings: number) => void;
@@ -148,19 +183,9 @@ export const useIDEStore = create<IDEStore>()(
       workspace: null,
       isLoading: false,
       directoryTree: [],
-      expandedPaths: new Set<string>(),
-      selectedPath: null,
-      isRootExpanded: true,
       isLoadingTree: false,
       treeError: null,
-      activeSidebarView: 'explorer',
-      isLeftPanelCollapsed: false,
-      isRightPanelCollapsed: false,
-      isBottomPanelCollapsed: false,
-      panelSizes: { left: 260, right: 280, bottom: 200 },
-      openFiles: [],
-      activeFileId: null,
-      cursorPosition: { line: 1, column: 1 },
+      ...createDefaultWorkspaceSessionState(),
       toast: null,
       activeTerminalTab: 'terminal',
       terminalSessions: [],
@@ -169,6 +194,7 @@ export const useIDEStore = create<IDEStore>()(
       runProfiles: [],
       isLoadingProfiles: false,
       profilesError: null,
+      isRestoringWorkspace: false,
       gitBranch: '',
       errorCount: 0,
       warningCount: 0,
@@ -411,6 +437,32 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'removeProfile'
         ),
+
+      // Per-file view state actions
+      setScrollPosition: (fileId, scrollTop) =>
+        set(
+          (state) => ({
+            scrollPositions: { ...state.scrollPositions, [fileId]: scrollTop },
+          }),
+          false,
+          'setScrollPosition'
+        ),
+
+      setFileCursorPosition: (fileId, position) =>
+        set(
+          (state) => ({
+            cursorPositions: { ...state.cursorPositions, [fileId]: position },
+          }),
+          false,
+          'setFileCursorPosition'
+        ),
+
+      // Workspace persistence actions
+      setRestoringWorkspace: (isRestoringWorkspace) =>
+        set({ isRestoringWorkspace }, false, 'setRestoringWorkspace'),
+
+      resetWorkspaceSession: () =>
+        set(createDefaultWorkspaceSessionState(), false, 'resetWorkspaceSession'),
 
       // Status actions
       setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
