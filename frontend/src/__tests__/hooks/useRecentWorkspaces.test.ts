@@ -73,7 +73,7 @@ describe('useRecentWorkspaces', () => {
     warnSpy.mockRestore();
   });
 
-  it('should refresh when workspace path changes', async () => {
+  it('should NOT refetch when workspace path changes (optimistic updates handle in-session ordering)', async () => {
     mockListRecentWorkspaces.mockResolvedValue([
       { name: 'project-a', path: '/projects/a', lastOpened: '2026-01-01T00:00:00Z' },
     ]);
@@ -84,21 +84,16 @@ describe('useRecentWorkspaces', () => {
       expect(useIDEStore.getState().recentWorkspaces).toHaveLength(1);
     });
 
-    // Change workspace
-    mockListRecentWorkspaces.mockResolvedValue([
-      { name: 'project-a', path: '/projects/a', lastOpened: '2026-01-02T00:00:00Z' },
-      { name: 'project-b', path: '/projects/b', lastOpened: '2026-01-01T00:00:00Z' },
-    ]);
+    // Simulate workspace switch — the hook should NOT refetch because the
+    // backend hasn't persisted the new LastOpened yet. Refetching here would
+    // overwrite the optimistic update from openWorkspaceByPath with stale data.
     useIDEStore.setState({
       workspace: { name: 'project-b', path: '/projects/b' },
     });
 
     rerender();
 
-    await waitFor(() => {
-      expect(useIDEStore.getState().recentWorkspaces).toHaveLength(2);
-    });
-
-    expect(mockListRecentWorkspaces).toHaveBeenCalledTimes(2);
+    // Only the initial mount fetch should have occurred
+    expect(mockListRecentWorkspaces).toHaveBeenCalledTimes(1);
   });
 });

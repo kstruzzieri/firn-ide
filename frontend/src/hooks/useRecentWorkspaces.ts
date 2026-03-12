@@ -5,12 +5,15 @@ import { ListRecentWorkspaces } from '../../wailsjs/go/main/App';
 const MAX_RECENT = 10;
 
 /**
- * Fetches recent workspaces from the backend on mount and whenever the
- * active workspace changes (since opening a workspace updates lastOpened).
+ * Fetches recent workspaces from the backend on mount.
+ *
+ * In-session workspace switches are handled by the optimistic update in
+ * `openWorkspaceByPath`, so we intentionally do NOT refetch when
+ * `workspace.path` changes — the backend only persists `LastOpened`
+ * during `SaveWorkspaceState` (autosave / blur / close), so an
+ * immediate refetch would overwrite the optimistic state with stale data.
  */
 export function useRecentWorkspaces() {
-  const workspacePath = useIDEStore((state) => state.workspace?.path);
-
   useEffect(() => {
     let cancelled = false;
 
@@ -29,5 +32,5 @@ export function useRecentWorkspaces() {
     return () => {
       cancelled = true;
     };
-  }, [workspacePath]);
+  }, []);
 }
