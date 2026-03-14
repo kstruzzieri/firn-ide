@@ -117,4 +117,67 @@ describe('Header Component', () => {
     expect(screen.getByText('other-project')).toBeInTheDocument();
     expect(screen.getByText('Recent Projects')).toBeInTheDocument();
   });
+
+  it('should exclude the current workspace from the recent projects list', () => {
+    useIDEStore.setState({
+      workspace: { name: 'active-project', path: '/Users/test/active-project' },
+      recentWorkspaces: [
+        {
+          name: 'active-project',
+          path: '/Users/test/active-project',
+          lastOpened: '2026-01-03T00:00:00Z',
+        },
+        {
+          name: 'other-a',
+          path: '/Users/test/other-a',
+          lastOpened: '2026-01-02T00:00:00Z',
+        },
+        {
+          name: 'other-b',
+          path: '/Users/test/other-b',
+          lastOpened: '2026-01-01T00:00:00Z',
+        },
+      ],
+    });
+
+    render(<Header />);
+    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+
+    // The dropdown menu items should include only non-current workspaces.
+    // "active-project" text appears in the workspace button label, but should
+    // NOT appear as a menuitem in the recent projects list.
+    const menuItems = screen.getAllByRole('menuitem');
+    const recentMenuItemNames = menuItems
+      .map((item) => item.textContent)
+      .filter((text) => text !== 'Open Folder...');
+
+    expect(recentMenuItemNames).toContain('other-a');
+    expect(recentMenuItemNames).toContain('other-b');
+    expect(recentMenuItemNames).not.toContain('active-project');
+  });
+
+  it('should switch workspace immediately when a recent project is clicked', () => {
+    useIDEStore.setState({
+      workspace: { name: 'current', path: '/Users/test/current' },
+      recentWorkspaces: [
+        {
+          name: 'target-project',
+          path: '/Users/test/target-project',
+          lastOpened: '2026-01-01T00:00:00Z',
+        },
+      ],
+    });
+
+    render(<Header />);
+    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+    fireEvent.click(screen.getByText('target-project'));
+
+    // Workspace should switch immediately (synchronous, optimistic update)
+    const state = useIDEStore.getState();
+    expect(state.workspace).toEqual({
+      name: 'target-project',
+      path: '/Users/test/target-project',
+    });
+    expect(WindowSetTitle).toHaveBeenCalledWith('target-project \u2014 Firn');
+  });
 });

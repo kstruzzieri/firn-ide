@@ -107,6 +107,7 @@ interface IDEState {
 
   // Recent workspaces
   recentWorkspaces: workspace.Summary[];
+  recentWorkspacesVersion: number;
 
   // Status
   gitBranch: string;
@@ -202,6 +203,7 @@ export const useIDEStore = create<IDEStore>()(
       profilesError: null,
       isRestoringWorkspace: false,
       recentWorkspaces: [],
+      recentWorkspacesVersion: 0,
       gitBranch: '',
       errorCount: 0,
       warningCount: 0,
