@@ -37,10 +37,18 @@ export function openWorkspaceByPath(folderPath: string) {
 
     // Optimistically update the recent workspaces list so the UI reflects
     // the change immediately, without waiting for the backend save + refetch.
+    // Bump the version so any in-flight backend fetch knows to discard its result.
     const now = new Date().toISOString();
     const filtered = store.recentWorkspaces.filter((w) => w.path !== folderPath);
     const updated = [{ name: folderName, path: folderPath, lastOpened: now }, ...filtered];
-    store.setRecentWorkspaces(updated.slice(0, MAX_RECENT));
+    useIDEStore.setState(
+      (s) => ({
+        recentWorkspaces: updated.slice(0, MAX_RECENT),
+        recentWorkspacesVersion: s.recentWorkspacesVersion + 1,
+      }),
+      false,
+      'setRecentWorkspaces/optimistic'
+    );
   } catch (err) {
     console.error('Failed to open workspace:', err);
     store.showToast(

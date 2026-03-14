@@ -14,6 +14,7 @@ beforeEach(() => {
   useIDEStore.setState({
     workspace: null,
     recentWorkspaces: [],
+    recentWorkspacesVersion: 0,
   });
 });
 
@@ -95,5 +96,51 @@ describe('useRecentWorkspaces', () => {
 
     // Only the initial mount fetch should have occurred
     expect(mockListRecentWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it('should merge backend response with optimistic state when an update occurs mid-flight', async () => {
+    // Simulate a slow backend fetch that resolves after an optimistic update
+    let resolveFetch!: (value: unknown) => void;
+    mockListRecentWorkspaces.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      })
+    );
+
+    renderHook(() => useRecentWorkspaces());
+
+    // While the backend fetch is in flight, simulate an optimistic update
+    // (as openWorkspaceByPath would do)
+    const optimisticEntry = {
+      name: 'new-project',
+      path: '/projects/new',
+      lastOpened: '2026-03-13T00:00:00Z',
+    };
+    useIDEStore.setState(
+      (s) => ({
+        recentWorkspaces: [optimisticEntry],
+        recentWorkspacesVersion: s.recentWorkspacesVersion + 1,
+      }),
+      false,
+      'setRecentWorkspaces/optimistic'
+    );
+
+    // Backend resolves with historical data (includes a workspace not in the optimistic list)
+    resolveFetch([
+      { name: 'new-project', path: '/projects/new', lastOpened: '2026-01-01T00:00:00Z' },
+      { name: 'old-project', path: '/projects/old', lastOpened: '2026-01-01T00:00:00Z' },
+    ]);
+
+    // Wait for the async handler to run
+    await waitFor(() => {
+      const state = useIDEStore.getState();
+      expect(state.recentWorkspaces).toHaveLength(2);
+    });
+
+    // Optimistic entry stays at the front; historical entry is backfilled
+    const state = useIDEStore.getState();
+    expect(state.recentWorkspaces[0].name).toBe('new-project');
+    expect(state.recentWorkspaces[0].lastOpened).toBe('2026-03-13T00:00:00Z'); // optimistic timestamp preserved
+    expect(state.recentWorkspaces[1].name).toBe('old-project');
   });
 });
