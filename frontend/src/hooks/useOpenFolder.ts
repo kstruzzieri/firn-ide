@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useIDEStore } from '../stores/ideStore';
 import { OpenFolderDialog } from '../../wailsjs/go/main/App';
-import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
+import { openWorkspaceByPath } from '../utils/workspace';
 
 // Module-level lock shared across all hook instances (Header, FileExplorer,
 // useKeyboardShortcuts) so concurrent triggers from different entry points
@@ -19,10 +19,6 @@ let isOpening = false;
  * keyboard shortcuts. Use `useKeyboardShortcuts` once at the app level for that.
  */
 export function useOpenFolder() {
-  const setWorkspace = useIDEStore((state) => state.setWorkspace);
-  const setTreeLoading = useIDEStore((state) => state.setTreeLoading);
-  const setDirectoryTree = useIDEStore((state) => state.setDirectoryTree);
-
   const openFolder = useCallback(async () => {
     // Guard against concurrent invocations (e.g., rapid double-click)
     if (isOpening) return;
@@ -34,20 +30,7 @@ export function useOpenFolder() {
       // User cancelled
       if (!folderPath) return;
 
-      // Extract folder name from path
-      const separator = folderPath.includes('\\') ? '\\' : '/';
-      const folderName = folderPath.split(separator).pop() || folderPath;
-
-      // Clear stale tree and mark loading *before* setting workspace so the
-      // UI never briefly shows old files under the new workspace name.
-      setDirectoryTree([]);
-      setTreeLoading(true);
-
-      // Set workspace — this triggers useDirectoryTree to fetch the tree
-      setWorkspace({ name: folderName, path: folderPath });
-
-      // Update window title
-      WindowSetTitle(`${folderName} — Firn`);
+      openWorkspaceByPath(folderPath);
     } catch (err) {
       console.error('Failed to open folder:', err);
       useIDEStore
@@ -59,7 +42,7 @@ export function useOpenFolder() {
     } finally {
       isOpening = false;
     }
-  }, [setWorkspace, setTreeLoading, setDirectoryTree]);
+  }, []);
 
   return { openFolder };
 }

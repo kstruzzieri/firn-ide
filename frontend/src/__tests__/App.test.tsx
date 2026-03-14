@@ -23,6 +23,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
   SaveWorkspaceState: jest.fn(() => Promise.resolve()),
   LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
+  ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({

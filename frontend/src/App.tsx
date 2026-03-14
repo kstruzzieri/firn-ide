@@ -12,12 +12,14 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Toast } from './components/Toast';
 import { useAutosave } from './hooks/useAutosave';
 import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
+import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { useWorkspace } from './stores/ideStore';
 
 function App() {
   useAutosave();
   useWorkspacePersistence();
+  useRecentWorkspaces();
   const workspace = useWorkspace();
   useRunProfilesLoader(workspace?.path);
 
