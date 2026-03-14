@@ -13,9 +13,10 @@ const MAX_RECENT = 10;
  * during `SaveWorkspaceState` (autosave / blur / close), so an
  * immediate refetch would overwrite the optimistic state with stale data.
  *
- * To guard the mount fetch itself, we snapshot `recentWorkspacesVersion`
- * before calling the backend. If an optimistic update bumps the version
- * while the fetch is in flight, we discard the stale backend response.
+ * If an optimistic update occurs while the backend fetch is in flight,
+ * we merge rather than replace: optimistic entries (fresher) take
+ * precedence, and the backend backfills any historical workspaces that
+ * the optimistic path didn't know about.
  */
 export function useRecentWorkspaces() {
   useEffect(() => {
@@ -28,12 +29,20 @@ export function useRecentWorkspaces() {
         const all = await ListRecentWorkspaces();
         if (cancelled) return;
 
-        // An optimistic update happened while the fetch was in flight —
-        // the in-memory list is more current than the backend response.
-        if (useIDEStore.getState().recentWorkspacesVersion !== versionAtStart) return;
+        const backendEntries = (all ?? []).slice(0, MAX_RECENT);
 
-        const limited = (all ?? []).slice(0, MAX_RECENT);
-        useIDEStore.getState().setRecentWorkspaces(limited);
+        if (useIDEStore.getState().recentWorkspacesVersion !== versionAtStart) {
+          // An optimistic update happened while the fetch was in flight.
+          // Merge: keep optimistic entries, backfill with backend entries
+          // that aren't already represented in the in-memory list.
+          const current = useIDEStore.getState().recentWorkspaces;
+          const currentPaths = new Set(current.map((w) => w.path));
+          const backfill = backendEntries.filter((w) => !currentPaths.has(w.path));
+          const merged = [...current, ...backfill].slice(0, MAX_RECENT);
+          useIDEStore.getState().setRecentWorkspaces(merged);
+        } else {
+          useIDEStore.getState().setRecentWorkspaces(backendEntries);
+        }
       } catch (err) {
         console.warn('Failed to load recent workspaces:', err);
       }

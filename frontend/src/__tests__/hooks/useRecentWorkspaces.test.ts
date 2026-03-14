@@ -98,7 +98,7 @@ describe('useRecentWorkspaces', () => {
     expect(mockListRecentWorkspaces).toHaveBeenCalledTimes(1);
   });
 
-  it('should discard stale backend response when an optimistic update occurs mid-flight', async () => {
+  it('should merge backend response with optimistic state when an update occurs mid-flight', async () => {
     // Simulate a slow backend fetch that resolves after an optimistic update
     let resolveFetch!: (value: unknown) => void;
     mockListRecentWorkspaces.mockReturnValue(
@@ -125,19 +125,22 @@ describe('useRecentWorkspaces', () => {
       'setRecentWorkspaces/optimistic'
     );
 
-    // Now the backend fetch resolves with stale data
+    // Backend resolves with historical data (includes a workspace not in the optimistic list)
     resolveFetch([
+      { name: 'new-project', path: '/projects/new', lastOpened: '2026-01-01T00:00:00Z' },
       { name: 'old-project', path: '/projects/old', lastOpened: '2026-01-01T00:00:00Z' },
     ]);
 
-    // Wait a tick for the async handler to run
+    // Wait for the async handler to run
     await waitFor(() => {
-      expect(mockListRecentWorkspaces).toHaveBeenCalledTimes(1);
+      const state = useIDEStore.getState();
+      expect(state.recentWorkspaces).toHaveLength(2);
     });
 
-    // The optimistic entry should still be in place — stale data was discarded
+    // Optimistic entry stays at the front; historical entry is backfilled
     const state = useIDEStore.getState();
-    expect(state.recentWorkspaces).toHaveLength(1);
     expect(state.recentWorkspaces[0].name).toBe('new-project');
+    expect(state.recentWorkspaces[0].lastOpened).toBe('2026-03-13T00:00:00Z'); // optimistic timestamp preserved
+    expect(state.recentWorkspaces[1].name).toBe('old-project');
   });
 });
