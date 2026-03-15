@@ -3,6 +3,15 @@ import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import type { filesystem, workspace } from '../../wailsjs/go/models';
 import type { RunProfile } from '../types/runProfile';
+import { LineAssembler } from '../utils/lineAssembler';
+import type {
+  OutputChunk,
+  OutputEntry,
+  RunOutput,
+  RunState,
+  RunOutputViewMode,
+} from '../types/runOutput';
+import { MAX_OUTPUT_ENTRIES } from '../types/runOutput';
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
@@ -98,6 +107,12 @@ interface IDEState {
   isLoadingProfiles: boolean;
   profilesError: string | null;
 
+  // Run Output
+  runOutputs: Record<string, RunOutput>;
+  activeRunOutputId: string | null;
+  runOutputViewMode: RunOutputViewMode;
+  runOutputAutoScroll: boolean;
+
   // Per-file view state (for persistence)
   scrollPositions: Record<string, number>; // fileId -> scrollTop
   cursorPositions: Record<string, CursorPosition>; // fileId -> cursor
@@ -165,6 +180,15 @@ interface IDEActions {
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
 
+  // Run Output actions
+  appendRunOutput: (chunk: OutputChunk) => void;
+  setRunState: (profileId: string, state: RunState, exitCode: number) => void;
+  clearRunOutput: (profileId: string) => void;
+  clearAllRunOutputs: () => void;
+  setActiveRunOutput: (id: string | null) => void;
+  setRunOutputViewMode: (mode: RunOutputViewMode) => void;
+  toggleAutoScroll: () => void;
+
   // Per-file view state actions
   setScrollPosition: (fileId: string, scrollTop: number) => void;
   setFileCursorPosition: (fileId: string, position: CursorPosition) => void;
@@ -182,6 +206,21 @@ interface IDEActions {
 }
 
 type IDEStore = IDEState & IDEActions;
+
+// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable)
+const lineAssemblers = new Map<string, LineAssembler>();
+
+function getOrCreateAssembler(
+  profileId: string,
+  appendEntry: (profileId: string, entry: OutputEntry) => void
+): LineAssembler {
+  let assembler = lineAssemblers.get(profileId);
+  if (!assembler) {
+    assembler = new LineAssembler((entry) => appendEntry(profileId, entry));
+    lineAssemblers.set(profileId, assembler);
+  }
+  return assembler;
+}
 
 export const useIDEStore = create<IDEStore>()(
   devtools(
@@ -201,6 +240,10 @@ export const useIDEStore = create<IDEStore>()(
       runProfiles: [],
       isLoadingProfiles: false,
       profilesError: null,
+      runOutputs: {},
+      activeRunOutputId: null,
+      runOutputViewMode: 'merged' as RunOutputViewMode,
+      runOutputAutoScroll: true,
       isRestoringWorkspace: false,
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
@@ -447,6 +490,118 @@ export const useIDEStore = create<IDEStore>()(
           'removeProfile'
         ),
 
+      // Run Output actions
+      appendRunOutput: (chunk) => {
+        const appendEntry = (profileId: string, entry: OutputEntry) => {
+          set(
+            (state) => {
+              const existing = state.runOutputs[profileId] ?? {
+                profileId,
+                state: 'idle' as RunState,
+                exitCode: 0,
+                runCount: 0,
+                entries: [],
+                previousEntries: [],
+              };
+              let entries = [...existing.entries, entry];
+              if (entries.length > MAX_OUTPUT_ENTRIES) {
+                entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
+                entries.unshift({
+                  stream: 'stdout',
+                  text: '[truncated — oldest output removed]',
+                  timestamp: entries[0]?.timestamp ?? Date.now(),
+                });
+              }
+              return {
+                runOutputs: {
+                  ...state.runOutputs,
+                  [profileId]: { ...existing, entries },
+                },
+              };
+            },
+            false,
+            'appendRunOutput'
+          );
+        };
+
+        const assembler = getOrCreateAssembler(chunk.profileId, appendEntry);
+        assembler.push(chunk.stream, chunk.data, chunk.timestamp);
+      },
+
+      setRunState: (profileId, newState, exitCode) => {
+        // Flush line assembler BEFORE updating state to avoid nested set() calls.
+        if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
+          const assembler = lineAssemblers.get(profileId);
+          if (assembler) {
+            assembler.flush();
+            lineAssemblers.delete(profileId);
+          }
+        }
+
+        set(
+          (state) => {
+            const existing = state.runOutputs[profileId] ?? {
+              profileId,
+              state: 'idle' as RunState,
+              exitCode: 0,
+              runCount: 0,
+              entries: [],
+              previousEntries: [],
+            };
+
+            const updated = { ...existing, state: newState, exitCode };
+
+            if (newState === 'running') {
+              updated.runCount = existing.runCount + 1;
+              if (updated.runCount > 1) {
+                let prev = existing.entries;
+                if (prev.length > MAX_OUTPUT_ENTRIES) {
+                  prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
+                }
+                updated.previousEntries = prev;
+                updated.entries = [];
+                lineAssemblers.delete(profileId);
+              }
+            }
+
+            return {
+              runOutputs: { ...state.runOutputs, [profileId]: updated },
+            };
+          },
+          false,
+          'setRunState'
+        );
+      },
+
+      clearRunOutput: (profileId) =>
+        set(
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [profileId]: _discarded, ...rest } = state.runOutputs;
+            lineAssemblers.delete(profileId);
+            return { runOutputs: rest };
+          },
+          false,
+          'clearRunOutput'
+        ),
+
+      clearAllRunOutputs: () => {
+        lineAssemblers.clear();
+        set({ runOutputs: {}, activeRunOutputId: null }, false, 'clearAllRunOutputs');
+      },
+
+      setActiveRunOutput: (id) => set({ activeRunOutputId: id }, false, 'setActiveRunOutput'),
+
+      setRunOutputViewMode: (mode) =>
+        set({ runOutputViewMode: mode }, false, 'setRunOutputViewMode'),
+
+      toggleAutoScroll: () =>
+        set(
+          (state) => ({ runOutputAutoScroll: !state.runOutputAutoScroll }),
+          false,
+          'toggleAutoScroll'
+        ),
+
       // Per-file view state actions
       setScrollPosition: (fileId, scrollTop) =>
         set(
@@ -530,3 +685,12 @@ export const useSavedProfiles = () =>
 export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoadingProfiles);
 export const useProfilesError = () => useIDEStore((state) => state.profilesError);
 export const useRecentWorkspaces = () => useIDEStore((state) => state.recentWorkspaces);
+export const useRunOutputs = () => useIDEStore((state) => state.runOutputs);
+export const useActiveRunOutputId = () => useIDEStore((state) => state.activeRunOutputId);
+export const useActiveRunOutput = () =>
+  useIDEStore((state) => {
+    const id = state.activeRunOutputId;
+    return id && id !== '__all__' ? (state.runOutputs[id] ?? null) : null;
+  });
+export const useRunOutputViewMode = () => useIDEStore((state) => state.runOutputViewMode);
+export const useRunOutputAutoScroll = () => useIDEStore((state) => state.runOutputAutoScroll);
