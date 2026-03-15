@@ -211,26 +211,27 @@
 
 /* ── Lanes View ────────────────────────────────────────── */
 .lanesView {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   flex: 1;
   overflow: hidden;
 }
 
 .laneHeaders {
-  display: contents; /* used as sticky row via separate sticky divs */
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #040406;
 }
 
 .laneHeader {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 14px 6px;
-  background: #040406;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -261,11 +262,13 @@
 }
 
 .laneRow {
-  display: contents;
+  display: flex;
 }
 
 .laneLine {
+  flex: 1;
   min-height: 20px;
+  min-width: 0;
   white-space: pre-wrap;
   word-break: break-all;
   color: #e2e8f0;

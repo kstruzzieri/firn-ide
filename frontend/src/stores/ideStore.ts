@@ -208,15 +208,23 @@ interface IDEActions {
 type IDEStore = IDEState & IDEActions;
 
 // Line assemblers are per-profile, stored outside Zustand (mutable, not serializable)
+// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable).
+// Each assembler's emit callback is swappable so appendRunOutput can collect lines
+// into a local array per chunk, then commit once to the store.
 const lineAssemblers = new Map<string, LineAssembler>();
+const assemblerCallbacks = new Map<string, (entry: OutputEntry) => void>();
 
 function getOrCreateAssembler(
   profileId: string,
-  appendEntry: (profileId: string, entry: OutputEntry) => void
+  emitFn: (entry: OutputEntry) => void
 ): LineAssembler {
+  assemblerCallbacks.set(profileId, emitFn);
   let assembler = lineAssemblers.get(profileId);
   if (!assembler) {
-    assembler = new LineAssembler((entry) => appendEntry(profileId, entry));
+    assembler = new LineAssembler((entry) => {
+      const cb = assemblerCallbacks.get(profileId);
+      if (cb) cb(entry);
+    });
     lineAssemblers.set(profileId, assembler);
   }
   return assembler;
@@ -492,40 +500,48 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
-        const appendEntry = (profileId: string, entry: OutputEntry) => {
-          set(
-            (state) => {
-              const existing = state.runOutputs[profileId] ?? {
-                profileId,
-                state: 'idle' as RunState,
-                exitCode: 0,
-                runCount: 0,
-                entries: [],
-                previousEntries: [],
-              };
-              let entries = [...existing.entries, entry];
-              if (entries.length > MAX_OUTPUT_ENTRIES) {
-                entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
-                entries.unshift({
-                  stream: 'stdout',
-                  text: '[truncated — oldest output removed]',
-                  timestamp: entries[0]?.timestamp ?? Date.now(),
-                });
-              }
-              return {
-                runOutputs: {
-                  ...state.runOutputs,
-                  [profileId]: { ...existing, entries },
-                },
-              };
-            },
-            false,
-            'appendRunOutput'
-          );
+        // Collect all lines from this chunk into a local array, then commit
+        // to the store in a single set() call. This avoids store thrashing
+        // when a chunk contains many newlines (e.g. npm install burst).
+        const pendingEntries: OutputEntry[] = [];
+        const collector = (entry: OutputEntry) => {
+          pendingEntries.push(entry);
         };
 
-        const assembler = getOrCreateAssembler(chunk.profileId, appendEntry);
+        const assembler = getOrCreateAssembler(chunk.profileId, collector);
         assembler.push(chunk.stream, chunk.data, chunk.timestamp);
+
+        if (pendingEntries.length === 0) return;
+
+        set(
+          (state) => {
+            const existing = state.runOutputs[chunk.profileId] ?? {
+              profileId: chunk.profileId,
+              state: 'idle' as RunState,
+              exitCode: 0,
+              runCount: 0,
+              entries: [],
+              previousEntries: [],
+            };
+            let entries = [...existing.entries, ...pendingEntries];
+            if (entries.length > MAX_OUTPUT_ENTRIES) {
+              entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
+              entries.unshift({
+                stream: 'stdout',
+                text: '[truncated — oldest output removed]',
+                timestamp: entries[0]?.timestamp ?? Date.now(),
+              });
+            }
+            return {
+              runOutputs: {
+                ...state.runOutputs,
+                [chunk.profileId]: { ...existing, entries },
+              },
+            };
+          },
+          false,
+          'appendRunOutput'
+        );
       },
 
       setRunState: (profileId, newState, exitCode) => {
@@ -535,6 +551,7 @@ export const useIDEStore = create<IDEStore>()(
           if (assembler) {
             assembler.flush();
             lineAssemblers.delete(profileId);
+            assemblerCallbacks.delete(profileId);
           }
         }
 
@@ -561,6 +578,7 @@ export const useIDEStore = create<IDEStore>()(
                 updated.previousEntries = prev;
                 updated.entries = [];
                 lineAssemblers.delete(profileId);
+                assemblerCallbacks.delete(profileId);
               }
             }
 
@@ -579,6 +597,7 @@ export const useIDEStore = create<IDEStore>()(
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { [profileId]: _discarded, ...rest } = state.runOutputs;
             lineAssemblers.delete(profileId);
+            assemblerCallbacks.delete(profileId);
             return { runOutputs: rest };
           },
           false,
@@ -587,6 +606,7 @@ export const useIDEStore = create<IDEStore>()(
 
       clearAllRunOutputs: () => {
         lineAssemblers.clear();
+        assemblerCallbacks.clear();
         set({ runOutputs: {}, activeRunOutputId: null }, false, 'clearAllRunOutputs');
       },
 

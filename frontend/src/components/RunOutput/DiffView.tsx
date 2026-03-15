@@ -37,7 +37,7 @@ export function DiffView({ entries, previousEntries }: DiffViewProps) {
   if (diffLines.length === 1 && diffLines[0].type === 'too-large') {
     return (
       <div className={styles.emptyState}>
-        <p>Output too large to diff (both runs exceed 5,000 lines)</p>
+        <p>Output too large to diff</p>
       </div>
     );
   }

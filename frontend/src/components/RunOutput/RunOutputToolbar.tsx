@@ -9,6 +9,11 @@ import { ALL_PROFILES_ID } from '../../types/runOutput';
 import type { RunOutputViewMode } from '../../types/runOutput';
 import styles from './RunOutput.module.css';
 
+function showError(action: string, profileId: string, err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  useIDEStore.getState().showToast(`Failed to ${action} "${profileId}": ${message}`, 'error');
+}
+
 const VIEW_MODES: Array<{ id: RunOutputViewMode; label: string }> = [
   { id: 'merged', label: 'Merged' },
   { id: 'lanes', label: 'Lanes' },
@@ -42,13 +47,13 @@ export function RunOutputToolbar() {
 
   const handleRerun = () => {
     if (hasActiveProfile) {
-      RestartRunProfile(activeId).catch(() => {});
+      RestartRunProfile(activeId).catch((err: unknown) => showError('restart', activeId, err));
     }
   };
 
   const handleStop = () => {
     if (hasActiveProfile) {
-      StopRunProfile(activeId).catch(() => {});
+      StopRunProfile(activeId).catch((err: unknown) => showError('stop', activeId, err));
     }
   };
 

@@ -12,7 +12,7 @@ interface TimelineEntry extends OutputEntry {
   profileId: string;
 }
 
-const PROFILE_COLORS = ['frontend', 'backend', 'lint', 'test', 'deploy'] as const;
+const PROFILE_COLOR_CLASSES = ['frontend', 'backend', 'lint', 'test', 'deploy'] as const;
 
 function formatTimestamp(ts: number): string {
   const d = new Date(ts);
@@ -22,6 +22,13 @@ function formatTimestamp(ts: number): string {
 export function TimelineView({ runOutputs, autoScroll }: TimelineViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const profileIds = useMemo(() => Object.keys(runOutputs), [runOutputs]);
+  const profileColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    profileIds.forEach((id, idx) => {
+      map.set(id, PROFILE_COLOR_CLASSES[idx % PROFILE_COLOR_CLASSES.length]);
+    });
+    return map;
+  }, [profileIds]);
 
   const entries = useMemo(() => {
     const all: TimelineEntry[] = [];
@@ -61,8 +68,7 @@ export function TimelineView({ runOutputs, autoScroll }: TimelineViewProps) {
       <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const entry = entries[virtualRow.index];
-          const colorIdx = profileIds.indexOf(entry.profileId);
-          const colorClass = PROFILE_COLORS[colorIdx % PROFILE_COLORS.length];
+          const colorClass = profileColorMap.get(entry.profileId) ?? PROFILE_COLOR_CLASSES[0];
           return (
             <div
               key={virtualRow.index}

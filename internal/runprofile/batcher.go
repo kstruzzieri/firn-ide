@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -9,7 +10,7 @@ import (
 type batchEntry struct {
 	profileID string
 	stream    string
-	data      string
+	data      strings.Builder
 	timestamp int64 // timestamp of the first write in this batch
 }
 
@@ -69,6 +70,22 @@ func (b *outputBatcher) Close() {
 	})
 }
 
+// accumWrite adds a write message to the accumulator.
+func accumWrite(accum map[string]*batchEntry, msg writeMsg) {
+	key := msg.profileID + "\x00" + msg.stream
+	if entry, ok := accum[key]; ok {
+		entry.data.WriteString(msg.data)
+	} else {
+		entry := &batchEntry{
+			profileID: msg.profileID,
+			stream:    msg.stream,
+			timestamp: msg.timestamp,
+		}
+		entry.data.WriteString(msg.data)
+		accum[key] = entry
+	}
+}
+
 // run is the timer goroutine. It owns the accumulator map and is the only
 // place that reads from writeCh or flushes.
 func (b *outputBatcher) run() {
@@ -82,14 +99,11 @@ func (b *outputBatcher) run() {
 
 	flush := func() {
 		if b.outputFn == nil {
-			// Clear the accumulator even when no outputFn — avoids memory growth.
-			for k := range accum {
-				delete(accum, k)
-			}
+			clear(accum)
 			return
 		}
 		for k, entry := range accum {
-			b.outputFn(entry.profileID, entry.stream, entry.data, entry.timestamp)
+			b.outputFn(entry.profileID, entry.stream, entry.data.String(), entry.timestamp)
 			delete(accum, k)
 		}
 	}
@@ -97,17 +111,7 @@ func (b *outputBatcher) run() {
 	for {
 		select {
 		case msg := <-b.writeCh:
-			key := msg.profileID + "\x00" + msg.stream
-			if entry, ok := accum[key]; ok {
-				entry.data += msg.data
-			} else {
-				accum[key] = &batchEntry{
-					profileID: msg.profileID,
-					stream:    msg.stream,
-					data:      msg.data,
-					timestamp: msg.timestamp,
-				}
-			}
+			accumWrite(accum, msg)
 
 		case <-ticker.C:
 			flush()
@@ -117,17 +121,7 @@ func (b *outputBatcher) run() {
 			for {
 				select {
 				case msg := <-b.writeCh:
-					key := msg.profileID + "\x00" + msg.stream
-					if entry, ok := accum[key]; ok {
-						entry.data += msg.data
-					} else {
-						accum[key] = &batchEntry{
-							profileID: msg.profileID,
-							stream:    msg.stream,
-							data:      msg.data,
-							timestamp: msg.timestamp,
-						}
-					}
+					accumWrite(accum, msg)
 				default:
 					flush()
 					return

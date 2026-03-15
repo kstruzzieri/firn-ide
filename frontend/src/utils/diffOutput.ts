@@ -1,4 +1,5 @@
-const DIFF_SIZE_LIMIT = 5000;
+/** Max product of input sizes before the LCS computation is skipped */
+const DIFF_PRODUCT_LIMIT = 4_000_000; // ~4M cells ≈ 32MB, safe for main thread
 
 export interface DiffLine {
   type: 'unchanged' | 'added' | 'removed' | 'too-large';
@@ -8,7 +9,7 @@ export interface DiffLine {
 export function diffOutputLines(prev: string[], curr: string[]): DiffLine[] {
   if (prev.length === 0 && curr.length === 0) return [];
 
-  if (prev.length > DIFF_SIZE_LIMIT && curr.length > DIFF_SIZE_LIMIT) {
+  if (prev.length * curr.length > DIFF_PRODUCT_LIMIT) {
     return [{ type: 'too-large', text: '' }];
   }
 
