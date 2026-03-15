@@ -68,7 +68,14 @@ func (a *App) startup(ctx context.Context) {
 		func(event string, data ...any) {
 			runtime.EventsEmit(a.ctx, event, data...)
 		},
-		nil, // outputFn — wired in #60 (Output Streaming)
+		func(profileID, stream, data string, timestamp int64) {
+			runtime.EventsEmit(a.ctx, "run:output", map[string]any{
+				"profileId": profileID,
+				"stream":    stream,
+				"data":      data,
+				"timestamp": timestamp,
+			})
+		},
 	)
 }
 
@@ -407,6 +414,9 @@ func (a *App) StartRunProfile(profileID string) error {
 // StopRunProfile stops a running profile (SIGTERM → 3s → SIGKILL).
 // This is exposed to the frontend via Wails bindings.
 func (a *App) StopRunProfile(profileID string) error {
+	if a.executor == nil {
+		return fmt.Errorf("application not initialized")
+	}
 	return a.executor.Stop(profileID)
 }
 
@@ -424,6 +434,9 @@ func (a *App) RestartRunProfile(profileID string) error {
 // Returns RunStateIdle for profiles that are not running.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GetRunStatus(profileID string) runprofile.RunStatus {
+	if a.executor == nil {
+		return runprofile.RunStatus{ProfileID: profileID, State: runprofile.RunStateIdle}
+	}
 	return a.executor.GetStatus(profileID)
 }
 

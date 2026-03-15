@@ -7,8 +7,13 @@ import {
   useWarningCount,
   useTerminalSessions,
   useActiveTerminalSessionId,
+  useRunOutputs,
+  useActiveRunOutputId,
 } from '../../stores/ideStore';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useRunOutputListener } from '../../hooks/useRunOutput';
+import { RunOutputPanel } from '../RunOutput';
+import { ALL_PROFILES_ID } from '../../types/runOutput';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -116,6 +121,14 @@ export function Terminal() {
   const renameSession = useIDEStore((state) => state.renameTerminalSession);
   const reorderSessions = useIDEStore((state) => state.reorderTerminalSessions);
   const showToast = useIDEStore((state) => state.showToast);
+
+  useRunOutputListener();
+
+  const runOutputs = useRunOutputs();
+  const activeRunOutputId = useActiveRunOutputId();
+  const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
+  const setViewMode = useIDEStore((s) => s.setRunOutputViewMode);
+  const outputIds = Object.keys(runOutputs);
 
   const sessionCountRef = useRef(0);
   const isCreatingRef = useRef(false);
@@ -317,6 +330,66 @@ export function Terminal() {
             >
               <PlusIcon aria-hidden="true" />
             </button>
+          </>
+        )}
+        {activeTab === 'output' && outputIds.length > 0 && (
+          <>
+            <div className={styles.divider} />
+            {outputIds.length >= 2 && (
+              <button
+                className={`${styles.sessionTab} ${activeRunOutputId === ALL_PROFILES_ID ? styles.active : ''}`}
+                onClick={() => {
+                  setActiveRunOutput(ALL_PROFILES_ID);
+                  setViewMode('timeline');
+                }}
+                title="All Profiles Timeline"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  width="11"
+                  height="11"
+                  style={{ flexShrink: 0 }}
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                <span className={styles.sessionTabLabel}>All</span>
+              </button>
+            )}
+            {outputIds.map((id) => {
+              const output = runOutputs[id];
+              const isActive = id === activeRunOutputId;
+              const stateClass =
+                output.state === 'running'
+                  ? styles.stateRunning
+                  : output.state === 'success'
+                    ? styles.stateSuccess
+                    : output.state === 'failed'
+                      ? styles.stateFailed
+                      : output.state === 'stopped'
+                        ? styles.stateStopped
+                        : '';
+
+              return (
+                <button
+                  key={id}
+                  className={`${styles.sessionTab} ${isActive ? styles.active : ''}`}
+                  onClick={() => {
+                    setActiveRunOutput(id);
+                    if (useIDEStore.getState().runOutputViewMode === 'timeline') {
+                      setViewMode('merged');
+                    }
+                  }}
+                  title={id}
+                >
+                  <span className={`${styles.stateDot} ${stateClass}`} />
+                  <span className={styles.sessionTabLabel}>{id}</span>
+                </button>
+              );
+            })}
           </>
         )}
       </div>
@@ -523,11 +596,7 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
 }
 
 function OutputContent() {
-  return (
-    <div className={styles.emptyState}>
-      <p>No output to display</p>
-    </div>
-  );
+  return <RunOutputPanel />;
 }
 
 interface ProblemsContentProps {

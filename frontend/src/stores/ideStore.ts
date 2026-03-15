@@ -3,6 +3,15 @@ import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import type { filesystem, workspace } from '../../wailsjs/go/models';
 import type { RunProfile } from '../types/runProfile';
+import { LineAssembler } from '../utils/lineAssembler';
+import type {
+  OutputChunk,
+  OutputEntry,
+  RunOutput,
+  RunState,
+  RunOutputViewMode,
+} from '../types/runOutput';
+import { MAX_OUTPUT_ENTRIES } from '../types/runOutput';
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
@@ -98,6 +107,12 @@ interface IDEState {
   isLoadingProfiles: boolean;
   profilesError: string | null;
 
+  // Run Output
+  runOutputs: Record<string, RunOutput>;
+  activeRunOutputId: string | null;
+  runOutputViewMode: RunOutputViewMode;
+  runOutputAutoScroll: boolean;
+
   // Per-file view state (for persistence)
   scrollPositions: Record<string, number>; // fileId -> scrollTop
   cursorPositions: Record<string, CursorPosition>; // fileId -> cursor
@@ -165,6 +180,15 @@ interface IDEActions {
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
 
+  // Run Output actions
+  appendRunOutput: (chunk: OutputChunk) => void;
+  setRunState: (profileId: string, state: RunState, exitCode: number) => void;
+  clearRunOutput: (profileId: string) => void;
+  clearAllRunOutputs: () => void;
+  setActiveRunOutput: (id: string | null) => void;
+  setRunOutputViewMode: (mode: RunOutputViewMode) => void;
+  toggleAutoScroll: () => void;
+
   // Per-file view state actions
   setScrollPosition: (fileId: string, scrollTop: number) => void;
   setFileCursorPosition: (fileId: string, position: CursorPosition) => void;
@@ -182,6 +206,29 @@ interface IDEActions {
 }
 
 type IDEStore = IDEState & IDEActions;
+
+// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable)
+// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable).
+// Each assembler's emit callback is swappable so appendRunOutput can collect lines
+// into a local array per chunk, then commit once to the store.
+const lineAssemblers = new Map<string, LineAssembler>();
+const assemblerCallbacks = new Map<string, (entry: OutputEntry) => void>();
+
+function getOrCreateAssembler(
+  profileId: string,
+  emitFn: (entry: OutputEntry) => void
+): LineAssembler {
+  assemblerCallbacks.set(profileId, emitFn);
+  let assembler = lineAssemblers.get(profileId);
+  if (!assembler) {
+    assembler = new LineAssembler((entry) => {
+      const cb = assemblerCallbacks.get(profileId);
+      if (cb) cb(entry);
+    });
+    lineAssemblers.set(profileId, assembler);
+  }
+  return assembler;
+}
 
 export const useIDEStore = create<IDEStore>()(
   devtools(
@@ -201,6 +248,10 @@ export const useIDEStore = create<IDEStore>()(
       runProfiles: [],
       isLoadingProfiles: false,
       profilesError: null,
+      runOutputs: {},
+      activeRunOutputId: null,
+      runOutputViewMode: 'merged' as RunOutputViewMode,
+      runOutputAutoScroll: true,
       isRestoringWorkspace: false,
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
@@ -447,6 +498,180 @@ export const useIDEStore = create<IDEStore>()(
           'removeProfile'
         ),
 
+      // Run Output actions
+      appendRunOutput: (chunk) => {
+        // Only append to profiles that already have a RunOutput record
+        // (created by setRunState on 'running' transition). This prevents
+        // stale events from a previous workspace from recreating entries
+        // after clearAllRunOutputs wiped them.
+        if (!useIDEStore.getState().runOutputs[chunk.profileId]) return;
+
+        // Collect all lines from this chunk into a local array, then commit
+        // to the store in a single set() call. This avoids store thrashing
+        // when a chunk contains many newlines (e.g. npm install burst).
+        const pendingEntries: OutputEntry[] = [];
+        const collector = (entry: OutputEntry) => {
+          pendingEntries.push(entry);
+        };
+
+        const assembler = getOrCreateAssembler(chunk.profileId, collector);
+        assembler.push(chunk.stream, chunk.data, chunk.timestamp);
+
+        if (pendingEntries.length === 0) return;
+
+        set(
+          (state) => {
+            const existing = state.runOutputs[chunk.profileId];
+            if (!existing) return state; // profile was cleared between check and set
+            let entries = [...existing.entries, ...pendingEntries];
+            if (entries.length > MAX_OUTPUT_ENTRIES) {
+              entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
+              entries.unshift({
+                stream: 'stdout',
+                text: '[truncated — oldest output removed]',
+                timestamp: entries[0]?.timestamp ?? Date.now(),
+              });
+            }
+            return {
+              runOutputs: {
+                ...state.runOutputs,
+                [chunk.profileId]: { ...existing, entries },
+              },
+            };
+          },
+          false,
+          'appendRunOutput'
+        );
+      },
+
+      setRunState: (profileId, newState, exitCode) => {
+        // On terminal states, flush the line assembler's carry-over into a local
+        // array so we can merge it into the store in a single set() call.
+        // We can't reuse the appendRunOutput collector because it references a
+        // dead pendingEntries array from a previous call.
+        const flushedEntries: OutputEntry[] = [];
+        if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
+          const assembler = lineAssemblers.get(profileId);
+          if (assembler) {
+            assemblerCallbacks.set(profileId, (entry) => flushedEntries.push(entry));
+            assembler.flush();
+            lineAssemblers.delete(profileId);
+            assemblerCallbacks.delete(profileId);
+          }
+        }
+
+        set(
+          (state) => {
+            const existing = state.runOutputs[profileId] ?? {
+              profileId,
+              state: 'idle' as RunState,
+              exitCode: 0,
+              runCount: 0,
+              entries: [],
+              previousEntries: [],
+            };
+
+            // Merge any flushed carry-over entries
+            const mergedEntries =
+              flushedEntries.length > 0
+                ? [...existing.entries, ...flushedEntries]
+                : existing.entries;
+
+            const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
+
+            if (newState === 'running') {
+              updated.runCount = existing.runCount + 1;
+              if (updated.runCount > 1) {
+                let prev = existing.entries;
+                if (prev.length > MAX_OUTPUT_ENTRIES) {
+                  prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
+                }
+                updated.previousEntries = prev;
+                updated.entries = [];
+                lineAssemblers.delete(profileId);
+                assemblerCallbacks.delete(profileId);
+              }
+            }
+
+            return {
+              runOutputs: { ...state.runOutputs, [profileId]: updated },
+            };
+          },
+          false,
+          'setRunState'
+        );
+      },
+
+      clearRunOutput: (profileId) =>
+        set(
+          (state) => {
+            const existing = state.runOutputs[profileId];
+            if (!existing) return state;
+
+            // If the profile is still running, only clear entries — preserve
+            // the RunOutput record so state/runCount stay correct for the
+            // active process. Otherwise remove the record entirely.
+            if (existing.state === 'running') {
+              // Reset assembler so partial carry-over doesn't leak into fresh output
+              lineAssemblers.delete(profileId);
+              assemblerCallbacks.delete(profileId);
+              return {
+                runOutputs: {
+                  ...state.runOutputs,
+                  [profileId]: { ...existing, entries: [], previousEntries: [] },
+                },
+              };
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [profileId]: _discarded, ...rest } = state.runOutputs;
+            lineAssemblers.delete(profileId);
+            assemblerCallbacks.delete(profileId);
+            // If the cleared profile was active, select the first remaining or null
+            let activeRunOutputId = state.activeRunOutputId;
+            if (activeRunOutputId === profileId) {
+              const remaining = Object.keys(rest);
+              activeRunOutputId = remaining.length > 0 ? remaining[0] : null;
+            }
+            return { runOutputs: rest, activeRunOutputId };
+          },
+          false,
+          'clearRunOutput'
+        ),
+
+      clearAllRunOutputs: () => {
+        lineAssemblers.clear();
+        assemblerCallbacks.clear();
+        set(
+          (state) => {
+            // Preserve RunOutput records for still-running profiles so their
+            // state/runCount stays correct. Only clear their entries.
+            const preserved: Record<string, RunOutput> = {};
+            for (const [id, output] of Object.entries(state.runOutputs)) {
+              if (output.state === 'running') {
+                preserved[id] = { ...output, entries: [], previousEntries: [] };
+              }
+            }
+            const firstId = Object.keys(preserved)[0] ?? null;
+            return { runOutputs: preserved, activeRunOutputId: firstId };
+          },
+          false,
+          'clearAllRunOutputs'
+        );
+      },
+
+      setActiveRunOutput: (id) => set({ activeRunOutputId: id }, false, 'setActiveRunOutput'),
+
+      setRunOutputViewMode: (mode) =>
+        set({ runOutputViewMode: mode }, false, 'setRunOutputViewMode'),
+
+      toggleAutoScroll: () =>
+        set(
+          (state) => ({ runOutputAutoScroll: !state.runOutputAutoScroll }),
+          false,
+          'toggleAutoScroll'
+        ),
+
       // Per-file view state actions
       setScrollPosition: (fileId, scrollTop) =>
         set(
@@ -530,3 +755,12 @@ export const useSavedProfiles = () =>
 export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoadingProfiles);
 export const useProfilesError = () => useIDEStore((state) => state.profilesError);
 export const useRecentWorkspaces = () => useIDEStore((state) => state.recentWorkspaces);
+export const useRunOutputs = () => useIDEStore((state) => state.runOutputs);
+export const useActiveRunOutputId = () => useIDEStore((state) => state.activeRunOutputId);
+export const useActiveRunOutput = () =>
+  useIDEStore((state) => {
+    const id = state.activeRunOutputId;
+    return id && id !== '__all__' ? (state.runOutputs[id] ?? null) : null;
+  });
+export const useRunOutputViewMode = () => useIDEStore((state) => state.runOutputViewMode);
+export const useRunOutputAutoScroll = () => useIDEStore((state) => state.runOutputAutoScroll);

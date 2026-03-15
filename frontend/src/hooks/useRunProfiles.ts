@@ -77,6 +77,8 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       return;
     }
 
+    useIDEStore.getState().clearAllRunOutputs();
+
     let cancelled = false;
     const { setProfilesLoading, setRunProfiles, setProfilesError } = useIDEStore.getState();
 
