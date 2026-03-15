@@ -214,11 +214,6 @@ type IDEStore = IDEState & IDEActions;
 const lineAssemblers = new Map<string, LineAssembler>();
 const assemblerCallbacks = new Map<string, (entry: OutputEntry) => void>();
 
-// Generation counter to discard stale events after workspace switch.
-// Incremented by clearAllRunOutputs. appendRunOutput captures the generation
-// at call time and discards the result if it's stale by the time set() runs.
-let outputGeneration = 0;
-
 function getOrCreateAssembler(
   profileId: string,
   emitFn: (entry: OutputEntry) => void
@@ -505,9 +500,11 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
-        // Capture the current generation to detect stale events from a
-        // previous workspace that arrive after clearAllRunOutputs.
-        const gen = outputGeneration;
+        // Only append to profiles that already have a RunOutput record
+        // (created by setRunState on 'running' transition). This prevents
+        // stale events from a previous workspace from recreating entries
+        // after clearAllRunOutputs wiped them.
+        if (!useIDEStore.getState().runOutputs[chunk.profileId]) return;
 
         // Collect all lines from this chunk into a local array, then commit
         // to the store in a single set() call. This avoids store thrashing
@@ -522,19 +519,10 @@ export const useIDEStore = create<IDEStore>()(
 
         if (pendingEntries.length === 0) return;
 
-        // Discard if a workspace switch occurred during assembly
-        if (gen !== outputGeneration) return;
-
         set(
           (state) => {
-            const existing = state.runOutputs[chunk.profileId] ?? {
-              profileId: chunk.profileId,
-              state: 'idle' as RunState,
-              exitCode: 0,
-              runCount: 0,
-              entries: [],
-              previousEntries: [],
-            };
+            const existing = state.runOutputs[chunk.profileId];
+            if (!existing) return state; // profile was cleared between check and set
             let entries = [...existing.entries, ...pendingEntries];
             if (entries.length > MAX_OUTPUT_ENTRIES) {
               entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
@@ -557,9 +545,6 @@ export const useIDEStore = create<IDEStore>()(
       },
 
       setRunState: (profileId, newState, exitCode) => {
-        // Discard stale events from a previous workspace
-        const gen = outputGeneration;
-
         // On terminal states, flush the line assembler's carry-over into a local
         // array so we can merge it into the store in a single set() call.
         // We can't reuse the appendRunOutput collector because it references a
@@ -574,9 +559,6 @@ export const useIDEStore = create<IDEStore>()(
             assemblerCallbacks.delete(profileId);
           }
         }
-
-        // Discard if a workspace switch occurred during flush
-        if (gen !== outputGeneration) return;
 
         set(
           (state) => {
@@ -630,6 +612,9 @@ export const useIDEStore = create<IDEStore>()(
             // the RunOutput record so state/runCount stay correct for the
             // active process. Otherwise remove the record entirely.
             if (existing.state === 'running') {
+              // Reset assembler so partial carry-over doesn't leak into fresh output
+              lineAssemblers.delete(profileId);
+              assemblerCallbacks.delete(profileId);
               return {
                 runOutputs: {
                   ...state.runOutputs,
@@ -655,10 +640,24 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       clearAllRunOutputs: () => {
-        outputGeneration++;
         lineAssemblers.clear();
         assemblerCallbacks.clear();
-        set({ runOutputs: {}, activeRunOutputId: null }, false, 'clearAllRunOutputs');
+        set(
+          (state) => {
+            // Preserve RunOutput records for still-running profiles so their
+            // state/runCount stays correct. Only clear their entries.
+            const preserved: Record<string, RunOutput> = {};
+            for (const [id, output] of Object.entries(state.runOutputs)) {
+              if (output.state === 'running') {
+                preserved[id] = { ...output, entries: [], previousEntries: [] };
+              }
+            }
+            const firstId = Object.keys(preserved)[0] ?? null;
+            return { runOutputs: preserved, activeRunOutputId: firstId };
+          },
+          false,
+          'clearAllRunOutputs'
+        );
       },
 
       setActiveRunOutput: (id) => set({ activeRunOutputId: id }, false, 'setActiveRunOutput'),
