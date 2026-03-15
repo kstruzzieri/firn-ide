@@ -6,12 +6,13 @@ import (
 	"time"
 )
 
-// batchEntry holds the accumulated data for one stream within a tick window.
-type batchEntry struct {
+// pendingWrite is a coalesced segment of output for one stream,
+// preserving insertion order across interleaved stdout/stderr.
+type pendingWrite struct {
 	profileID string
 	stream    string
 	data      strings.Builder
-	timestamp int64 // timestamp of the first write in this batch
+	timestamp int64 // timestamp of the first write in this segment
 }
 
 // writeMsg is sent over writeCh to the timer goroutine.
@@ -23,8 +24,9 @@ type writeMsg struct {
 }
 
 // outputBatcher accumulates output chunks and flushes them at a fixed interval.
-// This reduces the number of IPC events sent to the frontend while keeping
-// latency bounded to ~16 ms (one animation frame).
+// Writes are coalesced in insertion order: contiguous same-stream writes are
+// merged, but interleaving between stdout and stderr is preserved. This reduces
+// IPC events while maintaining correct chronological ordering for the frontend.
 type outputBatcher struct {
 	outputFn OutputFunc
 	interval time.Duration
@@ -70,23 +72,7 @@ func (b *outputBatcher) Close() {
 	})
 }
 
-// accumWrite adds a write message to the accumulator.
-func accumWrite(accum map[string]*batchEntry, msg writeMsg) {
-	key := msg.profileID + "\x00" + msg.stream
-	if entry, ok := accum[key]; ok {
-		entry.data.WriteString(msg.data)
-	} else {
-		entry := &batchEntry{
-			profileID: msg.profileID,
-			stream:    msg.stream,
-			timestamp: msg.timestamp,
-		}
-		entry.data.WriteString(msg.data)
-		accum[key] = entry
-	}
-}
-
-// run is the timer goroutine. It owns the accumulator map and is the only
+// run is the timer goroutine. It owns the pending list and is the only
 // place that reads from writeCh or flushes.
 func (b *outputBatcher) run() {
 	defer close(b.closed)
@@ -94,24 +80,41 @@ func (b *outputBatcher) run() {
 	ticker := time.NewTicker(b.interval)
 	defer ticker.Stop()
 
-	// accumulator: key = profileID + "\x00" + stream
-	accum := make(map[string]*batchEntry)
+	// Ordered list of coalesced segments. Contiguous same-stream writes
+	// are merged; stream transitions create a new segment.
+	var pending []*pendingWrite
+
+	accumulate := func(msg writeMsg) {
+		// Coalesce with the last segment if same profile+stream
+		if n := len(pending); n > 0 {
+			last := pending[n-1]
+			if last.profileID == msg.profileID && last.stream == msg.stream {
+				last.data.WriteString(msg.data)
+				return
+			}
+		}
+		pw := &pendingWrite{
+			profileID: msg.profileID,
+			stream:    msg.stream,
+			timestamp: msg.timestamp,
+		}
+		pw.data.WriteString(msg.data)
+		pending = append(pending, pw)
+	}
 
 	flush := func() {
-		if b.outputFn == nil {
-			clear(accum)
-			return
+		if b.outputFn != nil {
+			for _, pw := range pending {
+				b.outputFn(pw.profileID, pw.stream, pw.data.String(), pw.timestamp)
+			}
 		}
-		for k, entry := range accum {
-			b.outputFn(entry.profileID, entry.stream, entry.data.String(), entry.timestamp)
-			delete(accum, k)
-		}
+		pending = pending[:0]
 	}
 
 	for {
 		select {
 		case msg := <-b.writeCh:
-			accumWrite(accum, msg)
+			accumulate(msg)
 
 		case <-ticker.C:
 			flush()
@@ -121,7 +124,7 @@ func (b *outputBatcher) run() {
 			for {
 				select {
 				case msg := <-b.writeCh:
-					accumWrite(accum, msg)
+					accumulate(msg)
 				default:
 					flush()
 					return

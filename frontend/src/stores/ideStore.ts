@@ -609,7 +609,13 @@ export const useIDEStore = create<IDEStore>()(
             const { [profileId]: _discarded, ...rest } = state.runOutputs;
             lineAssemblers.delete(profileId);
             assemblerCallbacks.delete(profileId);
-            return { runOutputs: rest };
+            // If the cleared profile was active, select the first remaining or null
+            let activeRunOutputId = state.activeRunOutputId;
+            if (activeRunOutputId === profileId) {
+              const remaining = Object.keys(rest);
+              activeRunOutputId = remaining.length > 0 ? remaining[0] : null;
+            }
+            return { runOutputs: rest, activeRunOutputId };
           },
           false,
           'clearRunOutput'

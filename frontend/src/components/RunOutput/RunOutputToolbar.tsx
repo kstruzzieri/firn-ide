@@ -34,13 +34,19 @@ export function RunOutputToolbar() {
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
   const hasActiveProfile = activeId && !isAllProfiles;
+  const activeOutput = hasActiveProfile ? runOutputs[activeId] : undefined;
+  const isRunning = activeOutput?.state === 'running';
+  const outputIds = Object.keys(runOutputs);
+  const canTimeline = outputIds.length >= 2;
 
   const handleViewMode = (mode: RunOutputViewMode) => {
+    // Gate timeline mode: only allow with 2+ profiles
+    if (mode === 'timeline' && !canTimeline) return;
     setViewMode(mode);
     if (mode === 'timeline') {
       setActiveRunOutput(ALL_PROFILES_ID);
     } else if (isAllProfiles) {
-      const firstId = Object.keys(runOutputs)[0];
+      const firstId = outputIds[0];
       if (firstId) setActiveRunOutput(firstId);
     }
   };
@@ -52,7 +58,7 @@ export function RunOutputToolbar() {
   };
 
   const handleStop = () => {
-    if (hasActiveProfile) {
+    if (hasActiveProfile && isRunning) {
       StopRunProfile(activeId).catch((err: unknown) => showError('stop', activeId, err));
     }
   };
@@ -73,6 +79,7 @@ export function RunOutputToolbar() {
             key={id}
             className={`${styles.viewModeBtn} ${viewMode === id ? styles.active : ''}`}
             onClick={() => handleViewMode(id)}
+            disabled={id === 'timeline' && !canTimeline}
           >
             {label}
           </button>
@@ -104,7 +111,7 @@ export function RunOutputToolbar() {
       <button
         className={`${styles.toolbarBtn} ${styles.danger}`}
         onClick={handleStop}
-        disabled={!hasActiveProfile}
+        disabled={!isRunning}
         title="Stop"
         aria-label="Stop profile"
       >
