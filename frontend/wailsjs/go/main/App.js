@@ -26,6 +26,10 @@ export function GetAllRunProfiles() {
   return window['go']['main']['App']['GetAllRunProfiles']();
 }
 
+export function GetRunStatus(arg1) {
+  return window['go']['main']['App']['GetRunStatus'](arg1);
+}
+
 export function GetWatchedPath() {
   return window['go']['main']['App']['GetWatchedPath']();
 }
@@ -70,6 +74,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function RestartRunProfile(arg1) {
+  return window['go']['main']['App']['RestartRunProfile'](arg1);
+}
+
 export function SaveRunProfile(arg1) {
   return window['go']['main']['App']['SaveRunProfile'](arg1);
 }
@@ -78,8 +86,16 @@ export function SaveWorkspaceState(arg1) {
   return window['go']['main']['App']['SaveWorkspaceState'](arg1);
 }
 
+export function StartRunProfile(arg1) {
+  return window['go']['main']['App']['StartRunProfile'](arg1);
+}
+
 export function StartWatching(arg1) {
   return window['go']['main']['App']['StartWatching'](arg1);
+}
+
+export function StopRunProfile(arg1) {
+  return window['go']['main']['App']['StopRunProfile'](arg1);
 }
 
 export function StopWatching() {

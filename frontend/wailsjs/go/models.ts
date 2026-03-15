@@ -155,6 +155,24 @@ export namespace runprofile {
 		    return a;
 		}
 	}
+	export class RunStatus {
+	    profileId: string;
+	    state: string;
+	    exitCode: number;
+	    pid?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profileId = source["profileId"];
+	        this.state = source["state"];
+	        this.exitCode = source["exitCode"];
+	        this.pid = source["pid"];
+	    }
+	}
 	export class ValidationError {
 	    field: string;
 	    message: string;
