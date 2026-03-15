@@ -34,8 +34,9 @@ type RunStatus struct {
 
 // OutputFunc receives streaming process output.
 // stream is "stdout" or "stderr". data is the raw chunk.
+// timestamp is the Unix millisecond time when the data was read.
 // The caller is responsible for buffering or backpressure.
-type OutputFunc func(profileID, stream, data string)
+type OutputFunc func(profileID, stream, data string, timestamp int64)
 
 // StatusFunc emits run status events (wraps runtime.EventsEmit in production).
 type StatusFunc func(event string, data ...any)
@@ -321,7 +322,7 @@ func (e *Executor) drainPipe(wg *sync.WaitGroup, profileID, stream string, pipe 
 	for {
 		n, err := pipe.Read(buf)
 		if n > 0 && e.outputFn != nil {
-			e.outputFn(profileID, stream, string(buf[:n]))
+			e.outputFn(profileID, stream, string(buf[:n]), time.Now().UnixMilli())
 		}
 		if err != nil {
 			return
