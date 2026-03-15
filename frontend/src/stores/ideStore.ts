@@ -214,6 +214,11 @@ type IDEStore = IDEState & IDEActions;
 const lineAssemblers = new Map<string, LineAssembler>();
 const assemblerCallbacks = new Map<string, (entry: OutputEntry) => void>();
 
+// Generation counter to discard stale events after workspace switch.
+// Incremented by clearAllRunOutputs. appendRunOutput captures the generation
+// at call time and discards the result if it's stale by the time set() runs.
+let outputGeneration = 0;
+
 function getOrCreateAssembler(
   profileId: string,
   emitFn: (entry: OutputEntry) => void
@@ -500,6 +505,10 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
+        // Capture the current generation to detect stale events from a
+        // previous workspace that arrive after clearAllRunOutputs.
+        const gen = outputGeneration;
+
         // Collect all lines from this chunk into a local array, then commit
         // to the store in a single set() call. This avoids store thrashing
         // when a chunk contains many newlines (e.g. npm install burst).
@@ -512,6 +521,9 @@ export const useIDEStore = create<IDEStore>()(
         assembler.push(chunk.stream, chunk.data, chunk.timestamp);
 
         if (pendingEntries.length === 0) return;
+
+        // Discard if a workspace switch occurred during assembly
+        if (gen !== outputGeneration) return;
 
         set(
           (state) => {
@@ -545,6 +557,9 @@ export const useIDEStore = create<IDEStore>()(
       },
 
       setRunState: (profileId, newState, exitCode) => {
+        // Discard stale events from a previous workspace
+        const gen = outputGeneration;
+
         // On terminal states, flush the line assembler's carry-over into a local
         // array so we can merge it into the store in a single set() call.
         // We can't reuse the appendRunOutput collector because it references a
@@ -559,6 +574,9 @@ export const useIDEStore = create<IDEStore>()(
             assemblerCallbacks.delete(profileId);
           }
         }
+
+        // Discard if a workspace switch occurred during flush
+        if (gen !== outputGeneration) return;
 
         set(
           (state) => {
@@ -605,6 +623,21 @@ export const useIDEStore = create<IDEStore>()(
       clearRunOutput: (profileId) =>
         set(
           (state) => {
+            const existing = state.runOutputs[profileId];
+            if (!existing) return state;
+
+            // If the profile is still running, only clear entries — preserve
+            // the RunOutput record so state/runCount stay correct for the
+            // active process. Otherwise remove the record entirely.
+            if (existing.state === 'running') {
+              return {
+                runOutputs: {
+                  ...state.runOutputs,
+                  [profileId]: { ...existing, entries: [], previousEntries: [] },
+                },
+              };
+            }
+
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { [profileId]: _discarded, ...rest } = state.runOutputs;
             lineAssemblers.delete(profileId);
@@ -622,6 +655,7 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       clearAllRunOutputs: () => {
+        outputGeneration++;
         lineAssemblers.clear();
         assemblerCallbacks.clear();
         set({ runOutputs: {}, activeRunOutputId: null }, false, 'clearAllRunOutputs');
