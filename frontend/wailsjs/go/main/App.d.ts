@@ -17,6 +17,8 @@ export function DetectRunProfiles():Promise<Array<runprofile.RunProfile>>;
 
 export function GetAllRunProfiles():Promise<Array<runprofile.RunProfile>>;
 
+export function GetRunStatus(arg1:string):Promise<runprofile.RunStatus>;
+
 export function GetWatchedPath():Promise<string>;
 
 export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
@@ -39,11 +41,17 @@ export function ReadFile(arg1:string):Promise<filesystem.FileContent>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function RestartRunProfile(arg1:string):Promise<void>;
+
 export function SaveRunProfile(arg1:runprofile.RunProfile):Promise<runprofile.ValidationResult>;
 
 export function SaveWorkspaceState(arg1:workspace.State):Promise<void>;
 
+export function StartRunProfile(arg1:string):Promise<void>;
+
 export function StartWatching(arg1:string):Promise<void>;
+
+export function StopRunProfile(arg1:string):Promise<void>;
 
 export function StopWatching():Promise<void>;
 

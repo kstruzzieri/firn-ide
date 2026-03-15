@@ -19,19 +19,21 @@ import (
 // App represents the main application structure for Firn IDE.
 // It holds the application context for Wails runtime interactions.
 type App struct {
-	ctx            context.Context
-	dirReader      *filesystem.DirectoryReader
-	fileReader     *filesystem.FileReader
-	fileWriter     *filesystem.FileWriter
-	fileWatcher    watcher.Watcher
-	termManager    *terminal.Manager
-	profileMu      sync.RWMutex
-	profileManager *runprofile.Manager
-	osFS           filesystem.FileSystem
-	workspaceStore *workspace.Store
-	closeMu        sync.Mutex
-	isClosing      bool
-	closeReady     chan struct{}
+	ctx                  context.Context
+	dirReader            *filesystem.DirectoryReader
+	fileReader           *filesystem.FileReader
+	fileWriter           *filesystem.FileWriter
+	fileWatcher          watcher.Watcher
+	termManager          *terminal.Manager
+	profileMu            sync.RWMutex
+	profileManager       *runprofile.Manager
+	profileWorkspaceRoot string
+	executor             *runprofile.Executor
+	osFS                 filesystem.FileSystem
+	workspaceStore       *workspace.Store
+	closeMu              sync.Mutex
+	isClosing            bool
+	closeReady           chan struct{}
 }
 
 // NewApp creates and returns a new App instance.
@@ -62,11 +64,18 @@ func NewApp() *App {
 // It stores the context for later use with runtime methods.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.executor = runprofile.NewExecutor(
+		func(event string, data ...any) {
+			runtime.EventsEmit(a.ctx, event, data...)
+		},
+		nil, // outputFn — wired in #60 (Output Streaming)
+	)
 }
 
 // beforeClose is called by Wails before the application window closes.
 // On the first call it prevents close, emits an event so the frontend can
-// perform a final state save, then schedules a forced quit after 500ms.
+// perform a final state save, and concurrently stops any running profiles.
+// Both must complete (or a 2-second deadline expires) before the app quits.
 // When the forced quit triggers OnBeforeClose again, the isClosing flag
 // is already set so it returns false immediately, allowing the close.
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
@@ -83,11 +92,31 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	runtime.EventsEmit(a.ctx, "app:beforeclose")
 
 	go func() {
-		// Give the frontend a chance to flush workspace state before forcing quit.
-		select {
-		case <-closeReady:
-		case <-time.After(2 * time.Second):
+		// Wait for both frontend state flush and runner cleanup, bounded by 2s.
+		runnerDone := make(chan struct{})
+		go func() {
+			if a.executor != nil {
+				_ = a.executor.StopAll(1500 * time.Millisecond)
+			}
+			close(runnerDone)
+		}()
+
+		deadline := time.After(2 * time.Second)
+		closeReadyCh := closeReady
+		runnerDoneCh := runnerDone
+
+		for closeReadyCh != nil || runnerDoneCh != nil {
+			select {
+			case <-closeReadyCh:
+				closeReadyCh = nil
+			case <-runnerDoneCh:
+				runnerDoneCh = nil
+			case <-deadline:
+				runtime.Quit(a.ctx)
+				return
+			}
 		}
+
 		runtime.Quit(a.ctx)
 	}()
 
@@ -230,18 +259,26 @@ func (a *App) CloseTerminal(id string) error {
 }
 
 // LoadRunProfiles initializes or reinitializes the run profile manager for the given workspace path.
-// The entire operation (create/reset + load) runs under the lock to prevent concurrent
-// LoadRunProfiles calls from interleaving.
+// If switching workspaces while profiles are running, stops all running profiles first.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) LoadRunProfiles(workspacePath string) error {
 	a.profileMu.Lock()
 	defer a.profileMu.Unlock()
+
+	// Stop running profiles and clear stale terminal statuses when switching workspaces
+	if a.profileWorkspaceRoot != "" && a.profileWorkspaceRoot != workspacePath && a.executor != nil {
+		if ok := a.executor.StopAll(4 * time.Second); !ok {
+			return fmt.Errorf("failed to stop running profiles before switching workspace")
+		}
+		a.executor.ClearTerminalStatuses()
+	}
 
 	if a.profileManager == nil {
 		a.profileManager = runprofile.NewManager(a.osFS, workspacePath)
 	} else {
 		a.profileManager.SetWorkspaceRoot(workspacePath)
 	}
+	a.profileWorkspaceRoot = workspacePath
 	return a.profileManager.Load()
 }
 
@@ -339,6 +376,55 @@ func (a *App) LoadWorkspaceState(workspacePath string) (*workspace.State, error)
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ListRecentWorkspaces() ([]workspace.Summary, error) {
 	return a.workspaceStore.ListRecent(0)
+}
+
+// StartRunProfile starts executing a run profile by ID.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) StartRunProfile(profileID string) error {
+	a.profileMu.RLock()
+	if a.profileManager == nil {
+		a.profileMu.RUnlock()
+		return fmt.Errorf("no workspace loaded")
+	}
+	workspaceRoot := a.profileWorkspaceRoot
+	profiles := a.profileManager.GetAllProfiles()
+	a.profileMu.RUnlock()
+
+	var profile *runprofile.RunProfile
+	for i := range profiles {
+		if profiles[i].ID == profileID {
+			profile = &profiles[i]
+			break
+		}
+	}
+	if profile == nil {
+		return fmt.Errorf("profile not found: %s", profileID)
+	}
+
+	return a.executor.Start(workspaceRoot, *profile)
+}
+
+// StopRunProfile stops a running profile (SIGTERM → 3s → SIGKILL).
+// This is exposed to the frontend via Wails bindings.
+func (a *App) StopRunProfile(profileID string) error {
+	return a.executor.Stop(profileID)
+}
+
+// RestartRunProfile stops then starts a profile.
+// If the profile is not currently running, it just starts it.
+// Stop errors are ignored because the only failure mode is "not running",
+// which means we can safely proceed to Start.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) RestartRunProfile(profileID string) error {
+	_ = a.StopRunProfile(profileID)
+	return a.StartRunProfile(profileID)
+}
+
+// GetRunStatus returns the current run status of a profile.
+// Returns RunStateIdle for profiles that are not running.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GetRunStatus(profileID string) runprofile.RunStatus {
+	return a.executor.GetStatus(profileID)
 }
 
 // ConfirmBeforeCloseReady signals that the frontend finished its final flush

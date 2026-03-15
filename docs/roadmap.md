@@ -148,12 +148,14 @@ Project View (unified) vs Workspace View (focused) with color-coded regions.
 - [x] Backend: 7 Wails bindings (Load/GetAll/Save/Delete/Pin/Validate/Detect)
 - [x] Frontend: Zustand store slice, useRunProfiles hook, basic sidebar panel
 
-### #17: Run Profiles - Execution Engine
-- [ ] Start process with configured env/cwd
-- [ ] Stream stdout/stderr to frontend
-- [ ] Handle process termination, support stop/restart
-- [ ] Parse clickable file:line:col references
-- [ ] Compound profile sequential execution
+### #17: Run Profiles - Execution Engine [Epic]
+Sub-issues:
+- [ ] #59: Core Process Runner — `os/exec` implementation, env/cwd/envFile, start/stop bindings
+- [ ] #60: Output Streaming — pipe stdout/stderr, Wails events, output panel
+- [ ] #61: Process Lifecycle UI — play/stop/restart controls, state indicators
+- [ ] #62: Clickable Error Links — `file:line:col` parsing, jump-to-error
+- [ ] #63: Compound Profile Execution — sequential steps, stop-on-failure
+- [ ] #64: Environment Variants — env file swapping by active variant
 
 ### #18: Run Profiles - UI Integration
 - [ ] Profile selector dropdown in header toolbar (`[▶ Profile ▾]`)
