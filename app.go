@@ -68,7 +68,14 @@ func (a *App) startup(ctx context.Context) {
 		func(event string, data ...any) {
 			runtime.EventsEmit(a.ctx, event, data...)
 		},
-		nil, // outputFn — wired in #60 (Output Streaming)
+		func(profileID, stream, data string, timestamp int64) {
+			runtime.EventsEmit(a.ctx, "run:output", map[string]any{
+				"profileId": profileID,
+				"stream":    stream,
+				"data":      data,
+				"timestamp": timestamp,
+			})
+		},
 	)
 }
 
