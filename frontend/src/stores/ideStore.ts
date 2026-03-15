@@ -545,10 +545,15 @@ export const useIDEStore = create<IDEStore>()(
       },
 
       setRunState: (profileId, newState, exitCode) => {
-        // Flush line assembler BEFORE updating state to avoid nested set() calls.
+        // On terminal states, flush the line assembler's carry-over into a local
+        // array so we can merge it into the store in a single set() call.
+        // We can't reuse the appendRunOutput collector because it references a
+        // dead pendingEntries array from a previous call.
+        const flushedEntries: OutputEntry[] = [];
         if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
           const assembler = lineAssemblers.get(profileId);
           if (assembler) {
+            assemblerCallbacks.set(profileId, (entry) => flushedEntries.push(entry));
             assembler.flush();
             lineAssemblers.delete(profileId);
             assemblerCallbacks.delete(profileId);
@@ -566,7 +571,13 @@ export const useIDEStore = create<IDEStore>()(
               previousEntries: [],
             };
 
-            const updated = { ...existing, state: newState, exitCode };
+            // Merge any flushed carry-over entries
+            const mergedEntries =
+              flushedEntries.length > 0
+                ? [...existing.entries, ...flushedEntries]
+                : existing.entries;
+
+            const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
 
             if (newState === 'running') {
               updated.runCount = existing.runCount + 1;
