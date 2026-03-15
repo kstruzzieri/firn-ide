@@ -148,15 +148,17 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	// Emit running status
 	e.emit(rp.status)
 
-	// Drain stdout/stderr
+	// Drain stdout/stderr through the output batcher
+	batcher := newOutputBatcher(e.outputFn, 16*time.Millisecond)
 	var pipesWg sync.WaitGroup
 	pipesWg.Add(2)
-	go e.drainPipe(&pipesWg, profile.ID, "stdout", stdout)
-	go e.drainPipe(&pipesWg, profile.ID, "stderr", stderr)
+	go e.drainPipe(&pipesWg, profile.ID, "stdout", stdout, batcher)
+	go e.drainPipe(&pipesWg, profile.ID, "stderr", stderr, batcher)
 
 	// Wait for process exit
 	go func() {
 		pipesWg.Wait()
+		batcher.Close()
 		exitCode := waitExitCode(cmd)
 
 		e.mu.Lock()
@@ -315,14 +317,14 @@ func (e *Executor) emit(status RunStatus) {
 	}
 }
 
-// drainPipe reads from a pipe and either forwards to outputFn or discards.
-func (e *Executor) drainPipe(wg *sync.WaitGroup, profileID, stream string, pipe io.ReadCloser) {
+// drainPipe reads from a pipe and forwards chunks to the output batcher.
+func (e *Executor) drainPipe(wg *sync.WaitGroup, profileID, stream string, pipe io.ReadCloser, batcher *outputBatcher) {
 	defer wg.Done()
 	buf := make([]byte, 4096)
 	for {
 		n, err := pipe.Read(buf)
-		if n > 0 && e.outputFn != nil {
-			e.outputFn(profileID, stream, string(buf[:n]), time.Now().UnixMilli())
+		if n > 0 {
+			batcher.Write(profileID, stream, string(buf[:n]), time.Now().UnixMilli())
 		}
 		if err != nil {
 			return
