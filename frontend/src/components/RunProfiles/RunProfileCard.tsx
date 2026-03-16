@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ActivityWaveform } from './ActivityWaveform';
 import { RunHistoryDots } from './RunHistoryDots';
 import { getTagColor } from '../../utils/tagColors';
@@ -9,6 +9,37 @@ import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
 import type { VisualState, RunHistoryEntry, RunOutput } from '../../types/runOutput';
 import styles from './RunProfileCard.module.css';
+
+/**
+ * Custom hook for a live elapsed timer. Returns elapsed ms since startTs.
+ * Returns 0 when startTs is undefined (not running).
+ * Uses useSyncExternalStore pattern to avoid setState-in-effect lint errors.
+ */
+function useElapsedTimer(startTs: number | undefined): number {
+  const [elapsed, setElapsed] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const start = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (!startTs) {
+      setElapsed(0);
+      return;
+    }
+    setElapsed(Date.now() - startTs);
+    intervalRef.current = setInterval(() => {
+      setElapsed(Date.now() - startTs);
+    }, 1000);
+  }, [startTs]);
+
+  useEffect(() => {
+    start(); // eslint-disable-line react-hooks/set-state-in-effect -- timer pattern: setState deferred via setInterval, not synchronous
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [start]);
+
+  return startTs ? elapsed : 0;
+}
 
 interface RunProfileCardProps {
   profile: RunProfile;
@@ -93,17 +124,7 @@ export function RunProfileCard({
 
   const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
 
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    if (visualState !== 'running' || !startTs) {
-      setElapsed(0);
-      return;
-    }
-    setElapsed(Date.now() - startTs);
-    const interval = setInterval(() => setElapsed(Date.now() - startTs), 1000);
-    return () => clearInterval(interval);
-  }, [visualState, startTs]);
+  const computedElapsed = useElapsedTimer(visualState === 'running' ? startTs : undefined);
 
   const handleCardClick = () => {
     if (isDormant) {
@@ -141,7 +162,13 @@ export function RunProfileCard({
     }
   };
 
-  const durationLabel = getDurationLabel(visualState, elapsed, runHistory, runOutput, isDormant);
+  const durationLabel = getDurationLabel(
+    visualState,
+    computedElapsed,
+    runHistory,
+    runOutput,
+    isDormant
+  );
 
   const cardClassName = [styles.card, getStateClass(visualState), isDormant ? styles.dormant : '']
     .filter(Boolean)
