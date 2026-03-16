@@ -596,9 +596,10 @@
 }
 
 .historyDot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .historyDotOk {
@@ -614,4 +615,16 @@
 .historyDotActive {
   background: #22c55e;
   animation: hdotPulse 1.5s ease-in-out infinite;
+}
+
+.historyDuration {
+  font-size: 8px;
+  color: #444;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+}
+
+.historyOverflow {
+  font-size: 8px;
+  color: #444;
+  margin-left: 4px;
 }

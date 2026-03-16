@@ -728,7 +728,9 @@ export const useIDEStore = create<IDEStore>()(
       setProfileStopping: (profileId) =>
         set(
           (state) => ({
-            stoppingProfileIds: [...state.stoppingProfileIds, profileId],
+            stoppingProfileIds: state.stoppingProfileIds.includes(profileId)
+              ? state.stoppingProfileIds
+              : [...state.stoppingProfileIds, profileId],
           }),
           false,
           'setProfileStopping'
@@ -746,7 +748,9 @@ export const useIDEStore = create<IDEStore>()(
       setProfileRestarting: (profileId) =>
         set(
           (state) => ({
-            restartingProfileIds: [...state.restartingProfileIds, profileId],
+            restartingProfileIds: state.restartingProfileIds.includes(profileId)
+              ? state.restartingProfileIds
+              : [...state.restartingProfileIds, profileId],
           }),
           false,
           'setProfileRestarting'
@@ -816,18 +820,31 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       resetWorkspaceRunState: () => {
-        // First clear output entries via existing action
-        useIDEStore.getState().clearAllRunOutputs();
-        // Then clear lifecycle state
+        // Clear line assemblers (same as clearAllRunOutputs does)
+        lineAssemblers.clear();
+        assemblerCallbacks.clear();
+        // Atomic single set: clear output entries + lifecycle state together
         set(
-          () => ({
-            stoppingProfileIds: [],
-            restartingProfileIds: [],
-            runHistory: {},
-            waveformData: {},
-            hiddenProfileIds: [],
-            runStartTimestamps: {},
-          }),
+          (state) => {
+            // Preserve RunOutput records for still-running profiles (same logic as clearAllRunOutputs)
+            const preserved: Record<string, RunOutput> = {};
+            for (const [id, output] of Object.entries(state.runOutputs)) {
+              if (output.state === 'running') {
+                preserved[id] = { ...output, entries: [], previousEntries: [] };
+              }
+            }
+            const firstId = Object.keys(preserved)[0] ?? null;
+            return {
+              runOutputs: preserved,
+              activeRunOutputId: firstId,
+              stoppingProfileIds: [],
+              restartingProfileIds: [],
+              runHistory: {},
+              waveformData: {},
+              hiddenProfileIds: [],
+              runStartTimestamps: {},
+            };
+          },
           false,
           'resetWorkspaceRunState'
         );

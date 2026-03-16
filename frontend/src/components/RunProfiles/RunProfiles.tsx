@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Panel } from '../layout';
 import { PlusIcon } from '../icons';
 import { RunProfileCard } from './RunProfileCard';
@@ -25,16 +26,28 @@ export function RunProfiles() {
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
 
   // Filter out hidden profiles
-  const visibleProfiles = profiles.filter((p) => !hiddenProfileIds.includes(p.id));
+  const visibleProfiles = useMemo(
+    () => profiles.filter((p) => !hiddenProfileIds.includes(p.id)),
+    [profiles, hiddenProfileIds]
+  );
 
   // Detect duplicate names for disambiguation
-  const nameCounts = new Map<string, number>();
-  for (const p of visibleProfiles) {
-    nameCounts.set(p.name, (nameCounts.get(p.name) ?? 0) + 1);
-  }
+  const nameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of visibleProfiles) {
+      counts.set(p.name, (counts.get(p.name) ?? 0) + 1);
+    }
+    return counts;
+  }, [visibleProfiles]);
 
-  const savedProfiles = visibleProfiles.filter((p) => p.source === 'user');
-  const detectedProfiles = visibleProfiles.filter((p) => p.source === 'detected');
+  const savedProfiles = useMemo(
+    () => visibleProfiles.filter((p) => p.source === 'user'),
+    [visibleProfiles]
+  );
+  const detectedProfiles = useMemo(
+    () => visibleProfiles.filter((p) => p.source === 'detected'),
+    [visibleProfiles]
+  );
 
   const renderCard = (profile: RunProfile) => {
     const vs = getVisualState(

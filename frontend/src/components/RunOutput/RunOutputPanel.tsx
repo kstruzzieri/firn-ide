@@ -6,6 +6,7 @@ import {
   useRunOutputs,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
+import { RunOutputTabs } from './RunOutputTabs';
 import { MergedView } from './MergedView';
 import { LanesView } from './LanesView';
 import { DiffView } from './DiffView';
@@ -33,6 +34,7 @@ export function RunOutputPanel() {
 
   return (
     <div className={styles.panelContainer}>
+      <RunOutputTabs />
       <RunOutputToolbar />
       {viewMode === 'timeline' ? (
         <TimelineView runOutputs={runOutputs} autoScroll={autoScroll} />
