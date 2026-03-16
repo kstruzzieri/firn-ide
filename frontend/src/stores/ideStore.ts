@@ -527,11 +527,36 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
-        // Only append to profiles that already have a RunOutput record
-        // (created by setRunState on 'running' transition). This prevents
-        // stale events from a previous workspace from recreating entries
-        // after clearAllRunOutputs wiped them.
-        if (!useIDEStore.getState().runOutputs[chunk.profileId]) return;
+        const currentState = useIDEStore.getState();
+
+        if (!currentState.runOutputs[chunk.profileId]) {
+          // Profile-specific stale event check: only drop if THIS profile is stopping/restarting
+          const isStale =
+            currentState.stoppingProfileIds.includes(chunk.profileId) ||
+            currentState.restartingProfileIds.includes(chunk.profileId);
+          if (isStale) return;
+
+          // Create provisional RunOutput record — setRunState will upgrade it
+          // when run:status arrives. This handles the race where run:output
+          // arrives before run:status.
+          set(
+            (state) => ({
+              runOutputs: {
+                ...state.runOutputs,
+                [chunk.profileId]: {
+                  profileId: chunk.profileId,
+                  state: 'idle' as RunState,
+                  exitCode: 0,
+                  runCount: 0,
+                  entries: [],
+                  previousEntries: [],
+                },
+              },
+            }),
+            false,
+            'appendRunOutput:provision'
+          );
+        }
 
         // Collect all lines from this chunk into a local array, then commit
         // to the store in a single set() call. This avoids store thrashing
