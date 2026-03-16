@@ -18,9 +18,12 @@ const PULSE_KEYFRAMES = `
 
 function getDotColor(state: RunHistoryEntry['state']): string {
   switch (state) {
-    case 'success': return 'rgba(34,197,94,0.4)';
-    case 'failed': return 'rgba(239,68,68,0.4)';
-    case 'stopped': return 'rgba(255,255,255,0.1)';
+    case 'success':
+      return 'rgba(34,197,94,0.4)';
+    case 'failed':
+      return 'rgba(239,68,68,0.4)';
+    case 'stopped':
+      return 'rgba(255,255,255,0.1)';
   }
 }
 
@@ -46,10 +49,7 @@ export function RunHistoryDots({
         }}
       >
         {visible.map((entry, i) => (
-          <div
-            key={i}
-            style={{ display: 'flex', alignItems: 'center', gap: 2 }}
-          >
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span
               style={{
                 width: 6,

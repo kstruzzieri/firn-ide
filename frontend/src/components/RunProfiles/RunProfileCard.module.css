@@ -6,7 +6,8 @@
 /* ── Keyframe Animations ────────────────────────────────────── */
 
 @keyframes railBreathe {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
     box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
   }
@@ -17,7 +18,8 @@
 }
 
 @keyframes railBreatheAmber {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
     box-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
   }
@@ -28,17 +30,26 @@
 }
 
 @keyframes sweep {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes hdotPulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
     box-shadow: 0 0 3px rgba(34, 197, 94, 0.4);
   }
@@ -172,7 +183,7 @@
 
 /* Play — sky blue */
 .actionBtnPlay {
-  background: rgba(56, 189, 248, 0.10);
+  background: rgba(56, 189, 248, 0.1);
   color: #38bdf8;
 }
 
@@ -183,7 +194,7 @@
 
 /* Stop — red */
 .actionBtnStop {
-  background: rgba(239, 68, 68, 0.10);
+  background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
 }
 
@@ -194,7 +205,7 @@
 
 /* Restart — purple */
 .actionBtnRestart {
-  background: rgba(168, 85, 247, 0.10);
+  background: rgba(168, 85, 247, 0.1);
   color: #a855f7;
 }
 
@@ -205,7 +216,7 @@
 
 /* Loading / stopping — amber, non-interactive */
 .actionBtnLoading {
-  background: rgba(245, 158, 11, 0.10);
+  background: rgba(245, 158, 11, 0.1);
   color: #f59e0b;
   opacity: 0.7;
   cursor: default;
@@ -237,8 +248,10 @@
 
 .running {
   background: #171717;
-  border-color: rgba(34, 197, 94, 0.20);
-  box-shadow: 0 2px 12px rgba(34, 197, 94, 0.06), 0 1px 3px rgba(0, 0, 0, 0.2);
+  border-color: rgba(34, 197, 94, 0.2);
+  box-shadow:
+    0 2px 12px rgba(34, 197, 94, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.2);
   transform: translateX(-1px);
   z-index: 2;
 }
@@ -251,12 +264,7 @@
 
 .running::before {
   opacity: 1;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(34, 197, 94, 0.04) 50%,
-    transparent 100%
-  );
+  background: linear-gradient(90deg, transparent 0%, rgba(34, 197, 94, 0.04) 50%, transparent 100%);
   animation: sweep 4s ease-in-out infinite;
 }
 
@@ -270,13 +278,15 @@
 
 .running:hover {
   border-color: rgba(34, 197, 94, 0.35);
-  box-shadow: 0 4px 20px rgba(34, 197, 94, 0.10), 0 2px 6px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 4px 20px rgba(34, 197, 94, 0.1),
+    0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 /* ── State: Stopping ────────────────────────────────────────── */
 
 .stopping {
-  border-color: rgba(245, 158, 11, 0.20);
+  border-color: rgba(245, 158, 11, 0.2);
   box-shadow: 0 1px 8px rgba(245, 158, 11, 0.04);
 }
 
@@ -478,12 +488,12 @@
 
 /* Danger — red */
 .hoverActionDanger {
-  background: rgba(239, 68, 68, 0.10);
+  background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
 }
 
 .hoverActionDanger:hover {
-  background: rgba(239, 68, 68, 0.20);
+  background: rgba(239, 68, 68, 0.2);
 }
 
 /* Ghost — neutral */
@@ -499,12 +509,12 @@
 
 /* Purple — restart/secondary */
 .hoverActionPurple {
-  background: rgba(168, 85, 247, 0.10);
+  background: rgba(168, 85, 247, 0.1);
   color: #a855f7;
 }
 
 .hoverActionPurple:hover {
-  background: rgba(168, 85, 247, 0.20);
+  background: rgba(168, 85, 247, 0.2);
 }
 
 /* ── Hover History (run segments) ───────────────────────────── */
@@ -560,11 +570,21 @@
   min-width: 2px;
 }
 
-.waveformActive .waveformBar  { background: #22c55e; }
-.waveformFailed .waveformBar  { background: #ef4444; }
-.waveformIdle .waveformBar    { background: #222; }
-.waveformStopping .waveformBar { background: #f59e0b; }
-.waveformSuccess .waveformBar  { background: rgba(34, 197, 94, 0.3); }
+.waveformActive .waveformBar {
+  background: #22c55e;
+}
+.waveformFailed .waveformBar {
+  background: #ef4444;
+}
+.waveformIdle .waveformBar {
+  background: #222;
+}
+.waveformStopping .waveformBar {
+  background: #f59e0b;
+}
+.waveformSuccess .waveformBar {
+  background: rgba(34, 197, 94, 0.3);
+}
 
 /* ── Run History Dots (row-bottom) ──────────────────────────── */
 
@@ -581,9 +601,15 @@
   border-radius: 50%;
 }
 
-.historyDotOk      { background: rgba(34, 197, 94, 0.4); }
-.historyDotErr     { background: rgba(239, 68, 68, 0.4); }
-.historyDotStopped { background: rgba(255, 255, 255, 0.1); }
+.historyDotOk {
+  background: rgba(34, 197, 94, 0.4);
+}
+.historyDotErr {
+  background: rgba(239, 68, 68, 0.4);
+}
+.historyDotStopped {
+  background: rgba(255, 255, 255, 0.1);
+}
 
 .historyDotActive {
   background: #22c55e;

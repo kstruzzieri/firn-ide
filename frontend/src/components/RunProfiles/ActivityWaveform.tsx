@@ -9,11 +9,16 @@ interface ActivityWaveformProps {
 
 function getBarColor(state: VisualState): string {
   switch (state) {
-    case 'running': return '#22c55e';
-    case 'stopping': return '#f59e0b';
-    case 'failed': return '#ef4444';
-    case 'success': return 'rgba(34,197,94,0.3)';
-    default: return '#222';
+    case 'running':
+      return '#22c55e';
+    case 'stopping':
+      return '#f59e0b';
+    case 'failed':
+      return '#ef4444';
+    case 'success':
+      return 'rgba(34,197,94,0.3)';
+    default:
+      return '#222';
   }
 }
 
@@ -22,9 +27,10 @@ function ActivityWaveformInner({ data, visualState, expanded = false }: Activity
   const height = expanded ? 24 : 12;
 
   // Normalize data to target bar count
-  const bars = data.length >= barCount
-    ? data.slice(data.length - barCount)
-    : [...new Array(barCount - data.length).fill(0), ...data];
+  const bars =
+    data.length >= barCount
+      ? data.slice(data.length - barCount)
+      : [...new Array(barCount - data.length).fill(0), ...data];
 
   const maxVal = Math.max(...bars, 1);
   const barColor = getBarColor(visualState);
