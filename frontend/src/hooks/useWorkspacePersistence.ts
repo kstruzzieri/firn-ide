@@ -55,6 +55,7 @@ function collectWorkspaceState(overrideIdentity?: WorkspaceIdentity): workspace.
       rootExpanded: state.isRootExpanded,
     },
     activeSidebar: state.activeSidebarView,
+    hiddenProfileIds: state.hiddenProfileIds,
   } as workspace.State;
 }
 
@@ -100,6 +101,11 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
     // Restore sidebar view
     if (state.activeSidebar) {
       store.setSidebarView(state.activeSidebar as 'explorer' | 'search' | 'git' | 'run');
+    }
+
+    // Restore hidden profile IDs
+    if (state.hiddenProfileIds) {
+      useIDEStore.setState({ hiddenProfileIds: state.hiddenProfileIds });
     }
 
     // Restore explorer expanded paths
@@ -255,7 +261,8 @@ export function useWorkspacePersistence() {
         state.expandedPaths !== prevState.expandedPaths ||
         state.isRootExpanded !== prevState.isRootExpanded ||
         state.scrollPositions !== prevState.scrollPositions ||
-        state.cursorPositions !== prevState.cursorPositions
+        state.cursorPositions !== prevState.cursorPositions ||
+        state.hiddenProfileIds !== prevState.hiddenProfileIds
       ) {
         scheduleSave();
       }
