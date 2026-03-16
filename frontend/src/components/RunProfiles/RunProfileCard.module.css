@@ -1,0 +1,591 @@
+/* ═══════════════════════════════════════════════════════════════
+   RunProfileCard — Unified Card CSS Module
+   All state variants, animations, hover reveal, and output preview.
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Keyframe Animations ────────────────────────────────────── */
+
+@keyframes railBreathe {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.1);
+  }
+}
+
+@keyframes railBreatheAmber {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 4px rgba(245, 158, 11, 0.1);
+  }
+}
+
+@keyframes sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes hdotPulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 3px rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    opacity: 0.4;
+    box-shadow: none;
+  }
+}
+
+/* ── Card Base ──────────────────────────────────────────────── */
+
+.card {
+  position: relative;
+  padding: 10px 12px 10px 16px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: #151515;
+  border: 1px solid #1e1e1e;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  cursor: default;
+}
+
+/* Sweep animation overlay */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+  will-change: transform, opacity;
+}
+
+/* Default hover — blue tint border */
+.card:hover {
+  border-color: rgba(56, 189, 248, 0.15);
+}
+
+/* ── State Rail (left edge) ─────────────────────────────────── */
+
+.rail {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: transparent;
+  transition: all 0.3s;
+}
+
+/* ── Layout Rows ────────────────────────────────────────────── */
+
+.row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.rowBottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  margin-left: 34px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+
+.name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.duration {
+  font-size: 9px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: #444;
+  flex-shrink: 0;
+}
+
+.cmd {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: #3a3a3a;
+  margin-top: 3px;
+  margin-left: 34px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Action Button ──────────────────────────────────────────── */
+
+.actionBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  background: transparent;
+}
+
+.actionBtn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Play — sky blue */
+.actionBtnPlay {
+  background: rgba(56, 189, 248, 0.10);
+  color: #38bdf8;
+}
+
+.actionBtnPlay:hover {
+  background: rgba(56, 189, 248, 0.22);
+  transform: scale(1.08);
+}
+
+/* Stop — red */
+.actionBtnStop {
+  background: rgba(239, 68, 68, 0.10);
+  color: #ef4444;
+}
+
+.actionBtnStop:hover {
+  background: rgba(239, 68, 68, 0.22);
+  transform: scale(1.08);
+}
+
+/* Restart — purple */
+.actionBtnRestart {
+  background: rgba(168, 85, 247, 0.10);
+  color: #a855f7;
+}
+
+.actionBtnRestart:hover {
+  background: rgba(168, 85, 247, 0.22);
+  transform: scale(1.08);
+}
+
+/* Loading / stopping — amber, non-interactive */
+.actionBtnLoading {
+  background: rgba(245, 158, 11, 0.10);
+  color: #f59e0b;
+  opacity: 0.7;
+  cursor: default;
+}
+
+.actionBtnLoading svg {
+  animation: spin 1.2s linear infinite;
+}
+
+/* ── Tags ───────────────────────────────────────────────────── */
+
+.tags {
+  display: flex;
+  gap: 3px;
+}
+
+.tag {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #3a3a3a;
+  letter-spacing: 0.03em;
+}
+
+/* ── State: Running ─────────────────────────────────────────── */
+
+.running {
+  background: #171717;
+  border-color: rgba(34, 197, 94, 0.20);
+  box-shadow: 0 2px 12px rgba(34, 197, 94, 0.06), 0 1px 3px rgba(0, 0, 0, 0.2);
+  transform: translateX(-1px);
+  z-index: 2;
+}
+
+.running .rail {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+  animation: railBreathe 2.5s ease-in-out infinite;
+}
+
+.running::before {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(34, 197, 94, 0.04) 50%,
+    transparent 100%
+  );
+  animation: sweep 4s ease-in-out infinite;
+}
+
+.running .name {
+  color: #f0f0f0;
+}
+
+.running .duration {
+  color: #22c55e;
+}
+
+.running:hover {
+  border-color: rgba(34, 197, 94, 0.35);
+  box-shadow: 0 4px 20px rgba(34, 197, 94, 0.10), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* ── State: Stopping ────────────────────────────────────────── */
+
+.stopping {
+  border-color: rgba(245, 158, 11, 0.20);
+  box-shadow: 0 1px 8px rgba(245, 158, 11, 0.04);
+}
+
+.stopping .rail {
+  background: #f59e0b;
+  animation: railBreatheAmber 1.2s ease-in-out infinite;
+}
+
+.stopping::before {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(245, 158, 11, 0.03) 50%,
+    transparent 100%
+  );
+  animation: sweep 2s ease-in-out infinite;
+}
+
+.stopping .duration {
+  color: #f59e0b;
+}
+
+/* ── State: Failed ──────────────────────────────────────────── */
+
+.failed {
+  border-color: rgba(239, 68, 68, 0.15);
+  background: linear-gradient(135deg, #151515, rgba(239, 68, 68, 0.02));
+}
+
+.failed .rail {
+  background: #ef4444;
+}
+
+.failed .duration {
+  color: #ef4444;
+}
+
+.failed:hover {
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+/* ── State: Success ─────────────────────────────────────────── */
+
+.success .rail {
+  background: #22c55e;
+  opacity: 0.4;
+}
+
+.success .duration {
+  color: rgba(34, 197, 94, 0.5);
+}
+
+/* ── State: Dormant (never run) ─────────────────────────────── */
+
+.dormant {
+  opacity: 0.5;
+  border-color: #181818;
+  background: #131313;
+}
+
+.dormant:hover {
+  opacity: 0.8;
+}
+
+.dormant .actionBtnPlay {
+  opacity: 0.7;
+}
+
+.dormant .cmd {
+  color: #2a2a2a;
+}
+
+/* ── Hover Reveal ───────────────────────────────────────────── */
+
+.hoverReveal {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.25s ease,
+    margin-top 0.35s ease;
+  margin-top: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.card:hover .hoverReveal,
+.card:focus-within .hoverReveal {
+  max-height: 220px;
+  opacity: 1;
+  margin-top: 8px;
+}
+
+/* ── Hover Waveform (expanded) ──────────────────────────────── */
+
+.hoverWaveform {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 24px;
+  margin-bottom: 8px;
+}
+
+.hoverWaveformBar {
+  flex: 1;
+  min-width: 2px;
+  max-width: 5px;
+  border-radius: 1px 1px 0 0;
+}
+
+.hoverWaveformActive .hoverWaveformBar {
+  background: #22c55e;
+}
+
+.hoverWaveformFailed .hoverWaveformBar {
+  background: #ef4444;
+}
+
+/* ── Output Preview (mini terminal) ─────────────────────────── */
+
+.outputPreview {
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  font-size: 9px;
+  line-height: 1.6;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 8px;
+  max-height: 54px;
+  overflow: hidden;
+}
+
+.outputLine {
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outputLineHighlight {
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outputLineStderr {
+  color: rgba(239, 68, 68, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Hover Action Buttons ───────────────────────────────────── */
+
+.hoverActions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.hoverActionBtn {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: inherit;
+}
+
+.hoverActionBtn svg {
+  width: 10px;
+  height: 10px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Primary — sky blue */
+.hoverActionPrimary {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+
+.hoverActionPrimary:hover {
+  background: rgba(56, 189, 248, 0.22);
+}
+
+/* Danger — red */
+.hoverActionDanger {
+  background: rgba(239, 68, 68, 0.10);
+  color: #ef4444;
+}
+
+.hoverActionDanger:hover {
+  background: rgba(239, 68, 68, 0.20);
+}
+
+/* Ghost — neutral */
+.hoverActionGhost {
+  background: rgba(255, 255, 255, 0.04);
+  color: #555;
+}
+
+.hoverActionGhost:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #888;
+}
+
+/* Purple — restart/secondary */
+.hoverActionPurple {
+  background: rgba(168, 85, 247, 0.10);
+  color: #a855f7;
+}
+
+.hoverActionPurple:hover {
+  background: rgba(168, 85, 247, 0.20);
+}
+
+/* ── Hover History (run segments) ───────────────────────────── */
+
+.hoverHistory {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.hoverHistorySegment {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8px;
+  color: #444;
+}
+
+.hoverHistoryPip {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+}
+
+.hoverHistoryPipOk {
+  background: rgba(34, 197, 94, 0.4);
+}
+
+.hoverHistoryPipErr {
+  background: rgba(239, 68, 68, 0.4);
+}
+
+.hoverHistoryPipActive {
+  background: #22c55e;
+}
+
+/* ── Inline Waveform (row-bottom compact) ───────────────────── */
+
+.waveform {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 12px;
+  flex-shrink: 0;
+  width: 48px;
+}
+
+.waveformBar {
+  flex: 1;
+  border-radius: 1px 1px 0 0;
+  transition: height 0.15s ease;
+  min-width: 2px;
+}
+
+.waveformActive .waveformBar  { background: #22c55e; }
+.waveformFailed .waveformBar  { background: #ef4444; }
+.waveformIdle .waveformBar    { background: #222; }
+.waveformStopping .waveformBar { background: #f59e0b; }
+.waveformSuccess .waveformBar  { background: rgba(34, 197, 94, 0.3); }
+
+/* ── Run History Dots (row-bottom) ──────────────────────────── */
+
+.history {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.historyDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.historyDotOk      { background: rgba(34, 197, 94, 0.4); }
+.historyDotErr     { background: rgba(239, 68, 68, 0.4); }
+.historyDotStopped { background: rgba(255, 255, 255, 0.1); }
+
+.historyDotActive {
+  background: #22c55e;
+  animation: hdotPulse 1.5s ease-in-out infinite;
+}
