@@ -23,7 +23,7 @@ export type RunState = 'idle' | 'running' | 'stopped' | 'failed' | 'success';
 
 export interface RunHistoryEntry {
   state: 'success' | 'failed' | 'stopped';
-  duration: number;  // milliseconds
+  duration: number; // milliseconds
   timestamp: number; // when run completed (UnixMilli)
 }
 

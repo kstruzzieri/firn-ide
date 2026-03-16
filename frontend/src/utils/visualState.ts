@@ -4,7 +4,7 @@ export function getVisualState(
   profileId: string,
   backendState: RunState | undefined,
   stoppingProfileIds: string[],
-  restartingProfileIds: string[],
+  restartingProfileIds: string[]
 ): VisualState {
   const state = backendState ?? 'idle';
   if (stoppingProfileIds.includes(profileId)) return 'stopping';
