@@ -111,6 +111,15 @@ func (m *Manager) PinProfile(id string) error {
 	return m.store.Pin(*found)
 }
 
+// UnpinProfile removes a saved (pinned) profile, allowing the detected
+// version with the same deterministic ID to resurface.
+func (m *Manager) UnpinProfile(id string) error {
+	if err := m.store.Delete(id); err != nil {
+		return fmt.Errorf("unpin profile %s: %w", id, err)
+	}
+	return nil
+}
+
 // ReDetect re-runs detection and returns the new detected profiles.
 func (m *Manager) ReDetect() []RunProfile {
 	detected := m.detector.DetectAll()
