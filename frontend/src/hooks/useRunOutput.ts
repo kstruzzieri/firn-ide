@@ -6,8 +6,19 @@ import { ALL_PROFILES_ID } from '../types/runOutput';
 
 export function useRunOutputListener(): void {
   useEffect(() => {
+    const entryCounts = new Map<string, number>();
+
+    const waveformInterval = setInterval(() => {
+      const store = useIDEStore.getState();
+      for (const [profileId, count] of entryCounts) {
+        store.updateWaveform(profileId, count);
+      }
+      entryCounts.clear();
+    }, 500);
+
     const cleanupOutput = EventsOn('run:output', (chunk: OutputChunk) => {
       useIDEStore.getState().appendRunOutput(chunk);
+      entryCounts.set(chunk.profileId, (entryCounts.get(chunk.profileId) ?? 0) + 1);
     });
 
     const cleanupStatus = EventsOn(
@@ -56,6 +67,7 @@ export function useRunOutputListener(): void {
     return () => {
       cleanupOutput();
       cleanupStatus();
+      clearInterval(waveformInterval);
     };
   }, []);
 }
