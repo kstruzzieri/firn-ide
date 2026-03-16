@@ -4,7 +4,13 @@ import { RunHistoryDots } from './RunHistoryDots';
 import { getTagColor } from '../../utils/tagColors';
 import { formatDuration } from '../../utils/formatDuration';
 import { PlayIcon, StopIcon, RestartIcon, LoaderIcon } from '../icons';
-import { StartRunProfile, StopRunProfile, RestartRunProfile } from '../../../wailsjs/go/main/App';
+import {
+  StartRunProfile,
+  StopRunProfile,
+  RestartRunProfile,
+  PinRunProfile,
+  UnpinRunProfile,
+} from '../../../wailsjs/go/main/App';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
 import type { VisualState, RunHistoryEntry, RunOutput } from '../../types/runOutput';
@@ -273,8 +279,153 @@ export function RunProfileCard({
         <RunHistoryDots history={runHistory} isCurrentlyRunning={visualState === 'running'} />
       </div>
 
-      {/* Hover reveal placeholder (Task 15) */}
-      <div className={styles.hoverReveal} />
+      {/* Hover reveal — expanded on hover/focus */}
+      <div className={styles.hoverReveal}>
+        {/* Expanded waveform */}
+        <ActivityWaveform data={waveformData} visualState={visualState} expanded />
+
+        {/* Output preview — last 3 lines */}
+        {runOutput && runOutput.entries.length > 0 && (
+          <div className={styles.outputPreview}>
+            {runOutput.entries.slice(-3).map((entry, i) => (
+              <div
+                key={i}
+                className={entry.stream === 'stderr' ? styles.outputLineStderr : styles.outputLine}
+              >
+                {entry.text}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className={styles.hoverActions}>
+          {visualState === 'running' && (
+            <>
+              <button
+                className={`${styles.hoverActionBtn} ${styles.hoverActionDanger}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleActionClick(e);
+                }}
+                aria-label="Stop"
+              >
+                <StopIcon aria-hidden="true" />
+                Stop
+              </button>
+              <button
+                className={`${styles.hoverActionBtn} ${styles.hoverActionPurple}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setProfileRestarting(profile.id);
+                  RestartRunProfile(profile.id).catch((err: unknown) => {
+                    clearProfileRestarting(profile.id);
+                    const message = err instanceof Error ? err.message : String(err);
+                    showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
+                  });
+                }}
+                aria-label="Restart"
+              >
+                <RestartIcon aria-hidden="true" />
+                Restart
+              </button>
+            </>
+          )}
+          {(visualState === 'stopped' || visualState === 'failed') && (
+            <button
+              className={`${styles.hoverActionBtn} ${styles.hoverActionPurple}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleActionClick(e);
+              }}
+              aria-label="Restart"
+            >
+              <RestartIcon aria-hidden="true" />
+              Restart
+            </button>
+          )}
+          {(visualState === 'idle' || visualState === 'success') && (
+            <button
+              className={`${styles.hoverActionBtn} ${styles.hoverActionPrimary}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleActionClick(e);
+              }}
+              aria-label="Run"
+            >
+              <PlayIcon aria-hidden="true" />
+              Run
+            </button>
+          )}
+          {runOutput && (
+            <button
+              className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onFocusOutput(profile.id);
+              }}
+              aria-label="View Output"
+            >
+              View Output
+            </button>
+          )}
+
+          {/* Profile management — right side */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+            {profile.source === 'detected' && (
+              <button
+                className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  PinRunProfile(profile.id).catch((err: unknown) => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    showToast(`Failed to pin "${profile.name}": ${message}`, 'error');
+                  });
+                }}
+                aria-label="Pin profile"
+              >
+                Pin
+              </button>
+            )}
+            {profile.source === 'user' && (
+              <button
+                className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  UnpinRunProfile(profile.id).catch((err: unknown) => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    showToast(`Failed to unpin "${profile.name}": ${message}`, 'error');
+                  });
+                }}
+                aria-label="Unpin profile"
+              >
+                Unpin
+              </button>
+            )}
+            <button
+              className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                useIDEStore.getState().hideProfile(profile.id);
+              }}
+              aria-label="Hide profile"
+            >
+              Hide
+            </button>
+          </div>
+        </div>
+
+        {/* Expanded history with durations */}
+        {runHistory.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <RunHistoryDots
+              history={runHistory}
+              isCurrentlyRunning={visualState === 'running'}
+              expanded
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
