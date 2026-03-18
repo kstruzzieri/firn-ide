@@ -28,6 +28,16 @@ Thumbs.db
 docs/mockups/
 docs/archive/
 
+# Temporary working docs (specs, plans — deleted after feature completion)
+docs/superpowers/
+docs/plans/
+
+# Superpowers brainstorm sessions
+.superpowers/
+
+# Git worktrees
+.worktrees/
+
 # Misc
 *.log
 *.md5

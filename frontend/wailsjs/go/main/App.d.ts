@@ -57,6 +57,8 @@ export function StopWatching():Promise<void>;
 
 export function ToggleMaximize():Promise<void>;
 
+export function UnpinRunProfile(arg1:string):Promise<void>;
+
 export function ValidateRunProfile(arg1:runprofile.RunProfile):Promise<runprofile.ValidationResult>;
 
 export function WriteFile(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;

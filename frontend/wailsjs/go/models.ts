@@ -350,11 +350,12 @@ export namespace workspace {
 	    editor: EditorState;
 	    explorer: Explorer;
 	    activeSidebar: string;
-	
+	    hiddenProfileIds?: string[];
+
 	    static createFrom(source: any = {}) {
 	        return new State(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workspacePath = source["workspacePath"];
@@ -364,6 +365,7 @@ export namespace workspace {
 	        this.editor = this.convertValues(source["editor"], EditorState);
 	        this.explorer = this.convertValues(source["explorer"], Explorer);
 	        this.activeSidebar = source["activeSidebar"];
+	        this.hiddenProfileIds = source["hiddenProfileIds"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -281,6 +281,9 @@ func (d *Detector) detectDockerCompose(filename string) []RunProfile {
 }
 
 // generateID produces a deterministic ID for a detected profile.
+// INVARIANT: The unpin flow relies on this being deterministic — when a saved
+// profile is deleted, re-detection must produce the same ID so the detected
+// version resurfaces with matching state/history.
 func generateID(source, name string) string {
 	normalizedName := strings.ToLower(strings.TrimSpace(name))
 	sanitized := strings.Map(func(r rune) rune {

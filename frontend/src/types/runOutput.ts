@@ -20,6 +20,15 @@ export interface OutputEntry {
 }
 
 export type RunState = 'idle' | 'running' | 'stopped' | 'failed' | 'success';
+
+export interface RunHistoryEntry {
+  state: 'success' | 'failed' | 'stopped';
+  duration: number; // milliseconds
+  timestamp: number; // when run completed (UnixMilli)
+}
+
+export type VisualState = RunState | 'stopping';
+
 export type RunOutputViewMode = 'merged' | 'lanes' | 'diff' | 'timeline';
 
 export interface RunOutput {

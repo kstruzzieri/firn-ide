@@ -7,6 +7,7 @@ import { LineAssembler } from '../utils/lineAssembler';
 import type {
   OutputChunk,
   OutputEntry,
+  RunHistoryEntry,
   RunOutput,
   RunState,
   RunOutputViewMode,
@@ -113,6 +114,14 @@ interface IDEState {
   runOutputViewMode: RunOutputViewMode;
   runOutputAutoScroll: boolean;
 
+  // Process lifecycle UI
+  stoppingProfileIds: string[];
+  restartingProfileIds: string[];
+  runHistory: Record<string, RunHistoryEntry[]>;
+  waveformData: Record<string, number[]>;
+  hiddenProfileIds: string[];
+  runStartTimestamps: Record<string, number>;
+
   // Per-file view state (for persistence)
   scrollPositions: Record<string, number>; // fileId -> scrollTop
   cursorPositions: Record<string, CursorPosition>; // fileId -> cursor
@@ -189,6 +198,18 @@ interface IDEActions {
   setRunOutputViewMode: (mode: RunOutputViewMode) => void;
   toggleAutoScroll: () => void;
 
+  // Process lifecycle actions
+  setProfileStopping: (profileId: string) => void;
+  clearProfileStopping: (profileId: string) => void;
+  setProfileRestarting: (profileId: string) => void;
+  clearProfileRestarting: (profileId: string) => void;
+  appendRunHistory: (profileId: string, entry: RunHistoryEntry) => void;
+  updateWaveform: (profileId: string, entryCount: number) => void;
+  hideProfile: (id: string) => void;
+  unhideProfile: (id: string) => void;
+  focusProfileOutput: (profileId: string) => void;
+  resetWorkspaceRunState: () => void;
+
   // Per-file view state actions
   setScrollPosition: (fileId: string, scrollTop: number) => void;
   setFileCursorPosition: (fileId: string, position: CursorPosition) => void;
@@ -252,6 +273,12 @@ export const useIDEStore = create<IDEStore>()(
       activeRunOutputId: null,
       runOutputViewMode: 'merged' as RunOutputViewMode,
       runOutputAutoScroll: true,
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      runHistory: {},
+      waveformData: {},
+      hiddenProfileIds: [],
+      runStartTimestamps: {},
       isRestoringWorkspace: false,
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
@@ -500,11 +527,36 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
-        // Only append to profiles that already have a RunOutput record
-        // (created by setRunState on 'running' transition). This prevents
-        // stale events from a previous workspace from recreating entries
-        // after clearAllRunOutputs wiped them.
-        if (!useIDEStore.getState().runOutputs[chunk.profileId]) return;
+        const currentState = useIDEStore.getState();
+
+        if (!currentState.runOutputs[chunk.profileId]) {
+          // Profile-specific stale event check: only drop if THIS profile is stopping/restarting
+          const isStale =
+            currentState.stoppingProfileIds.includes(chunk.profileId) ||
+            currentState.restartingProfileIds.includes(chunk.profileId);
+          if (isStale) return;
+
+          // Create provisional RunOutput record — setRunState will upgrade it
+          // when run:status arrives. This handles the race where run:output
+          // arrives before run:status.
+          set(
+            (state) => ({
+              runOutputs: {
+                ...state.runOutputs,
+                [chunk.profileId]: {
+                  profileId: chunk.profileId,
+                  state: 'idle' as RunState,
+                  exitCode: 0,
+                  runCount: 0,
+                  entries: [],
+                  previousEntries: [],
+                },
+              },
+            }),
+            false,
+            'appendRunOutput:provision'
+          );
+        }
 
         // Collect all lines from this chunk into a local array, then commit
         // to the store in a single set() call. This avoids store thrashing
@@ -671,6 +723,132 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'toggleAutoScroll'
         ),
+
+      // Process lifecycle actions
+      setProfileStopping: (profileId) =>
+        set(
+          (state) => ({
+            stoppingProfileIds: state.stoppingProfileIds.includes(profileId)
+              ? state.stoppingProfileIds
+              : [...state.stoppingProfileIds, profileId],
+          }),
+          false,
+          'setProfileStopping'
+        ),
+
+      clearProfileStopping: (profileId) =>
+        set(
+          (state) => ({
+            stoppingProfileIds: state.stoppingProfileIds.filter((id) => id !== profileId),
+          }),
+          false,
+          'clearProfileStopping'
+        ),
+
+      setProfileRestarting: (profileId) =>
+        set(
+          (state) => ({
+            restartingProfileIds: state.restartingProfileIds.includes(profileId)
+              ? state.restartingProfileIds
+              : [...state.restartingProfileIds, profileId],
+          }),
+          false,
+          'setProfileRestarting'
+        ),
+
+      clearProfileRestarting: (profileId) =>
+        set(
+          (state) => ({
+            restartingProfileIds: state.restartingProfileIds.filter((id) => id !== profileId),
+          }),
+          false,
+          'clearProfileRestarting'
+        ),
+
+      appendRunHistory: (profileId, entry) =>
+        set(
+          (state) => {
+            const existing = state.runHistory[profileId] ?? [];
+            const updated = [...existing, entry];
+            const capped = updated.length > 50 ? updated.slice(updated.length - 50) : updated;
+            return { runHistory: { ...state.runHistory, [profileId]: capped } };
+          },
+          false,
+          'appendRunHistory'
+        ),
+
+      updateWaveform: (profileId, entryCount) =>
+        set(
+          (state) => {
+            const existing = state.waveformData[profileId] ?? new Array(12).fill(0);
+            const shifted = [...existing.slice(1), entryCount];
+            return { waveformData: { ...state.waveformData, [profileId]: shifted } };
+          },
+          false,
+          'updateWaveform'
+        ),
+
+      hideProfile: (id) =>
+        set(
+          (state) => ({
+            hiddenProfileIds: state.hiddenProfileIds.includes(id)
+              ? state.hiddenProfileIds
+              : [...state.hiddenProfileIds, id],
+          }),
+          false,
+          'hideProfile'
+        ),
+
+      unhideProfile: (id) =>
+        set(
+          (state) => ({
+            hiddenProfileIds: state.hiddenProfileIds.filter((hid) => hid !== id),
+          }),
+          false,
+          'unhideProfile'
+        ),
+
+      focusProfileOutput: (profileId) =>
+        set(
+          () => ({
+            activeRunOutputId: profileId,
+            activeTerminalTab: 'output' as TerminalTab,
+            isBottomPanelCollapsed: false,
+          }),
+          false,
+          'focusProfileOutput'
+        ),
+
+      resetWorkspaceRunState: () => {
+        // Clear line assemblers (same as clearAllRunOutputs does)
+        lineAssemblers.clear();
+        assemblerCallbacks.clear();
+        // Atomic single set: clear output entries + lifecycle state together
+        set(
+          (state) => {
+            // Preserve RunOutput records for still-running profiles (same logic as clearAllRunOutputs)
+            const preserved: Record<string, RunOutput> = {};
+            for (const [id, output] of Object.entries(state.runOutputs)) {
+              if (output.state === 'running') {
+                preserved[id] = { ...output, entries: [], previousEntries: [] };
+              }
+            }
+            const firstId = Object.keys(preserved)[0] ?? null;
+            return {
+              runOutputs: preserved,
+              activeRunOutputId: firstId,
+              stoppingProfileIds: [],
+              restartingProfileIds: [],
+              runHistory: {},
+              waveformData: {},
+              hiddenProfileIds: [],
+              runStartTimestamps: {},
+            };
+          },
+          false,
+          'resetWorkspaceRunState'
+        );
+      },
 
       // Per-file view state actions
       setScrollPosition: (fileId, scrollTop) =>

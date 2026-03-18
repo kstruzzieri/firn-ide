@@ -11,13 +11,14 @@ type StateFile struct {
 
 // State is the complete persisted state for one workspace.
 type State struct {
-	WorkspacePath  string      `json:"workspacePath"`
-	WorkspaceName  string      `json:"workspaceName"`
-	LastOpened     string      `json:"lastOpened"` // RFC 3339
-	Layout         Layout      `json:"layout"`
-	Editor         EditorState `json:"editor"`
-	Explorer       Explorer    `json:"explorer"`
-	ActiveSidebar  string      `json:"activeSidebar"`
+	WorkspacePath    string      `json:"workspacePath"`
+	WorkspaceName    string      `json:"workspaceName"`
+	LastOpened       string      `json:"lastOpened"` // RFC 3339
+	Layout           Layout      `json:"layout"`
+	Editor           EditorState `json:"editor"`
+	Explorer         Explorer    `json:"explorer"`
+	ActiveSidebar    string      `json:"activeSidebar"`
+	HiddenProfileIDs []string    `json:"hiddenProfileIds,omitempty"`
 }
 
 // Layout captures panel sizes and collapsed states.

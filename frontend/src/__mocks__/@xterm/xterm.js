@@ -7,7 +7,9 @@ class Terminal {
   open() {}
   write() {}
   clear() {}
-  onData() { return { dispose: jest.fn() }; }
+  onData() {
+    return { dispose: jest.fn() };
+  }
   dispose() {}
 }
 

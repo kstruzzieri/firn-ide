@@ -1,35 +1,83 @@
-import { useState } from 'react';
-import { Panel, PanelAction } from '../layout';
-import { PlusIcon, PlayIcon } from '../icons';
+import { useMemo } from 'react';
+import { Panel } from '../layout';
+import { PlusIcon } from '../icons';
+import { RunProfileCard } from './RunProfileCard';
+import { ProfileBrowser } from './ProfileBrowser';
 import {
   useRunProfiles,
   useIsLoadingProfiles,
   useProfilesError,
   useIDEStore,
 } from '../../stores/ideStore';
-import { PinRunProfile } from '../../../wailsjs/go/main/App';
-import type { RunProfile as RunProfileType } from '../../types/runProfile';
+import { getVisualState } from '../../utils/visualState';
+import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfiles.module.css';
 
 export function RunProfiles() {
   const profiles = useRunProfiles();
   const isLoading = useIsLoadingProfiles();
   const error = useProfilesError();
+  const runOutputs = useIDEStore((s) => s.runOutputs);
+  const runHistory = useIDEStore((s) => s.runHistory);
+  const waveformData = useIDEStore((s) => s.waveformData);
+  const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
+  const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
+  const restartingIds = useIDEStore((s) => s.restartingProfileIds);
+  const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
 
-  const savedProfiles = profiles.filter((p) => p.source === 'user');
-  const detectedProfiles = profiles.filter((p) => p.source === 'detected');
+  // Filter out hidden profiles
+  const visibleProfiles = useMemo(
+    () => profiles.filter((p) => !hiddenProfileIds.includes(p.id)),
+    [profiles, hiddenProfileIds]
+  );
+
+  // Detect duplicate names for disambiguation
+  const nameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of visibleProfiles) {
+      counts.set(p.name, (counts.get(p.name) ?? 0) + 1);
+    }
+    return counts;
+  }, [visibleProfiles]);
+
+  const savedProfiles = useMemo(
+    () => visibleProfiles.filter((p) => p.source === 'user'),
+    [visibleProfiles]
+  );
+  const detectedProfiles = useMemo(
+    () => visibleProfiles.filter((p) => p.source === 'detected'),
+    [visibleProfiles]
+  );
+
+  const renderCard = (profile: RunProfile) => {
+    const vs = getVisualState(
+      profile.id,
+      runOutputs[profile.id]?.state,
+      stoppingIds,
+      restartingIds
+    );
+    const isDormant = !runOutputs[profile.id] && !runHistory[profile.id]?.length;
+    const isDuplicate = (nameCounts.get(profile.name) ?? 0) > 1;
+
+    return (
+      <RunProfileCard
+        key={profile.id}
+        profile={profile}
+        visualState={vs}
+        runOutput={runOutputs[profile.id]}
+        runHistory={runHistory[profile.id] ?? []}
+        waveformData={waveformData[profile.id] ?? []}
+        isDormant={isDormant}
+        isDuplicate={isDuplicate}
+        onFocusOutput={focusProfileOutput}
+      />
+    );
+  };
 
   return (
     <Panel
       title="Run Profiles"
-      actions={
-        <PanelAction
-          icon={<PlusIcon />}
-          title="Add Profile (coming soon)"
-          ariaLabel="Add Profile (coming soon)"
-          disabled
-        />
-      }
+      actions={<ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />}
     >
       <div className={styles.list}>
         {isLoading ? (
@@ -40,98 +88,26 @@ export function RunProfiles() {
           <div className={styles.empty}>
             <p className={styles.errorText}>{error}</p>
           </div>
-        ) : profiles.length === 0 ? (
+        ) : visibleProfiles.length === 0 ? (
           <RunProfilesEmpty />
         ) : (
           <>
             {savedProfiles.length > 0 && (
               <div className={styles.group}>
                 <span className={styles.groupLabel}>Saved</span>
-                {savedProfiles.map((profile) => (
-                  <RunProfileItem key={profile.id} profile={profile} />
-                ))}
+                {savedProfiles.map(renderCard)}
               </div>
             )}
             {detectedProfiles.length > 0 && (
               <div className={styles.group}>
                 <span className={styles.groupLabel}>Detected</span>
-                {detectedProfiles.map((profile) => (
-                  <RunProfileItem key={profile.id} profile={profile} />
-                ))}
+                {detectedProfiles.map(renderCard)}
               </div>
             )}
           </>
         )}
       </div>
     </Panel>
-  );
-}
-
-interface RunProfileItemProps {
-  profile: RunProfileType;
-}
-
-function RunProfileItem({ profile }: RunProfileItemProps) {
-  const isDetected = profile.source === 'detected';
-  const isCompound = profile.type === 'compound';
-  const [isPinning, setIsPinning] = useState(false);
-
-  const handlePin = () => {
-    setIsPinning(true);
-    PinRunProfile(profile.id)
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        useIDEStore.getState().showToast(`Failed to pin "${profile.name}": ${message}`, 'error');
-      })
-      .finally(() => {
-        setIsPinning(false);
-      });
-  };
-
-  return (
-    <div className={styles.profile}>
-      <button
-        className={styles.runButton}
-        aria-label={`Run ${profile.name}`}
-        disabled
-        title="Execution engine coming soon"
-      >
-        <PlayIcon aria-hidden="true" />
-      </button>
-      <div className={styles.profileInfo}>
-        <div className={styles.profileHeader}>
-          <span className={styles.profileName}>
-            {isCompound && (
-              <span className={styles.compoundIcon} aria-label="Compound profile">
-                {'▶▶ '}
-              </span>
-            )}
-            {profile.name}
-          </span>
-          {isDetected && (
-            <button
-              className={styles.pinButton}
-              onClick={handlePin}
-              disabled={isPinning}
-              aria-label={`Pin ${profile.name}`}
-              title="Save this profile"
-            >
-              {isPinning ? 'Pinning…' : 'Pin'}
-            </button>
-          )}
-        </div>
-        {profile.command && <span className={styles.profileCommand}>{profile.command}</span>}
-        {profile.tags && profile.tags.length > 0 && (
-          <div className={styles.tagList}>
-            {profile.tags.map((tag) => (
-              <span key={tag} className={styles.tag}>
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 

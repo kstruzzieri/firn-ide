@@ -30,6 +30,7 @@ type RunStatus struct {
 	State     RunState `json:"state"`
 	ExitCode  int      `json:"exitCode"`
 	Pid       int      `json:"pid,omitempty"`
+	Timestamp int64    `json:"timestamp"`
 }
 
 // OutputFunc receives streaming process output.
@@ -312,6 +313,7 @@ func (e *Executor) ClearTerminalStatuses() {
 
 // emit sends a status event via the configured StatusFunc.
 func (e *Executor) emit(status RunStatus) {
+	status.Timestamp = time.Now().UnixMilli()
 	if e.emitFn != nil {
 		e.emitFn("run:status", status)
 	}

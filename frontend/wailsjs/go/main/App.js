@@ -106,6 +106,10 @@ export function ToggleMaximize() {
   return window['go']['main']['App']['ToggleMaximize']();
 }
 
+export function UnpinRunProfile(arg1) {
+  return window['go']['main']['App']['UnpinRunProfile'](arg1);
+}
+
 export function ValidateRunProfile(arg1) {
   return window['go']['main']['App']['ValidateRunProfile'](arg1);
 }
