@@ -58,12 +58,14 @@ function OutputTail({ entries }: { entries: OutputEntry[] }) {
 
 function StatsRow({
   elapsed,
+  durationLabel,
   profile,
   runHistory,
   resultLabel,
   eta,
 }: {
   elapsed: number;
+  durationLabel?: string;
   profile: RunProfile;
   runHistory: RunHistoryEntry[];
   resultLabel?: string;
@@ -77,7 +79,7 @@ function StatsRow({
   return (
     <div className={styles.statRow}>
       <div className={styles.stat}>
-        <span className={styles.statLabel}>Elapsed</span>
+        <span className={styles.statLabel}>{durationLabel ?? 'Elapsed'}</span>
         <span className={styles.statValueHl}>{formatDuration(elapsed)}</span>
       </div>
       {profile.workingDir && (
@@ -213,7 +215,12 @@ function FailedPanel({
       </div>
       <OutputTail entries={tail} />
       <ActivityGraph data={waveformData} visualState="failed" />
-      <StatsRow elapsed={elapsed} profile={profile} runHistory={runHistory} />
+      <StatsRow
+        elapsed={runHistory[runHistory.length - 1]?.duration ?? elapsed}
+        durationLabel="Duration"
+        profile={profile}
+        runHistory={runHistory}
+      />
     </>
   );
 }
@@ -285,7 +292,8 @@ function IdlePanel({
     <>
       <OutputTail entries={tail} />
       <StatsRow
-        elapsed={elapsed}
+        elapsed={lastEntry?.duration ?? elapsed}
+        durationLabel="Duration"
         profile={profile}
         runHistory={runHistory}
         resultLabel={resultLabel}
@@ -312,7 +320,12 @@ function SuccessPanel({
     <>
       <OutputTail entries={tail} />
       <ActivityGraph data={waveformData} visualState="success" />
-      <StatsRow elapsed={elapsed} profile={profile} runHistory={runHistory} />
+      <StatsRow
+        elapsed={runHistory[runHistory.length - 1]?.duration ?? elapsed}
+        durationLabel="Duration"
+        profile={profile}
+        runHistory={runHistory}
+      />
     </>
   );
 }
@@ -339,6 +352,7 @@ function StoppedPanel({ profile }: { profile: RunProfile }) {
 function ActionsRow({
   profile,
   visualState,
+  hasOutput,
   onFocusOutput,
   onStart,
   onStop,
@@ -349,6 +363,7 @@ function ActionsRow({
 }: {
   profile: RunProfile;
   visualState: VisualState;
+  hasOutput: boolean;
   onFocusOutput: (profileId: string) => void;
   onStart: () => void;
   onStop: () => void;
@@ -380,13 +395,15 @@ function ActionsRow({
           >
             <RestartIcon /> Restart
           </button>
-          <button
-            className={styles.actionGhost}
-            onClick={() => onFocusOutput(profile.id)}
-            aria-label={`View output ${profile.name}`}
-          >
-            Output
-          </button>
+          {hasOutput && (
+            <button
+              className={styles.actionGhost}
+              onClick={() => onFocusOutput(profile.id)}
+              aria-label={`View output ${profile.name}`}
+            >
+              Output
+            </button>
+          )}
         </>
       ) : (
         <>
@@ -397,13 +414,15 @@ function ActionsRow({
           >
             <PlayIcon /> Run
           </button>
-          <button
-            className={styles.actionGhost}
-            onClick={() => onFocusOutput(profile.id)}
-            aria-label={`View output ${profile.name}`}
-          >
-            Output
-          </button>
+          {hasOutput && (
+            <button
+              className={styles.actionGhost}
+              onClick={() => onFocusOutput(profile.id)}
+              aria-label={`View output ${profile.name}`}
+            >
+              Output
+            </button>
+          )}
         </>
       )}
       <span className={styles.spacer} />
@@ -513,6 +532,7 @@ export function ExpandedPanel({
       <ActionsRow
         profile={profile}
         visualState={visualState}
+        hasOutput={runOutput !== undefined && runOutput.entries.length > 0}
         onFocusOutput={onFocusOutput}
         onStart={onStart}
         onStop={onStop}
