@@ -199,8 +199,7 @@ function FailedPanel({
   elapsed: number;
 }) {
   const exitCode = runOutput?.exitCode;
-  const stderrEntries = (runOutput?.entries ?? []).filter((e) => e.stream === 'stderr');
-  const tail = getTailEntries(stderrEntries, 4);
+  const tail = getTailEntries(runOutput?.entries, 4);
 
   return (
     <>

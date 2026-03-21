@@ -117,7 +117,8 @@ export function RunProfileCard({
   const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
   const stopRequestTs = useIDEStore((s) => s.stopRequestTimestamps[profile.id]);
 
-  const computedElapsed = useElapsedTimer(visualState === 'running' ? startTs : undefined);
+  const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
+  const computedElapsed = useElapsedTimer(isRunningOrStopping ? startTs : undefined);
   const computedStopElapsed = useElapsedTimer(
     visualState === 'stopping' ? stopRequestTs : undefined
   );
