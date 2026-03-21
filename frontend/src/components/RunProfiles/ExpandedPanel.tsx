@@ -4,6 +4,7 @@ import { ActivityGraph } from './ActivityGraph';
 import { RunHistoryDots } from './RunHistoryDots';
 import { PlayIcon, StopIcon, RestartIcon } from '../icons';
 import { formatDuration } from '../../utils/formatDuration';
+import { estimateRemaining } from '../../utils/estimateCompletion';
 import styles from './ExpandedPanel.module.css';
 
 const GRACE_PERIOD_MS = 3000;
@@ -60,11 +61,13 @@ function StatsRow({
   profile,
   runHistory,
   resultLabel,
+  eta,
 }: {
   elapsed: number;
   profile: RunProfile;
   runHistory: RunHistoryEntry[];
   resultLabel?: string;
+  eta?: number | null;
 }) {
   const avgDuration =
     runHistory.length > 0
@@ -93,6 +96,14 @@ function StatsRow({
         <span className={styles.statLabel}>Runs</span>
         <span className={styles.statValue}>{runHistory.length}</span>
       </div>
+      {eta !== null && eta !== undefined && (
+        <span className={styles.stat}>
+          <span className={styles.statLabel}>ETA</span>
+          <span className={styles.statValue}>
+            {eta === 0 ? 'overrunning' : `~${formatDuration(eta)} left`}
+          </span>
+        </span>
+      )}
       {resultLabel && (
         <div className={styles.stat}>
           <span className={styles.statLabel}>Result</span>
@@ -119,11 +130,12 @@ function RunningPanel({
   elapsed: number;
 }) {
   const tail = getTailEntries(runOutput?.entries, 4);
+  const eta = estimateRemaining(runHistory, elapsed);
   return (
     <>
       <ActivityGraph data={waveformData} visualState="running" />
       <OutputTail entries={tail} />
-      <StatsRow elapsed={elapsed} profile={profile} runHistory={runHistory} />
+      <StatsRow elapsed={elapsed} profile={profile} runHistory={runHistory} eta={eta} />
     </>
   );
 }

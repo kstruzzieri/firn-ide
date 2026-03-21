@@ -9,6 +9,7 @@ import {
   useIDEStore,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
+import { estimateRemaining } from '../../utils/estimateCompletion';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfiles.module.css';
 
@@ -22,6 +23,7 @@ export function RunProfiles() {
   const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
+  const runStartTimestamps = useIDEStore((s) => s.runStartTimestamps);
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
 
   // Filter out hidden profiles
@@ -39,13 +41,40 @@ export function RunProfiles() {
     return counts;
   }, [visibleProfiles]);
 
+  // Helper: sort running profiles by ETA ascending (finishing soonest first),
+  // then non-running profiles in their original order.
+  const sortByEta = useMemo(() => {
+    return (profiles: RunProfile[]): RunProfile[] => {
+      const now = Date.now();
+      const running: { profile: RunProfile; eta: number }[] = [];
+      const rest: RunProfile[] = [];
+
+      for (const p of profiles) {
+        const vs = getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds);
+        if (vs === 'running') {
+          const startTs = runStartTimestamps[p.id] ?? now;
+          const elapsed = now - startTs;
+          const history = runHistory[p.id] ?? [];
+          const eta = estimateRemaining(history, elapsed);
+          // null ETA (insufficient data) sorts to end of running group
+          running.push({ profile: p, eta: eta ?? Infinity });
+        } else {
+          rest.push(p);
+        }
+      }
+
+      running.sort((a, b) => a.eta - b.eta);
+      return [...running.map((r) => r.profile), ...rest];
+    };
+  }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps]);
+
   const savedProfiles = useMemo(
-    () => visibleProfiles.filter((p) => p.source === 'user'),
-    [visibleProfiles]
+    () => sortByEta(visibleProfiles.filter((p) => p.source === 'user')),
+    [visibleProfiles, sortByEta]
   );
   const detectedProfiles = useMemo(
-    () => visibleProfiles.filter((p) => p.source === 'detected'),
-    [visibleProfiles]
+    () => sortByEta(visibleProfiles.filter((p) => p.source === 'detected')),
+    [visibleProfiles, sortByEta]
   );
 
   const renderCard = (profile: RunProfile) => {
