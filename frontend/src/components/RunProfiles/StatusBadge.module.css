@@ -1,0 +1,45 @@
+.badge {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.running {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+
+.stopping {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+
+.passed {
+  background: rgba(34, 197, 94, 0.08);
+  color: rgba(34, 197, 94, 0.6);
+}
+
+.failed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.stopped {
+  background: rgba(255, 255, 255, 0.04);
+  color: #555;
+}
+
+.ready {
+  background: rgba(56, 189, 248, 0.06);
+  color: rgba(56, 189, 248, 0.5);
+}
+
+.idle {
+  background: rgba(255, 255, 255, 0.03);
+  color: #444;
+}
