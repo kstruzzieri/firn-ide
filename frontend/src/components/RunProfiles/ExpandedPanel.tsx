@@ -376,6 +376,7 @@ function ActionsRow({
           <button
             className={styles.actionPurple}
             onClick={onRestart}
+            disabled={isStopping}
             aria-label={`Restart ${profile.name}`}
           >
             <RestartIcon /> Restart

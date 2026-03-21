@@ -285,9 +285,7 @@ export function RunProfileCard({
         <div className={styles.cmd}>
           {profile.command}
           {isDuplicate && profile.detectedFrom && (
-            <span style={{ display: 'block', color: '#2a2a2a', fontSize: 9, marginTop: 1 }}>
-              {profile.detectedFrom}
-            </span>
+            <span className={styles.cmdSource}>{profile.detectedFrom}</span>
           )}
         </div>
       )}

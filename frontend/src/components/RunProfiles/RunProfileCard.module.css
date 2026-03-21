@@ -167,6 +167,13 @@
   z-index: 1;
 }
 
+.cmdSource {
+  display: block;
+  color: var(--text-muted, #2a2a2a);
+  font-size: 9px;
+  margin-top: 1px;
+}
+
 /* ── Action Button ──────────────────────────────────────────── */
 
 .actionBtn {
