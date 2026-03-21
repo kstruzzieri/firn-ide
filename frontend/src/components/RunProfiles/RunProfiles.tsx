@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { Panel } from '../layout';
-import { PlusIcon } from '../icons';
 import { RunProfileCard } from './RunProfileCard';
 import { ProfileBrowser } from './ProfileBrowser';
 import {
@@ -114,14 +113,11 @@ export function RunProfiles() {
 function RunProfilesEmpty() {
   return (
     <div className={styles.empty}>
-      <p>No run profiles configured</p>
-      <p className={styles.emptyHint}>
-        Open a folder with package.json, go.mod, or Makefile to auto-detect profiles
-      </p>
-      <button className={styles.addButton} disabled title="Coming soon">
-        <PlusIcon aria-hidden="true" />
-        Add Profile
-      </button>
+      <span className={styles.emptyText}>No profiles detected.</span>
+      <span className={styles.emptyHint}>
+        Add a profile with <strong>+</strong> or open a project with package.json, go.mod, or
+        Makefile.
+      </span>
     </div>
   );
 }
