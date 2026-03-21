@@ -59,4 +59,11 @@ describe('getStatusBadgeInfo', () => {
     expect(badge.text).toBe('FAILED');
     expect(badge.className).toBe('failed');
   });
+
+  it('returns STOPPED for idle state with stopped last run', () => {
+    const history = [{ state: 'stopped' as const, duration: 500, timestamp: Date.now() }];
+    const badge = getStatusBadgeInfo('idle', mockProfile, history);
+    expect(badge.text).toBe('STOPPED');
+    expect(badge.className).toBe('stopped');
+  });
 });
