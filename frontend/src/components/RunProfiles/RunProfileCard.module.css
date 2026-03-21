@@ -59,6 +59,18 @@
   }
 }
 
+@keyframes failedPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px rgba(239, 68, 68, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
 /* ── Card Base ──────────────────────────────────────────────── */
 
 .card {
@@ -315,6 +327,7 @@
 .failed {
   border-color: rgba(239, 68, 68, 0.15);
   background: linear-gradient(135deg, #151515, rgba(239, 68, 68, 0.02));
+  animation: failedPulse 1s ease-out 1;
 }
 
 .failed .rail {
