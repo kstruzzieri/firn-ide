@@ -29,7 +29,7 @@ function useElapsedTimer(startTs: number | undefined): number {
       return;
     }
     // Initial value + interval — all managed in one effect
-    setElapsed(Date.now() - startTs); // eslint-disable-line react-hooks/set-state-in-effect -- initial sync before interval starts
+    setElapsed(Date.now() - startTs);
     const interval = setInterval(() => {
       setElapsed(Date.now() - startTs);
     }, 1000);
@@ -106,19 +106,11 @@ export function RunProfileCard({
   isDuplicate,
   onFocusOutput,
 }: RunProfileCardProps) {
-  const {
-    setProfileStopping,
-    clearProfileStopping,
-    setProfileRestarting,
-    clearProfileRestarting,
-    showToast,
-  } = useIDEStore((s) => ({
-    setProfileStopping: s.setProfileStopping,
-    clearProfileStopping: s.clearProfileStopping,
-    setProfileRestarting: s.setProfileRestarting,
-    clearProfileRestarting: s.clearProfileRestarting,
-    showToast: s.showToast,
-  }));
+  const setProfileStopping = useIDEStore((s) => s.setProfileStopping);
+  const clearProfileStopping = useIDEStore((s) => s.clearProfileStopping);
+  const setProfileRestarting = useIDEStore((s) => s.setProfileRestarting);
+  const clearProfileRestarting = useIDEStore((s) => s.clearProfileRestarting);
+  const showToast = useIDEStore((s) => s.showToast);
 
   const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
 
@@ -168,7 +160,15 @@ export function RunProfileCard({
     isDormant
   );
 
-  const cardClassName = [styles.card, getStateClass(visualState), isDormant ? styles.dormant : '']
+  const isActiveState =
+    visualState === 'running' || visualState === 'stopping' || visualState === 'failed';
+
+  const cardClassName = [
+    styles.card,
+    getStateClass(visualState),
+    isDormant ? styles.dormant : '',
+    isActiveState ? styles.forceExpand : '',
+  ]
     .filter(Boolean)
     .join(' ');
 

@@ -389,9 +389,15 @@
 
 .card:hover .hoverReveal,
 .card:focus-within .hoverReveal {
-  max-height: 220px;
+  max-height: 400px;
   opacity: 1;
-  margin-top: 8px;
+  margin-top: 10px;
+}
+
+.forceExpand .hoverReveal {
+  max-height: 400px;
+  opacity: 1;
+  margin-top: 10px;
 }
 
 /* ── Hover Waveform (expanded) ──────────────────────────────── */
