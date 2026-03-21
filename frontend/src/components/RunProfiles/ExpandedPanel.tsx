@@ -198,7 +198,7 @@ function FailedPanel({
   waveformData: number[];
   elapsed: number;
 }) {
-  const exitCode = runOutput?.exitCode ?? 1;
+  const exitCode = runOutput?.exitCode;
   const stderrEntries = (runOutput?.entries ?? []).filter((e) => e.stream === 'stderr');
   const tail = getTailEntries(stderrEntries, 4);
 
@@ -206,7 +206,9 @@ function FailedPanel({
     <>
       <div className={styles.errorDetail}>
         <div className={styles.errorHeader}>
-          <span className={styles.errorCode}>Exit {exitCode}</span>
+          <span className={styles.errorCode}>
+            {exitCode !== undefined ? `Exit ${exitCode}` : 'Process terminated'}
+          </span>
           <span className={styles.errorLabel}>Process failed</span>
         </div>
       </div>
@@ -220,10 +222,16 @@ function FailedPanel({
 function DormantPanel({ profile }: { profile: RunProfile }) {
   return (
     <div className={styles.dormantInfo}>
-      {profile.source && (
+      {profile.detectedFrom && (
         <div className={styles.dormantRow}>
           <span className={styles.dormantLabel}>Source</span>
-          <span className={styles.dormantValue}>{profile.source}</span>
+          <span className={styles.dormantValue}>{profile.detectedFrom}</span>
+        </div>
+      )}
+      {!profile.detectedFrom && profile.source === 'user' && (
+        <div className={styles.dormantRow}>
+          <span className={styles.dormantLabel}>Source</span>
+          <span className={styles.dormantValue}>User-defined</span>
         </div>
       )}
       {profile.workingDir && (
@@ -351,6 +359,7 @@ function ActionsRow({
   onHide: () => void;
 }) {
   const isActive = visualState === 'running' || visualState === 'stopping';
+  const isStopping = visualState === 'stopping';
 
   return (
     <div className={styles.actions}>
@@ -359,9 +368,10 @@ function ActionsRow({
           <button
             className={styles.actionDanger}
             onClick={onStop}
+            disabled={isStopping}
             aria-label={`Stop ${profile.name}`}
           >
-            <StopIcon /> Stop
+            <StopIcon /> {isStopping ? 'Stopping\u2026' : 'Stop'}
           </button>
           <button
             className={styles.actionPurple}
@@ -397,12 +407,19 @@ function ActionsRow({
         </>
       )}
       <span className={styles.spacer} />
-      <button className={styles.actionGhost} onClick={onPin} aria-label={`Pin ${profile.name}`}>
-        Pin
-      </button>
-      <button className={styles.actionGhost} onClick={onUnpin} aria-label={`Unpin ${profile.name}`}>
-        Unpin
-      </button>
+      {profile.source === 'detected' ? (
+        <button className={styles.actionGhost} onClick={onPin} aria-label={`Pin ${profile.name}`}>
+          Pin
+        </button>
+      ) : (
+        <button
+          className={styles.actionGhost}
+          onClick={onUnpin}
+          aria-label={`Unpin ${profile.name}`}
+        >
+          Unpin
+        </button>
+      )}
       <button className={styles.actionGhost} onClick={onHide} aria-label={`Hide ${profile.name}`}>
         Hide
       </button>

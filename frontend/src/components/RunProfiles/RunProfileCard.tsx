@@ -122,12 +122,53 @@ export function RunProfileCard({
     visualState === 'stopping' ? stopRequestTs : undefined
   );
 
+  // Shared action handlers — used by both inline action button and ExpandedPanel
+  const handleStart = () => {
+    StartRunProfile(profile.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to start "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleStop = () => {
+    setProfileStopping(profile.id);
+    StopRunProfile(profile.id).catch((err: unknown) => {
+      clearProfileStopping(profile.id);
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to stop "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleRestart = () => {
+    setProfileRestarting(profile.id);
+    RestartRunProfile(profile.id).catch((err: unknown) => {
+      clearProfileRestarting(profile.id);
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handlePin = () => {
+    PinRunProfile(profile.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to pin "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleUnpin = () => {
+    UnpinRunProfile(profile.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to unpin "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleHide = () => {
+    useIDEStore.getState().hideProfile(profile.id);
+  };
+
   const handleCardClick = () => {
     if (isDormant) {
-      StartRunProfile(profile.id).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to start "${profile.name}": ${message}`, 'error');
-      });
+      handleStart();
     } else {
       onFocusOutput(profile.id);
     }
@@ -137,24 +178,11 @@ export function RunProfileCard({
     e.stopPropagation();
 
     if (visualState === 'idle' || visualState === 'success') {
-      StartRunProfile(profile.id).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to start "${profile.name}": ${message}`, 'error');
-      });
+      handleStart();
     } else if (visualState === 'running') {
-      setProfileStopping(profile.id);
-      StopRunProfile(profile.id).catch((err: unknown) => {
-        clearProfileStopping(profile.id);
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to stop "${profile.name}": ${message}`, 'error');
-      });
+      handleStop();
     } else if (visualState === 'stopped' || visualState === 'failed') {
-      setProfileRestarting(profile.id);
-      RestartRunProfile(profile.id).catch((err: unknown) => {
-        clearProfileRestarting(profile.id);
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
-      });
+      handleRestart();
     }
   };
 
@@ -297,43 +325,12 @@ export function RunProfileCard({
           elapsed={computedElapsed}
           stopElapsedMs={computedStopElapsed}
           onFocusOutput={onFocusOutput}
-          onStart={() => {
-            StartRunProfile(profile.id).catch((err: unknown) => {
-              const message = err instanceof Error ? err.message : String(err);
-              showToast(`Failed to start "${profile.name}": ${message}`, 'error');
-            });
-          }}
-          onStop={() => {
-            setProfileStopping(profile.id);
-            StopRunProfile(profile.id).catch((err: unknown) => {
-              clearProfileStopping(profile.id);
-              const message = err instanceof Error ? err.message : String(err);
-              showToast(`Failed to stop "${profile.name}": ${message}`, 'error');
-            });
-          }}
-          onRestart={() => {
-            setProfileRestarting(profile.id);
-            RestartRunProfile(profile.id).catch((err: unknown) => {
-              clearProfileRestarting(profile.id);
-              const message = err instanceof Error ? err.message : String(err);
-              showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
-            });
-          }}
-          onPin={() => {
-            PinRunProfile(profile.id).catch((err: unknown) => {
-              const message = err instanceof Error ? err.message : String(err);
-              showToast(`Failed to pin "${profile.name}": ${message}`, 'error');
-            });
-          }}
-          onUnpin={() => {
-            UnpinRunProfile(profile.id).catch((err: unknown) => {
-              const message = err instanceof Error ? err.message : String(err);
-              showToast(`Failed to unpin "${profile.name}": ${message}`, 'error');
-            });
-          }}
-          onHide={() => {
-            useIDEStore.getState().hideProfile(profile.id);
-          }}
+          onStart={handleStart}
+          onStop={handleStop}
+          onRestart={handleRestart}
+          onPin={handlePin}
+          onUnpin={handleUnpin}
+          onHide={handleHide}
         />
       </div>
     </div>
