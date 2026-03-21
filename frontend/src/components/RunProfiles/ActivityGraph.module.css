@@ -1,0 +1,41 @@
+.graph {
+  margin-bottom: 8px;
+}
+
+.labelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.label {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #333;
+}
+
+.rate {
+  font-size: 8px;
+  color: #555;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 32px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 3px 4px;
+}
+
+.bar {
+  flex: 1;
+  border-radius: 1px 1px 0 0;
+  min-width: 2px;
+  transition: height 0.3s ease;
+}
