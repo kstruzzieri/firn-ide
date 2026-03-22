@@ -102,9 +102,22 @@ export function RunProfiles() {
     );
   };
 
+  const hiddenCount = hiddenProfileIds.length;
+  const totalCount = profiles.length;
+
+  const title = (
+    <>
+      Run Profiles{' '}
+      <span className={styles.profileCount}>
+        {totalCount}
+        {hiddenCount > 0 && <span className={styles.hiddenCount}> / {hiddenCount} hidden</span>}
+      </span>
+    </>
+  );
+
   return (
     <Panel
-      title="Run Profiles"
+      title={title}
       actions={<ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />}
     >
       <div className={styles.list}>

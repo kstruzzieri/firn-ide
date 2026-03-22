@@ -49,3 +49,15 @@
 .emptyHint strong {
   color: #555;
 }
+
+/* Header counter */
+.profileCount {
+  font-size: 9px;
+  font-weight: 400;
+  color: #444;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+}
+
+.hiddenCount {
+  color: rgba(168, 85, 247, 0.5);
+}
