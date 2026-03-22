@@ -80,15 +80,15 @@ function getDurationLabel(
     case 'running':
       return formatDuration(elapsed);
     case 'stopping':
-      return 'stopping\u2026';
+      return '';
     case 'failed':
-      return runOutput !== undefined ? `exit ${runOutput.exitCode}` : 'failed';
+      return runOutput !== undefined ? `exit ${runOutput.exitCode}` : '';
     case 'success': {
       const last = runHistory[runHistory.length - 1];
       return last ? formatDuration(last.duration) : '';
     }
     case 'stopped':
-      return 'stopped';
+      return '';
     case 'idle': {
       const last = runHistory[runHistory.length - 1];
       return last ? formatDuration(last.duration) : '';
