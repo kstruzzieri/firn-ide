@@ -63,9 +63,10 @@ Built-in AI assistant panel with:
 │  │                 │   bindings   │                         │  │
 │  │  • File System  │              │  • CodeMirror 6 Editor  │  │
 │  │  • FS Watcher   │              │  • Zustand State        │  │
-│  │  • LSP Client   │              │  • Panel System         │  │
-│  │  • Run Profiles │              │  • Theme Engine         │  │
-│  │  • Git Ops      │              │                         │  │
+│  │  • Run Profiles │              │  • Run Profile Cards    │  │
+│  │  • PTY Terminal │              │  • Panel System         │  │
+│  │  • Workspace    │              │  • Run Output Views     │  │
+│  │  • Git Ops      │              │  • Theme Engine         │  │
 │  └─────────────────┘              └─────────────────────────┘  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -93,11 +94,27 @@ Built-in AI assistant panel with:
 ### Completed
 
 **Backend (Go)**
-- [x] Layered package structure (domain → application → infrastructure → interfaces)
+- [x] Layered package structure (domain, application, infrastructure, interfaces)
 - [x] `ReadDirectory` — recursive directory listing with file metadata
 - [x] `ReadFile` — content reading with automatic encoding detection (UTF-8, UTF-16, Latin-1)
 - [x] `WriteFile` — content writing with encoding preservation
 - [x] File system watcher — real-time external change detection with debounced events
+- [x] Workspace store — open folder, persistence, recent projects
+
+**Run Profiles (Go + React)**
+- [x] Auto-detection from package.json, go.mod, Makefile, pyproject.toml, docker-compose
+- [x] Process executor with lifecycle management (start, stop, restart, SIGTERM grace period)
+- [x] Real-time output streaming with line assembly and FIFO truncation
+- [x] Pin/unpin profiles (promote detected to saved, demote back)
+- [x] Run history tracking (last 50 runs per profile with pass/fail/duration)
+- [x] Waveform activity visualization (output rate per 500ms interval)
+- [x] Status badges (RUNNING, PASSED, FAILED, READY, STOPPING, STOPPED)
+- [x] Auto-expand cards for active states, auto-collapse on completion
+- [x] Purpose-built expanded panels per state (activity graph, output preview, stats, error detail, SIGTERM progress)
+- [x] Predicted completion ETA with median-based estimation and running card sort
+- [x] Failed-state attention pulse animation
+- [x] Profile browser for hidden profile management
+- [x] Reactive re-detection on config file changes via file watcher
 
 **Frontend (React/TypeScript)**
 - [x] CodeMirror 6 editor with Firn Glacier theme
@@ -109,6 +126,7 @@ Built-in AI assistant panel with:
 - [x] Panel layout system with drag-to-resize and collapse/expand
 - [x] Icon system with currentColor SVGs
 - [x] Status bar (cursor position, language, git branch)
+- [x] Toast notification system
 
 **Terminal Integration**
 - [x] PTY backend — shell sessions with bidirectional I/O and ANSI support
@@ -116,14 +134,19 @@ Built-in AI assistant panel with:
 - [x] Multiple terminal sessions — create, switch, close, rename, drag-to-reorder
 - [x] Graceful process termination — SIGHUP via PTY close with SIGKILL fallback
 
+**Run Output Panel**
+- [x] Per-profile output display with tab selection
+- [x] Multiple view modes (merged, lanes, diff, timeline)
+- [x] Auto-scroll with toggle
+- [x] Output folding for repeated patterns
+
 ### Planned
 
-- [ ] Workspace management (open folder, persistence, recent projects)
-- [ ] Run profile execution
 - [ ] LSP client integration
 - [ ] Git integration
 - [ ] Search with ripgrep
 - [ ] AI Chat Panel
+- [ ] Clickable file:line:col links in output (jump to source from errors)
 
 ## Project Structure
 
@@ -133,20 +156,29 @@ firn-ide/
 ├── app.go                      # Wails bindings
 ├── internal/
 │   ├── filesystem/             # File read/write/watch
+│   ├── runprofile/             # Run profile detection, execution, management
 │   ├── terminal/               # PTY session management
 │   ├── watcher/                # FS event watcher
+│   ├── workspace/              # Workspace persistence
 │   └── process/                # Process management
 ├── frontend/
 │   ├── src/
 │   │   ├── components/         # React components
-│   │   ├── stores/             # Zustand state
-│   │   └── assets/             # Icons, logos
+│   │   │   ├── Editor/         # CodeMirror 6 editor
+│   │   │   ├── FileExplorer/   # File tree navigation
+│   │   │   ├── RunProfiles/    # Run profile cards and panels
+│   │   │   ├── RunOutput/      # Output display (merged, lanes, diff, timeline)
+│   │   │   ├── Terminal/       # xterm.js terminal
+│   │   │   └── layout/         # Panel system, sidebar, header
+│   │   ├── stores/             # Zustand state management
+│   │   ├── hooks/              # Custom React hooks
+│   │   ├── utils/              # Shared utilities
+│   │   └── types/              # TypeScript type definitions
 │   └── wailsjs/                # Generated Go bindings
 └── docs/
     ├── roadmap.md              # Consolidated roadmap with all issues
     ├── design-specification.md # Full UI/UX specification
-    ├── architecture.md         # System architecture guide
-    └── tdd/                    # Technical design documents
+    └── architecture.md         # System architecture guide
 ```
 
 ## Development
