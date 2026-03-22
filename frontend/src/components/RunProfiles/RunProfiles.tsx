@@ -107,11 +107,8 @@ export function RunProfiles() {
 
   const title = (
     <>
-      Run Profiles{' '}
-      <span className={styles.profileCount}>
-        {totalCount}
-        {hiddenCount > 0 && <span className={styles.hiddenCount}> / {hiddenCount} hidden</span>}
-      </span>
+      Run Profiles <span className={styles.totalCount}>{totalCount} TOTAL</span>
+      {hiddenCount > 0 && <span className={styles.hiddenCount}>({hiddenCount} HIDDEN)</span>}
     </>
   );
 

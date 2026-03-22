@@ -50,14 +50,21 @@
   color: #555;
 }
 
-/* Header counter */
-.profileCount {
+/* Header counters */
+.totalCount {
   font-size: 9px;
-  font-weight: 400;
-  color: #444;
+  font-weight: 600;
+  color: rgba(56, 189, 248, 0.6);
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
 }
 
 .hiddenCount {
+  font-size: 9px;
+  font-weight: 600;
   color: rgba(168, 85, 247, 0.5);
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
 }
