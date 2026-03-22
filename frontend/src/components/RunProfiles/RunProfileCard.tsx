@@ -168,9 +168,7 @@ export function RunProfileCard({
   };
 
   const handleCardClick = () => {
-    if (isDormant) {
-      handleStart();
-    } else {
+    if (!isDormant) {
       onFocusOutput(profile.id);
     }
   };
