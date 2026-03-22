@@ -30,8 +30,8 @@
 }
 
 .stopped {
-  background: rgba(255, 255, 255, 0.04);
-  color: #555;
+  background: rgba(168, 85, 247, 0.08);
+  color: rgba(168, 85, 247, 0.6);
 }
 
 .ready {
