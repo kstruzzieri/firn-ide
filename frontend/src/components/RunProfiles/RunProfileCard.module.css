@@ -407,14 +407,8 @@
   z-index: 1;
 }
 
-.card:hover .hoverReveal,
-.card:focus-within .hoverReveal {
-  max-height: 400px;
-  opacity: 1;
-  margin-top: 10px;
-}
-
-.forceExpand .hoverReveal {
+.forceExpand .hoverReveal,
+.expanded .hoverReveal {
   max-height: 400px;
   opacity: 1;
   margin-top: 10px;

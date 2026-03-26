@@ -167,9 +167,11 @@ export function RunProfileCard({
     useIDEStore.getState().hideProfile(profile.id);
   };
 
+  const [isExpanded, setIsExpanded] = useState(false);
+
   const handleCardClick = () => {
     if (!isDormant) {
-      onFocusOutput(profile.id);
+      setIsExpanded((prev) => !prev);
     }
   };
 
@@ -201,6 +203,7 @@ export function RunProfileCard({
     getStateClass(visualState),
     isDormant ? styles.dormant : '',
     isActiveState ? styles.forceExpand : '',
+    !isActiveState && isExpanded ? styles.expanded : '',
   ]
     .filter(Boolean)
     .join(' ');
