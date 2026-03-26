@@ -26,20 +26,6 @@ function getBarColor(visualState: VisualState): string {
   }
 }
 
-function getRateLabel(visualState: VisualState, rate: number): string {
-  if (rate === 0) return 'quiet';
-  switch (visualState) {
-    case 'running':
-    case 'stopping':
-      return `~${rate} lines/s`;
-    case 'failed':
-    case 'success':
-      return `${rate} lines/s avg`;
-    default:
-      return '';
-  }
-}
-
 interface ActivityGraphProps {
   data: number[];
   visualState: VisualState;
@@ -52,7 +38,6 @@ export const ActivityGraph = memo(function ActivityGraph({
   if (data.length === 0) return null;
 
   const rate = computeOutputRate(data);
-  const rateLabel = getRateLabel(visualState, rate);
   const barColor = getBarColor(visualState);
   const maxVal = Math.max(...data, 1);
   const timeSpanSeconds = (data.length * INTERVAL_MS) / 1000;
@@ -60,11 +45,14 @@ export const ActivityGraph = memo(function ActivityGraph({
   return (
     <div className={styles.graph}>
       <div className={styles.labelRow}>
-        <span className={styles.label}>Output Activity</span>
-        {rateLabel && <span className={styles.rate}>{rateLabel}</span>}
+        <span className={styles.label}>Output lines / {INTERVAL_MS}ms</span>
+        {rate > 0 && <span className={styles.rate}>{rate} lines/s</span>}
       </div>
       <div className={styles.chartArea}>
-        <span className={styles.yLabel}>LINES</span>
+        <div className={styles.yAxis}>
+          <span className={styles.yTick}>{maxVal}</span>
+          <span className={styles.yTick}>0</span>
+        </div>
         <div className={styles.bars}>
           {data.map((value, i) => {
             const height = Math.max(2, (value / maxVal) * 36);

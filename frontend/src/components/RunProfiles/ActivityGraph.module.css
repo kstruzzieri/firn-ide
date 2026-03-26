@@ -25,22 +25,24 @@
 
 .chartArea {
   display: flex;
-  align-items: stretch;
   gap: 4px;
 }
 
-.yLabel {
-  font-size: 8px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #333;
-  writing-mode: vertical-lr;
-  transform: rotate(180deg);
+.yAxis {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  justify-content: space-between;
   flex-shrink: 0;
+  min-width: 16px;
+  text-align: right;
+  padding: 2px 0;
+}
+
+.yTick {
+  font-size: 8px;
+  color: #444;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  line-height: 1;
 }
 
 .bars {
@@ -65,7 +67,7 @@
   display: flex;
   justify-content: space-between;
   margin-top: 3px;
-  padding-left: 16px;
+  padding-left: 20px;
 }
 
 .xLabel {
