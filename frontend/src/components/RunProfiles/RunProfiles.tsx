@@ -119,8 +119,13 @@ export function RunProfiles() {
     );
   };
 
-  const hiddenCount = hiddenProfileIds.length;
   const totalCount = profiles.length;
+  // Derive hidden count from intersection with current profiles to avoid
+  // stale IDs inflating the counter after profiles are removed/renamed
+  const hiddenCount = useMemo(() => {
+    const profileIds = new Set(profiles.map((p) => p.id));
+    return hiddenProfileIds.filter((id) => profileIds.has(id)).length;
+  }, [profiles, hiddenProfileIds]);
 
   const title = (
     <>
