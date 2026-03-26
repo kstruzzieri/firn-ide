@@ -193,8 +193,7 @@ export function RunProfileCard({
     isDormant
   );
 
-  const isActiveState =
-    visualState === 'running' || visualState === 'stopping' || visualState === 'failed';
+  const isActiveState = visualState === 'running' || visualState === 'stopping';
 
   const cardClassName = [
     styles.card,

@@ -201,7 +201,7 @@ function FailedPanel({
   elapsed: number;
 }) {
   const exitCode = runOutput?.exitCode;
-  const tail = getTailEntries(runOutput?.entries, 4);
+  const tail = getTailEntries(runOutput?.entries, 6);
 
   return (
     <>

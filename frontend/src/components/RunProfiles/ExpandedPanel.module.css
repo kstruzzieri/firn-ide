@@ -124,6 +124,20 @@
   margin-bottom: 8px;
 }
 
+/* Error output wraps instead of truncating so users can read the full message */
+.errorDetail + .outputPreview {
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.errorDetail + .outputPreview .outputLine,
+.errorDetail + .outputPreview .outputStderr {
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-overflow: unset;
+  overflow: visible;
+}
+
 .errorHeader {
   display: flex;
   align-items: center;
