@@ -100,7 +100,7 @@
 /* ── Typography ─────────────────────────────────────────────── */
 
 .name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
   flex: 1;
@@ -110,14 +110,14 @@
 }
 
 .duration {
-  font-size: 9px;
+  font-size: 10px;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
   color: #444;
   flex-shrink: 0;
 }
 
 .cmd {
-  font-size: 10px;
+  font-size: 11px;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
   color: #3a3a3a;
   margin-top: 3px;
@@ -130,7 +130,7 @@
 .cmdSource {
   display: block;
   color: var(--text-muted, #2a2a2a);
-  font-size: 9px;
+  font-size: 10px;
   margin-top: 1px;
 }
 
@@ -213,7 +213,7 @@
 }
 
 .tag {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
   padding: 1px 5px;
@@ -414,13 +414,13 @@
 }
 
 .historyDuration {
-  font-size: 8px;
+  font-size: 10px;
   color: #444;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
 }
 
 .historyOverflow {
-  font-size: 8px;
+  font-size: 10px;
   color: #444;
   margin-left: 4px;
 }
