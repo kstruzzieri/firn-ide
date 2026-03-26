@@ -33,15 +33,24 @@ func TestSessionWriteRead(t *testing.T) {
 		t.Fatalf("Write() returned error: %v", err)
 	}
 
+	// PTY I/O is async — read in a loop until expected output appears or timeout
+	deadline := time.After(3 * time.Second)
+	var collected string
 	buf := make([]byte, 4096)
-	n, err := session.Read(buf)
-	if err != nil {
-		t.Fatalf("session.Read() returned error: %v", err)
-	}
-
-	output := string(buf[:n])
-	if !strings.Contains(output, "hello") {
-		t.Fatalf("expected output to contain 'hello', got: %s", output)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for 'hello', got: %s", collected)
+		default:
+		}
+		n, err := session.Read(buf)
+		if err != nil {
+			t.Fatalf("session.Read() returned error: %v", err)
+		}
+		collected += string(buf[:n])
+		if strings.Contains(collected, "hello") {
+			return
+		}
 	}
 }
 
