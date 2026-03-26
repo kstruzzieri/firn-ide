@@ -55,6 +55,7 @@ export const ActivityGraph = memo(function ActivityGraph({
   const rateLabel = getRateLabel(visualState, rate);
   const barColor = getBarColor(visualState);
   const maxVal = Math.max(...data, 1);
+  const timeSpanSeconds = (data.length * INTERVAL_MS) / 1000;
 
   return (
     <div className={styles.graph}>
@@ -62,17 +63,24 @@ export const ActivityGraph = memo(function ActivityGraph({
         <span className={styles.label}>Output Activity</span>
         {rateLabel && <span className={styles.rate}>{rateLabel}</span>}
       </div>
-      <div className={styles.bars}>
-        {data.map((value, i) => {
-          const height = Math.max(2, (value / maxVal) * 28);
-          return (
-            <div
-              key={i}
-              className={styles.bar}
-              style={{ height: `${height}px`, background: barColor }}
-            />
-          );
-        })}
+      <div className={styles.chartArea}>
+        <span className={styles.yLabel}>{maxVal}</span>
+        <div className={styles.bars}>
+          {data.map((value, i) => {
+            const height = Math.max(2, (value / maxVal) * 28);
+            return (
+              <div
+                key={i}
+                className={styles.bar}
+                style={{ height: `${height}px`, background: barColor }}
+              />
+            );
+          })}
+        </div>
+      </div>
+      <div className={styles.xAxis}>
+        <span className={styles.xLabel}>{timeSpanSeconds}s ago</span>
+        <span className={styles.xLabel}>now</span>
       </div>
     </div>
   );

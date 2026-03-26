@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { ActivityWaveform } from './ActivityWaveform';
-import { RunHistoryDots } from './RunHistoryDots';
 import { StatusBadge } from './StatusBadge';
 import { ExpandedPanel } from './ExpandedPanel';
 import { getTagColor } from '../../utils/tagColors';
@@ -296,12 +294,9 @@ export function RunProfileCard({
         </div>
       )}
 
-      {/* Row 3: waveform (running only) + tags + history dots */}
-      <div className={styles.rowBottom}>
-        {(visualState === 'running' || visualState === 'stopping') && (
-          <ActivityWaveform data={waveformData} visualState={visualState} />
-        )}
-        {profile.tags && profile.tags.length > 0 && (
+      {/* Row 3: tags */}
+      {profile.tags && profile.tags.length > 0 && (
+        <div className={styles.rowBottom}>
           <div className={styles.tags}>
             {profile.tags.map((tag) => {
               const color = getTagColor(tag);
@@ -316,9 +311,8 @@ export function RunProfileCard({
               );
             })}
           </div>
-        )}
-        <RunHistoryDots history={runHistory} isCurrentlyRunning={visualState === 'running'} />
-      </div>
+        </div>
+      )}
 
       {/* Hover reveal — expanded on hover/focus */}
       <div className={styles.hoverReveal}>
