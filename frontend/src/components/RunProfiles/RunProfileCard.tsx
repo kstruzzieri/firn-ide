@@ -274,8 +274,6 @@ export function RunProfileCard({
       role={isDormant ? undefined : 'button'}
       aria-label={profile.name}
     >
-      <div className={styles.rail} />
-
       {/* Row 1: action button + name + duration */}
       <div className={styles.row1}>
         {renderActionButton()}

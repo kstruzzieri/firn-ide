@@ -5,30 +5,6 @@
 
 /* ── Keyframe Animations ────────────────────────────────────── */
 
-@keyframes railBreathe {
-  0%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
-  }
-  50% {
-    opacity: 0.5;
-    box-shadow: 0 0 4px rgba(34, 197, 94, 0.1);
-  }
-}
-
-@keyframes railBreatheAmber {
-  0%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
-  }
-  50% {
-    opacity: 0.5;
-    box-shadow: 0 0 4px rgba(245, 158, 11, 0.1);
-  }
-}
-
 @keyframes sweep {
   0% {
     transform: translateX(-100%);
@@ -75,9 +51,9 @@
 
 .card {
   position: relative;
-  padding: 14px 18px 14px 22px;
-  margin-bottom: 4px;
-  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  border-radius: 10px;
   background: #151515;
   border: 1px solid #1e1e1e;
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
@@ -90,29 +66,17 @@
   content: '';
   position: absolute;
   inset: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.4s;
   will-change: transform, opacity;
 }
 
-/* Default hover — blue tint border */
+/* Default hover — subtle lift + border */
 .card:hover {
-  border-color: rgba(56, 189, 248, 0.15);
-}
-
-/* ── State Rail (left edge) ─────────────────────────────────── */
-
-.rail {
-  position: absolute;
-  left: 0;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: transparent;
-  transition: all 0.3s;
+  border-color: rgba(56, 189, 248, 0.12);
+  background: #171717;
 }
 
 /* ── Layout Rows ────────────────────────────────────────────── */
@@ -131,8 +95,6 @@
   gap: 8px;
   margin-top: 6px;
   margin-left: 34px;
-  position: relative;
-  z-index: 1;
 }
 
 /* ── Typography ─────────────────────────────────────────────── */
@@ -163,8 +125,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  position: relative;
-  z-index: 1;
 }
 
 .cmdSource {
@@ -271,14 +231,6 @@
   box-shadow:
     0 2px 12px rgba(34, 197, 94, 0.06),
     0 1px 3px rgba(0, 0, 0, 0.2);
-  transform: translateX(-1px);
-  z-index: 2;
-}
-
-.running .rail {
-  background: #22c55e;
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
-  animation: railBreathe 2.5s ease-in-out infinite;
 }
 
 .running::before {
@@ -309,11 +261,6 @@
   box-shadow: 0 1px 8px rgba(245, 158, 11, 0.04);
 }
 
-.stopping .rail {
-  background: #f59e0b;
-  animation: railBreatheAmber 1.2s ease-in-out infinite;
-}
-
 .stopping::before {
   opacity: 1;
   background: linear-gradient(
@@ -337,10 +284,6 @@
   animation: failedPulse 1s ease-out 1;
 }
 
-.failed .rail {
-  background: #ef4444;
-}
-
 .failed .duration {
   color: #ef4444;
 }
@@ -351,16 +294,11 @@
 
 /* ── State: Success ─────────────────────────────────────────── */
 
-.success .rail {
-  background: #22c55e;
-  opacity: 0.4;
-}
-
 .success .duration {
   color: rgba(34, 197, 94, 0.5);
 }
 
-/* ── State: Dormant (never run) — REDESIGNED ──────────────── */
+/* ── State: Dormant (never run) ────────────────────────────── */
 
 .dormant {
   opacity: 0.78;
@@ -374,10 +312,6 @@
   border-color: rgba(56, 189, 248, 0.2);
   border-style: solid;
   background: #161616;
-}
-
-.dormant .rail {
-  background: #2a2a2a;
 }
 
 .dormant .actionBtnPlay {
