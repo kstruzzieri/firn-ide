@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Panel } from '../layout';
-import { PlusIcon } from '../icons';
 import { RunProfileCard } from './RunProfileCard';
 import { ProfileBrowser } from './ProfileBrowser';
 import {
@@ -10,6 +9,7 @@ import {
   useIDEStore,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
+import { estimateRemaining } from '../../utils/estimateCompletion';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfiles.module.css';
 
@@ -19,10 +19,10 @@ export function RunProfiles() {
   const error = useProfilesError();
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const runHistory = useIDEStore((s) => s.runHistory);
-  const waveformData = useIDEStore((s) => s.waveformData);
   const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
+  const runStartTimestamps = useIDEStore((s) => s.runStartTimestamps);
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
 
   // Filter out hidden profiles
@@ -40,13 +40,57 @@ export function RunProfiles() {
     return counts;
   }, [visibleProfiles]);
 
+  // Periodic tick to refresh ETA sort order while profiles are running.
+  // Without this, Date.now() in the sort memo stales until a store change.
+  const hasRunning = useMemo(
+    () =>
+      visibleProfiles.some(
+        (p) =>
+          getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+      ),
+    [visibleProfiles, runOutputs, stoppingIds, restartingIds]
+  );
+  const [etaTick, setEtaTick] = useState(0);
+  useEffect(() => {
+    if (!hasRunning) return;
+    const interval = setInterval(() => setEtaTick((t) => t + 1), 5000);
+    return () => clearInterval(interval);
+  }, [hasRunning]);
+
+  // Helper: sort running profiles by ETA ascending (finishing soonest first),
+  // then non-running profiles in their original order.
+  const sortByEta = useMemo(() => {
+    return (profiles: RunProfile[]): RunProfile[] => {
+      const now = Date.now();
+      const running: { profile: RunProfile; eta: number }[] = [];
+      const rest: RunProfile[] = [];
+
+      for (const p of profiles) {
+        const vs = getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds);
+        if (vs === 'running') {
+          const startTs = runStartTimestamps[p.id] ?? now;
+          const elapsed = now - startTs;
+          const history = runHistory[p.id] ?? [];
+          const eta = estimateRemaining(history, elapsed);
+          // null ETA (insufficient data) sorts to end of running group
+          running.push({ profile: p, eta: eta ?? Infinity });
+        } else {
+          rest.push(p);
+        }
+      }
+
+      running.sort((a, b) => a.eta - b.eta);
+      return [...running.map((r) => r.profile), ...rest];
+    };
+  }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
+
   const savedProfiles = useMemo(
-    () => visibleProfiles.filter((p) => p.source === 'user'),
-    [visibleProfiles]
+    () => sortByEta(visibleProfiles.filter((p) => p.source === 'user')),
+    [visibleProfiles, sortByEta]
   );
   const detectedProfiles = useMemo(
-    () => visibleProfiles.filter((p) => p.source === 'detected'),
-    [visibleProfiles]
+    () => sortByEta(visibleProfiles.filter((p) => p.source === 'detected')),
+    [visibleProfiles, sortByEta]
   );
 
   const renderCard = (profile: RunProfile) => {
@@ -66,7 +110,6 @@ export function RunProfiles() {
         visualState={vs}
         runOutput={runOutputs[profile.id]}
         runHistory={runHistory[profile.id] ?? []}
-        waveformData={waveformData[profile.id] ?? []}
         isDormant={isDormant}
         isDuplicate={isDuplicate}
         onFocusOutput={focusProfileOutput}
@@ -74,9 +117,24 @@ export function RunProfiles() {
     );
   };
 
+  const totalCount = profiles.length;
+  // Derive hidden count from intersection with current profiles to avoid
+  // stale IDs inflating the counter after profiles are removed/renamed
+  const hiddenCount = useMemo(() => {
+    const profileIds = new Set(profiles.map((p) => p.id));
+    return hiddenProfileIds.filter((id) => profileIds.has(id)).length;
+  }, [profiles, hiddenProfileIds]);
+
+  const title = (
+    <>
+      Run Profiles <span className={styles.totalCount}>{totalCount} TOTAL</span>
+      {hiddenCount > 0 && <span className={styles.hiddenCount}>({hiddenCount} HIDDEN)</span>}
+    </>
+  );
+
   return (
     <Panel
-      title="Run Profiles"
+      title={title}
       actions={<ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />}
     >
       <div className={styles.list}>
@@ -114,14 +172,11 @@ export function RunProfiles() {
 function RunProfilesEmpty() {
   return (
     <div className={styles.empty}>
-      <p>No run profiles configured</p>
-      <p className={styles.emptyHint}>
-        Open a folder with package.json, go.mod, or Makefile to auto-detect profiles
-      </p>
-      <button className={styles.addButton} disabled title="Coming soon">
-        <PlusIcon aria-hidden="true" />
-        Add Profile
-      </button>
+      <span className={styles.emptyText}>No profiles detected.</span>
+      <span className={styles.emptyHint}>
+        Add a profile with <strong>+</strong> or open a project with package.json, go.mod, or
+        Makefile.
+      </span>
     </div>
   );
 }

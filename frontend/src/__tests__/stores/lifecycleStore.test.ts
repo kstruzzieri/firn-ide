@@ -10,6 +10,7 @@ beforeEach(() => {
     waveformData: {},
     hiddenProfileIds: [],
     runStartTimestamps: {},
+    stopRequestTimestamps: {},
     activeRunOutputId: null,
     activeTerminalTab: 'terminal',
     isBottomPanelCollapsed: false,
@@ -244,6 +245,73 @@ describe('lifecycleStore - focusProfileOutput', () => {
   });
 });
 
+describe('lifecycleStore - stopRequestTimestamps', () => {
+  it('setProfileStopping stamps stopRequestTimestamps', () => {
+    const before = Date.now();
+    const { setProfileStopping } = useIDEStore.getState();
+    setProfileStopping('profile-1');
+    const ts = useIDEStore.getState().stopRequestTimestamps['profile-1'];
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('setProfileStopping does not overwrite existing timestamp', () => {
+    useIDEStore.setState({ stopRequestTimestamps: { 'profile-1': 12345 } });
+    const { setProfileStopping } = useIDEStore.getState();
+    setProfileStopping('profile-1');
+    expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBe(12345);
+  });
+
+  it('setProfileRestarting stamps stopRequestTimestamps', () => {
+    const before = Date.now();
+    const { setProfileRestarting } = useIDEStore.getState();
+    setProfileRestarting('profile-1');
+    const ts = useIDEStore.getState().stopRequestTimestamps['profile-1'];
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('setProfileRestarting does not overwrite existing timestamp', () => {
+    useIDEStore.setState({ stopRequestTimestamps: { 'profile-1': 99999 } });
+    const { setProfileRestarting } = useIDEStore.getState();
+    setProfileRestarting('profile-1');
+    expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBe(99999);
+  });
+
+  it('clearProfileStopping clears stopRequestTimestamps', () => {
+    const { setProfileStopping, clearProfileStopping } = useIDEStore.getState();
+    setProfileStopping('profile-1');
+    clearProfileStopping('profile-1');
+    expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
+  });
+
+  it('clearProfileRestarting clears stopRequestTimestamps', () => {
+    const { setProfileRestarting, clearProfileRestarting } = useIDEStore.getState();
+    setProfileRestarting('profile-1');
+    clearProfileRestarting('profile-1');
+    expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
+  });
+
+  it('handleRunStatus with terminal state clears stopRequestTimestamps', () => {
+    useIDEStore.setState({
+      stopRequestTimestamps: { 'profile-1': 10000 },
+      runStartTimestamps: { 'profile-1': 9000 },
+    });
+    const { handleRunStatus } = useIDEStore.getState();
+    handleRunStatus('profile-1', 'stopped', 0, 11000);
+    expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
+  });
+
+  it('handleRunStatus with running state clears stopRequestTimestamps (restart)', () => {
+    useIDEStore.setState({
+      stopRequestTimestamps: { 'profile-1': 10000 },
+    });
+    const { handleRunStatus } = useIDEStore.getState();
+    handleRunStatus('profile-1', 'running', 0, 11000);
+    expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
+  });
+});
+
 describe('lifecycleStore - resetWorkspaceRunState', () => {
   it('should clear stoppingProfileIds', () => {
     const { setProfileStopping, resetWorkspaceRunState } = useIDEStore.getState();
@@ -285,5 +353,12 @@ describe('lifecycleStore - resetWorkspaceRunState', () => {
     const { resetWorkspaceRunState } = useIDEStore.getState();
     resetWorkspaceRunState();
     expect(useIDEStore.getState().runStartTimestamps).toEqual({});
+  });
+
+  it('should clear stopRequestTimestamps', () => {
+    useIDEStore.setState({ stopRequestTimestamps: { 'profile-1': 12345 } });
+    const { resetWorkspaceRunState } = useIDEStore.getState();
+    resetWorkspaceRunState();
+    expect(useIDEStore.getState().stopRequestTimestamps).toEqual({});
   });
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { ActivityWaveform } from './ActivityWaveform';
-import { RunHistoryDots } from './RunHistoryDots';
+import { StatusBadge } from './StatusBadge';
+import { ExpandedPanel } from './ExpandedPanel';
 import { getTagColor } from '../../utils/tagColors';
 import { formatDuration } from '../../utils/formatDuration';
 import { PlayIcon, StopIcon, RestartIcon, LoaderIcon } from '../icons';
@@ -29,7 +29,7 @@ function useElapsedTimer(startTs: number | undefined): number {
       return;
     }
     // Initial value + interval — all managed in one effect
-    setElapsed(Date.now() - startTs); // eslint-disable-line react-hooks/set-state-in-effect -- initial sync before interval starts
+    setElapsed(Date.now() - startTs);
     const interval = setInterval(() => {
       setElapsed(Date.now() - startTs);
     }, 1000);
@@ -44,7 +44,6 @@ interface RunProfileCardProps {
   visualState: VisualState;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
-  waveformData: number[];
   isDormant: boolean;
   isDuplicate: boolean;
   onFocusOutput: (profileId: string) => void;
@@ -78,15 +77,15 @@ function getDurationLabel(
     case 'running':
       return formatDuration(elapsed);
     case 'stopping':
-      return 'stopping\u2026';
+      return '';
     case 'failed':
-      return runOutput !== undefined ? `exit ${runOutput.exitCode}` : 'failed';
+      return runOutput !== undefined ? `exit ${runOutput.exitCode}` : '';
     case 'success': {
       const last = runHistory[runHistory.length - 1];
       return last ? formatDuration(last.duration) : '';
     }
     case 'stopped':
-      return 'stopped';
+      return '';
     case 'idle': {
       const last = runHistory[runHistory.length - 1];
       return last ? formatDuration(last.duration) : '';
@@ -101,37 +100,79 @@ export function RunProfileCard({
   visualState,
   runOutput,
   runHistory,
-  waveformData,
   isDormant,
   isDuplicate,
   onFocusOutput,
 }: RunProfileCardProps) {
-  const {
-    setProfileStopping,
-    clearProfileStopping,
-    setProfileRestarting,
-    clearProfileRestarting,
-    showToast,
-  } = useIDEStore((s) => ({
-    setProfileStopping: s.setProfileStopping,
-    clearProfileStopping: s.clearProfileStopping,
-    setProfileRestarting: s.setProfileRestarting,
-    clearProfileRestarting: s.clearProfileRestarting,
-    showToast: s.showToast,
-  }));
+  const setProfileStopping = useIDEStore((s) => s.setProfileStopping);
+  const clearProfileStopping = useIDEStore((s) => s.clearProfileStopping);
+  const setProfileRestarting = useIDEStore((s) => s.setProfileRestarting);
+  const clearProfileRestarting = useIDEStore((s) => s.clearProfileRestarting);
+  const showToast = useIDEStore((s) => s.showToast);
 
   const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
+  const stopRequestTs = useIDEStore((s) => s.stopRequestTimestamps[profile.id]);
 
-  const computedElapsed = useElapsedTimer(visualState === 'running' ? startTs : undefined);
+  const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
+  const computedElapsed = useElapsedTimer(isRunningOrStopping ? startTs : undefined);
+  const computedStopElapsed = useElapsedTimer(
+    visualState === 'stopping' ? stopRequestTs : undefined
+  );
+
+  // Shared action handlers — used by both inline action button and ExpandedPanel
+  const handleStart = () => {
+    StartRunProfile(profile.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to start "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleStop = () => {
+    setProfileStopping(profile.id);
+    StopRunProfile(profile.id).catch((err: unknown) => {
+      clearProfileStopping(profile.id);
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to stop "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleRestart = () => {
+    setProfileRestarting(profile.id);
+    RestartRunProfile(profile.id).catch((err: unknown) => {
+      clearProfileRestarting(profile.id);
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handlePin = () => {
+    PinRunProfile(profile.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to pin "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleUnpin = () => {
+    UnpinRunProfile(profile.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to unpin "${profile.name}": ${message}`, 'error');
+    });
+  };
+
+  const handleHide = () => {
+    useIDEStore.getState().hideProfile(profile.id);
+  };
+
+  const isActiveState =
+    visualState === 'running' || visualState === 'stopping' || visualState === 'failed';
+
+  const [manualExpanded, setManualExpanded] = useState(false);
+  // Manual expand only applies to non-active states; active states use forceExpand
+  const isExpanded = !isActiveState && manualExpanded;
 
   const handleCardClick = () => {
-    if (isDormant) {
-      StartRunProfile(profile.id).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to start "${profile.name}": ${message}`, 'error');
-      });
-    } else {
-      onFocusOutput(profile.id);
+    if (!isDormant && !isActiveState) {
+      setManualExpanded((prev) => !prev);
     }
   };
 
@@ -139,24 +180,11 @@ export function RunProfileCard({
     e.stopPropagation();
 
     if (visualState === 'idle' || visualState === 'success') {
-      StartRunProfile(profile.id).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to start "${profile.name}": ${message}`, 'error');
-      });
+      handleStart();
     } else if (visualState === 'running') {
-      setProfileStopping(profile.id);
-      StopRunProfile(profile.id).catch((err: unknown) => {
-        clearProfileStopping(profile.id);
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to stop "${profile.name}": ${message}`, 'error');
-      });
+      handleStop();
     } else if (visualState === 'stopped' || visualState === 'failed') {
-      setProfileRestarting(profile.id);
-      RestartRunProfile(profile.id).catch((err: unknown) => {
-        clearProfileRestarting(profile.id);
-        const message = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
-      });
+      handleRestart();
     }
   };
 
@@ -168,7 +196,13 @@ export function RunProfileCard({
     isDormant
   );
 
-  const cardClassName = [styles.card, getStateClass(visualState), isDormant ? styles.dormant : '']
+  const cardClassName = [
+    styles.card,
+    getStateClass(visualState),
+    isDormant ? styles.dormant : '',
+    isActiveState ? styles.forceExpand : '',
+    !isActiveState && isExpanded ? styles.expanded : '',
+  ]
     .filter(Boolean)
     .join(' ');
 
@@ -225,23 +259,26 @@ export function RunProfileCard({
   return (
     <div
       className={cardClassName}
-      onClick={handleCardClick}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleCardClick();
-        }
-      }}
-      role="button"
+      onClick={isDormant ? undefined : handleCardClick}
+      tabIndex={isDormant ? undefined : 0}
+      onKeyDown={
+        isDormant
+          ? undefined
+          : (e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                e.preventDefault();
+                handleCardClick();
+              }
+            }
+      }
+      role={isDormant ? undefined : 'button'}
       aria-label={profile.name}
     >
-      <div className={styles.rail} />
-
       {/* Row 1: action button + name + duration */}
       <div className={styles.row1}>
         {renderActionButton()}
         <span className={styles.name}>{profile.name}</span>
+        <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />
         {durationLabel && <span className={styles.duration}>{durationLabel}</span>}
       </div>
 
@@ -250,17 +287,14 @@ export function RunProfileCard({
         <div className={styles.cmd}>
           {profile.command}
           {isDuplicate && profile.detectedFrom && (
-            <span style={{ display: 'block', color: '#2a2a2a', fontSize: 9, marginTop: 1 }}>
-              {profile.detectedFrom}
-            </span>
+            <span className={styles.cmdSource}>{profile.detectedFrom}</span>
           )}
         </div>
       )}
 
-      {/* Row 3: waveform + tags + history dots */}
-      <div className={styles.rowBottom}>
-        <ActivityWaveform data={waveformData} visualState={visualState} />
-        {profile.tags && profile.tags.length > 0 && (
+      {/* Row 3: tags */}
+      {profile.tags && profile.tags.length > 0 && (
+        <div className={styles.rowBottom}>
           <div className={styles.tags}>
             {profile.tags.map((tag) => {
               const color = getTagColor(tag);
@@ -275,156 +309,26 @@ export function RunProfileCard({
               );
             })}
           </div>
-        )}
-        <RunHistoryDots history={runHistory} isCurrentlyRunning={visualState === 'running'} />
-      </div>
+        </div>
+      )}
 
       {/* Hover reveal — expanded on hover/focus */}
       <div className={styles.hoverReveal}>
-        {/* Expanded waveform */}
-        <ActivityWaveform data={waveformData} visualState={visualState} expanded />
-
-        {/* Output preview — last 3 lines */}
-        {runOutput && runOutput.entries.length > 0 && (
-          <div className={styles.outputPreview}>
-            {runOutput.entries.slice(-3).map((entry, i) => (
-              <div
-                key={i}
-                className={entry.stream === 'stderr' ? styles.outputLineStderr : styles.outputLine}
-              >
-                {entry.text}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Action buttons */}
-        <div className={styles.hoverActions}>
-          {visualState === 'running' && (
-            <>
-              <button
-                className={`${styles.hoverActionBtn} ${styles.hoverActionDanger}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleActionClick(e);
-                }}
-                aria-label="Stop"
-              >
-                <StopIcon aria-hidden="true" />
-                Stop
-              </button>
-              <button
-                className={`${styles.hoverActionBtn} ${styles.hoverActionPurple}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setProfileRestarting(profile.id);
-                  RestartRunProfile(profile.id).catch((err: unknown) => {
-                    clearProfileRestarting(profile.id);
-                    const message = err instanceof Error ? err.message : String(err);
-                    showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
-                  });
-                }}
-                aria-label="Restart"
-              >
-                <RestartIcon aria-hidden="true" />
-                Restart
-              </button>
-            </>
-          )}
-          {(visualState === 'stopped' || visualState === 'failed') && (
-            <button
-              className={`${styles.hoverActionBtn} ${styles.hoverActionPurple}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleActionClick(e);
-              }}
-              aria-label="Restart"
-            >
-              <RestartIcon aria-hidden="true" />
-              Restart
-            </button>
-          )}
-          {(visualState === 'idle' || visualState === 'success') && (
-            <button
-              className={`${styles.hoverActionBtn} ${styles.hoverActionPrimary}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleActionClick(e);
-              }}
-              aria-label="Run"
-            >
-              <PlayIcon aria-hidden="true" />
-              Run
-            </button>
-          )}
-          {runOutput && (
-            <button
-              className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onFocusOutput(profile.id);
-              }}
-              aria-label="View Output"
-            >
-              View Output
-            </button>
-          )}
-
-          {/* Profile management — right side */}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-            {profile.source === 'detected' && (
-              <button
-                className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  PinRunProfile(profile.id).catch((err: unknown) => {
-                    const message = err instanceof Error ? err.message : String(err);
-                    showToast(`Failed to pin "${profile.name}": ${message}`, 'error');
-                  });
-                }}
-                aria-label="Pin profile"
-              >
-                Pin
-              </button>
-            )}
-            {profile.source === 'user' && (
-              <button
-                className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  UnpinRunProfile(profile.id).catch((err: unknown) => {
-                    const message = err instanceof Error ? err.message : String(err);
-                    showToast(`Failed to unpin "${profile.name}": ${message}`, 'error');
-                  });
-                }}
-                aria-label="Unpin profile"
-              >
-                Unpin
-              </button>
-            )}
-            <button
-              className={`${styles.hoverActionBtn} ${styles.hoverActionGhost}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                useIDEStore.getState().hideProfile(profile.id);
-              }}
-              aria-label="Hide profile"
-            >
-              Hide
-            </button>
-          </div>
-        </div>
-
-        {/* Expanded history with durations */}
-        {runHistory.length > 0 && (
-          <div style={{ marginTop: 6 }}>
-            <RunHistoryDots
-              history={runHistory}
-              isCurrentlyRunning={visualState === 'running'}
-              expanded
-            />
-          </div>
-        )}
+        <ExpandedPanel
+          profile={profile}
+          visualState={visualState}
+          runOutput={runOutput}
+          runHistory={runHistory}
+          elapsed={computedElapsed}
+          stopElapsedMs={computedStopElapsed}
+          onFocusOutput={onFocusOutput}
+          onStart={handleStart}
+          onStop={handleStop}
+          onRestart={handleRestart}
+          onPin={handlePin}
+          onUnpin={handleUnpin}
+          onHide={handleHide}
+        />
       </div>
     </div>
   );

@@ -12,7 +12,7 @@ import type {
   RunState,
   RunOutputViewMode,
 } from '../types/runOutput';
-import { MAX_OUTPUT_ENTRIES } from '../types/runOutput';
+import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
@@ -121,6 +121,7 @@ interface IDEState {
   waveformData: Record<string, number[]>;
   hiddenProfileIds: string[];
   runStartTimestamps: Record<string, number>;
+  stopRequestTimestamps: Record<string, number>;
 
   // Per-file view state (for persistence)
   scrollPositions: Record<string, number>; // fileId -> scrollTop
@@ -192,6 +193,12 @@ interface IDEActions {
   // Run Output actions
   appendRunOutput: (chunk: OutputChunk) => void;
   setRunState: (profileId: string, state: RunState, exitCode: number) => void;
+  handleRunStatus: (
+    profileId: string,
+    state: RunState,
+    exitCode: number,
+    timestamp: number
+  ) => void;
   clearRunOutput: (profileId: string) => void;
   clearAllRunOutputs: () => void;
   setActiveRunOutput: (id: string | null) => void;
@@ -279,6 +286,7 @@ export const useIDEStore = create<IDEStore>()(
       waveformData: {},
       hiddenProfileIds: [],
       runStartTimestamps: {},
+      stopRequestTimestamps: {},
       isRestoringWorkspace: false,
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
@@ -654,6 +662,127 @@ export const useIDEStore = create<IDEStore>()(
         );
       },
 
+      handleRunStatus: (profileId, newState, exitCode, timestamp) => {
+        // Flush line assembler on terminal states (same as setRunState)
+        const flushedEntries: OutputEntry[] = [];
+        if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
+          const assembler = lineAssemblers.get(profileId);
+          if (assembler) {
+            assemblerCallbacks.set(profileId, (entry) => flushedEntries.push(entry));
+            assembler.flush();
+            lineAssemblers.delete(profileId);
+            assemblerCallbacks.delete(profileId);
+          }
+        }
+
+        set(
+          (state) => {
+            // --- RunOutput update (same logic as setRunState) ---
+            const existing = state.runOutputs[profileId] ?? {
+              profileId,
+              state: 'idle' as RunState,
+              exitCode: 0,
+              runCount: 0,
+              entries: [],
+              previousEntries: [],
+            };
+
+            const mergedEntries =
+              flushedEntries.length > 0
+                ? [...existing.entries, ...flushedEntries]
+                : existing.entries;
+
+            const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
+
+            if (newState === 'running') {
+              updated.runCount = existing.runCount + 1;
+              if (updated.runCount > 1) {
+                let prev = existing.entries;
+                if (prev.length > MAX_OUTPUT_ENTRIES) {
+                  prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
+                }
+                updated.previousEntries = prev;
+                updated.entries = [];
+                lineAssemblers.delete(profileId);
+                assemblerCallbacks.delete(profileId);
+              }
+            }
+
+            // --- Lifecycle flags ---
+            let { stoppingProfileIds, restartingProfileIds } = state;
+
+            if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
+              stoppingProfileIds = stoppingProfileIds.filter((id) => id !== profileId);
+              restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+            } else if (newState === 'running') {
+              restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+            }
+
+            // --- Stop request timestamp ---
+            let { stopRequestTimestamps } = state;
+            if (
+              newState === 'stopped' ||
+              newState === 'failed' ||
+              newState === 'success' ||
+              newState === 'running'
+            ) {
+              if (stopRequestTimestamps[profileId] != null) {
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                const { [profileId]: _removed, ...rest } = stopRequestTimestamps;
+                stopRequestTimestamps = rest;
+              }
+            }
+
+            // --- Start timestamp ---
+            let { runStartTimestamps } = state;
+            if (newState === 'running') {
+              runStartTimestamps = { ...runStartTimestamps, [profileId]: timestamp };
+            }
+
+            // --- Run history ---
+            let { runHistory } = state;
+            if (
+              (newState === 'stopped' || newState === 'failed' || newState === 'success') &&
+              state.runStartTimestamps[profileId]
+            ) {
+              const existingHistory = runHistory[profileId] ?? [];
+              const entry: RunHistoryEntry = {
+                state: newState as RunHistoryEntry['state'],
+                duration: timestamp - state.runStartTimestamps[profileId],
+                timestamp,
+              };
+              const updatedHistory = [...existingHistory, entry];
+              const capped =
+                updatedHistory.length > 50
+                  ? updatedHistory.slice(updatedHistory.length - 50)
+                  : updatedHistory;
+              runHistory = { ...runHistory, [profileId]: capped };
+            }
+
+            // --- Auto-select first running profile ---
+            let { activeRunOutputId } = state;
+            if (
+              newState === 'running' &&
+              (!activeRunOutputId || activeRunOutputId === ALL_PROFILES_ID)
+            ) {
+              activeRunOutputId = profileId;
+            }
+
+            return {
+              runOutputs: { ...state.runOutputs, [profileId]: updated },
+              stoppingProfileIds,
+              restartingProfileIds,
+              stopRequestTimestamps,
+              runStartTimestamps,
+              runHistory,
+              activeRunOutputId,
+            };
+          },
+          false,
+          'handleRunStatus'
+        );
+      },
+
       clearRunOutput: (profileId) =>
         set(
           (state) => {
@@ -731,6 +860,10 @@ export const useIDEStore = create<IDEStore>()(
             stoppingProfileIds: state.stoppingProfileIds.includes(profileId)
               ? state.stoppingProfileIds
               : [...state.stoppingProfileIds, profileId],
+            stopRequestTimestamps:
+              state.stopRequestTimestamps[profileId] != null
+                ? state.stopRequestTimestamps
+                : { ...state.stopRequestTimestamps, [profileId]: Date.now() },
           }),
           false,
           'setProfileStopping'
@@ -738,9 +871,14 @@ export const useIDEStore = create<IDEStore>()(
 
       clearProfileStopping: (profileId) =>
         set(
-          (state) => ({
-            stoppingProfileIds: state.stoppingProfileIds.filter((id) => id !== profileId),
-          }),
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [profileId]: _removed, ...restTimestamps } = state.stopRequestTimestamps;
+            return {
+              stoppingProfileIds: state.stoppingProfileIds.filter((id) => id !== profileId),
+              stopRequestTimestamps: restTimestamps,
+            };
+          },
           false,
           'clearProfileStopping'
         ),
@@ -751,6 +889,10 @@ export const useIDEStore = create<IDEStore>()(
             restartingProfileIds: state.restartingProfileIds.includes(profileId)
               ? state.restartingProfileIds
               : [...state.restartingProfileIds, profileId],
+            stopRequestTimestamps:
+              state.stopRequestTimestamps[profileId] != null
+                ? state.stopRequestTimestamps
+                : { ...state.stopRequestTimestamps, [profileId]: Date.now() },
           }),
           false,
           'setProfileRestarting'
@@ -758,9 +900,14 @@ export const useIDEStore = create<IDEStore>()(
 
       clearProfileRestarting: (profileId) =>
         set(
-          (state) => ({
-            restartingProfileIds: state.restartingProfileIds.filter((id) => id !== profileId),
-          }),
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [profileId]: _removed, ...restTimestamps } = state.stopRequestTimestamps;
+            return {
+              restartingProfileIds: state.restartingProfileIds.filter((id) => id !== profileId),
+              stopRequestTimestamps: restTimestamps,
+            };
+          },
           false,
           'clearProfileRestarting'
         ),
@@ -843,6 +990,7 @@ export const useIDEStore = create<IDEStore>()(
               waveformData: {},
               hiddenProfileIds: [],
               runStartTimestamps: {},
+              stopRequestTimestamps: {},
             };
           },
           false,
