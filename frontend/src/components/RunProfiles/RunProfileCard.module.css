@@ -347,7 +347,16 @@
   display: none;
 }
 
-.forceExpand .hoverReveal,
+/* Grace period: forceExpand delays 0.4s so sub-second runs don't flash.
+   Collapse has no delay (reverts to base .hoverReveal transition-delay: 0s). */
+.forceExpand .hoverReveal {
+  max-height: 400px;
+  opacity: 1;
+  margin-top: 10px;
+  transition-delay: 0.4s;
+}
+
+/* Click-toggled expand has no delay — user explicitly asked for it */
 .expanded .hoverReveal {
   max-height: 400px;
   opacity: 1;
