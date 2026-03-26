@@ -190,11 +190,13 @@ function FailedPanel({
   profile,
   runOutput,
   runHistory,
+  waveformData,
   elapsed,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
+  waveformData: number[];
   elapsed: number;
 }) {
   const exitCode = runOutput?.exitCode;
@@ -211,6 +213,7 @@ function FailedPanel({
         </div>
       </div>
       <OutputTail entries={tail} />
+      <ActivityGraph data={waveformData} visualState="failed" />
       <StatsRow
         elapsed={runHistory[runHistory.length - 1]?.duration ?? elapsed}
         durationLabel="Duration"
@@ -302,17 +305,20 @@ function SuccessPanel({
   profile,
   runOutput,
   runHistory,
+  waveformData,
   elapsed,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
+  waveformData: number[];
   elapsed: number;
 }) {
   const tail = getTailEntries(runOutput?.entries, 4);
   return (
     <>
       <OutputTail entries={tail} />
+      <ActivityGraph data={waveformData} visualState="success" />
       <StatsRow
         elapsed={runHistory[runHistory.length - 1]?.duration ?? elapsed}
         durationLabel="Duration"
@@ -495,6 +501,7 @@ export function ExpandedPanel({
             profile={profile}
             runOutput={runOutput}
             runHistory={runHistory}
+            waveformData={waveformData}
             elapsed={elapsed}
           />
         );
@@ -504,6 +511,7 @@ export function ExpandedPanel({
             profile={profile}
             runOutput={runOutput}
             runHistory={runHistory}
+            waveformData={waveformData}
             elapsed={elapsed}
           />
         );

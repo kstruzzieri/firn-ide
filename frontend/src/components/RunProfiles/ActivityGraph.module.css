@@ -23,6 +23,26 @@
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
 }
 
+.chartArea {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.yLabel {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #333;
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .bars {
   display: flex;
   align-items: flex-end;
@@ -31,6 +51,7 @@
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
   padding: 4px 5px;
+  flex: 1;
 }
 
 .bar {
@@ -44,6 +65,7 @@
   display: flex;
   justify-content: space-between;
   margin-top: 3px;
+  padding-left: 16px;
 }
 
 .xLabel {

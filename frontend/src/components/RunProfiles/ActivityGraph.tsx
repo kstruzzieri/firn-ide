@@ -27,14 +27,14 @@ function getBarColor(visualState: VisualState): string {
 }
 
 function getRateLabel(visualState: VisualState, rate: number): string {
+  if (rate === 0) return 'quiet';
   switch (visualState) {
     case 'running':
-      return rate > 0 ? `~${rate} events/s` : 'quiet';
     case 'stopping':
-      return rate > 0 ? `~${rate} events/s` : 'quiet';
+      return `~${rate} lines/s`;
     case 'failed':
     case 'success':
-      return '';
+      return `${rate} lines/s avg`;
     default:
       return '';
   }
@@ -63,17 +63,20 @@ export const ActivityGraph = memo(function ActivityGraph({
         <span className={styles.label}>Output Activity</span>
         {rateLabel && <span className={styles.rate}>{rateLabel}</span>}
       </div>
-      <div className={styles.bars}>
-        {data.map((value, i) => {
-          const height = Math.max(2, (value / maxVal) * 36);
-          return (
-            <div
-              key={i}
-              className={styles.bar}
-              style={{ height: `${height}px`, background: barColor }}
-            />
-          );
-        })}
+      <div className={styles.chartArea}>
+        <span className={styles.yLabel}>LINES</span>
+        <div className={styles.bars}>
+          {data.map((value, i) => {
+            const height = Math.max(2, (value / maxVal) * 36);
+            return (
+              <div
+                key={i}
+                className={styles.bar}
+                style={{ height: `${height}px`, background: barColor }}
+              />
+            );
+          })}
+        </div>
       </div>
       <div className={styles.xAxis}>
         <span className={styles.xLabel}>{timeSpanSeconds}s ago</span>
