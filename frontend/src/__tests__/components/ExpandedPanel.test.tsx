@@ -90,8 +90,25 @@ describe('ExpandedPanel', () => {
   });
 
   it('renders stopping progress from the real stop elapsed time', () => {
-    renderPanel({ visualState: 'stopping', stopElapsedMs: 1500 });
+    renderPanel({
+      visualState: 'stopping',
+      stopElapsedMs: 1500,
+      runOutput: {
+        profileId: 'test-1',
+        state: 'running',
+        exitCode: 0,
+        runCount: 1,
+        entries: [],
+        previousEntries: [],
+      },
+    });
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByText('force-kill in 2s')).toBeInTheDocument();
+  });
+
+  it('shows restarting indicator when stopping a non-running profile', () => {
+    renderPanel({ visualState: 'stopping', stopElapsedMs: 0 });
+    expect(screen.getByText(/Restarting/)).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 });

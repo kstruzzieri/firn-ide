@@ -372,12 +372,13 @@ function ActionsRow({
   onUnpin: () => void;
   onHide: () => void;
 }) {
-  const isActive = visualState === 'running' || visualState === 'stopping';
+  const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
   const isStopping = visualState === 'stopping';
+  const isTerminal = visualState === 'failed' || visualState === 'stopped';
 
   return (
     <div className={styles.actions}>
-      {isActive ? (
+      {isRunningOrStopping ? (
         <>
           <button
             className={styles.actionDanger}
@@ -395,35 +396,32 @@ function ActionsRow({
           >
             <RestartIcon /> Restart
           </button>
-          {hasOutput && (
-            <button
-              className={styles.actionGhost}
-              onClick={() => onFocusOutput(profile.id)}
-              aria-label={`View output ${profile.name}`}
-            >
-              Output
-            </button>
-          )}
         </>
+      ) : isTerminal ? (
+        <button
+          className={styles.actionPurple}
+          onClick={onRestart}
+          aria-label={`Restart ${profile.name}`}
+        >
+          <RestartIcon /> Restart
+        </button>
       ) : (
-        <>
-          <button
-            className={styles.actionPrimary}
-            onClick={onStart}
-            aria-label={`Start ${profile.name}`}
-          >
-            <PlayIcon /> Run
-          </button>
-          {hasOutput && (
-            <button
-              className={styles.actionGhost}
-              onClick={() => onFocusOutput(profile.id)}
-              aria-label={`View output ${profile.name}`}
-            >
-              Output
-            </button>
-          )}
-        </>
+        <button
+          className={styles.actionPrimary}
+          onClick={onStart}
+          aria-label={`Start ${profile.name}`}
+        >
+          <PlayIcon /> Run
+        </button>
+      )}
+      {hasOutput && (
+        <button
+          className={styles.actionGhost}
+          onClick={() => onFocusOutput(profile.id)}
+          aria-label={`View output ${profile.name}`}
+        >
+          Output
+        </button>
       )}
       <span className={styles.spacer} />
       {profile.source === 'detected' ? (
@@ -476,8 +474,11 @@ export function ExpandedPanel({
             elapsed={elapsed}
           />
         );
-      case 'stopping':
-        return (
+      case 'stopping': {
+        // If backend state is not 'running', this is a restart of a dead process,
+        // not an actual SIGTERM sequence — show a simpler restarting indicator
+        const isRealStop = runOutput?.state === 'running';
+        return isRealStop ? (
           <StoppingPanel
             profile={profile}
             runOutput={runOutput}
@@ -486,7 +487,15 @@ export function ExpandedPanel({
             elapsed={elapsed}
             stopElapsedMs={stopElapsedMs}
           />
+        ) : (
+          <div className={styles.statRow}>
+            <div className={styles.stat}>
+              <span className={styles.statLabel}>Status</span>
+              <span className={styles.statValueHl}>Restarting&hellip;</span>
+            </div>
+          </div>
         );
+      }
       case 'failed':
         return (
           <FailedPanel

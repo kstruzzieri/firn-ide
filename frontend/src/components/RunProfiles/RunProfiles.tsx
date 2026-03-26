@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
 import { ProfileBrowser } from './ProfileBrowser';
@@ -41,6 +41,23 @@ export function RunProfiles() {
     return counts;
   }, [visibleProfiles]);
 
+  // Periodic tick to refresh ETA sort order while profiles are running.
+  // Without this, Date.now() in the sort memo stales until a store change.
+  const hasRunning = useMemo(
+    () =>
+      visibleProfiles.some(
+        (p) =>
+          getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+      ),
+    [visibleProfiles, runOutputs, stoppingIds, restartingIds]
+  );
+  const [etaTick, setEtaTick] = useState(0);
+  useEffect(() => {
+    if (!hasRunning) return;
+    const interval = setInterval(() => setEtaTick((t) => t + 1), 5000);
+    return () => clearInterval(interval);
+  }, [hasRunning]);
+
   // Helper: sort running profiles by ETA ascending (finishing soonest first),
   // then non-running profiles in their original order.
   const sortByEta = useMemo(() => {
@@ -66,7 +83,7 @@ export function RunProfiles() {
       running.sort((a, b) => a.eta - b.eta);
       return [...running.map((r) => r.profile), ...rest];
     };
-  }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps]);
+  }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
 
   const savedProfiles = useMemo(
     () => sortByEta(visibleProfiles.filter((p) => p.source === 'user')),
