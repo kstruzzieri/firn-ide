@@ -268,11 +268,3 @@
 .spacer {
   flex: 1;
 }
-
-/* ── History Row ────────────────────────────────────────────── */
-
-.historyRow {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-}

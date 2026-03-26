@@ -1,7 +1,6 @@
 import type { VisualState, RunOutput, RunHistoryEntry, OutputEntry } from '../../types/runOutput';
 import type { RunProfile } from '../../types/runProfile';
 import { ActivityGraph } from './ActivityGraph';
-import { RunHistoryDots } from './RunHistoryDots';
 import { PlayIcon, StopIcon, RestartIcon } from '../icons';
 import { formatDuration } from '../../utils/formatDuration';
 import { estimateRemaining } from '../../utils/estimateCompletion';
@@ -542,15 +541,6 @@ export function ExpandedPanel({
         onUnpin={onUnpin}
         onHide={onHide}
       />
-      {runHistory.length > 0 && (
-        <div className={styles.historyRow}>
-          <RunHistoryDots
-            history={runHistory}
-            isCurrentlyRunning={visualState === 'running'}
-            expanded
-          />
-        </div>
-      )}
     </div>
   );
 }
