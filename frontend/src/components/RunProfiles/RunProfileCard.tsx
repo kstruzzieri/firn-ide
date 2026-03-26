@@ -44,7 +44,6 @@ interface RunProfileCardProps {
   visualState: VisualState;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
-  waveformData: number[];
   isDormant: boolean;
   isDuplicate: boolean;
   onFocusOutput: (profileId: string) => void;
@@ -101,7 +100,6 @@ export function RunProfileCard({
   visualState,
   runOutput,
   runHistory,
-  waveformData,
   isDormant,
   isDuplicate,
   onFocusOutput,
@@ -319,7 +317,6 @@ export function RunProfileCard({
           visualState={visualState}
           runOutput={runOutput}
           runHistory={runHistory}
-          waveformData={waveformData}
           elapsed={computedElapsed}
           stopElapsedMs={computedStopElapsed}
           onFocusOutput={onFocusOutput}

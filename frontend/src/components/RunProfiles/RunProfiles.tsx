@@ -19,7 +19,6 @@ export function RunProfiles() {
   const error = useProfilesError();
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const runHistory = useIDEStore((s) => s.runHistory);
-  const waveformData = useIDEStore((s) => s.waveformData);
   const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
@@ -111,7 +110,6 @@ export function RunProfiles() {
         visualState={vs}
         runOutput={runOutputs[profile.id]}
         runHistory={runHistory[profile.id] ?? []}
-        waveformData={waveformData[profile.id] ?? []}
         isDormant={isDormant}
         isDuplicate={isDuplicate}
         onFocusOutput={focusProfileOutput}
