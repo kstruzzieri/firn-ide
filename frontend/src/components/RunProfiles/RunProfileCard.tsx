@@ -163,11 +163,16 @@ export function RunProfileCard({
     useIDEStore.getState().hideProfile(profile.id);
   };
 
-  const [isExpanded, setIsExpanded] = useState(false);
+  const isActiveState =
+    visualState === 'running' || visualState === 'stopping' || visualState === 'failed';
+
+  const [manualExpanded, setManualExpanded] = useState(false);
+  // Manual expand only applies to non-active states; active states use forceExpand
+  const isExpanded = !isActiveState && manualExpanded;
 
   const handleCardClick = () => {
-    if (!isDormant) {
-      setIsExpanded((prev) => !prev);
+    if (!isDormant && !isActiveState) {
+      setManualExpanded((prev) => !prev);
     }
   };
 
@@ -190,9 +195,6 @@ export function RunProfileCard({
     runOutput,
     isDormant
   );
-
-  const isActiveState =
-    visualState === 'running' || visualState === 'stopping' || visualState === 'failed';
 
   const cardClassName = [
     styles.card,

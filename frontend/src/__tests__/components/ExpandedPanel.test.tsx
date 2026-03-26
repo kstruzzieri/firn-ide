@@ -31,7 +31,6 @@ function renderPanel({
       visualState={visualState}
       runOutput={runOutput}
       runHistory={runHistory}
-      waveformData={[1, 2, 3, 4]}
       elapsed={2000}
       stopElapsedMs={stopElapsedMs}
       onFocusOutput={noop}
