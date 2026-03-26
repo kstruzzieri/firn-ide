@@ -296,9 +296,11 @@ export function RunProfileCard({
         </div>
       )}
 
-      {/* Row 3: waveform + tags + history dots */}
+      {/* Row 3: waveform (running only) + tags + history dots */}
       <div className={styles.rowBottom}>
-        <ActivityWaveform data={waveformData} visualState={visualState} />
+        {(visualState === 'running' || visualState === 'stopping') && (
+          <ActivityWaveform data={waveformData} visualState={visualState} />
+        )}
         {profile.tags && profile.tags.length > 0 && (
           <div className={styles.tags}>
             {profile.tags.map((tag) => {
