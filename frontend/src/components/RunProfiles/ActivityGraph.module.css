@@ -10,45 +10,27 @@
 }
 
 .label {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #333;
+  color: #444;
 }
 
 .rate {
-  font-size: 8px;
-  color: #555;
+  font-size: 9px;
+  color: #666;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
-}
-
-.chartArea {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-.yLabel {
-  font-size: 7px;
-  color: #333;
-  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
-  min-width: 14px;
-  text-align: right;
-  flex-shrink: 0;
-  align-self: flex-start;
-  padding-top: 1px;
 }
 
 .bars {
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  height: 32px;
+  height: 40px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
-  padding: 3px 4px;
-  flex: 1;
+  padding: 4px 5px;
 }
 
 .bar {
@@ -61,12 +43,11 @@
 .xAxis {
   display: flex;
   justify-content: space-between;
-  margin-top: 2px;
-  padding-left: 18px;
+  margin-top: 3px;
 }
 
 .xLabel {
-  font-size: 7px;
-  color: #333;
+  font-size: 8px;
+  color: #444;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
 }
