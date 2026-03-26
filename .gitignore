@@ -24,25 +24,9 @@ Thumbs.db
 
 # Wails dev (wailsjs bindings are committed to avoid CI chicken-and-egg issues)
 
-# Mockups & archive (design exploration, not production)
-docs/mockups/
-docs/archive/
-
-# Temporary working docs (specs, plans — deleted after feature completion)
-docs/superpowers/
-docs/plans/
-
-# Superpowers brainstorm sessions
-.superpowers/
-
-# Git worktrees
-.worktrees/
+# Test coverage
+coverage.out
 
 # Misc
 *.log
 *.md5
-
-# FewWord context plugin
-.fewword/scratch/
-.fewword/index/
-coverage.out
