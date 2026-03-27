@@ -160,6 +160,7 @@ export namespace runprofile {
 	    state: string;
 	    exitCode: number;
 	    pid?: number;
+	    timestamp: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RunStatus(source);
@@ -171,6 +172,7 @@ export namespace runprofile {
 	        this.state = source["state"];
 	        this.exitCode = source["exitCode"];
 	        this.pid = source["pid"];
+	        this.timestamp = source["timestamp"];
 	    }
 	}
 	export class ValidationError {
@@ -351,11 +353,11 @@ export namespace workspace {
 	    explorer: Explorer;
 	    activeSidebar: string;
 	    hiddenProfileIds?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new State(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workspacePath = source["workspacePath"];
