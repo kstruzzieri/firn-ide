@@ -76,31 +76,33 @@ export function FileExplorer() {
   const openFile = useIDEStore((state) => state.openFile);
   const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
 
-  // Sync active file in editor to file tree selection
+  // Sync active file in editor to file tree selection.
+  // Only depends on activeFileId — reads expandedPaths from store snapshot
+  // to avoid a dependency cycle (Set references change on every update).
   useEffect(() => {
-    if (activeFileId && activeFileId !== selectedPath) {
+    if (activeFileId && activeFileId !== useIDEStore.getState().selectedPath) {
       setSelectedPath(activeFileId);
 
       // Expand all parent folders to reveal the file
-      if (workspace) {
-        const relativePath = activeFileId.replace(workspace.path + '/', '');
+      const ws = useIDEStore.getState().workspace;
+      if (ws) {
+        const currentExpanded = useIDEStore.getState().expandedPaths;
+        const relativePath = activeFileId.replace(ws.path + '/', '');
         const parts = relativePath.split('/');
-        let currentPath = workspace.path;
+        let currentPath = ws.path;
 
-        // Expand each parent folder
-        const newExpanded = new Set(expandedPaths);
+        const newExpanded = new Set(currentExpanded);
         for (let i = 0; i < parts.length - 1; i++) {
           currentPath += '/' + parts[i];
           newExpanded.add(currentPath);
         }
 
-        // Update expanded paths if changed
-        if (newExpanded.size !== expandedPaths.size) {
+        if (newExpanded.size !== currentExpanded.size) {
           useIDEStore.setState({ expandedPaths: newExpanded });
         }
       }
     }
-  }, [activeFileId, selectedPath, setSelectedPath, workspace, expandedPaths]);
+  }, [activeFileId, setSelectedPath]);
 
   const { openFolder } = useOpenFolder();
 
