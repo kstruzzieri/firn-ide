@@ -292,7 +292,7 @@ Clickable file path breadcrumbs above editor with sibling dropdown navigation.
 Claude integration with context-aware code assistance, diff preview, provider architecture.
 
 ### gRPC Service Integration (v2.0+)
-Service Adapter Pattern for connecting to external backends. See `docs/plans/grpc-service-integration-concept.md`.
+Service Adapter Pattern for connecting to external backends.
 
 ---
 

@@ -33,24 +33,36 @@ func TestSessionWriteRead(t *testing.T) {
 		t.Fatalf("Write() returned error: %v", err)
 	}
 
-	// PTY I/O is async — read in a loop until expected output appears or timeout
-	deadline := time.After(3 * time.Second)
-	var collected string
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-deadline:
-			t.Fatalf("timed out waiting for 'hello', got: %s", collected)
-		default:
+	// PTY Read() blocks, so run it in a goroutine with a real timeout.
+	type readResult struct {
+		data string
+		err  error
+	}
+	ch := make(chan readResult, 1)
+	go func() {
+		var collected string
+		buf := make([]byte, 4096)
+		for {
+			n, err := session.Read(buf)
+			if err != nil {
+				ch <- readResult{collected, err}
+				return
+			}
+			collected += string(buf[:n])
+			if strings.Contains(collected, "hello") {
+				ch <- readResult{collected, nil}
+				return
+			}
 		}
-		n, err := session.Read(buf)
-		if err != nil {
-			t.Fatalf("session.Read() returned error: %v", err)
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			t.Fatalf("session.Read() returned error: %v", res.err)
 		}
-		collected += string(buf[:n])
-		if strings.Contains(collected, "hello") {
-			return
-		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for 'hello' in PTY output")
 	}
 }
 

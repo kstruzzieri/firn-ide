@@ -1095,7 +1095,7 @@ Multiple AI assistants visible simultaneously:
 - Provider architecture (ready for multi-provider)
 
 ### v2.0+ — Service Integration
-- gRPC Service Adapter Pattern (see `docs/plans/grpc-service-integration-concept.md`)
+- gRPC Service Adapter Pattern
 - Multiple AI panels visible simultaneously
 - Broadcast mode (compare AI responses)
 
