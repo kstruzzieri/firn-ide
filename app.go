@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"firn/internal/filesystem"
+	"firn/internal/lsp"
 	"firn/internal/runprofile"
 	"firn/internal/terminal"
 	"firn/internal/watcher"
@@ -31,6 +32,7 @@ type App struct {
 	executor             *runprofile.Executor
 	osFS                 filesystem.FileSystem
 	workspaceStore       *workspace.Store
+	lspManager           *lsp.Manager
 	closeMu              sync.Mutex
 	isClosing            bool
 	closeReady           chan struct{}
@@ -77,6 +79,9 @@ func (a *App) startup(ctx context.Context) {
 			})
 		},
 	)
+	a.lspManager = lsp.NewManager(func(event string, data ...any) {
+		runtime.EventsEmit(a.ctx, event, data...)
+	})
 }
 
 // beforeClose is called by Wails before the application window closes.
@@ -99,7 +104,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	runtime.EventsEmit(a.ctx, "app:beforeclose")
 
 	go func() {
-		// Wait for both frontend state flush and runner cleanup, bounded by 2s.
+		// Wait for frontend state flush, runner cleanup, and LSP shutdown, bounded by 2s.
 		runnerDone := make(chan struct{})
 		go func() {
 			if a.executor != nil {
@@ -108,16 +113,27 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 			close(runnerDone)
 		}()
 
+		lspDone := make(chan struct{})
+		go func() {
+			if a.lspManager != nil {
+				a.lspManager.ShutdownAll(1500 * time.Millisecond)
+			}
+			close(lspDone)
+		}()
+
 		deadline := time.After(2 * time.Second)
 		closeReadyCh := closeReady
 		runnerDoneCh := runnerDone
+		lspDoneCh := lspDone
 
-		for closeReadyCh != nil || runnerDoneCh != nil {
+		for closeReadyCh != nil || runnerDoneCh != nil || lspDoneCh != nil {
 			select {
 			case <-closeReadyCh:
 				closeReadyCh = nil
 			case <-runnerDoneCh:
 				runnerDoneCh = nil
+			case <-lspDoneCh:
+				lspDoneCh = nil
 			case <-deadline:
 				runtime.Quit(a.ctx)
 				return
@@ -269,6 +285,21 @@ func (a *App) CloseTerminal(id string) error {
 // If switching workspaces while profiles are running, stops all running profiles first.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) LoadRunProfiles(workspacePath string) error {
+	if err := a.loadRunProfilesLocked(workspacePath); err != nil {
+		return err
+	}
+
+	// Sync LSP workspace root outside profileMu to avoid blocking the
+	// profile system during LSP server shutdown (which can take seconds).
+	if a.lspManager != nil {
+		a.SetLSPWorkspaceRoot(workspacePath)
+	}
+
+	return nil
+}
+
+// loadRunProfilesLocked performs the profile loading under profileMu.
+func (a *App) loadRunProfilesLocked(workspacePath string) error {
 	a.profileMu.Lock()
 	defer a.profileMu.Unlock()
 
@@ -286,6 +317,7 @@ func (a *App) LoadRunProfiles(workspacePath string) error {
 		a.profileManager.SetWorkspaceRoot(workspacePath)
 	}
 	a.profileWorkspaceRoot = workspacePath
+
 	return a.profileManager.Load()
 }
 
@@ -477,3 +509,99 @@ func (a *App) ConfirmBeforeCloseReady() {
 		close(a.closeReady)
 	}
 }
+
+// --- LSP bindings ---
+
+// LSPDidOpen notifies the LSP manager that a document was opened.
+// The frontend is the source of truth for version numbers.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDidOpen(path, languageID string, version int, content string) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	return a.lspManager.DidOpen(a.ctx, path, languageID, version, content)
+}
+
+// LSPDidChange notifies the LSP manager that a document changed.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDidChange(path string, version int, contentChanges []lsp.TextDocumentContentChangeEvent) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	return a.lspManager.DidChange(path, version, contentChanges)
+}
+
+// LSPDidSave notifies the LSP manager that a document was saved.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDidSave(path string) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	return a.lspManager.DidSave(path)
+}
+
+// LSPDidClose notifies the LSP manager that a document was closed.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDidClose(path string) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	return a.lspManager.DidClose(a.ctx, path)
+}
+
+// LSPHover requests hover information for a position in a document.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPHover(path string, line, character int) (*lsp.Hover, error) {
+	if a.lspManager == nil {
+		return nil, fmt.Errorf("LSP not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, lsp.DefaultRequestTimeout)
+	defer cancel()
+	return a.lspManager.Hover(ctx, path, line, character)
+}
+
+// LSPDefinition requests go-to-definition for a position in a document.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDefinition(path string, line, character int) ([]lsp.Location, error) {
+	if a.lspManager == nil {
+		return nil, fmt.Errorf("LSP not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, lsp.DefaultRequestTimeout)
+	defer cancel()
+	return a.lspManager.Definition(ctx, path, line, character)
+}
+
+// LSPComplete requests completion items for a position in a document.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPComplete(path string, line, character int, triggerCharacter string) (*lsp.CompletionList, error) {
+	if a.lspManager == nil {
+		return nil, fmt.Errorf("LSP not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, lsp.DefaultRequestTimeout)
+	defer cancel()
+	return a.lspManager.Complete(ctx, path, line, character, triggerCharacter)
+}
+
+// GetLSPStatus returns the status of all running language servers.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GetLSPStatus() []lsp.ServerStatus {
+	if a.lspManager == nil {
+		return []lsp.ServerStatus{}
+	}
+	return a.lspManager.GetStatus()
+}
+
+// lspWorkspaceSwitchTimeout is the time allowed for LSP servers to shut down during a workspace switch.
+const lspWorkspaceSwitchTimeout = 3 * time.Second
+
+// SetLSPWorkspaceRoot updates the LSP manager's workspace root.
+// Called when the workspace changes — shuts down old servers first.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) SetLSPWorkspaceRoot(workspacePath string) {
+	if a.lspManager == nil {
+		return
+	}
+	a.lspManager.ShutdownAll(lspWorkspaceSwitchTimeout)
+	a.lspManager.SetWorkspaceRoot(workspacePath)
+}
+
