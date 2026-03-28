@@ -285,17 +285,13 @@ func (a *App) CloseTerminal(id string) error {
 // If switching workspaces while profiles are running, stops all running profiles first.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) LoadRunProfiles(workspacePath string) error {
-	if err := a.loadRunProfilesLocked(workspacePath); err != nil {
-		return err
-	}
-
-	// Sync LSP workspace root outside profileMu to avoid blocking the
-	// profile system during LSP server shutdown (which can take seconds).
+	// Always sync LSP workspace root, even if profile loading fails.
+	// The user has switched workspaces — LSP must follow regardless.
 	if a.lspManager != nil {
 		a.SetLSPWorkspaceRoot(workspacePath)
 	}
 
-	return nil
+	return a.loadRunProfilesLocked(workspacePath)
 }
 
 // loadRunProfilesLocked performs the profile loading under profileMu.

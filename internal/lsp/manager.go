@@ -50,11 +50,17 @@ type serverKey struct {
 	workspace string
 }
 
+// docState tracks an open document's reference count and latest version.
+type docState struct {
+	refCount int
+	version  int
+}
+
 // serverEntry tracks a running server and its open documents.
 type serverEntry struct {
 	client     *Client
 	config     *ServerConfig
-	openDocs   map[string]int // URI -> version
+	openDocs   map[string]*docState // URI -> state
 	crashCount int
 	lastCrash  time.Time
 	stopping   bool
@@ -116,10 +122,20 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 	}
 
 	m.mu.Lock()
-	entry.openDocs[uri] = version
+	ds, exists := entry.openDocs[uri]
+	if exists {
+		ds.refCount++
+		ds.version = version
+	} else {
+		entry.openDocs[uri] = &docState{refCount: 1, version: version}
+	}
 	m.mu.Unlock()
 
-	return entry.client.DidOpen(uri, languageID, version, content)
+	// Only send didOpen to the server on the first open
+	if !exists {
+		return entry.client.DidOpen(uri, languageID, version, content)
+	}
+	return nil
 }
 
 // DidChange forwards content changes to the appropriate server.
@@ -130,7 +146,9 @@ func (m *Manager) DidChange(path string, version int, changes []TextDocumentCont
 	}
 
 	m.mu.Lock()
-	entry.openDocs[uri] = version
+	if ds, ok := entry.openDocs[uri]; ok {
+		ds.version = version
+	}
 	m.mu.Unlock()
 
 	return entry.client.DidChange(uri, version, changes)
@@ -168,26 +186,29 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 		return nil
 	}
 
-	delete(entry.openDocs, uri)
+	ds, docExists := entry.openDocs[uri]
+	if !docExists {
+		m.mu.Unlock()
+		return nil
+	}
+
+	ds.refCount--
+	if ds.refCount <= 0 {
+		delete(entry.openDocs, uri)
+	}
 	shouldShutdown := len(entry.openDocs) == 0
 	m.mu.Unlock()
 
-	// Send didClose to the server before initiating shutdown
-	if err := entry.client.DidClose(uri); err != nil {
-		log.Printf("lsp: didClose failed for %s: %v", uri, err)
+	// Only send didClose to the server when the last reference is removed
+	if ds.refCount <= 0 {
+		if err := entry.client.DidClose(uri); err != nil {
+			log.Printf("lsp: didClose failed for %s: %v", uri, err)
+		}
 	}
 
 	// Shut down server if no more documents are open.
-	// Re-check under lock in case a concurrent DidOpen added a document.
+	// shutdownServer handles the stopping flag and map removal atomically.
 	if shouldShutdown {
-		m.mu.Lock()
-		if len(entry.openDocs) > 0 {
-			// Another goroutine opened a document while we were sending didClose
-			m.mu.Unlock()
-			return nil
-		}
-		entry.stopping = true
-		m.mu.Unlock()
 		shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer cancel()
 		m.shutdownServer(shutCtx, key)
@@ -311,7 +332,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 
 	entry := &serverEntry{
 		config:   config,
-		openDocs: make(map[string]int),
+		openDocs: make(map[string]*docState),
 	}
 
 	client := NewClient(transport, func(method string, params json.RawMessage) {
@@ -481,9 +502,28 @@ func (m *Manager) serverForPath(path string) (*serverEntry, string) {
 func (m *Manager) handleNotification(key serverKey, method string, params json.RawMessage) {
 	switch method {
 	case "textDocument/publishDiagnostics":
-		if m.emitter != nil {
-			m.emitter("lsp:diagnostics", params)
+		if m.emitter == nil {
+			return
 		}
+		// Drop stale diagnostics: if the server sends diagnostics with a version
+		// older than what we've tracked, the frontend has already moved past them.
+		var diagParams PublishDiagnosticsParams
+		if err := json.Unmarshal(params, &diagParams); err != nil {
+			log.Printf("lsp: failed to parse diagnostics: %v", err)
+			return
+		}
+		if diagParams.Version > 0 {
+			m.mu.Lock()
+			entry, ok := m.servers[key]
+			if ok {
+				if ds, docOk := entry.openDocs[diagParams.URI]; docOk && diagParams.Version < ds.version {
+					m.mu.Unlock()
+					return // stale diagnostics — drop
+				}
+			}
+			m.mu.Unlock()
+		}
+		m.emitter("lsp:diagnostics", params)
 	}
 }
 

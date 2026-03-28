@@ -11,14 +11,11 @@ import (
 )
 
 // newTestManager creates a Manager with a mock transport factory.
-// It overrides the registry to use the mock server for all TypeScript files.
 func newTestManager(t *testing.T) (*Manager, *eventCollector) {
 	t.Helper()
 
 	collector := &eventCollector{}
 	mgr := NewManager(collector.emit)
-
-	// Override the registry to use our mock server binary
 	mgr.registry = &Registry{}
 
 	return mgr, collector
@@ -107,7 +104,6 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	mgr.SetWorkspaceRoot("/tmp/test")
 
 	ctx := context.Background()
-	// Opening an unsupported file should be a no-op
 	err := mgr.DidOpen(ctx, "/tmp/test/main.go", "", 1, "package main")
 	if err != nil {
 		t.Errorf("DidOpen unsupported file should be no-op, got: %v", err)
@@ -116,7 +112,6 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 
 func TestManager_NoWorkspaceRoot(t *testing.T) {
 	mgr, _ := newTestManager(t)
-	// Don't set workspace root
 
 	ctx := context.Background()
 	err := mgr.DidOpen(ctx, "/tmp/test/main.ts", "", 1, "const x = 1;")
@@ -135,23 +130,15 @@ func TestManager_GetStatusEmpty(t *testing.T) {
 
 func TestManager_ShutdownAllEmpty(t *testing.T) {
 	mgr, _ := newTestManager(t)
-	// Should not panic
 	mgr.ShutdownAll(time.Second)
 }
 
-// Integration test that uses the mock server via exec
-func TestManager_IntegrationWithMockServer(t *testing.T) {
-	if os.Getenv("FIRN_MOCK_LSP") == "1" {
-		t.Skip("running as mock server")
-	}
+// startMockManager creates a Manager with a running mock LSP server.
+// Returns the manager, event collector, and the server key.
+func startMockManager(t *testing.T) (*Manager, *eventCollector, serverKey) {
+	t.Helper()
 
-	// Create a temp workspace with a .ts file to trigger detection
 	tmpDir := t.TempDir()
-	tsFile := filepath.Join(tmpDir, "main.ts")
-	os.WriteFile(tsFile, []byte("const x: number = 1;"), 0644)
-
-	// We need to override the registry to use the mock server
-	// This requires a custom manager that uses our mock binary
 	collector := &eventCollector{}
 	mgr := &Manager{
 		registry: NewRegistry(),
@@ -160,11 +147,9 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 	}
 	mgr.SetWorkspaceRoot(tmpDir)
 
-	// Override ServerConfigFor by injecting a mock config directly
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 
-	// Start the mock server manually via startServer
 	key := serverKey{family: "typescript", workspace: tmpDir}
 	config := &ServerConfig{
 		LanguageFamily: "typescript",
@@ -172,15 +157,27 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 		Args:           []string{"-test.run=^TestMockServerProcess$"},
 	}
 
-	// Set env for mock
-	origEnv := os.Getenv("FIRN_MOCK_LSP")
-	os.Setenv("FIRN_MOCK_LSP", "1")
-	defer os.Setenv("FIRN_MOCK_LSP", origEnv)
+	t.Setenv("FIRN_MOCK_LSP", "1")
 
-	entry, err := mgr.startServer(ctx, key, config)
+	_, err := mgr.startServer(ctx, key, config)
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}
+
+	t.Cleanup(func() {
+		mgr.ShutdownAll(5 * time.Second)
+	})
+
+	return mgr, collector, key
+}
+
+func TestManager_IntegrationWithMockServer(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	mgr, collector, key := startMockManager(t)
+	tmpDir := key.workspace
 
 	// Verify server is ready
 	statuses := mgr.GetStatus()
@@ -191,32 +188,22 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 		t.Errorf("server state = %q, want ready", statuses[0].State)
 	}
 
-	// Open a document
-	uri, _ := FileToURI(tsFile)
-	mgr.mu.Lock()
-	entry.openDocs[uri] = 1
-	mgr.mu.Unlock()
+	// Use Manager.DidOpen (not direct client call)
+	tsFile := filepath.Join(tmpDir, "main.ts")
+	os.WriteFile(tsFile, []byte("const x: number = 1;"), 0644)
 
-	if err := entry.client.DidOpen(uri, "typescript", 1, "const x: number = 1;"); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x: number = 1;"); err != nil {
 		t.Fatalf("DidOpen: %v", err)
 	}
 
 	// Wait for diagnostics
-	deadline := time.After(3 * time.Second)
-	for {
-		if collector.hasDiagnostics() {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for diagnostics via manager")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
+	waitFor(t, 3*time.Second, "diagnostics", collector.hasDiagnostics)
 
-	// Test hover
-	hover, err := entry.client.Hover(ctx, uri, 0, 0)
+	// Test hover via manager
+	hover, err := mgr.Hover(ctx, tsFile, 0, 0)
 	if err != nil {
 		t.Fatalf("Hover: %v", err)
 	}
@@ -224,8 +211,8 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 		t.Fatal("Hover returned nil")
 	}
 
-	// Test completion
-	list, err := entry.client.Complete(ctx, uri, 0, 0, "")
+	// Test completion via manager
+	list, err := mgr.Complete(ctx, tsFile, 0, 0, "")
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -233,8 +220,8 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 		t.Fatal("Complete returned no items")
 	}
 
-	// Test definition
-	locs, err := entry.client.Definition(ctx, uri, 0, 0)
+	// Test definition via manager
+	locs, err := mgr.Definition(ctx, tsFile, 0, 0)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)
 	}
@@ -242,27 +229,14 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 		t.Fatal("Definition returned no locations")
 	}
 
-	// Verify document reference counting
+	// Verify document is tracked
 	mgr.mu.Lock()
+	entry := mgr.servers[key]
 	docCount := len(entry.openDocs)
 	mgr.mu.Unlock()
 	if docCount != 1 {
 		t.Errorf("open doc count = %d, want 1", docCount)
 	}
-
-	// Close the document
-	delete(entry.openDocs, uri)
-	entry.client.DidClose(uri)
-
-	mgr.mu.Lock()
-	docCount = len(entry.openDocs)
-	mgr.mu.Unlock()
-	if docCount != 0 {
-		t.Errorf("open doc count after close = %d, want 0", docCount)
-	}
-
-	// Shutdown
-	mgr.ShutdownAll(5 * time.Second)
 
 	// Verify status events were emitted
 	statusEvents := collector.eventsByName("lsp:status")
@@ -271,12 +245,115 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 	}
 }
 
+func TestManager_ZeroDocTeardown(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	mgr, _, key := startMockManager(t)
+	tmpDir := key.workspace
+
+	tsFile := filepath.Join(tmpDir, "main.ts")
+	os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Open a file
+	if err := mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x = 1;"); err != nil {
+		t.Fatalf("DidOpen: %v", err)
+	}
+
+	// Verify server is running
+	mgr.mu.Lock()
+	_, serverExists := mgr.servers[key]
+	mgr.mu.Unlock()
+	if !serverExists {
+		t.Fatal("server should exist after DidOpen")
+	}
+
+	// Close the file — should tear down the server
+	if err := mgr.DidClose(ctx, tsFile); err != nil {
+		t.Fatalf("DidClose: %v", err)
+	}
+
+	// Verify server was removed
+	mgr.mu.Lock()
+	_, serverExists = mgr.servers[key]
+	mgr.mu.Unlock()
+	if serverExists {
+		t.Error("server should be removed after closing last document")
+	}
+}
+
+func TestManager_RefCounting(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	mgr, _, key := startMockManager(t)
+	tmpDir := key.workspace
+
+	tsFile := filepath.Join(tmpDir, "main.ts")
+	os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Open the same file twice (simulating two panes/tabs)
+	if err := mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x = 1;"); err != nil {
+		t.Fatalf("DidOpen 1: %v", err)
+	}
+	if err := mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x = 1;"); err != nil {
+		t.Fatalf("DidOpen 2: %v", err)
+	}
+
+	// Verify refCount is 2
+	uri, _ := FileToURI(tsFile)
+	mgr.mu.Lock()
+	entry := mgr.servers[key]
+	ds := entry.openDocs[uri]
+	mgr.mu.Unlock()
+	if ds.refCount != 2 {
+		t.Fatalf("refCount = %d, want 2", ds.refCount)
+	}
+
+	// Close once — server should still be running
+	if err := mgr.DidClose(ctx, tsFile); err != nil {
+		t.Fatalf("DidClose 1: %v", err)
+	}
+
+	mgr.mu.Lock()
+	_, serverExists := mgr.servers[key]
+	ds = entry.openDocs[uri]
+	mgr.mu.Unlock()
+	if !serverExists {
+		t.Error("server should still exist after first close (refCount was 2)")
+	}
+	if ds.refCount != 1 {
+		t.Errorf("refCount after first close = %d, want 1", ds.refCount)
+	}
+
+	// Close again — should tear down
+	if err := mgr.DidClose(ctx, tsFile); err != nil {
+		t.Fatalf("DidClose 2: %v", err)
+	}
+
+	mgr.mu.Lock()
+	_, serverExists = mgr.servers[key]
+	mgr.mu.Unlock()
+	if serverExists {
+		t.Error("server should be removed after closing last reference")
+	}
+}
+
 func TestManager_ConcurrentMultiFile(t *testing.T) {
 	if os.Getenv("FIRN_MOCK_LSP") == "1" {
 		t.Skip("running as mock server")
 	}
 
-	tmpDir := t.TempDir()
+	mgr, collector, key := startMockManager(t)
+	tmpDir := key.workspace
 
 	// Create multiple TS files
 	files := []string{"a.ts", "b.tsx", "c.js"}
@@ -284,92 +361,50 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 		os.WriteFile(filepath.Join(tmpDir, f), []byte("const x = 1;"), 0644)
 	}
 
-	collector := &eventCollector{}
-	mgr := &Manager{
-		registry: NewRegistry(),
-		emitter:  collector.emit,
-		servers:  make(map[serverKey]*serverEntry),
-	}
-	mgr.SetWorkspaceRoot(tmpDir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	key := serverKey{family: "typescript", workspace: tmpDir}
-	config := &ServerConfig{
-		LanguageFamily: "typescript",
-		Command:        os.Args[0],
-		Args:           []string{"-test.run=^TestMockServerProcess$"},
-	}
-
-	origEnv := os.Getenv("FIRN_MOCK_LSP")
-	os.Setenv("FIRN_MOCK_LSP", "1")
-	defer os.Setenv("FIRN_MOCK_LSP", origEnv)
-
-	entry, err := mgr.startServer(ctx, key, config)
-	if err != nil {
-		t.Fatalf("startServer: %v", err)
-	}
-
-	// Open 3 files concurrently
+	// Open 3 files concurrently via Manager API
 	var wg sync.WaitGroup
 	for _, f := range files {
 		wg.Add(1)
 		go func(filename string) {
 			defer wg.Done()
 			path := filepath.Join(tmpDir, filename)
-			uri, _ := FileToURI(path)
-			ext := filepath.Ext(filename)
-			langID := mgr.registry.LanguageIDForExtension(ext)
-
-			mgr.mu.Lock()
-			entry.openDocs[uri] = 1
-			mgr.mu.Unlock()
-
-			entry.client.DidOpen(uri, langID, 1, "const x = 1;")
+			mgr.DidOpen(ctx, path, "", 1, "const x = 1;")
 		}(f)
 	}
 	wg.Wait()
 
 	// Verify all 3 are tracked
 	mgr.mu.Lock()
+	entry := mgr.servers[key]
 	docCount := len(entry.openDocs)
 	mgr.mu.Unlock()
 	if docCount != 3 {
 		t.Fatalf("open doc count = %d, want 3", docCount)
 	}
 
-	// Edit two files concurrently
-	wg = sync.WaitGroup{}
+	// Edit two files concurrently via Manager API
 	for _, f := range files[:2] {
 		wg.Add(1)
 		go func(filename string) {
 			defer wg.Done()
 			path := filepath.Join(tmpDir, filename)
-			uri, _ := FileToURI(path)
-
-			mgr.mu.Lock()
-			entry.openDocs[uri] = 2
-			mgr.mu.Unlock()
-
-			entry.client.DidChange(uri, 2, []TextDocumentContentChangeEvent{
+			mgr.DidChange(path, 2, []TextDocumentContentChangeEvent{
 				{Text: "const x = 2;"},
 			})
 		}(f)
 	}
 	wg.Wait()
 
-	// Close one file — should keep server running
+	// Close one file via Manager API — should keep server running
 	closePath := filepath.Join(tmpDir, files[0])
-	closeURI, _ := FileToURI(closePath)
+	mgr.DidClose(ctx, closePath)
 
 	mgr.mu.Lock()
-	delete(entry.openDocs, closeURI)
 	remaining := len(entry.openDocs)
 	mgr.mu.Unlock()
-
-	entry.client.DidClose(closeURI)
-
 	if remaining != 2 {
 		t.Errorf("after closing 1 of 3: doc count = %d, want 2", remaining)
 	}
@@ -380,108 +415,77 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 	}
 
 	// Wait for diagnostics from the concurrent operations
-	deadline := time.After(3 * time.Second)
-	for {
-		if collector.hasDiagnostics() {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for diagnostics during concurrent test")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	mgr.ShutdownAll(5 * time.Second)
+	waitFor(t, 3*time.Second, "diagnostics", collector.hasDiagnostics)
 }
 
-// Test that diagnostics are routed through the notification handler
 func TestManager_DiagnosticsRouting(t *testing.T) {
 	if os.Getenv("FIRN_MOCK_LSP") == "1" {
 		t.Skip("running as mock server")
 	}
 
-	tmpDir := t.TempDir()
+	mgr, _, key := startMockManager(t)
+	tmpDir := key.workspace
 
 	var diagMu sync.Mutex
 	var diagnostics []PublishDiagnosticsParams
 
-	mgr := &Manager{
-		registry: NewRegistry(),
-		emitter: func(event string, data ...any) {
-			if event == "lsp:diagnostics" && len(data) > 0 {
-				diagMu.Lock()
-				defer diagMu.Unlock()
-				raw, ok := data[0].(json.RawMessage)
-				if ok {
-					var d PublishDiagnosticsParams
-					json.Unmarshal(raw, &d)
-					diagnostics = append(diagnostics, d)
-				}
+	mgr.emitter = func(event string, data ...any) {
+		if event == "lsp:diagnostics" && len(data) > 0 {
+			diagMu.Lock()
+			defer diagMu.Unlock()
+			raw, ok := data[0].(json.RawMessage)
+			if ok {
+				var d PublishDiagnosticsParams
+				json.Unmarshal(raw, &d)
+				diagnostics = append(diagnostics, d)
 			}
-		},
-		servers: make(map[serverKey]*serverEntry),
+		}
 	}
-	mgr.SetWorkspaceRoot(tmpDir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	tsFile := filepath.Join(tmpDir, "main.ts")
+	os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	key := serverKey{family: "typescript", workspace: tmpDir}
-	config := &ServerConfig{
-		LanguageFamily: "typescript",
-		Command:        os.Args[0],
-		Args:           []string{"-test.run=^TestMockServerProcess$"},
-	}
-
-	origEnv := os.Getenv("FIRN_MOCK_LSP")
-	os.Setenv("FIRN_MOCK_LSP", "1")
-	defer os.Setenv("FIRN_MOCK_LSP", origEnv)
-
-	entry, err := mgr.startServer(ctx, key, config)
-	if err != nil {
-		t.Fatalf("startServer: %v", err)
-	}
-
-	// Open a file — mock server emits diagnostics on didOpen
-	uri := "file:///tmp/test.ts"
-	mgr.mu.Lock()
-	entry.openDocs[uri] = 1
-	mgr.mu.Unlock()
-
-	entry.client.DidOpen(uri, "typescript", 1, "const x = 1;")
+	// Open via Manager API
+	mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x = 1;")
+	uri, _ := FileToURI(tsFile)
 
 	// Wait for diagnostics
-	deadline := time.After(3 * time.Second)
-	for {
+	waitFor(t, 3*time.Second, "diagnostics", func() bool {
 		diagMu.Lock()
-		count := len(diagnostics)
-		diagMu.Unlock()
+		defer diagMu.Unlock()
+		return len(diagnostics) > 0
+	})
 
-		if count > 0 {
-			diagMu.Lock()
-			first := diagnostics[0]
-			diagMu.Unlock()
+	diagMu.Lock()
+	first := diagnostics[0]
+	diagMu.Unlock()
 
-			if first.URI != uri {
-				t.Errorf("diagnostic URI = %q, want %q", first.URI, uri)
-			}
-			if len(first.Diagnostics) == 0 {
-				t.Error("expected at least one diagnostic")
-			} else if first.Diagnostics[0].Severity != SeverityError {
-				t.Errorf("diagnostic severity = %d, want %d", first.Diagnostics[0].Severity, SeverityError)
-			}
-			break
+	if first.URI != uri {
+		t.Errorf("diagnostic URI = %q, want %q", first.URI, uri)
+	}
+	if len(first.Diagnostics) == 0 {
+		t.Error("expected at least one diagnostic")
+	} else if first.Diagnostics[0].Severity != SeverityError {
+		t.Errorf("diagnostic severity = %d, want %d", first.Diagnostics[0].Severity, SeverityError)
+	}
+}
+
+// waitFor polls a condition with a timeout, failing the test if not satisfied.
+func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		if cond() {
+			return
 		}
-
 		select {
 		case <-deadline:
-			t.Fatal("timed out waiting for diagnostics")
+			t.Fatalf("timed out waiting for %s", desc)
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-
-	mgr.ShutdownAll(5 * time.Second)
 }
