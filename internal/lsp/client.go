@@ -399,7 +399,13 @@ func (c *Client) readLoop() {
 			if err == io.EOF {
 				return
 			}
-			log.Printf("lsp: read error: %v", err)
+			// Suppress expected errors during shutdown (e.g., closed pipe)
+			c.stateMu.RLock()
+			shuttingDown := c.state == ClientStateShuttingDown || c.state == ClientStateStopped
+			c.stateMu.RUnlock()
+			if !shuttingDown {
+				log.Printf("lsp: read error: %v", err)
+			}
 			return
 		}
 

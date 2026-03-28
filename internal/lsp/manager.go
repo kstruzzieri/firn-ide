@@ -207,11 +207,11 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 	}
 
 	// Shut down server if no more documents are open.
-	// shutdownServer handles the stopping flag and map removal atomically.
+	// shutdownServerIfEmpty re-checks under lock in case a concurrent DidOpen added a document.
 	if shouldShutdown {
 		shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer cancel()
-		m.shutdownServer(shutCtx, key)
+		m.shutdownServerIfEmpty(shutCtx, key)
 	}
 
 	return nil
@@ -372,7 +372,25 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 	return entry, nil
 }
 
-// shutdownServer gracefully shuts down and removes a server.
+// shutdownServerIfEmpty shuts down a server only if it still has no open documents.
+// Used by DidClose to guard against a concurrent DidOpen that reopened a document
+// between the DidClose unlock and this call.
+func (m *Manager) shutdownServerIfEmpty(ctx context.Context, key serverKey) {
+	m.mu.Lock()
+	entry, ok := m.servers[key]
+	if !ok || entry.stopping || len(entry.openDocs) > 0 {
+		m.mu.Unlock()
+		return
+	}
+	entry.stopping = true
+	delete(m.servers, key)
+	m.mu.Unlock()
+
+	m.doShutdown(ctx, key, entry)
+}
+
+// shutdownServer unconditionally shuts down a server.
+// Used by ShutdownAll and workspace switching.
 func (m *Manager) shutdownServer(ctx context.Context, key serverKey) {
 	m.mu.Lock()
 	entry, ok := m.servers[key]
@@ -381,13 +399,18 @@ func (m *Manager) shutdownServer(ctx context.Context, key serverKey) {
 		return
 	}
 	if entry.stopping {
-		// Another goroutine is already shutting this server down
 		m.mu.Unlock()
 		return
 	}
 	entry.stopping = true
 	delete(m.servers, key)
 	m.mu.Unlock()
+
+	m.doShutdown(ctx, key, entry)
+}
+
+// doShutdown performs the actual client shutdown and emits status events.
+func (m *Manager) doShutdown(ctx context.Context, key serverKey, entry *serverEntry) {
 
 	m.emitStatus(key.family, key.workspace, "stopping", "")
 
