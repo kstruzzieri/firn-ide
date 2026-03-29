@@ -14,11 +14,13 @@ import { useAutosave } from './hooks/useAutosave';
 import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
+import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useWorkspace } from './stores/ideStore';
 
 function App() {
   useAutosave();
   useWorkspacePersistence();
+  useLSPDocumentSync();
   useRecentWorkspaces();
   const workspace = useWorkspace();
   useRunProfilesLoader(workspace?.path);
