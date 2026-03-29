@@ -14,6 +14,18 @@ import (
 // DefaultRequestTimeout is the default timeout for LSP requests (hover, completion, definition).
 const DefaultRequestTimeout = 10 * time.Second
 
+// clientCapabilities is the static capabilities blob sent during initialization.
+// These don't change at runtime. Go code never reads them back — they're write-once for the server.
+var clientCapabilities = json.RawMessage(`{
+	"textDocument": {
+		"synchronization": {"didSave": true},
+		"completion": {"completionItem": {"snippetSupport": true, "documentationFormat": ["markdown", "plaintext"]}},
+		"hover": {"contentFormat": ["markdown", "plaintext"]},
+		"definition": {},
+		"publishDiagnostics": {"versionSupport": true}
+	}
+}`)
+
 // NotificationHandler is called when the server sends a notification.
 type NotificationHandler func(method string, params json.RawMessage)
 
@@ -71,31 +83,9 @@ func (c *Client) Initialize(ctx context.Context, rootURI string) error {
 	c.stateMu.Unlock()
 
 	params := InitializeParams{
-		ProcessID: nil, // null per LSP spec — we manage server lifecycle ourselves
-		RootURI:   rootURI,
-		Capabilities: ClientCapabilities{
-			TextDocument: &TextDocumentClientCapabilities{
-				Synchronization: &TextDocumentSyncClientCapabilities{
-					DynamicRegistration: false,
-					DidSave:             true,
-				},
-				Completion: &CompletionClientCapabilities{
-					CompletionItem: &CompletionItemClientCapabilities{
-						SnippetSupport:      true,
-						DocumentationFormat: []string{"markdown", "plaintext"},
-					},
-				},
-				Hover: &HoverClientCapabilities{
-					ContentFormat: []string{"markdown", "plaintext"},
-				},
-				Definition: &DefinitionClientCapabilities{
-					LinkSupport: false,
-				},
-				PublishDiag: &PublishDiagnosticsCapabilities{
-					VersionSupport: true,
-				},
-			},
-		},
+		ProcessID:    nil, // null per LSP spec — we manage server lifecycle ourselves
+		RootURI:      rootURI,
+		Capabilities: clientCapabilities,
 	}
 
 	var result InitializeResult

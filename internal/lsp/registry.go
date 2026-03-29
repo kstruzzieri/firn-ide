@@ -26,40 +26,40 @@ func NewRegistry() *Registry {
 	return &Registry{}
 }
 
-// extensionToLanguageID maps file extensions to LSP languageId strings.
-var extensionToLanguageID = map[string]string{
-	".ts":  "typescript",
-	".tsx": "typescriptreact",
-	".js":  "javascript",
-	".jsx": "javascriptreact",
-	".mts": "typescript",
-	".cts": "typescript",
-	".mjs": "javascript",
-	".cjs": "javascript",
+// langInfo pairs an LSP languageId with its server family.
+type langInfo struct {
+	languageID string
+	family     string
 }
 
-// extensionToFamily maps file extensions to server family keys.
-var extensionToFamily = map[string]string{
-	".ts":  "typescript",
-	".tsx": "typescript",
-	".js":  "typescript",
-	".jsx": "typescript",
-	".mts": "typescript",
-	".cts": "typescript",
-	".mjs": "typescript",
-	".cjs": "typescript",
+// extensionMap is the single source of truth for extension → language/family mapping.
+var extensionMap = map[string]langInfo{
+	".ts":  {"typescript", "typescript"},
+	".tsx": {"typescriptreact", "typescript"},
+	".js":  {"javascript", "typescript"},
+	".jsx": {"javascriptreact", "typescript"},
+	".mts": {"typescript", "typescript"},
+	".cts": {"typescript", "typescript"},
+	".mjs": {"javascript", "typescript"},
+	".cjs": {"javascript", "typescript"},
 }
 
 // LanguageIDForExtension returns the LSP languageId for the given file extension.
 // Returns empty string if the extension is not recognized.
 func (r *Registry) LanguageIDForExtension(ext string) string {
-	return extensionToLanguageID[strings.ToLower(ext)]
+	if info, ok := extensionMap[strings.ToLower(ext)]; ok {
+		return info.languageID
+	}
+	return ""
 }
 
 // FamilyForExtension returns the server family for the given file extension.
 // Returns empty string if the extension is not recognized.
 func (r *Registry) FamilyForExtension(ext string) string {
-	return extensionToFamily[strings.ToLower(ext)]
+	if info, ok := extensionMap[strings.ToLower(ext)]; ok {
+		return info.family
+	}
+	return ""
 }
 
 // ServerConfigFor returns the server configuration for a given language family

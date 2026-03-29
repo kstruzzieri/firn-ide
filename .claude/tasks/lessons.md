@@ -41,3 +41,19 @@
 **Why it was missed:** The LSP workspace sync was added late (during code review) and was inserted at the end of `LoadRunProfiles` after the profile loading, following the existing code flow. The error-early-return at line 288 was already present, so the LSP sync was unreachable on failure.
 
 **Lesson:** When coupling two subsystems (profiles and LSP) to a shared workspace state change, ask: "which of these MUST succeed for the other to proceed?" The LSP workspace root should always follow the user's workspace switch intent, regardless of whether profile detection succeeds. Independent subsystems should not gate each other's state transitions.
+
+### 6. types.go bloated with dead constants and write-only struct trees
+
+**What happened:** `types.go` defined all 25 `CompletionItemKind` constants, both `InsertTextFormat` constants, and 8 nested `ClientCapabilities` structs. None of the constants were referenced in production code — the backend passes them through as integers. The 8 capabilities structs existed solely to construct one static JSON object in `Initialize()` that never changes at runtime.
+
+**Why it was missed:** The implementation followed a "define Firn's subset of LSP types" approach and defaulted to completeness — defining every enum value in a type felt like "the right thing to do" for a protocol implementation. The distinction between "types the backend needs to read/write" (struct fields) and "constants the frontend needs to interpret" (enum values for icon mapping) wasn't recognized during design. Similarly, the capabilities blob was modeled as typed Go structs because "everything should be typed" — without asking whether Go code ever reads those types back.
+
+**Lesson:** Ask "who consumes this?" for every type and constant. If the Go backend just passes an integer through to the frontend as JSON, don't define 25 named constants in Go — the frontend will define its own TypeScript enums. If a value is write-once and never read back by Go code, a `json.RawMessage` literal is simpler and more honest than a type tree. Define types for what you deserialize and inspect, not for what you just marshal and forward.
+
+### 7. Two parallel maps in registry with identical keys
+
+**What happened:** `registry.go` had `extensionToLanguageID` and `extensionToFamily` as separate `map[string]string` variables with identical key sets. Adding a new extension required updating both maps — a maintenance hazard where they could drift.
+
+**Why it was missed:** The two lookups (`LanguageIDForExtension` and `FamilyForExtension`) were implemented as separate methods, and the natural Go pattern was one map per method. The shared key set wasn't recognized as a code smell during implementation.
+
+**Lesson:** When two maps share identical keys, merge them into one map with a struct value. One map, one lookup, no drift risk.

@@ -91,8 +91,8 @@ func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 		return respondWithResult(msg.ID, CompletionList{
 			IsIncomplete: false,
 			Items: []CompletionItem{
-				{Label: "mockFunction", Kind: CompletionItemKindFunction, Detail: "mock detail"},
-				{Label: "mockVariable", Kind: CompletionItemKindVariable, Detail: "mock var"},
+				{Label: "mockFunction", Kind: 3, Detail: "mock detail"},  // Function
+				{Label: "mockVariable", Kind: 6, Detail: "mock var"},     // Variable
 			},
 		})
 

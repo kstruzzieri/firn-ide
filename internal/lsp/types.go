@@ -60,7 +60,7 @@ const (
 type Diagnostic struct {
 	Range    Range              `json:"range"`
 	Severity DiagnosticSeverity `json:"severity,omitempty"`
-	Code     json.RawMessage    `json:"code,omitempty"`
+	Code     json.RawMessage    `json:"code,omitempty"` // integer or string per LSP spec
 	Source   string             `json:"source,omitempty"`
 	Message  string             `json:"message"`
 }
@@ -76,9 +76,8 @@ type PublishDiagnosticsParams struct {
 type CompletionTriggerKind int
 
 const (
-	CompletionTriggerInvoked                  CompletionTriggerKind = 1
-	CompletionTriggerCharacter                CompletionTriggerKind = 2
-	CompletionTriggerForIncompleteCompletions CompletionTriggerKind = 3
+	CompletionTriggerInvoked   CompletionTriggerKind = 1
+	CompletionTriggerCharacter CompletionTriggerKind = 2
 )
 
 // CompletionContext contains additional information about the context in which
@@ -89,44 +88,12 @@ type CompletionContext struct {
 }
 
 // CompletionItemKind defines the kind of a completion entry.
+// The backend passes these through as integers; the frontend maps them to icons/styles.
 type CompletionItemKind int
 
-const (
-	CompletionItemKindText          CompletionItemKind = 1
-	CompletionItemKindMethod        CompletionItemKind = 2
-	CompletionItemKindFunction      CompletionItemKind = 3
-	CompletionItemKindConstructor   CompletionItemKind = 4
-	CompletionItemKindField         CompletionItemKind = 5
-	CompletionItemKindVariable      CompletionItemKind = 6
-	CompletionItemKindClass         CompletionItemKind = 7
-	CompletionItemKindInterface     CompletionItemKind = 8
-	CompletionItemKindModule        CompletionItemKind = 9
-	CompletionItemKindProperty      CompletionItemKind = 10
-	CompletionItemKindUnit          CompletionItemKind = 11
-	CompletionItemKindValue         CompletionItemKind = 12
-	CompletionItemKindEnum          CompletionItemKind = 13
-	CompletionItemKindKeyword       CompletionItemKind = 14
-	CompletionItemKindSnippet       CompletionItemKind = 15
-	CompletionItemKindColor         CompletionItemKind = 16
-	CompletionItemKindFile          CompletionItemKind = 17
-	CompletionItemKindReference     CompletionItemKind = 18
-	CompletionItemKindFolder        CompletionItemKind = 19
-	CompletionItemKindEnumMember    CompletionItemKind = 20
-	CompletionItemKindConstant      CompletionItemKind = 21
-	CompletionItemKindStruct        CompletionItemKind = 22
-	CompletionItemKindEvent         CompletionItemKind = 23
-	CompletionItemKindOperator      CompletionItemKind = 24
-	CompletionItemKindTypeParameter CompletionItemKind = 25
-)
-
-// InsertTextFormat defines whether the insert text is to be interpreted as
-// plain text or a snippet.
+// InsertTextFormat defines whether the insert text is plain text or a snippet.
+// The backend passes these through as integers.
 type InsertTextFormat int
-
-const (
-	InsertTextFormatPlainText InsertTextFormat = 1
-	InsertTextFormatSnippet   InsertTextFormat = 2
-)
 
 // CompletionItem represents a completion suggestion.
 type CompletionItem struct {
@@ -167,57 +134,11 @@ type Hover struct {
 
 // --- Initialize types ---
 
-// ClientCapabilities are sent from the client to the server during initialization.
-type ClientCapabilities struct {
-	TextDocument *TextDocumentClientCapabilities `json:"textDocument,omitempty"`
-}
-
-// TextDocumentClientCapabilities define capabilities the client supports for text documents.
-type TextDocumentClientCapabilities struct {
-	Synchronization *TextDocumentSyncClientCapabilities `json:"synchronization,omitempty"`
-	Completion      *CompletionClientCapabilities       `json:"completion,omitempty"`
-	Hover           *HoverClientCapabilities            `json:"hover,omitempty"`
-	Definition      *DefinitionClientCapabilities       `json:"definition,omitempty"`
-	PublishDiag     *PublishDiagnosticsCapabilities      `json:"publishDiagnostics,omitempty"`
-}
-
-// TextDocumentSyncClientCapabilities define synchronization capabilities.
-type TextDocumentSyncClientCapabilities struct {
-	DynamicRegistration bool `json:"dynamicRegistration,omitempty"`
-	DidSave             bool `json:"didSave,omitempty"`
-}
-
-// CompletionClientCapabilities define completion capabilities.
-type CompletionClientCapabilities struct {
-	CompletionItem *CompletionItemClientCapabilities `json:"completionItem,omitempty"`
-}
-
-// CompletionItemClientCapabilities describe the client's completion item support.
-type CompletionItemClientCapabilities struct {
-	SnippetSupport      bool     `json:"snippetSupport,omitempty"`
-	DocumentationFormat []string `json:"documentationFormat,omitempty"`
-}
-
-// HoverClientCapabilities define hover capabilities.
-type HoverClientCapabilities struct {
-	ContentFormat []string `json:"contentFormat,omitempty"`
-}
-
-// DefinitionClientCapabilities define definition capabilities.
-type DefinitionClientCapabilities struct {
-	LinkSupport bool `json:"linkSupport,omitempty"`
-}
-
-// PublishDiagnosticsCapabilities define diagnostics capabilities.
-type PublishDiagnosticsCapabilities struct {
-	VersionSupport bool `json:"versionSupport,omitempty"`
-}
-
 // InitializeParams are sent as the first request from client to server.
 type InitializeParams struct {
-	ProcessID    *int               `json:"processId"`
-	RootURI      string             `json:"rootUri"`
-	Capabilities ClientCapabilities `json:"capabilities"`
+	ProcessID    *int            `json:"processId"`
+	RootURI      string          `json:"rootUri"`
+	Capabilities json.RawMessage `json:"capabilities"`
 }
 
 // InitializeResult is the server's response to the initialize request.
@@ -237,9 +158,7 @@ type ServerCapabilities struct {
 type TextDocumentSyncKind int
 
 const (
-	TextDocumentSyncNone        TextDocumentSyncKind = 0
-	TextDocumentSyncFull        TextDocumentSyncKind = 1
-	TextDocumentSyncIncremental TextDocumentSyncKind = 2
+	TextDocumentSyncFull TextDocumentSyncKind = 1
 )
 
 // TextDocumentSyncOptions describe how text document syncing works.
