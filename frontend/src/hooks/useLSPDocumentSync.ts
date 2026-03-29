@@ -33,10 +33,6 @@ export function useLSPDocumentSync() {
     return next;
   }, []);
 
-  const getVersion = useCallback((path: string): number => {
-    return versions.current.get(path) ?? 0;
-  }, []);
-
   // --- didOpen ---
   const sendDidOpen = useCallback(
     (file: EditorFile) => {
@@ -143,11 +139,11 @@ export function useLSPDocumentSync() {
     openedPaths.current.clear();
   }, []);
 
-  // --- Watch store for file opens ---
+  // --- Watch store for file lifecycle events (single subscription) ---
   useEffect(() => {
     let prevOpenFiles: EditorFile[] = useIDEStore.getState().openFiles;
 
-    return useIDEStore.subscribe((state) => {
+    return useIDEStore.subscribe((state, prevState) => {
       const currentFiles = state.openFiles;
 
       // Detect newly opened files
@@ -166,34 +162,25 @@ export function useLSPDocumentSync() {
         }
       }
 
-      prevOpenFiles = currentFiles;
-    });
-  }, [sendDidOpen, sendDidClose]);
-
-  // --- Watch store for content changes ---
-  useEffect(() => {
-    return useIDEStore.subscribe((state, prevState) => {
-      for (const file of state.openFiles) {
+      // Detect content changes and save completions (only for files that existed before)
+      for (const file of currentFiles) {
         const prevFile = prevState.openFiles.find((f) => f.id === file.id);
-        if (prevFile && file.content !== prevFile.content && file.isModified) {
+        if (!prevFile) continue;
+
+        // Content changed while modified = didChange
+        if (file.content !== prevFile.content && file.isModified) {
           sendDidChange(file.path, file.content);
         }
-      }
-    });
-  }, [sendDidChange]);
 
-  // --- Watch store for save completions ---
-  useEffect(() => {
-    return useIDEStore.subscribe((state, prevState) => {
-      for (const file of state.openFiles) {
-        const prevFile = prevState.openFiles.find((f) => f.id === file.id);
-        // Detect isModified transition from true to false = save completed
-        if (prevFile && prevFile.isModified && !file.isModified) {
+        // isModified went true→false = save completed
+        if (prevFile.isModified && !file.isModified) {
           sendDidSave(file.path, file.content);
         }
       }
+
+      prevOpenFiles = currentFiles;
     });
-  }, [sendDidSave]);
+  }, [sendDidOpen, sendDidClose, sendDidChange, sendDidSave]);
 
   // --- Watch for workspace switches ---
   useEffect(() => {
@@ -218,5 +205,6 @@ export function useLSPDocumentSync() {
     };
   }, []);
 
-  return { sendDidOpen, sendDidChange, sendDidSave, sendDidClose, flushDidChange, getVersion };
+  // All lifecycle events are driven by store subscriptions above.
+  // No return value needed — this hook is fire-and-forget like useAutosave.
 }
