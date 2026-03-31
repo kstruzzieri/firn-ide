@@ -358,7 +358,7 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 	// Create multiple TS files
 	files := []string{"a.ts", "b.tsx", "c.js"}
 	for _, f := range files {
-		os.WriteFile(filepath.Join(tmpDir, f), []byte("const x = 1;"), 0644)
+		_ = os.WriteFile(filepath.Join(tmpDir, f), []byte("const x = 1;"), 0644)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

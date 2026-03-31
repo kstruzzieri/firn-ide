@@ -60,7 +60,7 @@ func TestCodec_MultipleMessages(t *testing.T) {
 			t.Fatalf("ReadMessage %d: %v", i, err)
 		}
 		var id int
-		json.Unmarshal(got.ID, &id)
+		_ = json.Unmarshal(got.ID, &id)
 		if id != i {
 			t.Errorf("message %d: ID = %d, want %d", i, id, i)
 		}
@@ -79,7 +79,7 @@ func TestCodec_ContentLengthFraming(t *testing.T) {
 	}
 
 	var id int
-	json.Unmarshal(msg.ID, &id)
+	_ = json.Unmarshal(msg.ID, &id)
 	if id != 42 {
 		t.Errorf("ID = %d, want 42", id)
 	}

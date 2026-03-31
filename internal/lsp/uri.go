@@ -25,9 +25,14 @@ func FileToURI(path string) (string, error) {
 		path = "/" + strings.ToLower(path[:1]) + path[1:]
 	}
 
-	// Percent-encode path segments but preserve slashes
+	// Percent-encode path segments but preserve slashes and drive letters.
+	// Drive segments like "c:" must not be encoded (colon is valid in the
+	// authority-relative path of a file URI per RFC 8089).
 	segments := strings.Split(path, "/")
 	for i, seg := range segments {
+		if len(seg) == 2 && seg[1] == ':' {
+			continue // drive letter — leave as-is
+		}
 		segments[i] = url.PathEscape(seg)
 	}
 

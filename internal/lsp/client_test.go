@@ -132,7 +132,7 @@ func TestClient_Completion(t *testing.T) {
 		t.Errorf("first completion label = %q, want %q", list.Items[0].Label, "mockFunction")
 	}
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
 
 func TestClient_DidOpenAndDiagnostics(t *testing.T) {
@@ -190,7 +190,7 @@ func TestClient_DidOpenAndDiagnostics(t *testing.T) {
 		}
 	}
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
 
 func TestClient_DidChangeThenClose(t *testing.T) {
@@ -223,7 +223,7 @@ func TestClient_DidChangeThenClose(t *testing.T) {
 		t.Fatalf("DidClose: %v", err)
 	}
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
 
 func TestClient_RequestTimeout(t *testing.T) {
