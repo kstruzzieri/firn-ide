@@ -358,7 +358,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 		m.mu.Unlock()
 		shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer cancel()
-		client.Shutdown(shutCtx)
+		_ = client.Shutdown(shutCtx)
 		return existing, nil
 	}
 	m.servers[key] = entry

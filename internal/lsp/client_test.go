@@ -246,5 +246,5 @@ func TestClient_RequestTimeout(t *testing.T) {
 	// The important thing is it doesn't hang or panic.
 	_, _ = client.Hover(shortCtx, "file:///tmp/test/main.ts", 0, 0)
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
