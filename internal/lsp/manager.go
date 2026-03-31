@@ -42,6 +42,10 @@ type Manager struct {
 
 	// workspaceRoot is the active workspace root path (not URI).
 	workspaceRoot string
+
+	// stopped is set by ShutdownAll to prevent crash-recovery restarts
+	// from resurrecting servers after intentional teardown.
+	stopped bool
 }
 
 // serverKey identifies a unique server instance by language family and workspace.
@@ -139,6 +143,8 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 }
 
 // DidChange forwards content changes to the appropriate server.
+// Returns early if the document has not been opened via DidOpen (e.g., during
+// the gap between crash recovery and frontend reconnect).
 func (m *Manager) DidChange(path string, version int, changes []TextDocumentContentChangeEvent) error {
 	entry, uri := m.serverForPath(path)
 	if entry == nil {
@@ -146,20 +152,32 @@ func (m *Manager) DidChange(path string, version int, changes []TextDocumentCont
 	}
 
 	m.mu.Lock()
-	if ds, ok := entry.openDocs[uri]; ok {
-		ds.version = version
+	ds, ok := entry.openDocs[uri]
+	if !ok {
+		m.mu.Unlock()
+		return nil // document not tracked — skip to avoid LSP sequencing violation
 	}
+	ds.version = version
 	m.mu.Unlock()
 
 	return entry.client.DidChange(uri, version, changes)
 }
 
 // DidSave forwards save notification to the appropriate server.
+// Returns early if the document has not been opened via DidOpen.
 func (m *Manager) DidSave(path string) error {
 	entry, uri := m.serverForPath(path)
 	if entry == nil {
 		return nil
 	}
+
+	m.mu.Lock()
+	_, ok := entry.openDocs[uri]
+	m.mu.Unlock()
+	if !ok {
+		return nil // document not tracked — skip
+	}
+
 	return entry.client.DidSave(uri)
 }
 
@@ -277,6 +295,7 @@ func (m *Manager) GetStatus() []ServerStatus {
 // Used during workspace switches and app close.
 func (m *Manager) ShutdownAll(timeout time.Duration) {
 	m.mu.Lock()
+	m.stopped = true
 	keys := make([]serverKey, 0, len(m.servers))
 	for key := range m.servers {
 		keys = append(keys, key)
@@ -469,6 +488,17 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 		fmt.Sprintf("server crashed, restarting in %v (attempt %d/%d)", backoff, crashCount, maxCrashRetries))
 
 	time.Sleep(backoff)
+
+	// After backoff, verify the manager hasn't been shut down and the workspace
+	// hasn't changed. Without this check, ShutdownAll or a workspace switch during
+	// the sleep would still result in a stray server being resurrected.
+	m.mu.Lock()
+	if m.stopped || m.workspaceRoot != key.workspace {
+		m.mu.Unlock()
+		log.Printf("lsp: skipping %s restart — manager stopped or workspace changed", key.family)
+		return
+	}
+	m.mu.Unlock()
 
 	// Restart
 	ctx, cancel := context.WithTimeout(context.Background(), crashRestartTimeout)
