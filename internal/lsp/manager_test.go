@@ -190,7 +190,7 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 
 	// Use Manager.DidOpen (not direct client call)
 	tsFile := filepath.Join(tmpDir, "main.ts")
-	os.WriteFile(tsFile, []byte("const x: number = 1;"), 0644)
+	_ = os.WriteFile(tsFile, []byte("const x: number = 1;"), 0644)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -254,7 +254,7 @@ func TestManager_ZeroDocTeardown(t *testing.T) {
 	tmpDir := key.workspace
 
 	tsFile := filepath.Join(tmpDir, "main.ts")
-	os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
+	_ = os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -295,7 +295,7 @@ func TestManager_RefCounting(t *testing.T) {
 	tmpDir := key.workspace
 
 	tsFile := filepath.Join(tmpDir, "main.ts")
-	os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
+	_ = os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -371,7 +371,7 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 		go func(filename string) {
 			defer wg.Done()
 			path := filepath.Join(tmpDir, filename)
-			mgr.DidOpen(ctx, path, "", 1, "const x = 1;")
+			_ = mgr.DidOpen(ctx, path, "", 1, "const x = 1;")
 		}(f)
 	}
 	wg.Wait()
@@ -391,7 +391,7 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 		go func(filename string) {
 			defer wg.Done()
 			path := filepath.Join(tmpDir, filename)
-			mgr.DidChange(path, 2, []TextDocumentContentChangeEvent{
+			_ = mgr.DidChange(path, 2, []TextDocumentContentChangeEvent{
 				{Text: "const x = 2;"},
 			})
 		}(f)
@@ -436,20 +436,23 @@ func TestManager_DiagnosticsRouting(t *testing.T) {
 			raw, ok := data[0].(json.RawMessage)
 			if ok {
 				var d PublishDiagnosticsParams
-				json.Unmarshal(raw, &d)
-				diagnostics = append(diagnostics, d)
+				if err := json.Unmarshal(raw, &d); err == nil {
+					diagnostics = append(diagnostics, d)
+				}
 			}
 		}
 	}
 
 	tsFile := filepath.Join(tmpDir, "main.ts")
-	os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
+	_ = os.WriteFile(tsFile, []byte("const x = 1;"), 0644)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Open via Manager API
-	mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x = 1;")
+	if err := mgr.DidOpen(ctx, tsFile, "typescript", 1, "const x = 1;"); err != nil {
+		t.Fatalf("DidOpen: %v", err)
+	}
 	uri, _ := FileToURI(tsFile)
 
 	// Wait for diagnostics

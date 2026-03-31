@@ -81,7 +81,7 @@ func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 
 	case "textDocument/definition":
 		var params TextDocumentPositionParams
-		json.Unmarshal(msg.Params, &params)
+		_ = json.Unmarshal(msg.Params, &params)
 		return respondWithResult(msg.ID, Location{
 			URI:   params.TextDocument.URI,
 			Range: Range{Start: Position{Line: 0, Character: 0}, End: Position{Line: 0, Character: 10}},

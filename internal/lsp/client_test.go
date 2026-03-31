@@ -57,7 +57,7 @@ func TestClient_DoubleInitialize(t *testing.T) {
 		t.Error("expected error on double initialize")
 	}
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
 
 func TestClient_Hover(t *testing.T) {
@@ -82,7 +82,7 @@ func TestClient_Hover(t *testing.T) {
 		t.Error("Hover contents is nil")
 	}
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
 
 func TestClient_Definition(t *testing.T) {
@@ -107,7 +107,7 @@ func TestClient_Definition(t *testing.T) {
 		t.Errorf("Definition URI = %q, want %q", locs[0].URI, "file:///tmp/test/main.ts")
 	}
 
-	client.Shutdown(ctx)
+	_ = client.Shutdown(ctx)
 }
 
 func TestClient_Completion(t *testing.T) {
@@ -146,7 +146,9 @@ func TestClient_DidOpenAndDiagnostics(t *testing.T) {
 			diagMu.Lock()
 			defer diagMu.Unlock()
 			var d PublishDiagnosticsParams
-			json.Unmarshal(params, &d)
+			if err := json.Unmarshal(params, &d); err != nil {
+				return
+			}
 			receivedDiag = &d
 		}
 	})

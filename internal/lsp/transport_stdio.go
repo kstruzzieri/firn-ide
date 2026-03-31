@@ -110,7 +110,7 @@ func (t *StdioTransport) Close() error {
 		select {
 		case <-t.done:
 		case <-time.After(processExitTimeout):
-			t.cmd.Process.Kill()
+			_ = t.cmd.Process.Kill()
 			<-t.done
 		}
 
