@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { useIDEStore } from '../stores/ideStore';
+import { useIDEStore, type EditorFile } from '../stores/ideStore';
 import { WriteFile } from '../../wailsjs/go/main/App';
 import { isMac } from '../utils/platform';
 
@@ -55,17 +55,44 @@ export function useAutosave() {
     [saveFile]
   );
 
+  // Save a file directly from captured data (for files about to leave openFiles)
+  const saveFileData = useCallback(async (file: EditorFile) => {
+    if (!file.isModified) return;
+    try {
+      await WriteFile(file.path, file.content, file.encoding, file.lineEndings, false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      useIDEStore.getState().showToast(`Failed to save ${file.name}: ${message}`, 'error');
+    }
+  }, []);
+
   // Watch for content changes (isModified transitions to true)
+  // Also save dirty files that are being closed (removed from openFiles)
   useEffect(() => {
     return useIDEStore.subscribe((state, prevState) => {
+      // Schedule saves for newly modified files
       state.openFiles.forEach((file) => {
         const prevFile = prevState.openFiles.find((f) => f.id === file.id);
         if (file.isModified && (!prevFile || !prevFile.isModified)) {
           scheduleSave(file.id);
         }
       });
+
+      // Save dirty files that just left openFiles (closed tab)
+      for (const prevFile of prevState.openFiles) {
+        const stillOpen = state.openFiles.some((f) => f.id === prevFile.id);
+        if (!stillOpen && prevFile.isModified) {
+          // Cancel any pending debounce timer — we'll save directly with captured content
+          const timer = debounceTimers.current.get(prevFile.id);
+          if (timer) {
+            clearTimeout(timer);
+            debounceTimers.current.delete(prevFile.id);
+          }
+          saveFileData(prevFile);
+        }
+      }
     });
-  }, [scheduleSave]);
+  }, [scheduleSave, saveFileData]);
 
   // Save outgoing tab on tab switch
   useEffect(() => {

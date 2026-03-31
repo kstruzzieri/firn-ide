@@ -115,4 +115,32 @@ describe('useAutosave', () => {
 
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
+
+  it('should save dirty file when tab is closed before debounce fires', async () => {
+    openTestFile();
+    renderHook(() => useAutosave());
+
+    // Modify file content (triggers debounce timer)
+    act(() => {
+      useIDEStore.getState().updateFileContent('/test/file.ts', 'unsaved changes');
+    });
+
+    // Close the tab before the debounce fires — the file leaves openFiles while dirty
+    act(() => {
+      useIDEStore.getState().closeFile('/test/file.ts');
+    });
+
+    // The save should happen immediately using the captured content from before removal
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      '/test/file.ts',
+      'unsaved changes',
+      'utf-8',
+      'LF',
+      false
+    );
+  });
 });

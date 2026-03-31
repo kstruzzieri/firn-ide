@@ -57,3 +57,43 @@
 **Why it was missed:** The two lookups (`LanguageIDForExtension` and `FamilyForExtension`) were implemented as separate methods, and the natural Go pattern was one map per method. The shared key set wasn't recognized as a code smell during implementation.
 
 **Lesson:** When two maps share identical keys, merge them into one map with a struct value. One map, one lookup, no drift risk.
+
+## Post-Phase 1 Review (2026-03-29)
+
+Issues surfaced by external code review (Codex) that were missed during implementation and self-review.
+
+### 8. Stray `type` token left in filereader.go broke Go compilation
+
+**What happened:** An uncommitted bare `type` keyword at line 28 of `internal/filesystem/filereader.go` made `go build` and `go test ./...` fail. The worktree was in a non-compilable state.
+
+**Why it was missed:** The token was introduced during an edit session that removed or refactored a type definition but left a fragment behind. The working tree was never re-validated with `go build` after the edit — the cached test results from before the edit masked the break. CI wasn't run against the local working tree, only against clean HEAD.
+
+**Lesson:** After any edit to a Go file, run `go build ./...` before considering the change complete. Don't trust cached test results — they reflect the state at time of caching, not the current working tree. A "test passes" result from cache is not the same as "code compiles now."
+
+### 9. Frontend never subscribed to lsp:reconnect after server crash recovery
+
+**What happened:** The backend's crash recovery goroutine emits `lsp:reconnect` with the list of documents the restarted server needs. But the frontend's `useLSPDocumentSync` hook never subscribed to any Wails runtime events — it only tracked local `openedPaths` state. After a server restart, the new server had no document state, yet later `didChange`/`didSave` calls bypassed the `openedPaths` guard (the paths were still marked as "opened") and operated on an unopened document.
+
+**Why it was missed:** The backend and frontend were implemented as separate work items. The backend crash recovery was fully implemented and tested in Go (including the `lsp:reconnect` event emission and verification). The frontend hook was built to handle the "normal" document lifecycle — open, change, save, close — without considering server-side restarts. The implicit assumption was "the server is always there once started." There was no test or checklist item that validated the full round-trip: backend crashes → emits event → frontend receives → re-opens documents.
+
+**Lesson:** When two layers communicate via events, the subscription must be implemented and tested as part of the same work item as the emission. An event without a consumer is dead code. Add an integration checklist: "for each event the backend emits, where does the frontend subscribe? Is there a test that fires the event and asserts the frontend reacts?"
+
+### 10. Closing a dirty file dropped unsaved edits (autosave race + LSP flush)
+
+**What happened:** Two independent bugs conspired:
+1. **Autosave race:** `closeFile()` in the store removed the file from `openFiles` immediately. The autosave hook's `saveFile()` looked up the file by ID in `openFiles` — but the file was already gone. The pending debounce timer fired into the void.
+2. **LSP flush:** `sendDidClose` cancelled pending debounced `didChange` timers instead of flushing them. The last buffer state was never sent to the LSP server before the document was closed.
+
+**Why it was missed:** The autosave and LSP document sync hooks were implemented independently, each watching the Zustand store for state changes. Neither hook considered what happens when the store mutation (removing the file) happens *before* their cleanup logic runs. The subscription pattern `useIDEStore.subscribe((state, prevState) => ...)` provides both states, but the autosave hook only used `state` (which no longer has the file), not `prevState` (which still does). For the LSP hook, `sendDidClose` tried to look up the file content from `openFiles` for flushing, but the store had already removed it.
+
+The test suite tested "close cancels pending didChange" as the *desired* behavior, not a bug — the test asserted `expect(mockDidChange).not.toHaveBeenCalled()` after close. This enshrined the data-loss path as correct.
+
+**Lesson:** When a store mutation removes an entity, any hook that needs to clean up based on that entity's data must capture the data *before* or *during* the mutation — not after. The Zustand subscription provides `prevState` for exactly this purpose. For the autosave hook, watch for files leaving `openFiles` in `prevState` and save them using the captured previous data. For LSP, pass the last known content as a parameter to the close handler rather than looking it up from the (already-mutated) store. Tests should validate the *invariant* ("no data loss on close"), not the *mechanism* ("cancel pending timers").
+
+### 11. useFileWatcher hook existed but had no callers
+
+**What happened:** `useFileWatcher` was fully implemented with proper event subscription and cleanup, but was never called from any component. The `file:changed` event path and reactive run-profile reload existed only on paper.
+
+**Why it was missed:** The hook was created as part of a "file system infrastructure" pass, with the assumption it would be wired up during a later "integration" pass. That integration pass never happened — subsequent work moved on to LSP and run profiles. The hook wasn't in any checklist or test suite, so its unused state was invisible.
+
+**Lesson:** A hook without a call site is dead code. Wire up the consumer in the same PR that creates the hook, even if the consumer is minimal. If the integration genuinely can't happen yet, add a failing test or TODO that blocks the PR from being considered complete.

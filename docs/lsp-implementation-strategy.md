@@ -1,6 +1,6 @@
 # Firn IDE LSP Implementation Strategy
 
-**Date:** 2026-03-26 (updated 2026-03-27)
+**Date:** 2026-03-26 (updated 2026-03-28)
 **Scope:** Epic #74, tickets #19, #73, #20, #21, #22
 **Goal:** Turn Firn from a syntax-colored editor into an IDE with real language intelligence, starting with a production-ready TypeScript vertical slice and a language-agnostic backend that can immediately support Go and Python follow-ons.
 
@@ -166,7 +166,7 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 
 - Architecture review on lifecycle policy and TypeScript server choice
 
-## Phase 1: Backend LSP foundation (`#19A`, `#19B`)
+## Phase 1: Backend LSP foundation (`#19`)
 
 **Objective:** Land a reusable LSP core in Go without UI coupling.
 
@@ -179,7 +179,7 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 - Track open documents per workspace/language with version numbers (frontend is source of truth for versions, backend passes through and uses them to drop stale responses)
 - Implement graceful shutdown when open-document count reaches zero
 - Implement app-level LSP shutdown in `beforeClose` (same pattern as `executor.StopAll`)
-- Restart cleanly after process crash
+- Restart cleanly after process crash with exponential backoff (e.g., 1s → 2s → 4s, cap at 30s, max 5 retries before surfacing a persistent error to the user)
 - Normalize file URIs across macOS, Linux, and Windows
 - Resolve workspace root internally from active workspace context (consistent with `LoadRunProfiles`)
 - Add request timeout and cancellation plumbing for hover/completion/definition
@@ -190,8 +190,9 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 - Request/response correlation and timeout behavior
 - stdio transport lifecycle (start, communicate, graceful shutdown, crash)
 - URI/path normalization on Unix and Windows path formats
-- Server restart after unexpected process exit
+- Server restart after unexpected process exit (including backoff behavior and max-retry cap)
 - Document open/close reference counting and server teardown at zero
+- Concurrent multi-file scenarios (open 3+ files, edit two simultaneously, close one — verify ref counting and diagnostics stay correct per-file)
 
 **Acceptance criteria:**
 
@@ -210,7 +211,7 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 
 - Code review focused on race conditions, shutdown safety, and cross-platform path behavior
 
-## Phase 2: Frontend document sync (`#19C`)
+## Phase 2: Frontend document sync (`#73`)
 
 **Objective:** Make the editor speak LSP reliably.
 
@@ -218,7 +219,7 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 
 - Track per-file document version numbers
 - Send `didOpen` when a file first becomes an editor document
-- Send debounced `didChange` for active edits
+- Send debounced `didChange` for active edits (default 150ms; tunable later if needed)
 - Send `didSave` after successful autosave/manual save
 - Send `didClose` when a tab closes or a workspace switch unloads the document
 - Re-open persisted editor tabs during workspace restore
@@ -254,10 +255,12 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 
 - Detect TypeScript/JavaScript projects by nearest `tsconfig.json`, `jsconfig.json`, or `package.json`
 - Resolve server binaries in this order:
-  1. workspace-local install
+  1. workspace-local install (`node_modules/.bin/typescript-language-server`)
   2. system `PATH`
+- If the project has a local TypeScript install but no local `typescript-language-server`, fall back to system PATH for the server while still using the local `tsserver` lib (the language server's `--tsserver-path` flag handles this)
 - Launch `typescript-language-server --stdio`
 - Treat `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs` as the same server family
+- Map file extensions to correct LSP `languageId` strings in `registry.go`: `.ts` → `typescript`, `.tsx` → `typescriptreact`, `.js` → `javascript`, `.jsx` → `javascriptreact`, `.mts`/`.cts` → `typescript`, `.mjs`/`.cjs` → `javascript`
 
 **Feature delivery in this phase:**
 
@@ -326,7 +329,7 @@ Keep only the aggregate counts needed by existing UI in `ideStore` if that reduc
 - Add a real CodeMirror completion source backed by `LSPComplete`
 - Map LSP completion kinds to icons/styles
 - Show completion documentation/details in the popup
-- Support insert text vs snippet insertion correctly
+- Support insert text and snippet insertion — for v1, support `$0` (final cursor position) and `${n:placeholder}` tabstops via CodeMirror's snippet API; full nested snippet grammar is a follow-on
 - Keep `Tab` and `Enter` behavior aligned with current editor expectations
 - **Coordinate with the existing `autocompletion()` extension** in `extensions.ts` — the LSP source should replace or integrate with the default CodeMirror autocomplete to avoid double-completion popups
 
@@ -432,8 +435,9 @@ Every phase should be verified with automated tests plus manual smoke coverage.
 - Request/response correlation and timeout behavior
 - stdio transport lifecycle (start, communicate, graceful shutdown, crash detection)
 - URI/path normalization on Unix and Windows path formats
-- Server restart after unexpected process exit
+- Server restart after unexpected process exit (including backoff and max-retry behavior)
 - Document open/close reference counting and server teardown at zero
+- Concurrent multi-file editing (open 3+ files, edit two simultaneously, close one — verify ref counting and per-file diagnostics correctness)
 
 ### Frontend tests
 
@@ -507,7 +511,7 @@ Every phase should be verified with automated tests plus manual smoke coverage.
 
 ## Bottom Line
 
-> **Updated 2026-03-27:** All identified gaps have been resolved in the tickets and this document. The milestone is implementation-ready.
+> **Updated 2026-03-28:** All identified gaps have been resolved in the tickets and this document. The milestone is implementation-ready.
 
 The critical fixes that were applied:
 
@@ -520,5 +524,12 @@ The critical fixes that were applied:
 - ✅ Workspace root resolution is backend-internal across all tickets
 - ✅ TCP transport deferred; transport interface makes it trivial to add later
 - ✅ CodeMirror autocompletion integration explicitly addressed in #22
+- ✅ Phase numbering aligned to ticket numbers (#19 → #73 → #20 → #21 → #22)
+- ✅ Crash recovery specifies exponential backoff strategy and max-retry cap
+- ✅ `didChange` debounce default pinned at 150ms
+- ✅ `languageId` mapping specified per file extension in `registry.go`
+- ✅ Binary resolution clarified: workspace-local `node_modules/.bin/`, system PATH fallback, `--tsserver-path` for mixed installs
+- ✅ Snippet support scoped for v1: `$0` and `${n:placeholder}` tabstops, full grammar deferred
+- ✅ Concurrent multi-file test scenarios added to both Phase 1 tests and verification matrix
 
 If Firn follows this sequence, Milestone 5 will produce a real IDE foundation instead of a one-off autocomplete patch.

@@ -8,6 +8,8 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^\\.\\./\\.\\./\\.\\./wailsjs/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
     '^\\.\\./\\.\\./wailsjs/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '^\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '^\\.\\./\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
   },
   transform: {
     '^.+\\.tsx?$': [
