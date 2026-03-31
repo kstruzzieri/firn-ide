@@ -454,19 +454,16 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
 
   // Clamp menu position to viewport on mount via callback ref.
   // The context menu remounts each time it opens, so this runs with fresh x/y.
-  const clampRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      const rect = node.getBoundingClientRect();
-      if (rect.right > window.innerWidth) {
-        node.style.left = `${window.innerWidth - rect.width - 4}px`;
-      }
-      if (rect.bottom > window.innerHeight) {
-        node.style.top = `${window.innerHeight - rect.height - 4}px`;
-      }
-    },
-    [x, y]
-  );
+  const clampRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      node.style.left = `${window.innerWidth - rect.width - 4}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+      node.style.top = `${window.innerHeight - rect.height - 4}px`;
+    }
+  }, []);
 
   return (
     <>

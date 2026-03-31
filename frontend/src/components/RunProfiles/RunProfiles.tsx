@@ -82,6 +82,7 @@ export function RunProfiles() {
       running.sort((a, b) => a.eta - b.eta);
       return [...running.map((r) => r.profile), ...rest];
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- etaTick forces re-sort when ETA estimates update
   }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
 
   const savedProfiles = useMemo(

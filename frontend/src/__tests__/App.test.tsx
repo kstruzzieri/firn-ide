@@ -67,14 +67,18 @@ describe('App Component', () => {
     jest.useRealTimers();
   });
 
-  it('should render without crashing', () => {
-    render(<App />);
+  it('should render without crashing', async () => {
+    await act(async () => {
+      render(<App />);
+    });
     // The app should render the IDE shell
     expect(document.body).toBeInTheDocument();
   });
 
-  it('should render the Firn IDE header', () => {
-    render(<App />);
+  it('should render the Firn IDE header', async () => {
+    await act(async () => {
+      render(<App />);
+    });
     // Look for the app name in the header
     expect(screen.getByText('Firn')).toBeInTheDocument();
   });
@@ -90,7 +94,9 @@ describe('App Component', () => {
         { name: 'new.ts', path: '/test/workspace/new.ts', isDir: false },
       ]);
 
-      render(<App />);
+      await act(async () => {
+        render(<App />);
+      });
 
       const watcherCallback = mockUseFileWatcher.mock.calls[0]?.[1] as
         | ((event: FileEvent) => void)
