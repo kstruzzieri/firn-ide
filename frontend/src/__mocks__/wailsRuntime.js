@@ -5,6 +5,7 @@ module.exports = {
   EventsOff: jest.fn(),
   EventsOffAll: jest.fn(),
   EventsEmit: jest.fn(),
+  WindowSetTitle: jest.fn(),
   LogPrint: jest.fn(),
   LogTrace: jest.fn(),
   LogDebug: jest.fn(),

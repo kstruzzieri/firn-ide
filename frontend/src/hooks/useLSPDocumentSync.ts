@@ -1,10 +1,25 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
 import { LSPDidOpen, LSPDidChange, LSPDidSave, LSPDidClose } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { lsp } from '../../wailsjs/go/models';
 import { languageIdForFile } from '../utils/lspLanguageId';
 
 const DIDCHANGE_DEBOUNCE_MS = 150;
+
+function filePathToURI(path: string): string {
+  let normalized = path.replace(/\\/g, '/');
+
+  // Mirror the backend's Windows URI normalization: lowercase drive letter
+  // and add the extra leading slash required by file:///c:/...
+  if (/^[A-Za-z]:\//.test(normalized)) {
+    normalized = `/${normalized[0].toLowerCase()}${normalized.slice(1)}`;
+  }
+
+  const uri = new URL('file://');
+  uri.pathname = normalized;
+  return uri.toString();
+}
 
 /**
  * useLSPDocumentSync wires the editor's document lifecycle to the backend LSP manager.
@@ -108,36 +123,59 @@ export function useLSPDocumentSync() {
   );
 
   // --- didClose ---
-  const sendDidClose = useCallback((path: string) => {
-    if (!openedPaths.current.has(path)) return;
-    openedPaths.current.delete(path);
+  // lastContent: content to flush if there's a pending debounced didChange.
+  // Caller must provide this because the file may already be removed from openFiles.
+  const sendDidClose = useCallback(
+    (path: string, lastContent?: string) => {
+      if (!openedPaths.current.has(path)) return;
+      openedPaths.current.delete(path);
 
-    // Cancel any pending debounce
-    const timer = changeTimers.current.get(path);
-    if (timer) {
-      clearTimeout(timer);
-      changeTimers.current.delete(path);
-    }
-
-    LSPDidClose(path).catch((err) => {
-      console.error(`LSP didClose failed for ${path}:`, err);
-    });
-  }, []);
-
-  // Close all tracked documents (used during workspace switch)
-  const closeAll = useCallback(() => {
-    for (const path of openedPaths.current) {
+      // Flush any pending debounced didChange so the server gets the final state
       const timer = changeTimers.current.get(path);
       if (timer) {
         clearTimeout(timer);
         changeTimers.current.delete(path);
+        const content =
+          lastContent ?? useIDEStore.getState().openFiles.find((f) => f.path === path)?.content;
+        if (content !== undefined) {
+          const version = nextVersion(path);
+          const change = new lsp.TextDocumentContentChangeEvent({ text: content });
+          LSPDidChange(path, version, [change]).catch((err) => {
+            console.error(`LSP didChange flush-on-close failed for ${path}:`, err);
+          });
+        }
+      }
+
+      LSPDidClose(path).catch((err) => {
+        console.error(`LSP didClose failed for ${path}:`, err);
+      });
+    },
+    [nextVersion]
+  );
+
+  // Close all tracked documents (used during workspace switch)
+  const closeAll = useCallback(() => {
+    for (const path of openedPaths.current) {
+      // Flush any pending debounced didChange before closing
+      const timer = changeTimers.current.get(path);
+      if (timer) {
+        clearTimeout(timer);
+        changeTimers.current.delete(path);
+        const file = useIDEStore.getState().openFiles.find((f) => f.path === path);
+        if (file) {
+          const version = nextVersion(path);
+          const change = new lsp.TextDocumentContentChangeEvent({ text: file.content });
+          LSPDidChange(path, version, [change]).catch((err) => {
+            console.error(`LSP didChange flush-on-close failed for ${path}:`, err);
+          });
+        }
       }
       LSPDidClose(path).catch((err) => {
         console.error(`LSP didClose failed for ${path}:`, err);
       });
     }
     openedPaths.current.clear();
-  }, []);
+  }, [nextVersion]);
 
   // --- Watch store for file lifecycle events (single subscription) ---
   useEffect(() => {
@@ -154,11 +192,11 @@ export function useLSPDocumentSync() {
         }
       }
 
-      // Detect closed files
+      // Detect closed files — pass last known content for flushing pending changes
       for (const prevFile of prevOpenFiles) {
         const stillOpen = currentFiles.some((f) => f.id === prevFile.id);
         if (!stillOpen) {
-          sendDidClose(prevFile.path);
+          sendDidClose(prevFile.path, prevFile.content);
         }
       }
 
@@ -195,6 +233,28 @@ export function useLSPDocumentSync() {
       }
     });
   }, [closeAll]);
+
+  // --- Listen for lsp:reconnect after server crash recovery ---
+  useEffect(() => {
+    const cancel = EventsOn('lsp:reconnect', (payload: { documents?: string[] }) => {
+      const reconnectedURIs = payload?.documents;
+      if (!reconnectedURIs || reconnectedURIs.length === 0) return;
+
+      const reconnectSet = new Set(reconnectedURIs);
+
+      // Re-send didOpen for all currently open files that match the reconnected paths
+      const { openFiles } = useIDEStore.getState();
+      for (const file of openFiles) {
+        if (reconnectSet.has(filePathToURI(file.path))) {
+          // Clear the stale guard first so the new server instance gets a fresh didOpen.
+          openedPaths.current.delete(file.path);
+          sendDidOpen(file);
+        }
+      }
+    });
+
+    return cancel;
+  }, [sendDidOpen]);
 
   // Cleanup on unmount
   useEffect(() => {
