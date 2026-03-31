@@ -26,6 +26,10 @@ export function GetAllRunProfiles() {
   return window['go']['main']['App']['GetAllRunProfiles']();
 }
 
+export function GetLSPStatus() {
+  return window['go']['main']['App']['GetLSPStatus']();
+}
+
 export function GetRunStatus(arg1) {
   return window['go']['main']['App']['GetRunStatus'](arg1);
 }
@@ -40,6 +44,34 @@ export function GetWorkspaceInfo() {
 
 export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
+}
+
+export function LSPComplete(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['LSPComplete'](arg1, arg2, arg3, arg4);
+}
+
+export function LSPDefinition(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LSPDefinition'](arg1, arg2, arg3);
+}
+
+export function LSPDidChange(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LSPDidChange'](arg1, arg2, arg3);
+}
+
+export function LSPDidClose(arg1) {
+  return window['go']['main']['App']['LSPDidClose'](arg1);
+}
+
+export function LSPDidOpen(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['LSPDidOpen'](arg1, arg2, arg3, arg4);
+}
+
+export function LSPDidSave(arg1) {
+  return window['go']['main']['App']['LSPDidSave'](arg1);
+}
+
+export function LSPHover(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LSPHover'](arg1, arg2, arg3);
 }
 
 export function ListRecentWorkspaces() {
@@ -84,6 +116,10 @@ export function SaveRunProfile(arg1) {
 
 export function SaveWorkspaceState(arg1) {
   return window['go']['main']['App']['SaveWorkspaceState'](arg1);
+}
+
+export function SetLSPWorkspaceRoot(arg1) {
+  return window['go']['main']['App']['SetLSPWorkspaceRoot'](arg1);
 }
 
 export function StartRunProfile(arg1) {
