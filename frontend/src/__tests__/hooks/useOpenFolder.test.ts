@@ -99,6 +99,10 @@ describe('useOpenFolder', () => {
     const { result: instance1 } = renderHook(() => useOpenFolder());
     const { result: instance2 } = renderHook(() => useOpenFolder());
 
+    // Suppress the expected "act without await" warning — we intentionally
+    // defer awaiting `first` to test the concurrent lock guard.
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
     // Start first call from instance1 (won't resolve yet)
     const first = act(async () => {
       await instance1.current.openFolder();
@@ -115,6 +119,8 @@ describe('useOpenFolder', () => {
     // Resolve first to clean up
     resolveFirst!('');
     await first;
+
+    spy.mockRestore();
   });
 
   it('should clear stale tree and set loading before setting workspace', async () => {

@@ -18,7 +18,6 @@ describe('getVisualState', () => {
     }
   });
   it('returns idle when no backend state exists', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(getVisualState('p1', undefined as unknown as RunState, [], [])).toBe('idle');
   });
   it('stopping flag takes precedence over restarting flag', () => {
