@@ -15,10 +15,14 @@ function captureEventHandlers() {
   return handlers;
 }
 
+function setActiveWorkspace(path = '/project') {
+  useIDEStore.getState().setWorkspace({ name: path.split('/').pop() || path, path });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   useLSPStore.setState(useLSPStore.getInitialState());
-  useIDEStore.setState({ toast: null } as Partial<ReturnType<typeof useIDEStore.getState>>);
+  useIDEStore.setState(useIDEStore.getInitialState());
 });
 
 describe('useLSPEvents', () => {
@@ -31,7 +35,7 @@ describe('useLSPEvents', () => {
     expect(events).toContain('lsp:error');
   });
 
-  it('updates lspStore on lsp:diagnostics event', () => {
+  it('updates lspStore and IDE diagnostic counts on lsp:diagnostics event', () => {
     const handlers = captureEventHandlers();
     renderHook(() => useLSPEvents());
 
@@ -52,14 +56,13 @@ describe('useLSPEvents', () => {
     const diags = useLSPStore.getState().diagnostics.get('file:///test.ts');
     expect(diags).toHaveLength(1);
     expect(diags![0].message).toBe('Type error');
+    expect(useIDEStore.getState().errorCount).toBe(1);
+    expect(useIDEStore.getState().warningCount).toBe(0);
   });
 
   it('ignores lsp:diagnostics from a different workspace', () => {
     const handlers = captureEventHandlers();
-    // Set active workspace
-    useIDEStore.setState({
-      workspace: { name: 'project', path: '/project' },
-    } as Partial<ReturnType<typeof useIDEStore.getState>>);
+    setActiveWorkspace();
     renderHook(() => useLSPEvents());
 
     act(() => {
@@ -79,6 +82,44 @@ describe('useLSPEvents', () => {
     expect(useLSPStore.getState().diagnostics.size).toBe(0);
   });
 
+  it('clears LSP state and IDE diagnostic counts on workspace switch', () => {
+    const handlers = captureEventHandlers();
+    setActiveWorkspace('/project');
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:diagnostics']({
+        workspace: '/project',
+        uri: 'file:///project/test.ts',
+        diagnostics: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+            severity: 1,
+            message: 'Type error',
+          },
+        ],
+      });
+      handlers['lsp:status']({
+        family: 'typescript',
+        workspace: '/project',
+        state: 'ready',
+      });
+    });
+
+    expect(useLSPStore.getState().diagnostics.size).toBe(1);
+    expect(useLSPStore.getState().serverStatuses.size).toBe(1);
+    expect(useIDEStore.getState().errorCount).toBe(1);
+
+    act(() => {
+      useIDEStore.getState().setWorkspace({ name: 'other-project', path: '/other-project' });
+    });
+
+    expect(useLSPStore.getState().diagnostics.size).toBe(0);
+    expect(useLSPStore.getState().serverStatuses.size).toBe(0);
+    expect(useIDEStore.getState().errorCount).toBe(0);
+    expect(useIDEStore.getState().warningCount).toBe(0);
+  });
+
   it('updates lspStore on lsp:status event', () => {
     const handlers = captureEventHandlers();
     renderHook(() => useLSPEvents());
@@ -93,6 +134,24 @@ describe('useLSPEvents', () => {
 
     const status = useLSPStore.getState().serverStatuses.get('/project::typescript');
     expect(status?.state).toBe('ready');
+  });
+
+  it('ignores lsp:status from a different workspace', () => {
+    const handlers = captureEventHandlers();
+    setActiveWorkspace('/project');
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:status']({
+        family: 'typescript',
+        workspace: '/other-project',
+        state: 'error',
+        error: 'stale server error',
+      });
+    });
+
+    expect(useLSPStore.getState().serverStatuses.size).toBe(0);
+    expect(useIDEStore.getState().toast).toBeNull();
   });
 
   it('shows Toast on lsp:status with state=error (e.g., missing server binary)', () => {
@@ -180,6 +239,22 @@ describe('useLSPEvents', () => {
     expect(toast).not.toBeNull();
     expect(toast!.type).toBe('error');
     expect(toast!.message).toContain('crashed repeatedly');
+  });
+
+  it('ignores lsp:error from a different workspace', () => {
+    const handlers = captureEventHandlers();
+    setActiveWorkspace('/project');
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:error']({
+        family: 'typescript',
+        workspace: '/other-project',
+        message: 'Language server for typescript crashed repeatedly.',
+      });
+    });
+
+    expect(useIDEStore.getState().toast).toBeNull();
   });
 
   it('cleans up subscriptions on unmount', () => {

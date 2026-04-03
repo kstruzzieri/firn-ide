@@ -17,6 +17,11 @@ interface ErrorPayload {
   message: string;
 }
 
+function isActiveWorkspaceEvent(workspace?: string): boolean {
+  const activeWorkspace = useIDEStore.getState().workspace?.path;
+  return !activeWorkspace || !workspace || workspace === activeWorkspace;
+}
+
 /**
  * useLSPEvents subscribes to backend LSP Wails events and routes them
  * into lspStore. Shows Toast notifications for actionable errors.
@@ -30,12 +35,35 @@ export function useLSPEvents() {
   const toastedErrors = useRef(new Set<string>());
 
   useEffect(() => {
+    const syncDiagnosticCounts = () => {
+      const lspState = useLSPStore.getState();
+      useIDEStore.getState().setDiagnostics(lspState.errorCount(), lspState.warningCount());
+    };
+
+    syncDiagnosticCounts();
+
+    const cancelLSPStore = useLSPStore.subscribe((state, prevState) => {
+      if (state.diagnostics !== prevState.diagnostics) {
+        syncDiagnosticCounts();
+      }
+    });
+
+    const cancelWorkspace = useIDEStore.subscribe((state, prevState) => {
+      const workspacePath = state.workspace?.path ?? null;
+      const prevWorkspacePath = prevState.workspace?.path ?? null;
+      if (workspacePath === prevWorkspacePath) return;
+
+      const lspState = useLSPStore.getState();
+      lspState.clearAllDiagnostics();
+      lspState.clearAllStatuses();
+      toastedErrors.current.clear();
+    });
+
     const cancelDiagnostics = EventsOn('lsp:diagnostics', (payload: DiagnosticsPayload) => {
       if (!payload?.uri) return;
 
       // Reject diagnostics from a non-active workspace
-      const activeWorkspace = useIDEStore.getState().workspace?.path;
-      if (activeWorkspace && payload.workspace && payload.workspace !== activeWorkspace) {
+      if (!isActiveWorkspaceEvent(payload.workspace)) {
         return;
       }
 
@@ -44,6 +72,8 @@ export function useLSPEvents() {
 
     const cancelStatus = EventsOn('lsp:status', (payload: LSPServerStatus) => {
       if (!payload?.family) return;
+      if (!isActiveWorkspaceEvent(payload.workspace)) return;
+
       useLSPStore.getState().setServerStatus(payload);
 
       if (payload.state === 'error' && payload.error) {
@@ -62,11 +92,15 @@ export function useLSPEvents() {
 
     const cancelError = EventsOn('lsp:error', (payload: ErrorPayload) => {
       if (!payload?.message) return;
+      if (!isActiveWorkspaceEvent(payload.workspace)) return;
+
       // Terminal errors (crash exhaustion) always show a Toast regardless of dedup
       useIDEStore.getState().showToast(payload.message, 'error');
     });
 
     return () => {
+      cancelLSPStore();
+      cancelWorkspace();
       cancelDiagnostics();
       cancelStatus();
       cancelError();
