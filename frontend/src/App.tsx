@@ -16,6 +16,7 @@ import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
+import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
 import { useWorkspace, useIDEStore } from './stores/ideStore';
 import { ReadDirectory, ReadFile } from '../wailsjs/go/main/App';
@@ -28,6 +29,7 @@ function App() {
   useAutosave();
   useWorkspacePersistence();
   useLSPDocumentSync();
+  useLSPEvents();
   useRecentWorkspaces();
   const workspace = useWorkspace();
   useRunProfilesLoader(workspace?.path);
