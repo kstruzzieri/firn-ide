@@ -576,7 +576,14 @@ func (m *Manager) handleNotification(key serverKey, method string, params json.R
 			}
 			m.mu.Unlock()
 		}
-		m.emitter("lsp:diagnostics", params)
+		// Wrap diagnostics with workspace context so the frontend can
+		// filter stale events after workspace switches.
+		m.emitter("lsp:diagnostics", map[string]any{
+			"workspace":   key.workspace,
+			"uri":         diagParams.URI,
+			"version":     diagParams.Version,
+			"diagnostics": diagParams.Diagnostics,
+		})
 	}
 }
 

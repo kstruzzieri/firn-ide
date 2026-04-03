@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -433,13 +432,18 @@ func TestManager_DiagnosticsRouting(t *testing.T) {
 		if event == "lsp:diagnostics" && len(data) > 0 {
 			diagMu.Lock()
 			defer diagMu.Unlock()
-			raw, ok := data[0].(json.RawMessage)
-			if ok {
-				var d PublishDiagnosticsParams
-				if err := json.Unmarshal(raw, &d); err == nil {
-					diagnostics = append(diagnostics, d)
-				}
+			payload, ok := data[0].(map[string]any)
+			if !ok {
+				return
 			}
+			uri, _ := payload["uri"].(string)
+			diags, _ := payload["diagnostics"].([]Diagnostic)
+			version, _ := payload["version"].(int)
+			diagnostics = append(diagnostics, PublishDiagnosticsParams{
+				URI:         uri,
+				Version:     version,
+				Diagnostics: diags,
+			})
 		}
 	}
 

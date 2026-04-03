@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -100,9 +101,20 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 		)
 	}
 
+	args := []string{"--stdio"}
+
+	// 3. If workspace has local TypeScript lib, tell the system server to use it
+	// via --tsserver-path. This ensures the server uses the project's TS version
+	// rather than whatever TypeScript the global server bundles.
+	// TODO: Gate behind workspace trust when trust system is implemented.
+	localTSLib := filepath.Join(workspaceRoot, "node_modules", "typescript", "lib")
+	if _, statErr := os.Stat(filepath.Join(localTSLib, "tsserver.js")); statErr == nil {
+		args = append(args, "--tsserver-path", localTSLib)
+	}
+
 	return &ServerConfig{
 		LanguageFamily: "typescript",
 		Command:        path,
-		Args:           []string{"--stdio"},
+		Args:           args,
 	}, nil
 }
