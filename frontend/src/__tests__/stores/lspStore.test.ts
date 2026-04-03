@@ -71,15 +71,13 @@ describe('lspStore', () => {
           message: 'err2',
         },
       ]);
-      useLSPStore
-        .getState()
-        .setDiagnostics('file:///b.ts', [
-          {
-            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
-            severity: 2,
-            message: 'warn1',
-          },
-        ]);
+      useLSPStore.getState().setDiagnostics('file:///b.ts', [
+        {
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+          severity: 2,
+          message: 'warn1',
+        },
+      ]);
 
       expect(useLSPStore.getState().errorCount()).toBe(2);
       expect(useLSPStore.getState().warningCount()).toBe(1);
