@@ -136,9 +136,10 @@ type Hover struct {
 
 // InitializeParams are sent as the first request from client to server.
 type InitializeParams struct {
-	ProcessID    *int            `json:"processId"`
-	RootURI      string          `json:"rootUri"`
-	Capabilities json.RawMessage `json:"capabilities"`
+	ProcessID             *int            `json:"processId"`
+	RootURI               string          `json:"rootUri"`
+	Capabilities          json.RawMessage `json:"capabilities"`
+	InitializationOptions any             `json:"initializationOptions,omitempty"`
 }
 
 // InitializeResult is the server's response to the initialize request.
