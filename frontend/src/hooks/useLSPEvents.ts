@@ -3,6 +3,7 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useLSPStore } from '../stores/lspStore';
 import { useIDEStore } from '../stores/ideStore';
 import type { LSPDiagnostic, LSPServerStatus } from '../stores/lspStore';
+import { canonicalizeFileURI } from '../utils/lspUri';
 
 interface DiagnosticsPayload {
   workspace: string;
@@ -35,19 +36,6 @@ export function useLSPEvents() {
   const toastedErrors = useRef(new Set<string>());
 
   useEffect(() => {
-    const syncDiagnosticCounts = () => {
-      const lspState = useLSPStore.getState();
-      useIDEStore.getState().setDiagnostics(lspState.errorCount(), lspState.warningCount());
-    };
-
-    syncDiagnosticCounts();
-
-    const cancelLSPStore = useLSPStore.subscribe((state, prevState) => {
-      if (state.diagnostics !== prevState.diagnostics) {
-        syncDiagnosticCounts();
-      }
-    });
-
     const cancelWorkspace = useIDEStore.subscribe((state, prevState) => {
       const workspacePath = state.workspace?.path ?? null;
       const prevWorkspacePath = prevState.workspace?.path ?? null;
@@ -67,7 +55,9 @@ export function useLSPEvents() {
         return;
       }
 
-      useLSPStore.getState().setDiagnostics(payload.uri, payload.diagnostics ?? []);
+      useLSPStore
+        .getState()
+        .setDiagnostics(canonicalizeFileURI(payload.uri), payload.diagnostics ?? []);
     });
 
     const cancelStatus = EventsOn('lsp:status', (payload: LSPServerStatus) => {
@@ -99,7 +89,6 @@ export function useLSPEvents() {
     });
 
     return () => {
-      cancelLSPStore();
       cancelWorkspace();
       cancelDiagnostics();
       cancelStatus();

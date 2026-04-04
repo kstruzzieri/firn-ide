@@ -8,6 +8,8 @@ import {
 } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { workspace } from '../../wailsjs/go/models';
+import { createEditorFile } from '../utils/editorFile';
+import { pathsReferToSameFile } from '../utils/lspUri';
 
 const SAVE_DEBOUNCE_MS = 2000;
 
@@ -134,26 +136,18 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
           if (signal.aborted) return;
           if (fileContent.isBinary) continue;
 
-          const fileName =
-            fileState.path.split('/').pop() ?? fileState.path.split('\\').pop() ?? fileState.path;
+          const editorFile = createEditorFile(fileState.path, fileContent);
+          store.openFile(editorFile);
 
-          store.openFile({
-            id: fileState.path,
-            name: fileName,
-            path: fileState.path,
-            language: '',
-            encoding: fileContent.encoding,
-            lineEndings: fileContent.lineEndings,
-            content: fileContent.content,
-            isModified: false,
-          });
-
-          // Store view state for later application
+          // Use the normalized file ID for view-state keys so they match
+          // the ID that openFile stored (important on Windows where
+          // createEditorFile normalizes c:/... -> C:\...).
+          const fileId = editorFile.id;
           if (fileState.scrollTop > 0) {
-            scrollPositions[fileState.path] = fileState.scrollTop;
+            scrollPositions[fileId] = fileState.scrollTop;
           }
           if (fileState.cursorLine > 0) {
-            cursorPositions[fileState.path] = {
+            cursorPositions[fileId] = {
               line: fileState.cursorLine,
               column: fileState.cursorColumn || 1,
             };
@@ -172,12 +166,16 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
         cursorPositions: { ...prev.cursorPositions, ...cursorPositions },
       }));
 
-      // Set active file (only if it was successfully opened)
+      // Set active file (only if it was successfully opened).
+      // Compare with pathsReferToSameFile since the saved activeFilePath may
+      // differ in case/slash form from the normalized EditorFile.id.
       if (state.editor.activeFilePath) {
         const openFiles = useIDEStore.getState().openFiles;
-        const activeExists = openFiles.some((f) => f.id === state.editor.activeFilePath);
-        if (activeExists) {
-          store.setActiveFile(state.editor.activeFilePath);
+        const match = openFiles.find((f) =>
+          pathsReferToSameFile(f.id, state.editor.activeFilePath)
+        );
+        if (match) {
+          store.setActiveFile(match.id);
         }
       }
     }

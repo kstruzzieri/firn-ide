@@ -35,7 +35,7 @@ describe('useLSPEvents', () => {
     expect(events).toContain('lsp:error');
   });
 
-  it('updates lspStore and IDE diagnostic counts on lsp:diagnostics event', () => {
+  it('updates lspStore on lsp:diagnostics event', () => {
     const handlers = captureEventHandlers();
     renderHook(() => useLSPEvents());
 
@@ -56,8 +56,8 @@ describe('useLSPEvents', () => {
     const diags = useLSPStore.getState().diagnostics.get('file:///test.ts');
     expect(diags).toHaveLength(1);
     expect(diags![0].message).toBe('Type error');
-    expect(useIDEStore.getState().errorCount).toBe(1);
-    expect(useIDEStore.getState().warningCount).toBe(0);
+    expect(useLSPStore.getState().errorCount()).toBe(1);
+    expect(useLSPStore.getState().warningCount()).toBe(0);
   });
 
   it('ignores lsp:diagnostics from a different workspace', () => {
@@ -82,7 +82,7 @@ describe('useLSPEvents', () => {
     expect(useLSPStore.getState().diagnostics.size).toBe(0);
   });
 
-  it('clears LSP state and IDE diagnostic counts on workspace switch', () => {
+  it('clears LSP state on workspace switch', () => {
     const handlers = captureEventHandlers();
     setActiveWorkspace('/project');
     renderHook(() => useLSPEvents());
@@ -108,7 +108,6 @@ describe('useLSPEvents', () => {
 
     expect(useLSPStore.getState().diagnostics.size).toBe(1);
     expect(useLSPStore.getState().serverStatuses.size).toBe(1);
-    expect(useIDEStore.getState().errorCount).toBe(1);
 
     act(() => {
       useIDEStore.getState().setWorkspace({ name: 'other-project', path: '/other-project' });
@@ -116,8 +115,6 @@ describe('useLSPEvents', () => {
 
     expect(useLSPStore.getState().diagnostics.size).toBe(0);
     expect(useLSPStore.getState().serverStatuses.size).toBe(0);
-    expect(useIDEStore.getState().errorCount).toBe(0);
-    expect(useIDEStore.getState().warningCount).toBe(0);
   });
 
   it('updates lspStore on lsp:status event', () => {

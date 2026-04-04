@@ -1,4 +1,5 @@
 import { renderHook, act } from '@testing-library/react';
+import { getPlatform } from '../../utils/platform';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
@@ -13,25 +14,29 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
 
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 
+const isMac = getPlatform() === 'mac';
+
+function modifierKeyEvent(key: string): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key,
+    ctrlKey: !isMac,
+    metaKey: isMac,
+    bubbles: true,
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
 
 describe('useKeyboardShortcuts', () => {
-  it('should open folder dialog on Ctrl+O', async () => {
-    // jsdom reports as non-Mac, so Ctrl is the modifier
+  it('should open folder dialog on modifier+O', async () => {
     mockOpenFolderDialog.mockResolvedValue('');
 
     renderHook(() => useKeyboardShortcuts());
 
     await act(async () => {
-      window.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'o',
-          ctrlKey: true,
-          bubbles: true,
-        })
-      );
+      window.dispatchEvent(modifierKeyEvent('o'));
     });
 
     expect(mockOpenFolderDialog).toHaveBeenCalled();
@@ -61,13 +66,7 @@ describe('useKeyboardShortcuts', () => {
     unmount();
 
     await act(async () => {
-      window.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'o',
-          ctrlKey: true,
-          bubbles: true,
-        })
-      );
+      window.dispatchEvent(modifierKeyEvent('o'));
     });
 
     expect(mockOpenFolderDialog).not.toHaveBeenCalled();

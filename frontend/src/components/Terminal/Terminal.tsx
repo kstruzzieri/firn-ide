@@ -3,13 +3,19 @@ import { TerminalIcon, OutputIcon, AlertCircleIcon, PlusIcon } from '../icons';
 import {
   useIDEStore,
   TerminalTab,
-  useErrorCount,
-  useWarningCount,
   useTerminalSessions,
   useActiveTerminalSessionId,
   useRunOutputs,
   useActiveRunOutputId,
 } from '../../stores/ideStore';
+import {
+  useLSPDiagnosticCount,
+  useGroupedDiagnostics,
+  type GroupedDiagnostic,
+  type LSPDiagnostic,
+} from '../../stores/lspStore';
+import { navigateToEditorLocation } from '../../utils/editorNavigation';
+import { getDirectoryPath, getFileNameFromPath } from '../../utils/lspUri';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { RunOutputPanel } from '../RunOutput';
@@ -111,8 +117,7 @@ function cleanupSessionBuffers(sessionId: string) {
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
-  const errorCount = useErrorCount();
-  const warningCount = useWarningCount();
+  const problemCount = useLSPDiagnosticCount();
   const terminalSessions = useTerminalSessions();
   const activeSessionId = useActiveTerminalSessionId();
   const addSession = useIDEStore((state) => state.addTerminalSession);
@@ -243,7 +248,7 @@ export function Terminal() {
       <div className={styles.tabBar} role="tablist" aria-label="Terminal panels">
         {TERMINAL_TABS.map(({ id, icon: Icon, label }) => {
           const isActive = id === activeTab;
-          const count = id === 'problems' ? errorCount + warningCount : undefined;
+          const count = id === 'problems' ? problemCount : undefined;
 
           return (
             <button
@@ -409,9 +414,7 @@ export function Terminal() {
           </div>
         </div>
         {activeTab === 'output' && <OutputContent />}
-        {activeTab === 'problems' && (
-          <ProblemsContent errors={errorCount} warnings={warningCount} />
-        )}
+        {activeTab === 'problems' && <ProblemsContent />}
       </div>
       {contextMenu && (
         <SessionContextMenu
@@ -596,15 +599,10 @@ function OutputContent() {
   return <RunOutputPanel />;
 }
 
-interface ProblemsContentProps {
-  errors: number;
-  warnings: number;
-}
+function ProblemsContent() {
+  const groups = useGroupedDiagnostics();
 
-function ProblemsContent({ errors, warnings }: ProblemsContentProps) {
-  const total = errors + warnings;
-
-  if (total === 0) {
+  if (groups.length === 0) {
     return (
       <div className={styles.emptyState}>
         <p>No problems detected</p>
@@ -612,5 +610,59 @@ function ProblemsContent({ errors, warnings }: ProblemsContentProps) {
     );
   }
 
-  return <div className={styles.problemsList}>{/* Problems will be populated dynamically */}</div>;
+  return (
+    <div className={styles.problemsList}>
+      {groups.map((group) => (
+        <ProblemsFileGroup key={group.uri} group={group} />
+      ))}
+    </div>
+  );
+}
+
+function ProblemsFileGroup({ group }: { group: GroupedDiagnostic }) {
+  const fileName = getFileNameFromPath(group.filePath);
+  const dirPath = getDirectoryPath(group.filePath);
+
+  return (
+    <div className={styles.problemsGroup}>
+      <div className={styles.problemsGroupHeader}>
+        <span className={styles.problemsFileName}>{fileName}</span>
+        {dirPath && <span className={styles.problemsFilePath}>{dirPath}</span>}
+        <span className={styles.problemsGroupCount}>{group.diagnostics.length}</span>
+      </div>
+      {group.diagnostics.map((diag, i) => (
+        <ProblemRow key={`${group.uri}-${i}`} diagnostic={diag} filePath={group.filePath} />
+      ))}
+    </div>
+  );
+}
+
+function ProblemRow({ diagnostic, filePath }: { diagnostic: LSPDiagnostic; filePath: string }) {
+  const handleClick = useCallback(() => {
+    navigateToEditorLocation(
+      filePath,
+      diagnostic.range.start.line + 1,
+      diagnostic.range.start.character + 1
+    );
+  }, [filePath, diagnostic.range.start.line, diagnostic.range.start.character]);
+
+  const severityClass =
+    diagnostic.severity === 1
+      ? styles.problemsError
+      : diagnostic.severity === 2
+        ? styles.problemsWarning
+        : styles.problemsInfo;
+
+  const severityLabel = diagnostic.severity === 1 ? 'E' : diagnostic.severity === 2 ? 'W' : 'I';
+
+  return (
+    <button className={styles.problemsRow} onClick={handleClick} type="button">
+      <span className={`${styles.problemsSeverity} ${severityClass}`}>{severityLabel}</span>
+      <span className={styles.problemsMessage}>{diagnostic.message}</span>
+      <span className={styles.problemsLocation}>
+        [{diagnostic.range.start.line + 1}:{diagnostic.range.start.character + 1}]
+      </span>
+      {diagnostic.source && <span className={styles.problemsSource}>{diagnostic.source}</span>}
+    </button>
+  );
 }

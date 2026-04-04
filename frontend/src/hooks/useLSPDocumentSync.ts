@@ -4,22 +4,9 @@ import { LSPDidOpen, LSPDidChange, LSPDidSave, LSPDidClose } from '../../wailsjs
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { lsp } from '../../wailsjs/go/models';
 import { languageIdForFile } from '../utils/lspLanguageId';
+import { filePathToURI } from '../utils/lspUri';
 
 const DIDCHANGE_DEBOUNCE_MS = 150;
-
-function filePathToURI(path: string): string {
-  let normalized = path.replace(/\\/g, '/');
-
-  // Mirror the backend's Windows URI normalization: lowercase drive letter
-  // and add the extra leading slash required by file:///c:/...
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    normalized = `/${normalized[0].toLowerCase()}${normalized.slice(1)}`;
-  }
-
-  const uri = new URL('file://');
-  uri.pathname = normalized;
-  return uri.toString();
-}
 
 /**
  * useLSPDocumentSync wires the editor's document lifecycle to the backend LSP manager.
