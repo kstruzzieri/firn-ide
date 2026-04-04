@@ -15,7 +15,7 @@ func TestClient_InitializeAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
@@ -48,12 +48,12 @@ func TestClient_DoubleInitialize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
 	// Second initialize should fail
-	if err := client.Initialize(ctx, "file:///tmp/test"); err == nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err == nil {
 		t.Error("expected error on double initialize")
 	}
 
@@ -67,7 +67,7 @@ func TestClient_Hover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestClient_Definition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestClient_Completion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestClient_DidOpenAndDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
@@ -200,7 +200,7 @@ func TestClient_DidChangeThenClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestClient_RequestTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Initialize(ctx, "file:///tmp/test"); err != nil {
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 

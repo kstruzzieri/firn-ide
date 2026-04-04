@@ -73,7 +73,8 @@ func NewClient(transport Transport, handler NotificationHandler) *Client {
 
 // Initialize sends the initialize request and the initialized notification.
 // rootURI should be a file:// URI for the workspace root.
-func (c *Client) Initialize(ctx context.Context, rootURI string) error {
+// initOptions, if non-nil, is sent as initializationOptions in the request.
+func (c *Client) Initialize(ctx context.Context, rootURI string, initOptions any) error {
 	c.stateMu.Lock()
 	if c.state != ClientStateUninitialized {
 		c.stateMu.Unlock()
@@ -83,9 +84,10 @@ func (c *Client) Initialize(ctx context.Context, rootURI string) error {
 	c.stateMu.Unlock()
 
 	params := InitializeParams{
-		ProcessID:    nil, // null per LSP spec — we manage server lifecycle ourselves
-		RootURI:      rootURI,
-		Capabilities: clientCapabilities,
+		ProcessID:             nil, // null per LSP spec — we manage server lifecycle ourselves
+		RootURI:               rootURI,
+		Capabilities:          clientCapabilities,
+		InitializationOptions: initOptions,
 	}
 
 	var result InitializeResult

@@ -366,7 +366,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 		m.emitStatus(key.family, key.workspace, "error", err.Error())
 		return nil, fmt.Errorf("invalid workspace path %q: %w", key.workspace, err)
 	}
-	if err := client.Initialize(ctx, rootURI); err != nil {
+	if err := client.Initialize(ctx, rootURI, config.InitOptions); err != nil {
 		// Include captured server stderr in the error for diagnostics.
 		errMsg := err.Error()
 		if stderr := transport.Stderr(); stderr != "" {

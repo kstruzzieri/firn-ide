@@ -20,6 +20,8 @@ type ServerConfig struct {
 	// Dir is the working directory for the spawned process.
 	// Language servers often resolve configs (tsconfig.json, etc.) relative to their cwd.
 	Dir string
+	// InitOptions, if non-nil, is sent as initializationOptions in the LSP initialize request.
+	InitOptions any
 }
 
 // Registry maps file extensions and language contexts to server configurations.
@@ -108,12 +110,18 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 	args := []string{"--stdio"}
 
 	// 3. If workspace has local TypeScript lib, tell the system server to use it
-	// via --tsserver-path. This ensures the server uses the project's TS version
-	// rather than whatever TypeScript the global server bundles.
+	// via initializationOptions.tsserver.path. This ensures the server uses the
+	// project's TS version rather than whatever TypeScript the global server bundles.
+	// (The --tsserver-path CLI flag was removed in typescript-language-server v4+.)
 	// TODO: Gate behind workspace trust when trust system is implemented.
+	var initOpts any
 	localTSLib := filepath.Join(workspaceRoot, "node_modules", "typescript", "lib")
 	if _, statErr := os.Stat(filepath.Join(localTSLib, "tsserver.js")); statErr == nil {
-		args = append(args, "--tsserver-path", localTSLib)
+		initOpts = map[string]any{
+			"tsserver": map[string]any{
+				"path": localTSLib,
+			},
+		}
 	}
 
 	return &ServerConfig{
@@ -121,5 +129,6 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 		Command:        path,
 		Args:           args,
 		Dir:            workspaceRoot,
+		InitOptions:    initOpts,
 	}, nil
 }

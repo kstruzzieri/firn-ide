@@ -46,19 +46,24 @@ func TestResolveTypeScriptServer_MixedInstall(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify --tsserver-path is present and points to the local lib
-	foundTsserverPath := false
-	for i, arg := range config.Args {
-		if arg == "--tsserver-path" && i+1 < len(config.Args) {
-			if config.Args[i+1] == tsLib {
-				foundTsserverPath = true
-			} else {
-				t.Errorf("--tsserver-path value = %q, want %q", config.Args[i+1], tsLib)
-			}
-		}
+	// Verify tsserver.path is set in InitOptions (not CLI args — v4+ removed the flag)
+	opts, ok := config.InitOptions.(map[string]any)
+	if !ok {
+		t.Fatalf("expected InitOptions to be map[string]any, got %T", config.InitOptions)
 	}
-	if !foundTsserverPath {
-		t.Error("expected --tsserver-path in args for mixed install, got:", config.Args)
+	tsserverOpts, ok := opts["tsserver"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tsserver key in InitOptions, got %v", opts)
+	}
+	if tsserverOpts["path"] != tsLib {
+		t.Errorf("tsserver.path = %q, want %q", tsserverOpts["path"], tsLib)
+	}
+
+	// CLI args should NOT contain --tsserver-path
+	for _, arg := range config.Args {
+		if arg == "--tsserver-path" {
+			t.Error("--tsserver-path should not be in CLI args (removed in v4+)")
+		}
 	}
 }
 
