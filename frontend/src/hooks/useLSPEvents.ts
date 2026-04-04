@@ -3,6 +3,7 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useLSPStore } from '../stores/lspStore';
 import { useIDEStore } from '../stores/ideStore';
 import type { LSPDiagnostic, LSPServerStatus } from '../stores/lspStore';
+import { canonicalizeFileURI } from '../utils/lspUri';
 
 interface DiagnosticsPayload {
   workspace: string;
@@ -54,7 +55,9 @@ export function useLSPEvents() {
         return;
       }
 
-      useLSPStore.getState().setDiagnostics(payload.uri, payload.diagnostics ?? []);
+      useLSPStore
+        .getState()
+        .setDiagnostics(canonicalizeFileURI(payload.uri), payload.diagnostics ?? []);
     });
 
     const cancelStatus = EventsOn('lsp:status', (payload: LSPServerStatus) => {

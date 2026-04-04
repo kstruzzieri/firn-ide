@@ -15,6 +15,26 @@ function normalizeWindowsDrivePath(path: string): string {
 }
 
 /**
+ * Normalizes a file URI to a canonical form for use as a map key.
+ * Strips localhost authority and lowercases the scheme.
+ * Returns the input unchanged for non-file or unparseable URIs.
+ */
+export function canonicalizeFileURI(uri: string): string {
+  if (!uri.startsWith('file:')) return uri;
+  try {
+    const parsed = new URL(uri);
+    if (parsed.protocol !== 'file:') return uri;
+    // Strip localhost authority: file://localhost/... -> file:///...
+    if (parsed.host === 'localhost') {
+      return `file://${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return uri;
+  } catch {
+    return uri;
+  }
+}
+
+/**
  * Converts a local file path to a file:// URI.
  * Mirrors the backend's Windows drive-letter normalization.
  */
@@ -72,14 +92,18 @@ export function fileURIToPath(uri: string): string | null {
 
 /**
  * Normalizes a local path for cross-platform equality checks.
- * Windows drive letters are compared case-insensitively and slash direction is ignored.
+ * Drive-letter paths (Windows-origin) are fully lowercased since NTFS is
+ * case-insensitive. Backslashes are always converted to forward slashes.
+ * Non-drive paths on macOS/Linux are left case-sensitive.
  */
 export function normalizePathForComparison(path: string): string {
   if (!path) return path;
 
   const normalized = normalizeWindowsDrivePath(path);
+  // Drive-letter paths are always Windows-origin and should be compared
+  // case-insensitively regardless of the host platform.
   if (/^[A-Za-z]:\//.test(normalized)) {
-    return `${normalized[0].toLowerCase()}${normalized.slice(1)}`;
+    return normalized.toLowerCase();
   }
 
   return normalized;
