@@ -5,6 +5,10 @@
  * matching the backend's normalization conventions.
  */
 
+import { getPlatform } from './platform';
+
+const isWindows = getPlatform() === 'windows';
+
 function normalizeWindowsDrivePath(path: string): string {
   const normalized = path.replace(/\\/g, '/');
   return /^\/[A-Za-z]:\//.test(normalized) ? normalized.slice(1) : normalized;
@@ -74,14 +78,20 @@ export function pathsReferToSameFile(a: string, b: string): boolean {
 
 /**
  * Converts a local path into the platform-native form Firn stores in editor tabs.
- * Windows drive paths are normalized to `C:\...`; Unix paths are returned unchanged.
+ * On Windows, drive paths are normalized to `C:\...`; on other platforms, paths
+ * are returned unchanged to avoid misinterpreting POSIX paths.
  */
 export function toNativeLocalPath(path: string): string {
   if (!path) return path;
 
-  const normalized = normalizeWindowsDrivePath(path);
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    return `${normalized[0].toUpperCase()}${normalized.slice(1).replace(/\//g, '\\')}`;
+  // Only apply Windows drive-letter normalization on Windows.
+  // On macOS/Linux a path like "c:/foo" is a valid POSIX relative path
+  // and should not be rewritten to "C:\foo".
+  if (isWindows) {
+    const normalized = normalizeWindowsDrivePath(path);
+    if (/^[A-Za-z]:\//.test(normalized)) {
+      return `${normalized[0].toUpperCase()}${normalized.slice(1).replace(/\//g, '\\')}`;
+    }
   }
 
   return path;
