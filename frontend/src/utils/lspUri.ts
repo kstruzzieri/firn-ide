@@ -61,10 +61,9 @@ export function fileURIToPath(uri: string): string | null {
     return null;
   }
 
-  // Strip the leading slash from Windows drive-letter paths (/c:/... -> c:/...).
-  // This applies regardless of the host platform because the URI encodes the
-  // drive letter explicitly.
-  if (/^\/[A-Za-z]:\//.test(path)) {
+  // On Windows, strip the leading slash from drive-letter paths (/c:/... -> c:/...).
+  // On macOS/Linux, /c:/... is a valid absolute POSIX path and must be preserved.
+  if (isWindows && /^\/[A-Za-z]:\//.test(path)) {
     path = path.slice(1);
   }
 

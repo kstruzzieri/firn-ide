@@ -71,6 +71,7 @@ function createDefaultWorkspaceSessionState() {
     expandedPaths: new Set<string>(),
     selectedPath: null as string | null,
     isRootExpanded: true,
+    pendingEditorNavigation: null as EditorNavigationRequest | null,
   };
 }
 

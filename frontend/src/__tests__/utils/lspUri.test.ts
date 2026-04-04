@@ -26,14 +26,12 @@ describe('fileURIToPath', () => {
     expect(fileURIToPath('file:///home/user/project/test.ts')).toBe('/home/user/project/test.ts');
   });
 
-  it('strips leading slash from Windows drive-letter URIs', () => {
+  it('converts a Windows drive-letter URI to a local path', () => {
     const result = fileURIToPath('file:///c:/Users/dev/test.ts');
-    // The leading /c: slash is always stripped.
-    // On Windows toNativeLocalPath further normalizes to C:\...; on other
-    // platforms the forward-slash form is returned as-is.
     expect(result).not.toBeNull();
-    expect(result!.startsWith('/')).toBe(false);
-    expect(result).toMatch(/^[cC]:[/\\]Users/);
+    // On Windows: leading slash stripped and normalized to C:\Users\dev\test.ts
+    // On macOS/Linux: /c:/Users/dev/test.ts preserved as a valid absolute path
+    expect(result).toMatch(/^[/]?[cC]:[/\\]Users/);
   });
 
   it('decodes percent-encoded characters', () => {
