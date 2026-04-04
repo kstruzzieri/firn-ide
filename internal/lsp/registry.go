@@ -17,6 +17,9 @@ type ServerConfig struct {
 	Command string
 	// Args are the command-line arguments.
 	Args []string
+	// Dir is the working directory for the spawned process.
+	// Language servers often resolve configs (tsconfig.json, etc.) relative to their cwd.
+	Dir string
 }
 
 // Registry maps file extensions and language contexts to server configurations.
@@ -88,6 +91,7 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 			LanguageFamily: "typescript",
 			Command:        path,
 			Args:           []string{"--stdio"},
+			Dir:            workspaceRoot,
 		}, nil
 	}
 
@@ -116,5 +120,6 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 		LanguageFamily: "typescript",
 		Command:        path,
 		Args:           args,
+		Dir:            workspaceRoot,
 	}, nil
 }
