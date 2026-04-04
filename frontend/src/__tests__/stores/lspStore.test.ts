@@ -1,5 +1,13 @@
-import { useLSPStore } from '../../stores/lspStore';
-import type { LSPDiagnostic } from '../../stores/lspStore';
+import { renderHook, act } from '@testing-library/react';
+import {
+  useLSPStore,
+  useLSPDiagnosticCount,
+  useLSPErrorCount,
+  useLSPInfoCount,
+  useLSPWarningCount,
+  useGroupedDiagnostics,
+  type LSPDiagnostic,
+} from '../../stores/lspStore';
 
 beforeEach(() => {
   useLSPStore.setState(useLSPStore.getInitialState());
@@ -89,6 +97,149 @@ describe('lspStore', () => {
     });
   });
 
+  describe('reactive selectors', () => {
+    it('useLSPErrorCount returns error count reactively', () => {
+      const { result } = renderHook(() => useLSPErrorCount());
+      expect(result.current).toBe(0);
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///test.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: 'err',
+          },
+        ]);
+      });
+
+      expect(result.current).toBe(1);
+    });
+
+    it('useLSPWarningCount returns warning count reactively', () => {
+      const { result } = renderHook(() => useLSPWarningCount());
+      expect(result.current).toBe(0);
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///test.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 2,
+            message: 'warn',
+          },
+        ]);
+      });
+
+      expect(result.current).toBe(1);
+    });
+
+    it('useLSPInfoCount includes informational and unspecified severities', () => {
+      const { result } = renderHook(() => useLSPInfoCount());
+      expect(result.current).toBe(0);
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///test.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 3,
+            message: 'info',
+          },
+          {
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+            message: 'hint-like without severity',
+          },
+        ]);
+      });
+
+      expect(result.current).toBe(2);
+    });
+
+    it('useLSPDiagnosticCount matches every Problems panel entry', () => {
+      const { result } = renderHook(() => useLSPDiagnosticCount());
+      expect(result.current).toBe(0);
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///test.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: 'error',
+          },
+          {
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+            severity: 4,
+            message: 'hint',
+          },
+        ]);
+      });
+
+      expect(result.current).toBe(2);
+    });
+
+    it('useGroupedDiagnostics groups by file and sorts by severity', () => {
+      const { result } = renderHook(() => useGroupedDiagnostics());
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///b.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 2,
+            message: 'warning only',
+          },
+        ]);
+        useLSPStore.getState().setDiagnostics('file:///a.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: 'error here',
+          },
+        ]);
+      });
+
+      // File with errors should come first
+      expect(result.current).toHaveLength(2);
+      expect(result.current[0].filePath).toContain('a.ts');
+      expect(result.current[1].filePath).toContain('b.ts');
+    });
+
+    it('useGroupedDiagnostics excludes empty groups', () => {
+      const { result } = renderHook(() => useGroupedDiagnostics());
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///a.ts', []);
+        useLSPStore.getState().setDiagnostics('file:///b.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: 'err',
+          },
+        ]);
+      });
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0].filePath).toContain('b.ts');
+    });
+
+    it('counts clear to zero when diagnostics are removed', () => {
+      const { result: errorResult } = renderHook(() => useLSPErrorCount());
+
+      act(() => {
+        useLSPStore.getState().setDiagnostics('file:///test.ts', [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: 'err',
+          },
+        ]);
+      });
+      expect(errorResult.current).toBe(1);
+
+      act(() => {
+        useLSPStore.getState().clearAllDiagnostics();
+      });
+      expect(errorResult.current).toBe(0);
+    });
+  });
+
   describe('server status', () => {
     it('stores server status keyed by workspace::family', () => {
       useLSPStore.getState().setServerStatus({
@@ -156,8 +307,6 @@ describe('lspStore', () => {
       useLSPStore.getState().clearWorkspaceState('/project');
 
       expect(useLSPStore.getState().serverStatuses.has('/project::typescript')).toBe(false);
-      // Diagnostics are not cleared by workspace since URIs don't embed workspace paths reliably.
-      // The frontend clears diagnostics via clearAllDiagnostics on workspace switch.
     });
   });
 });

@@ -47,6 +47,13 @@ export interface TerminalSession {
   title: string;
 }
 
+export interface EditorNavigationRequest {
+  fileId: string;
+  line: number;
+  column: number;
+  revision: number;
+}
+
 const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
 
 function createDefaultWorkspaceSessionState() {
@@ -136,8 +143,9 @@ interface IDEState {
 
   // Status
   gitBranch: string;
-  errorCount: number;
-  warningCount: number;
+
+  // Editor navigation
+  pendingEditorNavigation: EditorNavigationRequest | null;
 }
 
 interface IDEActions {
@@ -230,7 +238,10 @@ interface IDEActions {
 
   // Status actions
   setGitBranch: (branch: string) => void;
-  setDiagnostics: (errors: number, warnings: number) => void;
+
+  // Editor navigation actions
+  requestEditorNavigation: (fileId: string, line: number, column: number) => void;
+  clearPendingEditorNavigation: (fileId: string, revision: number) => void;
 }
 
 type IDEStore = IDEState & IDEActions;
@@ -291,8 +302,7 @@ export const useIDEStore = create<IDEStore>()(
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
       gitBranch: '',
-      errorCount: 0,
-      warningCount: 0,
+      pendingEditorNavigation: null,
 
       // Workspace actions
       setWorkspace: (workspace) =>
@@ -1031,8 +1041,33 @@ export const useIDEStore = create<IDEStore>()(
       // Status actions
       setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
 
-      setDiagnostics: (errorCount, warningCount) =>
-        set({ errorCount, warningCount }, false, 'setDiagnostics'),
+      // Editor navigation actions
+      requestEditorNavigation: (fileId, line, column) =>
+        set(
+          (state) => ({
+            pendingEditorNavigation: {
+              fileId,
+              line,
+              column,
+              revision: (state.pendingEditorNavigation?.revision ?? 0) + 1,
+            },
+          }),
+          false,
+          'requestEditorNavigation'
+        ),
+
+      clearPendingEditorNavigation: (fileId, revision) =>
+        set(
+          (state) => {
+            const nav = state.pendingEditorNavigation;
+            if (nav && nav.fileId === fileId && nav.revision === revision) {
+              return { pendingEditorNavigation: null };
+            }
+            return {};
+          },
+          false,
+          'clearPendingEditorNavigation'
+        ),
     }),
     { name: 'ide-store' }
   )
@@ -1064,8 +1099,6 @@ export const useActiveTerminalSession = () =>
     return id ? (state.terminalSessions.find((s) => s.id === id) ?? null) : null;
   });
 export const useGitBranch = () => useIDEStore((state) => state.gitBranch);
-export const useErrorCount = () => useIDEStore((state) => state.errorCount);
-export const useWarningCount = () => useIDEStore((state) => state.warningCount);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);
 export const useExpandedPaths = () => useIDEStore((state) => state.expandedPaths);
 export const useSelectedPath = () => useIDEStore((state) => state.selectedPath);

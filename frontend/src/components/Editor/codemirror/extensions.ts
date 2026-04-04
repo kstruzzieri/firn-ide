@@ -52,6 +52,8 @@ import { yaml } from '@codemirror/lang-yaml';
 import { rust } from '@codemirror/lang-rust';
 
 import { firnGlacier } from './theme';
+import { diagnosticsExtensions } from './diagnostics';
+export { getLanguageName } from '../../../utils/editorLanguage';
 
 /**
  * Compartments for dynamic extension reconfiguration.
@@ -132,60 +134,6 @@ export function getLanguageExtension(filename: string): LanguageSupport | null {
     default:
       return null;
   }
-}
-
-/**
- * Get human-readable language name for status bar.
- */
-export function getLanguageName(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase();
-
-  const languageNames: Record<string, string> = {
-    js: 'JavaScript',
-    mjs: 'JavaScript',
-    cjs: 'JavaScript',
-    jsx: 'JavaScript JSX',
-    ts: 'TypeScript',
-    mts: 'TypeScript',
-    cts: 'TypeScript',
-    tsx: 'TypeScript JSX',
-    py: 'Python',
-    pyw: 'Python',
-    pyi: 'Python',
-    go: 'Go',
-    css: 'CSS',
-    scss: 'SCSS',
-    less: 'Less',
-    html: 'HTML',
-    htm: 'HTML',
-    json: 'JSON',
-    jsonc: 'JSON with Comments',
-    md: 'Markdown',
-    markdown: 'Markdown',
-    txt: 'Plain Text',
-    sh: 'Shell',
-    bash: 'Bash',
-    zsh: 'Zsh',
-    yml: 'YAML',
-    yaml: 'YAML',
-    toml: 'TOML',
-    xml: 'XML',
-    svg: 'SVG',
-    sql: 'SQL',
-    rs: 'Rust',
-    rb: 'Ruby',
-    java: 'Java',
-    kt: 'Kotlin',
-    swift: 'Swift',
-    c: 'C',
-    h: 'C Header',
-    cpp: 'C++',
-    hpp: 'C++ Header',
-    cs: 'C#',
-    php: 'PHP',
-  };
-
-  return ext ? languageNames[ext] || 'Plain Text' : 'Plain Text';
 }
 
 /**
@@ -361,6 +309,9 @@ export function createEditorExtensions(options: {
 
     // Language (in compartment for dynamic switching)
     languageCompartment.of(language || []),
+
+    // Diagnostics (lint gutter + underlines, populated dynamically)
+    ...diagnosticsExtensions(),
   ];
 
   // Optional placeholder

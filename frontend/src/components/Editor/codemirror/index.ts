@@ -26,6 +26,9 @@ export {
   tabSize,
 } from './extensions';
 
+// Diagnostics
+export { updateEditorDiagnostics, lspToCMDiagnostics, diagnosticsCompartment } from './diagnostics';
+
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';
 export { EditorState, type Extension } from '@codemirror/state';

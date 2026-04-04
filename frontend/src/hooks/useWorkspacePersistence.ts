@@ -8,6 +8,7 @@ import {
 } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { workspace } from '../../wailsjs/go/models';
+import { createEditorFile } from '../utils/editorFile';
 
 const SAVE_DEBOUNCE_MS = 2000;
 
@@ -134,19 +135,7 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
           if (signal.aborted) return;
           if (fileContent.isBinary) continue;
 
-          const fileName =
-            fileState.path.split('/').pop() ?? fileState.path.split('\\').pop() ?? fileState.path;
-
-          store.openFile({
-            id: fileState.path,
-            name: fileName,
-            path: fileState.path,
-            language: '',
-            encoding: fileContent.encoding,
-            lineEndings: fileContent.lineEndings,
-            content: fileContent.content,
-            isModified: false,
-          });
+          store.openFile(createEditorFile(fileState.path, fileContent));
 
           // Store view state for later application
           if (fileState.scrollTop > 0) {

@@ -1,17 +1,13 @@
 import styles from './StatusBar.module.css';
 import { StatusBranchIcon, CheckIcon, AlertCircleIcon } from '../icons';
-import {
-  useGitBranch,
-  useErrorCount,
-  useWarningCount,
-  useActiveFile,
-  useCursorPosition,
-} from '../../stores/ideStore';
+import { useGitBranch, useActiveFile, useCursorPosition } from '../../stores/ideStore';
+import { useLSPErrorCount, useLSPInfoCount, useLSPWarningCount } from '../../stores/lspStore';
 
 export function StatusBar() {
   const gitBranch = useGitBranch();
-  const errorCount = useErrorCount();
-  const warningCount = useWarningCount();
+  const errorCount = useLSPErrorCount();
+  const warningCount = useLSPWarningCount();
+  const infoCount = useLSPInfoCount();
   const activeFile = useActiveFile();
   const cursorPosition = useCursorPosition();
 
@@ -24,7 +20,7 @@ export function StatusBar() {
             <span>{gitBranch}</span>
           </span>
         )}
-        <DiagnosticsIndicator errors={errorCount} warnings={warningCount} />
+        <DiagnosticsIndicator errors={errorCount} warnings={warningCount} info={infoCount} />
       </div>
       <div className={styles.spacer} />
       <div className={styles.right}>
@@ -45,19 +41,18 @@ export function StatusBar() {
 interface DiagnosticsIndicatorProps {
   errors: number;
   warnings: number;
+  info: number;
 }
 
-function DiagnosticsIndicator({ errors, warnings }: DiagnosticsIndicatorProps) {
-  const hasIssues = errors > 0 || warnings > 0;
+function DiagnosticsIndicator({ errors, warnings, info }: DiagnosticsIndicatorProps) {
+  const hasIssues = errors > 0 || warnings > 0 || info > 0;
 
   return (
     <span className={`${styles.item} ${errors > 0 ? styles.error : ''}`}>
       {hasIssues ? (
         <>
           <AlertCircleIcon aria-hidden="true" />
-          <span>
-            {errors} errors, {warnings} warnings
-          </span>
+          <span>{formatDiagnosticsSummary(errors, warnings, info)}</span>
         </>
       ) : (
         <>
@@ -67,4 +62,20 @@ function DiagnosticsIndicator({ errors, warnings }: DiagnosticsIndicatorProps) {
       )}
     </span>
   );
+}
+
+function formatDiagnosticsSummary(errors: number, warnings: number, info: number): string {
+  const parts: string[] = [];
+
+  if (errors > 0) {
+    parts.push(`${errors} ${errors === 1 ? 'error' : 'errors'}`);
+  }
+  if (warnings > 0) {
+    parts.push(`${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`);
+  }
+  if (info > 0) {
+    parts.push(`${info} info`);
+  }
+
+  return parts.join(', ');
 }

@@ -6,11 +6,21 @@
  * - Firn Glacier theme integration
  * - Content change notifications
  * - Cursor position tracking
+ * - LSP diagnostics display (underlines + gutter markers)
+ * - Programmatic navigation support
  * - Proper cleanup on unmount
  */
 
 import { useEffect, useRef, useCallback, memo } from 'react';
-import { EditorView, EditorState, createEditorExtensions } from './codemirror';
+import {
+  EditorView,
+  EditorState,
+  createEditorExtensions,
+  updateEditorDiagnostics,
+} from './codemirror';
+import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
+import { useLSPStore } from '../../stores/lspStore';
+import { filePathToURI } from '../../utils/lspUri';
 import styles from './CodeMirrorEditor.module.css';
 
 interface CodeMirrorEditorProps {
@@ -144,6 +154,13 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     applyInitialCursor();
     applyInitialScroll();
 
+    // Apply any existing diagnostics for this file
+    const uri = filePathToURI(fileId);
+    const existingDiags = useLSPStore.getState().diagnostics.get(uri);
+    if (existingDiags && existingDiags.length > 0) {
+      updateEditorDiagnostics(view, existingDiags);
+    }
+
     // Focus/blur event handlers
     const handleFocusEvent = () => onFocus?.();
     const handleBlurEvent = () => onBlur?.();
@@ -197,7 +214,64 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     }
   }, [content]);
 
+  // Subscribe to diagnostics for this file's URI
+  useEffect(() => {
+    const uri = filePathToURI(fileId);
+    let prevDiags = useLSPStore.getState().diagnostics.get(uri);
+
+    const cancel = useLSPStore.subscribe((state) => {
+      const diags = state.diagnostics.get(uri);
+      if (diags === prevDiags) return;
+      prevDiags = diags;
+
+      const view = editorRef.current;
+      if (!view) return;
+
+      updateEditorDiagnostics(view, diags ?? []);
+    });
+
+    return cancel;
+  }, [fileId]);
+
+  // Handle programmatic navigation requests
+  useEffect(() => {
+    const cancel = useIDEStore.subscribe((state, prevState) => {
+      const nav = state.pendingEditorNavigation;
+      const prevNav = prevState.pendingEditorNavigation;
+      if (!nav || nav === prevNav || nav.fileId !== fileIdRef.current) return;
+
+      const view = editorRef.current;
+      if (!view) return;
+
+      applyNavigation(view, nav);
+      useIDEStore.getState().clearPendingEditorNavigation(nav.fileId, nav.revision);
+    });
+
+    // Also check if there's a pending navigation right now (e.g., file just opened)
+    const nav = useIDEStore.getState().pendingEditorNavigation;
+    if (nav && nav.fileId === fileId && editorRef.current) {
+      applyNavigation(editorRef.current, nav);
+      useIDEStore.getState().clearPendingEditorNavigation(nav.fileId, nav.revision);
+    }
+
+    return cancel;
+  }, [fileId]);
+
   return <div ref={containerRef} className={styles.container} data-testid="codemirror-editor" />;
 });
 
 CodeMirrorEditor.displayName = 'CodeMirrorEditor';
+
+function applyNavigation(view: EditorView, nav: EditorNavigationRequest): void {
+  const lineNum = Math.min(nav.line, view.state.doc.lines);
+  if (lineNum <= 0) return;
+  const line = view.state.doc.line(lineNum);
+  const col = Math.min((nav.column ?? 1) - 1, line.length);
+  const pos = line.from + col;
+
+  view.dispatch({
+    selection: { anchor: pos },
+    scrollIntoView: true,
+  });
+  view.focus();
+}

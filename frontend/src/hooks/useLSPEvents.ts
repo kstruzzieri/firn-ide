@@ -35,19 +35,6 @@ export function useLSPEvents() {
   const toastedErrors = useRef(new Set<string>());
 
   useEffect(() => {
-    const syncDiagnosticCounts = () => {
-      const lspState = useLSPStore.getState();
-      useIDEStore.getState().setDiagnostics(lspState.errorCount(), lspState.warningCount());
-    };
-
-    syncDiagnosticCounts();
-
-    const cancelLSPStore = useLSPStore.subscribe((state, prevState) => {
-      if (state.diagnostics !== prevState.diagnostics) {
-        syncDiagnosticCounts();
-      }
-    });
-
     const cancelWorkspace = useIDEStore.subscribe((state, prevState) => {
       const workspacePath = state.workspace?.path ?? null;
       const prevWorkspacePath = prevState.workspace?.path ?? null;
@@ -99,7 +86,6 @@ export function useLSPEvents() {
     });
 
     return () => {
-      cancelLSPStore();
       cancelWorkspace();
       cancelDiagnostics();
       cancelStatus();

@@ -273,7 +273,116 @@
 }
 
 .problemsList {
-  padding: 8px;
+  padding: 4px 0;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.problemsGroup {
+  margin-bottom: 2px;
+}
+
+.problemsGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.problemsFileName {
+  color: var(--text-primary);
+}
+
+.problemsFilePath {
+  color: var(--text-muted);
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.problemsGroupCount {
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.problemsRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 12px 3px 24px;
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', var(--font-mono, monospace);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+
+.problemsRow:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.problemsRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.problemsSeverity {
+  font-size: 10px;
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.problemsError {
+  color: var(--status-error);
+}
+
+.problemsWarning {
+  color: var(--status-warning);
+}
+
+.problemsInfo {
+  color: var(--accent);
+}
+
+.problemsMessage {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.problemsLocation {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.problemsSource {
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 /* ── Drag and drop ───────────────────────────────────────────── */

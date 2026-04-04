@@ -22,8 +22,8 @@ import {
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { TreeNode } from './TreeNode';
-import { ReadFile } from '../../../wailsjs/go/main/App';
 import type { filesystem } from '../../../wailsjs/go/models';
+import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import styles from './FileExplorer.module.css';
 import treeStyles from './TreeNode.module.css';
 
@@ -40,26 +40,6 @@ function shortenPath(path: string): string {
   return path;
 }
 
-/** Maps file extension to language identifier for the editor */
-function getLanguageFromPath(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase() ?? '';
-  const langMap: Record<string, string> = {
-    ts: 'typescript',
-    tsx: 'typescript',
-    js: 'javascript',
-    jsx: 'javascript',
-    json: 'json',
-    md: 'markdown',
-    go: 'go',
-    py: 'python',
-    css: 'css',
-    html: 'html',
-    yaml: 'yaml',
-    yml: 'yaml',
-  };
-  return langMap[ext] ?? 'plaintext';
-}
-
 export function FileExplorer() {
   const workspace = useWorkspace();
   const directoryTree = useDirectoryTree();
@@ -73,7 +53,6 @@ export function FileExplorer() {
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
   const toggleRootExpanded = useIDEStore((state) => state.toggleRootExpanded);
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
-  const openFile = useIDEStore((state) => state.openFile);
   const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
 
   // Sync active file in editor to file tree selection.
@@ -125,28 +104,10 @@ export function FileExplorer() {
   );
 
   // Double click: open file in editor
-  const handleOpen = useCallback(
-    async (entry: filesystem.FileEntry) => {
-      if (entry.isDir) return;
-
-      try {
-        const content = await ReadFile(entry.path);
-        openFile({
-          id: entry.path,
-          name: entry.name,
-          path: entry.path,
-          language: getLanguageFromPath(entry.path),
-          encoding: content.encoding,
-          lineEndings: content.lineEndings,
-          content: content.content,
-          isModified: false,
-        });
-      } catch (err) {
-        console.error('Failed to open file:', err);
-      }
-    },
-    [openFile]
-  );
+  const handleOpen = useCallback(async (entry: filesystem.FileEntry) => {
+    if (entry.isDir) return;
+    await ensureEditorFileOpen(entry.path);
+  }, []);
 
   const handleHidePanel = useCallback(() => {
     toggleLeftPanel();
