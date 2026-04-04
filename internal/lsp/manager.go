@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -343,7 +344,7 @@ func (m *Manager) ensureServer(ctx context.Context, family, workspace string) (*
 func (m *Manager) startServer(ctx context.Context, key serverKey, config *ServerConfig) (*serverEntry, error) {
 	m.emitStatus(key.family, key.workspace, "starting", "")
 
-	transport, err := NewStdioTransport(config.Command, config.Args...)
+	transport, err := NewStdioTransport(config.Command, config.Dir, config.Args...)
 	if err != nil {
 		m.emitStatus(key.family, key.workspace, "error", err.Error())
 		return nil, fmt.Errorf("start server %s: %w", config.Command, err)
@@ -366,8 +367,13 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 		return nil, fmt.Errorf("invalid workspace path %q: %w", key.workspace, err)
 	}
 	if err := client.Initialize(ctx, rootURI); err != nil {
+		// Include captured server stderr in the error for diagnostics.
+		errMsg := err.Error()
+		if stderr := transport.Stderr(); stderr != "" {
+			errMsg = fmt.Sprintf("%s (server stderr: %s)", errMsg, strings.TrimSpace(stderr))
+		}
 		transport.Close()
-		m.emitStatus(key.family, key.workspace, "error", err.Error())
+		m.emitStatus(key.family, key.workspace, "error", errMsg)
 		return nil, fmt.Errorf("initialize %s: %w", config.Command, err)
 	}
 

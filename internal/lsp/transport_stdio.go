@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os/exec"
@@ -11,12 +12,16 @@ import (
 // processExitTimeout is the time to wait for a server process to exit gracefully before killing it.
 const processExitTimeout = 5 * time.Second
 
+// maxStderrCapture is the maximum number of stderr bytes to retain for diagnostics.
+const maxStderrCapture = 4096
+
 // StdioTransport implements Transport over a child process's stdin/stdout.
 type StdioTransport struct {
 	cmd    *exec.Cmd
 	codec  *Codec
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
+	stderr *limitedBuffer
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -25,8 +30,12 @@ type StdioTransport struct {
 }
 
 // NewStdioTransport starts the given command and wraps its stdin/stdout as an LSP transport.
-func NewStdioTransport(name string, args ...string) (*StdioTransport, error) {
+// dir sets the working directory for the spawned process; if empty, the parent's cwd is used.
+func NewStdioTransport(name string, dir string, args ...string) (*StdioTransport, error) {
 	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -39,8 +48,9 @@ func NewStdioTransport(name string, args ...string) (*StdioTransport, error) {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	// Discard stderr to avoid blocking the server process
-	cmd.Stderr = io.Discard
+	// Capture stderr so crash diagnostics can be included in error messages.
+	stderrBuf := &limitedBuffer{max: maxStderrCapture}
+	cmd.Stderr = stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
@@ -52,6 +62,7 @@ func NewStdioTransport(name string, args ...string) (*StdioTransport, error) {
 		codec:  NewCodec(stdout, stdin),
 		stdin:  stdin,
 		stdout: stdout,
+		stderr: stderrBuf,
 		done:   make(chan struct{}),
 	}
 
@@ -65,6 +76,11 @@ func NewStdioTransport(name string, args ...string) (*StdioTransport, error) {
 	}()
 
 	return t, nil
+}
+
+// Stderr returns the captured stderr output from the server process.
+func (t *StdioTransport) Stderr() string {
+	return t.stderr.String()
 }
 
 // Send writes a JSON-RPC message to the server's stdin.
@@ -136,4 +152,27 @@ func (t *StdioTransport) ExitErr() error {
 	default:
 		return nil
 	}
+}
+
+// limitedBuffer is a bytes.Buffer that silently discards writes beyond max bytes.
+// This prevents a chatty server from consuming unbounded memory via stderr.
+type limitedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	remaining := b.max - b.buf.Len()
+	if remaining <= 0 {
+		return len(p), nil // discard but report success so the writer doesn't block
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *limitedBuffer) String() string {
+	return b.buf.String()
 }
