@@ -11,7 +11,7 @@ export type Platform = 'mac' | 'windows' | 'linux';
 export function getPlatform(): Platform {
   const userAgent = navigator.userAgent.toLowerCase();
 
-  if (userAgent.includes('mac')) {
+  if (userAgent.includes('mac') || userAgent.includes('darwin')) {
     return 'mac';
   }
   if (userAgent.includes('win')) {

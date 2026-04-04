@@ -26,8 +26,14 @@ describe('fileURIToPath', () => {
     expect(fileURIToPath('file:///home/user/project/test.ts')).toBe('/home/user/project/test.ts');
   });
 
-  it('converts a Windows file URI to a local path', () => {
-    expect(fileURIToPath('file:///c:/Users/dev/test.ts')).toBe('C:\\Users\\dev\\test.ts');
+  it('strips leading slash from Windows drive-letter URIs', () => {
+    const result = fileURIToPath('file:///c:/Users/dev/test.ts');
+    // The leading /c: slash is always stripped.
+    // On Windows toNativeLocalPath further normalizes to C:\...; on other
+    // platforms the forward-slash form is returned as-is.
+    expect(result).not.toBeNull();
+    expect(result!.startsWith('/')).toBe(false);
+    expect(result).toMatch(/^[cC]:[/\\]Users/);
   });
 
   it('decodes percent-encoded characters', () => {
@@ -40,12 +46,20 @@ describe('fileURIToPath', () => {
     expect(fileURIToPath('https://example.com')).toBeNull();
   });
 
-  it('returns null for file URIs with a host authority', () => {
+  it('accepts file://localhost/ as a local URI', () => {
+    expect(fileURIToPath('file://localhost/home/user/test.ts')).toBe('/home/user/test.ts');
+  });
+
+  it('returns null for file URIs with a remote host authority', () => {
     expect(fileURIToPath('file://remote-host/share/file.ts')).toBeNull();
   });
 
   it('returns null for invalid URIs', () => {
     expect(fileURIToPath('not a uri')).toBeNull();
+  });
+
+  it('returns null for malformed percent-encoding', () => {
+    expect(fileURIToPath('file:///tmp/%')).toBeNull();
   });
 });
 

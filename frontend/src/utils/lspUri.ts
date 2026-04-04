@@ -48,11 +48,26 @@ export function fileURIToPath(uri: string): string | null {
     return null;
   }
 
-  if (parsed.host) {
+  // file://localhost/... is a valid local-file URI form produced by some tools.
+  if (parsed.host && parsed.host !== 'localhost') {
     return null;
   }
 
-  const path = decodeURIComponent(parsed.pathname);
+  let path: string;
+  try {
+    path = decodeURIComponent(parsed.pathname);
+  } catch {
+    // Malformed percent-encoding (e.g. file:///tmp/%) — treat as unusable.
+    return null;
+  }
+
+  // Strip the leading slash from Windows drive-letter paths (/c:/... -> c:/...).
+  // This applies regardless of the host platform because the URI encodes the
+  // drive letter explicitly.
+  if (/^\/[A-Za-z]:\//.test(path)) {
+    path = path.slice(1);
+  }
+
   return toNativeLocalPath(path);
 }
 

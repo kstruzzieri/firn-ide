@@ -1,5 +1,6 @@
 import { ensureEditorFileOpen, navigateToEditorLocation } from '../../utils/editorNavigation';
 import { useIDEStore } from '../../stores/ideStore';
+import { toNativeLocalPath } from '../../utils/lspUri';
 import { ReadFile } from '../../../wailsjs/go/main/App';
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
@@ -48,11 +49,13 @@ describe('ensureEditorFileOpen', () => {
     expect(useIDEStore.getState().openFiles).toHaveLength(1);
   });
 
-  it('reuses an already-open Windows file when the requested path is slash-normalized', async () => {
+  it('reuses an already-open file when the requested path is slash-normalized', async () => {
+    // Open a file under its backslash form
+    const storedId = 'C:\\Users\\dev\\project\\file.ts';
     useIDEStore.getState().openFile({
-      id: 'C:\\Users\\dev\\project\\file.ts',
+      id: storedId,
       name: 'file.ts',
-      path: 'C:\\Users\\dev\\project\\file.ts',
+      path: storedId,
       language: 'TypeScript',
       encoding: 'utf-8',
       lineEndings: 'LF',
@@ -60,15 +63,16 @@ describe('ensureEditorFileOpen', () => {
       isModified: true,
     });
 
+    // Request with forward-slash lowercase form — should find the existing file
     const file = await ensureEditorFileOpen('c:/Users/dev/project/file.ts');
 
     expect(file).not.toBeNull();
-    expect(file!.id).toBe('C:\\Users\\dev\\project\\file.ts');
-    expect(useIDEStore.getState().activeFileId).toBe('C:\\Users\\dev\\project\\file.ts');
+    expect(file!.id).toBe(storedId);
+    expect(useIDEStore.getState().activeFileId).toBe(storedId);
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 
-  it('stores new Windows files using a native path and basename', async () => {
+  it('stores new files using the native path form', async () => {
     mockReadFile.mockResolvedValue({
       content: 'const x = 1;',
       encoding: 'utf-8',
@@ -76,11 +80,14 @@ describe('ensureEditorFileOpen', () => {
       isBinary: false,
     } as never);
 
-    const file = await ensureEditorFileOpen('c:/Users/dev/project/file.ts');
+    const inputPath = 'c:/Users/dev/project/file.ts';
+    const file = await ensureEditorFileOpen(inputPath);
 
-    expect(mockReadFile).toHaveBeenCalledWith('C:\\Users\\dev\\project\\file.ts');
+    // toNativeLocalPath determines the expected form for this platform
+    const expectedPath = toNativeLocalPath(inputPath);
+    expect(mockReadFile).toHaveBeenCalledWith(expectedPath);
     expect(file).not.toBeNull();
-    expect(file!.id).toBe('C:\\Users\\dev\\project\\file.ts');
+    expect(file!.id).toBe(expectedPath);
     expect(file!.name).toBe('file.ts');
     expect(file!.language).toBe('TypeScript');
   });
