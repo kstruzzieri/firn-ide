@@ -291,7 +291,7 @@ function getOrCreateAssembler(
 
 export const useIDEStore = create<IDEStore>()(
   devtools(
-    (set) => ({
+    (set, get) => ({
       // Initial state
       workspace: null,
       isLoading: false,
@@ -1104,7 +1104,7 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       goBack: (current: NavigationLocation) => {
-        const state = useIDEStore.getState();
+        const state = get();
         if (state.navigationHistory.length === 0) return undefined;
         const entry = state.navigationHistory[state.navigationHistory.length - 1];
         set(
@@ -1119,7 +1119,7 @@ export const useIDEStore = create<IDEStore>()(
       },
 
       goForward: (current: NavigationLocation) => {
-        const state = useIDEStore.getState();
+        const state = get();
         if (state.navigationForward.length === 0) return undefined;
         const entry = state.navigationForward[state.navigationForward.length - 1];
         set(
