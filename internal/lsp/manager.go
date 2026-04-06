@@ -284,11 +284,15 @@ func (m *Manager) GetStatus() []ServerStatus {
 			state = "stopping"
 		}
 
-		statuses = append(statuses, ServerStatus{
+		status := ServerStatus{
 			Family:    key.family,
 			Workspace: key.workspace,
 			State:     state,
-		})
+		}
+		if state == "ready" {
+			status.CompletionTriggerCharacters = completionTriggerChars(entry)
+		}
+		statuses = append(statuses, status)
 	}
 	return statuses
 }
@@ -599,12 +603,21 @@ func (m *Manager) emitStatus(family, workspace, state, errMsg string) {
 	if m.emitter == nil {
 		return
 	}
-	m.emitter("lsp:status", ServerStatus{
+	status := ServerStatus{
 		Family:    family,
 		Workspace: workspace,
 		State:     state,
 		Error:     errMsg,
-	})
+	}
+	if state == "ready" {
+		m.mu.Lock()
+		key := serverKey{family: family, workspace: workspace}
+		if entry, ok := m.servers[key]; ok {
+			status.CompletionTriggerCharacters = completionTriggerChars(entry)
+		}
+		m.mu.Unlock()
+	}
+	m.emitter("lsp:status", status)
 }
 
 // emitError emits an lsp:error event with a user-facing message.
@@ -617,4 +630,17 @@ func (m *Manager) emitError(family, workspace, message string) {
 		"workspace": workspace,
 		"message":   message,
 	})
+}
+
+// completionTriggerChars extracts trigger characters from a server's completion capabilities.
+func completionTriggerChars(entry *serverEntry) []string {
+	raw := entry.client.ServerCapabilities().CompletionProvider
+	if len(raw) == 0 {
+		return nil
+	}
+	var opts CompletionProviderOptions
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		return nil
+	}
+	return opts.TriggerCharacters
 }

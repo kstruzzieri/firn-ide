@@ -27,6 +27,7 @@ export interface LSPServerStatus {
   workspace: string;
   state: 'starting' | 'ready' | 'stopping' | 'stopped' | 'error';
   error?: string;
+  completionTriggerCharacters?: string[];
 }
 
 // --- Store ---
