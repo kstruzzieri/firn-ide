@@ -10,6 +10,7 @@ module.exports = {
     '^\\.\\./\\.\\./wailsjs/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
     '^\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
     '^\\.\\./\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '^\\.\\./\\.\\./\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
   },
   transform: {
     '^.+\\.tsx?$': [
