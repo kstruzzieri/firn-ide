@@ -53,6 +53,9 @@ import { rust } from '@codemirror/lang-rust';
 
 import { firnGlacier } from './theme';
 import { diagnosticsExtensions } from './diagnostics';
+import { completionExtensions, renderKindIcon } from './completion';
+import { hoverExtensions } from './hover';
+import { definitionExtensions } from './definition';
 export { getLanguageName } from '../../../utils/editorLanguage';
 
 /**
@@ -189,6 +192,13 @@ export function autocompleteExtensions(): Extension[] {
     autocompletion({
       activateOnTyping: true,
       maxRenderedOptions: 50,
+      icons: false,
+      addToOptions: [
+        {
+          render: renderKindIcon,
+          position: 20,
+        },
+      ],
     }),
   ];
 }
@@ -312,6 +322,15 @@ export function createEditorExtensions(options: {
 
     // Diagnostics (lint gutter + underlines, populated dynamically)
     ...diagnosticsExtensions(),
+
+    // LSP Completion (compartment, initially empty)
+    ...completionExtensions(),
+
+    // LSP Hover (compartment, initially empty)
+    ...hoverExtensions(),
+
+    // LSP Definition (F12, Cmd+Click, back/forward)
+    ...definitionExtensions(filename),
   ];
 
   // Optional placeholder
