@@ -155,6 +155,11 @@ type ServerCapabilities struct {
 	DefinitionProvider json.RawMessage `json:"definitionProvider,omitempty"`
 }
 
+// CompletionProviderOptions describes the server's completion capabilities.
+type CompletionProviderOptions struct {
+	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+}
+
 // TextDocumentSyncKind defines how the host (editor) should sync document changes.
 type TextDocumentSyncKind int
 
