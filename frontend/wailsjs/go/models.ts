@@ -293,6 +293,7 @@ export namespace lsp {
 	    workspace: string;
 	    state: string;
 	    error?: string;
+	    completionTriggerCharacters?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerStatus(source);
@@ -304,6 +305,7 @@ export namespace lsp {
 	        this.workspace = source["workspace"];
 	        this.state = source["state"];
 	        this.error = source["error"];
+	        this.completionTriggerCharacters = source["completionTriggerCharacters"];
 	    }
 	}
 	export class TextDocumentContentChangeEvent {
