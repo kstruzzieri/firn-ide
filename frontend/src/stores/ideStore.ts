@@ -60,6 +60,8 @@ export interface NavigationLocation {
   column: number;
 }
 
+const MAX_NAVIGATION_HISTORY = 50;
+
 const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
 
 function createDefaultWorkspaceSessionState() {
@@ -1092,8 +1094,8 @@ export const useIDEStore = create<IDEStore>()(
         set(
           (state) => {
             const history = [...state.navigationHistory, entry];
-            if (history.length > 50) {
-              history.splice(0, history.length - 50);
+            if (history.length > MAX_NAVIGATION_HISTORY) {
+              history.splice(0, history.length - MAX_NAVIGATION_HISTORY);
             }
             return { navigationHistory: history, navigationForward: [] };
           },

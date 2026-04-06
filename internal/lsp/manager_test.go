@@ -222,6 +222,10 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 	if statuses[0].State != "ready" {
 		t.Errorf("server state = %q, want ready", statuses[0].State)
 	}
+	// Mock server advertises triggerCharacters: [".", ":"]
+	if len(statuses[0].CompletionTriggerCharacters) != 2 {
+		t.Errorf("CompletionTriggerCharacters = %v, want 2 entries", statuses[0].CompletionTriggerCharacters)
+	}
 
 	// Use Manager.DidOpen (not direct client call)
 	tsFile := filepath.Join(tmpDir, "main.ts")
