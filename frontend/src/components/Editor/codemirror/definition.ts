@@ -140,7 +140,9 @@ export function definitionExtensions(filePath: string) {
       const modHeld = isMac() ? event.metaKey : event.ctrlKey;
 
       if (!modHeld) {
-        view.dispatch({ effects: setUnderline.of(null) });
+        if (view.state.field(underlineField) !== Decoration.none) {
+          view.dispatch({ effects: setUnderline.of(null) });
+        }
         return;
       }
 

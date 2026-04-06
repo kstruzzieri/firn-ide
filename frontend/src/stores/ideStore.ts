@@ -260,8 +260,8 @@ interface IDEActions {
 
   // Navigation history actions
   pushNavigationHistory: (entry: NavigationLocation) => void;
-  goBack: () => NavigationLocation | undefined;
-  goForward: () => NavigationLocation | undefined;
+  goBack: (current: NavigationLocation) => NavigationLocation | undefined;
+  goForward: (current: NavigationLocation) => NavigationLocation | undefined;
 }
 
 type IDEStore = IDEState & IDEActions;
@@ -1103,14 +1103,14 @@ export const useIDEStore = create<IDEStore>()(
           'pushNavigationHistory'
         ),
 
-      goBack: () => {
+      goBack: (current: NavigationLocation) => {
         const state = useIDEStore.getState();
         if (state.navigationHistory.length === 0) return undefined;
         const entry = state.navigationHistory[state.navigationHistory.length - 1];
         set(
           {
             navigationHistory: state.navigationHistory.slice(0, -1),
-            navigationForward: [...state.navigationForward, entry],
+            navigationForward: [...state.navigationForward, current],
           },
           false,
           'goBack'
@@ -1118,13 +1118,13 @@ export const useIDEStore = create<IDEStore>()(
         return entry;
       },
 
-      goForward: () => {
+      goForward: (current: NavigationLocation) => {
         const state = useIDEStore.getState();
         if (state.navigationForward.length === 0) return undefined;
         const entry = state.navigationForward[state.navigationForward.length - 1];
         set(
           {
-            navigationHistory: [...state.navigationHistory, entry],
+            navigationHistory: [...state.navigationHistory, current],
             navigationForward: state.navigationForward.slice(0, -1),
           },
           false,
