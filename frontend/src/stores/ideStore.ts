@@ -54,6 +54,12 @@ export interface EditorNavigationRequest {
   revision: number;
 }
 
+export interface NavigationLocation {
+  fileId: string;
+  line: number;
+  column: number;
+}
+
 const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
 
 function createDefaultWorkspaceSessionState() {
@@ -72,6 +78,8 @@ function createDefaultWorkspaceSessionState() {
     selectedPath: null as string | null,
     isRootExpanded: true,
     pendingEditorNavigation: null as EditorNavigationRequest | null,
+    navigationHistory: [] as NavigationLocation[],
+    navigationForward: [] as NavigationLocation[],
   };
 }
 
@@ -147,6 +155,10 @@ interface IDEState {
 
   // Editor navigation
   pendingEditorNavigation: EditorNavigationRequest | null;
+
+  // Navigation history (back/forward)
+  navigationHistory: NavigationLocation[];
+  navigationForward: NavigationLocation[];
 }
 
 interface IDEActions {
@@ -243,6 +255,11 @@ interface IDEActions {
   // Editor navigation actions
   requestEditorNavigation: (fileId: string, line: number, column: number) => void;
   clearPendingEditorNavigation: (fileId: string, revision: number) => void;
+
+  // Navigation history actions
+  pushNavigationHistory: (entry: NavigationLocation) => void;
+  goBack: () => NavigationLocation | undefined;
+  goForward: () => NavigationLocation | undefined;
 }
 
 type IDEStore = IDEState & IDEActions;
@@ -1069,6 +1086,50 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'clearPendingEditorNavigation'
         ),
+
+      // Navigation history actions
+      pushNavigationHistory: (entry) =>
+        set(
+          (state) => {
+            const history = [...state.navigationHistory, entry];
+            if (history.length > 50) {
+              history.splice(0, history.length - 50);
+            }
+            return { navigationHistory: history, navigationForward: [] };
+          },
+          false,
+          'pushNavigationHistory'
+        ),
+
+      goBack: () => {
+        const state = useIDEStore.getState();
+        if (state.navigationHistory.length === 0) return undefined;
+        const entry = state.navigationHistory[state.navigationHistory.length - 1];
+        set(
+          {
+            navigationHistory: state.navigationHistory.slice(0, -1),
+            navigationForward: [...state.navigationForward, entry],
+          },
+          false,
+          'goBack'
+        );
+        return entry;
+      },
+
+      goForward: () => {
+        const state = useIDEStore.getState();
+        if (state.navigationForward.length === 0) return undefined;
+        const entry = state.navigationForward[state.navigationForward.length - 1];
+        set(
+          {
+            navigationHistory: [...state.navigationHistory, entry],
+            navigationForward: state.navigationForward.slice(0, -1),
+          },
+          false,
+          'goForward'
+        );
+        return entry;
+      },
     }),
     { name: 'ide-store' }
   )
