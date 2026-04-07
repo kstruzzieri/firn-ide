@@ -1,8 +1,10 @@
-import { render, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 
 type DispatchSpec = {
   selection?: { anchor: number };
   changes?: { from: number; to: number; insert: string };
+  effects?: unknown[];
+  scrollIntoView?: boolean;
 };
 
 class FakeDoc {
@@ -38,6 +40,26 @@ let lastEditorView: {
   scrollDOM: { scrollTop: number; addEventListener: jest.Mock; removeEventListener: jest.Mock };
 } | null = null;
 
+const mockCreateEditorExtensions = jest.fn(() => []);
+const mockUpdateEditorDiagnostics = jest.fn();
+const mockReconfigureCompletion = jest.fn((filePath: string, triggerCharacters: string[]) => ({
+  kind: 'completion-source',
+  filePath,
+  triggerCharacters,
+}));
+const mockReconfigureHover = jest.fn((filePath: string) => ({
+  kind: 'hover-source',
+  filePath,
+}));
+const mockCompletionCompartmentReconfigure = jest.fn((value: unknown) => ({
+  kind: 'completion-compartment',
+  value,
+}));
+const mockHoverCompartmentReconfigure = jest.fn((value: unknown) => ({
+  kind: 'hover-compartment',
+  value,
+}));
+
 jest.mock('../../../components/Editor/codemirror', () => {
   class MockEditorView {
     state: { doc: FakeDoc };
@@ -65,14 +87,28 @@ jest.mock('../../../components/Editor/codemirror', () => {
         doc: new FakeDoc(doc),
       }),
     },
-    createEditorExtensions: jest.fn(() => []),
+    completionCompartment: {
+      reconfigure: mockCompletionCompartmentReconfigure,
+    },
+    hoverCompartment: {
+      reconfigure: mockHoverCompartmentReconfigure,
+    },
+    createEditorExtensions: mockCreateEditorExtensions,
+    reconfigureCompletion: mockReconfigureCompletion,
+    reconfigureHover: mockReconfigureHover,
+    updateEditorDiagnostics: mockUpdateEditorDiagnostics,
   };
 });
 
 import { CodeMirrorEditor } from '../../../components/Editor/CodeMirrorEditor';
+import { useIDEStore } from '../../../stores/ideStore';
+import { useLSPStore } from '../../../stores/lspStore';
 
 beforeEach(() => {
+  jest.clearAllMocks();
   lastEditorView = null;
+  useIDEStore.setState(useIDEStore.getInitialState());
+  useLSPStore.setState(useLSPStore.getInitialState());
   global.requestAnimationFrame = jest.fn((callback: FrameRequestCallback) => {
     callback(0);
     return 1;
@@ -106,5 +142,97 @@ describe('CodeMirrorEditor', () => {
       })
     );
     expect(lastEditorView?.scrollDOM.scrollTop).toBe(55);
+  });
+
+  it('passes the absolute file path into editor extensions', () => {
+    render(
+      <CodeMirrorEditor fileId="/project/main.ts" filename="main.ts" content="const value = 1;" />
+    );
+
+    expect(mockCreateEditorExtensions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filename: 'main.ts',
+        filePath: '/project/main.ts',
+      })
+    );
+  });
+
+  it('reconfigures completion and hover from matching LSP server status', async () => {
+    render(
+      <CodeMirrorEditor fileId="/project/main.ts" filename="main.ts" content="const value = 1;" />
+    );
+
+    expect(lastEditorView).not.toBeNull();
+    lastEditorView?.dispatch.mockClear();
+    mockReconfigureCompletion.mockClear();
+    mockReconfigureHover.mockClear();
+    mockCompletionCompartmentReconfigure.mockClear();
+    mockHoverCompartmentReconfigure.mockClear();
+
+    act(() => {
+      useIDEStore.getState().setWorkspace({ name: 'project', path: '/project' });
+      useLSPStore.getState().setServerStatus({
+        family: 'typescript',
+        workspace: '/project',
+        state: 'ready',
+        completionTriggerCharacters: ['.', ':'],
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockReconfigureCompletion).toHaveBeenCalledWith('/project/main.ts', ['.', ':']);
+      expect(mockReconfigureHover).toHaveBeenCalledWith('/project/main.ts');
+    });
+
+    expect(lastEditorView?.dispatch).toHaveBeenCalledWith({
+      effects: [
+        {
+          kind: 'completion-compartment',
+          value: {
+            kind: 'completion-source',
+            filePath: '/project/main.ts',
+            triggerCharacters: ['.', ':'],
+          },
+        },
+        {
+          kind: 'hover-compartment',
+          value: {
+            kind: 'hover-source',
+            filePath: '/project/main.ts',
+          },
+        },
+      ],
+    });
+
+    lastEditorView?.dispatch.mockClear();
+    mockCompletionCompartmentReconfigure.mockClear();
+    mockHoverCompartmentReconfigure.mockClear();
+
+    act(() => {
+      useLSPStore.getState().setServerStatus({
+        family: 'typescript',
+        workspace: '/project',
+        state: 'error',
+        error: 'server crashed',
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockCompletionCompartmentReconfigure).toHaveBeenCalledWith([]);
+      expect(mockHoverCompartmentReconfigure).toHaveBeenCalledWith([]);
+    });
+
+    expect(lastEditorView?.dispatch).toHaveBeenCalledWith({
+      effects: [
+        {
+          kind: 'completion-compartment',
+          value: [],
+        },
+        {
+          kind: 'hover-compartment',
+          value: [],
+        },
+      ],
+    });
   });
 });

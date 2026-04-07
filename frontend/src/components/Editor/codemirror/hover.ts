@@ -5,6 +5,7 @@ import { ClipboardSetText } from '../../../../wailsjs/runtime/runtime';
 import { decodeLSPContent } from '../../../utils/lspContent';
 import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
+import { useIDEStore } from '../../../stores/ideStore';
 
 /** Compartment for the LSP hover tooltip. Empty when no LSP is active. */
 export const hoverCompartment = new Compartment();
@@ -94,10 +95,18 @@ function createHoverTooltipDOM(
         const loc = locations[0];
         const path = fileURIToPath(loc.uri);
         if (path) {
+          // Push current position so Back works after hover-initiated navigation
+          useIDEStore.getState().pushNavigationHistory({
+            fileId: filePath,
+            line: line + 1, // Convert LSP 0-based to 1-based
+            column: character + 1,
+          });
           navigateToEditorLocation(path, loc.range.start.line + 1, loc.range.start.character + 1);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Non-critical: user clicked "Go to Definition" in tooltip
+      });
   });
   actionsDiv.appendChild(goToDef);
 

@@ -16,11 +16,16 @@ import {
   EditorView,
   EditorState,
   createEditorExtensions,
+  completionCompartment,
+  hoverCompartment,
+  reconfigureCompletion,
+  reconfigureHover,
   updateEditorDiagnostics,
 } from './codemirror';
 import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
-import { useLSPStore } from '../../stores/lspStore';
+import { useLSPStore, serverStatusKey } from '../../stores/lspStore';
 import { filePathToURI } from '../../utils/lspUri';
+import { lspFamilyForFile } from '../../utils/lspLanguageId';
 import styles from './CodeMirrorEditor.module.css';
 
 interface CodeMirrorEditorProps {
@@ -131,6 +136,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     // Create extensions with callbacks
     const extensions = createEditorExtensions({
       filename,
+      filePath: fileId,
       readOnly,
       tabSize,
       onChange: handleContentChange,
@@ -232,6 +238,71 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 
     return cancel;
   }, [fileId]);
+
+  // Enable LSP completion/hover when the matching server becomes ready.
+  useEffect(() => {
+    const family = lspFamilyForFile(filename);
+    if (!family) return;
+
+    let lastConfigKey: string | null = null;
+
+    const applyLSPFeatureConfiguration = () => {
+      const currentView = editorRef.current;
+      if (!currentView) return;
+
+      const workspacePath = useIDEStore.getState().workspace?.path;
+      const status = workspacePath
+        ? useLSPStore.getState().serverStatuses.get(serverStatusKey(workspacePath, family))
+        : undefined;
+      const isReady = status?.state === 'ready';
+      const triggerCharacters = status?.completionTriggerCharacters ?? [];
+      const nextConfigKey = isReady
+        ? `${workspacePath ?? ''}::${family}::${triggerCharacters.join('\u0000')}`
+        : null;
+
+      if (nextConfigKey === lastConfigKey) return;
+      if (!nextConfigKey && lastConfigKey === null) return;
+
+      currentView.dispatch({
+        effects: [
+          completionCompartment.reconfigure(
+            isReady ? reconfigureCompletion(fileId, triggerCharacters) : []
+          ),
+          hoverCompartment.reconfigure(isReady ? reconfigureHover(fileId) : []),
+        ],
+      });
+
+      lastConfigKey = nextConfigKey;
+    };
+
+    applyLSPFeatureConfiguration();
+
+    // Use reference equality on the status entry to skip work during unrelated
+    // store updates (e.g. diagnostics arriving on every keystroke).
+    let prevStatus = useLSPStore
+      .getState()
+      .serverStatuses.get(serverStatusKey(useIDEStore.getState().workspace?.path ?? '', family));
+
+    const cancelStatus = useLSPStore.subscribe((state) => {
+      const workspacePath = useIDEStore.getState().workspace?.path;
+      if (!workspacePath) return;
+      const status = state.serverStatuses.get(serverStatusKey(workspacePath, family));
+      if (status === prevStatus) return;
+      prevStatus = status;
+      applyLSPFeatureConfiguration();
+    });
+
+    const cancelWorkspace = useIDEStore.subscribe((state, prevState) => {
+      if (state.workspace?.path !== prevState.workspace?.path) {
+        applyLSPFeatureConfiguration();
+      }
+    });
+
+    return () => {
+      cancelStatus();
+      cancelWorkspace();
+    };
+  }, [fileId, filename]);
 
   // Handle programmatic navigation requests
   useEffect(() => {

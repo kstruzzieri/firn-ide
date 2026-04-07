@@ -24,40 +24,40 @@ describe('navigation history', () => {
     const store = useIDEStore.getState();
     store.pushNavigationHistory(loc1);
     store.pushNavigationHistory(loc2);
-    store.goBack();
+    store.goBack(loc3);
     expect(useIDEStore.getState().navigationForward).toHaveLength(1);
     store.pushNavigationHistory(loc3);
     expect(useIDEStore.getState().navigationForward).toEqual([]);
   });
 
-  it('goBack pops from back stack and pushes to forward stack', () => {
+  it('goBack pops from back stack and pushes the current location to forward stack', () => {
     const store = useIDEStore.getState();
     store.pushNavigationHistory(loc1);
     store.pushNavigationHistory(loc2);
-    const result = useIDEStore.getState().goBack();
+    const result = useIDEStore.getState().goBack(loc3);
     expect(result).toEqual(loc2);
     expect(useIDEStore.getState().navigationHistory).toEqual([loc1]);
-    expect(useIDEStore.getState().navigationForward).toEqual([loc2]);
+    expect(useIDEStore.getState().navigationForward).toEqual([loc3]);
   });
 
   it('goBack returns undefined when stack is empty', () => {
-    const result = useIDEStore.getState().goBack();
+    const result = useIDEStore.getState().goBack(loc1);
     expect(result).toBeUndefined();
   });
 
-  it('goForward pops from forward stack and pushes to back stack', () => {
+  it('goForward pops from forward stack and pushes the current location to back stack', () => {
     const store = useIDEStore.getState();
     store.pushNavigationHistory(loc1);
     store.pushNavigationHistory(loc2);
-    store.goBack();
-    const result = useIDEStore.getState().goForward();
-    expect(result).toEqual(loc2);
+    store.goBack(loc3);
+    const result = useIDEStore.getState().goForward(loc2);
+    expect(result).toEqual(loc3);
     expect(useIDEStore.getState().navigationForward).toEqual([]);
     expect(useIDEStore.getState().navigationHistory).toEqual([loc1, loc2]);
   });
 
   it('goForward returns undefined when forward stack is empty', () => {
-    const result = useIDEStore.getState().goForward();
+    const result = useIDEStore.getState().goForward(loc1);
     expect(result).toBeUndefined();
   });
 
@@ -74,7 +74,7 @@ describe('navigation history', () => {
     const store = useIDEStore.getState();
     store.pushNavigationHistory(loc1);
     store.pushNavigationHistory(loc2);
-    store.goBack();
+    store.goBack(loc3);
     store.resetWorkspaceSession();
     expect(useIDEStore.getState().navigationHistory).toEqual([]);
     expect(useIDEStore.getState().navigationForward).toEqual([]);

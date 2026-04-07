@@ -275,6 +275,7 @@ export function tabSize(size: number): Extension {
  */
 export function createEditorExtensions(options: {
   filename: string;
+  filePath: string;
   readOnly?: boolean;
   tabSize?: number;
   placeholder?: string;
@@ -283,6 +284,7 @@ export function createEditorExtensions(options: {
 }): Extension[] {
   const {
     filename,
+    filePath,
     readOnly: isReadOnly = false,
     tabSize: tabs = 2,
     placeholder,
@@ -330,7 +332,7 @@ export function createEditorExtensions(options: {
     ...hoverExtensions(),
 
     // LSP Definition (F12, Cmd+Click, back/forward)
-    ...definitionExtensions(filename),
+    ...definitionExtensions(filePath),
   ];
 
   // Optional placeholder

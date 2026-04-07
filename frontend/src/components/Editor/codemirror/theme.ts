@@ -286,6 +286,120 @@ export const firnGlacierTheme = EditorView.theme(
     '&::-webkit-scrollbar-thumb:hover, & *::-webkit-scrollbar-thumb:hover': {
       background: colors.border,
     },
+
+    // --- Completion styles ---
+    '.firn-completion-icon': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      marginRight: '4px',
+      verticalAlign: 'middle',
+    },
+    '.firn-completion-info': {
+      padding: '8px 12px',
+      maxWidth: '400px',
+      fontSize: '13px',
+      lineHeight: '1.4',
+    },
+    '.firn-completion-info-header': {
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: '12px',
+      color: colors.foreground,
+      marginBottom: '6px',
+      fontWeight: '600',
+    },
+    '.firn-completion-info-body': {
+      color: colors.foregroundSecondary,
+      fontSize: '12px',
+      whiteSpace: 'pre-wrap',
+    },
+
+    // --- Hover tooltip styles ---
+    '.firn-hover-tooltip': {
+      backgroundColor: colors.backgroundHighlight,
+      border: `1px solid ${colors.border}`,
+      borderRadius: '6px',
+      padding: '0',
+      maxWidth: '520px',
+      maxHeight: '360px',
+      overflow: 'auto',
+      fontSize: '13px',
+      lineHeight: '1.5',
+      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+    },
+    '.firn-hover-signature': {
+      padding: '8px 12px',
+    },
+    '.firn-hover-code': {
+      margin: '0',
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: '12px',
+      lineHeight: '1.5',
+      whiteSpace: 'pre-wrap',
+      color: colors.foreground,
+    },
+    '.firn-hover-separator': {
+      borderTop: `1px solid ${colors.border}`,
+      margin: '0',
+    },
+    '.firn-hover-docs': {
+      padding: '8px 12px',
+      color: colors.foregroundSecondary,
+      fontSize: '12px',
+    },
+    '.firn-hover-doc-text': {
+      whiteSpace: 'pre-wrap',
+    },
+    '.firn-hover-doc-code': {
+      margin: '4px 0',
+      padding: '6px 8px',
+      backgroundColor: colors.activeLine,
+      borderRadius: '4px',
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: '11px',
+      color: colors.foreground,
+      whiteSpace: 'pre-wrap',
+    },
+    '.firn-hover-doc-tag': {
+      color: colors.keyword,
+      fontWeight: '600',
+    },
+    '.firn-hover-actions': {
+      display: 'flex',
+      gap: '12px',
+      padding: '6px 12px',
+      borderTop: `1px solid ${colors.border}`,
+    },
+    '.firn-hover-action': {
+      color: colors.accent,
+      fontSize: '11px',
+      textDecoration: 'none',
+      cursor: 'pointer',
+    },
+
+    // --- Hover syntax highlighting ---
+    '.firn-hover-keyword': {
+      color: colors.keyword,
+    },
+    '.firn-hover-function': {
+      color: colors.function,
+    },
+    '.firn-hover-type': {
+      color: colors.type,
+    },
+    '.firn-hover-string': {
+      color: colors.string,
+    },
+    '.firn-hover-punctuation': {
+      color: colors.punctuation,
+    },
+
+    // --- Definition underline ---
+    '.firn-definition-link': {
+      textDecoration: 'underline',
+      textDecorationColor: 'rgba(56, 189, 248, 0.5)',
+      textUnderlineOffset: '2px',
+      cursor: 'pointer',
+    },
   },
   { dark: true }
 );

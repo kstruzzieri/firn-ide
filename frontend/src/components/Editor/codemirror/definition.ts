@@ -58,14 +58,6 @@ async function triggerDefinition(view: EditorView, pos: number, filePath: string
   const lspLine = line.number - 1;
   const lspChar = pos - line.from;
 
-  const currentLine = line.number;
-  const currentCol = pos - line.from + 1;
-  useIDEStore.getState().pushNavigationHistory({
-    fileId: filePath,
-    line: currentLine,
-    column: currentCol,
-  });
-
   let locations;
   try {
     locations = await LSPDefinition(filePath, lspLine, lspChar);
@@ -78,6 +70,14 @@ async function triggerDefinition(view: EditorView, pos: number, filePath: string
   const loc = locations[0];
   const targetPath = fileURIToPath(loc.uri);
   if (!targetPath) return;
+
+  // Push current position to history only after confirming a valid target exists,
+  // so failed lookups don't pollute the back stack.
+  useIDEStore.getState().pushNavigationHistory({
+    fileId: filePath,
+    line: line.number,
+    column: pos - line.from + 1,
+  });
 
   navigateToEditorLocation(targetPath, loc.range.start.line + 1, loc.range.start.character + 1);
 }
@@ -135,29 +135,50 @@ export function definitionExtensions(filePath: string) {
         ]),
   ];
 
+  // Track the last underlined range to avoid redundant dispatches on mousemove
+  let lastUnderlineFrom = -1;
+  let lastUnderlineTo = -1;
+
   const modifierHandlers = EditorView.domEventHandlers({
     mousemove(event: MouseEvent, view: EditorView) {
       const modHeld = isMac() ? event.metaKey : event.ctrlKey;
 
       if (!modHeld) {
-        if (view.state.field(underlineField) !== Decoration.none) {
+        if (lastUnderlineFrom !== -1) {
           view.dispatch({ effects: setUnderline.of(null) });
+          lastUnderlineFrom = -1;
+          lastUnderlineTo = -1;
         }
         return;
       }
 
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) {
-        view.dispatch({ effects: setUnderline.of(null) });
+        if (lastUnderlineFrom !== -1) {
+          view.dispatch({ effects: setUnderline.of(null) });
+          lastUnderlineFrom = -1;
+          lastUnderlineTo = -1;
+        }
         return;
       }
 
       const wordRange = view.state.wordAt(pos);
       if (!wordRange) {
-        view.dispatch({ effects: setUnderline.of(null) });
+        if (lastUnderlineFrom !== -1) {
+          view.dispatch({ effects: setUnderline.of(null) });
+          lastUnderlineFrom = -1;
+          lastUnderlineTo = -1;
+        }
         return;
       }
 
+      // Skip dispatch if the same word is already underlined
+      if (wordRange.from === lastUnderlineFrom && wordRange.to === lastUnderlineTo) {
+        return;
+      }
+
+      lastUnderlineFrom = wordRange.from;
+      lastUnderlineTo = wordRange.to;
       view.dispatch({
         effects: setUnderline.of({ from: wordRange.from, to: wordRange.to }),
       });
@@ -168,6 +189,8 @@ export function definitionExtensions(filePath: string) {
       if (!modHeld) return;
 
       view.dispatch({ effects: setUnderline.of(null) });
+      lastUnderlineFrom = -1;
+      lastUnderlineTo = -1;
 
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return;
@@ -179,6 +202,8 @@ export function definitionExtensions(filePath: string) {
       const modKey = isMac() ? 'Meta' : 'Control';
       if (event.key === modKey) {
         view.dispatch({ effects: setUnderline.of(null) });
+        lastUnderlineFrom = -1;
+        lastUnderlineTo = -1;
       }
     },
   });

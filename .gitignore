@@ -27,6 +27,9 @@ Thumbs.db
 # Test coverage
 coverage.out
 
+# Brainstorming mockups
+.superpowers/
+
 # Misc
 *.log
 *.md5
