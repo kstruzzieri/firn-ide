@@ -31,7 +31,7 @@ type LSPTextEdit = {
   newText: string;
 };
 
-type LSPCompletionItem = {
+export type LSPCompletionItem = {
   label: string;
   kind?: number;
   detail?: string;
@@ -309,7 +309,7 @@ function shouldResolveCompletionItem(item: LSPCompletionItem): boolean {
   return item.data !== undefined || (!item.detail && !item.labelDetails?.detail);
 }
 
-async function resolveCompletionItem(
+export async function resolveCompletionItem(
   filePath: string,
   item: LSPCompletionItem
 ): Promise<LSPCompletionItem> {
@@ -321,7 +321,7 @@ async function resolveCompletionItem(
 
   const pending = LSPResolveCompletionItem(
     filePath,
-    item as Parameters<typeof LSPResolveCompletionItem>[1]
+    completionItemForResolve(item) as Parameters<typeof LSPResolveCompletionItem>[1]
   )
     .then((resolved) => ({
       ...item,
@@ -334,6 +334,34 @@ async function resolveCompletionItem(
 
   completionResolveCache.set(key, pending);
   return pending;
+}
+
+function completionItemForResolve(item: LSPCompletionItem): LSPCompletionItem {
+  const decodedData = decodeRawJSONMessage(item.data);
+  const decodedDocumentation = decodeRawJSONMessage(item.documentation);
+
+  if (decodedData === item.data && decodedDocumentation === item.documentation) {
+    return item;
+  }
+
+  return {
+    ...item,
+    data: decodedData,
+    documentation: decodedDocumentation,
+  };
+}
+
+function decodeRawJSONMessage(raw: unknown): unknown {
+  if (!Array.isArray(raw) || raw.length === 0 || !raw.every((item) => typeof item === 'number')) {
+    return raw;
+  }
+
+  try {
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(raw));
+    return JSON.parse(text);
+  } catch {
+    return raw;
+  }
 }
 
 function completionResolveKey(filePath: string, item: LSPCompletionItem): string {

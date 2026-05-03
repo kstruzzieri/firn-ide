@@ -6,9 +6,11 @@ jest.mock('../../../../../wailsjs/go/main/App', () => ({
   LSPResolveCompletionItem: jest.fn(),
 }));
 
+import { LSPResolveCompletionItem } from '../../../../../wailsjs/go/main/App';
 import {
   parseResolvedCompletionDetail,
   positionCompletionInfo,
+  resolveCompletionItem,
   sortLSPCompletionItems,
 } from '../../../../components/Editor/codemirror/completion';
 import {
@@ -31,6 +33,46 @@ describe('sortLSPCompletionItems', () => {
       '__dirname',
       '_esri',
     ]);
+  });
+});
+
+describe('resolveCompletionItem', () => {
+  const mockResolve = LSPResolveCompletionItem as jest.MockedFunction<
+    typeof LSPResolveCompletionItem
+  >;
+
+  beforeEach(() => {
+    mockResolve.mockReset();
+  });
+
+  it('decodes RawMessage byte arrays before sending resolve requests', async () => {
+    const data = encodeRawJSON({ entryId: 7, source: 'tsserver' });
+    const documentation = encodeRawJSON({
+      kind: 'markdown',
+      value: 'Existing docs',
+    });
+
+    mockResolve.mockResolvedValue({
+      label: 'readFile',
+      detail: '(method) readFile(path: string): Promise<string>',
+    } as Awaited<ReturnType<typeof LSPResolveCompletionItem>>);
+
+    await resolveCompletionItem('/project/src/file.ts', {
+      label: 'readFile',
+      data,
+      documentation,
+    });
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      '/project/src/file.ts',
+      expect.objectContaining({
+        data: { entryId: 7, source: 'tsserver' },
+        documentation: {
+          kind: 'markdown',
+          value: 'Existing docs',
+        },
+      })
+    );
   });
 });
 
@@ -102,3 +144,7 @@ describe('editorTooltipSpace', () => {
     });
   });
 });
+
+function encodeRawJSON(value: unknown): number[] {
+  return Array.from(new TextEncoder().encode(JSON.stringify(value)));
+}
