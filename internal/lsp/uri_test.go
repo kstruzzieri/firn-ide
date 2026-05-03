@@ -1,7 +1,9 @@
 package lsp
 
 import (
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +18,7 @@ func TestFileToURI_Unix(t *testing.T) {
 	}{
 		{"/home/user/project/main.go", "file:///home/user/project/main.go"},
 		{"/tmp/file with spaces.ts", "file:///tmp/file%20with%20spaces.ts"},
+		{"/tmp/Firn #1/100%/café.ts", "file:///tmp/Firn%20%231/100%25/caf%C3%A9.ts"},
 		{"/usr/local/bin/test", "file:///usr/local/bin/test"},
 	}
 
@@ -49,6 +52,7 @@ func TestURIToFile_Unix(t *testing.T) {
 	}{
 		{"file:///home/user/project/main.go", "/home/user/project/main.go"},
 		{"file:///tmp/file%20with%20spaces.ts", "/tmp/file with spaces.ts"},
+		{"file:///tmp/Firn%20%231/100%25/caf%C3%A9.ts", "/tmp/Firn #1/100%/café.ts"},
 	}
 
 	for _, tt := range tests {
@@ -96,6 +100,7 @@ func TestURIToFile_Roundtrip(t *testing.T) {
 	paths := []string{
 		"/home/user/project/main.go",
 		"/tmp/test file.ts",
+		"/tmp/Firn #1/100%/café.ts",
 		"/var/data/café.txt",
 	}
 
@@ -120,5 +125,21 @@ func TestURIToFile_InvalidScheme(t *testing.T) {
 	_, err := URIToFile("https://example.com/file.ts")
 	if err == nil {
 		t.Error("expected error for non-file URI scheme")
+	}
+}
+
+func TestWorkspaceLocalNodeBinPlatformSuffix(t *testing.T) {
+	got := workspaceLocalNodeBin("/workspace", "pyright-langserver")
+	wantSuffix := filepath.Join("node_modules", ".bin", "pyright-langserver")
+	if runtime.GOOS == "windows" {
+		wantSuffix += ".cmd"
+		if !strings.HasSuffix(got, wantSuffix) {
+			t.Fatalf("workspaceLocalNodeBin on Windows = %q, want .cmd suffix", got)
+		}
+		return
+	}
+
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Fatalf("workspaceLocalNodeBin = %q, want Unix-style local bin path", got)
 	}
 }

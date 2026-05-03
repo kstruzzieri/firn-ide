@@ -1,13 +1,23 @@
 import { acceptCompletion } from '@codemirror/autocomplete';
 import { indentWithTab } from '@codemirror/commands';
+import { EditorState } from '@codemirror/state';
 
 jest.mock('../../../../../wailsjs/go/main/App', () => ({
   LSPComplete: jest.fn(),
   LSPResolveCompletionItem: jest.fn(),
 }));
 
-import { LSPResolveCompletionItem } from '../../../../../wailsjs/go/main/App';
+jest.mock('../../../../utils/lspDocumentSync', () => ({
+  flushLSPDocumentChange: jest.fn(() => Promise.resolve(false)),
+}));
+
+import { LSPComplete, LSPResolveCompletionItem } from '../../../../../wailsjs/go/main/App';
+import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
 import {
+  COMPLETION_RESOLVE_CACHE_LIMIT,
+  clearCompletionResolveCache,
+  completionResolveCacheSize,
+  createLSPCompletionSource,
   parseResolvedCompletionDetail,
   positionCompletionInfo,
   resolveCompletionItem,
@@ -17,6 +27,11 @@ import {
   editorKeybindings,
   editorTooltipSpace,
 } from '../../../../components/Editor/codemirror/extensions';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  clearCompletionResolveCache();
+});
 
 describe('sortLSPCompletionItems', () => {
   it('preserves server ordering while demoting internal-style names', () => {
@@ -40,10 +55,6 @@ describe('resolveCompletionItem', () => {
   const mockResolve = LSPResolveCompletionItem as jest.MockedFunction<
     typeof LSPResolveCompletionItem
   >;
-
-  beforeEach(() => {
-    mockResolve.mockReset();
-  });
 
   it('decodes RawMessage byte arrays before sending resolve requests', async () => {
     const data = encodeRawJSON({ entryId: 7, source: 'tsserver' });
@@ -73,6 +84,90 @@ describe('resolveCompletionItem', () => {
         },
       })
     );
+  });
+
+  it('caps the resolve cache to avoid unbounded workspace growth', async () => {
+    mockResolve.mockImplementation(async (_path, item) => item);
+
+    for (let i = 0; i < COMPLETION_RESOLVE_CACHE_LIMIT + 1; i += 1) {
+      await resolveCompletionItem('/project/src/file.ts', {
+        label: `item${i}`,
+        data: { i },
+      });
+    }
+
+    expect(completionResolveCacheSize()).toBe(COMPLETION_RESOLVE_CACHE_LIMIT);
+  });
+});
+
+describe('createLSPCompletionSource', () => {
+  const mockComplete = LSPComplete as jest.MockedFunction<typeof LSPComplete>;
+  const mockFlush = flushLSPDocumentChange as jest.MockedFunction<typeof flushLSPDocumentChange>;
+
+  it('does not send backend requests after CodeMirror aborts the query', async () => {
+    const state = EditorState.create({ doc: 'con' });
+    const source = createLSPCompletionSource('/project/src/file.ts', new Set());
+
+    const result = await source({
+      state,
+      pos: 3,
+      explicit: false,
+      aborted: true,
+      addEventListener: jest.fn(),
+      matchBefore: (expr: RegExp) => {
+        const text = state.sliceDoc(0, 3);
+        const match = text.match(expr);
+        return match ? { from: 0, to: 3, text: match[0] } : null;
+      },
+    } as never);
+
+    expect(result).toBeNull();
+    expect(mockFlush).not.toHaveBeenCalled();
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+
+  it('drops backend results when CodeMirror aborts an in-flight query', async () => {
+    const state = EditorState.create({ doc: 'con' });
+    const source = createLSPCompletionSource('/project/src/file.ts', new Set());
+    let aborted = false;
+    let abortListener = () => {};
+    let resolveComplete: (value: Awaited<ReturnType<typeof LSPComplete>>) => void = () => {};
+
+    mockComplete.mockReturnValue(
+      new Promise((resolve) => {
+        resolveComplete = resolve;
+      })
+    );
+
+    const pending = source({
+      state,
+      pos: 3,
+      explicit: false,
+      get aborted() {
+        return aborted;
+      },
+      addEventListener: (_type: 'abort', listener: () => void) => {
+        abortListener = listener;
+      },
+      matchBefore: (expr: RegExp) => {
+        const text = state.sliceDoc(0, 3);
+        const match = text.match(expr);
+        return match ? { from: 0, to: 3, text: match[0] } : null;
+      },
+    } as never);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockComplete).toHaveBeenCalledTimes(1);
+
+    aborted = true;
+    abortListener();
+    resolveComplete({
+      isIncomplete: false,
+      items: [{ label: 'console' }],
+    } as Awaited<ReturnType<typeof LSPComplete>>);
+
+    await expect(pending).resolves.toBeNull();
   });
 });
 

@@ -157,11 +157,16 @@ func (t *StdioTransport) ExitErr() error {
 // limitedBuffer is a bytes.Buffer that silently discards writes beyond max bytes.
 // This prevents a chatty server from consuming unbounded memory via stderr.
 type limitedBuffer struct {
+	mu  sync.Mutex
 	buf bytes.Buffer
 	max int
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	written := len(p)
 	remaining := b.max - b.buf.Len()
 	if remaining <= 0 {
 		return len(p), nil // discard but report success so the writer doesn't block
@@ -170,9 +175,11 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		p = p[:remaining]
 	}
 	b.buf.Write(p)
-	return len(p), nil
+	return written, nil
 }
 
 func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.buf.String()
 }

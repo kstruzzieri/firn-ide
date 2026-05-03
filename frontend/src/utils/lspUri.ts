@@ -14,21 +14,25 @@ function normalizeWindowsDrivePath(path: string): string {
   return /^\/[A-Za-z]:\//.test(normalized) ? normalized.slice(1) : normalized;
 }
 
+function encodeFileURIPath(path: string): string {
+  return path
+    .split('/')
+    .map((segment) => (/^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)))
+    .join('/');
+}
+
 /**
  * Normalizes a file URI to a canonical form for use as a map key.
  * Strips localhost authority and lowercases the scheme.
  * Returns the input unchanged for non-file or unparseable URIs.
  */
 export function canonicalizeFileURI(uri: string): string {
-  if (!uri.startsWith('file:')) return uri;
+  if (!/^file:/i.test(uri)) return uri;
   try {
     const parsed = new URL(uri);
     if (parsed.protocol !== 'file:') return uri;
-    // Strip localhost authority: file://localhost/... -> file:///...
-    if (parsed.host === 'localhost') {
-      return `file://${parsed.pathname}${parsed.search}${parsed.hash}`;
-    }
-    return uri;
+    const path = fileURIToPath(uri);
+    return path ? filePathToURI(path) : uri;
   } catch {
     return uri;
   }
@@ -47,9 +51,7 @@ export function filePathToURI(path: string): string {
     normalized = `/${normalized[0].toLowerCase()}${normalized.slice(1)}`;
   }
 
-  const uri = new URL('file://');
-  uri.pathname = normalized;
-  return uri.toString();
+  return `file://${encodeFileURIPath(normalized)}`;
 }
 
 /**

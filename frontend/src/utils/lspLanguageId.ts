@@ -16,6 +16,10 @@ const extensionToLSPInfo: Record<string, LSPFileInfo> = {
   cts: { languageId: 'typescript', family: 'typescript' },
   mjs: { languageId: 'javascript', family: 'typescript' },
   cjs: { languageId: 'javascript', family: 'typescript' },
+  go: { languageId: 'go', family: 'go' },
+  py: { languageId: 'python', family: 'python' },
+  pyw: { languageId: 'python', family: 'python' },
+  pyi: { languageId: 'python', family: 'python' },
 };
 
 function lspInfoForFile(filename: string): LSPFileInfo | undefined {

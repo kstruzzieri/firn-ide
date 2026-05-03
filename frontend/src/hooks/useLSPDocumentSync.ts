@@ -13,6 +13,11 @@ import {
   trackedLSPDocumentPaths,
 } from '../utils/lspDocumentSync';
 
+interface LSPReconnectPayload {
+  workspace?: string;
+  documents?: string[];
+}
+
 /**
  * useLSPDocumentSync wires the editor's document lifecycle to the backend LSP manager.
  *
@@ -128,9 +133,14 @@ export function useLSPDocumentSync() {
 
   // --- Listen for lsp:reconnect after server crash recovery ---
   useEffect(() => {
-    const cancel = EventsOn('lsp:reconnect', (payload: { documents?: string[] }) => {
+    const cancel = EventsOn('lsp:reconnect', (payload: LSPReconnectPayload) => {
       const reconnectedURIs = payload?.documents;
       if (!reconnectedURIs || reconnectedURIs.length === 0) return;
+
+      const activeWorkspace = useIDEStore.getState().workspace?.path;
+      if (payload.workspace && payload.workspace !== activeWorkspace) {
+        return;
+      }
 
       const reconnectSet = new Set(reconnectedURIs);
 

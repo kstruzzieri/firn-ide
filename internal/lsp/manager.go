@@ -26,6 +26,7 @@ const (
 type ServerStatus struct {
 	Family                      string   `json:"family"`
 	Workspace                   string   `json:"workspace"`
+	Command                     string   `json:"command,omitempty"`
 	State                       string   `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
 	Error                       string   `json:"error,omitempty"`
 	CompletionTriggerCharacters []string `json:"completionTriggerCharacters,omitempty"`
@@ -87,6 +88,7 @@ func (m *Manager) SetWorkspaceRoot(root string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.workspaceRoot = root
+	m.stopped = false
 }
 
 // WorkspaceRoot returns the current workspace root path.
@@ -148,7 +150,7 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 // Returns early if the document has not been opened via DidOpen (e.g., during
 // the gap between crash recovery and frontend reconnect).
 func (m *Manager) DidChange(path string, version int, changes []TextDocumentContentChangeEvent) error {
-	entry, uri := m.serverForPath(path)
+	entry, uri, _ := m.serverForPath(path)
 	if entry == nil {
 		return nil
 	}
@@ -168,7 +170,7 @@ func (m *Manager) DidChange(path string, version int, changes []TextDocumentCont
 // DidSave forwards save notification to the appropriate server.
 // Returns early if the document has not been opened via DidOpen.
 func (m *Manager) DidSave(path string) error {
-	entry, uri := m.serverForPath(path)
+	entry, uri, _ := m.serverForPath(path)
 	if entry == nil {
 		return nil
 	}
@@ -239,38 +241,54 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 
 // Hover sends a hover request for the given file position.
 func (m *Manager) Hover(ctx context.Context, path string, line, character int) (*Hover, error) {
-	entry, uri := m.serverForPath(path)
+	entry, uri, key := m.serverForPath(path)
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.client.Hover(ctx, uri, line, character)
+	result, err := entry.client.Hover(ctx, uri, line, character)
+	if err != nil {
+		m.logRequestFailure(key, "textDocument/hover", err)
+	}
+	return result, err
 }
 
 // Definition sends a go-to-definition request for the given file position.
 func (m *Manager) Definition(ctx context.Context, path string, line, character int) ([]Location, error) {
-	entry, uri := m.serverForPath(path)
+	entry, uri, key := m.serverForPath(path)
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.client.Definition(ctx, uri, line, character)
+	result, err := entry.client.Definition(ctx, uri, line, character)
+	if err != nil {
+		m.logRequestFailure(key, "textDocument/definition", err)
+	}
+	return result, err
 }
 
 // Complete sends a completion request for the given file position.
 func (m *Manager) Complete(ctx context.Context, path string, line, character int, triggerChar string) (*CompletionList, error) {
-	entry, uri := m.serverForPath(path)
+	entry, uri, key := m.serverForPath(path)
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.client.Complete(ctx, uri, line, character, triggerChar)
+	result, err := entry.client.Complete(ctx, uri, line, character, triggerChar)
+	if err != nil {
+		m.logRequestFailure(key, "textDocument/completion", err)
+	}
+	return result, err
 }
 
 // ResolveCompletionItem resolves additional metadata for a completion item.
 func (m *Manager) ResolveCompletionItem(ctx context.Context, path string, item CompletionItem) (*CompletionItem, error) {
-	entry, _ := m.serverForPath(path)
+	entry, _, key := m.serverForPath(path)
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.client.ResolveCompletionItem(ctx, item)
+	result, err := entry.client.ResolveCompletionItem(ctx, item)
+	if err != nil {
+		m.logRequestFailure(key, "completionItem/resolve", err)
+	}
+	return result, err
 }
 
 // GetStatus returns the status of all running language servers.
@@ -296,6 +314,7 @@ func (m *Manager) GetStatus() []ServerStatus {
 		status := ServerStatus{
 			Family:    key.family,
 			Workspace: key.workspace,
+			Command:   entry.config.Command,
 			State:     state,
 		}
 		if state == "ready" {
@@ -347,7 +366,7 @@ func (m *Manager) ensureServer(ctx context.Context, family, workspace string) (*
 	// Resolve server config
 	config, err := m.registry.ServerConfigFor(family, workspace)
 	if err != nil {
-		m.emitStatus(family, workspace, "error", err.Error())
+		m.emitStatus(family, workspace, "error", err.Error(), defaultServerCommand(family))
 		return nil, err
 	}
 
@@ -356,11 +375,11 @@ func (m *Manager) ensureServer(ctx context.Context, family, workspace string) (*
 
 // startServer launches a new language server process and initializes it.
 func (m *Manager) startServer(ctx context.Context, key serverKey, config *ServerConfig) (*serverEntry, error) {
-	m.emitStatus(key.family, key.workspace, "starting", "")
+	m.emitStatus(key.family, key.workspace, "starting", "", config.Command)
 
 	transport, err := NewStdioTransport(config.Command, config.Dir, config.Args...)
 	if err != nil {
-		m.emitStatus(key.family, key.workspace, "error", err.Error())
+		m.emitStatus(key.family, key.workspace, "error", err.Error(), config.Command)
 		return nil, fmt.Errorf("start server %s: %w", config.Command, err)
 	}
 
@@ -377,7 +396,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 	rootURI, err := FileToURI(key.workspace)
 	if err != nil {
 		transport.Close()
-		m.emitStatus(key.family, key.workspace, "error", err.Error())
+		m.emitStatus(key.family, key.workspace, "error", err.Error(), config.Command)
 		return nil, fmt.Errorf("invalid workspace path %q: %w", key.workspace, err)
 	}
 	if err := client.Initialize(ctx, rootURI, config.InitOptions); err != nil {
@@ -387,11 +406,18 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 			errMsg = fmt.Sprintf("%s (server stderr: %s)", errMsg, strings.TrimSpace(stderr))
 		}
 		transport.Close()
-		m.emitStatus(key.family, key.workspace, "error", errMsg)
-		return nil, fmt.Errorf("initialize %s: %w", config.Command, err)
+		m.emitStatus(key.family, key.workspace, "error", errMsg, config.Command)
+		return nil, fmt.Errorf("initialize %s: %s", config.Command, errMsg)
 	}
 
 	m.mu.Lock()
+	if m.stopped || m.workspaceRoot != key.workspace {
+		m.mu.Unlock()
+		shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+		defer cancel()
+		m.doShutdown(shutCtx, key, entry)
+		return nil, fmt.Errorf("server start abandoned for %s/%s: workspace changed or manager stopped", key.family, key.workspace)
+	}
 	// Double-check: another goroutine may have started the server while we were initializing
 	if existing, ok := m.servers[key]; ok {
 		m.mu.Unlock()
@@ -403,7 +429,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 	m.servers[key] = entry
 	m.mu.Unlock()
 
-	m.emitStatus(key.family, key.workspace, "ready", "")
+	m.emitStatus(key.family, key.workspace, "ready", "", config.Command)
 
 	// Monitor for unexpected server exit
 	go m.monitorServer(key, entry)
@@ -451,13 +477,13 @@ func (m *Manager) shutdownServer(ctx context.Context, key serverKey) {
 // doShutdown performs the actual client shutdown and emits status events.
 func (m *Manager) doShutdown(ctx context.Context, key serverKey, entry *serverEntry) {
 
-	m.emitStatus(key.family, key.workspace, "stopping", "")
+	m.emitStatus(key.family, key.workspace, "stopping", "", entry.config.Command)
 
 	if err := entry.client.Shutdown(ctx); err != nil {
 		log.Printf("lsp: shutdown %s/%s failed: %v", key.family, key.workspace, err)
 	}
 
-	m.emitStatus(key.family, key.workspace, "stopped", "")
+	m.emitStatus(key.family, key.workspace, "stopped", "", entry.config.Command)
 }
 
 // monitorServer watches for unexpected server process exit and attempts restart.
@@ -479,7 +505,7 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 		delete(m.servers, key)
 		m.mu.Unlock()
 		m.emitStatus(key.family, key.workspace, "error",
-			fmt.Sprintf("server crashed %d times, giving up", entry.crashCount))
+			fmt.Sprintf("server crashed %d times, giving up", entry.crashCount), entry.config.Command)
 		m.emitError(key.family, key.workspace,
 			fmt.Sprintf("Language server for %s crashed repeatedly. Check that %s is installed correctly.",
 				key.family, entry.config.Command))
@@ -505,7 +531,7 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 
 	log.Printf("lsp: %s server crashed (attempt %d), restarting in %v", key.family, crashCount, backoff)
 	m.emitStatus(key.family, key.workspace, "error",
-		fmt.Sprintf("server crashed, restarting in %v (attempt %d/%d)", backoff, crashCount, maxCrashRetries))
+		fmt.Sprintf("server crashed, restarting in %v (attempt %d/%d)", backoff, crashCount, maxCrashRetries), config.Command)
 
 	time.Sleep(backoff)
 
@@ -548,16 +574,16 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 }
 
 // serverForPath finds the server entry responsible for the given file path.
-func (m *Manager) serverForPath(path string) (*serverEntry, string) {
+func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 	ext := filepath.Ext(path)
 	family := m.registry.FamilyForExtension(ext)
 	if family == "" {
-		return nil, ""
+		return nil, "", serverKey{}
 	}
 
 	uri, err := FileToURI(path)
 	if err != nil {
-		return nil, ""
+		return nil, "", serverKey{}
 	}
 
 	m.mu.Lock()
@@ -566,9 +592,26 @@ func (m *Manager) serverForPath(path string) (*serverEntry, string) {
 	key := serverKey{family: family, workspace: m.workspaceRoot}
 	entry, ok := m.servers[key]
 	if !ok {
-		return nil, ""
+		return nil, "", key
 	}
-	return entry, uri
+	return entry, uri, key
+}
+
+func (m *Manager) logRequestFailure(key serverKey, method string, err error) {
+	log.Printf("lsp: request failed method=%s family=%s workspace=%q error=%v", method, key.family, key.workspace, err)
+}
+
+func defaultServerCommand(family string) string {
+	switch family {
+	case "typescript":
+		return "typescript-language-server"
+	case "go":
+		return "gopls"
+	case "python":
+		return "pyright-langserver"
+	default:
+		return ""
+	}
 }
 
 // handleNotification processes server notifications and emits events.
@@ -585,6 +628,14 @@ func (m *Manager) handleNotification(key serverKey, method string, params json.R
 			log.Printf("lsp: failed to parse diagnostics: %v", err)
 			return
 		}
+
+		m.mu.Lock()
+		if m.stopped || m.workspaceRoot != key.workspace {
+			m.mu.Unlock()
+			return
+		}
+		m.mu.Unlock()
+
 		if diagParams.Version > 0 {
 			m.mu.Lock()
 			entry, ok := m.servers[key]
@@ -608,7 +659,7 @@ func (m *Manager) handleNotification(key serverKey, method string, params json.R
 }
 
 // emitStatus emits an lsp:status event.
-func (m *Manager) emitStatus(family, workspace, state, errMsg string) {
+func (m *Manager) emitStatus(family, workspace, state, errMsg string, command ...string) {
 	if m.emitter == nil {
 		return
 	}
@@ -617,6 +668,9 @@ func (m *Manager) emitStatus(family, workspace, state, errMsg string) {
 		Workspace: workspace,
 		State:     state,
 		Error:     errMsg,
+	}
+	if len(command) > 0 {
+		status.Command = command[0]
 	}
 	if state == "ready" {
 		m.mu.Lock()

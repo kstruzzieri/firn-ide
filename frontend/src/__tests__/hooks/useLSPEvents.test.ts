@@ -125,12 +125,14 @@ describe('useLSPEvents', () => {
       handlers['lsp:status']({
         family: 'typescript',
         workspace: '/project',
+        command: '/project/node_modules/.bin/typescript-language-server',
         state: 'ready',
       });
     });
 
     const status = useLSPStore.getState().serverStatuses.get('/project::typescript');
     expect(status?.state).toBe('ready');
+    expect(status?.command).toBe('/project/node_modules/.bin/typescript-language-server');
   });
 
   it('ignores lsp:status from a different workspace', () => {

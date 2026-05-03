@@ -2,8 +2,11 @@ package lsp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +63,25 @@ func (ec *eventCollector) hasDiagnostics() bool {
 	return false
 }
 
+func writeTestExecutable(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	if runtime.GOOS == "windows" && filepath.Ext(name) == "" {
+		name += ".cmd"
+	}
+
+	path := filepath.Join(dir, name)
+	content := []byte("#!/bin/sh\nexit 0\n")
+	if runtime.GOOS == "windows" {
+		content = []byte("@echo off\r\nexit /b 0\r\n")
+	}
+
+	if err := os.WriteFile(path, content, 0755); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+	return path
+}
+
 func TestRegistry_LanguageIDMapping(t *testing.T) {
 	r := NewRegistry()
 
@@ -76,8 +98,10 @@ func TestRegistry_LanguageIDMapping(t *testing.T) {
 		{".cts", "typescript", "typescript"},
 		{".mjs", "javascript", "typescript"},
 		{".cjs", "javascript", "typescript"},
-		{".go", "", ""},
-		{".py", "", ""},
+		{".go", "go", "go"},
+		{".py", "python", "python"},
+		{".pyw", "python", "python"},
+		{".pyi", "python", "python"},
 		{".rs", "", ""},
 	}
 
@@ -88,6 +112,87 @@ func TestRegistry_LanguageIDMapping(t *testing.T) {
 		if got := r.FamilyForExtension(tt.ext); got != tt.family {
 			t.Errorf("FamilyForExtension(%q) = %q, want %q", tt.ext, got, tt.family)
 		}
+	}
+}
+
+func TestRegistry_GoServerConfigUsesGoplsFromPath(t *testing.T) {
+	r := NewRegistry()
+	binDir := t.TempDir()
+	goplsPath := writeTestExecutable(t, binDir, "gopls")
+	t.Setenv("PATH", binDir)
+
+	workspace := t.TempDir()
+	config, err := r.ServerConfigFor("go", workspace)
+	if err != nil {
+		t.Fatalf("ServerConfigFor(go): %v", err)
+	}
+
+	if config.LanguageFamily != "go" {
+		t.Errorf("LanguageFamily = %q, want go", config.LanguageFamily)
+	}
+	if config.Command != goplsPath {
+		t.Errorf("Command = %q, want %q", config.Command, goplsPath)
+	}
+	if len(config.Args) != 0 {
+		t.Errorf("Args = %v, want none", config.Args)
+	}
+	if config.Dir != workspace {
+		t.Errorf("Dir = %q, want %q", config.Dir, workspace)
+	}
+}
+
+func TestRegistry_GoServerConfigReportsMissingGopls(t *testing.T) {
+	r := NewRegistry()
+	t.Setenv("PATH", "")
+
+	_, err := r.ServerConfigFor("go", t.TempDir())
+	if err == nil {
+		t.Fatal("expected error when gopls is not found")
+	}
+	if !contains(err.Error(), "go install golang.org/x/tools/gopls@latest") {
+		t.Errorf("error should include install instructions, got: %s", err.Error())
+	}
+}
+
+func TestRegistry_PythonServerConfigPrefersWorkspaceLocalPyright(t *testing.T) {
+	r := NewRegistry()
+	workspace := t.TempDir()
+	localBin := filepath.Join(workspace, "node_modules", ".bin")
+	if err := os.MkdirAll(localBin, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	pyrightPath := writeTestExecutable(t, localBin, "pyright-langserver")
+	t.Setenv("PATH", "")
+
+	config, err := r.ServerConfigFor("python", workspace)
+	if err != nil {
+		t.Fatalf("ServerConfigFor(python): %v", err)
+	}
+
+	if config.LanguageFamily != "python" {
+		t.Errorf("LanguageFamily = %q, want python", config.LanguageFamily)
+	}
+	if config.Command != pyrightPath {
+		t.Errorf("Command = %q, want %q", config.Command, pyrightPath)
+	}
+	if len(config.Args) != 1 || config.Args[0] != "--stdio" {
+		t.Errorf("Args = %v, want [--stdio]", config.Args)
+	}
+	if config.Dir != workspace {
+		t.Errorf("Dir = %q, want %q", config.Dir, workspace)
+	}
+}
+
+func TestRegistry_PythonServerConfigReportsMissingPyright(t *testing.T) {
+	r := NewRegistry()
+	t.Setenv("PATH", "")
+
+	_, err := r.ServerConfigFor("python", t.TempDir())
+	if err == nil {
+		t.Fatal("expected error when pyright-langserver is not found")
+	}
+	if !contains(err.Error(), "npm install -g pyright") {
+		t.Errorf("error should include install instructions, got: %s", err.Error())
 	}
 }
 
@@ -103,9 +208,237 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	mgr.SetWorkspaceRoot("/tmp/test")
 
 	ctx := context.Background()
-	err := mgr.DidOpen(ctx, "/tmp/test/main.go", "", 1, "package main")
+	err := mgr.DidOpen(ctx, "/tmp/test/main.rs", "", 1, "fn main() {}")
 	if err != nil {
 		t.Errorf("DidOpen unsupported file should be no-op, got: %v", err)
+	}
+}
+
+func TestManager_SetWorkspaceRootClearsStoppedFlag(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	mgr.SetWorkspaceRoot("/tmp/old")
+	mgr.ShutdownAll(time.Millisecond)
+
+	mgr.mu.Lock()
+	stoppedAfterShutdown := mgr.stopped
+	mgr.mu.Unlock()
+	if !stoppedAfterShutdown {
+		t.Fatal("stopped should be true after ShutdownAll")
+	}
+
+	mgr.SetWorkspaceRoot("/tmp/new")
+
+	mgr.mu.Lock()
+	stoppedAfterSwitch := mgr.stopped
+	mgr.mu.Unlock()
+	if stoppedAfterSwitch {
+		t.Fatal("stopped should be false after setting a new workspace root")
+	}
+}
+
+func TestManager_InitializingServerAbandonedAfterWorkspaceSwitch(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	oldWorkspace := t.TempDir()
+	newWorkspace := t.TempDir()
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+	}
+	mgr.SetWorkspaceRoot(oldWorkspace)
+
+	config := &ServerConfig{
+		LanguageFamily: "typescript",
+		Command:        os.Args[0],
+		Args:           []string{"-test.run=^TestMockServerProcess$"},
+	}
+
+	t.Setenv("FIRN_MOCK_LSP", "1")
+	t.Setenv("FIRN_MOCK_LSP_INITIALIZE_DELAY_MS", "200")
+
+	key := serverKey{family: "typescript", workspace: oldWorkspace}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	type startResult struct {
+		entry *serverEntry
+		err   error
+	}
+	resultCh := make(chan startResult, 1)
+	go func() {
+		entry, err := mgr.startServer(ctx, key, config)
+		resultCh <- startResult{entry: entry, err: err}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	mgr.ShutdownAll(time.Second)
+	mgr.SetWorkspaceRoot(newWorkspace)
+
+	var result startResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for delayed startServer")
+	}
+
+	if result.err == nil {
+		t.Fatal("expected stale initializing server to return an error")
+	}
+	if result.entry != nil {
+		t.Fatal("expected stale initializing server not to return an entry")
+	}
+
+	mgr.mu.Lock()
+	_, oldExists := mgr.servers[key]
+	serverCount := len(mgr.servers)
+	mgr.mu.Unlock()
+	if oldExists || serverCount != 0 {
+		t.Fatalf("stale server remained registered: oldExists=%v serverCount=%d", oldExists, serverCount)
+	}
+
+	for _, event := range collector.eventsByName("lsp:status") {
+		if len(event.data) == 0 {
+			continue
+		}
+		status, ok := event.data[0].(ServerStatus)
+		if ok && status.Workspace == oldWorkspace && status.State == "ready" {
+			t.Fatal("stale initializing server emitted ready after workspace switch")
+		}
+	}
+}
+
+func TestManager_InitializeFailureStatusIncludesBoundedStderrAndCommand(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	workspace := t.TempDir()
+	mgr, collector := newTestManager(t)
+	mgr.SetWorkspaceRoot(workspace)
+
+	stderrPrefix := "mock initialize failed: "
+	stderrBody := strings.Repeat("x", maxStderrCapture+256) + "UNCAPTURED_TAIL"
+	t.Setenv("FIRN_MOCK_LSP", "1")
+	t.Setenv("FIRN_MOCK_LSP_INITIALIZE_STDERR", stderrPrefix+stderrBody)
+
+	key := serverKey{family: "typescript", workspace: workspace}
+	config := &ServerConfig{
+		LanguageFamily: "typescript",
+		Command:        os.Args[0],
+		Args:           []string{"-test.run=^TestMockServerProcess$"},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := mgr.startServer(ctx, key, config)
+	if err == nil {
+		t.Fatal("expected initialize failure")
+	}
+	if !strings.Contains(err.Error(), stderrPrefix) {
+		t.Fatalf("returned error should include stderr prefix, got: %s", err)
+	}
+	if strings.Contains(err.Error(), "UNCAPTURED_TAIL") {
+		t.Fatalf("returned error should include bounded stderr, got tail in: %s", err)
+	}
+
+	var errorStatus *ServerStatus
+	for _, event := range collector.eventsByName("lsp:status") {
+		if len(event.data) == 0 {
+			continue
+		}
+		status, ok := event.data[0].(ServerStatus)
+		if ok && status.State == "error" && status.Family == key.family && status.Workspace == key.workspace {
+			errorStatus = &status
+		}
+	}
+	if errorStatus == nil {
+		t.Fatal("expected error status event")
+	}
+	if errorStatus.Command != os.Args[0] {
+		t.Fatalf("status command = %q, want %q", errorStatus.Command, os.Args[0])
+	}
+	if !strings.Contains(errorStatus.Error, stderrPrefix) {
+		t.Fatalf("status error should include stderr prefix, got: %s", errorStatus.Error)
+	}
+	if strings.Contains(errorStatus.Error, "UNCAPTURED_TAIL") {
+		t.Fatalf("status error should include bounded stderr, got tail in: %s", errorStatus.Error)
+	}
+}
+
+func TestManager_DropsDiagnosticsAfterWorkspaceSwitch(t *testing.T) {
+	oldWorkspace := t.TempDir()
+	newWorkspace := t.TempDir()
+	mgr, collector := newTestManager(t)
+	mgr.SetWorkspaceRoot(oldWorkspace)
+	mgr.SetWorkspaceRoot(newWorkspace)
+
+	uri, err := FileToURI(filepath.Join(oldWorkspace, "main.ts"))
+	if err != nil {
+		t.Fatalf("FileToURI: %v", err)
+	}
+	paramsJSON, err := json.Marshal(PublishDiagnosticsParams{
+		URI: uri,
+		Diagnostics: []Diagnostic{
+			{
+				Range:   Range{Start: Position{Line: 0, Character: 0}, End: Position{Line: 0, Character: 1}},
+				Message: "stale diagnostic",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	mgr.handleNotification(serverKey{family: "typescript", workspace: oldWorkspace}, "textDocument/publishDiagnostics", paramsJSON)
+
+	if diagnostics := collector.eventsByName("lsp:diagnostics"); len(diagnostics) != 0 {
+		t.Fatalf("expected stale diagnostics to be dropped, got %d events", len(diagnostics))
+	}
+}
+
+func TestManager_StartupFailureStatusIncludesCommandAndInstallHint(t *testing.T) {
+	workspace := t.TempDir()
+	mgr, collector := newTestManager(t)
+	mgr.SetWorkspaceRoot(workspace)
+	t.Setenv("PATH", "")
+
+	err := mgr.DidOpen(context.Background(), filepath.Join(workspace, "main.go"), "go", 1, "package main")
+	if err == nil {
+		t.Fatal("expected missing gopls error")
+	}
+
+	statusEvents := collector.eventsByName("lsp:status")
+	if len(statusEvents) == 0 {
+		t.Fatal("expected lsp:status event")
+	}
+
+	last := statusEvents[len(statusEvents)-1]
+	if len(last.data) != 1 {
+		t.Fatalf("status event data len = %d, want 1", len(last.data))
+	}
+	status, ok := last.data[0].(ServerStatus)
+	if !ok {
+		t.Fatalf("status payload type = %T, want ServerStatus", last.data[0])
+	}
+	if status.Family != "go" {
+		t.Fatalf("status family = %q, want go", status.Family)
+	}
+	if status.Workspace != workspace {
+		t.Fatalf("status workspace = %q, want %q", status.Workspace, workspace)
+	}
+	if status.Command != "gopls" {
+		t.Fatalf("status command = %q, want gopls", status.Command)
+	}
+	if status.State != "error" {
+		t.Fatalf("status state = %q, want error", status.State)
+	}
+	if !strings.Contains(status.Error, "go install golang.org/x/tools/gopls@latest") {
+		t.Fatalf("status error should include install guidance, got: %s", status.Error)
 	}
 }
 

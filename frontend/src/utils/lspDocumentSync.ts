@@ -8,10 +8,12 @@ type TrackedDocument = {
   pendingContent?: string;
   changeTimer?: ReturnType<typeof setTimeout>;
   openPromise?: Promise<void>;
+  opened?: boolean;
 };
 
 const versions = new Map<string, number>();
 const documents = new Map<string, TrackedDocument>();
+const closeBarriers = new Map<string, Promise<void>>();
 
 function nextVersion(path: string): number {
   const current = versions.get(path) ?? 0;
@@ -38,7 +40,13 @@ export function openLSPDocument(
   };
   documents.set(path, doc);
 
-  const openPromise = LSPDidOpen(path, languageID, nextVersion(path), content)
+  const closeBarrier = closeBarriers.get(path) ?? Promise.resolve();
+  const openPromise = closeBarrier
+    .then(async () => {
+      if (documents.get(path) !== doc) return;
+      await LSPDidOpen(path, languageID, nextVersion(path), content);
+      doc.opened = true;
+    })
     .catch((err) => {
       if (documents.get(path) === doc) {
         clearChangeTimer(doc);
@@ -83,9 +91,12 @@ export async function flushLSPDocumentChange(path: string, content?: string): Pr
 
   clearChangeTimer(doc);
 
-  const nextContent = content ?? doc.pendingContent;
+  const hasExplicitContent = content !== undefined;
+  let nextContent = content ?? doc.pendingContent;
   if (nextContent === undefined || nextContent === doc.syncedContent) {
-    doc.pendingContent = undefined;
+    if (!hasExplicitContent || doc.pendingContent === nextContent) {
+      doc.pendingContent = undefined;
+    }
     return false;
   }
 
@@ -94,9 +105,26 @@ export async function flushLSPDocumentChange(path: string, content?: string): Pr
   }
 
   const current = documents.get(path);
-  if (!current) return false;
+  if (current !== doc || !current.opened) return false;
 
-  current.pendingContent = undefined;
+  if (hasExplicitContent) {
+    nextContent = content;
+  } else {
+    clearChangeTimer(current);
+    nextContent = current.pendingContent;
+  }
+
+  if (nextContent === undefined || nextContent === current.syncedContent) {
+    if (!hasExplicitContent || current.pendingContent === nextContent) {
+      current.pendingContent = undefined;
+    }
+    return false;
+  }
+
+  if (!hasExplicitContent || current.pendingContent === nextContent) {
+    current.pendingContent = undefined;
+  }
+
   const change = new lsp.TextDocumentContentChangeEvent({ text: nextContent });
   await LSPDidChange(path, nextVersion(path), [change]);
   current.syncedContent = nextContent;
@@ -110,23 +138,33 @@ export async function saveLSPDocument(path: string, content: string): Promise<vo
   await flushLSPDocumentChange(path, content);
 
   const current = documents.get(path);
-  if (!current) return;
+  if (current !== doc) return;
 
   if (current.openPromise) {
     await current.openPromise;
   }
-  if (!documents.has(path)) return;
+  if (documents.get(path) !== current || !current.opened) return;
 
   await LSPDidSave(path);
 }
 
-export async function closeLSPDocument(path: string, lastContent?: string): Promise<void> {
+export function closeLSPDocument(path: string, lastContent?: string): Promise<void> {
   const doc = documents.get(path);
-  if (!doc) return;
+  if (!doc) return closeBarriers.get(path) ?? Promise.resolve();
 
   clearChangeTimer(doc);
   documents.delete(path);
 
+  const closePromise = closeTrackedDocument(path, doc, lastContent);
+  trackCloseBarrier(path, closePromise);
+  return closePromise;
+}
+
+async function closeTrackedDocument(
+  path: string,
+  doc: TrackedDocument,
+  lastContent?: string
+): Promise<void> {
   try {
     if (doc.openPromise) {
       await doc.openPromise;
@@ -135,6 +173,8 @@ export async function closeLSPDocument(path: string, lastContent?: string): Prom
     return;
   }
 
+  if (!doc.opened) return;
+
   const nextContent = lastContent ?? doc.pendingContent;
   if (nextContent !== undefined && nextContent !== doc.syncedContent) {
     const change = new lsp.TextDocumentContentChangeEvent({ text: nextContent });
@@ -142,6 +182,20 @@ export async function closeLSPDocument(path: string, lastContent?: string): Prom
   }
 
   await LSPDidClose(path);
+}
+
+function trackCloseBarrier(path: string, closePromise: Promise<void>): void {
+  const barrier = closePromise
+    .catch(() => {
+      // The caller still observes the close failure; the barrier only keeps later
+      // opens ordered after the attempted close.
+    })
+    .then(() => {
+      if (closeBarriers.get(path) === barrier) {
+        closeBarriers.delete(path);
+      }
+    });
+  closeBarriers.set(path, barrier);
 }
 
 export function forgetLSPDocument(path: string): void {
@@ -161,4 +215,5 @@ export function resetLSPDocumentSyncState(): void {
   }
   documents.clear();
   versions.clear();
+  closeBarriers.clear();
 }
