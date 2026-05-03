@@ -119,6 +119,7 @@ interface IDEState {
   activeTerminalTab: TerminalTab;
   terminalSessions: TerminalSession[];
   activeTerminalSessionId: string | null;
+  hasAutoCreatedInitialTerminalSession: boolean;
   workingDirectory: string;
 
   // Run Profiles
@@ -204,6 +205,7 @@ interface IDEActions {
   setActiveTerminalSession: (sessionId: string) => void;
   renameTerminalSession: (sessionId: string, title: string) => void;
   reorderTerminalSessions: (fromIndex: number, toIndex: number) => void;
+  markInitialTerminalSessionCreated: () => void;
   setWorkingDirectory: (path: string) => void;
 
   // Run Profile actions
@@ -303,6 +305,7 @@ export const useIDEStore = create<IDEStore>()(
       activeTerminalTab: 'terminal',
       terminalSessions: [],
       activeTerminalSessionId: null,
+      hasAutoCreatedInitialTerminalSession: false,
       workingDirectory: '',
       runProfiles: [],
       isLoadingProfiles: false,
@@ -520,6 +523,13 @@ export const useIDEStore = create<IDEStore>()(
           },
           false,
           'reorderTerminalSessions'
+        ),
+
+      markInitialTerminalSessionCreated: () =>
+        set(
+          { hasAutoCreatedInitialTerminalSession: true },
+          false,
+          'markInitialTerminalSessionCreated'
         ),
 
       setWorkingDirectory: (workingDirectory) =>

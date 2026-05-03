@@ -114,6 +114,24 @@ function cleanupSessionBuffers(sessionId: string) {
   outputListeners.delete(sessionId);
 }
 
+function getNextTerminalTitle(sessions: Array<{ title: string }>) {
+  const usedNumbers = new Set<number>();
+
+  for (const session of sessions) {
+    const match = /^Terminal (\d+)$/.exec(session.title);
+    if (match) {
+      usedNumbers.add(Number(match[1]));
+    }
+  }
+
+  let nextNumber = 1;
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber += 1;
+  }
+
+  return `Terminal ${nextNumber}`;
+}
+
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
@@ -125,6 +143,10 @@ export function Terminal() {
   const setActiveSession = useIDEStore((state) => state.setActiveTerminalSession);
   const renameSession = useIDEStore((state) => state.renameTerminalSession);
   const reorderSessions = useIDEStore((state) => state.reorderTerminalSessions);
+  const hasAutoCreatedInitialSession = useIDEStore(
+    (state) => state.hasAutoCreatedInitialTerminalSession
+  );
+  const markInitialSessionCreated = useIDEStore((state) => state.markInitialTerminalSessionCreated);
   const showToast = useIDEStore((state) => state.showToast);
 
   useRunOutputListener();
@@ -135,7 +157,6 @@ export function Terminal() {
   const setViewMode = useIDEStore((s) => s.setRunOutputViewMode);
   const outputIds = Object.keys(runOutputs);
 
-  const sessionCountRef = useRef(0);
   const isCreatingRef = useRef(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -158,8 +179,8 @@ export function Terminal() {
       // Register global listener before creating the PTY so early output is buffered
       ensureGlobalOutputListener();
       const id = await CreateTerminal();
-      sessionCountRef.current += 1;
-      addSession({ id, title: `Terminal ${sessionCountRef.current}` });
+      const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
+      addSession({ id, title });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       showToast(`Failed to create terminal: ${message}`, 'error');
@@ -168,12 +189,23 @@ export function Terminal() {
     }
   }, [addSession, showToast]);
 
-  // Auto-create a session when switching to the terminal tab with no sessions
+  // Auto-create the first terminal once, but honor an explicit close-all state.
   useEffect(() => {
-    if (activeTab === 'terminal' && terminalSessions.length === 0) {
+    if (
+      activeTab === 'terminal' &&
+      terminalSessions.length === 0 &&
+      !hasAutoCreatedInitialSession
+    ) {
+      markInitialSessionCreated();
       createNewSession();
     }
-  }, [activeTab, terminalSessions.length, createNewSession]);
+  }, [
+    activeTab,
+    createNewSession,
+    hasAutoCreatedInitialSession,
+    markInitialSessionCreated,
+    terminalSessions.length,
+  ]);
 
   const handleCloseSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
@@ -268,7 +300,7 @@ export function Terminal() {
             </button>
           );
         })}
-        {activeTab === 'terminal' && terminalSessions.length > 0 && (
+        {activeTab === 'terminal' && (
           <>
             <div className={styles.divider} />
             {terminalSessions.map((session, index) => {

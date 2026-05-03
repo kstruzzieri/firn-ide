@@ -12,6 +12,7 @@ beforeEach(() => {
     panelSizes: { left: 260, right: 280, bottom: 200 },
     terminalSessions: [],
     activeTerminalSessionId: null,
+    hasAutoCreatedInitialTerminalSession: false,
   });
 });
 
@@ -283,6 +284,14 @@ describe('ideStore - terminal sessions', () => {
 
     const sessions = useIDEStore.getState().terminalSessions;
     expect(sessions.map((s) => s.id)).toEqual(['term-1', 'term-2']);
+  });
+
+  it('should track when the initial terminal session has been created', () => {
+    const { markInitialTerminalSessionCreated } = useIDEStore.getState();
+
+    markInitialTerminalSessionCreated();
+
+    expect(useIDEStore.getState().hasAutoCreatedInitialTerminalSession).toBe(true);
   });
 });
 
