@@ -115,4 +115,31 @@ describe('useKeyboardShortcuts', () => {
       { fileId: '/current.ts', line: 12, column: 8 },
     ]);
   });
+
+  it('should not handle navigation shortcuts that were already handled', async () => {
+    renderHook(() => useKeyboardShortcuts());
+
+    useIDEStore.setState({
+      activeFileId: '/current.ts',
+      cursorPosition: { line: 9, column: 4 },
+      cursorPositions: { '/current.ts': { line: 12, column: 8 } },
+    });
+    useIDEStore.getState().pushNavigationHistory({
+      fileId: '/definition-source.ts',
+      line: 3,
+      column: 2,
+    });
+
+    const event = navigationBackEvent();
+    event.preventDefault();
+    await act(async () => {
+      window.dispatchEvent(event);
+    });
+
+    expect(mockNavigateToEditorLocation).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().navigationHistory).toEqual([
+      { fileId: '/definition-source.ts', line: 3, column: 2 },
+    ]);
+    expect(useIDEStore.getState().navigationForward).toEqual([]);
+  });
 });

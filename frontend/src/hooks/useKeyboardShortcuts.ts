@@ -13,6 +13,8 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+
       const mac = isMac();
       const modifier = mac ? e.metaKey : e.ctrlKey;
 
