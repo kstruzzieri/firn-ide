@@ -74,6 +74,10 @@ export function LSPHover(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPHover'](arg1, arg2, arg3);
 }
 
+export function LSPResolveCompletionItem(arg1, arg2) {
+  return window['go']['main']['App']['LSPResolveCompletionItem'](arg1, arg2);
+}
+
 export function ListRecentWorkspaces() {
   return window['go']['main']['App']['ListRecentWorkspaces']();
 }

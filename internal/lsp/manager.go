@@ -24,10 +24,11 @@ const (
 
 // ServerStatus represents the current status of a language server.
 type ServerStatus struct {
-	Family    string `json:"family"`
-	Workspace string `json:"workspace"`
-	State     string `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
-	Error     string `json:"error,omitempty"`
+	Family                      string   `json:"family"`
+	Workspace                   string   `json:"workspace"`
+	State                       string   `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
+	Error                       string   `json:"error,omitempty"`
+	CompletionTriggerCharacters []string `json:"completionTriggerCharacters,omitempty"`
 }
 
 // EventEmitter is the callback signature for emitting events to the frontend.
@@ -240,7 +241,7 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 func (m *Manager) Hover(ctx context.Context, path string, line, character int) (*Hover, error) {
 	entry, uri := m.serverForPath(path)
 	if entry == nil {
-		return nil, fmt.Errorf("no language server for %s", path)
+		return nil, nil
 	}
 	return entry.client.Hover(ctx, uri, line, character)
 }
@@ -249,7 +250,7 @@ func (m *Manager) Hover(ctx context.Context, path string, line, character int) (
 func (m *Manager) Definition(ctx context.Context, path string, line, character int) ([]Location, error) {
 	entry, uri := m.serverForPath(path)
 	if entry == nil {
-		return nil, fmt.Errorf("no language server for %s", path)
+		return nil, nil
 	}
 	return entry.client.Definition(ctx, uri, line, character)
 }
@@ -258,9 +259,18 @@ func (m *Manager) Definition(ctx context.Context, path string, line, character i
 func (m *Manager) Complete(ctx context.Context, path string, line, character int, triggerChar string) (*CompletionList, error) {
 	entry, uri := m.serverForPath(path)
 	if entry == nil {
-		return nil, fmt.Errorf("no language server for %s", path)
+		return nil, nil
 	}
 	return entry.client.Complete(ctx, uri, line, character, triggerChar)
+}
+
+// ResolveCompletionItem resolves additional metadata for a completion item.
+func (m *Manager) ResolveCompletionItem(ctx context.Context, path string, item CompletionItem) (*CompletionItem, error) {
+	entry, _ := m.serverForPath(path)
+	if entry == nil {
+		return nil, nil
+	}
+	return entry.client.ResolveCompletionItem(ctx, item)
 }
 
 // GetStatus returns the status of all running language servers.
@@ -283,11 +293,15 @@ func (m *Manager) GetStatus() []ServerStatus {
 			state = "stopping"
 		}
 
-		statuses = append(statuses, ServerStatus{
+		status := ServerStatus{
 			Family:    key.family,
 			Workspace: key.workspace,
 			State:     state,
-		})
+		}
+		if state == "ready" {
+			status.CompletionTriggerCharacters = completionTriggerChars(entry)
+		}
+		statuses = append(statuses, status)
 	}
 	return statuses
 }
@@ -598,12 +612,21 @@ func (m *Manager) emitStatus(family, workspace, state, errMsg string) {
 	if m.emitter == nil {
 		return
 	}
-	m.emitter("lsp:status", ServerStatus{
+	status := ServerStatus{
 		Family:    family,
 		Workspace: workspace,
 		State:     state,
 		Error:     errMsg,
-	})
+	}
+	if state == "ready" {
+		m.mu.Lock()
+		key := serverKey{family: family, workspace: workspace}
+		if entry, ok := m.servers[key]; ok {
+			status.CompletionTriggerCharacters = completionTriggerChars(entry)
+		}
+		m.mu.Unlock()
+	}
+	m.emitter("lsp:status", status)
 }
 
 // emitError emits an lsp:error event with a user-facing message.
@@ -616,4 +639,17 @@ func (m *Manager) emitError(family, workspace, message string) {
 		"workspace": workspace,
 		"message":   message,
 	})
+}
+
+// completionTriggerChars extracts trigger characters from a server's completion capabilities.
+func completionTriggerChars(entry *serverEntry) []string {
+	raw := entry.client.ServerCapabilities().CompletionProvider
+	if len(raw) == 0 {
+		return nil
+	}
+	var opts CompletionProviderOptions
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		return nil
+	}
+	return opts.TriggerCharacters
 }

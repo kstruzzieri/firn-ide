@@ -119,6 +119,42 @@ func TestManager_NoWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestHover_UnsupportedPath_ReturnsNil(t *testing.T) {
+	mgr := NewManager(nil)
+	mgr.SetWorkspaceRoot("/tmp/ws")
+	result, err := mgr.Hover(context.Background(), "/tmp/ws/readme.md", 0, 0)
+	if err != nil {
+		t.Fatalf("expected nil error for unsupported path, got: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil result for unsupported path, got: %+v", result)
+	}
+}
+
+func TestDefinition_UnsupportedPath_ReturnsNil(t *testing.T) {
+	mgr := NewManager(nil)
+	mgr.SetWorkspaceRoot("/tmp/ws")
+	result, err := mgr.Definition(context.Background(), "/tmp/ws/readme.md", 0, 0)
+	if err != nil {
+		t.Fatalf("expected nil error for unsupported path, got: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil result for unsupported path, got: %+v", result)
+	}
+}
+
+func TestComplete_UnsupportedPath_ReturnsNil(t *testing.T) {
+	mgr := NewManager(nil)
+	mgr.SetWorkspaceRoot("/tmp/ws")
+	result, err := mgr.Complete(context.Background(), "/tmp/ws/readme.md", 0, 0, "")
+	if err != nil {
+		t.Fatalf("expected nil error for unsupported path, got: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil result for unsupported path, got: %+v", result)
+	}
+}
+
 func TestManager_GetStatusEmpty(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	statuses := mgr.GetStatus()
@@ -185,6 +221,10 @@ func TestManager_IntegrationWithMockServer(t *testing.T) {
 	}
 	if statuses[0].State != "ready" {
 		t.Errorf("server state = %q, want ready", statuses[0].State)
+	}
+	// Mock server advertises triggerCharacters: [".", ":"]
+	if len(statuses[0].CompletionTriggerCharacters) != 2 {
+		t.Errorf("CompletionTriggerCharacters = %v, want 2 entries", statuses[0].CompletionTriggerCharacters)
 	}
 
 	// Use Manager.DidOpen (not direct client call)

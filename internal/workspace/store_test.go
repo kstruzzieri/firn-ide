@@ -66,9 +66,9 @@ type mockDirEntry struct {
 }
 
 func (e *mockDirEntry) Name() string               { return e.name }
-func (e *mockDirEntry) IsDir() bool                 { return e.isDir }
-func (e *mockDirEntry) Type() fs.FileMode           { return 0 }
-func (e *mockDirEntry) Info() (fs.FileInfo, error)  { return nil, nil }
+func (e *mockDirEntry) IsDir() bool                { return e.isDir }
+func (e *mockDirEntry) Type() fs.FileMode          { return 0 }
+func (e *mockDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func testState(path, name string) State {
 	return State{
@@ -90,6 +90,20 @@ func testState(path, name string) State {
 		Explorer: Explorer{
 			ExpandedPaths: []string{"/project/internal", "/project/frontend"},
 			RootExpanded:  true,
+			TreeSnapshot: []filesystem.FileEntry{
+				{
+					Name:  "src",
+					Path:  "/project/src",
+					IsDir: true,
+					Children: []filesystem.FileEntry{
+						{
+							Name:  "main.go",
+							Path:  "/project/src/main.go",
+							IsDir: false,
+						},
+					},
+				},
+			},
 		},
 		ActiveSidebar: "explorer",
 	}
@@ -178,6 +192,9 @@ func TestStoreLoadValidFile(t *testing.T) {
 	if len(state.Explorer.ExpandedPaths) != 2 {
 		t.Errorf("expected 2 expanded paths, got %d", len(state.Explorer.ExpandedPaths))
 	}
+	if len(state.Explorer.TreeSnapshot) != 1 || state.Explorer.TreeSnapshot[0].Name != "src" {
+		t.Errorf("expected tree snapshot to round-trip, got %+v", state.Explorer.TreeSnapshot)
+	}
 }
 
 func TestStoreSaveCreatesFile(t *testing.T) {
@@ -264,6 +281,9 @@ func TestStoreSaveNilSlicesBecomeEmpty(t *testing.T) {
 	}
 	if strings.Contains(string(data), `"expandedPaths": null`) {
 		t.Error("expandedPaths should serialize as [] not null")
+	}
+	if strings.Contains(string(data), `"treeSnapshot": null`) {
+		t.Error("treeSnapshot should serialize as [] not null")
 	}
 }
 

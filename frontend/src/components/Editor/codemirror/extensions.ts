@@ -18,6 +18,8 @@ import {
   lineNumbers,
   highlightActiveLineGutter,
   placeholder as placeholderExtension,
+  tooltips,
+  type Rect,
 } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import {
@@ -31,7 +33,7 @@ import {
   LanguageSupport,
 } from '@codemirror/language';
 import {
-  autocompletion,
+  acceptCompletion,
   completionKeymap,
   closeBrackets,
   closeBracketsKeymap,
@@ -53,6 +55,9 @@ import { rust } from '@codemirror/lang-rust';
 
 import { firnGlacier } from './theme';
 import { diagnosticsExtensions } from './diagnostics';
+import { completionExtensions } from './completion';
+import { hoverExtensions } from './hover';
+import { definitionExtensions } from './definition';
 export { getLanguageName } from '../../../utils/editorLanguage';
 
 /**
@@ -184,13 +189,7 @@ export function coreExtensions(): Extension[] {
  * Autocomplete and bracket extensions.
  */
 export function autocompleteExtensions(): Extension[] {
-  return [
-    closeBrackets(),
-    autocompletion({
-      activateOnTyping: true,
-      maxRenderedOptions: 50,
-    }),
-  ];
+  return [closeBrackets()];
 }
 
 /**
@@ -203,19 +202,20 @@ export function searchExtensions(): Extension[] {
 /**
  * Keymap extensions - all keyboard shortcuts.
  */
+export const editorKeybindings = [
+  ...closeBracketsKeymap,
+  ...defaultKeymap,
+  ...searchKeymap,
+  ...historyKeymap,
+  ...foldKeymap,
+  ...completionKeymap,
+  ...lintKeymap,
+  { key: 'Tab', run: acceptCompletion },
+  indentWithTab,
+];
+
 export function keymapExtensions(): Extension[] {
-  return [
-    keymap.of([
-      ...closeBracketsKeymap,
-      ...defaultKeymap,
-      ...searchKeymap,
-      ...historyKeymap,
-      ...foldKeymap,
-      ...completionKeymap,
-      ...lintKeymap,
-      indentWithTab,
-    ]),
-  ];
+  return [keymap.of(editorKeybindings)];
 }
 
 /**
@@ -229,6 +229,15 @@ export function behaviorExtensions(): Extension[] {
     // Wrap long lines
     EditorView.lineWrapping,
 
+    // Mount hover/completion tooltips outside the editor container so they
+    // aren't clipped by split panes or overflow-hidden wrappers. Constrain
+    // their available space to the visible editor viewport so panels such as
+    // the bottom terminal don't end up covering the lower portion.
+    tooltips({
+      parent: typeof document === 'undefined' ? undefined : document.body,
+      tooltipSpace: editorTooltipSpace,
+    }),
+
     // Update listener for content changes
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
@@ -236,6 +245,19 @@ export function behaviorExtensions(): Extension[] {
       }
     }),
   ];
+}
+
+export function editorTooltipSpace(view: EditorView): Rect {
+  const rect = view.scrollDOM.getBoundingClientRect();
+  const insetX = 4;
+  const insetY = 6;
+
+  return {
+    top: rect.top + insetY,
+    left: rect.left + insetX,
+    right: Math.max(rect.left + insetX, rect.right - insetX),
+    bottom: Math.max(rect.top + insetY, rect.bottom - insetY),
+  };
 }
 
 /**
@@ -265,6 +287,7 @@ export function tabSize(size: number): Extension {
  */
 export function createEditorExtensions(options: {
   filename: string;
+  filePath: string;
   readOnly?: boolean;
   tabSize?: number;
   placeholder?: string;
@@ -273,6 +296,7 @@ export function createEditorExtensions(options: {
 }): Extension[] {
   const {
     filename,
+    filePath,
     readOnly: isReadOnly = false,
     tabSize: tabs = 2,
     placeholder,
@@ -312,6 +336,15 @@ export function createEditorExtensions(options: {
 
     // Diagnostics (lint gutter + underlines, populated dynamically)
     ...diagnosticsExtensions(),
+
+    // LSP Completion (compartment, initially empty)
+    ...completionExtensions(),
+
+    // LSP Hover (compartment, initially empty)
+    ...hoverExtensions(),
+
+    // LSP Definition (F12, Cmd+Click, back/forward)
+    ...definitionExtensions(filePath),
   ];
 
   // Optional placeholder

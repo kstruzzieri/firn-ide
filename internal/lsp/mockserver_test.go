@@ -91,10 +91,16 @@ func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 		return respondWithResult(msg.ID, CompletionList{
 			IsIncomplete: false,
 			Items: []CompletionItem{
-				{Label: "mockFunction", Kind: 3, Detail: "mock detail"},  // Function
-				{Label: "mockVariable", Kind: 6, Detail: "mock var"},     // Variable
+				{Label: "mockFunction", Kind: 3, Data: json.RawMessage(`{"id":1}`)}, // Function
+				{Label: "mockVariable", Kind: 6, Detail: "mock var"},               // Variable
 			},
 		})
+
+	case "completionItem/resolve":
+		var item CompletionItem
+		_ = json.Unmarshal(msg.Params, &item)
+		item.Detail = "(method) mockFunction(value: string): boolean"
+		return respondWithResult(msg.ID, item)
 
 	default:
 		return &JSONRPCMessage{

@@ -6,10 +6,7 @@ module.exports = {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
     '\\.svg$': '<rootDir>/src/__mocks__/svgMock.js',
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^\\.\\./\\.\\./\\.\\./wailsjs/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
-    '^\\.\\./\\.\\./wailsjs/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
-    '^\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
-    '^\\.\\./\\.\\./\\.\\./wailsjs/runtime/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '(?:\\.\\./)+wailsjs/runtime(?:/runtime)?$': '<rootDir>/src/__mocks__/wailsRuntime.js',
   },
   transform: {
     '^.+\\.tsx?$': [

@@ -97,15 +97,23 @@ type InsertTextFormat int
 
 // CompletionItem represents a completion suggestion.
 type CompletionItem struct {
-	Label            string             `json:"label"`
-	Kind             CompletionItemKind `json:"kind,omitempty"`
-	Detail           string             `json:"detail,omitempty"`
-	Documentation    json.RawMessage    `json:"documentation,omitempty"`
-	InsertText       string             `json:"insertText,omitempty"`
-	InsertTextFormat InsertTextFormat    `json:"insertTextFormat,omitempty"`
-	TextEdit         *TextEdit          `json:"textEdit,omitempty"`
-	FilterText       string             `json:"filterText,omitempty"`
-	SortText         string             `json:"sortText,omitempty"`
+	Label            string                      `json:"label"`
+	Kind             CompletionItemKind          `json:"kind,omitempty"`
+	Detail           string                      `json:"detail,omitempty"`
+	LabelDetails     *CompletionItemLabelDetails `json:"labelDetails,omitempty"`
+	Documentation    json.RawMessage             `json:"documentation,omitempty"`
+	InsertText       string                      `json:"insertText,omitempty"`
+	InsertTextFormat InsertTextFormat            `json:"insertTextFormat,omitempty"`
+	TextEdit         *TextEdit                   `json:"textEdit,omitempty"`
+	FilterText       string                      `json:"filterText,omitempty"`
+	SortText         string                      `json:"sortText,omitempty"`
+	CommitCharacters []string                    `json:"commitCharacters,omitempty"`
+	Data             json.RawMessage             `json:"data,omitempty"`
+}
+
+type CompletionItemLabelDetails struct {
+	Detail      string `json:"detail,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // CompletionList represents a collection of completion items.
@@ -153,6 +161,12 @@ type ServerCapabilities struct {
 	CompletionProvider json.RawMessage `json:"completionProvider,omitempty"`
 	HoverProvider      json.RawMessage `json:"hoverProvider,omitempty"`
 	DefinitionProvider json.RawMessage `json:"definitionProvider,omitempty"`
+}
+
+// CompletionProviderOptions describes the server's completion capabilities.
+type CompletionProviderOptions struct {
+	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+	ResolveProvider   bool     `json:"resolveProvider,omitempty"`
 }
 
 // TextDocumentSyncKind defines how the host (editor) should sync document changes.

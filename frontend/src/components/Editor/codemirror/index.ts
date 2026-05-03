@@ -29,6 +29,15 @@ export {
 // Diagnostics
 export { updateEditorDiagnostics, lspToCMDiagnostics, diagnosticsCompartment } from './diagnostics';
 
+// Completion
+export { completionCompartment, reconfigureCompletion, resetCompletion } from './completion';
+
+// Hover
+export { hoverCompartment, reconfigureHover } from './hover';
+
+// Definition
+export { definitionExtensions } from './definition';
+
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';
 export { EditorState, type Extension } from '@codemirror/state';

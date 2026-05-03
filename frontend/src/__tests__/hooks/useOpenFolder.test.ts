@@ -15,10 +15,12 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
 
 import { useOpenFolder, _resetOpeningLock } from '../../hooks/useOpenFolder';
 import { openWorkspaceByPath } from '../../utils/workspace';
+import { clearWorkspaceTreeCache, setCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 
 beforeEach(() => {
   jest.clearAllMocks();
   _resetOpeningLock();
+  clearWorkspaceTreeCache();
   useIDEStore.setState({
     workspace: null,
     directoryTree: [],
@@ -186,7 +188,31 @@ describe('openWorkspaceByPath', () => {
 
     const state = useIDEStore.getState();
     expect(state.directoryTree).toEqual([]);
+    expect(state.isLoadingTree).toBe(true);
     expect(state.workspace?.name).toBe('new-project');
+  });
+
+  it('should show a cached directory tree immediately when available', () => {
+    const cachedTree = [
+      filesystem.FileEntry.createFrom({
+        name: 'src',
+        path: '/Users/test/cached-project/src',
+        isDir: true,
+        size: 0,
+        modTime: new Date().toISOString(),
+      }),
+    ];
+    setCachedWorkspaceTree('/Users/test/cached-project', cachedTree);
+
+    openWorkspaceByPath('/Users/test/cached-project');
+
+    const state = useIDEStore.getState();
+    expect(state.workspace).toEqual({
+      name: 'cached-project',
+      path: '/Users/test/cached-project',
+    });
+    expect(state.directoryTree).toEqual(cachedTree);
+    expect(state.isLoadingTree).toBe(false);
   });
 
   it('should handle Windows paths', () => {

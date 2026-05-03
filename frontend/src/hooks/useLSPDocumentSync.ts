@@ -1,12 +1,17 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
-import { LSPDidOpen, LSPDidChange, LSPDidSave, LSPDidClose } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { lsp } from '../../wailsjs/go/models';
 import { languageIdForFile } from '../utils/lspLanguageId';
 import { filePathToURI } from '../utils/lspUri';
-
-const DIDCHANGE_DEBOUNCE_MS = 150;
+import {
+  closeLSPDocument,
+  forgetLSPDocument,
+  openLSPDocument,
+  resetLSPDocumentSyncState,
+  saveLSPDocument,
+  scheduleLSPDocumentChange,
+  trackedLSPDocumentPaths,
+} from '../utils/lspDocumentSync';
 
 /**
  * useLSPDocumentSync wires the editor's document lifecycle to the backend LSP manager.
@@ -21,148 +26,48 @@ const DIDCHANGE_DEBOUNCE_MS = 150;
  * The frontend is the source of truth for version numbers.
  */
 export function useLSPDocumentSync() {
-  // Per-file document version. Monotonically increasing, never resets within a session.
-  const versions = useRef(new Map<string, number>());
-  // Set of file paths we've sent didOpen for (to avoid duplicate opens on workspace restore)
-  const openedPaths = useRef(new Set<string>());
-  // Debounce timers for didChange per file path
-  const changeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // --- didOpen ---
+  const sendDidOpen = useCallback((file: EditorFile) => {
+    const langId = languageIdForFile(file.name);
+    if (!langId) return; // unsupported language — backend will no-op anyway
 
-  const nextVersion = useCallback((path: string): number => {
-    const current = versions.current.get(path) ?? 0;
-    const next = current + 1;
-    versions.current.set(path, next);
-    return next;
+    openLSPDocument(file.path, langId, file.content)?.catch((err) => {
+      console.error(`LSP didOpen failed for ${file.path}:`, err);
+    });
   }, []);
 
-  // --- didOpen ---
-  const sendDidOpen = useCallback(
-    (file: EditorFile) => {
-      const langId = languageIdForFile(file.name);
-      if (!langId) return; // unsupported language — backend will no-op anyway
-
-      if (openedPaths.current.has(file.path)) return; // already opened
-      openedPaths.current.add(file.path);
-
-      const version = nextVersion(file.path);
-      LSPDidOpen(file.path, langId, version, file.content).catch((err) => {
-        console.error(`LSP didOpen failed for ${file.path}:`, err);
-        openedPaths.current.delete(file.path);
-      });
-    },
-    [nextVersion]
-  );
-
   // --- didChange (debounced) ---
-  const sendDidChange = useCallback(
-    (path: string, content: string) => {
-      if (!openedPaths.current.has(path)) return;
-
-      // Cancel pending debounce
-      const existing = changeTimers.current.get(path);
-      if (existing) clearTimeout(existing);
-
-      const timer = setTimeout(() => {
-        changeTimers.current.delete(path);
-        const version = nextVersion(path);
-        const change = new lsp.TextDocumentContentChangeEvent({ text: content });
-        LSPDidChange(path, version, [change]).catch((err) => {
-          console.error(`LSP didChange failed for ${path}:`, err);
-        });
-      }, DIDCHANGE_DEBOUNCE_MS);
-
-      changeTimers.current.set(path, timer);
-    },
-    [nextVersion]
-  );
-
-  // Flush any pending debounced didChange for a file (called before didSave)
-  const flushDidChange = useCallback(
-    (path: string, content: string) => {
-      const timer = changeTimers.current.get(path);
-      if (timer) {
-        clearTimeout(timer);
-        changeTimers.current.delete(path);
-        // Send the change immediately
-        if (openedPaths.current.has(path)) {
-          const version = nextVersion(path);
-          const change = new lsp.TextDocumentContentChangeEvent({ text: content });
-          LSPDidChange(path, version, [change]).catch((err) => {
-            console.error(`LSP didChange flush failed for ${path}:`, err);
-          });
-        }
-      }
-    },
-    [nextVersion]
-  );
+  const sendDidChange = useCallback((path: string, content: string) => {
+    scheduleLSPDocumentChange(path, content, (err) => {
+      console.error(`LSP didChange failed for ${path}:`, err);
+    });
+  }, []);
 
   // --- didSave ---
-  const sendDidSave = useCallback(
-    (path: string, content: string) => {
-      if (!openedPaths.current.has(path)) return;
-      // Flush any pending changes before save
-      flushDidChange(path, content);
-      LSPDidSave(path).catch((err) => {
-        console.error(`LSP didSave failed for ${path}:`, err);
-      });
-    },
-    [flushDidChange]
-  );
+  const sendDidSave = useCallback((path: string, content: string) => {
+    void saveLSPDocument(path, content).catch((err) => {
+      console.error(`LSP didSave failed for ${path}:`, err);
+    });
+  }, []);
 
   // --- didClose ---
   // lastContent: content to flush if there's a pending debounced didChange.
   // Caller must provide this because the file may already be removed from openFiles.
-  const sendDidClose = useCallback(
-    (path: string, lastContent?: string) => {
-      if (!openedPaths.current.has(path)) return;
-      openedPaths.current.delete(path);
-
-      // Flush any pending debounced didChange so the server gets the final state
-      const timer = changeTimers.current.get(path);
-      if (timer) {
-        clearTimeout(timer);
-        changeTimers.current.delete(path);
-        const content =
-          lastContent ?? useIDEStore.getState().openFiles.find((f) => f.path === path)?.content;
-        if (content !== undefined) {
-          const version = nextVersion(path);
-          const change = new lsp.TextDocumentContentChangeEvent({ text: content });
-          LSPDidChange(path, version, [change]).catch((err) => {
-            console.error(`LSP didChange flush-on-close failed for ${path}:`, err);
-          });
-        }
-      }
-
-      LSPDidClose(path).catch((err) => {
-        console.error(`LSP didClose failed for ${path}:`, err);
-      });
-    },
-    [nextVersion]
-  );
+  const sendDidClose = useCallback((path: string, lastContent?: string) => {
+    void closeLSPDocument(path, lastContent).catch((err) => {
+      console.error(`LSP didClose failed for ${path}:`, err);
+    });
+  }, []);
 
   // Close all tracked documents (used during workspace switch)
   const closeAll = useCallback(() => {
-    for (const path of openedPaths.current) {
-      // Flush any pending debounced didChange before closing
-      const timer = changeTimers.current.get(path);
-      if (timer) {
-        clearTimeout(timer);
-        changeTimers.current.delete(path);
-        const file = useIDEStore.getState().openFiles.find((f) => f.path === path);
-        if (file) {
-          const version = nextVersion(path);
-          const change = new lsp.TextDocumentContentChangeEvent({ text: file.content });
-          LSPDidChange(path, version, [change]).catch((err) => {
-            console.error(`LSP didChange flush-on-close failed for ${path}:`, err);
-          });
-        }
-      }
-      LSPDidClose(path).catch((err) => {
+    for (const path of trackedLSPDocumentPaths()) {
+      const file = useIDEStore.getState().openFiles.find((f) => f.path === path);
+      void closeLSPDocument(path, file?.content).catch((err) => {
         console.error(`LSP didClose failed for ${path}:`, err);
       });
     }
-    openedPaths.current.clear();
-  }, [nextVersion]);
+  }, []);
 
   // --- Watch store for file lifecycle events (single subscription) ---
   useEffect(() => {
@@ -234,7 +139,7 @@ export function useLSPDocumentSync() {
       for (const file of openFiles) {
         if (reconnectSet.has(filePathToURI(file.path))) {
           // Clear the stale guard first so the new server instance gets a fresh didOpen.
-          openedPaths.current.delete(file.path);
+          forgetLSPDocument(file.path);
           sendDidOpen(file);
         }
       }
@@ -245,10 +150,8 @@ export function useLSPDocumentSync() {
 
   // Cleanup on unmount
   useEffect(() => {
-    const timers = changeTimers.current;
     return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-      timers.clear();
+      resetLSPDocumentSyncState();
     };
   }, []);
 

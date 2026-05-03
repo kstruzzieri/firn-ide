@@ -578,6 +578,17 @@ func (a *App) LSPComplete(path string, line, character int, triggerCharacter str
 	return a.lspManager.Complete(ctx, path, line, character, triggerCharacter)
 }
 
+// LSPResolveCompletionItem requests additional detail for a completion item.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPResolveCompletionItem(path string, item lsp.CompletionItem) (*lsp.CompletionItem, error) {
+	if a.lspManager == nil {
+		return nil, fmt.Errorf("LSP not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, lsp.DefaultRequestTimeout)
+	defer cancel()
+	return a.lspManager.ResolveCompletionItem(ctx, path, item)
+}
+
 // GetLSPStatus returns the status of all running language servers.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GetLSPStatus() []lsp.ServerStatus {
@@ -600,4 +611,3 @@ func (a *App) SetLSPWorkspaceRoot(workspacePath string) {
 	a.lspManager.ShutdownAll(lspWorkspaceSwitchTimeout)
 	a.lspManager.SetWorkspaceRoot(workspacePath)
 }
-

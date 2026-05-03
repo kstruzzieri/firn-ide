@@ -10,21 +10,19 @@ import {
   BinaryIcon,
   ArchiveIcon,
 } from '../icons';
-import {
-  TypescriptOriginal,
-  JavascriptOriginal,
-  GoOriginal,
-  PythonOriginal,
-  JsonOriginal,
-  MarkdownOriginal,
-  Css3Original,
-  Html5Original,
-  RustOriginal,
-  ReactOriginal,
-  GitOriginal,
-  YamlOriginal,
-  XmlOriginal,
-} from 'devicons-react';
+import TypescriptOriginal from 'devicons-react/icons/TypescriptOriginal';
+import JavascriptOriginal from 'devicons-react/icons/JavascriptOriginal';
+import GoOriginal from 'devicons-react/icons/GoOriginal';
+import PythonOriginal from 'devicons-react/icons/PythonOriginal';
+import JsonOriginal from 'devicons-react/icons/JsonOriginal';
+import MarkdownOriginal from 'devicons-react/icons/MarkdownOriginal';
+import Css3Original from 'devicons-react/icons/Css3Original';
+import Html5Original from 'devicons-react/icons/Html5Original';
+import RustOriginal from 'devicons-react/icons/RustOriginal';
+import ReactOriginal from 'devicons-react/icons/ReactOriginal';
+import GitOriginal from 'devicons-react/icons/GitOriginal';
+import YamlOriginal from 'devicons-react/icons/YamlOriginal';
+import XmlOriginal from 'devicons-react/icons/XmlOriginal';
 
 /** File type identifier for icon styling */
 export type FileType =

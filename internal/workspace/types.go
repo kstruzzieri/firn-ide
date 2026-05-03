@@ -3,6 +3,8 @@
 // ~/.firn/workspaces/ so sessions can be restored across app restarts.
 package workspace
 
+import "firn/internal/filesystem"
+
 // StateFile is the on-disk JSON format with a version envelope.
 type StateFile struct {
 	Version int   `json:"version"`
@@ -52,8 +54,9 @@ type FileState struct {
 
 // Explorer captures file tree expand/collapse state.
 type Explorer struct {
-	ExpandedPaths []string `json:"expandedPaths"`
-	RootExpanded  bool     `json:"rootExpanded"`
+	ExpandedPaths []string               `json:"expandedPaths"`
+	RootExpanded  bool                   `json:"rootExpanded"`
+	TreeSnapshot  []filesystem.FileEntry `json:"treeSnapshot,omitempty"`
 }
 
 // Summary is a lightweight struct for listing recent workspaces.

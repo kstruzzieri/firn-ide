@@ -32,9 +32,14 @@ export default defineConfig({
             '@codemirror/lang-html',
             '@codemirror/lang-json',
             '@codemirror/lang-markdown',
+            '@codemirror/lang-rust',
+            '@codemirror/lang-xml',
+            '@codemirror/lang-yaml',
           ],
           // React vendor chunk
-          react: ['react', 'react-dom'],
+          react: ['react', 'react-dom', 'react-dom/client'],
+          // Terminal emulator
+          xterm: ['@xterm/xterm', '@xterm/addon-fit'],
           // State management
           zustand: ['zustand'],
         },

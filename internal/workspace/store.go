@@ -50,6 +50,9 @@ func (s *Store) Save(state State) error {
 	if state.Explorer.ExpandedPaths == nil {
 		state.Explorer.ExpandedPaths = []string{}
 	}
+	if state.Explorer.TreeSnapshot == nil {
+		state.Explorer.TreeSnapshot = []filesystem.FileEntry{}
+	}
 
 	if err := s.fs.MkdirAll(s.baseDir, 0o755); err != nil {
 		return fmt.Errorf("creating workspaces directory: %w", err)

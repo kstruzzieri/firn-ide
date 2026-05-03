@@ -42,6 +42,8 @@ export function LSPDidSave(arg1:string):Promise<void>;
 
 export function LSPHover(arg1:string,arg2:number,arg3:number):Promise<lsp.Hover>;
 
+export function LSPResolveCompletionItem(arg1:string,arg2:lsp.CompletionItem):Promise<lsp.CompletionItem>;
+
 export function ListRecentWorkspaces():Promise<Array<workspace.Summary>>;
 
 export function LoadRunProfiles(arg1:string):Promise<void>;
