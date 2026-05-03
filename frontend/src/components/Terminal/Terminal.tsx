@@ -172,22 +172,28 @@ export function Terminal() {
     ensureGlobalOutputListener();
   }, []);
 
-  const createNewSession = useCallback(async () => {
-    if (isCreatingRef.current) return;
-    isCreatingRef.current = true;
-    try {
-      // Register global listener before creating the PTY so early output is buffered
-      ensureGlobalOutputListener();
-      const id = await CreateTerminal();
-      const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
-      addSession({ id, title });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      showToast(`Failed to create terminal: ${message}`, 'error');
-    } finally {
-      isCreatingRef.current = false;
-    }
-  }, [addSession, showToast]);
+  const createNewSession = useCallback(
+    async (options?: { markInitialCreated?: boolean }) => {
+      if (isCreatingRef.current) return;
+      isCreatingRef.current = true;
+      try {
+        // Register global listener before creating the PTY so early output is buffered
+        ensureGlobalOutputListener();
+        const id = await CreateTerminal();
+        const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
+        addSession({ id, title });
+        if (options?.markInitialCreated) {
+          markInitialSessionCreated();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        showToast(`Failed to create terminal: ${message}`, 'error');
+      } finally {
+        isCreatingRef.current = false;
+      }
+    },
+    [addSession, markInitialSessionCreated, showToast]
+  );
 
   // Auto-create the first terminal once, but honor an explicit close-all state.
   useEffect(() => {
@@ -196,16 +202,9 @@ export function Terminal() {
       terminalSessions.length === 0 &&
       !hasAutoCreatedInitialSession
     ) {
-      markInitialSessionCreated();
-      createNewSession();
+      createNewSession({ markInitialCreated: true });
     }
-  }, [
-    activeTab,
-    createNewSession,
-    hasAutoCreatedInitialSession,
-    markInitialSessionCreated,
-    terminalSessions.length,
-  ]);
+  }, [activeTab, createNewSession, hasAutoCreatedInitialSession, terminalSessions.length]);
 
   const handleCloseSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
@@ -361,7 +360,9 @@ export function Terminal() {
             })}
             <button
               className={styles.newSessionButton}
-              onClick={createNewSession}
+              onClick={() => {
+                void createNewSession();
+              }}
               aria-label="New terminal session"
               title="New Terminal"
             >

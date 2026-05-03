@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Terminal } from '../../components/Terminal';
 import { useIDEStore } from '../../stores/ideStore';
 
@@ -28,6 +28,7 @@ describe('Terminal component', () => {
       hasAutoCreatedInitialTerminalSession: false,
       runOutputs: {},
       activeRunOutputId: null,
+      toast: null,
     });
   });
 
@@ -51,5 +52,30 @@ describe('Terminal component', () => {
     expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
     expect(screen.queryByText('Terminal 2')).not.toBeInTheDocument();
     expect(mockCreateTerminal).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries initial auto-create after a failed terminal spawn', async () => {
+    mockCreateTerminal.mockReset();
+    mockCreateTerminal.mockRejectedValueOnce(new Error('pty unavailable'));
+    mockCreateTerminal.mockResolvedValueOnce('term-1');
+
+    render(<Terminal />);
+
+    await waitFor(() => {
+      expect(useIDEStore.getState().toast?.message).toContain('pty unavailable');
+    });
+    expect(mockCreateTerminal).toHaveBeenCalledTimes(1);
+    expect(useIDEStore.getState().hasAutoCreatedInitialTerminalSession).toBe(false);
+
+    act(() => {
+      useIDEStore.getState().setTerminalTab('output');
+    });
+    act(() => {
+      useIDEStore.getState().setTerminalTab('terminal');
+    });
+
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    expect(mockCreateTerminal).toHaveBeenCalledTimes(2);
+    expect(useIDEStore.getState().hasAutoCreatedInitialTerminalSession).toBe(true);
   });
 });
