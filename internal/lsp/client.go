@@ -19,7 +19,15 @@ const DefaultRequestTimeout = 10 * time.Second
 var clientCapabilities = json.RawMessage(`{
 	"textDocument": {
 		"synchronization": {"didSave": true},
-		"completion": {"completionItem": {"snippetSupport": true, "documentationFormat": ["markdown", "plaintext"]}},
+		"completion": {
+			"completionItem": {
+				"snippetSupport": true,
+				"documentationFormat": ["markdown", "plaintext"],
+				"labelDetailsSupport": true,
+				"commitCharactersSupport": true,
+				"resolveSupport": {"properties": ["detail", "documentation", "labelDetails"]}
+			}
+		},
 		"hover": {"contentFormat": ["markdown", "plaintext"]},
 		"definition": {},
 		"publishDiagnostics": {"versionSupport": true}
@@ -278,6 +286,15 @@ func (c *Client) Complete(ctx context.Context, uri string, line, character int, 
 		return nil, fmt.Errorf("unmarshal completion result: %w", err)
 	}
 	return &CompletionList{Items: items}, nil
+}
+
+// ResolveCompletionItem sends a completionItem/resolve request for a completion entry.
+func (c *Client) ResolveCompletionItem(ctx context.Context, item CompletionItem) (*CompletionItem, error) {
+	var resolved CompletionItem
+	if err := c.call(ctx, "completionItem/resolve", item, &resolved); err != nil {
+		return nil, err
+	}
+	return &resolved, nil
 }
 
 // Done returns a channel that is closed when the read loop exits

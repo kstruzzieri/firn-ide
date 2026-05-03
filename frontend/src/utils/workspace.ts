@@ -1,5 +1,6 @@
 import { useIDEStore } from '../stores/ideStore';
 import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
+import { getCachedWorkspaceTree } from './workspaceTreeCache';
 
 const MAX_RECENT = 10;
 
@@ -22,15 +23,23 @@ export function openWorkspaceByPath(folderPath: string) {
 
   const separator = folderPath.includes('\\') ? '\\' : '/';
   const folderName = folderPath.split(separator).pop() || folderPath;
+  const cachedTree = getCachedWorkspaceTree(folderPath);
 
   try {
-    // Clear stale tree and mark loading *before* setting workspace so the
-    // UI never briefly shows old files under the new workspace name.
-    store.setDirectoryTree([]);
-    store.setTreeLoading(true);
-
-    // Set workspace — this triggers useDirectoryTree to fetch the tree
-    store.setWorkspace({ name: folderName, path: folderPath });
+    // Switch workspace and tree state in one store update so the explorer can
+    // immediately render a cached tree for the target workspace, while still
+    // avoiding any brief stale-tree flash from the previous workspace.
+    useIDEStore.setState(
+      {
+        workspace: { name: folderName, path: folderPath },
+        workingDirectory: folderPath,
+        directoryTree: cachedTree ?? [],
+        isLoadingTree: cachedTree === undefined,
+        treeError: null,
+      },
+      false,
+      'openWorkspace'
+    );
 
     // Update window title
     WindowSetTitle(`${folderName} \u2014 Firn`);

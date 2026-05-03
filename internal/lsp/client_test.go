@@ -135,6 +135,34 @@ func TestClient_Completion(t *testing.T) {
 	_ = client.Shutdown(ctx)
 }
 
+func TestClient_ResolveCompletionItem(t *testing.T) {
+	transport := startMockTransport(t)
+	client := NewClient(transport, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	resolved, err := client.ResolveCompletionItem(ctx, CompletionItem{
+		Label: "mockFunction",
+		Data:  json.RawMessage(`{"id":1}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveCompletionItem: %v", err)
+	}
+	if resolved == nil {
+		t.Fatal("ResolveCompletionItem returned nil")
+	}
+	if resolved.Detail != "(method) mockFunction(value: string): boolean" {
+		t.Fatalf("resolved detail = %q", resolved.Detail)
+	}
+
+	_ = client.Shutdown(ctx)
+}
+
 func TestClient_DidOpenAndDiagnostics(t *testing.T) {
 	transport := startMockTransport(t)
 

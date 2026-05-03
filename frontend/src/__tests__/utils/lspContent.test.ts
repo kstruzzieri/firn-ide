@@ -51,6 +51,27 @@ describe('decodeLSPContent', () => {
     expect(result).toEqual({ kind: 'plaintext', value: 'just text' });
   });
 
+  it('accepts already-parsed MarkupContent objects', () => {
+    expect(decodeLSPContent({ kind: 'markdown', value: '**ready**' })).toEqual({
+      kind: 'markdown',
+      value: '**ready**',
+    });
+  });
+
+  it('accepts already-parsed string content', () => {
+    expect(decodeLSPContent('hover text')).toEqual({
+      kind: 'plaintext',
+      value: 'hover text',
+    });
+  });
+
+  it('accepts already-parsed MarkedString arrays', () => {
+    expect(decodeLSPContent([{ language: 'ts', value: 'const x = 1' }, 'docs'])).toEqual({
+      kind: 'markdown',
+      value: '```ts\nconst x = 1\n```\n\ndocs',
+    });
+  });
+
   it('returns null for malformed JSON', () => {
     const bytes = toBytes('not valid json{');
     expect(decodeLSPContent(bytes)).toBeNull();

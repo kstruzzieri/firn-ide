@@ -51,6 +51,9 @@ const mockReconfigureHover = jest.fn((filePath: string) => ({
   kind: 'hover-source',
   filePath,
 }));
+const mockResetCompletion = jest.fn(() => ({
+  kind: 'completion-default',
+}));
 const mockCompletionCompartmentReconfigure = jest.fn((value: unknown) => ({
   kind: 'completion-compartment',
   value,
@@ -96,6 +99,7 @@ jest.mock('../../../components/Editor/codemirror', () => {
     createEditorExtensions: mockCreateEditorExtensions,
     reconfigureCompletion: mockReconfigureCompletion,
     reconfigureHover: mockReconfigureHover,
+    resetCompletion: mockResetCompletion,
     updateEditorDiagnostics: mockUpdateEditorDiagnostics,
   };
 });
@@ -218,7 +222,7 @@ describe('CodeMirrorEditor', () => {
     });
 
     await waitFor(() => {
-      expect(mockCompletionCompartmentReconfigure).toHaveBeenCalledWith([]);
+      expect(mockResetCompletion).toHaveBeenCalled();
       expect(mockHoverCompartmentReconfigure).toHaveBeenCalledWith([]);
     });
 
@@ -226,7 +230,9 @@ describe('CodeMirrorEditor', () => {
       effects: [
         {
           kind: 'completion-compartment',
-          value: [],
+          value: {
+            kind: 'completion-default',
+          },
         },
         {
           kind: 'hover-compartment',

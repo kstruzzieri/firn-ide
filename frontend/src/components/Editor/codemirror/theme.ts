@@ -188,21 +188,68 @@ export const firnGlacierTheme = EditorView.theme(
       boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
       color: colors.foreground,
       fontSize: '12px',
+      zIndex: '1200',
     },
 
     // Autocomplete
     '.cm-tooltip.cm-tooltip-autocomplete': {
+      backgroundColor: '#10192A',
+      border: `1px solid ${colors.border}`,
+      borderRadius: '7px',
+      minWidth: '440px',
+      maxWidth: '620px',
+      padding: 0,
+      overflow: 'visible',
+      boxShadow: '0 18px 36px rgba(2, 6, 23, 0.48)',
       '& > ul': {
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-        maxHeight: '300px',
+        maxHeight: '320px',
+        padding: 0,
+        overflow: 'hidden auto',
+        borderRadius: '7px',
+        overscrollBehavior: 'contain',
+        scrollbarGutter: 'stable',
+        background:
+          'linear-gradient(180deg, rgba(15, 23, 42, 0.98) 0%, rgba(15, 23, 42, 0.94) 100%)',
+      },
+      '& > ul > completion-section': {
+        display: 'list-item',
+      },
+      '& > ul > completion-section:not(:first-child)': {
+        borderTop: `1px solid rgba(148, 163, 184, 0.12)`,
       },
       '& > ul > li': {
-        padding: '4px 12px',
-        lineHeight: '1.4',
+        display: 'grid',
+        gridTemplateColumns: '18px minmax(0, 1.4fr) minmax(0, 1fr) auto',
+        gridTemplateRows: 'auto auto',
+        gridTemplateAreas: '"icon label tail detail" "icon meta meta detail"',
+        columnGap: '12px',
+        rowGap: '3px',
+        alignItems: 'start',
+        padding: '10px 14px 9px 12px',
+        lineHeight: '1.25',
+        borderLeft: '3px solid rgba(56, 189, 248, 0.08)',
+        borderTop: `1px solid rgba(148, 163, 184, 0.08)`,
+        background:
+          'linear-gradient(90deg, rgba(148, 163, 184, 0.03) 0%, rgba(148, 163, 184, 0) 28%)',
+      },
+      '& > ul > completion-section + li': {
+        borderTop: 'none',
       },
       '& > ul > li[aria-selected]': {
-        backgroundColor: colors.accentDim,
+        backgroundColor: '#1F2E45',
+        borderLeftColor: colors.accent,
+        boxShadow: 'inset 0 0 0 1px rgba(56, 189, 248, 0.12)',
         color: colors.foreground,
+      },
+      '& > ul > li[aria-selected] .firn-completion-meta': {
+        color: '#AFC3D8',
+      },
+      '& > ul > li[aria-selected] .firn-completion-meta-source': {
+        color: '#C1D3E8',
+      },
+      '& > ul > li:not([aria-selected]):hover': {
+        backgroundColor: 'rgba(36, 49, 71, 0.62)',
       },
     },
 
@@ -210,6 +257,44 @@ export const firnGlacierTheme = EditorView.theme(
     '.cm-completionIcon': {
       width: '20px',
       opacity: 0.8,
+    },
+    '.cm-completionLabel': {
+      gridArea: 'label',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontWeight: '650',
+      fontSize: '13px',
+      letterSpacing: '0.01em',
+      color: '#D7E2EE',
+    },
+    '.firn-completion-tail': {
+      gridArea: 'tail',
+      alignSelf: 'center',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: '12px',
+      color: '#8FA6C2',
+      letterSpacing: '0.01em',
+    },
+    '.cm-completionMatchedText': {
+      color: colors.accent,
+      textDecoration: 'none',
+    },
+    '.cm-completionDetail': {
+      gridArea: 'detail',
+      alignSelf: 'center',
+      color: '#9DB3CC',
+      fontSize: '10.5px',
+      fontWeight: '600',
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      marginLeft: '16px',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      maxWidth: '180px',
+      textAlign: 'right',
     },
 
     // Panels (search, goto line)
@@ -290,44 +375,372 @@ export const firnGlacierTheme = EditorView.theme(
     // --- Completion styles ---
     '.firn-completion-icon': {
       display: 'inline-flex',
+      gridArea: 'icon',
       alignItems: 'center',
-      marginRight: '4px',
+      justifyContent: 'center',
+      width: '18px',
+      height: '18px',
+      marginTop: '2px',
       verticalAlign: 'middle',
+      opacity: 0.92,
+    },
+    '.firn-completion-section': {
+      display: 'block',
+      listStyle: 'none',
+      minHeight: '30px',
+      padding: '10px 14px 7px 12px',
+      color: '#8FB0D4',
+      fontSize: '11px',
+      fontWeight: '700',
+      background: 'linear-gradient(180deg, rgba(21, 32, 53, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%)',
+      letterSpacing: '0.03em',
+      textTransform: 'uppercase',
+      lineHeight: '1.25',
+    },
+    '.firn-completion-meta': {
+      gridArea: 'meta',
+      color: '#8CA0BB',
+      fontSize: '11px',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    },
+    '.firn-completion-meta-source': {
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      color: '#7F93AD',
+    },
+    '.firn-completion-option-internal .cm-completionLabel': {
+      color: colors.foregroundSecondary,
+    },
+    '.firn-completion-option-internal .firn-completion-meta': {
+      color: colors.foregroundDisabled,
+    },
+    '.firn-completion-option-internal .cm-completionDetail': {
+      color: colors.foregroundDisabled,
     },
     '.firn-completion-info': {
-      padding: '8px 12px',
-      maxWidth: '400px',
-      fontSize: '13px',
-      lineHeight: '1.4',
+      padding: '12px 14px 13px',
+      maxWidth: '320px',
+      maxHeight: '260px',
+      overflow: 'auto',
+      overscrollBehavior: 'contain',
+      fontSize: '12px',
+      lineHeight: '1.45',
+      background: 'linear-gradient(180deg, rgba(16, 25, 42, 0.98) 0%, rgba(13, 20, 34, 0.98) 100%)',
+      border: `1px solid ${colors.border}`,
+      borderRadius: '7px',
+      boxShadow: '0 12px 28px rgba(0, 0, 0, 0.34)',
     },
-    '.firn-completion-info-header': {
+    '.firn-completion-info-top': {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '10px',
+      marginBottom: '8px',
+    },
+    '.firn-completion-info-title': {
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: '12px',
-      color: colors.foreground,
-      marginBottom: '6px',
-      fontWeight: '600',
+      color: '#DDE7F4',
+      fontWeight: '700',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    },
+    '.firn-completion-info-badge': {
+      flexShrink: 0,
+      padding: '2px 7px',
+      borderRadius: '999px',
+      backgroundColor: 'rgba(148, 163, 184, 0.12)',
+      border: '1px solid rgba(148, 163, 184, 0.18)',
+      color: '#B8C7DA',
+      fontSize: '10px',
+      fontWeight: '700',
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase',
+    },
+    '.firn-completion-info-signature': {
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: '12px',
+      lineHeight: '1.5',
+      padding: '8px 10px',
+      borderRadius: '6px',
+      backgroundColor: 'rgba(30, 41, 59, 0.72)',
+      border: '1px solid rgba(56, 189, 248, 0.08)',
+      marginBottom: '10px',
+      whiteSpace: 'normal',
+      wordBreak: 'break-word',
+    },
+    '.firn-completion-info-signature-name': {
+      color: '#DDE7F4',
+      fontWeight: '700',
+    },
+    '.firn-completion-info-signature-tail': {
+      color: '#8FD4FF',
+    },
+    '.firn-completion-info-signature-punct': {
+      color: '#90A4BF',
+    },
+    '.firn-completion-info-signature-type': {
+      color: '#FDE68A',
+      fontStyle: 'italic',
     },
     '.firn-completion-info-body': {
       color: colors.foregroundSecondary,
-      fontSize: '12px',
+      fontSize: '11px',
       whiteSpace: 'pre-wrap',
+      lineHeight: '1.55',
+    },
+    '.cm-tooltip.cm-completionInfo, .cm-tooltip.cm-tooltip-hover': {
+      backgroundColor: 'transparent',
+      border: 'none',
+      borderRadius: 0,
+      boxShadow: 'none',
+      padding: 0,
+    },
+
+    // Completion row color coding
+    '.firn-completion-option-callable': {
+      borderLeftColor: 'rgba(125, 211, 252, 0.3)',
+      background: 'linear-gradient(90deg, rgba(14, 116, 144, 0.12) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-callable .cm-completionLabel': {
+      color: '#6FD3FF',
+    },
+    '.firn-completion-option-callable .firn-completion-tail': {
+      color: '#A7E7FF',
+    },
+    '.firn-completion-option-callable .cm-completionDetail': {
+      color: '#FDE68A',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-callable .cm-completionLabel':
+      {
+        color: '#86DDFF',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-callable .firn-completion-tail':
+      {
+        color: '#C0EEFF',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-callable .cm-completionDetail':
+      {
+        color: '#FFE08A',
+      },
+
+    '.firn-completion-option-member': {
+      borderLeftColor: 'rgba(96, 165, 250, 0.28)',
+      background: 'linear-gradient(90deg, rgba(59, 130, 246, 0.11) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-member .cm-completionLabel': {
+      color: '#6EC8FF',
+    },
+    '.firn-completion-option-member .firn-completion-tail': {
+      color: '#9EC7EB',
+    },
+    '.firn-completion-option-member .cm-completionDetail': {
+      color: '#9BD3FF',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-member .cm-completionLabel':
+      {
+        color: '#9FD8FF',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-member .firn-completion-tail':
+      {
+        color: '#CBE4FB',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-member .cm-completionDetail':
+      {
+        color: '#FFE082',
+      },
+
+    '.firn-completion-option-value': {
+      borderLeftColor: 'rgba(196, 181, 253, 0.32)',
+      background: 'linear-gradient(90deg, rgba(139, 92, 246, 0.1) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-value .cm-completionLabel': {
+      color: '#B98CFF',
+    },
+    '.firn-completion-option-value .firn-completion-tail': {
+      color: '#DAC8FF',
+    },
+    '.firn-completion-option-value .cm-completionDetail': {
+      color: '#FDE68A',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-value .cm-completionLabel':
+      {
+        color: '#CAA5FF',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-value .firn-completion-tail':
+      {
+        color: '#E7D9FF',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-value .cm-completionDetail':
+      {
+        color: '#FFE59C',
+      },
+
+    '.firn-completion-option-type': {
+      borderLeftColor: 'rgba(253, 164, 175, 0.3)',
+      background: 'linear-gradient(90deg, rgba(244, 114, 182, 0.1) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-type .cm-completionLabel': {
+      color: '#FF9DB0',
+    },
+    '.firn-completion-option-type .firn-completion-tail': {
+      color: '#FFD1D8',
+    },
+    '.firn-completion-option-type .cm-completionDetail': {
+      color: '#FDE68A',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-type .cm-completionLabel':
+      {
+        color: '#FFB3C1',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-type .firn-completion-tail':
+      {
+        color: '#FFE0E5',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-type .cm-completionDetail':
+      {
+        color: '#FFE9A8',
+      },
+
+    '.firn-completion-option-constant': {
+      borderLeftColor: 'rgba(252, 211, 77, 0.34)',
+      background: 'linear-gradient(90deg, rgba(245, 158, 11, 0.12) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-constant .cm-completionLabel': {
+      color: '#F7C95E',
+    },
+    '.firn-completion-option-constant .firn-completion-tail': {
+      color: '#FFD98D',
+    },
+    '.firn-completion-option-constant .cm-completionDetail': {
+      color: '#FFF2BF',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-constant .cm-completionLabel':
+      {
+        color: '#FFD86A',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-constant .firn-completion-tail':
+      {
+        color: '#FFE7A3',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-constant .cm-completionDetail':
+      {
+        color: '#FFF4C8',
+      },
+
+    '.firn-completion-option-import': {
+      borderLeftColor: 'rgba(52, 211, 153, 0.28)',
+      background: 'linear-gradient(90deg, rgba(16, 185, 129, 0.1) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-import .cm-completionLabel': {
+      color: '#42D69D',
+    },
+    '.firn-completion-option-import .firn-completion-meta-source': {
+      color: '#79E9BE',
+    },
+    '.firn-completion-option-import .cm-completionDetail': {
+      color: '#D9F99D',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-import .cm-completionLabel':
+      {
+        color: '#69E6B2',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-import .cm-completionDetail':
+      {
+        color: '#E5F9B8',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-import .firn-completion-meta-source':
+      {
+        color: '#92F0CB',
+      },
+
+    '.firn-completion-option-keyword': {
+      borderLeftColor: 'rgba(253, 186, 116, 0.32)',
+      background: 'linear-gradient(90deg, rgba(249, 115, 22, 0.1) 0%, rgba(15, 23, 42, 0) 34%)',
+    },
+    '.firn-completion-option-keyword .cm-completionLabel': {
+      color: '#FFB86B',
+    },
+    '.firn-completion-option-keyword .firn-completion-tail': {
+      color: '#FFD1A1',
+    },
+    '.firn-completion-option-keyword .cm-completionDetail': {
+      color: '#FDE68A',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-keyword .cm-completionLabel':
+      {
+        color: '#FFC990',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-keyword .firn-completion-tail':
+      {
+        color: '#FFE0BA',
+      },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected].firn-completion-option-keyword .cm-completionDetail':
+      {
+        color: '#FFE9A8',
+      },
+
+    '.firn-completion-info[data-tone="callable"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(125, 211, 252, 0.16)',
+      borderColor: 'rgba(125, 211, 252, 0.22)',
+      color: '#BAE6FD',
+    },
+    '.firn-completion-info[data-tone="member"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(148, 163, 184, 0.16)',
+      borderColor: 'rgba(148, 163, 184, 0.22)',
+      color: '#CBD5E1',
+    },
+    '.firn-completion-info[data-tone="value"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(196, 181, 253, 0.16)',
+      borderColor: 'rgba(196, 181, 253, 0.22)',
+      color: '#DDD6FE',
+    },
+    '.firn-completion-info[data-tone="type"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(253, 164, 175, 0.16)',
+      borderColor: 'rgba(253, 164, 175, 0.22)',
+      color: '#FFD1D8',
+    },
+    '.firn-completion-info[data-tone="constant"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(252, 211, 77, 0.16)',
+      borderColor: 'rgba(252, 211, 77, 0.22)',
+      color: '#FDE68A',
+    },
+    '.firn-completion-info[data-tone="constant"] .firn-completion-info-title': {
+      color: '#F7D074',
+    },
+    '.firn-completion-info[data-tone="constant"] .firn-completion-info-signature-name': {
+      color: '#F7D074',
+    },
+    '.firn-completion-info[data-tone="import"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(103, 232, 249, 0.16)',
+      borderColor: 'rgba(103, 232, 249, 0.22)',
+      color: '#A5F3FC',
+    },
+    '.firn-completion-info[data-tone="keyword"] .firn-completion-info-badge': {
+      backgroundColor: 'rgba(253, 186, 116, 0.16)',
+      borderColor: 'rgba(253, 186, 116, 0.22)',
+      color: '#FED7AA',
     },
 
     // --- Hover tooltip styles ---
     '.firn-hover-tooltip': {
-      backgroundColor: colors.backgroundHighlight,
+      backgroundColor: '#10192A',
       border: `1px solid ${colors.border}`,
-      borderRadius: '6px',
+      borderRadius: '7px',
       padding: '0',
+      minWidth: '320px',
       maxWidth: '520px',
       maxHeight: '360px',
       overflow: 'auto',
       fontSize: '13px',
       lineHeight: '1.5',
-      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+      boxShadow: '0 12px 30px rgba(0, 0, 0, 0.34)',
     },
     '.firn-hover-signature': {
-      padding: '8px 12px',
+      padding: '10px 12px',
+      backgroundColor: '#0F172A',
     },
     '.firn-hover-code': {
       margin: '0',
@@ -335,25 +748,25 @@ export const firnGlacierTheme = EditorView.theme(
       fontSize: '12px',
       lineHeight: '1.5',
       whiteSpace: 'pre-wrap',
-      color: colors.foreground,
+      color: '#BCCBDC',
     },
     '.firn-hover-separator': {
       borderTop: `1px solid ${colors.border}`,
       margin: '0',
     },
     '.firn-hover-docs': {
-      padding: '8px 12px',
-      color: colors.foregroundSecondary,
+      padding: '10px 12px',
+      color: '#C1D1E2',
       fontSize: '12px',
     },
     '.firn-hover-doc-text': {
       whiteSpace: 'pre-wrap',
     },
     '.firn-hover-doc-code': {
-      margin: '4px 0',
-      padding: '6px 8px',
+      margin: '6px 0',
+      padding: '8px 10px',
       backgroundColor: colors.activeLine,
-      borderRadius: '4px',
+      borderRadius: '5px',
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: '11px',
       color: colors.foreground,
@@ -365,31 +778,44 @@ export const firnGlacierTheme = EditorView.theme(
     },
     '.firn-hover-actions': {
       display: 'flex',
-      gap: '12px',
-      padding: '6px 12px',
+      justifyContent: 'flex-end',
+      gap: '16px',
+      padding: '8px 12px',
       borderTop: `1px solid ${colors.border}`,
+      backgroundColor: '#0F172A',
     },
     '.firn-hover-action': {
-      color: colors.accent,
+      color: '#9FB5CF',
       fontSize: '11px',
+      fontWeight: '600',
       textDecoration: 'none',
       cursor: 'pointer',
+      transition: 'color 120ms ease-out',
+    },
+    '.firn-hover-action:hover': {
+      color: colors.accent,
     },
 
     // --- Hover syntax highlighting ---
-    '.firn-hover-keyword': {
+    '.firn-hover-code .firn-hover-keyword': {
       color: colors.keyword,
     },
-    '.firn-hover-function': {
+    '.firn-hover-code .firn-hover-function': {
       color: colors.function,
     },
-    '.firn-hover-type': {
+    '.firn-hover-code .firn-hover-variable': {
+      color: '#6EC8FF',
+    },
+    '.firn-hover-code .firn-hover-constant': {
+      color: '#FCD34D',
+    },
+    '.firn-hover-code .firn-hover-type': {
       color: colors.type,
     },
-    '.firn-hover-string': {
+    '.firn-hover-code .firn-hover-string': {
       color: colors.string,
     },
-    '.firn-hover-punctuation': {
+    '.firn-hover-code .firn-hover-punctuation': {
       color: colors.punctuation,
     },
 

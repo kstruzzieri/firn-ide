@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { ReadDirectory } from '../../../wailsjs/go/main/App';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
+import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 
 /**
  * Hook to manage directory tree data fetching and state.
@@ -20,12 +21,16 @@ export function useDirectoryTree() {
   const fetchTree = useCallback(async () => {
     if (!workspace?.path) {
       setDirectoryTree([]);
+      setTreeLoading(false);
       return;
     }
 
     const requestId = ++requestIdRef.current;
+    const hasCachedTree = getCachedWorkspaceTree(workspace.path) !== undefined;
 
-    setTreeLoading(true);
+    if (!hasCachedTree) {
+      setTreeLoading(true);
+    }
     setTreeError(null);
 
     try {
@@ -34,10 +39,13 @@ export function useDirectoryTree() {
       setDirectoryTree(entries);
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
+      if (hasCachedTree) {
+        return;
+      }
       const message = err instanceof Error ? err.message : 'Failed to read directory';
       setTreeError(message);
     } finally {
-      if (requestIdRef.current === requestId) {
+      if (requestIdRef.current === requestId && !hasCachedTree) {
         setTreeLoading(false);
       }
     }

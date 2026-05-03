@@ -264,6 +264,15 @@ func (m *Manager) Complete(ctx context.Context, path string, line, character int
 	return entry.client.Complete(ctx, uri, line, character, triggerChar)
 }
 
+// ResolveCompletionItem resolves additional metadata for a completion item.
+func (m *Manager) ResolveCompletionItem(ctx context.Context, path string, item CompletionItem) (*CompletionItem, error) {
+	entry, _ := m.serverForPath(path)
+	if entry == nil {
+		return nil, nil
+	}
+	return entry.client.ResolveCompletionItem(ctx, item)
+}
+
 // GetStatus returns the status of all running language servers.
 func (m *Manager) GetStatus() []ServerStatus {
 	m.mu.Lock()

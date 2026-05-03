@@ -1,9 +1,15 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
+import { filesystem } from '../../../wailsjs/go/models';
+import { clearWorkspaceTreeCache, getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 
 const mockConfirmBeforeCloseReady = jest.fn(() => Promise.resolve());
-const mockSaveWorkspaceState = jest.fn(() => Promise.resolve());
-const mockLoadWorkspaceState = jest.fn(() => Promise.resolve(null));
+let lastSavedWorkspaceState: unknown = null;
+const mockSaveWorkspaceState = jest.fn((state: unknown) => {
+  lastSavedWorkspaceState = state;
+  return Promise.resolve();
+});
+const mockLoadWorkspaceState = jest.fn<Promise<unknown>, []>(() => Promise.resolve(null));
 const mockReadFile = jest.fn();
 
 let beforeCloseHandler: (() => void) | null = null;
@@ -29,6 +35,8 @@ import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 beforeEach(() => {
   jest.clearAllMocks();
   beforeCloseHandler = null;
+  lastSavedWorkspaceState = null;
+  clearWorkspaceTreeCache();
 
   useIDEStore.getState().resetWorkspaceSession();
   useIDEStore.setState({
@@ -105,5 +113,98 @@ describe('useWorkspacePersistence', () => {
 
     await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
     expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+  });
+
+  it('restores a cached explorer tree immediately from saved workspace state', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/workspace/cached',
+      workspaceName: 'cached',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: ['/workspace/cached/src'],
+        rootExpanded: true,
+        treeSnapshot: [
+          filesystem.FileEntry.createFrom({
+            name: 'src',
+            path: '/workspace/cached/src',
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+            children: [
+              {
+                name: 'App.tsx',
+                path: '/workspace/cached/src/App.tsx',
+                isDir: false,
+                size: 123,
+                modTime: new Date().toISOString(),
+              },
+            ],
+          }),
+        ],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'cached', path: '/workspace/cached' },
+      directoryTree: [],
+      isLoadingTree: true,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/cached'));
+    await waitFor(() =>
+      expect(useIDEStore.getState().directoryTree[0]?.path).toBe('/workspace/cached/src')
+    );
+
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
+  });
+
+  it('persists tree snapshots when the directory tree changes', async () => {
+    jest.useFakeTimers();
+
+    try {
+      useIDEStore.setState({
+        workspace: { name: 'tree-save', path: '/workspace/tree-save' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+
+      renderHook(() => useWorkspacePersistence());
+
+      await waitFor(() =>
+        expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/tree-save')
+      );
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      const treeEntry = filesystem.FileEntry.createFrom({
+        name: 'src',
+        path: '/workspace/tree-save/src',
+        isDir: true,
+        size: 0,
+        modTime: new Date().toISOString(),
+      });
+
+      act(() => {
+        useIDEStore.getState().setDirectoryTree([treeEntry]);
+      });
+
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalled());
+
+      const savedState = lastSavedWorkspaceState as {
+        explorer: { treeSnapshot: filesystem.FileEntry[] };
+      };
+      expect(savedState.explorer.treeSnapshot).toEqual([treeEntry]);
+      expect(getCachedWorkspaceTree('/workspace/tree-save')).toEqual([treeEntry]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

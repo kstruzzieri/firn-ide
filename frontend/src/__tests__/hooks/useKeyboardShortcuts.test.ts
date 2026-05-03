@@ -1,8 +1,10 @@
 import { renderHook, act } from '@testing-library/react';
 import { getPlatform } from '../../utils/platform';
+import { useIDEStore } from '../../stores/ideStore';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
+const mockNavigateToEditorLocation = jest.fn();
 jest.mock('../../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: (...args: unknown[]) => mockOpenFolderDialog(...args),
   ReadDirectory: jest.fn().mockResolvedValue([]),
@@ -10,6 +12,10 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 
 jest.mock('../../../wailsjs/runtime/runtime', () => ({
   WindowSetTitle: jest.fn(),
+}));
+
+jest.mock('../../utils/editorNavigation', () => ({
+  navigateToEditorLocation: (...args: unknown[]) => mockNavigateToEditorLocation(...args),
 }));
 
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
@@ -25,8 +31,20 @@ function modifierKeyEvent(key: string): KeyboardEvent {
   });
 }
 
+function navigationBackEvent(): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key: isMac ? '[' : 'ArrowLeft',
+    code: isMac ? 'BracketLeft' : 'ArrowLeft',
+    metaKey: isMac,
+    altKey: !isMac,
+    bubbles: true,
+    cancelable: true,
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+  useIDEStore.setState(useIDEStore.getInitialState());
 });
 
 describe('useKeyboardShortcuts', () => {
@@ -70,5 +88,31 @@ describe('useKeyboardShortcuts', () => {
     });
 
     expect(mockOpenFolderDialog).not.toHaveBeenCalled();
+  });
+
+  it('should navigate back through editor navigation history', async () => {
+    renderHook(() => useKeyboardShortcuts());
+
+    useIDEStore.setState({
+      activeFileId: '/current.ts',
+      cursorPosition: { line: 9, column: 4 },
+      cursorPositions: { '/current.ts': { line: 12, column: 8 } },
+    });
+    useIDEStore.getState().pushNavigationHistory({
+      fileId: '/definition-source.ts',
+      line: 3,
+      column: 2,
+    });
+
+    const event = navigationBackEvent();
+    await act(async () => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(mockNavigateToEditorLocation).toHaveBeenCalledWith('/definition-source.ts', 3, 2);
+    expect(useIDEStore.getState().navigationForward).toEqual([
+      { fileId: '/current.ts', line: 12, column: 8 },
+    ]);
   });
 });

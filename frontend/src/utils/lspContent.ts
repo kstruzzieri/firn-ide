@@ -3,16 +3,11 @@ export interface LSPMarkupContent {
   value: string;
 }
 
-export function decodeLSPContent(raw: number[] | undefined): LSPMarkupContent | null {
-  if (!raw || raw.length === 0) return null;
+export function decodeLSPContent(raw: unknown): LSPMarkupContent | null {
+  if (raw === undefined || raw === null) return null;
 
-  let parsed: unknown;
-  try {
-    const text = new TextDecoder('utf-8').decode(new Uint8Array(raw));
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
-  }
+  const parsed = parseLSPContent(raw);
+  if (parsed === null) return null;
 
   if (typeof parsed === 'string') {
     return { kind: 'plaintext', value: parsed };
@@ -38,6 +33,21 @@ export function decodeLSPContent(raw: number[] | undefined): LSPMarkupContent | 
   }
 
   return null;
+}
+
+function parseLSPContent(raw: unknown): unknown | null {
+  if (Array.isArray(raw) && raw.length === 0) return null;
+
+  if (Array.isArray(raw) && raw.every((item) => typeof item === 'number')) {
+    try {
+      const text = new TextDecoder('utf-8').decode(new Uint8Array(raw));
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  return raw;
 }
 
 function formatMarkedString(item: unknown): string {

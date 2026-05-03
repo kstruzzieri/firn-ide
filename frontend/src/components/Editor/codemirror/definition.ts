@@ -22,6 +22,7 @@ import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
 import { useIDEStore } from '../../../stores/ideStore';
 import { isMac } from '../../../utils/platform';
+import { flushLSPDocumentChange } from '../../../utils/lspDocumentSync';
 
 const setUnderline = StateEffect.define<{ from: number; to: number } | null>();
 
@@ -60,6 +61,7 @@ async function triggerDefinition(view: EditorView, pos: number, filePath: string
 
   let locations;
   try {
+    await flushLSPDocumentChange(filePath);
     locations = await LSPDefinition(filePath, lspLine, lspChar);
   } catch {
     return;

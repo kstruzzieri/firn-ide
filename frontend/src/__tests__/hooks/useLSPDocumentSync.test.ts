@@ -32,6 +32,7 @@ jest.mock('../../../wailsjs/go/models', () => ({
 
 // Import after mocks
 import { useLSPDocumentSync } from '../../hooks/useLSPDocumentSync';
+import { resetLSPDocumentSyncState } from '../../utils/lspDocumentSync';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -40,6 +41,7 @@ beforeEach(() => {
   mockDidSave.mockClear();
   mockDidClose.mockClear();
   mockEventsOn.mockClear();
+  resetLSPDocumentSyncState();
   // Reset EventsOn to default: returns a cleanup function
   mockEventsOn.mockImplementation(() => jest.fn());
   useIDEStore.setState({
@@ -279,6 +281,10 @@ describe('useLSPDocumentSync', () => {
       // Close before debounce fires — should flush the pending change
       act(() => {
         useIDEStore.getState().closeFile('/test/workspace/main.ts');
+      });
+
+      await act(async () => {
+        await Promise.resolve();
       });
 
       // didChange should have been flushed immediately on close
@@ -566,6 +572,10 @@ describe('useLSPDocumentSync', () => {
         useIDEStore.setState({
           workspace: { name: 'other', path: '/other/workspace' },
         });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
       });
 
       // Both pending changes should have been flushed

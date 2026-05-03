@@ -6,6 +6,7 @@ import { decodeLSPContent } from '../../../utils/lspContent';
 import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
 import { useIDEStore } from '../../../stores/ideStore';
+import { flushLSPDocumentChange } from '../../../utils/lspDocumentSync';
 
 /** Compartment for the LSP hover tooltip. Empty when no LSP is active. */
 export const hoverCompartment = new Compartment();
@@ -17,12 +18,18 @@ export function hoverExtensions() {
 export function reconfigureHover(filePath: string) {
   return hoverTooltip(
     async (view, pos): Promise<Tooltip | null> => {
-      const line = view.state.doc.lineAt(pos);
+      const wordRange = view.state.wordAt(pos) ?? (pos > 0 ? view.state.wordAt(pos - 1) : null);
+      const targetRange = hoverTargetRange(wordRange, pos);
+      if (!targetRange) return null;
+      const requestPos = hoverRequestPos(targetRange, pos);
+
+      const line = view.state.doc.lineAt(requestPos);
       const lspLine = line.number - 1;
-      const lspChar = pos - line.from;
+      const lspChar = requestPos - line.from;
 
       let result;
       try {
+        await flushLSPDocumentChange(filePath);
         result = await LSPHover(filePath, lspLine, lspChar);
       } catch {
         return null;
@@ -30,14 +37,12 @@ export function reconfigureHover(filePath: string) {
 
       if (!result || !result.contents) return null;
 
-      const content = decodeLSPContent(result.contents as unknown as number[]);
+      const content = decodeLSPContent(result.contents);
       if (!content) return null;
 
-      const wordRange = view.state.wordAt(pos);
-      const from = wordRange ? wordRange.from : pos;
-
       return {
-        pos: from,
+        pos: targetRange.from,
+        end: targetRange.to,
         above: true,
         create: () => {
           const dom = createHoverTooltipDOM(content.value, filePath, lspLine, lspChar);
@@ -45,8 +50,26 @@ export function reconfigureHover(filePath: string) {
         },
       };
     },
-    { hideOnChange: true }
+    {
+      hideOn: (tr) => tr.docChanged,
+      hoverTime: 180,
+    }
   );
+}
+
+export function hoverTargetRange(
+  wordRange: { from: number; to: number } | null,
+  _pos: number
+): { from: number; to: number } | null {
+  if (!wordRange) return null;
+  return {
+    from: wordRange.from,
+    to: wordRange.to,
+  };
+}
+
+export function hoverRequestPos(targetRange: { from: number; to: number }, pos: number): number {
+  return Math.min(Math.max(pos, targetRange.from), Math.max(targetRange.from, targetRange.to - 1));
 }
 
 function createHoverTooltipDOM(
@@ -89,7 +112,8 @@ function createHoverTooltipDOM(
   goToDef.href = '#';
   goToDef.addEventListener('click', (e) => {
     e.preventDefault();
-    LSPDefinition(filePath, line, character)
+    flushLSPDocumentChange(filePath)
+      .then(() => LSPDefinition(filePath, line, character))
       .then((locations) => {
         if (!locations || locations.length === 0) return;
         const loc = locations[0];
@@ -144,11 +168,33 @@ function splitSignatureAndDocs(content: string): { signature: string; docs: stri
   };
 }
 
+export interface SignatureHighlightPart {
+  text: string;
+  className: string;
+}
+
 const HIGHLIGHT_RULES: Array<{ pattern: RegExp; className: string }> = [
   {
     pattern:
       /\b(const|let|var|function|class|type|interface|enum|import|export|from|extends|implements|return|if|else|for|while|new|async|await|readonly|static|public|private|protected|abstract|declare|namespace|module)\b/g,
     className: 'firn-hover-keyword',
+  },
+  {
+    pattern: /\b[A-Z][A-Z0-9_]{2,}\b/g,
+    className: 'firn-hover-constant',
+  },
+  {
+    pattern: /(?<=\b(?:const|let|var)\s+)\b[A-Za-z_$][\w$]*\b/g,
+    className: 'firn-hover-variable',
+  },
+  {
+    pattern: /(?<![\w$])[a-z_$][\w$]*(?=\s*:)/g,
+    className: 'firn-hover-variable',
+  },
+  {
+    pattern:
+      /(?<=:\s*|\|\s*|<|,\s*)\b(string|number|boolean|void|undefined|null|unknown|never|any|object|symbol|bigint)\b/g,
+    className: 'firn-hover-type',
   },
   { pattern: /(?<=:\s*|<|,\s*)\b[A-Z]\w*/g, className: 'firn-hover-type' },
   { pattern: /\b\w+(?=\s*\()/g, className: 'firn-hover-function' },
@@ -157,11 +203,8 @@ const HIGHLIGHT_RULES: Array<{ pattern: RegExp; className: string }> = [
   { pattern: /[{}()\[\]<>:;,=&|?!.]/g, className: 'firn-hover-punctuation' },
 ];
 
-function renderHighlightedSignature(container: HTMLElement, text: string): void {
-  const pre = document.createElement('pre');
-  pre.className = 'firn-hover-code';
-
-  const charStyles = new Array(text.length).fill('');
+export function highlightSignatureParts(text: string): SignatureHighlightPart[] {
+  const charStyles: string[] = new Array(text.length).fill('');
 
   for (const rule of HIGHLIGHT_RULES) {
     rule.pattern.lastIndex = 0;
@@ -175,6 +218,7 @@ function renderHighlightedSignature(container: HTMLElement, text: string): void 
     }
   }
 
+  const parts: SignatureHighlightPart[] = [];
   let currentClass = charStyles[0] || '';
   let currentText = text[0] || '';
 
@@ -183,13 +227,24 @@ function renderHighlightedSignature(container: HTMLElement, text: string): void 
     if (cls === currentClass) {
       currentText += text[i];
     } else {
-      appendSpan(pre, currentText, currentClass);
+      parts.push({ text: currentText, className: currentClass });
       currentClass = cls;
       currentText = text[i];
     }
   }
   if (currentText) {
-    appendSpan(pre, currentText, currentClass);
+    parts.push({ text: currentText, className: currentClass });
+  }
+
+  return parts;
+}
+
+function renderHighlightedSignature(container: HTMLElement, text: string): void {
+  const pre = document.createElement('pre');
+  pre.className = 'firn-hover-code';
+
+  for (const part of highlightSignatureParts(text)) {
+    appendSpan(pre, part.text, part.className);
   }
 
   container.appendChild(pre);

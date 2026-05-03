@@ -30,7 +30,7 @@ export {
 export { updateEditorDiagnostics, lspToCMDiagnostics, diagnosticsCompartment } from './diagnostics';
 
 // Completion
-export { completionCompartment, reconfigureCompletion } from './completion';
+export { completionCompartment, reconfigureCompletion, resetCompletion } from './completion';
 
 // Hover
 export { hoverCompartment, reconfigureHover } from './hover';

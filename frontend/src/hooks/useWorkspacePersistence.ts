@@ -10,12 +10,17 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { workspace } from '../../wailsjs/go/models';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
+import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
 
 const SAVE_DEBOUNCE_MS = 2000;
 
 interface WorkspaceIdentity {
   path: string;
   name: string;
+}
+
+interface CollectWorkspaceOptions {
+  includeTreeSnapshot?: boolean;
 }
 
 /**
@@ -26,8 +31,12 @@ interface WorkspaceIdentity {
  * the current editor/explorer state under a *different* workspace
  * path (e.g., when flushing the old workspace before a switch).
  */
-function collectWorkspaceState(overrideIdentity?: WorkspaceIdentity): workspace.State | null {
+function collectWorkspaceState(
+  overrideIdentity?: WorkspaceIdentity,
+  options?: CollectWorkspaceOptions
+): workspace.State | null {
   const state = useIDEStore.getState();
+  const includeTreeSnapshot = options?.includeTreeSnapshot ?? false;
 
   const wsPath = overrideIdentity?.path ?? state.workspace?.path;
   const wsName = overrideIdentity?.name ?? state.workspace?.name;
@@ -55,6 +64,7 @@ function collectWorkspaceState(overrideIdentity?: WorkspaceIdentity): workspace.
     explorer: {
       expandedPaths: Array.from(state.expandedPaths),
       rootExpanded: state.isRootExpanded,
+      treeSnapshot: includeTreeSnapshot ? state.directoryTree : undefined,
     },
     activeSidebar: state.activeSidebarView,
     hiddenProfileIds: state.hiddenProfileIds,
@@ -71,8 +81,14 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
   store.setRestoringWorkspace(true);
 
   try {
+    const cachedTree = getCachedWorkspaceTree(workspacePath);
+
     // Reset workspace-scoped state before applying saved values.
     store.resetWorkspaceSession();
+
+    if (cachedTree !== undefined) {
+      store.setDirectoryTree(cachedTree);
+    }
 
     const state = await LoadWorkspaceState(workspacePath);
     if (signal.aborted) return;
@@ -119,6 +135,10 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
       }
       if (state.explorer.rootExpanded !== undefined) {
         useIDEStore.setState({ isRootExpanded: state.explorer.rootExpanded });
+      }
+      if (state.explorer.treeSnapshot) {
+        setCachedWorkspaceTree(workspacePath, state.explorer.treeSnapshot);
+        store.setDirectoryTree(state.explorer.treeSnapshot);
       }
     }
 
@@ -198,6 +218,7 @@ export function useWorkspacePersistence() {
   const workspace = useIDEStore((state) => state.workspace);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingSaveOptionsRef = useRef<CollectWorkspaceOptions>({});
   const prevWorkspaceRef = useRef<WorkspaceIdentity | null>(null);
 
   /**
@@ -208,38 +229,57 @@ export function useWorkspacePersistence() {
    * If a save is already in flight, waits for it to finish and then
    * saves a fresh snapshot so recent changes are never dropped.
    */
-  const flushSave = useCallback(async (identityOverride?: WorkspaceIdentity) => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+  const flushSave = useCallback(
+    async (identityOverride?: WorkspaceIdentity, options?: CollectWorkspaceOptions) => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
 
-    // Wait for any in-flight save to complete before collecting a fresh snapshot.
-    await savePromiseRef.current;
+      const saveOptions = {
+        includeTreeSnapshot: Boolean(
+          pendingSaveOptionsRef.current.includeTreeSnapshot || options?.includeTreeSnapshot
+        ),
+      };
+      pendingSaveOptionsRef.current = {};
 
-    const state = collectWorkspaceState(identityOverride);
-    if (!state) return;
+      // Wait for any in-flight save to complete before collecting a fresh snapshot.
+      await savePromiseRef.current;
 
-    const promise = SaveWorkspaceState(state)
-      .catch((err) => {
-        console.error('Failed to save workspace state:', err);
-      })
-      .finally(() => {
-        if (savePromiseRef.current === promise) {
-          savePromiseRef.current = Promise.resolve();
-        }
-      });
+      const state = collectWorkspaceState(identityOverride, saveOptions);
+      if (!state) return;
 
-    savePromiseRef.current = promise;
-    await promise;
-  }, []);
+      const promise = SaveWorkspaceState(state)
+        .catch((err) => {
+          console.error('Failed to save workspace state:', err);
+        })
+        .finally(() => {
+          if (savePromiseRef.current === promise) {
+            savePromiseRef.current = Promise.resolve();
+          }
+        });
 
-  const scheduleSave = useCallback(() => {
-    if (useIDEStore.getState().isRestoringWorkspace) return;
+      savePromiseRef.current = promise;
+      await promise;
+    },
+    []
+  );
 
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => flushSave(), SAVE_DEBOUNCE_MS);
-  }, [flushSave]);
+  const scheduleSave = useCallback(
+    (options?: CollectWorkspaceOptions) => {
+      if (useIDEStore.getState().isRestoringWorkspace) return;
+
+      pendingSaveOptionsRef.current = {
+        includeTreeSnapshot: Boolean(
+          pendingSaveOptionsRef.current.includeTreeSnapshot || options?.includeTreeSnapshot
+        ),
+      };
+
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => flushSave(), SAVE_DEBOUNCE_MS);
+    },
+    [flushSave]
+  );
 
   // Subscribe to relevant state changes
   useEffect(() => {
@@ -247,10 +287,19 @@ export function useWorkspacePersistence() {
 
     const unsubscribe = useIDEStore.subscribe((state, prevState) => {
       if (state.isRestoringWorkspace) return;
+      if (state.workspace?.path !== prevState.workspace?.path) return;
+
+      if (state.workspace?.path && state.directoryTree !== prevState.directoryTree) {
+        setCachedWorkspaceTree(state.workspace.path, state.directoryTree);
+      }
+
+      const treeChanged = state.directoryTree !== prevState.directoryTree;
+      const shouldSaveTree = treeChanged;
 
       if (
         state.openFiles !== prevState.openFiles ||
         state.activeFileId !== prevState.activeFileId ||
+        shouldSaveTree ||
         state.panelSizes !== prevState.panelSizes ||
         state.isLeftPanelCollapsed !== prevState.isLeftPanelCollapsed ||
         state.isRightPanelCollapsed !== prevState.isRightPanelCollapsed ||
@@ -262,7 +311,7 @@ export function useWorkspacePersistence() {
         state.cursorPositions !== prevState.cursorPositions ||
         state.hiddenProfileIds !== prevState.hiddenProfileIds
       ) {
-        scheduleSave();
+        scheduleSave(shouldSaveTree ? { includeTreeSnapshot: true } : undefined);
       }
     });
 
@@ -288,7 +337,7 @@ export function useWorkspacePersistence() {
     // Pass the old identity so collectWorkspaceState serializes
     // the current editor state under the OLD workspace path.
     if (prevWorkspaceRef.current) {
-      flushSave(prevWorkspaceRef.current);
+      void flushSave(prevWorkspaceRef.current, { includeTreeSnapshot: true });
     }
 
     prevWorkspaceRef.current = { path: workspace.path, name: workspace.name };
@@ -305,10 +354,12 @@ export function useWorkspacePersistence() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        flushSave();
+        void flushSave(undefined, { includeTreeSnapshot: true });
       }
     };
-    const handleBlur = () => flushSave();
+    const handleBlur = () => {
+      void flushSave(undefined, { includeTreeSnapshot: true });
+    };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleBlur);
@@ -323,7 +374,7 @@ export function useWorkspacePersistence() {
   useEffect(() => {
     const handleBeforeClose = async () => {
       try {
-        await flushSave();
+        await flushSave(undefined, { includeTreeSnapshot: true });
       } finally {
         try {
           await ConfirmBeforeCloseReady();

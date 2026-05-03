@@ -20,6 +20,7 @@ import {
   hoverCompartment,
   reconfigureCompletion,
   reconfigureHover,
+  resetCompletion,
   updateEditorDiagnostics,
 } from './codemirror';
 import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
@@ -266,7 +267,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       currentView.dispatch({
         effects: [
           completionCompartment.reconfigure(
-            isReady ? reconfigureCompletion(fileId, triggerCharacters) : []
+            isReady ? reconfigureCompletion(fileId, triggerCharacters) : resetCompletion()
           ),
           hoverCompartment.reconfigure(isReady ? reconfigureHover(fileId) : []),
         ],
