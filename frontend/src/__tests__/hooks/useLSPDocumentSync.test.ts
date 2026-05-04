@@ -534,6 +534,45 @@ describe('useLSPDocumentSync', () => {
       );
     });
 
+    it('should match backend reconnect URIs with PathEscape-preserved characters', async () => {
+      const getReconnectHandler = captureReconnectHandler();
+
+      renderHook(() => useLSPDocumentSync());
+
+      act(() => {
+        openTestFile({
+          id: '/test/workspace/a&b+c=d$e@f:main.ts',
+          name: 'a&b+c=d$e@f:main.ts',
+          path: '/test/workspace/a&b+c=d$e@f:main.ts',
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(1);
+
+      const reconnectHandler = getReconnectHandler();
+      act(() => {
+        reconnectHandler!({
+          documents: ['file:///test/workspace/a&b+c=d$e@f:main.ts'],
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(2);
+      expect(mockDidOpen).toHaveBeenLastCalledWith(
+        '/test/workspace/a&b+c=d$e@f:main.ts',
+        'typescript',
+        expect.any(Number),
+        'const x = 1;'
+      );
+    });
+
     it('should match reconnect URIs with Windows-style file paths', async () => {
       const getReconnectHandler = captureReconnectHandler();
 

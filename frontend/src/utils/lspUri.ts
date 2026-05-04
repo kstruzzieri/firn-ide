@@ -14,10 +14,18 @@ function normalizeWindowsDrivePath(path: string): string {
   return /^\/[A-Za-z]:\//.test(normalized) ? normalized.slice(1) : normalized;
 }
 
+function encodeGoPathSegment(segment: string): string {
+  return encodeURIComponent(segment)
+    .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replace(/%(24|26|2B|3A|3D|40)/gi, (match) =>
+      String.fromCharCode(Number.parseInt(match.slice(1), 16))
+    );
+}
+
 function encodeFileURIPath(path: string): string {
   return path
     .split('/')
-    .map((segment) => (/^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)))
+    .map((segment) => (/^[A-Za-z]:$/.test(segment) ? segment : encodeGoPathSegment(segment)))
     .join('/');
 }
 

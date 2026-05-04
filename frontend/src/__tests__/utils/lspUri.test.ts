@@ -26,6 +26,10 @@ describe('filePathToURI', () => {
       'file:///tmp/Firn%20%231/100%25/caf%C3%A9.ts'
     );
   });
+
+  it('matches backend PathEscape encoding for reconnect-sensitive path characters', () => {
+    expect(filePathToURI('/tmp/a&b+c=d$e@f:main.ts')).toBe('file:///tmp/a&b+c=d$e@f:main.ts');
+  });
 });
 
 describe('fileURIToPath', () => {
