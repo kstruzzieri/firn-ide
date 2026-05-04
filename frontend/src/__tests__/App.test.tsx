@@ -8,11 +8,16 @@
 import { act, render, screen } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
+import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
 import type { FileEvent } from '../types/watcher';
 
 const mockReadDirectory = jest.fn();
 const mockReadFile = jest.fn();
 const mockUseFileWatcher = jest.fn();
+const mockDidOpen = jest.fn().mockResolvedValue(undefined);
+const mockDidChange = jest.fn().mockResolvedValue(undefined);
+const mockDidSave = jest.fn().mockResolvedValue(undefined);
+const mockDidClose = jest.fn().mockResolvedValue(undefined);
 
 // Mock Wails bindings
 jest.mock('../../wailsjs/go/main/App', () => ({
@@ -32,6 +37,10 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
   LoadRunProfiles: jest.fn(() => Promise.resolve()),
   GetAllRunProfiles: jest.fn(() => Promise.resolve([])),
+  LSPDidOpen: (...args: unknown[]) => mockDidOpen(...args),
+  LSPDidChange: (...args: unknown[]) => mockDidChange(...args),
+  LSPDidSave: (...args: unknown[]) => mockDidSave(...args),
+  LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
@@ -41,6 +50,10 @@ jest.mock('../../wailsjs/runtime/runtime', () => ({
 
 jest.mock('../hooks/useFileWatcher', () => ({
   useFileWatcher: (...args: unknown[]) => mockUseFileWatcher(...args),
+}));
+
+jest.mock('../components/Editor', () => ({
+  Editor: () => null,
 }));
 
 // Mock useDirectoryTree to prevent automatic fetching
@@ -54,6 +67,11 @@ describe('App Component', () => {
     mockReadDirectory.mockReset();
     mockReadFile.mockReset();
     mockUseFileWatcher.mockReset();
+    mockDidOpen.mockClear();
+    mockDidChange.mockClear();
+    mockDidSave.mockClear();
+    mockDidClose.mockClear();
+    resetLSPDocumentSyncState();
     useIDEStore.setState({
       workspace: null,
       openFiles: [],
@@ -123,4 +141,69 @@ describe('App Component', () => {
       ]);
     }
   );
+
+  it('should sync LSP content when an unmodified open file is externally reloaded', async () => {
+    useIDEStore.setState({
+      workspace: { name: 'workspace', path: '/test/workspace' },
+    });
+
+    mockReadFile.mockResolvedValueOnce({
+      content: 'const x = 2;',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    act(() => {
+      useIDEStore.getState().openFile({
+        id: '/test/workspace/main.ts',
+        name: 'main.ts',
+        path: '/test/workspace/main.ts',
+        language: 'typescript',
+        encoding: 'utf-8',
+        lineEndings: 'LF',
+        content: 'const x = 1;',
+        isModified: false,
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const watcherCallback = mockUseFileWatcher.mock.calls[0]?.[1] as
+      | ((event: FileEvent) => void)
+      | undefined;
+    expect(watcherCallback).toBeDefined();
+
+    await act(async () => {
+      watcherCallback!({
+        type: 'modified',
+        path: '/test/workspace/main.ts',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useIDEStore.getState().openFiles[0]).toEqual(
+      expect.objectContaining({
+        content: 'const x = 2;',
+        isModified: false,
+      })
+    );
+    expect(mockDidChange).toHaveBeenCalledWith(
+      '/test/workspace/main.ts',
+      2,
+      expect.arrayContaining([expect.objectContaining({ text: 'const x = 2;' })])
+    );
+    expect(mockDidSave).toHaveBeenCalledWith('/test/workspace/main.ts');
+    expect(mockDidChange.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDidSave.mock.invocationCallOrder[0]
+    );
+  });
 });

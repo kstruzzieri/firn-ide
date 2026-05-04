@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // mockServerMain is the entry point for the mock LSP server subprocess.
@@ -62,6 +64,16 @@ func handleMockNotification(msg *JSONRPCMessage, initialized *bool) {
 func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 	switch msg.Method {
 	case "initialize":
+		if stderr := os.Getenv("FIRN_MOCK_LSP_INITIALIZE_STDERR"); stderr != "" {
+			fmt.Fprint(os.Stderr, stderr)
+			os.Exit(2)
+		}
+		if delay := os.Getenv("FIRN_MOCK_LSP_INITIALIZE_DELAY_MS"); delay != "" {
+			ms, err := strconv.Atoi(delay)
+			if err == nil && ms > 0 {
+				time.Sleep(time.Duration(ms) * time.Millisecond)
+			}
+		}
 		return respondWithResult(msg.ID, InitializeResult{
 			Capabilities: ServerCapabilities{
 				TextDocumentSync:   mustJSON(TextDocumentSyncOptions{OpenClose: true, Change: TextDocumentSyncFull}),
@@ -92,7 +104,7 @@ func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 			IsIncomplete: false,
 			Items: []CompletionItem{
 				{Label: "mockFunction", Kind: 3, Data: json.RawMessage(`{"id":1}`)}, // Function
-				{Label: "mockVariable", Kind: 6, Detail: "mock var"},               // Variable
+				{Label: "mockVariable", Kind: 6, Detail: "mock var"},                // Variable
 			},
 		})
 

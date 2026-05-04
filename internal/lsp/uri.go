@@ -53,14 +53,16 @@ func URIToFile(uri string) (string, error) {
 		return "", fmt.Errorf("file URI with host %q not supported", parsed.Host)
 	}
 
-	path := parsed.Path
+	path := parsed.EscapedPath()
 
 	// On Windows, the path will be /C:/... — strip the leading slash
 	if runtime.GOOS == "windows" && len(path) >= 3 && path[0] == '/' && path[2] == ':' {
 		path = path[1:]
 	}
 
-	// Unescape percent-encoded characters
+	// Unescape percent-encoded characters. Use EscapedPath instead of Path:
+	// url.Parse decodes Path eagerly, which would make literal '%' characters
+	// from file names look like malformed escape sequences during a second pass.
 	path, err = url.PathUnescape(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to unescape URI path %q: %w", parsed.Path, err)

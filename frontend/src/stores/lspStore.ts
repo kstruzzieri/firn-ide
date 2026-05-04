@@ -25,6 +25,7 @@ export interface LSPDiagnostic {
 export interface LSPServerStatus {
   family: string;
   workspace: string;
+  command?: string;
   state: 'starting' | 'ready' | 'stopping' | 'stopped' | 'error';
   error?: string;
   completionTriggerCharacters?: string[];

@@ -384,7 +384,9 @@ describe('useLSPDocumentSync', () => {
 
   describe('lsp:reconnect', () => {
     function captureReconnectHandler() {
-      let reconnectHandler: ((payload: { documents?: string[] }) => void) | null = null;
+      let reconnectHandler:
+        | ((payload: { workspace?: string; documents?: string[] }) => void)
+        | null = null;
       mockEventsOn.mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
         if (event === 'lsp:reconnect') {
           reconnectHandler = handler as typeof reconnectHandler;
@@ -414,6 +416,7 @@ describe('useLSPDocumentSync', () => {
       expect(reconnectHandler).not.toBeNull();
       act(() => {
         reconnectHandler!({
+          workspace: '/test/workspace',
           documents: ['file:///test/workspace/main.ts'],
         });
       });
@@ -462,6 +465,36 @@ describe('useLSPDocumentSync', () => {
       expect(mockDidOpen).toHaveBeenCalledTimes(1); // no additional didOpen
     });
 
+    it('should ignore reconnect events from a non-active workspace', async () => {
+      const getReconnectHandler = captureReconnectHandler();
+
+      renderHook(() => useLSPDocumentSync());
+
+      act(() => {
+        openTestFile();
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(1);
+
+      const reconnectHandler = getReconnectHandler();
+      act(() => {
+        reconnectHandler!({
+          workspace: '/other/workspace',
+          documents: ['file:///test/workspace/main.ts'],
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(1);
+    });
+
     it('should match reconnect URIs with percent-encoded Unix paths', async () => {
       const getReconnectHandler = captureReconnectHandler();
 
@@ -495,6 +528,45 @@ describe('useLSPDocumentSync', () => {
       expect(mockDidOpen).toHaveBeenCalledTimes(2);
       expect(mockDidOpen).toHaveBeenLastCalledWith(
         '/test/workspace/file with #hash.ts',
+        'typescript',
+        expect.any(Number),
+        'const x = 1;'
+      );
+    });
+
+    it('should match backend reconnect URIs with PathEscape-preserved characters', async () => {
+      const getReconnectHandler = captureReconnectHandler();
+
+      renderHook(() => useLSPDocumentSync());
+
+      act(() => {
+        openTestFile({
+          id: '/test/workspace/a&b+c=d$e@f:main.ts',
+          name: 'a&b+c=d$e@f:main.ts',
+          path: '/test/workspace/a&b+c=d$e@f:main.ts',
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(1);
+
+      const reconnectHandler = getReconnectHandler();
+      act(() => {
+        reconnectHandler!({
+          documents: ['file:///test/workspace/a&b+c=d$e@f:main.ts'],
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(2);
+      expect(mockDidOpen).toHaveBeenLastCalledWith(
+        '/test/workspace/a&b+c=d$e@f:main.ts',
         'typescript',
         expect.any(Number),
         'const x = 1;'

@@ -48,6 +48,10 @@ var extensionMap = map[string]langInfo{
 	".cts": {"typescript", "typescript"},
 	".mjs": {"javascript", "typescript"},
 	".cjs": {"javascript", "typescript"},
+	".go":  {"go", "go"},
+	".py":  {"python", "python"},
+	".pyw": {"python", "python"},
+	".pyi": {"python", "python"},
 }
 
 // LanguageIDForExtension returns the LSP languageId for the given file extension.
@@ -74,9 +78,21 @@ func (r *Registry) ServerConfigFor(family, workspaceRoot string) (*ServerConfig,
 	switch family {
 	case "typescript":
 		return r.resolveTypeScriptServer(workspaceRoot)
+	case "go":
+		return r.resolveGoServer(workspaceRoot)
+	case "python":
+		return r.resolvePythonServer(workspaceRoot)
 	default:
 		return nil, fmt.Errorf("no language server configured for %q", family)
 	}
+}
+
+func workspaceLocalNodeBin(workspaceRoot, binary string) string {
+	localBin := filepath.Join(workspaceRoot, "node_modules", ".bin", binary)
+	if runtime.GOOS == "windows" {
+		localBin += ".cmd"
+	}
+	return localBin
 }
 
 // resolveTypeScriptServer finds and configures typescript-language-server.
@@ -84,11 +100,7 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 	binary := "typescript-language-server"
 
 	// 1. Check workspace-local node_modules/.bin/
-	localBin := filepath.Join(workspaceRoot, "node_modules", ".bin", binary)
-	if runtime.GOOS == "windows" {
-		localBin += ".cmd"
-	}
-	if path, err := exec.LookPath(localBin); err == nil {
+	if path, err := exec.LookPath(workspaceLocalNodeBin(workspaceRoot, binary)); err == nil {
 		return &ServerConfig{
 			LanguageFamily: "typescript",
 			Command:        path,
@@ -101,8 +113,8 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 	path, err := exec.LookPath(binary)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"typescript-language-server not found: install it with "+
-				"\"npm install -g typescript-language-server typescript\" "+
+			"typescript-language-server not found: install it with " +
+				"\"npm install -g typescript-language-server typescript\" " +
 				"or add it as a project dependency",
 		)
 	}
@@ -130,5 +142,53 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 		Args:           args,
 		Dir:            workspaceRoot,
 		InitOptions:    initOpts,
+	}, nil
+}
+
+// resolveGoServer finds and configures gopls.
+func (r *Registry) resolveGoServer(workspaceRoot string) (*ServerConfig, error) {
+	path, err := exec.LookPath("gopls")
+	if err != nil {
+		return nil, fmt.Errorf(
+			"gopls not found: install it with " +
+				"\"go install golang.org/x/tools/gopls@latest\" " +
+				"or add it to PATH",
+		)
+	}
+
+	return &ServerConfig{
+		LanguageFamily: "go",
+		Command:        path,
+		Dir:            workspaceRoot,
+	}, nil
+}
+
+// resolvePythonServer finds and configures pyright-langserver.
+func (r *Registry) resolvePythonServer(workspaceRoot string) (*ServerConfig, error) {
+	binary := "pyright-langserver"
+
+	if path, err := exec.LookPath(workspaceLocalNodeBin(workspaceRoot, binary)); err == nil {
+		return &ServerConfig{
+			LanguageFamily: "python",
+			Command:        path,
+			Args:           []string{"--stdio"},
+			Dir:            workspaceRoot,
+		}, nil
+	}
+
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"pyright-langserver not found: install it with " +
+				"\"npm install -g pyright\" " +
+				"or add pyright as a project dependency",
+		)
+	}
+
+	return &ServerConfig{
+		LanguageFamily: "python",
+		Command:        path,
+		Args:           []string{"--stdio"},
+		Dir:            workspaceRoot,
 	}, nil
 }

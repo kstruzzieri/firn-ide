@@ -174,6 +174,32 @@ func TestJSONRPCMessage_Classification(t *testing.T) {
 	}
 }
 
+func TestLimitedBufferCapsCaptureAndReportsFullWrite(t *testing.T) {
+	buf := &limitedBuffer{max: 5}
+
+	n, err := buf.Write([]byte("abcdef"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if n != 6 {
+		t.Fatalf("Write reported %d bytes, want 6", n)
+	}
+	if got := buf.String(); got != "abcde" {
+		t.Fatalf("captured stderr = %q, want abcde", got)
+	}
+
+	n, err = buf.Write([]byte("gh"))
+	if err != nil {
+		t.Fatalf("second Write: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("second Write reported %d bytes, want 2", n)
+	}
+	if got := buf.String(); got != "abcde" {
+		t.Fatalf("captured stderr after overflow = %q, want abcde", got)
+	}
+}
+
 // --- helpers ---
 
 type slowReader struct {

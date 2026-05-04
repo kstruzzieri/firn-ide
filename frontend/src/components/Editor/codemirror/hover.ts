@@ -1,5 +1,5 @@
 import { Compartment } from '@codemirror/state';
-import { hoverTooltip, type Tooltip } from '@codemirror/view';
+import { hoverTooltip, type EditorView, type Tooltip } from '@codemirror/view';
 import { LSPHover, LSPDefinition } from '../../../../wailsjs/go/main/App';
 import { ClipboardSetText } from '../../../../wailsjs/runtime/runtime';
 import { decodeLSPContent } from '../../../utils/lspContent';
@@ -16,45 +16,49 @@ export function hoverExtensions() {
 }
 
 export function reconfigureHover(filePath: string) {
-  return hoverTooltip(
-    async (view, pos): Promise<Tooltip | null> => {
-      const wordRange = view.state.wordAt(pos) ?? (pos > 0 ? view.state.wordAt(pos - 1) : null);
-      const targetRange = hoverTargetRange(wordRange, pos);
-      if (!targetRange) return null;
-      const requestPos = hoverRequestPos(targetRange, pos);
+  return hoverTooltip(createLSPHoverSource(filePath), {
+    hideOn: (tr) => tr.docChanged,
+    hoverTime: 180,
+  });
+}
 
-      const line = view.state.doc.lineAt(requestPos);
-      const lspLine = line.number - 1;
-      const lspChar = requestPos - line.from;
+export function createLSPHoverSource(filePath: string) {
+  return async (view: EditorView, pos: number): Promise<Tooltip | null> => {
+    const requestDoc = view.state.doc;
+    const wordRange = view.state.wordAt(pos) ?? (pos > 0 ? view.state.wordAt(pos - 1) : null);
+    const targetRange = hoverTargetRange(wordRange, pos);
+    if (!targetRange) return null;
+    const requestPos = hoverRequestPos(targetRange, pos);
 
-      let result;
-      try {
-        await flushLSPDocumentChange(filePath);
-        result = await LSPHover(filePath, lspLine, lspChar);
-      } catch {
-        return null;
-      }
+    const line = view.state.doc.lineAt(requestPos);
+    const lspLine = line.number - 1;
+    const lspChar = requestPos - line.from;
 
-      if (!result || !result.contents) return null;
-
-      const content = decodeLSPContent(result.contents);
-      if (!content) return null;
-
-      return {
-        pos: targetRange.from,
-        end: targetRange.to,
-        above: true,
-        create: () => {
-          const dom = createHoverTooltipDOM(content.value, filePath, lspLine, lspChar);
-          return { dom };
-        },
-      };
-    },
-    {
-      hideOn: (tr) => tr.docChanged,
-      hoverTime: 180,
+    let result;
+    try {
+      await flushLSPDocumentChange(filePath);
+      if (view.state.doc !== requestDoc) return null;
+      result = await LSPHover(filePath, lspLine, lspChar);
+      if (view.state.doc !== requestDoc) return null;
+    } catch {
+      return null;
     }
-  );
+
+    if (!result || !result.contents) return null;
+
+    const content = decodeLSPContent(result.contents);
+    if (!content) return null;
+
+    return {
+      pos: targetRange.from,
+      end: targetRange.to,
+      above: true,
+      create: () => {
+        const dom = createHoverTooltipDOM(content.value, filePath, lspLine, lspChar);
+        return { dom };
+      },
+    };
+  };
 }
 
 export function hoverTargetRange(

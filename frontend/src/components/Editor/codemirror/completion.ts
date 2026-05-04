@@ -69,6 +69,7 @@ type ParsedCompletionDetail = {
 };
 
 const completionResolveCache = new Map<string, Promise<LSPCompletionItem>>();
+export const COMPLETION_RESOLVE_CACHE_LIMIT = 500;
 const PROPERTY_ACCESS_RESOLVE_LIMIT = 12;
 const SCOPE_RESOLVE_LIMIT = 6;
 
@@ -94,6 +95,7 @@ export function completionExtensions() {
 
 /** Returns the default completion configuration with language-mode fallbacks. */
 export function resetCompletion() {
+  clearCompletionResolveCache();
   return createCompletionExtension();
 }
 
@@ -175,10 +177,23 @@ export function positionCompletionInfo(
 
 // --- Completion Source ---
 
-function createLSPCompletionSource(filePath: string, triggerChars: Set<string>): CompletionSource {
+export function createLSPCompletionSource(
+  filePath: string,
+  triggerChars: Set<string>
+): CompletionSource {
   return async function lspCompletionSource(
     ctx: CompletionContext
   ): Promise<CompletionResult | null> {
+    let aborted = ctx.aborted;
+    ctx.addEventListener(
+      'abort',
+      () => {
+        aborted = true;
+      },
+      { onDocChange: true }
+    );
+    const isAborted = () => aborted || ctx.aborted;
+
     const { pos, explicit } = ctx;
     const lineText = ctx.state.doc.lineAt(pos);
     const charBefore = pos > lineText.from ? ctx.state.sliceDoc(pos - 1, pos) : '';
@@ -198,10 +213,14 @@ function createLSPCompletionSource(filePath: string, triggerChars: Set<string>):
     const line = lineText.number - 1;
     const character = pos - lineText.from;
 
+    if (isAborted()) return null;
+
     let result;
     try {
       await flushLSPDocumentChange(filePath, ctx.state.doc.toString());
+      if (isAborted()) return null;
       result = await LSPComplete(filePath, line, character, triggerCharacter);
+      if (isAborted()) return null;
     } catch {
       return null;
     }
@@ -210,6 +229,7 @@ function createLSPCompletionSource(filePath: string, triggerChars: Set<string>):
 
     const sortedItems = sortLSPCompletionItems(result.items as LSPCompletionItem[]);
     const resolvedItems = await resolveCompletionItems(filePath, sortedItems, isPropertyAccess);
+    if (isAborted()) return null;
 
     const completions: Completion[] = resolvedItems.map((item) => {
       const presentation = completionPresentation(item, isPropertyAccess);
@@ -333,7 +353,24 @@ export async function resolveCompletionItem(
     });
 
   completionResolveCache.set(key, pending);
+  trimCompletionResolveCache();
   return pending;
+}
+
+export function clearCompletionResolveCache(): void {
+  completionResolveCache.clear();
+}
+
+export function completionResolveCacheSize(): number {
+  return completionResolveCache.size;
+}
+
+function trimCompletionResolveCache(): void {
+  while (completionResolveCache.size > COMPLETION_RESOLVE_CACHE_LIMIT) {
+    const oldestKey = completionResolveCache.keys().next().value;
+    if (oldestKey === undefined) return;
+    completionResolveCache.delete(oldestKey);
+  }
 }
 
 function completionItemForResolve(item: LSPCompletionItem): LSPCompletionItem {
