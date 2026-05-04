@@ -87,6 +87,19 @@ describe('lspDocumentSync', () => {
     expect(mockDidChange).toHaveBeenCalledTimes(1);
   });
 
+  it('clears stale pending content when an explicit flush is already synced', async () => {
+    await openLSPDocument('/test/workspace/main.ts', 'typescript', 'const x = 1;');
+
+    scheduleLSPDocumentChange('/test/workspace/main.ts', 'const x = 2;');
+
+    await expect(flushLSPDocumentChange('/test/workspace/main.ts', 'const x = 1;')).resolves.toBe(
+      false
+    );
+    await expect(flushLSPDocumentChange('/test/workspace/main.ts')).resolves.toBe(false);
+
+    expect(mockDidChange).not.toHaveBeenCalled();
+  });
+
   it('flushes the latest pending content when didOpen is still in flight', async () => {
     let resolveOpen: () => void = () => {};
     mockDidOpen.mockReturnValueOnce(

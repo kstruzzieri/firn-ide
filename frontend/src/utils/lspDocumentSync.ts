@@ -92,11 +92,10 @@ export async function flushLSPDocumentChange(path: string, content?: string): Pr
   clearChangeTimer(doc);
 
   const hasExplicitContent = content !== undefined;
+  const pendingContentAtFlushStart = doc.pendingContent;
   let nextContent = content ?? doc.pendingContent;
   if (nextContent === undefined || nextContent === doc.syncedContent) {
-    if (!hasExplicitContent || doc.pendingContent === nextContent) {
-      doc.pendingContent = undefined;
-    }
+    doc.pendingContent = undefined;
     return false;
   }
 
@@ -115,7 +114,11 @@ export async function flushLSPDocumentChange(path: string, content?: string): Pr
   }
 
   if (nextContent === undefined || nextContent === current.syncedContent) {
-    if (!hasExplicitContent || current.pendingContent === nextContent) {
+    if (
+      !hasExplicitContent ||
+      current.pendingContent === pendingContentAtFlushStart ||
+      current.pendingContent === nextContent
+    ) {
       current.pendingContent = undefined;
     }
     return false;
