@@ -97,3 +97,35 @@ The test suite tested "close cancels pending didChange" as the *desired* behavio
 **Why it was missed:** The hook was created as part of a "file system infrastructure" pass, with the assumption it would be wired up during a later "integration" pass. That integration pass never happened — subsequent work moved on to LSP and run profiles. The hook wasn't in any checklist or test suite, so its unused state was invisible.
 
 **Lesson:** A hook without a call site is dead code. Wire up the consumer in the same PR that creates the hook, even if the consumer is minimal. If the integration genuinely can't happen yet, add a failing test or TODO that blocks the PR from being considered complete.
+
+## Milestone 6: Search (2026-05-04)
+
+### 12. Parallel-worktree work committed directly to local develop instead of a feature branch
+
+**What happened:** After PR #85 merged, two parallel worktree agents implemented Task 1 (backend ripgrep) and Task 4 (CodeMirror in-file find/replace). Their commits were cherry-picked into local `develop` along with a baseline cleanup commit and a tracker update — four commits in total — without ever creating a feature branch or opening a PR. This diverged silently from the M5 convention, which used a separate feature branch and PR for each phase (PR #77, #79, #81, #83, #85). The user caught this only when asking "are we working in feature branches?" after the work was already integrated.
+
+**Why it was missed:** The session opened with `git status` showing branch `develop` clean at PR #85's merge. That state was treated as "the working branch" rather than "the integration target." When the cleanup commit landed on `develop` directly, no pause occurred to ask "what branch should this land on?" — and the subsequent cherry-picks followed the same path by inertia. The worktree dispatches used `isolation: "worktree"` which felt like sufficient isolation, but a worktree only isolates the *working tree*; the eventual integration commits still land on whatever branch the orchestrator is on. There was no project-level guardrail (pre-commit hook, CLAUDE.md note, or memory entry) codifying the feature-branch convention, so the M5 pattern existed only in the git history.
+
+**Lesson:** Create the feature branch as the FIRST step of any multi-commit task — before the first commit, edit, or agent dispatch. The right opening sequence on a clean `develop`:
+
+```bash
+git checkout -b codex/milestone-N-<short-name> origin/develop
+# OR
+git checkout -b feature/<scope>-<short-name> origin/develop
+```
+
+For recovery when commits already exist on the wrong long-lived branch (no force-push, no cherry-pick churn):
+
+```bash
+git branch -m develop feature/<descriptive-name>   # rename current branch
+git checkout -b develop origin/develop              # recreate develop tracking origin
+git push -u origin feature/<descriptive-name>       # push feature
+gh pr create                                         # open PR
+```
+
+Three habits that would catch this earlier:
+1. First message after seeing a clean `develop` tree should be: "are we creating a feature branch, or extending an existing one?" Make the branch decision explicit, not implicit.
+2. A pre-commit hook that warns or refuses commits to `develop`/`main` would have stopped commit #1 dead. Worth adding as a project-level guardrail.
+3. The convention belongs in `CLAUDE.md` or persistent memory so future sessions default to it without asking. Workflow norms that live only in git history get re-broken.
+
+This applies even to "small" work (like the cleanup commit) — once the first commit lands on the wrong branch, every subsequent commit compounds the problem and the recovery cost grows linearly.
