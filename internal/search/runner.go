@@ -62,17 +62,26 @@ func isMissingTool(err error) bool {
 // Order:
 //  1. --no-config: ignore user-level ripgrep configuration so our flags are
 //     authoritative.
-//  2. --json, --line-number, --column, --color=never: stable parsing contract.
-//  3. Mode flags: --fixed-strings, --case-sensitive/--ignore-case, --word-regexp.
-//  4. --regexp <query>: query is its own argv element; leading "-" is safe.
-//  5. -- <root>: end-of-options sentinel so paths starting with "-" are safe.
+//  2. --no-require-git: honor .gitignore / .ignore even when the search root
+//     is not inside a Git repository. Firn IDE workspaces commonly target
+//     plain folders; without this flag ripgrep silently disables ignore rules
+//     for non-Git roots and surfaces files the user expects to be hidden.
+//  3. --json, --line-number, --column, --color=never: stable parsing contract.
+//  4. Mode flags: --fixed-strings, --case-sensitive/--ignore-case, --word-regexp.
+//  5. --regexp <query>: query is its own argv element; leading "-" is safe.
+//  6. -- <root>: end-of-options sentinel so paths starting with "-" are safe.
 func buildArgs(req SearchRequest) []string {
-	args := make([]string, 0, 14)
+	args := make([]string, 0, 15)
 	args = append(args,
 		// Ignore any user-level ripgrep config file so our explicit flags
 		// are authoritative. Without this, a stray RIPGREP_CONFIG_PATH or
 		// ~/.ripgreprc could change case behavior, ignore rules, etc.
 		"--no-config",
+		// Apply .gitignore / .ignore even outside a Git repo so workspaces
+		// rooted at a plain folder still hide ignored files. Without this,
+		// ripgrep requires the root to be inside a .git tree before it
+		// honors any ignore rules at all.
+		"--no-require-git",
 		"--json",
 		"--line-number",
 		"--column",

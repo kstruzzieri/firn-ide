@@ -205,6 +205,43 @@ func TestManager_RespectsGitignore(t *testing.T) {
 	}
 }
 
+// TestManager_RespectsGitignoreOutsideGitRepo verifies that .gitignore is
+// honored when the workspace root is a plain folder (no .git subdirectory).
+// Firn IDE workspaces commonly target arbitrary folders, not just git
+// repositories, so the runner must pass --no-require-git to ripgrep. Without
+// that flag, ripgrep silently disables ignore rules for non-git roots and
+// "ignored" files leak into search results.
+func TestManager_RespectsGitignoreOutsideGitRepo(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".gitignore":   "ignored.txt\n",
+		"included.txt": "needle\n",
+		"ignored.txt":  "needle\n",
+	})
+
+	// Defensive: assert no .git directory exists, so the test is unambiguous
+	// about the scenario it covers (a non-git folder).
+	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf(".git unexpectedly exists in test root; want a non-git folder: %v", err)
+	}
+
+	mgr := NewManager()
+	resp := mgr.Search(context.Background(), SearchRequest{
+		RequestID: "gi-no-git",
+		Root:      root,
+		Query:     "needle",
+	})
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	if resp.TotalFiles != 1 {
+		t.Fatalf("totalFiles = %d, want 1 (only included.txt should match outside a git repo); files=%+v", resp.TotalFiles, resp.Files)
+	}
+	if !strings.HasSuffix(resp.Files[0].RelativePath, "included.txt") {
+		t.Errorf("matched relative path = %q, want included.txt", resp.Files[0].RelativePath)
+	}
+}
+
 func TestManager_InvalidRegex(t *testing.T) {
 	requireRipgrep(t)
 	root := withWorkspace(t, map[string]string{

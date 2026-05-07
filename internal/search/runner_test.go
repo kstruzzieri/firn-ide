@@ -24,7 +24,7 @@ func TestBuildArgs(t *testing.T) {
 				Options: SearchOptions{},
 			},
 			want: []string{
-				"--no-config", "--json", "--line-number", "--column", "--color", "never",
+				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
 				"--fixed-strings", "--ignore-case",
 				"--regexp", "needle",
 				"--", "/abs/root",
@@ -38,7 +38,7 @@ func TestBuildArgs(t *testing.T) {
 				Options: SearchOptions{Regex: true, CaseSensitive: true, WholeWord: true},
 			},
 			want: []string{
-				"--no-config", "--json", "--line-number", "--column", "--color", "never",
+				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
 				"--case-sensitive", "--word-regexp",
 				"--regexp", `\bfoo\b`,
 				"--", "/r",
@@ -51,7 +51,7 @@ func TestBuildArgs(t *testing.T) {
 				Query: "-flag",
 			},
 			want: []string{
-				"--no-config", "--json", "--line-number", "--column", "--color", "never",
+				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
 				"--fixed-strings", "--ignore-case",
 				"--regexp", "-flag",
 				"--", "/r",
@@ -65,7 +65,7 @@ func TestBuildArgs(t *testing.T) {
 				Options: SearchOptions{Regex: false, CaseSensitive: true},
 			},
 			want: []string{
-				"--no-config", "--json", "--line-number", "--column", "--color", "never",
+				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
 				"--fixed-strings", "--case-sensitive",
 				"--regexp", ".*",
 				"--", "/r",
