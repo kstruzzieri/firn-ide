@@ -5,6 +5,9 @@ import {lsp} from '../models';
 import {main} from '../models';
 import {workspace} from '../models';
 import {filesystem} from '../models';
+import {search} from '../models';
+
+export function CancelSearch(arg1:string):Promise<void>;
 
 export function CloseTerminal(arg1:string):Promise<void>;
 
@@ -65,6 +68,8 @@ export function RestartRunProfile(arg1:string):Promise<void>;
 export function SaveRunProfile(arg1:runprofile.RunProfile):Promise<runprofile.ValidationResult>;
 
 export function SaveWorkspaceState(arg1:workspace.State):Promise<void>;
+
+export function SearchWorkspace(arg1:search.SearchRequest):Promise<search.SearchResponse>;
 
 export function SetLSPWorkspaceRoot(arg1:string):Promise<void>;
 

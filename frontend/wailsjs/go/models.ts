@@ -312,6 +312,7 @@ export namespace lsp {
 	export class ServerStatus {
 	    family: string;
 	    workspace: string;
+	    command?: string;
 	    state: string;
 	    error?: string;
 	    completionTriggerCharacters?: string[];
@@ -324,6 +325,7 @@ export namespace lsp {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.family = source["family"];
 	        this.workspace = source["workspace"];
+	        this.command = source["command"];
 	        this.state = source["state"];
 	        this.error = source["error"];
 	        this.completionTriggerCharacters = source["completionTriggerCharacters"];
@@ -501,6 +503,195 @@ export namespace runprofile {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.valid = source["valid"];
 	        this.errors = this.convertValues(source["errors"], ValidationError);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace search {
+	
+	export class MatchRange {
+	    start: number;
+	    end: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MatchRange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.start = source["start"];
+	        this.end = source["end"];
+	    }
+	}
+	export class LineMatch {
+	    line: number;
+	    column: number;
+	    text: string;
+	    submatches: MatchRange[];
+	
+	    static createFrom(source: any = {}) {
+	        return new LineMatch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.line = source["line"];
+	        this.column = source["column"];
+	        this.text = source["text"];
+	        this.submatches = this.convertValues(source["submatches"], MatchRange);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class FileResult {
+	    path: string;
+	    relativePath: string;
+	    matches: LineMatch[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FileResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.relativePath = source["relativePath"];
+	        this.matches = this.convertValues(source["matches"], LineMatch);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	export class SearchOptions {
+	    regex: boolean;
+	    caseSensitive: boolean;
+	    wholeWord: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.regex = source["regex"];
+	        this.caseSensitive = source["caseSensitive"];
+	        this.wholeWord = source["wholeWord"];
+	    }
+	}
+	export class SearchRequest {
+	    requestId: string;
+	    root: string;
+	    query: string;
+	    options: SearchOptions;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requestId = source["requestId"];
+	        this.root = source["root"];
+	        this.query = source["query"];
+	        this.options = this.convertValues(source["options"], SearchOptions);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SearchResponse {
+	    requestId: string;
+	    status: string;
+	    message?: string;
+	    files: FileResult[];
+	    totalFiles: number;
+	    totalLines: number;
+	    truncated: boolean;
+	    matchCap: number;
+	    durationMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requestId = source["requestId"];
+	        this.status = source["status"];
+	        this.message = source["message"];
+	        this.files = this.convertValues(source["files"], FileResult);
+	        this.totalFiles = source["totalFiles"];
+	        this.totalLines = source["totalLines"];
+	        this.truncated = source["truncated"];
+	        this.matchCap = source["matchCap"];
+	        this.durationMs = source["durationMs"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -5,6 +5,7 @@ import (
 	"firn/internal/filesystem"
 	"firn/internal/lsp"
 	"firn/internal/runprofile"
+	"firn/internal/search"
 	"firn/internal/terminal"
 	"firn/internal/watcher"
 	"firn/internal/workspace"
@@ -33,6 +34,7 @@ type App struct {
 	osFS                 filesystem.FileSystem
 	workspaceStore       *workspace.Store
 	lspManager           *lsp.Manager
+	searchManager        *search.Manager
 	closeMu              sync.Mutex
 	isClosing            bool
 	closeReady           chan struct{}
@@ -59,6 +61,7 @@ func NewApp() *App {
 		termManager:    terminal.NewManager(),
 		osFS:           osFS,
 		workspaceStore: workspace.NewStore(osFS, workspaceBaseDir),
+		searchManager:  search.NewManager(),
 	}
 }
 
@@ -102,6 +105,14 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	a.closeMu.Unlock()
 
 	runtime.EventsEmit(a.ctx, "app:beforeclose")
+
+	// Cancel any in-flight workspace searches before the runner/LSP shutdown
+	// goroutines run. CancelAll is synchronous (it only signals contexts; the
+	// rg processes wind down via exec.CommandContext), so it does not need its
+	// own deadline like the runner/LSP paths do.
+	if a.searchManager != nil {
+		a.searchManager.CancelAll()
+	}
 
 	go func() {
 		// Wait for frontend state flush, runner cleanup, and LSP shutdown, bounded by 2s.
@@ -610,4 +621,39 @@ func (a *App) SetLSPWorkspaceRoot(workspacePath string) {
 	}
 	a.lspManager.ShutdownAll(lspWorkspaceSwitchTimeout)
 	a.lspManager.SetWorkspaceRoot(workspacePath)
+}
+
+// --- Search bindings ---
+
+// SearchWorkspace runs a workspace text search via ripgrep and returns a
+// typed response. Status discriminates between success, no-matches,
+// missing-tool, invalid-regex, canceled, and failed states; the frontend
+// renders distinct UI for each. The Wails context is passed through so the
+// search aborts when the application context is canceled (window close).
+// This is exposed to the frontend via Wails bindings.
+func (a *App) SearchWorkspace(request search.SearchRequest) search.SearchResponse {
+	if a.searchManager == nil {
+		return search.SearchResponse{
+			RequestID: request.RequestID,
+			Status:    search.StatusFailed,
+			Message:   "search service not initialized",
+			Files:     []search.FileResult{},
+		}
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.searchManager.Search(ctx, request)
+}
+
+// CancelSearch aborts an in-flight search by RequestID. It is a no-op when
+// no search with that id is active, which is the expected state after a
+// successful response was already delivered.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CancelSearch(requestID string) {
+	if a.searchManager == nil {
+		return
+	}
+	a.searchManager.Cancel(requestID)
 }
