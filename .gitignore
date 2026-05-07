@@ -34,6 +34,9 @@ coverage.out
 docs/plans/
 docs/superpowers/
 
+# Agent worktrees (created by Task tool with isolation: worktree)
+.claude/worktrees/
+
 # Misc
 *.log
 *.md5
