@@ -19,11 +19,10 @@
 ## Current Focus (Milestone 6: Search)
 - [x] **Current status snapshot (2026-05-04)** - local `develop` and `origin/develop` are synced at PR #85 merge `682462b`; PR #84 and PR #85 are merged; no newer upstream merge is visible after fetch
 - [x] **Milestone 6 (#23-25): Search implementation plan** - created `docs/plans/milestone-6-search-implementation-plan.md` (untracked) with task-by-task code review and adversarial review gates
-- [ ] **Milestone 6 implementation** - not started; next executable work is Task 1 (#23)
-- [ ] **Task 1 (#23): Backend ripgrep integration** - add `internal/search`, safe `rg --json` execution, parser, Wails bindings, cancelation, and backend tests
-- [ ] **Task 2 (#24): Frontend search client/state** - add typed search store/hook, stale request handling, range conversion, and focused tests
-- [ ] **Task 3 (#24): Search UI panel/navigation** - render the Search tool view, options, grouped results, shortcut integration, and result navigation
-- [ ] **Task 4 (#25): Find in file and replace** - verify/stabilize CodeMirror search panel, match navigation, replace/replace all, and shortcut ownership
+- [x] **Task 1 (#23): Backend ripgrep integration** - `internal/search` package with runner/parser/manager, Wails `SearchWorkspace`/`CancelSearch` bindings, cancelation, 30s timeout, 5000-match cap, full Go test coverage. Implemented in worktree, code-reviewed + criticize-reviewed (added `searchManager.CancelAll()` to `beforeClose`; regenerated Wails bindings via `wails generate module` to restore canonical alphabetical namespace order and pull in pre-existing `lsp.ServerStatus.command` drift). Local commit `816d5ab` on `develop`.
+- [x] **Task 4 (#25): Find in file and replace** - `@codemirror/search` wired through new `codemirror/search.ts` wrapper, Firn Glacier panel/match styling, no-file `Cmd+F` browser-find suppression, `Mod-Shift-f` reserved across `key`/`mac`/`win`/`linux` `KeyBinding` fields. Implemented in worktree, code-reviewed + criticize-reviewed (extended platform-specific reserved-shortcut filter). Local commit `cf51a76` on `develop`.
+- [ ] **Task 2 (#24): Frontend search client/state** - add typed search store/hook, stale request handling, range conversion, and focused tests. Mirror Go shapes from Task 1: `SearchRequest { requestId, root, query, options }`, `SearchResponse { requestId, status, message?, files, totalFiles, totalLines, truncated, matchCap, durationMs }`. Convert byte offsets to JS string offsets in `utils/searchRanges.ts`.
+- [ ] **Task 3 (#24): Search UI panel/navigation** - render the Search tool view, options, grouped results, shortcut integration, and result navigation. Owns the `Cmd+Shift+F` global binding (Task 4 leaves it free).
 - [ ] **Task 5: Milestone 6 final integration** - run full verification, update docs/tracker, and record final smoke/review notes
 
 ## Known Bugs
