@@ -1,11 +1,17 @@
 package search
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestBuildArgs verifies the option-to-argument mapping is exact and that
@@ -147,6 +153,60 @@ func TestIsMissingTool(t *testing.T) {
 	if !isMissingTool(errors.Join(wrapped, errors.New("ctx"))) {
 		t.Error("isMissingTool(joined exec.Error) = false, want true")
 	}
+}
+
+func TestRunRipgrepCancelsProcessAtMatchCap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell wrapper helper is Unix-only")
+	}
+
+	wrapper := filepath.Join(t.TempDir(), "fake-rg")
+	script := fmt.Sprintf("#!/bin/sh\nFIRN_SEARCH_FAKE_RG=cap exec %q -test.run=TestSearchFakeRGProcess -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake rg wrapper: %v", err)
+	}
+
+	prevLookup := rgLookup
+	prevName := rgBinaryName
+	t.Cleanup(func() {
+		rgLookup = prevLookup
+		rgBinaryName = prevName
+	})
+	rgLookup = func(string) (string, error) { return wrapper, nil }
+
+	start := time.Now()
+	outcome := runRipgrep(
+		context.Background(),
+		runnerConfig{MatchCap: 5, Timeout: 5 * time.Second},
+		SearchRequest{RequestID: "cap", Root: "/tmp", Query: "needle"},
+		func(string, LineMatch) bool { return true },
+	)
+
+	if outcome.Err != nil {
+		t.Fatalf("runRipgrep returned error: %v", outcome.Err)
+	}
+	if !outcome.Truncated {
+		t.Fatal("Truncated = false, want true")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("cap cancel took %s, want under 1s", elapsed)
+	}
+}
+
+func TestSearchFakeRGProcess(t *testing.T) {
+	if os.Getenv("FIRN_SEARCH_FAKE_RG") != "cap" {
+		return
+	}
+
+	for i := 1; i <= 10_000; i++ {
+		_, _ = fmt.Fprintf(
+			os.Stdout,
+			`{"type":"match","data":{"path":{"text":"/tmp/fake.txt"},"lines":{"text":"needle\n"},"line_number":%d,"submatches":[{"match":{"text":"needle"},"start":0,"end":6}]}}`+"\n",
+			i,
+		)
+		time.Sleep(time.Millisecond)
+	}
+	os.Exit(0)
 }
 
 // TestValidateRequest covers all rejection branches and the success path.

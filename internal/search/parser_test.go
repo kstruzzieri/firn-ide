@@ -229,6 +229,7 @@ func TestToRelativeForwardSlash(t *testing.T) {
 	}{
 		{"/abs/root/a.txt", "a.txt"},
 		{"/abs/root/sub/b.go", "sub/b.go"},
+		{"/abs/root/..foo/file.txt", "..foo/file.txt"},
 		{"/abs/other/c.go", "/abs/other/c.go"}, // Not under root: keep absolute.
 	}
 	for _, tc := range cases {

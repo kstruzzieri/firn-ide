@@ -176,7 +176,7 @@ func parseEvents(r io.Reader, onMatch func(filePath string, m LineMatch) bool) e
 // so the user always sees something they can act on.
 func toRelativeForwardSlash(root, p string) string {
 	rel, err := filepath.Rel(root, p)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return filepath.ToSlash(p)
 	}
 	return filepath.ToSlash(rel)

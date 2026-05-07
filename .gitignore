@@ -31,7 +31,8 @@ coverage.out
 .superpowers/
 
 # Working plans and specs (WIP, do not commit)
-docs/plans/
+docs/plans/*
+!docs/plans/milestone-6-search-implementation-plan.md
 docs/superpowers/
 
 # Agent worktrees (created by Task tool with isolation: worktree)

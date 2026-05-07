@@ -157,14 +157,20 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 
 	collected := 0
 	truncated := false
+	canceledAfterCap := false
+	cancelAfterCap := func() {
+		truncated = true
+		canceledAfterCap = true
+		cancel()
+	}
 	parseErr := parseEvents(stdout, func(filePath string, m LineMatch) bool {
 		if collected >= cfg.MatchCap {
-			truncated = true
+			cancelAfterCap()
 			return false
 		}
 		collected++
 		if !onMatch(filePath, m) {
-			truncated = true
+			cancelAfterCap()
 			return false
 		}
 		return true
@@ -184,6 +190,10 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 	// message later if needed.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return runOutcome{Truncated: truncated, Err: runErrCanceled}
+	}
+
+	if canceledAfterCap {
+		return runOutcome{Truncated: true}
 	}
 
 	if waitErr == nil {
