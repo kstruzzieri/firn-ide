@@ -1,16 +1,16 @@
 export namespace filesystem {
-	
+
 	export class FileContent {
 	    content: string;
 	    encoding: string;
 	    lineEndings: string;
 	    size: number;
 	    isBinary: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FileContent(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.content = source["content"];
@@ -28,11 +28,11 @@ export namespace filesystem {
 	    // Go type: time
 	    modTime: any;
 	    children?: FileEntry[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FileEntry(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -42,7 +42,7 @@ export namespace filesystem {
 	        this.modTime = this.convertValues(source["modTime"], null);
 	        this.children = this.convertValues(source["children"], FileEntry);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -65,15 +65,15 @@ export namespace filesystem {
 }
 
 export namespace lsp {
-	
+
 	export class Position {
 	    line: number;
 	    character: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Position(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.line = source["line"];
@@ -83,17 +83,17 @@ export namespace lsp {
 	export class Range {
 	    start: Position;
 	    end: Position;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Range(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.start = this.convertValues(source["start"], Position);
 	        this.end = this.convertValues(source["end"], Position);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -115,17 +115,17 @@ export namespace lsp {
 	export class TextEdit {
 	    range: Range;
 	    newText: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TextEdit(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.range = this.convertValues(source["range"], Range);
 	        this.newText = source["newText"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -147,11 +147,11 @@ export namespace lsp {
 	export class CompletionItemLabelDetails {
 	    detail?: string;
 	    description?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CompletionItemLabelDetails(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.detail = source["detail"];
@@ -171,11 +171,11 @@ export namespace lsp {
 	    sortText?: string;
 	    commitCharacters?: string[];
 	    data?: number[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CompletionItem(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.label = source["label"];
@@ -191,7 +191,7 @@ export namespace lsp {
 	        this.commitCharacters = source["commitCharacters"];
 	        this.data = source["data"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -210,21 +210,21 @@ export namespace lsp {
 		    return a;
 		}
 	}
-	
+
 	export class CompletionList {
 	    isIncomplete: boolean;
 	    items: CompletionItem[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CompletionList(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.isIncomplete = source["isIncomplete"];
 	        this.items = this.convertValues(source["items"], CompletionItem);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -246,17 +246,17 @@ export namespace lsp {
 	export class Hover {
 	    contents: number[];
 	    range?: Range;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Hover(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.contents = source["contents"];
 	        this.range = this.convertValues(source["range"], Range);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -278,17 +278,17 @@ export namespace lsp {
 	export class Location {
 	    uri: string;
 	    range: Range;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Location(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.uri = source["uri"];
 	        this.range = this.convertValues(source["range"], Range);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -307,8 +307,8 @@ export namespace lsp {
 		    return a;
 		}
 	}
-	
-	
+
+
 	export class ServerStatus {
 	    family: string;
 	    workspace: string;
@@ -316,11 +316,11 @@ export namespace lsp {
 	    state: string;
 	    error?: string;
 	    completionTriggerCharacters?: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ServerStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.family = source["family"];
@@ -334,17 +334,17 @@ export namespace lsp {
 	export class TextDocumentContentChangeEvent {
 	    range?: Range;
 	    text: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TextDocumentContentChangeEvent(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.range = this.convertValues(source["range"], Range);
 	        this.text = source["text"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -367,15 +367,15 @@ export namespace lsp {
 }
 
 export namespace main {
-	
+
 	export class WorkspaceInfo {
 	    name: string;
 	    path: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new WorkspaceInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -386,15 +386,15 @@ export namespace main {
 }
 
 export namespace runprofile {
-	
+
 	export class EnvVariant {
 	    name: string;
 	    envFile: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EnvVariant(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -416,11 +416,11 @@ export namespace runprofile {
 	    steps?: string[];
 	    detectedFrom?: string;
 	    order?: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RunProfile(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -438,7 +438,7 @@ export namespace runprofile {
 	        this.detectedFrom = source["detectedFrom"];
 	        this.order = source["order"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -463,11 +463,11 @@ export namespace runprofile {
 	    exitCode: number;
 	    pid?: number;
 	    timestamp: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RunStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profileId = source["profileId"];
@@ -480,11 +480,11 @@ export namespace runprofile {
 	export class ValidationError {
 	    field: string;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ValidationError(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.field = source["field"];
@@ -494,17 +494,17 @@ export namespace runprofile {
 	export class ValidationResult {
 	    valid: boolean;
 	    errors: ValidationError[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ValidationResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.valid = source["valid"];
 	        this.errors = this.convertValues(source["errors"], ValidationError);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -527,15 +527,15 @@ export namespace runprofile {
 }
 
 export namespace search {
-	
+
 	export class MatchRange {
 	    start: number;
 	    end: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new MatchRange(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.start = source["start"];
@@ -547,11 +547,11 @@ export namespace search {
 	    column: number;
 	    text: string;
 	    submatches: MatchRange[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LineMatch(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.line = source["line"];
@@ -559,7 +559,7 @@ export namespace search {
 	        this.text = source["text"];
 	        this.submatches = this.convertValues(source["submatches"], MatchRange);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -582,18 +582,18 @@ export namespace search {
 	    path: string;
 	    relativePath: string;
 	    matches: LineMatch[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FileResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
 	        this.relativePath = source["relativePath"];
 	        this.matches = this.convertValues(source["matches"], LineMatch);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -612,17 +612,17 @@ export namespace search {
 		    return a;
 		}
 	}
-	
-	
+
+
 	export class SearchOptions {
 	    regex: boolean;
 	    caseSensitive: boolean;
 	    wholeWord: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SearchOptions(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.regex = source["regex"];
@@ -635,11 +635,11 @@ export namespace search {
 	    root: string;
 	    query: string;
 	    options: SearchOptions;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SearchRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.requestId = source["requestId"];
@@ -647,7 +647,7 @@ export namespace search {
 	        this.query = source["query"];
 	        this.options = this.convertValues(source["options"], SearchOptions);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -676,11 +676,11 @@ export namespace search {
 	    truncated: boolean;
 	    matchCap: number;
 	    durationMs: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SearchResponse(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.requestId = source["requestId"];
@@ -693,7 +693,7 @@ export namespace search {
 	        this.matchCap = source["matchCap"];
 	        this.durationMs = source["durationMs"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -716,17 +716,17 @@ export namespace search {
 }
 
 export namespace workspace {
-	
+
 	export class FileState {
 	    path: string;
 	    cursorLine: number;
 	    cursorColumn: number;
 	    scrollTop: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FileState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -738,17 +738,17 @@ export namespace workspace {
 	export class EditorState {
 	    activeFilePath: string;
 	    openFiles: FileState[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.activeFilePath = source["activeFilePath"];
 	        this.openFiles = this.convertValues(source["openFiles"], FileState);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -771,18 +771,18 @@ export namespace workspace {
 	    expandedPaths: string[];
 	    rootExpanded: boolean;
 	    treeSnapshot?: filesystem.FileEntry[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Explorer(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.expandedPaths = source["expandedPaths"];
 	        this.rootExpanded = source["rootExpanded"];
 	        this.treeSnapshot = this.convertValues(source["treeSnapshot"], filesystem.FileEntry);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -801,16 +801,16 @@ export namespace workspace {
 		    return a;
 		}
 	}
-	
+
 	export class PanelSizes {
 	    left: number;
 	    right: number;
 	    bottom: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PanelSizes(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.left = source["left"];
@@ -823,11 +823,11 @@ export namespace workspace {
 	    leftCollapsed: boolean;
 	    rightCollapsed: boolean;
 	    bottomCollapsed: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Layout(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.panelSizes = this.convertValues(source["panelSizes"], PanelSizes);
@@ -835,7 +835,7 @@ export namespace workspace {
 	        this.rightCollapsed = source["rightCollapsed"];
 	        this.bottomCollapsed = source["bottomCollapsed"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -854,7 +854,7 @@ export namespace workspace {
 		    return a;
 		}
 	}
-	
+
 	export class State {
 	    workspacePath: string;
 	    workspaceName: string;
@@ -864,11 +864,11 @@ export namespace workspace {
 	    explorer: Explorer;
 	    activeSidebar: string;
 	    hiddenProfileIds?: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new State(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workspacePath = source["workspacePath"];
@@ -880,7 +880,7 @@ export namespace workspace {
 	        this.activeSidebar = source["activeSidebar"];
 	        this.hiddenProfileIds = source["hiddenProfileIds"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -903,11 +903,11 @@ export namespace workspace {
 	    name: string;
 	    path: string;
 	    lastOpened: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
