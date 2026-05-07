@@ -30,6 +30,10 @@ coverage.out
 # Brainstorming mockups
 .superpowers/
 
+# Working plans and specs (WIP, do not commit)
+docs/plans/
+docs/superpowers/
+
 # Misc
 *.log
 *.md5
