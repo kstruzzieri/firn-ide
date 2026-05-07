@@ -117,9 +117,9 @@ git checkout -b feature/<scope>-<short-name> origin/develop
 For recovery when commits already exist on the wrong long-lived branch (no force-push, no cherry-pick churn):
 
 ```bash
-git branch -m develop feature/<descriptive-name>   # rename current branch
+git branch -m develop codex/<descriptive-name>     # rename current branch
 git checkout -b develop origin/develop              # recreate develop tracking origin
-git push -u origin feature/<descriptive-name>       # push feature
+git push -u origin codex/<descriptive-name>         # push feature
 gh pr create                                         # open PR
 ```
 
@@ -129,3 +129,5 @@ Three habits that would catch this earlier:
 3. The convention belongs in `CLAUDE.md` or persistent memory so future sessions default to it without asking. Workflow norms that live only in git history get re-broken.
 
 This applies even to "small" work (like the cleanup commit) — once the first commit lands on the wrong branch, every subsequent commit compounds the problem and the recovery cost grows linearly.
+
+**Bootstrap caveat for the repo-local pre-commit hook:** `.husky/pre-commit` only protects `develop` after the commit that adds the protection has actually reached `develop`. While the protection PR is open, `develop`'s working tree still has the old (unprotected) hook, so commits to `develop` continue to succeed silently. Verified: switching to `develop` and running `git commit --allow-empty` succeeded with the message "hook was ignored because it's not set as executable" until the protection PR merged. The robust counterpart to a repo-local hook is **GitHub branch protection rules** on the server side, which apply regardless of what's in any local working tree. Repo-local hooks complement but do not replace server-side protection.
