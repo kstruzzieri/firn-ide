@@ -58,7 +58,12 @@ const colors = {
   cursor: '#38BDF8',
   activeLine: 'rgba(56, 189, 248, 0.06)',
   matchingBracket: 'rgba(56, 189, 248, 0.4)',
-  searchMatch: 'rgba(245, 158, 11, 0.3)',
+  // Search uses amber to remain visually distinct from selection (sky-400) and
+  // diagnostics (red/yellow/blue) without overpowering syntax tokens.
+  searchMatch: 'rgba(245, 158, 11, 0.28)',
+  searchMatchBorder: 'rgba(245, 158, 11, 0.55)',
+  searchMatchSelected: 'rgba(245, 158, 11, 0.55)',
+  searchMatchSelectedBorder: '#F59E0B',
 
   // Gutter
   gutterBackground: '#0F172A',
@@ -120,13 +125,27 @@ export const firnGlacierTheme = EditorView.theme(
       outline: `1px solid ${colors.error}`,
     },
 
-    // Search matches
+    // Search matches (in-file find/replace via @codemirror/search). The amber
+    // tone keeps matches distinct from sky-400 selection, sky-300 syntax
+    // tokens, and red/yellow/blue diagnostic underlines so search highlights
+    // never visually merge with cursor selection or LSP signals.
     '.cm-searchMatch': {
       backgroundColor: colors.searchMatch,
-      outline: `1px solid ${colors.warning}`,
+      borderRadius: '2px',
+      outline: `1px solid ${colors.searchMatchBorder}`,
     },
     '.cm-searchMatch.cm-searchMatch-selected': {
-      backgroundColor: 'rgba(245, 158, 11, 0.5)',
+      backgroundColor: colors.searchMatchSelected,
+      outline: `1px solid ${colors.searchMatchSelectedBorder}`,
+      // Restore foreground contrast on the highlighted match — amber-400
+      // backgrounds otherwise wash out the slate-100 default text colour.
+      color: '#0F172A',
+    },
+    // Suppress nested selection highlighting underneath an active search
+    // match so the amber match marker stays legible while the user has the
+    // cursor on it.
+    '.cm-searchMatch .cm-selectionMatch': {
+      backgroundColor: 'transparent',
     },
 
     // Selection matches (same word highlighting)
@@ -301,6 +320,13 @@ export const firnGlacierTheme = EditorView.theme(
     '.cm-panels': {
       backgroundColor: colors.surface,
       borderBottom: `1px solid ${colors.border}`,
+      color: colors.foreground,
+      fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+    },
+
+    '.cm-panels.cm-panels-top': {
+      borderTop: 'none',
+      borderBottom: `1px solid ${colors.border}`,
     },
 
     '.cm-panel': {
@@ -319,6 +345,7 @@ export const firnGlacierTheme = EditorView.theme(
 
     '.cm-panel input:focus': {
       borderColor: colors.accent,
+      boxShadow: `0 0 0 1px ${colors.accentDim}`,
     },
 
     '.cm-panel button': {
@@ -335,6 +362,77 @@ export const firnGlacierTheme = EditorView.theme(
     '.cm-panel button:hover': {
       backgroundColor: colors.surfaceActive,
       borderColor: colors.accent,
+    },
+
+    '.cm-panel button:focus-visible': {
+      outline: `2px solid ${colors.accent}`,
+      outlineOffset: '1px',
+    },
+
+    // Find/Replace panel (@codemirror/search). Lay out fields, toggles, and
+    // action buttons consistently with the rest of the IDE chrome and use
+    // existing Firn Glacier tokens for every colour so the panel never goes
+    // out of sync with the editor theme.
+    '.cm-panel.cm-search': {
+      padding: '8px 36px 8px 12px',
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      columnGap: '6px',
+      rowGap: '4px',
+      backgroundColor: colors.surface,
+    },
+
+    '.cm-panel.cm-search input.cm-textfield': {
+      minWidth: '180px',
+      flex: '0 0 auto',
+    },
+
+    '.cm-panel.cm-search input[type="checkbox"]': {
+      accentColor: colors.accent,
+      cursor: 'pointer',
+    },
+
+    '.cm-panel.cm-search label': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      color: colors.foregroundSecondary,
+      fontSize: '11px',
+      letterSpacing: '0.02em',
+      cursor: 'pointer',
+      userSelect: 'none',
+    },
+
+    '.cm-panel.cm-search br': {
+      flexBasis: '100%',
+      height: 0,
+      width: 0,
+      margin: 0,
+      border: 'none',
+    },
+
+    '.cm-panel.cm-search button[name="close"]': {
+      position: 'absolute',
+      top: '4px',
+      right: '6px',
+      backgroundColor: 'transparent',
+      border: 'none',
+      color: colors.foregroundSecondary,
+      fontSize: '16px',
+      lineHeight: '1',
+      padding: '2px 6px',
+      borderRadius: '4px',
+      cursor: 'pointer',
+    },
+
+    '.cm-panel.cm-search button[name="close"]:hover': {
+      backgroundColor: colors.surfaceActive,
+      color: colors.foreground,
+    },
+
+    '.cm-panel.cm-search button[name="close"]:focus-visible': {
+      outline: `2px solid ${colors.accent}`,
+      outlineOffset: '1px',
     },
 
     // Linting

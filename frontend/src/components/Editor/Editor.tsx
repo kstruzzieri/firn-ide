@@ -5,7 +5,7 @@
  * Manages open files, tab switching, and editor state.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import styles from './Editor.module.css';
 import {
   useOpenFiles,
@@ -16,7 +16,7 @@ import {
 } from '../../stores/ideStore';
 import { FileIcon } from '../FileExplorer/FileIcon';
 import { FolderOutlineIcon } from '../icons';
-import { formatShortcut } from '../../utils/platform';
+import { formatShortcut, isMac } from '../../utils/platform';
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { getLanguageName } from './codemirror';
@@ -64,6 +64,34 @@ export function Editor() {
     },
     [activeFile, setScrollPosition]
   );
+
+  // When no editor is mounted (welcome screen or empty workspace), suppress
+  // the browser's native Cmd+F / Ctrl+F find dialog so users do not see a
+  // browser chrome that cannot search workspace files. The CodeMirror search
+  // panel handles Cmd+F itself when an editor is focused, so this listener is
+  // only registered while there are no open files. Cmd+Shift+F is left
+  // untouched because it is reserved for the project Search panel.
+  const hasOpenFiles = openFiles.length > 0;
+  useEffect(() => {
+    if (hasOpenFiles) return undefined;
+
+    const handleNoFileFind = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.shiftKey || event.altKey) return;
+
+      const key = event.key.toLowerCase();
+      if (key !== 'f') return;
+
+      const usesPlatformModifier = isMac() ? event.metaKey : event.ctrlKey;
+      if (!usesPlatformModifier) return;
+
+      // Suppress only the native find UI; do not navigate or mutate anything.
+      event.preventDefault();
+    };
+
+    window.addEventListener('keydown', handleNoFileFind);
+    return () => window.removeEventListener('keydown', handleNoFileFind);
+  }, [hasOpenFiles]);
 
   // Welcome screen when no files are open
   if (openFiles.length === 0) {

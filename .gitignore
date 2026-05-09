@@ -30,6 +30,14 @@ coverage.out
 # Brainstorming mockups
 .superpowers/
 
+# Working plans and specs (WIP, do not commit)
+docs/plans/*
+!docs/plans/milestone-6-search-implementation-plan.md
+docs/superpowers/
+
+# Agent worktrees (created by Task tool with isolation: worktree)
+.claude/worktrees/
+
 # Misc
 *.log
 *.md5

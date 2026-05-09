@@ -19,6 +19,7 @@ export {
   coreExtensions,
   autocompleteExtensions,
   searchExtensions,
+  inFileSearchKeymap,
   keymapExtensions,
   behaviorExtensions,
   placeholderText,

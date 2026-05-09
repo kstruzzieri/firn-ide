@@ -39,7 +39,8 @@ import {
   closeBracketsKeymap,
 } from '@codemirror/autocomplete';
 import { lintKeymap } from '@codemirror/lint';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { inFileSearchExtensions, inFileSearchKeymap } from './search';
+export { inFileSearchKeymap } from './search';
 
 // Language imports
 import { javascript } from '@codemirror/lang-javascript';
@@ -193,10 +194,13 @@ export function autocompleteExtensions(): Extension[] {
 }
 
 /**
- * Search and selection extensions.
+ * Search and selection extensions. Delegates to `inFileSearchExtensions()` so
+ * the actual `@codemirror/search` wiring can live in `./search` (and stay
+ * unit-testable without dragging in the LSP/completion/hover graph) while
+ * preserving the historical function name used elsewhere in the editor stack.
  */
 export function searchExtensions(): Extension[] {
-  return [highlightSelectionMatches()];
+  return inFileSearchExtensions();
 }
 
 /**
@@ -205,7 +209,7 @@ export function searchExtensions(): Extension[] {
 export const editorKeybindings = [
   ...closeBracketsKeymap,
   ...defaultKeymap,
-  ...searchKeymap,
+  ...inFileSearchKeymap,
   ...historyKeymap,
   ...foldKeymap,
   ...completionKeymap,

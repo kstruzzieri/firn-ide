@@ -99,4 +99,51 @@ describe('Editor Welcome Screen', () => {
     render(<Editor />);
     expect(screen.getByText('~/projects/my-project')).toBeInTheDocument();
   });
+
+  it('suppresses the browser native find dialog when no files are open', () => {
+    render(<Editor />);
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves Cmd+Shift+F untouched so it can be claimed by project search', () => {
+    render(<Editor />);
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'F',
+      ctrlKey: true,
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('does not suppress unmodified F keystrokes when no files are open', () => {
+    render(<Editor />);
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
 });
