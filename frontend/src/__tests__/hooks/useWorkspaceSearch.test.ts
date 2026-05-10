@@ -88,10 +88,9 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 /**
- * Type a query and advance past the debounce window in two separate acts so
- * React commits the re-render (scheduling the new effect's timer) before the
- * timer is advanced. Then flush microtasks so the SearchWorkspace promise
- * resolves and the store updates land before assertions run.
+ * Type a query, advance past the debounce window, then flush microtasks so
+ * the SearchWorkspace promise resolves and the store updates land before
+ * assertions run.
  */
 async function typeAndDebounce(query: string, ms = SEARCH_DEBOUNCE_MS): Promise<void> {
   act(() => {
@@ -158,6 +157,33 @@ describe('useWorkspaceSearch', () => {
     expect(arg.options).toEqual({ regex: false, caseSensitive: false, wholeWord: false });
     expect(typeof arg.requestId).toBe('string');
     expect(arg.requestId.length).toBeGreaterThan(0);
+  });
+
+  it('does not re-render its host when query or options change', async () => {
+    setWorkspace('/workspace');
+    let renderCount = 0;
+
+    renderHook(() => {
+      renderCount += 1;
+      useWorkspaceSearch();
+    });
+
+    expect(renderCount).toBe(1);
+
+    act(() => {
+      useSearchStore.getState().setQuery('alpha');
+    });
+    act(() => {
+      useSearchStore.getState().setOption('regex', true);
+    });
+    act(() => {
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await flushMicrotasks();
+
+    expect(renderCount).toBe(1);
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(1);
+    expect(mockSearchWorkspace.mock.calls[0][0].options.regex).toBe(true);
   });
 
   it('coalesces rapid typing into one backend call with the latest query', async () => {

@@ -57,99 +57,112 @@ function fireCancelSearch(requestId: string): void {
  *     SearchWorkspace, so rapid typing collapses into one request
  *   - assign each fired request a unique RequestID; drop stale responses by
  *     comparing against the store's activeRequestId
- *   - on workspace switch or unmount, fire CancelSearch(activeRequestId) so
- *     the backend ripgrep process is reaped instead of running to completion
+ *   - on query/option supersession, workspace switch, or unmount, fire
+ *     CancelSearch(activeRequestId) so the backend ripgrep process is reaped
+ *     instead of running to completion
  *   - keep ideStore.workspace and searchStore in sync: empty query → empty
  *     state, no workspace → no-workspace state
  *
- * The hook is fire-and-forget; mount it once at the top of the app.
+ * The hook is fire-and-forget; mount it once at the top of the app. It uses
+ * vanilla store subscriptions internally so query/option changes do not
+ * re-render the component that hosts the hook.
  */
 export function useWorkspaceSearch(): void {
-  const workspacePath = useIDEStore((state) => state.workspace?.path ?? null);
-  const query = useSearchStore((state) => state.query);
-  const options = useSearchStore((state) => state.options);
   const requestCounter = useRef(0);
 
-  // Workspace-switch listener: cancel any in-flight search and reset state
-  // when the user opens a different workspace. Subscribed once at mount; the
-  // dep array is empty so the subscription persists for the hook's lifetime.
   useEffect(() => {
-    let previousWorkspacePath = useIDEStore.getState().workspace?.path ?? null;
+    let debounceTimer: number | null = null;
+    let searchGeneration = 0;
+    const canceledRequestIds = new Set<string>();
 
-    return useIDEStore.subscribe((state) => {
-      const nextWorkspacePath = state.workspace?.path ?? null;
-      if (nextWorkspacePath === previousWorkspacePath) return;
-
+    const cancelActiveSearch = () => {
       const activeRequestId = useSearchStore.getState().activeRequestId;
-      if (activeRequestId) fireCancelSearch(activeRequestId);
-
-      useSearchStore.getState().resetForWorkspace(nextWorkspacePath);
-      previousWorkspacePath = nextWorkspacePath;
-    });
-  }, []);
-
-  // Unmount cleanup: cancel any in-flight backend search so the ripgrep
-  // process does not outlive the IDE session.
-  useEffect(() => {
-    return () => {
-      const activeRequestId = useSearchStore.getState().activeRequestId;
-      if (activeRequestId) fireCancelSearch(activeRequestId);
+      if (!activeRequestId || canceledRequestIds.has(activeRequestId)) return;
+      canceledRequestIds.add(activeRequestId);
+      fireCancelSearch(activeRequestId);
     };
-  }, []);
 
-  // Main debounced search effect. Re-runs whenever the workspace, query, or
-  // options change. Stale debounced supersessions are dropped by RequestID,
-  // and any request that already reached the backend is canceled during
-  // cleanup so only the latest active query keeps a ripgrep process alive.
-  useEffect(() => {
-    const trimmedQuery = query.trim();
-
-    if (!workspacePath) {
-      useSearchStore.getState().setNoWorkspace();
-      return;
-    }
-
-    if (!trimmedQuery) {
-      useSearchStore.getState().setEmptyQuery();
-      return;
-    }
-
-    let canceled = false;
-    let started = false;
-    const requestId = `search-${Date.now()}-${++requestCounter.current}`;
-
-    const timer = window.setTimeout(() => {
-      if (canceled) return;
-
-      started = true;
-      useSearchStore.getState().beginSearch(requestId);
-
-      const request = new search.SearchRequest({
-        requestId,
-        root: workspacePath,
-        query,
-        options: { ...options },
-      });
-
-      void SearchWorkspace(request)
-        .then((raw) => {
-          if (canceled) return;
-          if (useSearchStore.getState().activeRequestId !== requestId) return;
-          useSearchStore.getState().applyResponse(narrowResponse(raw));
-        })
-        .catch((err) => {
-          if (canceled) return;
-          if (useSearchStore.getState().activeRequestId !== requestId) return;
-          useSearchStore.getState().failSearch(requestId, errorMessage(err));
-        });
-    }, SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      canceled = true;
-      window.clearTimeout(timer);
-      if (started && useSearchStore.getState().activeRequestId === requestId) {
-        fireCancelSearch(requestId);
+    const clearPendingSearch = (cancelActive: boolean) => {
+      searchGeneration += 1;
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+        debounceTimer = null;
       }
+      if (cancelActive) cancelActiveSearch();
     };
-  }, [options, query, workspacePath]);
+
+    const scheduleSearch = () => {
+      // Query/option changes supersede any active backend search. Stale
+      // responses are still guarded by generation in case cancellation races
+      // with a response already on its way back from Wails.
+      clearPendingSearch(true);
+
+      const workspacePath = useIDEStore.getState().workspace?.path ?? null;
+      const { query, options } = useSearchStore.getState();
+      const trimmedQuery = query.trim();
+
+      if (!workspacePath) {
+        useSearchStore.getState().setNoWorkspace();
+        return;
+      }
+
+      if (!trimmedQuery) {
+        useSearchStore.getState().setEmptyQuery();
+        return;
+      }
+
+      const requestId = `search-${Date.now()}-${++requestCounter.current}`;
+      const generation = searchGeneration;
+      const requestQuery = query;
+      const requestOptions = { ...options };
+
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        if (generation !== searchGeneration) return;
+
+        useSearchStore.getState().beginSearch(requestId);
+
+        const request = new search.SearchRequest({
+          requestId,
+          root: workspacePath,
+          query: requestQuery,
+          options: requestOptions,
+        });
+
+        void SearchWorkspace(request)
+          .then((raw) => {
+            if (generation !== searchGeneration) return;
+            if (useSearchStore.getState().activeRequestId !== requestId) return;
+            useSearchStore.getState().applyResponse(narrowResponse(raw));
+          })
+          .catch((err) => {
+            if (generation !== searchGeneration) return;
+            if (useSearchStore.getState().activeRequestId !== requestId) return;
+            useSearchStore.getState().failSearch(requestId, errorMessage(err));
+          });
+      }, SEARCH_DEBOUNCE_MS);
+    };
+
+    const unsubscribeWorkspace = useIDEStore.subscribe((state, prevState) => {
+      const workspacePath = state.workspace?.path ?? null;
+      const previousWorkspacePath = prevState.workspace?.path ?? null;
+      if (workspacePath === previousWorkspacePath) return;
+
+      clearPendingSearch(true);
+      useSearchStore.getState().resetForWorkspace(workspacePath);
+    });
+
+    const unsubscribeSearch = useSearchStore.subscribe((state, prevState) => {
+      if (state.query === prevState.query && state.options === prevState.options) return;
+      scheduleSearch();
+    });
+
+    scheduleSearch();
+
+    return () => {
+      clearPendingSearch(true);
+      unsubscribeWorkspace();
+      unsubscribeSearch();
+    };
+  }, []);
 }

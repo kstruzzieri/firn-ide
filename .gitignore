@@ -38,6 +38,9 @@ docs/superpowers/
 # Agent worktrees (created by Task tool with isolation: worktree)
 .claude/worktrees/
 
+# Internal working tracker (local-only; lessons.md stays tracked as durable engineering doc)
+.claude/tasks/todo.md
+
 # Misc
 *.log
 *.md5

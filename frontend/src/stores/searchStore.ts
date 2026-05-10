@@ -21,6 +21,12 @@ interface SearchState {
   uiState: SearchUIState;
   expandedFiles: Set<string>;
   activeRequestId: string | null;
+  // Monotonic revision bumped whenever a consumer (e.g. the Cmd+Shift+F
+  // keyboard shortcut) wants the SearchPanel input to grab focus. The panel
+  // watches this via useEffect so focus requests work even when the panel
+  // isn't mounted yet — the shortcut bumps the counter, the panel mounts,
+  // sees the new revision in its initial render, and focuses the input.
+  focusInputRevision: number;
 }
 
 interface SearchActions {
@@ -34,6 +40,7 @@ interface SearchActions {
   resetForWorkspace: (workspacePath: string | null | undefined) => void;
   toggleFileExpanded: (path: string) => void;
   clearResults: () => void;
+  requestInputFocus: () => void;
 }
 
 type SearchStore = SearchState & SearchActions;
@@ -88,6 +95,7 @@ export const useSearchStore = create<SearchStore>()(
       uiState: { kind: 'no-workspace' },
       expandedFiles: new Set<string>(),
       activeRequestId: null,
+      focusInputRevision: 0,
 
       setQuery: (query) => set({ query }, false, 'search/setQuery'),
 
@@ -220,6 +228,13 @@ export const useSearchStore = create<SearchStore>()(
           },
           false,
           'search/clearResults'
+        ),
+
+      requestInputFocus: () =>
+        set(
+          (state) => ({ focusInputRevision: state.focusInputRevision + 1 }),
+          false,
+          'search/requestInputFocus'
         ),
     }),
     { name: 'search-store' }

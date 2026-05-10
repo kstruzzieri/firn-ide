@@ -8,6 +8,7 @@
 import { act, render, screen } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
+import { useSearchStore } from '../stores/searchStore';
 import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
 import type { FileEvent } from '../types/watcher';
 
@@ -18,6 +19,8 @@ const mockDidOpen = jest.fn().mockResolvedValue(undefined);
 const mockDidChange = jest.fn().mockResolvedValue(undefined);
 const mockDidSave = jest.fn().mockResolvedValue(undefined);
 const mockDidClose = jest.fn().mockResolvedValue(undefined);
+const mockSearchWorkspace = jest.fn().mockResolvedValue({});
+const mockCancelSearch = jest.fn().mockResolvedValue(undefined);
 
 // Mock Wails bindings
 jest.mock('../../wailsjs/go/main/App', () => ({
@@ -41,6 +44,8 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   LSPDidChange: (...args: unknown[]) => mockDidChange(...args),
   LSPDidSave: (...args: unknown[]) => mockDidSave(...args),
   LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
+  SearchWorkspace: (...args: unknown[]) => mockSearchWorkspace(...args),
+  CancelSearch: (...args: unknown[]) => mockCancelSearch(...args),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
@@ -71,6 +76,8 @@ describe('App Component', () => {
     mockDidChange.mockClear();
     mockDidSave.mockClear();
     mockDidClose.mockClear();
+    mockSearchWorkspace.mockClear();
+    mockCancelSearch.mockClear();
     resetLSPDocumentSyncState();
     useIDEStore.setState({
       workspace: null,
@@ -78,6 +85,16 @@ describe('App Component', () => {
       activeFileId: null,
       directoryTree: [],
       treeError: null,
+      activeSidebarView: 'explorer',
+      isLeftPanelCollapsed: false,
+    });
+    useSearchStore.setState({
+      query: '',
+      options: { regex: false, caseSensitive: false, wholeWord: false },
+      uiState: { kind: 'no-workspace' },
+      expandedFiles: new Set<string>(),
+      activeRequestId: null,
+      focusInputRevision: 0,
     });
   });
 
@@ -99,6 +116,23 @@ describe('App Component', () => {
     });
     // Look for the app name in the header
     expect(screen.getByText('Firn')).toBeInTheDocument();
+  });
+
+  it('shows the FileExplorer in the left panel when sidebar view is explorer', async () => {
+    useIDEStore.setState({ activeSidebarView: 'explorer' });
+    await act(async () => {
+      render(<App />);
+    });
+    // SearchPanel exposes a textbox labelled "Search query"; the explorer does not.
+    expect(screen.queryByLabelText('Search query')).not.toBeInTheDocument();
+  });
+
+  it('routes the left panel to the SearchPanel when sidebar view is search', async () => {
+    useIDEStore.setState({ activeSidebarView: 'search' });
+    await act(async () => {
+      render(<App />);
+    });
+    expect(screen.getByLabelText('Search query')).toBeInTheDocument();
   });
 
   it.each(['created', 'deleted', 'renamed'] as const)(
