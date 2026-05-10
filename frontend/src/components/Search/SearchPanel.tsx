@@ -274,11 +274,14 @@ export function SearchPanel() {
     // would open it as a tab outside the active workspace's scope).
     const workspaceAtClick = useIDEStore.getState().workspace?.path ?? null;
     if (!workspaceAtClick) return;
+    const isSameWorkspace = () => useIDEStore.getState().workspace?.path === workspaceAtClick;
 
     const charColumn = byteColumnToCharColumn(match.text, match.column);
-    if (useIDEStore.getState().workspace?.path !== workspaceAtClick) return;
+    if (!isSameWorkspace()) return;
 
-    await navigateToEditorLocation(file.path, match.line, charColumn);
+    await navigateToEditorLocation(file.path, match.line, charColumn, {
+      shouldApply: isSameWorkspace,
+    });
   }, []);
 
   const handleListKeyDown = useCallback(

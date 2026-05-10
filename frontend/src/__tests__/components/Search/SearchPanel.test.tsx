@@ -371,7 +371,21 @@ describe('SearchPanel — results rendering', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledTimes(1);
-    expect(mockNavigate).toHaveBeenCalledWith('/workspace/emoji.ts', 1, 4);
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/workspace/emoji.ts',
+      1,
+      4,
+      expect.objectContaining({ shouldApply: expect.any(Function) })
+    );
+
+    const options = mockNavigate.mock.calls[0][3] as { shouldApply: () => boolean };
+    expect(options.shouldApply()).toBe(true);
+
+    act(() => {
+      useIDEStore.setState({ workspace: { name: 'other', path: '/other-workspace' } });
+    });
+
+    expect(options.shouldApply()).toBe(false);
   });
 
   it('clicking a file header collapses then expands the group', () => {
@@ -488,7 +502,12 @@ describe('SearchPanel — keyboard navigation', () => {
     await act(async () => {
       fireEvent.keyDown(firstResult, { key: 'Enter' });
     });
-    expect(mockNavigate).toHaveBeenCalledWith(file.path, 1, 1);
+    expect(mockNavigate).toHaveBeenCalledWith(
+      file.path,
+      1,
+      1,
+      expect.objectContaining({ shouldApply: expect.any(Function) })
+    );
   });
 
   it('Enter on a file header toggles expansion', () => {
