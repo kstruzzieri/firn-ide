@@ -11,35 +11,54 @@ import { ReadFile } from '../../wailsjs/go/main/App';
 import { createEditorFile } from './editorFile';
 import { getFileNameFromPath, pathsReferToSameFile, toNativeLocalPath } from './lspUri';
 
+interface EditorNavigationOptions {
+  shouldApply?: () => boolean;
+}
+
+function shouldApplyNavigation(options?: EditorNavigationOptions): boolean {
+  return options?.shouldApply?.() ?? true;
+}
+
 /**
  * Opens a file in the editor if it isn't already open, and activates its tab.
  * Returns the EditorFile on success, or null if the file could not be read.
  */
-export async function ensureEditorFileOpen(path: string): Promise<EditorFile | null> {
-  const store = useIDEStore.getState();
+export async function ensureEditorFileOpen(
+  path: string,
+  options?: EditorNavigationOptions
+): Promise<EditorFile | null> {
   const localPath = toNativeLocalPath(path);
 
   // Already open — just activate and return
-  const existing = store.openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
+  const existing = useIDEStore
+    .getState()
+    .openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
   if (existing) {
-    store.setActiveFile(existing.id);
+    if (!shouldApplyNavigation(options)) return null;
+    useIDEStore.getState().setActiveFile(existing.id);
     return existing;
   }
 
   // Read and open
   try {
     const content = await ReadFile(localPath);
+    if (!shouldApplyNavigation(options)) return null;
+
     if (content.isBinary) {
-      store.showToast(`Cannot open binary file: ${getFileNameFromPath(localPath)}`, 'error');
+      useIDEStore
+        .getState()
+        .showToast(`Cannot open binary file: ${getFileNameFromPath(localPath)}`, 'error');
       return null;
     }
 
     const file = createEditorFile(localPath, content);
-    store.openFile(file);
+    useIDEStore.getState().openFile(file);
     return file;
   } catch (err) {
+    if (!shouldApplyNavigation(options)) return null;
+
     const message = err instanceof Error ? err.message : 'Unknown error';
-    store.showToast(`Failed to open file: ${message}`, 'error');
+    useIDEStore.getState().showToast(`Failed to open file: ${message}`, 'error');
     return null;
   }
 }
@@ -51,10 +70,12 @@ export async function ensureEditorFileOpen(path: string): Promise<EditorFile | n
 export async function navigateToEditorLocation(
   path: string,
   line: number,
-  column: number
+  column: number,
+  options?: EditorNavigationOptions
 ): Promise<void> {
-  const file = await ensureEditorFileOpen(path);
+  const file = await ensureEditorFileOpen(path, options);
   if (!file) return;
+  if (!shouldApplyNavigation(options)) return;
 
   useIDEStore.getState().requestEditorNavigation(file.id, line, column);
 }

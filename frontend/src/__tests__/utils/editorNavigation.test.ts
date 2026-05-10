@@ -9,6 +9,16 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 
 const mockReadFile = ReadFile as jest.MockedFunction<typeof ReadFile>;
 
+function createReadFileResult(content: string) {
+  return {
+    content,
+    encoding: 'utf-8',
+    lineEndings: 'LF',
+    size: content.length,
+    isBinary: false,
+  };
+}
+
 beforeEach(() => {
   useIDEStore.setState(useIDEStore.getInitialState());
   jest.clearAllMocks();
@@ -35,12 +45,7 @@ describe('ensureEditorFileOpen', () => {
   });
 
   it('reads and opens a new file', async () => {
-    mockReadFile.mockResolvedValue({
-      content: 'hello world',
-      encoding: 'utf-8',
-      lineEndings: 'LF',
-      isBinary: false,
-    } as never);
+    mockReadFile.mockResolvedValue(createReadFileResult('hello world') as never);
 
     const file = await ensureEditorFileOpen('/test/new.ts');
     expect(file).not.toBeNull();
@@ -73,12 +78,7 @@ describe('ensureEditorFileOpen', () => {
   });
 
   it('stores new files using the native path form', async () => {
-    mockReadFile.mockResolvedValue({
-      content: 'const x = 1;',
-      encoding: 'utf-8',
-      lineEndings: 'LF',
-      isBinary: false,
-    } as never);
+    mockReadFile.mockResolvedValue(createReadFileResult('const x = 1;') as never);
 
     const inputPath = 'c:/Users/dev/project/file.ts';
     const file = await ensureEditorFileOpen(inputPath);
@@ -116,12 +116,7 @@ describe('ensureEditorFileOpen', () => {
 
 describe('navigateToEditorLocation', () => {
   it('opens file and requests navigation', async () => {
-    mockReadFile.mockResolvedValue({
-      content: 'line1\nline2\nline3',
-      encoding: 'utf-8',
-      lineEndings: 'LF',
-      isBinary: false,
-    } as never);
+    mockReadFile.mockResolvedValue(createReadFileResult('line1\nline2\nline3') as never);
 
     await navigateToEditorLocation('/test/file.ts', 2, 5);
 
@@ -138,6 +133,28 @@ describe('navigateToEditorLocation', () => {
 
     await navigateToEditorLocation('/test/missing.ts', 1, 1);
 
+    expect(useIDEStore.getState().pendingEditorNavigation).toBeNull();
+  });
+
+  it('does not open or navigate when shouldApply turns false while reading', async () => {
+    useIDEStore.setState({ workspace: { name: 'Workspace A', path: '/workspace-a' } });
+    let resolveRead!: (value: ReturnType<typeof createReadFileResult>) => void;
+    mockReadFile.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        })
+    );
+
+    const navigation = navigateToEditorLocation('/workspace-a/file.ts', 2, 5, {
+      shouldApply: () => useIDEStore.getState().workspace?.path === '/workspace-a',
+    });
+
+    useIDEStore.setState({ workspace: { name: 'Workspace B', path: '/workspace-b' } });
+    resolveRead(createReadFileResult('line1\nline2'));
+    await navigation;
+
+    expect(useIDEStore.getState().openFiles).toHaveLength(0);
     expect(useIDEStore.getState().pendingEditorNavigation).toBeNull();
   });
 

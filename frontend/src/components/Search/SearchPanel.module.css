@@ -1,0 +1,355 @@
+/* ═══════════════════════════════════════════════════════════════
+   Search Panel — Workspace-wide search results
+═══════════════════════════════════════════════════════════════ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--font-ui);
+}
+
+/* Header row: input + clear button + options toggles */
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  flex-shrink: 0;
+}
+
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input {
+  flex: 1;
+  width: 100%;
+  padding: 6px 28px 6px 10px;
+  background: var(--surface-base);
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:focus,
+.input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.input.invalid {
+  border-color: var(--status-error);
+}
+
+.input.invalid:focus,
+.input.invalid:focus-visible {
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3);
+}
+
+.clearButton {
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.clearButton:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.clearButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.options {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.optionToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.optionToggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.optionToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.optionToggle[aria-pressed='true'] {
+  background: var(--accent-dim);
+  border-color: var(--accent-glow);
+  color: var(--accent);
+}
+
+/* Summary row (match count, duration, truncation) */
+.summary {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--surface-border-subtle);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary.truncated {
+  color: var(--status-warning);
+}
+
+/* Results scroller */
+.resultsScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.resultsList {
+  padding: 2px 0;
+}
+
+/* File group header */
+.fileHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 10px 3px 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+
+.fileHeader:hover {
+  background: var(--surface-hover);
+}
+
+.fileHeader:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.fileHeader.focused {
+  background: var(--surface-hover);
+}
+
+.chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.filePath {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fileName {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 60%;
+}
+
+.fileDir {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* direction:rtl + text-align:left right-anchors the string so very long
+     paths ellipsize on the LEFT, keeping the deepest folder visible. The
+     <bdi dir="ltr"> wrapper isolates internal text direction so slashes
+     and any non-ASCII path segments don't re-order across bidi neutrals. */
+  direction: rtl;
+  text-align: left;
+  min-width: 0;
+}
+
+.matchCount {
+  flex-shrink: 0;
+  padding: 0 5px;
+  background: var(--surface-elevated);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  line-height: 16px;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* Result rows (a line match) */
+.resultRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 10px 2px 26px;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background var(--transition);
+}
+
+.resultRow:hover {
+  background: var(--surface-hover);
+}
+
+.resultRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.resultRow.focused {
+  background: var(--surface-hover);
+}
+
+.lineNumber {
+  flex-shrink: 0;
+  min-width: 36px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+  user-select: none;
+}
+
+.lineText {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.match {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
+/* Empty / error states */
+.statePanel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  gap: 6px;
+}
+
+.statePanel.error {
+  color: var(--status-error);
+}
+
+.statePanel.warning {
+  color: var(--status-warning);
+}
+
+.statePanelTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.statePanel.error .statePanelTitle {
+  color: var(--status-error);
+}
+
+.statePanel.warning .statePanelTitle {
+  color: var(--status-warning);
+}
+
+.loadingDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}

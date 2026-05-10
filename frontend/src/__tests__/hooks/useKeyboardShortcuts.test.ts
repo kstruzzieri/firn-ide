@@ -1,6 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { getPlatform } from '../../utils/platform';
 import { useIDEStore } from '../../stores/ideStore';
+import { useSearchStore } from '../../stores/searchStore';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
@@ -28,6 +29,17 @@ function modifierKeyEvent(key: string): KeyboardEvent {
     ctrlKey: !isMac,
     metaKey: isMac,
     bubbles: true,
+  });
+}
+
+function searchShortcutEvent(): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key: 'f',
+    ctrlKey: !isMac,
+    metaKey: isMac,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
   });
 }
 
@@ -114,6 +126,80 @@ describe('useKeyboardShortcuts', () => {
     expect(useIDEStore.getState().navigationForward).toEqual([
       { fileId: '/current.ts', line: 12, column: 8 },
     ]);
+  });
+
+  describe('search shortcut', () => {
+    beforeEach(() => {
+      useSearchStore.setState({
+        query: '',
+        options: { regex: false, caseSensitive: false, wholeWord: false },
+        uiState: { kind: 'no-workspace' },
+        expandedFiles: new Set<string>(),
+        activeRequestId: null,
+        focusInputRevision: 0,
+      });
+    });
+
+    it('switches the sidebar to search and bumps focusInputRevision', async () => {
+      useIDEStore.setState({
+        activeSidebarView: 'explorer',
+        isLeftPanelCollapsed: false,
+      });
+      renderHook(() => useKeyboardShortcuts());
+
+      const event = searchShortcutEvent();
+      await act(async () => {
+        window.dispatchEvent(event);
+      });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(useIDEStore.getState().activeSidebarView).toBe('search');
+      expect(useSearchStore.getState().focusInputRevision).toBe(1);
+    });
+
+    it('expands the left panel if it was collapsed', async () => {
+      useIDEStore.setState({
+        activeSidebarView: 'search',
+        isLeftPanelCollapsed: true,
+      });
+      renderHook(() => useKeyboardShortcuts());
+
+      await act(async () => {
+        window.dispatchEvent(searchShortcutEvent());
+      });
+
+      expect(useIDEStore.getState().isLeftPanelCollapsed).toBe(false);
+    });
+
+    it('leaves the left panel expanded if already open', async () => {
+      useIDEStore.setState({
+        activeSidebarView: 'search',
+        isLeftPanelCollapsed: false,
+      });
+      renderHook(() => useKeyboardShortcuts());
+
+      await act(async () => {
+        window.dispatchEvent(searchShortcutEvent());
+      });
+
+      expect(useIDEStore.getState().isLeftPanelCollapsed).toBe(false);
+      expect(useSearchStore.getState().focusInputRevision).toBe(1);
+    });
+
+    it('does not trigger on plain "f" or modifier+F without Shift', async () => {
+      renderHook(() => useKeyboardShortcuts());
+
+      await act(async () => {
+        window.dispatchEvent(modifierKeyEvent('f'));
+      });
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'f', shiftKey: true, bubbles: true })
+        );
+      });
+
+      expect(useSearchStore.getState().focusInputRevision).toBe(0);
+    });
   });
 
   it('should not handle navigation shortcuts that were already handled', async () => {
