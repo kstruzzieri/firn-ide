@@ -5,6 +5,7 @@ import { IDEShell } from './components/layout';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
+import { SearchPanel } from './components/Search';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
 import { RunProfiles } from './components/RunProfiles';
@@ -18,7 +19,8 @@ import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
-import { useWorkspace, useIDEStore } from './stores/ideStore';
+import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
+import { useWorkspace, useIDEStore, useSidebarView } from './stores/ideStore';
 import { ReadDirectory, ReadFile } from '../wailsjs/go/main/App';
 import type { FileEvent } from './types/watcher';
 
@@ -31,7 +33,11 @@ function App() {
   useLSPDocumentSync();
   useLSPEvents();
   useRecentWorkspaces();
+  // Mount workspace-search wiring once at the App level so the in-flight
+  // request guards (workspace switch, unmount) survive panel toggling.
+  useWorkspaceSearch();
   const workspace = useWorkspace();
+  const sidebarView = useSidebarView();
   useRunProfilesLoader(workspace?.path);
 
   const refreshDirectoryTree = useCallback(() => {
@@ -126,7 +132,7 @@ function App() {
         accent="project"
         header={<Header />}
         sidebar={<Sidebar />}
-        leftPanel={<FileExplorer />}
+        leftPanel={sidebarView === 'search' ? <SearchPanel /> : <FileExplorer />}
         centerPanel={<Editor />}
         bottomPanel={<Terminal />}
         rightPanel={<RunProfiles />}

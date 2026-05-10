@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useOpenFolder } from './useOpenFolder';
 import { isMac } from '../utils/platform';
 import { useIDEStore, type NavigationLocation } from '../stores/ideStore';
+import { useSearchStore } from '../stores/searchStore';
 import { navigateToEditorLocation } from '../utils/editorNavigation';
 
 /**
@@ -22,6 +23,23 @@ export function useKeyboardShortcuts() {
       if (modifier && e.key === 'o') {
         e.preventDefault();
         openFolder();
+        return;
+      }
+
+      // Cmd+Shift+F / Ctrl+Shift+F — Workspace search.
+      // Switch the sidebar to the search view, expand the left panel if it's
+      // collapsed, then request input focus. Compare key case-insensitively
+      // because Shift modifies the printed key on some layouts.
+      if (modifier && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        const ide = useIDEStore.getState();
+        if (ide.activeSidebarView !== 'search') {
+          ide.setSidebarView('search');
+        }
+        if (ide.isLeftPanelCollapsed) {
+          ide.toggleLeftPanel();
+        }
+        useSearchStore.getState().requestInputFocus();
         return;
       }
 
