@@ -57,8 +57,9 @@ function fireCancelSearch(requestId: string): void {
  *     SearchWorkspace, so rapid typing collapses into one request
  *   - assign each fired request a unique RequestID; drop stale responses by
  *     comparing against the store's activeRequestId
- *   - on workspace switch or unmount, fire CancelSearch(activeRequestId) so
- *     the backend ripgrep process is reaped instead of running to completion
+ *   - on query/option supersession, workspace switch, or unmount, fire
+ *     CancelSearch(activeRequestId) so the backend ripgrep process is reaped
+ *     instead of running to completion
  *   - keep ideStore.workspace and searchStore in sync: empty query → empty
  *     state, no workspace → no-workspace state
  *
@@ -72,17 +73,29 @@ export function useWorkspaceSearch(): void {
   useEffect(() => {
     let debounceTimer: number | null = null;
     let searchGeneration = 0;
+    const canceledRequestIds = new Set<string>();
 
-    const clearPendingSearch = () => {
+    const cancelActiveSearch = () => {
+      const activeRequestId = useSearchStore.getState().activeRequestId;
+      if (!activeRequestId || canceledRequestIds.has(activeRequestId)) return;
+      canceledRequestIds.add(activeRequestId);
+      fireCancelSearch(activeRequestId);
+    };
+
+    const clearPendingSearch = (cancelActive: boolean) => {
       searchGeneration += 1;
       if (debounceTimer) {
         window.clearTimeout(debounceTimer);
         debounceTimer = null;
       }
+      if (cancelActive) cancelActiveSearch();
     };
 
     const scheduleSearch = () => {
-      clearPendingSearch();
+      // Query/option changes supersede any active backend search. Stale
+      // responses are still guarded by generation in case cancellation races
+      // with a response already on its way back from Wails.
+      clearPendingSearch(true);
 
       const workspacePath = useIDEStore.getState().workspace?.path ?? null;
       const { query, options } = useSearchStore.getState();
@@ -135,11 +148,7 @@ export function useWorkspaceSearch(): void {
       const previousWorkspacePath = prevState.workspace?.path ?? null;
       if (workspacePath === previousWorkspacePath) return;
 
-      clearPendingSearch();
-
-      const activeRequestId = useSearchStore.getState().activeRequestId;
-      if (activeRequestId) fireCancelSearch(activeRequestId);
-
+      clearPendingSearch(true);
       useSearchStore.getState().resetForWorkspace(workspacePath);
     });
 
@@ -151,12 +160,9 @@ export function useWorkspaceSearch(): void {
     scheduleSearch();
 
     return () => {
-      clearPendingSearch();
+      clearPendingSearch(true);
       unsubscribeWorkspace();
       unsubscribeSearch();
-
-      const activeRequestId = useSearchStore.getState().activeRequestId;
-      if (activeRequestId) fireCancelSearch(activeRequestId);
     };
   }, []);
 }
