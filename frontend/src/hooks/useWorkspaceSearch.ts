@@ -98,9 +98,9 @@ export function useWorkspaceSearch(): void {
   }, []);
 
   // Main debounced search effect. Re-runs whenever the workspace, query, or
-  // options change. Stale debounced supersessions are dropped by RequestID;
-  // we deliberately do not fire CancelSearch on debounce-supersession because
-  // the backend run usually finishes within the next debounce window.
+  // options change. Stale debounced supersessions are dropped by RequestID,
+  // and any request that already reached the backend is canceled during
+  // cleanup so only the latest active query keeps a ripgrep process alive.
   useEffect(() => {
     const trimmedQuery = query.trim();
 
@@ -115,11 +115,13 @@ export function useWorkspaceSearch(): void {
     }
 
     let canceled = false;
+    let started = false;
     const requestId = `search-${Date.now()}-${++requestCounter.current}`;
 
     const timer = window.setTimeout(() => {
       if (canceled) return;
 
+      started = true;
       useSearchStore.getState().beginSearch(requestId);
 
       const request = new search.SearchRequest({
@@ -145,6 +147,9 @@ export function useWorkspaceSearch(): void {
     return () => {
       canceled = true;
       window.clearTimeout(timer);
+      if (started && useSearchStore.getState().activeRequestId === requestId) {
+        fireCancelSearch(requestId);
+      }
     };
   }, [options, query, workspacePath]);
 }

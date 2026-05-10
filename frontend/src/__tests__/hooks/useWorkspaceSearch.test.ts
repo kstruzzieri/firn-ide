@@ -248,6 +248,60 @@ describe('useWorkspaceSearch', () => {
     expect(useSearchStore.getState().uiState.kind).toBe('no-matches');
   });
 
+  it('cancels an in-flight request when the query changes', async () => {
+    setWorkspace('/workspace');
+    mockSearchWorkspace.mockImplementation(() => new Promise<SearchResponse>(() => {}));
+    renderHook(() => useWorkspaceSearch());
+
+    await typeAndDebounce('alpha');
+    const firstRequestId = useSearchStore.getState().activeRequestId;
+    expect(firstRequestId).not.toBeNull();
+
+    act(() => {
+      useSearchStore.getState().setQuery('beta');
+    });
+
+    expect(mockCancelSearch).toHaveBeenCalledWith(firstRequestId);
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await flushMicrotasks();
+
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(2);
+    expect(mockSearchWorkspace.mock.calls[1][0].query).toBe('beta');
+    expect(useSearchStore.getState().activeRequestId).toBe(
+      mockSearchWorkspace.mock.calls[1][0].requestId
+    );
+  });
+
+  it('cancels an in-flight request when search options change', async () => {
+    setWorkspace('/workspace');
+    mockSearchWorkspace.mockImplementation(() => new Promise<SearchResponse>(() => {}));
+    renderHook(() => useWorkspaceSearch());
+
+    await typeAndDebounce('alpha');
+    const firstRequestId = useSearchStore.getState().activeRequestId;
+    expect(firstRequestId).not.toBeNull();
+
+    act(() => {
+      useSearchStore.getState().setOption('regex', true);
+    });
+
+    expect(mockCancelSearch).toHaveBeenCalledWith(firstRequestId);
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await flushMicrotasks();
+
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(2);
+    expect(mockSearchWorkspace.mock.calls[1][0].query).toBe('alpha');
+    expect(mockSearchWorkspace.mock.calls[1][0].options.regex).toBe(true);
+  });
+
   it('cancels the in-flight request when the workspace switches', async () => {
     setWorkspace('/workspace-a');
     mockSearchWorkspace.mockImplementation(
@@ -294,7 +348,35 @@ describe('useWorkspaceSearch', () => {
     await flushMicrotasks();
 
     expect(mockSearchWorkspace).not.toHaveBeenCalled();
+    expect(mockCancelSearch).not.toHaveBeenCalled();
     expect(useSearchStore.getState().uiState).toEqual({ kind: 'empty-query' });
+  });
+
+  it('cancels the in-flight request when the user clears the query', async () => {
+    setWorkspace('/workspace');
+    mockSearchWorkspace.mockImplementation(() => new Promise<SearchResponse>(() => {}));
+    renderHook(() => useWorkspaceSearch());
+
+    await typeAndDebounce('alpha');
+    const inflightRequestId = useSearchStore.getState().activeRequestId;
+    expect(inflightRequestId).not.toBeNull();
+
+    act(() => {
+      useSearchStore.getState().setQuery('');
+    });
+    await flushMicrotasks();
+
+    expect(mockCancelSearch).toHaveBeenCalledWith(inflightRequestId);
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(1);
+    expect(useSearchStore.getState().uiState).toEqual({ kind: 'empty-query' });
+    expect(useSearchStore.getState().activeRequestId).toBeNull();
+
+    act(() => {
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await flushMicrotasks();
+
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(1);
   });
 
   it('routes a SearchWorkspace rejection to failSearch with the error message', async () => {
