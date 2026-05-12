@@ -400,12 +400,12 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 		return nil, fmt.Errorf("invalid workspace path %q: %w", key.workspace, err)
 	}
 	if err := client.Initialize(ctx, rootURI, config.InitOptions); err != nil {
-		// Include captured server stderr in the error for diagnostics.
+		// Close waits for the child process and stderr copier so diagnostics are complete.
+		transport.Close()
 		errMsg := err.Error()
 		if stderr := transport.Stderr(); stderr != "" {
 			errMsg = fmt.Sprintf("%s (server stderr: %s)", errMsg, strings.TrimSpace(stderr))
 		}
-		transport.Close()
 		m.emitStatus(key.family, key.workspace, "error", errMsg, config.Command)
 		return nil, fmt.Errorf("initialize %s: %s", config.Command, errMsg)
 	}
