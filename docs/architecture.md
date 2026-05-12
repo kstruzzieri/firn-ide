@@ -48,21 +48,28 @@ Firn IDE uses a hybrid architecture: a **Go backend** for system operations and 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
 | `IDEShell` | `components/layout/` | Main layout container with panels |
-| `Header` | `components/Header/` | Logo, workspace selector, search |
+| `Header` | `components/Header/` | Logo, workspace/recent-project selector, search trigger |
 | `Sidebar` | `components/Sidebar/` | Navigation icons (Explorer, Search, Git, Run) |
 | `FileExplorer` | `components/FileExplorer/` | File tree navigation |
 | `Editor` | `components/Editor/` | CodeMirror 6 code editor |
+| `SearchPanel` | `components/Search/` | Workspace-wide ripgrep search UI |
 | `Terminal` | `components/Terminal/` | Integrated terminal panel |
 | `RunProfiles` | `components/RunProfiles/` | Build/run configurations |
+| `RunOutput` | `components/RunOutput/` | Streaming run output views |
 | `StatusBar` | `components/StatusBar/` | Git branch, cursor position, diagnostics |
 
 ### Backend Components
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| `App` | `app.go` | Main application struct, Wails lifecycle |
-| `FileSystem` | `interfaces.go` | File operations interface (mockable) |
-| `ProcessManager` | `interfaces.go` | Process management interface (mockable) |
+| `App` | `app.go` | Main application struct, Wails lifecycle and bindings |
+| `filesystem` | `internal/filesystem/` | Directory reads, file reads/writes, metadata, encodings |
+| `watcher` | `internal/watcher/` | fsnotify-based file watching with debounce |
+| `workspace` | `internal/workspace/` | Workspace state persistence and recent projects |
+| `runprofile` | `internal/runprofile/` | Profile detection, persistence, execution, output streaming |
+| `terminal` | `internal/terminal/` | PTY session management |
+| `lsp` | `internal/lsp/` | LSP client, stdio transport, registry, URI handling |
+| `search` | `internal/search/` | ripgrep runner, JSON parser, cancellation, typed results |
 
 ## Data Flow
 
@@ -92,19 +99,20 @@ Data flows through the application in a unidirectional pattern:
 2. Component calls `useIDEStore().openFile(fileData)`
 3. Zustand store updates `openFiles` and `activeFileId`
 4. `Editor` component re-renders with new file
-5. (Future) Wails binding reads file content from Go backend
+5. `ensureEditorFileOpen` reads file content from Go via Wails when needed
 
-### Example: Getting Workspace Info
+### Example: Workspace Search
 
-1. Application starts
-2. React calls `window.go.main.App.GetWorkspaceInfo()`
-3. Wails runtime invokes Go method
-4. Go backend returns `WorkspaceInfo` struct
-5. React receives JavaScript object with `name` and `path`
+1. User presses Cmd+Shift+F or opens the Search sidebar
+2. `useWorkspaceSearch` debounces query/options from `searchStore`
+3. React calls `SearchWorkspace` through Wails
+4. Go runs `rg --json` with explicit arguments and cancellation
+5. Parsed file/match results are stored in `searchStore`
+6. `SearchPanel` renders grouped results and opens matches through the editor navigation flow
 
 ## State Management
 
-Firn uses **Zustand** for state management with a single store pattern.
+Firn uses **Zustand** for state management. `ideStore` owns the main IDE/session state, while focused stores such as `lspStore` and `searchStore` own feature-specific state that should not live as derived counters or duplicated data in `ideStore`.
 
 ### Store Structure
 
@@ -114,7 +122,7 @@ Firn uses **Zustand** for state management with a single store pattern.
 interface IDEState {
   // Workspace
   workspace: WorkspaceInfo | null;
-  isLoading: boolean;
+  isLoadingTree: boolean;
 
   // Sidebar
   activeSidebarView: 'explorer' | 'search' | 'git' | 'run';
@@ -126,14 +134,18 @@ interface IDEState {
 
   // Terminal
   activeTerminalTab: 'terminal' | 'output' | 'problems';
-  workingDirectory: string;
+  terminalSessions: TerminalSession[];
+
+  // Run profiles
+  runProfiles: RunProfile[];
+  runOutputs: Record<string, RunOutputState>;
 
   // Status
   gitBranch: string;
-  errorCount: number;
-  warningCount: number;
 }
 ```
+
+Diagnostics live in `lspStore` as a full URI -> diagnostics map. Error/warning/info counts are derived selector hooks, not separately maintained status fields.
 
 ### Selector Hooks
 
@@ -161,8 +173,10 @@ const workspace = useIDEStore(state => state.workspace);
 | `useCursorPosition()` | Cursor line/column |
 | `useTerminalTab()` | Active terminal tab |
 | `useGitBranch()` | Current git branch |
-| `useErrorCount()` | Number of errors |
-| `useWarningCount()` | Number of warnings |
+| `useRunProfiles()` | Run profile list |
+| `useLSPErrorCount()` | Derived LSP error count |
+| `useLSPWarningCount()` | Derived LSP warning count |
+| `useLSPInfoCount()` | Derived LSP info/hint count |
 
 ### Actions
 
@@ -185,12 +199,12 @@ store.setFileModified(fileId, true);
 
 // Terminal
 store.setTerminalTab('output');
-store.setWorkingDirectory('/path/to/dir');
 
 // Status
 store.setGitBranch('main');
-store.setDiagnostics(2, 5);
 ```
+
+For LSP diagnostics and workspace search state, use `lspStore` and `searchStore` actions rather than adding parallel counters or result state to `ideStore`.
 
 ## Adding New Features
 
