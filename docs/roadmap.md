@@ -23,11 +23,11 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Infrastructure | **COMPLETE** | #28-32 |
 | Milestone 1: Core File Operations | **COMPLETE** | #3-9 |
 | UI/UX Polish | **COMPLETE** | #35-36 |
-| Milestone 2: Terminal Integration | **COMPLETE** | #10-12, #47 |
-| Milestone 3: Workspace Management | **IN PROGRESS** | #13-15, #53, #54 |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16-18 |
-| Milestone 5: Language Server Protocol | Not started | #19-22 |
-| Milestone 6: Search | Not started | #23-25 |
+| Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
+| Milestone 3: Workspace Management | **IN PROGRESS** | #13-15 complete, #53-54 open |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-61 complete; #17-18, #62-64, #71 open |
+| Milestone 5: Language Server Protocol | **IN PROGRESS** | #19, #21-22, #73 complete; #20, #74-76 open |
+| Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
 | Performance | Not started | #37-39 |
 | Dependency Upgrades | **COMPLETE** | #40 |
@@ -35,6 +35,16 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Accessibility | Not started | #43 |
 | Future Features | Not started | #44-46 |
 | Bug Fixes | Not started | #33-34 |
+
+---
+
+## Next Priorities
+
+1. **#20: Finish TypeScript project-root detection** — the LSP TypeScript path is functional, but this ticket still requires nearest `tsconfig.json`, `jsconfig.json`, or `package.json` root resolution rather than only using the active workspace root.
+2. **#62: Run Profiles - Clickable Error Links** — parse common `file:line:col` output formats and jump from run output to source.
+3. **#64: Run Profiles - Environment Variants** — complete `ActiveVariant` env-file resolution and add the frontend variant selector.
+4. **#63: Run Profiles - Compound Profile Execution** — add sequential step execution, stop-on-failure, and per-step UI.
+5. **#53 then #54: Workspace Identity and File Tree Views** — workspace definitions, active accent, selector, then Project/Workspace tree modes.
 
 ---
 
@@ -63,7 +73,7 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 
 ---
 
-## Milestone 2: Terminal Integration (COMPLETE)
+## Milestone 2: Terminal Integration (IN PROGRESS)
 
 ### #10: Terminal - PTY Backend ✅
 - [x] Create PTY session with shell (bash/zsh)
@@ -103,16 +113,16 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 - [x] Load selected folder into file explorer
 - [x] Update window title with folder name
 
-### #14: Workspace - Persistence
-- [ ] Save/restore open files, cursor positions, scroll state
-- [ ] Save panel sizes and layout
-- [ ] Save active workspace/folder
-- [ ] Store in `~/.firn/workspaces/`
+### #14: Workspace - Persistence ✅
+- [x] Save/restore open files, cursor positions, scroll state
+- [x] Save panel sizes and layout
+- [x] Save active workspace/folder
+- [x] Store in `~/.firn/workspaces/`
 
-### #15: Workspace - Recent Projects
-- [ ] Store last 10 opened folders
-- [ ] Display in welcome screen and File menu
-- [ ] Click to reopen project
+### #15: Workspace - Recent Projects ✅
+- [x] Store recent opened folders
+- [x] Display in workspace menu
+- [x] Click to reopen project
 
 ### #53: Workspace - Identity & Accent System (NEW)
 Defines workspace identity: type, accent color, and how workspaces are configured within a repo.
@@ -150,69 +160,124 @@ Project View (unified) vs Workspace View (focused) with color-coded regions.
 
 ### #17: Run Profiles - Execution Engine [Epic]
 Sub-issues:
-- [ ] #59: Core Process Runner — `os/exec` implementation, env/cwd/envFile, start/stop bindings
-- [ ] #60: Output Streaming — pipe stdout/stderr, Wails events, output panel
-- [ ] #61: Process Lifecycle UI — play/stop/restart controls, state indicators
+- [x] #59: Core Process Runner — `os/exec` implementation, env/cwd/envFile, start/stop bindings
+- [x] #60: Output Streaming — pipe stdout/stderr, Wails events, output panel
+- [x] #61: Process Lifecycle UI — play/stop/restart controls, state indicators
 - [ ] #62: Clickable Error Links — `file:line:col` parsing, jump-to-error
 - [ ] #63: Compound Profile Execution — sequential steps, stop-on-failure
 - [ ] #64: Environment Variants — env file swapping by active variant
 
+### #71: Run Profiles - Activated State, Section Reorganization, and Selection Persistence
+- [ ] Activated profile working set
+- [ ] Reorganize sections into Activated, Pinned, and Detected
+- [ ] Persist activation state per workspace
+- [ ] Header counter with active/total counts
+
 ### #18: Run Profiles - UI Integration
 - [ ] Profile selector dropdown in header toolbar (`[▶ Profile ▾]`)
-- [ ] Play/stop/restart controls
-- [ ] Running status indicator (green dot running, red dot failed)
-- [ ] Output panel with streaming logs and clickable file:line:col
+- [x] Play/stop/restart controls in run profile cards
+- [x] Running status indicators and status badges
+- [x] Output panel with streaming logs
+- [ ] Clickable file:line:col output links
 - [ ] Compound execution view with stage indicators
 - [ ] Environment variant selector (`[env: dev ▾]`)
 - [ ] Edit profile form (create/modify saved profiles)
-- [ ] Profiles grouped by workspace with accent colors (depends on #48)
-- [ ] Status bar: click running profile → opens output panel
+- [ ] Profiles grouped by workspace with accent colors (depends on #53)
+- [x] Status bar / output focus integration for running profiles
 
 > **Design spec ref:** Section 5 (Run Profiles UI)
 
 ---
 
-## Milestone 5: Language Server Protocol
+## Milestone 5: Language Server Protocol (IN PROGRESS)
 
-### #19: LSP - Client Implementation
-- [ ] JSON-RPC 2.0 message handling
-- [ ] Initialize/shutdown lifecycle
-- [ ] textDocument/didOpen, didChange, didSave
-- [ ] Support stdio and TCP transports
+### #74: LSP - Language Intelligence [Epic]
+Epic for Firn's production LSP foundation and TypeScript vertical slice.
+- [x] Backend LSP foundation
+- [x] Frontend document sync
+- [x] Diagnostics UX and Problems panel
+- [x] Completion, hover, and definition UX
+- [ ] TypeScript project-root detection completion (#20)
 
-### #20: LSP - TypeScript Integration
-- [ ] Auto-detect TypeScript projects
-- [ ] Start/stop tsserver appropriately
-- [ ] Diagnostics, hover, go-to-definition
+### #19: LSP - Client Foundation ✅
+- [x] JSON-RPC 2.0 message handling
+- [x] Initialize/shutdown lifecycle
+- [x] `textDocument/didOpen`, `didChange`, `didSave`, `didClose`
+- [x] stdio transport
+- [x] Capability negotiation and storage
+- [x] Path/URI normalization for macOS, Linux, and Windows
+- [x] Crash detection and safe restart behavior
+- [x] Graceful teardown on last document close and app shutdown
+- [x] Request timeout/cancellation plumbing
+- [x] Backend diagnostics, status, and error events
 
-### #21: LSP - Diagnostics Display
-- [ ] Underline errors/warnings in editor
-- [ ] Gutter icons, problems panel
-- [ ] Click to navigate to issue
+### #73: LSP - Frontend Document Sync ✅
+- [x] Send `didOpen` for newly opened/restored editor files
+- [x] Maintain per-file document versions
+- [x] Debounced `didChange` without dropping latest state
+- [x] Send `didSave` after successful save
+- [x] Send `didClose` on tab close and workspace switch
+- [x] Reconnect handling after language-server crash recovery
+- [x] Surface backend LSP status/errors through frontend events
 
-### #22: LSP - Autocomplete
-- [ ] Trigger on typing (configurable)
-- [ ] Display completion items with icons and docs
-- [ ] Insert with Tab/Enter, support snippets
+### #20: LSP - TypeScript Integration (IN PROGRESS)
+- [ ] Auto-detect TypeScript/JavaScript projects by nearest `tsconfig.json`, `jsconfig.json`, or `package.json`
+- [x] Resolve `typescript-language-server` from workspace-local install first, then PATH
+- [x] Launch `typescript-language-server --stdio`
+- [x] Start/stop the server based on open TS/JS documents in the active workspace
+- [x] Route diagnostics, hover, definition, and completion requests through the shared client
+- [x] Surface actionable errors when server startup fails
+
+### #21: LSP - Diagnostics UX & Problems Panel ✅
+- [x] Convert LSP diagnostics into CodeMirror lint diagnostics
+- [x] Editor underlines and lint gutter markers
+- [x] Problems tab grouped by file
+- [x] Click diagnostics to open and position the editor
+- [x] Status bar counts derived from `lspStore`
+- [x] Clear stale diagnostics on workspace switch
+
+### #22: LSP - Completion, Hover & Definition UX ✅
+- [x] CodeMirror completion source backed by LSP completion requests
+- [x] Trigger-character support and non-blocking request behavior
+- [x] Completion details, documentation, and snippets
+- [x] Hover tooltips backed by LSP hover responses
+- [x] F12 and Cmd/Ctrl-click go-to-definition
+- [x] Cross-file definition navigation through the existing editor open flow
+
+### #75: LSP - Go Integration
+- [ ] Auto-detect Go workspaces by nearest `go.mod`
+- [x] Resolve and launch `gopls` through the shared LSP client
+- [x] Use shared diagnostics, hover, definition, and completion plumbing
+- [ ] Handle multi-module edge cases explicitly
+
+### #76: LSP - Python Integration
+- [ ] Auto-detect Python projects by nearest `pyproject.toml`, `requirements.txt`, or `setup.py`
+- [ ] Resolve `pyright-langserver` from active virtual environment before PATH
+- [x] Resolve and launch `pyright-langserver --stdio` through the shared LSP client
+- [x] Use shared diagnostics, hover, definition, and completion plumbing
 
 ---
 
-## Milestone 6: Search
+## Milestone 6: Search (COMPLETE)
 
-### #23: Search - ripgrep Integration
-- [ ] Call rg binary with search parameters
-- [ ] Parse structured results, respect .gitignore
-- [ ] Support regex, case sensitivity, whole word
+### #23: Search - ripgrep Integration ✅
+- [x] Call `rg` with structured arguments
+- [x] Parse JSON results and respect ignore files
+- [x] Support regex, case sensitivity, and whole word
+- [x] Typed statuses for no matches, missing tool, invalid regex, canceled, and failed
 
-### #24: Search - UI Panel
-- [ ] Search input with options (regex, case, whole word)
-- [ ] Results grouped by file with context
-- [ ] Click result to open file at location (Cmd+Shift+F)
+### #24: Search - UI Panel ✅
+- [x] Search input with regex, case, and whole-word toggles
+- [x] Results grouped by file with context and highlights
+- [x] Cmd+Shift+F opens workspace search
+- [x] Click result to open the file at the match location
+- [x] Keyboard navigation and robust loading/error states
 
-### #25: Search - Find in File
-- [ ] Cmd+F opens search bar in editor
-- [ ] Highlight all matches, navigate between
-- [ ] Replace and Replace All, regex support
+### #25: Search - Find in File ✅
+- [x] Cmd+F opens CodeMirror's in-file search panel
+- [x] Highlight all matches and navigate between them
+- [x] Replace and Replace All through CodeMirror search
+- [x] Regex support
 
 ---
 
@@ -299,7 +364,7 @@ Service Adapter Pattern for connecting to external backends.
 ## Bug Fixes
 
 ### #33: Window Dragging Not Working
-Window cannot be dragged from header area on macOS.
+Likely fixed in code via Wails macOS titlebar configuration and `--wails-draggable: drag` on the header; keep open until verified in a packaged macOS app smoke test.
 
 ### #34: Add Button Type Attributes
 Missing explicit `type` attributes on non-submit buttons.

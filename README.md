@@ -43,9 +43,9 @@ Firn uses [Wails](https://wails.io) (Go backend + system WebView) instead of Ele
 
 The trade-off: Fewer npm packages that rely on Node.js APIs work out-of-the-box. Worth it for a lightweight, fast IDE.
 
-### AI Integration
+### Future AI Integration
 
-Built-in AI assistant panel with:
+The roadmap includes a built-in AI assistant panel with:
 - Context-aware code assistance (current file, selection, workspace)
 - Multiple provider support (Claude, OpenAI, local Ollama)
 - Diff preview before applying suggested changes
@@ -66,7 +66,8 @@ Built-in AI assistant panel with:
 │  │  • Run Profiles │              │  • Run Profile Cards    │  │
 │  │  • PTY Terminal │              │  • Panel System         │  │
 │  │  • Workspace    │              │  • Run Output Views     │  │
-│  │  • Git Ops      │              │  • Theme Engine         │  │
+│  │  • LSP Client   │              │  • LSP Editor UX        │  │
+│  │  • ripgrep      │              │  • Search UI            │  │
 │  └─────────────────┘              └─────────────────────────┘  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -79,8 +80,8 @@ Built-in AI assistant panel with:
 | State | Zustand |
 | Editor | CodeMirror 6 |
 | File Watching | fsnotify with debounce |
-| Language Intelligence | LSP per workspace (planned) |
-| Search | ripgrep (planned) |
+| Language Intelligence | LSP per active workspace |
+| Search | ripgrep workspace search + CodeMirror in-file search |
 
 ### Performance Targets
 
@@ -100,6 +101,8 @@ Built-in AI assistant panel with:
 - [x] `WriteFile` — content writing with encoding preservation
 - [x] File system watcher — real-time external change detection with debounced events
 - [x] Workspace store — open folder, persistence, recent projects
+- [x] LSP client foundation — JSON-RPC framing, stdio transport, lifecycle, crash recovery, diagnostics/status events
+- [x] Search backend — ripgrep JSON parsing, cancellation, typed errors, and result caps
 
 **Run Profiles (Go + React)**
 - [x] Auto-detection from package.json, go.mod, Makefile, pyproject.toml, docker-compose
@@ -128,6 +131,21 @@ Built-in AI assistant panel with:
 - [x] Status bar (cursor position, language, git branch)
 - [x] Toast notification system
 
+**Language Intelligence**
+- [x] Frontend document sync (`didOpen`, debounced `didChange`, `didSave`, `didClose`)
+- [x] TypeScript/JavaScript LSP vertical slice through `typescript-language-server --stdio`
+- [x] Diagnostics underlines, gutter markers, Problems panel, and status-bar counts
+- [x] Completion source with trigger characters, detail/docs, and snippet support
+- [x] Hover tooltips and go-to-definition (`F12`, Cmd/Ctrl-click)
+- [x] Shared registry entries for Go (`gopls`) and Python (`pyright-langserver`)
+
+**Search**
+- [x] Workspace-wide ripgrep search with regex, case, and whole-word options
+- [x] Results grouped by file with highlighted matches and keyboard navigation
+- [x] Cmd+Shift+F opens workspace search
+- [x] Click result to open the file at the match location
+- [x] In-file find/replace through CodeMirror search (`Cmd+F`)
+
 **Terminal Integration**
 - [x] PTY backend — shell sessions with bidirectional I/O and ANSI support
 - [x] xterm.js frontend — themed terminal with Firn Glacier colors
@@ -142,11 +160,12 @@ Built-in AI assistant panel with:
 
 ### Planned
 
-- [ ] LSP client integration
+- [ ] Complete TypeScript project-root detection for nearest `tsconfig.json`, `jsconfig.json`, or `package.json`
 - [ ] Git integration
-- [ ] Search with ripgrep
+- [ ] Run output clickable `file:line:col` links
+- [ ] Run Profile environment variants and compound execution
+- [ ] Workspace identity and Project/Workspace file tree views
 - [ ] AI Chat Panel
-- [ ] Clickable file:line:col links in output (jump to source from errors)
 
 ## Project Structure
 
@@ -156,7 +175,9 @@ firn-ide/
 ├── app.go                      # Wails bindings
 ├── internal/
 │   ├── filesystem/             # File read/write/watch
+│   ├── lsp/                    # LSP client, registry, transports, URI handling
 │   ├── runprofile/             # Run profile detection, execution, management
+│   ├── search/                 # ripgrep search runner and parser
 │   ├── terminal/               # PTY session management
 │   ├── watcher/                # FS event watcher
 │   ├── workspace/              # Workspace persistence
@@ -168,6 +189,7 @@ firn-ide/
 │   │   │   ├── FileExplorer/   # File tree navigation
 │   │   │   ├── RunProfiles/    # Run profile cards and panels
 │   │   │   ├── RunOutput/      # Output display (merged, lanes, diff, timeline)
+│   │   │   ├── Search/         # Workspace-wide search
 │   │   │   ├── Terminal/       # xterm.js terminal
 │   │   │   └── layout/         # Panel system, sidebar, header
 │   │   ├── stores/             # Zustand state management
@@ -216,6 +238,13 @@ The [Design Specification](docs/design-specification.md) contains the complete U
 - Keyboard shortcuts
 
 See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked issues.
+
+## Current Priorities
+
+1. Finish TypeScript project-root detection for the remaining LSP integration work.
+2. Add clickable run-output error links.
+3. Complete Run Profile environment variants and compound execution.
+4. Build workspace identity, active workspace accenting, and Project/Workspace tree views.
 
 ## Contributing
 
