@@ -128,18 +128,18 @@ func TestURIToFile_InvalidScheme(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLocalNodeBinPlatformSuffix(t *testing.T) {
-	got := workspaceLocalNodeBin("/workspace", "pyright-langserver")
+func TestProjectLocalNodeBinPlatformSuffix(t *testing.T) {
+	got := projectLocalNodeBin("/workspace", "pyright-langserver")
 	wantSuffix := filepath.Join("node_modules", ".bin", "pyright-langserver")
 	if runtime.GOOS == "windows" {
 		wantSuffix += ".cmd"
 		if !strings.HasSuffix(got, wantSuffix) {
-			t.Fatalf("workspaceLocalNodeBin on Windows = %q, want .cmd suffix", got)
+			t.Fatalf("projectLocalNodeBin on Windows = %q, want .cmd suffix", got)
 		}
 		return
 	}
 
 	if !strings.HasSuffix(got, wantSuffix) {
-		t.Fatalf("workspaceLocalNodeBin = %q, want Unix-style local bin path", got)
+		t.Fatalf("projectLocalNodeBin = %q, want Unix-style local bin path", got)
 	}
 }
