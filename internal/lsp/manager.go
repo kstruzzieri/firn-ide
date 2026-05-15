@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -10,6 +11,11 @@ import (
 	"sync"
 	"time"
 )
+
+// errNoWorkspaceRoot signals that an LSP method was called before
+// SetWorkspaceRoot. Only DidOpen surfaces this to the caller; other entry
+// points treat it as a silent no-op.
+var errNoWorkspaceRoot = errors.New("no workspace root set")
 
 const (
 	// serverShutdownTimeout is the time allowed for a single server to shut down gracefully.
@@ -84,10 +90,21 @@ func NewManager(emitter EventEmitter) *Manager {
 
 // SetWorkspaceRoot updates the active workspace root path.
 // This does NOT shut down existing servers — call ShutdownAll first if switching workspaces.
+//
+// The stored root is cleaned and made absolute. This invariant lets later
+// boundary comparisons (e.g. pathContains for crash-recovery guards) treat
+// the workspace prefix consistently regardless of whether the caller passed
+// a trailing separator or a relative path.
 func (m *Manager) SetWorkspaceRoot(root string) {
+	cleaned := root
+	if root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			cleaned = filepath.Clean(abs)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.workspaceRoot = root
+	m.workspaceRoot = cleaned
 	m.stopped = false
 }
 
@@ -116,12 +133,15 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
 
-	m.mu.Lock()
-	workspace := m.workspaceRoot
-	m.mu.Unlock()
-
-	if workspace == "" {
-		return fmt.Errorf("no workspace root set")
+	workspace, err := m.projectRootForPath(family, path)
+	if err != nil {
+		if errors.Is(err, errNoWorkspaceRoot) {
+			return fmt.Errorf("no workspace root set")
+		}
+		// Path outside the active workspace or otherwise unresolvable: skip
+		// silently so files opened transiently outside the LSP scope (e.g.,
+		// preview of a sibling repo) do not surface noisy errors.
+		return nil
 	}
 
 	entry, err := m.ensureServer(ctx, family, workspace)
@@ -199,8 +219,13 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
 
+	workspace, rerr := m.projectRootForPath(family, path)
+	if rerr != nil {
+		// No workspace, or path outside workspace — no server to close against.
+		return nil
+	}
+
 	m.mu.Lock()
-	workspace := m.workspaceRoot
 	key := serverKey{family: family, workspace: workspace}
 	entry, ok := m.servers[key]
 	if !ok {
@@ -411,7 +436,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 	}
 
 	m.mu.Lock()
-	if m.stopped || m.workspaceRoot != key.workspace {
+	if m.stopped || !pathContains(m.workspaceRoot, key.workspace) {
 		m.mu.Unlock()
 		shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer cancel()
@@ -535,11 +560,12 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 
 	time.Sleep(backoff)
 
-	// After backoff, verify the manager hasn't been shut down and the workspace
-	// hasn't changed. Without this check, ShutdownAll or a workspace switch during
-	// the sleep would still result in a stray server being resurrected.
+	// After backoff, verify the manager hasn't been shut down and the project
+	// root is still inside the active workspace. Without this check, a
+	// ShutdownAll or a workspace switch during the sleep would still result in
+	// a stray server being resurrected.
 	m.mu.Lock()
-	if m.stopped || m.workspaceRoot != key.workspace {
+	if m.stopped || !pathContains(m.workspaceRoot, key.workspace) {
 		m.mu.Unlock()
 		log.Printf("lsp: skipping %s restart — manager stopped or workspace changed", key.family)
 		return
@@ -574,6 +600,8 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 }
 
 // serverForPath finds the server entry responsible for the given file path.
+// For TypeScript-family files the lookup is keyed by the detected project
+// root, so nested packages route to their own server instance.
 func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 	ext := filepath.Ext(path)
 	family := m.registry.FamilyForExtension(ext)
@@ -586,15 +614,61 @@ func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 		return nil, "", serverKey{}
 	}
 
+	workspace, rerr := m.projectRootForPath(family, path)
+	if rerr != nil {
+		return nil, "", serverKey{}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := serverKey{family: family, workspace: m.workspaceRoot}
+	key := serverKey{family: family, workspace: workspace}
 	entry, ok := m.servers[key]
 	if !ok {
 		return nil, "", key
 	}
 	return entry, uri, key
+}
+
+// projectRootForPath returns the workspace key for the given file path.
+// For TypeScript-family files this is the nearest project root found by
+// upward walk (tsconfig.json > jsconfig.json > package.json), bounded by the
+// active workspace. For other families it returns the active workspace root
+// unchanged.
+//
+// Must be called WITHOUT the manager lock held — it performs filesystem
+// stat calls during marker probing.
+//
+// Returns errNoWorkspaceRoot if SetWorkspaceRoot has not been called, or
+// ErrPathOutsideWorkspace (wrapped via ResolveProjectRoot) if the file is
+// outside the active workspace.
+func (m *Manager) projectRootForPath(family, path string) (string, error) {
+	m.mu.Lock()
+	workspace := m.workspaceRoot
+	m.mu.Unlock()
+
+	if workspace == "" {
+		return "", errNoWorkspaceRoot
+	}
+
+	markers := projectRootMarkers(family)
+	if len(markers) == 0 {
+		return workspace, nil
+	}
+	return ResolveProjectRoot(path, workspace, markers)
+}
+
+// projectRootMarkers returns the marker filenames used to detect a project
+// root for the given language family. Returning an empty slice means root
+// detection is disabled for the family and callers should use the active
+// workspace root directly. Go and Python are intentionally not wired up here
+// yet — see issues #75 and #76.
+func projectRootMarkers(family string) []string {
+	switch family {
+	case "typescript":
+		return []string{"tsconfig.json", "jsconfig.json", "package.json"}
+	}
+	return nil
 }
 
 func (m *Manager) logRequestFailure(key serverKey, method string, err error) {
@@ -630,7 +704,7 @@ func (m *Manager) handleNotification(key serverKey, method string, params json.R
 		}
 
 		m.mu.Lock()
-		if m.stopped || m.workspaceRoot != key.workspace {
+		if m.stopped || !pathContains(m.workspaceRoot, key.workspace) {
 			m.mu.Unlock()
 			return
 		}
