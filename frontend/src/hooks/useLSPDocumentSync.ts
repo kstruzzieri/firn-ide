@@ -3,6 +3,7 @@ import { useIDEStore, type EditorFile } from '../stores/ideStore';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { languageIdForFile } from '../utils/lspLanguageId';
 import { filePathToURI } from '../utils/lspUri';
+import { pathContainsOrEquals } from '../stores/lspStore';
 import {
   closeLSPDocument,
   forgetLSPDocument,
@@ -137,8 +138,15 @@ export function useLSPDocumentSync() {
       const reconnectedURIs = payload?.documents;
       if (!reconnectedURIs || reconnectedURIs.length === 0) return;
 
+      // payload.workspace is the server's project root (may be a nested
+      // package), not the active workspace path — use containment so
+      // nested TypeScript project reconnects aren't dropped.
       const activeWorkspace = useIDEStore.getState().workspace?.path;
-      if (payload.workspace && payload.workspace !== activeWorkspace) {
+      if (
+        activeWorkspace &&
+        payload.workspace &&
+        !pathContainsOrEquals(activeWorkspace, payload.workspace)
+      ) {
         return;
       }
 

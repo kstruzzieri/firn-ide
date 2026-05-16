@@ -495,6 +495,50 @@ describe('useLSPDocumentSync', () => {
       expect(mockDidOpen).toHaveBeenCalledTimes(1);
     });
 
+    it('should re-send didOpen when reconnect workspace is a nested project root', async () => {
+      // After PR #95, backend emits payload.workspace as the detected TS
+      // project root (e.g. /repo/packages/ui), not the active workspace
+      // (/repo). Equality-based filtering dropped these events and left
+      // restarted servers with no open documents until the file was reopened.
+      const getReconnectHandler = captureReconnectHandler();
+
+      renderHook(() => useLSPDocumentSync());
+
+      act(() => {
+        openTestFile({
+          id: '/test/workspace/packages/ui/main.ts',
+          name: 'main.ts',
+          path: '/test/workspace/packages/ui/main.ts',
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(1);
+
+      const reconnectHandler = getReconnectHandler();
+      act(() => {
+        reconnectHandler!({
+          workspace: '/test/workspace/packages/ui',
+          documents: ['file:///test/workspace/packages/ui/main.ts'],
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockDidOpen).toHaveBeenCalledTimes(2);
+      expect(mockDidOpen).toHaveBeenLastCalledWith(
+        '/test/workspace/packages/ui/main.ts',
+        'typescript',
+        expect.any(Number),
+        'const x = 1;'
+      );
+    });
+
     it('should match reconnect URIs with percent-encoded Unix paths', async () => {
       const getReconnectHandler = captureReconnectHandler();
 
