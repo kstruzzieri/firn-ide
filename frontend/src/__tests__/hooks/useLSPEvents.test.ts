@@ -266,4 +266,72 @@ describe('useLSPEvents', () => {
 
     cancelFns.forEach((fn) => expect(fn).toHaveBeenCalled());
   });
+
+  // --- Project-root containment (#20) ---
+
+  it('accepts lsp:diagnostics from a project root inside the active workspace', () => {
+    // Backend now emits diagnostics with workspace = detected project root,
+    // which is *inside* the active workspace for TypeScript monorepo files.
+    // The stale-event guard must accept these, not just exact matches.
+    const handlers = captureEventHandlers();
+    setActiveWorkspace('/project');
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:diagnostics']({
+        workspace: '/project/frontend',
+        uri: 'file:///project/frontend/src/App.tsx',
+        diagnostics: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+            severity: 1,
+            message: 'Type error from nested package',
+          },
+        ],
+      });
+    });
+
+    expect(useLSPStore.getState().diagnostics.size).toBe(1);
+  });
+
+  it('accepts lsp:status from a project root inside the active workspace', () => {
+    const handlers = captureEventHandlers();
+    setActiveWorkspace('/project');
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:status']({
+        family: 'typescript',
+        workspace: '/project/frontend',
+        state: 'ready',
+      });
+    });
+
+    const statuses = useLSPStore.getState().serverStatuses;
+    expect(statuses.size).toBe(1);
+    expect(Array.from(statuses.values())[0].workspace).toBe('/project/frontend');
+  });
+
+  it('rejects lsp:diagnostics whose workspace prefix-collides with the active workspace', () => {
+    // /project-other must not be classified as inside /project.
+    const handlers = captureEventHandlers();
+    setActiveWorkspace('/project');
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:diagnostics']({
+        workspace: '/project-other',
+        uri: 'file:///project-other/test.ts',
+        diagnostics: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+            severity: 1,
+            message: 'should not appear',
+          },
+        ],
+      });
+    });
+
+    expect(useLSPStore.getState().diagnostics.size).toBe(0);
+  });
 });

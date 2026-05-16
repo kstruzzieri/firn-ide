@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { useLSPStore } from '../stores/lspStore';
+import { useLSPStore, pathContainsOrEquals } from '../stores/lspStore';
 import { useIDEStore } from '../stores/ideStore';
 import type { LSPDiagnostic, LSPServerStatus } from '../stores/lspStore';
 import { canonicalizeFileURI } from '../utils/lspUri';
@@ -18,9 +18,17 @@ interface ErrorPayload {
   message: string;
 }
 
+/**
+ * Accepts LSP backend events whose `workspace` field is at or inside the
+ * active workspace. TypeScript project-root detection (#20) emits events
+ * keyed by the detected project root, which is a path *inside* the active
+ * workspace; before #20 this was always an exact match. Containment keeps
+ * the stale-event guard correct for both legacy and project-root events.
+ */
 function isActiveWorkspaceEvent(workspace?: string): boolean {
   const activeWorkspace = useIDEStore.getState().workspace?.path;
-  return !activeWorkspace || !workspace || workspace === activeWorkspace;
+  if (!activeWorkspace || !workspace) return true;
+  return pathContainsOrEquals(activeWorkspace, workspace);
 }
 
 /**
