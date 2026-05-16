@@ -221,6 +221,13 @@ func TestPathContains(t *testing.T) {
 		{"/a/b", "/a/bc", false}, // prefix collision must be false
 		{"/a/b", "/a", false},
 		{strings.TrimRight("/a/b/", sep), "/a/b/c", true},
+		// Empty-input guard: an unset workspace must not be classified as
+		// containing every absolute path. Without this guard the crash-
+		// recovery checks in manager.go would resurrect servers after
+		// SetWorkspaceRoot("").
+		{"", "/a/b", false},
+		{"/a/b", "", false},
+		{"", "", false},
 	}
 	for _, tc := range cases {
 		if got := pathContains(tc.parent, tc.child); got != tc.want {

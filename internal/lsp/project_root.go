@@ -86,7 +86,16 @@ func absClean(p string) (string, error) {
 // pathContains reports whether child is at or below parent. Both paths must be
 // absolute and cleaned. Uses a separator-suffixed prefix check so that
 // `/foo/bar` is not treated as a child of `/foo/ba`.
+//
+// Empty inputs are explicitly NOT contained: pathContains("", x) and
+// pathContains(x, "") both return false. This guards manager.go's crash-
+// recovery checks (lines 439, 568, 707) so that a missing workspace root
+// cannot cause the empty-string + leading-slash combination to be classified
+// as containing every absolute path.
 func pathContains(parent, child string) bool {
+	if parent == "" || child == "" {
+		return false
+	}
 	if parent == child {
 		return true
 	}
