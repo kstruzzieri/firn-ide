@@ -49,6 +49,18 @@ type Manager struct {
 	mu      sync.Mutex
 	servers map[serverKey]*serverEntry
 
+	// docKeys maps an open document URI to the serverKey of the server
+	// that owns it. Populated by DidOpen after ensureServer succeeds, used
+	// by serverForPath / DidClose to skip the project-root filesystem walk
+	// on every subsequent call (DidChange, DidSave, Hover, Definition,
+	// Complete, ResolveCompletionItem). Removed when the document's
+	// refCount hits zero.
+	//
+	// The plan explicitly defers hot-migration when a marker appears mid-
+	// session, so caching the resolved root is consistent with the spec:
+	// the next open/reopen picks up the new root.
+	docKeys map[string]serverKey
+
 	// workspaceRoot is the active workspace root path (not URI).
 	workspaceRoot string
 
@@ -85,6 +97,7 @@ func NewManager(emitter EventEmitter) *Manager {
 		registry: NewRegistry(),
 		emitter:  emitter,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 }
 
@@ -157,6 +170,10 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 	} else {
 		entry.openDocs[uri] = &docState{refCount: 1, version: version}
 	}
+	// Cache the resolved key so that DidChange / DidSave / Hover /
+	// Definition / Complete / ResolveCompletionItem can route this URI
+	// without re-walking the filesystem on every keystroke.
+	m.docKeys[uri] = serverKey{family: family, workspace: workspace}
 	m.mu.Unlock()
 
 	// Only send didOpen to the server on the first open
@@ -219,22 +236,27 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
 
-	workspace, rerr := m.projectRootForPath(family, path)
-	if rerr != nil {
-		// No workspace, or path outside workspace — no server to close against.
+	m.mu.Lock()
+	// Use the cached key from DidOpen rather than re-resolving the project
+	// root — the document's owning server is fixed at open time.
+	key, cached := m.docKeys[uri]
+	if !cached {
+		// Document was never opened (or already fully closed). Silent no-op.
+		m.mu.Unlock()
 		return nil
 	}
-
-	m.mu.Lock()
-	key := serverKey{family: family, workspace: workspace}
 	entry, ok := m.servers[key]
 	if !ok {
+		// Server already torn down (workspace switch, crash, etc.). Clean up
+		// the stale cache entry and bail.
+		delete(m.docKeys, uri)
 		m.mu.Unlock()
 		return nil
 	}
 
 	ds, docExists := entry.openDocs[uri]
 	if !docExists {
+		delete(m.docKeys, uri)
 		m.mu.Unlock()
 		return nil
 	}
@@ -242,6 +264,7 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 	ds.refCount--
 	if ds.refCount <= 0 {
 		delete(entry.openDocs, uri)
+		delete(m.docKeys, uri)
 	}
 	shouldShutdown := len(entry.openDocs) == 0
 	m.mu.Unlock()
@@ -602,6 +625,12 @@ func (m *Manager) monitorServer(key serverKey, entry *serverEntry) {
 // serverForPath finds the server entry responsible for the given file path.
 // For TypeScript-family files the lookup is keyed by the detected project
 // root, so nested packages route to their own server instance.
+//
+// Hot-path callers (DidChange/DidSave/Hover/Definition/Complete) call this
+// per keystroke or per request; it MUST avoid filesystem I/O. The cache
+// populated by DidOpen makes the common case a single map lookup. The
+// fallback resolution path runs only for unopened documents, which the
+// existing API contract treats as no-ops anyway.
 func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 	ext := filepath.Ext(path)
 	family := m.registry.FamilyForExtension(ext)
@@ -614,6 +643,24 @@ func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 		return nil, "", serverKey{}
 	}
 
+	m.mu.Lock()
+	if key, cached := m.docKeys[uri]; cached {
+		entry, ok := m.servers[key]
+		if !ok {
+			// Server was torn down out from under the cache — clean up.
+			delete(m.docKeys, uri)
+			m.mu.Unlock()
+			return nil, "", key
+		}
+		m.mu.Unlock()
+		return entry, uri, key
+	}
+	m.mu.Unlock()
+
+	// Fallback for documents that were never DidOpen'd through this manager.
+	// Existing callers (DidChange/DidSave/Hover/etc.) already treat a nil
+	// entry as a silent no-op, so this branch effectively just preserves
+	// "unknown document → no server" semantics rather than crashing.
 	workspace, rerr := m.projectRootForPath(family, path)
 	if rerr != nil {
 		return nil, "", serverKey{}
@@ -621,7 +668,6 @@ func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	key := serverKey{family: family, workspace: workspace}
 	entry, ok := m.servers[key]
 	if !ok {

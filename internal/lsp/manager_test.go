@@ -249,6 +249,7 @@ func TestManager_InitializingServerAbandonedAfterWorkspaceSwitch(t *testing.T) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(oldWorkspace)
 
@@ -513,6 +514,7 @@ func startMockManager(t *testing.T) (*Manager, *eventCollector, serverKey) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(tmpDir)
 
@@ -1198,6 +1200,7 @@ func TestManager_DistinctProjectRootsKeepSeparateServers(t *testing.T) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(ws)
 	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
@@ -1285,6 +1288,7 @@ func TestManager_SameProjectRootSharesOneServer(t *testing.T) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(ws)
 	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
@@ -1316,6 +1320,155 @@ func TestManager_SameProjectRootSharesOneServer(t *testing.T) {
 	}
 }
 
+func TestManager_DocKeysCachePopulatedOnDidOpenClearedOnDidClose(t *testing.T) {
+	// The cache eliminates per-keystroke filesystem walks for DidChange/
+	// DidSave/Hover/Definition/Complete. Verify that DidOpen populates it,
+	// DidClose tears it down, and refcount > 1 keeps it alive.
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "pkg", "tsconfig.json"))
+	file := filepath.Join(ws, "pkg", "src", "main.ts")
+	touch(t, file)
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+
+	root, err := mgr.projectRootForPath("typescript", file)
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	startMockServerAt(t, mgr, "typescript", root)
+
+	uri, _ := FileToURI(file)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Before DidOpen, cache is empty.
+	mgr.mu.Lock()
+	_, hasBefore := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if hasBefore {
+		t.Fatal("docKeys should be empty before DidOpen")
+	}
+
+	// First DidOpen populates cache with the resolved project root.
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen 1: %v", err)
+	}
+	mgr.mu.Lock()
+	cachedKey, ok := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if !ok {
+		t.Fatal("docKeys should contain entry after DidOpen")
+	}
+	if cachedKey.workspace != root || cachedKey.family != "typescript" {
+		t.Errorf("cached key = %+v, want {typescript, %s}", cachedKey, root)
+	}
+
+	// Second DidOpen (refcount 2) keeps cache alive.
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen 2: %v", err)
+	}
+	mgr.mu.Lock()
+	_, stillCached := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if !stillCached {
+		t.Fatal("docKeys entry should persist while refcount > 0")
+	}
+
+	// First DidClose (refcount 1) leaves cache in place.
+	if err := mgr.DidClose(ctx, file); err != nil {
+		t.Fatalf("DidClose 1: %v", err)
+	}
+	mgr.mu.Lock()
+	_, afterFirstClose := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if !afterFirstClose {
+		t.Error("docKeys entry should persist after DidClose with refcount > 0")
+	}
+
+	// Final DidClose (refcount 0) clears the cache.
+	if err := mgr.DidClose(ctx, file); err != nil {
+		t.Fatalf("DidClose 2: %v", err)
+	}
+	mgr.mu.Lock()
+	_, afterLastClose := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if afterLastClose {
+		t.Error("docKeys entry should be removed after final DidClose")
+	}
+}
+
+func TestManager_DidChangeUsesCacheNotFilesystem(t *testing.T) {
+	// Proves the perf invariant: once DidOpen has cached the document's
+	// project root, subsequent DidChange / Hover / Definition / Complete
+	// calls route through serverForPath WITHOUT walking the filesystem.
+	//
+	// We assert this indirectly by deleting the marker file after DidOpen.
+	// If the hot path re-resolved on every call, removing the marker would
+	// cause routing to fall back to workspaceRoot — a different key — and
+	// the request would land on no server. With the cache, routing remains
+	// pinned to the original project root.
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	marker := filepath.Join(ws, "pkg", "tsconfig.json")
+	touch(t, marker)
+	file := filepath.Join(ws, "pkg", "src", "main.ts")
+	touch(t, file)
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+
+	pkgRoot := filepath.Join(ws, "pkg")
+	startMockServerAt(t, mgr, "typescript", pkgRoot)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen: %v", err)
+	}
+
+	// Remove the marker — if the hot path were re-resolving, this would
+	// shift the resolved root to ws and the request would miss our pkg
+	// server.
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("remove marker: %v", err)
+	}
+
+	// serverForPath must still find the pkg-rooted server via the cache.
+	uri, _ := FileToURI(file)
+	entry, gotURI, key := mgr.serverForPath(file)
+	if entry == nil {
+		t.Fatal("serverForPath returned nil after marker removal — cache not honored on hot path")
+	}
+	if gotURI != uri {
+		t.Errorf("uri = %q, want %q", gotURI, uri)
+	}
+	if key.workspace != pkgRoot {
+		t.Errorf("routed to workspace %q, want cached %q", key.workspace, pkgRoot)
+	}
+}
+
 func TestManager_ShutdownAllTearsDownAllRoots(t *testing.T) {
 	if os.Getenv("FIRN_MOCK_LSP") == "1" {
 		t.Skip("running as mock server")
@@ -1330,6 +1483,7 @@ func TestManager_ShutdownAllTearsDownAllRoots(t *testing.T) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(ws)
 
