@@ -655,7 +655,7 @@ func (m *Manager) projectRootForPath(family, path string) (string, error) {
 	if len(markers) == 0 {
 		return workspace, nil
 	}
-	return ResolveProjectRoot(path, workspace, markers)
+	return ResolveProjectRoot(path, workspace, markers, projectRootSkipDirs(family))
 }
 
 // projectRootMarkers returns the marker filenames used to detect a project
@@ -667,6 +667,22 @@ func projectRootMarkers(family string) []string {
 	switch family {
 	case "typescript":
 		return []string{"tsconfig.json", "jsconfig.json", "package.json"}
+	}
+	return nil
+}
+
+// projectRootSkipDirs returns directory segments whose marker matches must
+// be ignored during project-root resolution for the given family.
+//
+// For TypeScript this returns ["node_modules"] so that navigating into a
+// dependency (e.g. via go-to-definition) does NOT spawn a per-dependency
+// LSP server rooted at node_modules/<dep>/package.json. Instead the walk
+// continues through node_modules until it finds the consuming package's
+// project root above.
+func projectRootSkipDirs(family string) []string {
+	switch family {
+	case "typescript":
+		return []string{"node_modules"}
 	}
 	return nil
 }

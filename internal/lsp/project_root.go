@@ -23,6 +23,13 @@ var ErrPathOutsideWorkspace = errors.New("path outside workspace root")
 // coexist in the same directory the first one in the slice wins. This only
 // affects determinism — the resolved root is the same directory either way.
 //
+// skipDirs names path segments (e.g. "node_modules") that, if present in the
+// directory's relative path from workspaceRoot, suppress marker matching for
+// that directory. The walk continues upward so that files inside a skipped
+// segment route to the consuming package above rather than spawning a server
+// rooted at the dependency itself. A nil or empty skipDirs disables this
+// filtering.
+//
 // Returns ErrPathOutsideWorkspace if filePath resolves outside workspaceRoot
 // after cleaning. Symlinks are not evaluated in this first cut; callers that
 // need symlink-aware policy should resolve before calling.
@@ -30,7 +37,7 @@ var ErrPathOutsideWorkspace = errors.New("path outside workspace root")
 // markers may be empty, in which case workspaceRoot is returned without
 // walking. This makes the helper safe to call for language families that do
 // not yet have project-root detection wired in.
-func ResolveProjectRoot(filePath, workspaceRoot string, markers []string) (string, error) {
+func ResolveProjectRoot(filePath, workspaceRoot string, markers []string, skipDirs []string) (string, error) {
 	if workspaceRoot == "" {
 		return "", errors.New("workspaceRoot is empty")
 	}
@@ -56,9 +63,11 @@ func ResolveProjectRoot(filePath, workspaceRoot string, markers []string) (strin
 	}
 
 	for dir := filepath.Dir(absFile); ; {
-		for _, marker := range markers {
-			if fileExists(filepath.Join(dir, marker)) {
-				return dir, nil
+		if !dirHasSkippedSegment(dir, absWorkspace, skipDirs) {
+			for _, marker := range markers {
+				if fileExists(filepath.Join(dir, marker)) {
+					return dir, nil
+				}
 			}
 		}
 
@@ -72,6 +81,28 @@ func ResolveProjectRoot(filePath, workspaceRoot string, markers []string) (strin
 		}
 		dir = parent
 	}
+}
+
+// dirHasSkippedSegment reports whether dir's relative path from workspace
+// contains any of the named segments. Used to suppress marker matching inside
+// directories like node_modules without halting the upward walk.
+func dirHasSkippedSegment(dir, workspace string, skipDirs []string) bool {
+	if len(skipDirs) == 0 {
+		return false
+	}
+	rel, err := filepath.Rel(workspace, dir)
+	if err != nil || rel == "." || rel == "" {
+		return false
+	}
+	segments := strings.Split(rel, string(filepath.Separator))
+	for _, seg := range segments {
+		for _, skip := range skipDirs {
+			if seg == skip {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // absClean returns an absolute, lexically cleaned path.

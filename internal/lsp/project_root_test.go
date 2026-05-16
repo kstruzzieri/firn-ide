@@ -34,7 +34,7 @@ func TestResolveProjectRoot_NearestTsconfigWins(t *testing.T) {
 	file := filepath.Join(ws, "frontend", "src", "App.tsx")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestResolveProjectRoot_NearestJsconfigWins(t *testing.T) {
 	file := filepath.Join(ws, "admin", "src", "main.js")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestResolveProjectRoot_PackageJsonFallback(t *testing.T) {
 	file := filepath.Join(ws, "packages", "ui", "src", "Button.tsx")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestResolveProjectRoot_SameDirectoryMarkerPriority(t *testing.T) {
 	file := filepath.Join(ws, "src", "index.ts")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestResolveProjectRoot_FallbackToWorkspaceRoot(t *testing.T) {
 	file := filepath.Join(ws, "src", "index.ts")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestResolveProjectRoot_FileAtWorkspaceRoot(t *testing.T) {
 	file := filepath.Join(ws, "index.ts")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestResolveProjectRoot_PathOutsideWorkspace(t *testing.T) {
 	file := filepath.Join(outside, "evil.ts")
 	touch(t, file)
 
-	_, err := ResolveProjectRoot(file, ws, tsMarkers)
+	_, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if !errors.Is(err, ErrPathOutsideWorkspace) {
 		t.Fatalf("got error %v, want ErrPathOutsideWorkspace", err)
 	}
@@ -139,14 +139,16 @@ func TestResolveProjectRoot_PathOutsideWorkspace(t *testing.T) {
 func TestResolveProjectRoot_DotDotEscapeRejected(t *testing.T) {
 	ws := t.TempDir()
 	parent := filepath.Dir(ws)
-	// Construct a path that lexically escapes via `..` but is not absolute-cleaned.
+	// Construct a path that escapes via `..` to a sibling of ws. After
+	// cleaning this resolves outside ws — the boundary check must reject it
+	// with a typed error so future cleaning-error refactors cannot silently
+	// regress this guard.
 	escapePath := filepath.Join(ws, "..", filepath.Base(parent), "outside.ts")
 
-	_, err := ResolveProjectRoot(escapePath, ws, tsMarkers)
-	if err == nil {
-		t.Fatalf("expected error for `..` escape, got nil")
+	_, err := ResolveProjectRoot(escapePath, ws, tsMarkers, nil)
+	if !errors.Is(err, ErrPathOutsideWorkspace) {
+		t.Fatalf("expected ErrPathOutsideWorkspace for `..` escape, got %v", err)
 	}
-	// May be ErrPathOutsideWorkspace or a related cleaning error; assert no false success.
 }
 
 func TestResolveProjectRoot_EmptyMarkersReturnsWorkspace(t *testing.T) {
@@ -154,7 +156,7 @@ func TestResolveProjectRoot_EmptyMarkersReturnsWorkspace(t *testing.T) {
 	file := filepath.Join(ws, "src", "main.go")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, nil)
+	got, err := ResolveProjectRoot(file, ws, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestResolveProjectRoot_PathWithSpacesAndUnicode(t *testing.T) {
 	file := filepath.Join(pkg, "src", "app.ts")
 	touch(t, file)
 
-	got, err := ResolveProjectRoot(file, ws, tsMarkers)
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,18 +196,114 @@ func TestResolveProjectRoot_RejectsPrefixCollision(t *testing.T) {
 	file := filepath.Join(sibling, "index.ts")
 	touch(t, file)
 
-	_, err := ResolveProjectRoot(file, ws, tsMarkers)
+	_, err := ResolveProjectRoot(file, ws, tsMarkers, nil)
 	if !errors.Is(err, ErrPathOutsideWorkspace) {
 		t.Fatalf("expected ErrPathOutsideWorkspace for prefix collision, got %v", err)
 	}
 }
 
 func TestResolveProjectRoot_EmptyArgsRejected(t *testing.T) {
-	if _, err := ResolveProjectRoot("", "/tmp", tsMarkers); err == nil {
+	if _, err := ResolveProjectRoot("", "/tmp", tsMarkers, nil); err == nil {
 		t.Error("expected error for empty filePath")
 	}
-	if _, err := ResolveProjectRoot("/tmp/foo.ts", "", tsMarkers); err == nil {
+	if _, err := ResolveProjectRoot("/tmp/foo.ts", "", tsMarkers, nil); err == nil {
 		t.Error("expected error for empty workspaceRoot")
+	}
+}
+
+// --- node_modules skip behavior ---
+
+func TestResolveProjectRoot_NodeModulesPackageDoesNotBecomeRoot(t *testing.T) {
+	// Cmd+Click into a dependency must NOT spawn a server rooted at the
+	// dep — it should fall through to the consuming package above.
+	ws := t.TempDir()
+	consumer := filepath.Join(ws, "packages", "ui")
+	touch(t, filepath.Join(consumer, "package.json"))
+	depFile := filepath.Join(consumer, "node_modules", "lodash", "index.js")
+	touch(t, filepath.Join(consumer, "node_modules", "lodash", "package.json"))
+	touch(t, depFile)
+
+	got, err := ResolveProjectRoot(depFile, ws, tsMarkers, []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != consumer {
+		t.Errorf("got %q, want consumer root %q (node_modules/lodash/package.json must not become project root)", got, consumer)
+	}
+}
+
+func TestResolveProjectRoot_NestedNodeModulesAlsoSkipped(t *testing.T) {
+	// node_modules/<dep>/node_modules/<transitive>/index.js must skip the
+	// transitive dep AND its parent dep, falling through to the consumer.
+	ws := t.TempDir()
+	consumer := filepath.Join(ws, "app")
+	touch(t, filepath.Join(consumer, "package.json"))
+	transitive := filepath.Join(consumer, "node_modules", "react", "node_modules", "scheduler")
+	touch(t, filepath.Join(transitive, "package.json"))
+	depFile := filepath.Join(transitive, "src", "scheduler.js")
+	touch(t, depFile)
+
+	got, err := ResolveProjectRoot(depFile, ws, tsMarkers, []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != consumer {
+		t.Errorf("got %q, want consumer root %q", got, consumer)
+	}
+}
+
+func TestResolveProjectRoot_NodeModulesAtWorkspaceRootFallsBackToWorkspace(t *testing.T) {
+	// File inside a top-level node_modules with no consuming package above
+	// should fall back to workspaceRoot, not spawn a server inside the dep.
+	ws := t.TempDir()
+	depFile := filepath.Join(ws, "node_modules", "lodash", "index.js")
+	touch(t, filepath.Join(ws, "node_modules", "lodash", "package.json"))
+	touch(t, depFile)
+
+	got, err := ResolveProjectRoot(depFile, ws, tsMarkers, []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != ws {
+		t.Errorf("got %q, want workspace root %q", got, ws)
+	}
+}
+
+func TestResolveProjectRoot_NodeModulesSkipDoesNotAffectSiblingPackages(t *testing.T) {
+	// A directory literally named like node_modules but not actually inside
+	// a node_modules path segment should match normally. (Covers e.g.
+	// `/repo/node_modules_archive/<...>` which is a sibling of `node_modules`,
+	// not inside it.)
+	ws := t.TempDir()
+	pkg := filepath.Join(ws, "node_modules_backup", "ui")
+	touch(t, filepath.Join(pkg, "tsconfig.json"))
+	file := filepath.Join(pkg, "src", "App.tsx")
+	touch(t, file)
+
+	got, err := ResolveProjectRoot(file, ws, tsMarkers, []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != pkg {
+		t.Errorf("got %q, want %q (node_modules_backup is not node_modules)", got, pkg)
+	}
+}
+
+func TestResolveProjectRoot_SkipDirsNilHasNoEffect(t *testing.T) {
+	// nil skipDirs preserves the no-skip behavior so the helper is safe to
+	// call from non-TS families that don't want filtering.
+	ws := t.TempDir()
+	depFile := filepath.Join(ws, "node_modules", "lodash", "index.js")
+	touch(t, filepath.Join(ws, "node_modules", "lodash", "package.json"))
+	touch(t, depFile)
+
+	got, err := ResolveProjectRoot(depFile, ws, tsMarkers, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantDepRoot := filepath.Join(ws, "node_modules", "lodash")
+	if got != wantDepRoot {
+		t.Errorf("with nil skipDirs got %q, want %q (no skipping)", got, wantDepRoot)
 	}
 }
 
