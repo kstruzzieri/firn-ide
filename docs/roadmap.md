@@ -26,7 +26,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
 | Milestone 3: Workspace Management | **IN PROGRESS** | #13-15 complete, #53-54 open |
 | Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-61 complete; #17-18, #62-64, #71 open |
-| Milestone 5: Language Server Protocol | **IN PROGRESS** | #19, #21-22, #73 complete; #20, #74-76 open |
+| Milestone 5: Language Server Protocol | **IN PROGRESS** | #19-22, #73 complete; #74-76 open |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
 | Performance | Not started | #37-39 |
@@ -40,7 +40,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-1. **#20: Finish TypeScript project-root detection** — the LSP TypeScript path is functional, but this ticket still requires nearest `tsconfig.json`, `jsconfig.json`, or `package.json` root resolution rather than only using the active workspace root.
+1. **#75 / #76: Finish LSP epic** — apply the `ResolveProjectRoot(filePath, workspaceRoot, markers)` helper landed for #20 to nearest-`go.mod` (Go) and nearest-`pyproject.toml` / `requirements.txt` / `setup.py` (Python) detection. Closes epic #74.
 2. **#62: Run Profiles - Clickable Error Links** — parse common `file:line:col` output formats and jump from run output to source.
 3. **#64: Run Profiles - Environment Variants** — complete `ActiveVariant` env-file resolution and add the frontend variant selector.
 4. **#63: Run Profiles - Compound Profile Execution** — add sequential step execution, stop-on-failure, and per-step UI.
@@ -197,7 +197,7 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Frontend document sync
 - [x] Diagnostics UX and Problems panel
 - [x] Completion, hover, and definition UX
-- [ ] TypeScript project-root detection completion (#20)
+- [x] TypeScript project-root detection completion (#20)
 
 ### #19: LSP - Client Foundation ✅
 - [x] JSON-RPC 2.0 message handling
@@ -220,11 +220,11 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Reconnect handling after language-server crash recovery
 - [x] Surface backend LSP status/errors through frontend events
 
-### #20: LSP - TypeScript Integration (IN PROGRESS)
-- [ ] Auto-detect TypeScript/JavaScript projects by nearest `tsconfig.json`, `jsconfig.json`, or `package.json`
-- [x] Resolve `typescript-language-server` from workspace-local install first, then PATH
+### #20: LSP - TypeScript Integration ✅
+- [x] Auto-detect TypeScript/JavaScript projects by nearest `tsconfig.json`, `jsconfig.json`, or `package.json` (bounded by active workspace)
+- [x] Resolve `typescript-language-server` from project-local install first, then PATH
 - [x] Launch `typescript-language-server --stdio`
-- [x] Start/stop the server based on open TS/JS documents in the active workspace
+- [x] Start/stop the server based on open TS/JS documents (per detected project root, so monorepo packages get separate servers)
 - [x] Route diagnostics, hover, definition, and completion requests through the shared client
 - [x] Surface actionable errors when server startup fails
 
