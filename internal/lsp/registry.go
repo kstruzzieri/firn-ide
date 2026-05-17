@@ -183,6 +183,15 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 func (r *Registry) resolvePythonServer(projectRoot string) (*ServerConfig, error) {
 	binary := "pyright-langserver"
 
+	if path, ok := resolvePythonVirtualEnvBinary(projectRoot, binary); ok {
+		return &ServerConfig{
+			LanguageFamily: "python",
+			Command:        path,
+			Args:           []string{"--stdio"},
+			Dir:            projectRoot,
+		}, nil
+	}
+
 	if path, err := exec.LookPath(projectLocalNodeBin(projectRoot, binary)); err == nil {
 		return &ServerConfig{
 			LanguageFamily: "python",
@@ -196,8 +205,8 @@ func (r *Registry) resolvePythonServer(projectRoot string) (*ServerConfig, error
 	if err != nil {
 		return nil, fmt.Errorf(
 			"pyright-langserver not found: install it with " +
-				"\"npm install -g pyright\" " +
-				"or add pyright as a project dependency",
+				"\"npm install -g pyright\", add pyright as a project dependency, " +
+				"or activate a virtual environment that provides pyright-langserver",
 		)
 	}
 
@@ -207,4 +216,42 @@ func (r *Registry) resolvePythonServer(projectRoot string) (*ServerConfig, error
 		Args:           []string{"--stdio"},
 		Dir:            projectRoot,
 	}, nil
+}
+
+func resolvePythonVirtualEnvBinary(projectRoot, binary string) (string, bool) {
+	for _, venv := range pythonVirtualEnvDirs(projectRoot) {
+		for _, candidate := range pythonVirtualEnvBinaryCandidates(venv, binary) {
+			if path, err := exec.LookPath(candidate); err == nil {
+				return path, true
+			}
+		}
+	}
+	return "", false
+}
+
+func pythonVirtualEnvDirs(projectRoot string) []string {
+	dirs := make([]string, 0, 3)
+	if active := os.Getenv("VIRTUAL_ENV"); active != "" {
+		dirs = append(dirs, active)
+	}
+	if projectRoot != "" {
+		dirs = append(dirs,
+			filepath.Join(projectRoot, ".venv"),
+			filepath.Join(projectRoot, "venv"),
+		)
+	}
+	return dirs
+}
+
+func pythonVirtualEnvBinaryCandidates(venv, binary string) []string {
+	if runtime.GOOS == "windows" {
+		scriptsDir := filepath.Join(venv, "Scripts")
+		return []string{
+			filepath.Join(scriptsDir, binary+".exe"),
+			filepath.Join(scriptsDir, binary+".cmd"),
+			filepath.Join(scriptsDir, binary+".bat"),
+			filepath.Join(scriptsDir, binary),
+		}
+	}
+	return []string{filepath.Join(venv, "bin", binary)}
 }
