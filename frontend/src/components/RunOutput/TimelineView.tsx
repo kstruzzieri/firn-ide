@@ -1,11 +1,14 @@
 import { useRef, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { RunOutput, OutputEntry } from '../../types/runOutput';
+import { OutputLine } from './OutputLine';
 import styles from './RunOutput.module.css';
 
 interface TimelineViewProps {
   runOutputs: Record<string, RunOutput>;
   autoScroll: boolean;
+  profileWorkingDirs: Record<string, string | undefined>;
+  workspacePath?: string;
 }
 
 interface TimelineEntry extends OutputEntry {
@@ -19,7 +22,12 @@ function formatTimestamp(ts: number): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}.${d.getMilliseconds().toString().padStart(3, '0')}`;
 }
 
-export function TimelineView({ runOutputs, autoScroll }: TimelineViewProps) {
+export function TimelineView({
+  runOutputs,
+  autoScroll,
+  profileWorkingDirs,
+  workspacePath,
+}: TimelineViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const profileIds = useMemo(() => Object.keys(runOutputs), [runOutputs]);
   const profileColorMap = useMemo(() => {
@@ -87,11 +95,12 @@ export function TimelineView({ runOutputs, autoScroll }: TimelineViewProps) {
               <span className={`${styles.timelineProfile} ${styles[colorClass]}`}>
                 {entry.profileId}
               </span>
-              <span
+              <OutputLine
+                text={entry.text}
                 className={`${styles.timelineData} ${entry.stream === 'stderr' ? styles.stderr : ''}`}
-              >
-                {entry.text}
-              </span>
+                workingDir={profileWorkingDirs[entry.profileId]}
+                workspacePath={workspacePath}
+              />
             </div>
           );
         })}

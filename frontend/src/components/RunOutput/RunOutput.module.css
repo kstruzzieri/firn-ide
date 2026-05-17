@@ -209,6 +209,34 @@
   padding-left: 8px;
 }
 
+.outputLink {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  text-underline-offset: 2px;
+  white-space: inherit;
+  word-break: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.outputLink:hover {
+  color: #93c5fd;
+  text-decoration-color: currentColor;
+}
+
+.outputLink:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* ── Lanes View ────────────────────────────────────────── */
 .lanesView {
   display: flex;
@@ -329,11 +357,18 @@
 }
 
 .diffLine {
+  display: flex;
+  align-items: flex-start;
   min-height: 20px;
   white-space: pre-wrap;
   word-break: break-all;
   padding: 0 4px;
   border-radius: 2px;
+}
+
+.diffText {
+  flex: 1;
+  min-width: 0;
 }
 
 .diffLine.unchanged {

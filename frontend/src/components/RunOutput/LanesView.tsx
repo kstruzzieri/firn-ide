@@ -1,11 +1,14 @@
 import { useRef, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { OutputEntry } from '../../types/runOutput';
+import { OutputLine } from './OutputLine';
 import styles from './RunOutput.module.css';
 
 interface LanesViewProps {
   entries: OutputEntry[];
   autoScroll: boolean;
+  workingDir?: string;
+  workspacePath?: string;
 }
 
 interface LaneRow {
@@ -13,7 +16,7 @@ interface LaneRow {
   stderr: string | null;
 }
 
-export function LanesView({ entries, autoScroll }: LanesViewProps) {
+export function LanesView({ entries, autoScroll, workingDir, workspacePath }: LanesViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(() => {
@@ -75,10 +78,18 @@ export function LanesView({ entries, autoScroll }: LanesViewProps) {
               ref={virtualizer.measureElement}
               data-index={virtualRow.index}
             >
-              <div className={styles.laneLine}>{row.stdout ?? ''}</div>
-              <div className={`${styles.laneLine} ${row.stderr != null ? styles.stderr : ''}`}>
-                {row.stderr ?? ''}
-              </div>
+              <OutputLine
+                text={row.stdout ?? ''}
+                className={styles.laneLine}
+                workingDir={workingDir}
+                workspacePath={workspacePath}
+              />
+              <OutputLine
+                text={row.stderr ?? ''}
+                className={`${styles.laneLine} ${row.stderr != null ? styles.stderr : ''}`}
+                workingDir={workingDir}
+                workspacePath={workspacePath}
+              />
             </div>
           );
         })}

@@ -1,9 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   useActiveRunOutput,
   useRunOutputViewMode,
   useRunOutputAutoScroll,
   useRunOutputs,
+  useRunProfiles,
+  useWorkspace,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
 import { RunOutputTabs } from './RunOutputTabs';
@@ -18,7 +20,20 @@ export function RunOutputPanel() {
   const viewMode = useRunOutputViewMode();
   const autoScroll = useRunOutputAutoScroll();
   const runOutputs = useRunOutputs();
+  const runProfiles = useRunProfiles();
+  const workspace = useWorkspace();
   const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
+
+  const profileWorkingDirs = useMemo(() => {
+    const workingDirs: Record<string, string | undefined> = {};
+    for (const profile of runProfiles) {
+      workingDirs[profile.id] = profile.workingDir;
+    }
+    return workingDirs;
+  }, [runProfiles]);
+
+  const workspacePath = workspace?.path;
+  const activeWorkingDir = activeOutput ? profileWorkingDirs[activeOutput.profileId] : undefined;
 
   const handleToggleFold = useCallback((foldId: string) => {
     setExpandedFolds((prev) => {
@@ -37,7 +52,12 @@ export function RunOutputPanel() {
       <RunOutputTabs />
       <RunOutputToolbar />
       {viewMode === 'timeline' ? (
-        <TimelineView runOutputs={runOutputs} autoScroll={autoScroll} />
+        <TimelineView
+          runOutputs={runOutputs}
+          autoScroll={autoScroll}
+          profileWorkingDirs={profileWorkingDirs}
+          workspacePath={workspacePath}
+        />
       ) : activeOutput ? (
         <>
           {viewMode === 'merged' && (
@@ -46,15 +66,24 @@ export function RunOutputPanel() {
               autoScroll={autoScroll}
               expandedFolds={expandedFolds}
               onToggleFold={handleToggleFold}
+              workingDir={activeWorkingDir}
+              workspacePath={workspacePath}
             />
           )}
           {viewMode === 'lanes' && (
-            <LanesView entries={activeOutput.entries} autoScroll={autoScroll} />
+            <LanesView
+              entries={activeOutput.entries}
+              autoScroll={autoScroll}
+              workingDir={activeWorkingDir}
+              workspacePath={workspacePath}
+            />
           )}
           {viewMode === 'diff' && (
             <DiffView
               entries={activeOutput.entries}
               previousEntries={activeOutput.previousEntries}
+              workingDir={activeWorkingDir}
+              workspacePath={workspacePath}
             />
           )}
         </>

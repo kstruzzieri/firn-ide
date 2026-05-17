@@ -1,13 +1,22 @@
 import type { FoldedRegion } from '../../types/runOutput';
+import { OutputLine } from './OutputLine';
 import styles from './RunOutput.module.css';
 
 interface SmartFoldProps {
   fold: FoldedRegion;
   isExpanded: boolean;
   onToggle: (foldId: string) => void;
+  workingDir?: string;
+  workspacePath?: string;
 }
 
-export function SmartFold({ fold, isExpanded, onToggle }: SmartFoldProps) {
+export function SmartFold({
+  fold,
+  isExpanded,
+  onToggle,
+  workingDir,
+  workspacePath,
+}: SmartFoldProps) {
   if (!isExpanded) {
     return (
       <div
@@ -52,9 +61,13 @@ export function SmartFold({ fold, isExpanded, onToggle }: SmartFoldProps) {
       </div>
       <div className={styles.foldExpandedBody}>
         {fold.entries.map((entry, idx) => (
-          <div key={idx} className={`${styles.outputLine} ${styles[entry.stream]}`}>
-            {entry.text}
-          </div>
+          <OutputLine
+            key={idx}
+            text={entry.text}
+            className={`${styles.outputLine} ${styles[entry.stream]}`}
+            workingDir={workingDir}
+            workspacePath={workspacePath}
+          />
         ))}
       </div>
     </div>
