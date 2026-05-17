@@ -71,6 +71,10 @@ func writeTestExecutable(t *testing.T, dir, name string) string {
 		name += ".cmd"
 	}
 
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", dir, err)
+	}
+
 	path := filepath.Join(dir, name)
 	content := []byte("#!/bin/sh\nexit 0\n")
 	if runtime.GOOS == "windows" {
@@ -142,6 +146,28 @@ func TestRegistry_GoServerConfigUsesGoplsFromPath(t *testing.T) {
 	}
 }
 
+func TestRegistry_GoServerConfigUsesDetectedProjectRoot(t *testing.T) {
+	r := NewRegistry()
+	binDir := t.TempDir()
+	writeTestExecutable(t, binDir, "gopls")
+	t.Setenv("PATH", binDir)
+
+	repoRoot := t.TempDir()
+	moduleRoot := filepath.Join(repoRoot, "services", "api")
+	if err := os.MkdirAll(moduleRoot, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	config, err := r.ServerConfigFor("go", moduleRoot)
+	if err != nil {
+		t.Fatalf("ServerConfigFor(go): %v", err)
+	}
+
+	if config.Dir != moduleRoot {
+		t.Errorf("Dir = %q, want detected module root %q", config.Dir, moduleRoot)
+	}
+}
+
 func TestRegistry_GoServerConfigReportsMissingGopls(t *testing.T) {
 	r := NewRegistry()
 	t.Setenv("PATH", "")
@@ -157,6 +183,7 @@ func TestRegistry_GoServerConfigReportsMissingGopls(t *testing.T) {
 
 func TestRegistry_PythonServerConfigPrefersWorkspaceLocalPyright(t *testing.T) {
 	r := NewRegistry()
+	t.Setenv("VIRTUAL_ENV", "")
 	workspace := t.TempDir()
 	localBin := filepath.Join(workspace, "node_modules", ".bin")
 	if err := os.MkdirAll(localBin, 0755); err != nil {
@@ -184,9 +211,90 @@ func TestRegistry_PythonServerConfigPrefersWorkspaceLocalPyright(t *testing.T) {
 	}
 }
 
+func TestRegistry_PythonServerConfigPrefersActiveVirtualEnvPyright(t *testing.T) {
+	r := NewRegistry()
+	projectRoot := t.TempDir()
+
+	venvPath := t.TempDir()
+	venvPyrightPath := writeTestExecutable(t, pythonVirtualEnvScriptDir(venvPath), "pyright-langserver")
+	t.Setenv("VIRTUAL_ENV", venvPath)
+
+	localBin := filepath.Join(projectRoot, "node_modules", ".bin")
+	if err := os.MkdirAll(localBin, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeTestExecutable(t, localBin, "pyright-langserver")
+
+	systemBin := t.TempDir()
+	writeTestExecutable(t, systemBin, "pyright-langserver")
+	t.Setenv("PATH", systemBin)
+
+	config, err := r.ServerConfigFor("python", projectRoot)
+	if err != nil {
+		t.Fatalf("ServerConfigFor(python): %v", err)
+	}
+
+	if config.Command != venvPyrightPath {
+		t.Errorf("Command = %q, want active virtualenv %q", config.Command, venvPyrightPath)
+	}
+	if config.Dir != projectRoot {
+		t.Errorf("Dir = %q, want detected project root %q", config.Dir, projectRoot)
+	}
+}
+
+func TestRegistry_PythonServerConfigUsesProjectVirtualEnvBeforePath(t *testing.T) {
+	r := NewRegistry()
+	projectRoot := t.TempDir()
+
+	venvPath := filepath.Join(projectRoot, ".venv")
+	venvPyrightPath := writeTestExecutable(t, pythonVirtualEnvScriptDir(venvPath), "pyright-langserver")
+
+	systemBin := t.TempDir()
+	writeTestExecutable(t, systemBin, "pyright-langserver")
+	t.Setenv("PATH", systemBin)
+
+	config, err := r.ServerConfigFor("python", projectRoot)
+	if err != nil {
+		t.Fatalf("ServerConfigFor(python): %v", err)
+	}
+
+	if config.Command != venvPyrightPath {
+		t.Errorf("Command = %q, want project virtualenv %q", config.Command, venvPyrightPath)
+	}
+}
+
+func TestRegistry_PythonServerConfigPrefersDetectedProjectLocalPyright(t *testing.T) {
+	r := NewRegistry()
+	t.Setenv("VIRTUAL_ENV", "")
+	repoRoot := t.TempDir()
+	projectRoot := filepath.Join(repoRoot, "services", "api")
+	localBin := filepath.Join(projectRoot, "node_modules", ".bin")
+	if err := os.MkdirAll(localBin, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	pyrightPath := writeTestExecutable(t, localBin, "pyright-langserver")
+
+	systemBin := t.TempDir()
+	writeTestExecutable(t, systemBin, "pyright-langserver")
+	t.Setenv("PATH", systemBin)
+
+	config, err := r.ServerConfigFor("python", projectRoot)
+	if err != nil {
+		t.Fatalf("ServerConfigFor(python): %v", err)
+	}
+
+	if config.Command != pyrightPath {
+		t.Errorf("Command = %q, want project-local %q", config.Command, pyrightPath)
+	}
+	if config.Dir != projectRoot {
+		t.Errorf("Dir = %q, want detected project root %q", config.Dir, projectRoot)
+	}
+}
+
 func TestRegistry_PythonServerConfigReportsMissingPyright(t *testing.T) {
 	r := NewRegistry()
 	t.Setenv("PATH", "")
+	t.Setenv("VIRTUAL_ENV", filepath.Join(t.TempDir(), "missing-venv"))
 
 	_, err := r.ServerConfigFor("python", t.TempDir())
 	if err == nil {
@@ -195,6 +303,13 @@ func TestRegistry_PythonServerConfigReportsMissingPyright(t *testing.T) {
 	if !contains(err.Error(), "npm install -g pyright") {
 		t.Errorf("error should include install instructions, got: %s", err.Error())
 	}
+}
+
+func pythonVirtualEnvScriptDir(venvPath string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(venvPath, "Scripts")
+	}
+	return filepath.Join(venvPath, "bin")
 }
 
 func TestRegistry_CaseInsensitive(t *testing.T) {
@@ -1076,11 +1191,10 @@ func TestManager_ProjectRootForPath_TypeScriptUsesNearestMarker(t *testing.T) {
 	}
 }
 
-func TestManager_ProjectRootForPath_GoReturnsWorkspaceUnchanged(t *testing.T) {
-	// Go nearest-go.mod detection is deferred to #75. This ticket keeps Go
-	// behavior identical: project root == active workspace root.
+func TestManager_ProjectRootForPath_GoUsesNearestGoMod(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "go.mod"))
 	touch(t, filepath.Join(ws, "cmd", "tool", "go.mod"))
 	file := filepath.Join(ws, "cmd", "tool", "main.go")
 	touch(t, file)
@@ -1090,26 +1204,33 @@ func TestManager_ProjectRootForPath_GoReturnsWorkspaceUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if root != ws {
-		t.Errorf("Go project root = %q, want workspace %q (Go detection lands with #75)", root, ws)
+	want := filepath.Join(ws, "cmd", "tool")
+	if root != want {
+		t.Errorf("Go project root = %q, want nearest go.mod root %q", root, want)
 	}
 }
 
-func TestManager_ProjectRootForPath_PythonReturnsWorkspaceUnchanged(t *testing.T) {
-	// Python nearest-pyproject.toml detection is deferred to #76.
-	mgr, _ := newTestManager(t)
-	ws := t.TempDir()
-	touch(t, filepath.Join(ws, "service", "pyproject.toml"))
-	file := filepath.Join(ws, "service", "src", "app.py")
-	touch(t, file)
-	mgr.SetWorkspaceRoot(ws)
+func TestManager_ProjectRootForPath_PythonUsesNearestProjectMarker(t *testing.T) {
+	for _, marker := range []string{"pyproject.toml", "requirements.txt", "setup.py"} {
+		t.Run(marker, func(t *testing.T) {
+			mgr, _ := newTestManager(t)
+			ws := t.TempDir()
+			touch(t, filepath.Join(ws, "pyproject.toml"))
 
-	root, err := mgr.projectRootForPath("python", file)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if root != ws {
-		t.Errorf("Python project root = %q, want workspace %q (Python detection lands with #76)", root, ws)
+			project := filepath.Join(ws, "service")
+			touch(t, filepath.Join(project, marker))
+			file := filepath.Join(project, "src", "app.py")
+			touch(t, file)
+			mgr.SetWorkspaceRoot(ws)
+
+			root, err := mgr.projectRootForPath("python", file)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if root != project {
+				t.Errorf("Python project root = %q, want nearest %s root %q", root, marker, project)
+			}
+		})
 	}
 }
 
