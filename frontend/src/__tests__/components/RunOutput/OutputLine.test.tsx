@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { OutputLine } from '../../../components/RunOutput/OutputLine';
 import { useIDEStore } from '../../../stores/ideStore';
 
@@ -57,6 +57,23 @@ describe('OutputLine', () => {
 
     expect(mockNavigate).toHaveBeenCalledWith('/repo/app.py', 12, 1, {
       shouldApply: expect.any(Function),
+    });
+  });
+
+  it('shows a toast when navigation rejects unexpectedly', async () => {
+    mockNavigate.mockRejectedValueOnce(new Error('boom'));
+
+    render(
+      <OutputLine text="src/App.tsx:7:11 - error TS2322" className="line" workspacePath="/repo" />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open src/App.tsx at line 7, column 11' }));
+
+    await waitFor(() => {
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to open linked output location: boom',
+        type: 'error',
+      });
     });
   });
 });

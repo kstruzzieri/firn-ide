@@ -27,7 +27,14 @@ export function OutputLine({ text, className, workingDir, workspacePath }: Outpu
           }
         : undefined;
 
-      await navigateToEditorLocation(path, reference.line, reference.column, options);
+      try {
+        await navigateToEditorLocation(path, reference.line, reference.column, options);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        useIDEStore
+          .getState()
+          .showToast(`Failed to open linked output location: ${message}`, 'error');
+      }
     },
     [workingDir, workspacePath]
   );

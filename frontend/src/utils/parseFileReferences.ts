@@ -73,6 +73,10 @@ const FILE_LINE_COLUMN_PATTERN = new RegExp(
   `(^|[^\\w./\\\\:-])(${FILE_PATH}):(\\d+)(?::(\\d+))?`,
   'gi'
 );
+const PAREN_FILE_LINE_COLUMN_PATTERN = new RegExp(
+  `(^|[^\\w./\\\\:-])(${FILE_PATH})\\((\\d+),(\\d+)\\)`,
+  'gi'
+);
 const WRAPPED_FILE_PATH = `(?:[A-Za-z]:)?[^:\r\n]*?\\.(?:${CODE_EXTENSIONS})`;
 const WRAPPED_FILE_LINE_COLUMN_PATTERN = new RegExp(
   `([\\(\\[\\{"'\`])(${WRAPPED_FILE_PATH}):(\\d+)(?::(\\d+))?(?=[\\)\\]\\}"'\`])`,
@@ -150,6 +154,23 @@ export function parseFileReferences(text: string): FileReference[] {
   }
 
   for (const match of text.matchAll(FILE_LINE_COLUMN_PATTERN)) {
+    const boundary = match[1] ?? '';
+    const referenceText = match[0].slice(boundary.length);
+    const startIndex = (match.index ?? 0) + boundary.length;
+    const reference = createReference(
+      match[2],
+      match[3],
+      match[4],
+      startIndex,
+      startIndex + referenceText.length,
+      referenceText
+    );
+    if (reference) {
+      references.push(reference);
+    }
+  }
+
+  for (const match of text.matchAll(PAREN_FILE_LINE_COLUMN_PATTERN)) {
     const boundary = match[1] ?? '';
     const referenceText = match[0].slice(boundary.length);
     const startIndex = (match.index ?? 0) + boundary.length;

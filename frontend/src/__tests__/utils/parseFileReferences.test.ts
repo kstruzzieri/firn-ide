@@ -57,6 +57,20 @@ describe('parseFileReferences', () => {
     });
   });
 
+  it('parses TypeScript and MSBuild-style parenthesized diagnostics', () => {
+    const references = parseFileReferences(
+      'src/components/Button.tsx(42,5): error TS2741: Property missing'
+    );
+
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({
+      path: 'src/components/Button.tsx',
+      line: 42,
+      column: 5,
+      text: 'src/components/Button.tsx(42,5)',
+    });
+  });
+
   it('parses Python traceback frames with a default column', () => {
     const line = '  File "app.py", line 42, in <module>';
     const references = parseFileReferences(line);
