@@ -677,10 +677,9 @@ func (m *Manager) serverForPath(path string) (*serverEntry, string, serverKey) {
 }
 
 // projectRootForPath returns the workspace key for the given file path.
-// For TypeScript-family files this is the nearest project root found by
-// upward walk (tsconfig.json > jsconfig.json > package.json), bounded by the
-// active workspace. For other families it returns the active workspace root
-// unchanged.
+// For language families with project markers this is the nearest project root
+// found by upward walk, bounded by the active workspace. Families without
+// marker detection return the active workspace root unchanged.
 //
 // Must be called WITHOUT the manager lock held — it performs filesystem
 // stat calls during marker probing.
@@ -707,12 +706,15 @@ func (m *Manager) projectRootForPath(family, path string) (string, error) {
 // projectRootMarkers returns the marker filenames used to detect a project
 // root for the given language family. Returning an empty slice means root
 // detection is disabled for the family and callers should use the active
-// workspace root directly. Go and Python are intentionally not wired up here
-// yet — see issues #75 and #76.
+// workspace root directly.
 func projectRootMarkers(family string) []string {
 	switch family {
 	case "typescript":
 		return []string{"tsconfig.json", "jsconfig.json", "package.json"}
+	case "go":
+		return []string{"go.mod"}
+	case "python":
+		return []string{"pyproject.toml", "requirements.txt", "setup.py"}
 	}
 	return nil
 }

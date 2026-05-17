@@ -76,7 +76,8 @@ func (r *Registry) FamilyForExtension(ext string) string {
 // family and project root. The project root is whatever the caller has
 // resolved for the file being opened — for TypeScript that's the nearest
 // directory with tsconfig.json / jsconfig.json / package.json bounded by the
-// active workspace; for other families it remains the active workspace root.
+// active workspace; for Go/Python it is the nearest go.mod / Python project
+// marker, falling back to the active workspace root when no marker exists.
 //
 // Binary lookups (e.g. node_modules/.bin/typescript-language-server) and
 // local-TypeScript discovery use this project root, so monorepo packages get
@@ -161,7 +162,7 @@ func (r *Registry) resolveTypeScriptServer(projectRoot string) (*ServerConfig, e
 }
 
 // resolveGoServer finds and configures gopls.
-func (r *Registry) resolveGoServer(workspaceRoot string) (*ServerConfig, error) {
+func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 	path, err := exec.LookPath("gopls")
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -174,20 +175,20 @@ func (r *Registry) resolveGoServer(workspaceRoot string) (*ServerConfig, error) 
 	return &ServerConfig{
 		LanguageFamily: "go",
 		Command:        path,
-		Dir:            workspaceRoot,
+		Dir:            projectRoot,
 	}, nil
 }
 
 // resolvePythonServer finds and configures pyright-langserver.
-func (r *Registry) resolvePythonServer(workspaceRoot string) (*ServerConfig, error) {
+func (r *Registry) resolvePythonServer(projectRoot string) (*ServerConfig, error) {
 	binary := "pyright-langserver"
 
-	if path, err := exec.LookPath(projectLocalNodeBin(workspaceRoot, binary)); err == nil {
+	if path, err := exec.LookPath(projectLocalNodeBin(projectRoot, binary)); err == nil {
 		return &ServerConfig{
 			LanguageFamily: "python",
 			Command:        path,
 			Args:           []string{"--stdio"},
-			Dir:            workspaceRoot,
+			Dir:            projectRoot,
 		}, nil
 	}
 
@@ -204,6 +205,6 @@ func (r *Registry) resolvePythonServer(workspaceRoot string) (*ServerConfig, err
 		LanguageFamily: "python",
 		Command:        path,
 		Args:           []string{"--stdio"},
-		Dir:            workspaceRoot,
+		Dir:            projectRoot,
 	}, nil
 }
