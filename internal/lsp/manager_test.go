@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -248,6 +249,7 @@ func TestManager_InitializingServerAbandonedAfterWorkspaceSwitch(t *testing.T) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(oldWorkspace)
 
@@ -512,6 +514,7 @@ func startMockManager(t *testing.T) (*Manager, *eventCollector, serverKey) {
 		registry: NewRegistry(),
 		emitter:  collector.emit,
 		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
 	}
 	mgr.SetWorkspaceRoot(tmpDir)
 
@@ -1049,5 +1052,457 @@ func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool)
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
+	}
+}
+
+// --- Per-project-root routing (#20) ---
+
+func TestManager_ProjectRootForPath_TypeScriptUsesNearestMarker(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "package.json"))              // repo-root
+	touch(t, filepath.Join(ws, "frontend", "tsconfig.json")) // package-local
+	file := filepath.Join(ws, "frontend", "src", "App.tsx")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	root, err := mgr.projectRootForPath("typescript", file)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(ws, "frontend")
+	if root != want {
+		t.Errorf("root = %q, want %q (nearest tsconfig.json should win)", root, want)
+	}
+}
+
+func TestManager_ProjectRootForPath_GoReturnsWorkspaceUnchanged(t *testing.T) {
+	// Go nearest-go.mod detection is deferred to #75. This ticket keeps Go
+	// behavior identical: project root == active workspace root.
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "cmd", "tool", "go.mod"))
+	file := filepath.Join(ws, "cmd", "tool", "main.go")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	root, err := mgr.projectRootForPath("go", file)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root != ws {
+		t.Errorf("Go project root = %q, want workspace %q (Go detection lands with #75)", root, ws)
+	}
+}
+
+func TestManager_ProjectRootForPath_PythonReturnsWorkspaceUnchanged(t *testing.T) {
+	// Python nearest-pyproject.toml detection is deferred to #76.
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "service", "pyproject.toml"))
+	file := filepath.Join(ws, "service", "src", "app.py")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	root, err := mgr.projectRootForPath("python", file)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root != ws {
+		t.Errorf("Python project root = %q, want workspace %q (Python detection lands with #76)", root, ws)
+	}
+}
+
+func TestManager_ProjectRootForPath_PathOutsideWorkspaceReturnsError(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	outside := t.TempDir()
+	file := filepath.Join(outside, "stray.ts")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	_, err := mgr.projectRootForPath("typescript", file)
+	if !errors.Is(err, ErrPathOutsideWorkspace) {
+		t.Fatalf("got error %v, want ErrPathOutsideWorkspace", err)
+	}
+}
+
+func TestManager_ProjectRootForPath_NoWorkspaceReturnsSentinel(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	_, err := mgr.projectRootForPath("typescript", "/tmp/foo.ts")
+	if !errors.Is(err, errNoWorkspaceRoot) {
+		t.Fatalf("got error %v, want errNoWorkspaceRoot", err)
+	}
+}
+
+func TestManager_DidOpen_PathOutsideWorkspaceIsSilentNoop(t *testing.T) {
+	mgr, collector := newTestManager(t)
+	ws := t.TempDir()
+	outside := t.TempDir()
+	file := filepath.Join(outside, "stray.ts")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, ""); err != nil {
+		t.Fatalf("DidOpen for out-of-workspace path must be a silent no-op, got %v", err)
+	}
+	mgr.mu.Lock()
+	serverCount := len(mgr.servers)
+	mgr.mu.Unlock()
+	if serverCount != 0 {
+		t.Errorf("expected no servers, got %d", serverCount)
+	}
+	if len(collector.eventsByName("lsp:status")) != 0 {
+		t.Errorf("expected no status events for out-of-workspace path")
+	}
+}
+
+// startMockManagerAtRoot starts a mock LSP server at the given project root
+// inside the active workspace, returning the manager and the server key. The
+// caller is responsible for SetWorkspaceRoot before calling.
+func startMockServerAt(t *testing.T, mgr *Manager, family, root string) serverKey {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	t.Setenv("FIRN_MOCK_LSP", "1")
+
+	key := serverKey{family: family, workspace: root}
+	cfg := &ServerConfig{
+		LanguageFamily: family,
+		Command:        os.Args[0],
+		Args:           []string{"-test.run=^TestMockServerProcess$"},
+	}
+	if _, err := mgr.startServer(ctx, key, cfg); err != nil {
+		t.Fatalf("startServer at %s: %v", root, err)
+	}
+	return key
+}
+
+func TestManager_DistinctProjectRootsKeepSeparateServers(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "frontend", "tsconfig.json"))
+	touch(t, filepath.Join(ws, "admin", "package.json"))
+	fileA := filepath.Join(ws, "frontend", "src", "a.ts")
+	fileB := filepath.Join(ws, "admin", "src", "b.ts")
+	touch(t, fileA)
+	touch(t, fileB)
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+
+	rootA, err := mgr.projectRootForPath("typescript", fileA)
+	if err != nil {
+		t.Fatalf("rootA: %v", err)
+	}
+	rootB, err := mgr.projectRootForPath("typescript", fileB)
+	if err != nil {
+		t.Fatalf("rootB: %v", err)
+	}
+	if rootA == rootB {
+		t.Fatalf("expected distinct project roots, got both = %q", rootA)
+	}
+
+	keyA := startMockServerAt(t, mgr, "typescript", rootA)
+	keyB := startMockServerAt(t, mgr, "typescript", rootB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.DidOpen(ctx, fileA, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen A: %v", err)
+	}
+	if err := mgr.DidOpen(ctx, fileB, "typescript", 1, "// b"); err != nil {
+		t.Fatalf("DidOpen B: %v", err)
+	}
+
+	uriA, _ := FileToURI(fileA)
+	uriB, _ := FileToURI(fileB)
+	mgr.mu.Lock()
+	entryA, hasA := mgr.servers[keyA]
+	entryB, hasB := mgr.servers[keyB]
+	mgr.mu.Unlock()
+	if !hasA || !hasB {
+		t.Fatalf("expected two servers, got hasA=%v hasB=%v", hasA, hasB)
+	}
+	if entryA == entryB {
+		t.Fatal("expected distinct serverEntry pointers per project root")
+	}
+
+	mgr.mu.Lock()
+	_, aOwnsItsDoc := entryA.openDocs[uriA]
+	_, aLeakedB := entryA.openDocs[uriB]
+	_, bOwnsItsDoc := entryB.openDocs[uriB]
+	_, bLeakedA := entryB.openDocs[uriA]
+	mgr.mu.Unlock()
+	if !aOwnsItsDoc || !bOwnsItsDoc {
+		t.Errorf("server missing its own document: a=%v b=%v", aOwnsItsDoc, bOwnsItsDoc)
+	}
+	if aLeakedB || bLeakedA {
+		t.Errorf("cross-root document leak: aLeakedB=%v bLeakedA=%v", aLeakedB, bLeakedA)
+	}
+
+	// Closing the document at root A must only tear down server A.
+	if err := mgr.DidClose(ctx, fileA); err != nil {
+		t.Fatalf("DidClose A: %v", err)
+	}
+	mgr.mu.Lock()
+	_, aStillExists := mgr.servers[keyA]
+	_, bStillExists := mgr.servers[keyB]
+	mgr.mu.Unlock()
+	if aStillExists {
+		t.Error("server A should be torn down after its last document closed")
+	}
+	if !bStillExists {
+		t.Error("server B should remain after closing only A's document")
+	}
+}
+
+func TestManager_SameProjectRootSharesOneServer(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "pkg", "tsconfig.json"))
+	fileA := filepath.Join(ws, "pkg", "src", "a.ts")
+	fileB := filepath.Join(ws, "pkg", "src", "deeper", "b.tsx")
+	touch(t, fileA)
+	touch(t, fileB)
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+
+	root, err := mgr.projectRootForPath("typescript", fileA)
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	key := startMockServerAt(t, mgr, "typescript", root)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.DidOpen(ctx, fileA, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen A: %v", err)
+	}
+	if err := mgr.DidOpen(ctx, fileB, "typescriptreact", 1, "// b"); err != nil {
+		t.Fatalf("DidOpen B: %v", err)
+	}
+
+	mgr.mu.Lock()
+	serverCount := len(mgr.servers)
+	docCount := len(mgr.servers[key].openDocs)
+	mgr.mu.Unlock()
+	if serverCount != 1 {
+		t.Errorf("expected 1 shared server, got %d", serverCount)
+	}
+	if docCount != 2 {
+		t.Errorf("expected 2 documents on shared server, got %d", docCount)
+	}
+}
+
+func TestManager_DocKeysCachePopulatedOnDidOpenClearedOnDidClose(t *testing.T) {
+	// The cache eliminates per-keystroke filesystem walks for DidChange/
+	// DidSave/Hover/Definition/Complete. Verify that DidOpen populates it,
+	// DidClose tears it down, and refcount > 1 keeps it alive.
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "pkg", "tsconfig.json"))
+	file := filepath.Join(ws, "pkg", "src", "main.ts")
+	touch(t, file)
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+
+	root, err := mgr.projectRootForPath("typescript", file)
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	startMockServerAt(t, mgr, "typescript", root)
+
+	uri, _ := FileToURI(file)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Before DidOpen, cache is empty.
+	mgr.mu.Lock()
+	_, hasBefore := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if hasBefore {
+		t.Fatal("docKeys should be empty before DidOpen")
+	}
+
+	// First DidOpen populates cache with the resolved project root.
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen 1: %v", err)
+	}
+	mgr.mu.Lock()
+	cachedKey, ok := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if !ok {
+		t.Fatal("docKeys should contain entry after DidOpen")
+	}
+	if cachedKey.workspace != root || cachedKey.family != "typescript" {
+		t.Errorf("cached key = %+v, want {typescript, %s}", cachedKey, root)
+	}
+
+	// Second DidOpen (refcount 2) keeps cache alive.
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen 2: %v", err)
+	}
+	mgr.mu.Lock()
+	_, stillCached := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if !stillCached {
+		t.Fatal("docKeys entry should persist while refcount > 0")
+	}
+
+	// First DidClose (refcount 1) leaves cache in place.
+	if err := mgr.DidClose(ctx, file); err != nil {
+		t.Fatalf("DidClose 1: %v", err)
+	}
+	mgr.mu.Lock()
+	_, afterFirstClose := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if !afterFirstClose {
+		t.Error("docKeys entry should persist after DidClose with refcount > 0")
+	}
+
+	// Final DidClose (refcount 0) clears the cache.
+	if err := mgr.DidClose(ctx, file); err != nil {
+		t.Fatalf("DidClose 2: %v", err)
+	}
+	mgr.mu.Lock()
+	_, afterLastClose := mgr.docKeys[uri]
+	mgr.mu.Unlock()
+	if afterLastClose {
+		t.Error("docKeys entry should be removed after final DidClose")
+	}
+}
+
+func TestManager_DidChangeUsesCacheNotFilesystem(t *testing.T) {
+	// Proves the perf invariant: once DidOpen has cached the document's
+	// project root, subsequent DidChange / Hover / Definition / Complete
+	// calls route through serverForPath WITHOUT walking the filesystem.
+	//
+	// We assert this indirectly by deleting the marker file after DidOpen.
+	// If the hot path re-resolved on every call, removing the marker would
+	// cause routing to fall back to workspaceRoot — a different key — and
+	// the request would land on no server. With the cache, routing remains
+	// pinned to the original project root.
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	marker := filepath.Join(ws, "pkg", "tsconfig.json")
+	touch(t, marker)
+	file := filepath.Join(ws, "pkg", "src", "main.ts")
+	touch(t, file)
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+
+	pkgRoot := filepath.Join(ws, "pkg")
+	startMockServerAt(t, mgr, "typescript", pkgRoot)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.DidOpen(ctx, file, "typescript", 1, "// a"); err != nil {
+		t.Fatalf("DidOpen: %v", err)
+	}
+
+	// Remove the marker — if the hot path were re-resolving, this would
+	// shift the resolved root to ws and the request would miss our pkg
+	// server.
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("remove marker: %v", err)
+	}
+
+	// serverForPath must still find the pkg-rooted server via the cache.
+	uri, _ := FileToURI(file)
+	entry, gotURI, key := mgr.serverForPath(file)
+	if entry == nil {
+		t.Fatal("serverForPath returned nil after marker removal — cache not honored on hot path")
+	}
+	if gotURI != uri {
+		t.Errorf("uri = %q, want %q", gotURI, uri)
+	}
+	if key.workspace != pkgRoot {
+		t.Errorf("routed to workspace %q, want cached %q", key.workspace, pkgRoot)
+	}
+}
+
+func TestManager_ShutdownAllTearsDownAllRoots(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "a", "tsconfig.json"))
+	touch(t, filepath.Join(ws, "b", "tsconfig.json"))
+
+	collector := &eventCollector{}
+	mgr := &Manager{
+		registry: NewRegistry(),
+		emitter:  collector.emit,
+		servers:  make(map[serverKey]*serverEntry),
+		docKeys:  make(map[string]serverKey),
+	}
+	mgr.SetWorkspaceRoot(ws)
+
+	startMockServerAt(t, mgr, "typescript", filepath.Join(ws, "a"))
+	startMockServerAt(t, mgr, "typescript", filepath.Join(ws, "b"))
+
+	mgr.mu.Lock()
+	beforeCount := len(mgr.servers)
+	mgr.mu.Unlock()
+	if beforeCount != 2 {
+		t.Fatalf("expected 2 servers before shutdown, got %d", beforeCount)
+	}
+
+	mgr.ShutdownAll(5 * time.Second)
+
+	mgr.mu.Lock()
+	afterCount := len(mgr.servers)
+	mgr.mu.Unlock()
+	if afterCount != 0 {
+		t.Errorf("expected 0 servers after ShutdownAll, got %d", afterCount)
 	}
 }

@@ -72,23 +72,30 @@ func (r *Registry) FamilyForExtension(ext string) string {
 	return ""
 }
 
-// ServerConfigFor returns the server configuration for a given language family
-// and workspace root. It resolves binary paths using workspace-local and system lookups.
-func (r *Registry) ServerConfigFor(family, workspaceRoot string) (*ServerConfig, error) {
+// ServerConfigFor returns the server configuration for a given language
+// family and project root. The project root is whatever the caller has
+// resolved for the file being opened — for TypeScript that's the nearest
+// directory with tsconfig.json / jsconfig.json / package.json bounded by the
+// active workspace; for other families it remains the active workspace root.
+//
+// Binary lookups (e.g. node_modules/.bin/typescript-language-server) and
+// local-TypeScript discovery use this project root, so monorepo packages get
+// their own per-package server installation when one exists.
+func (r *Registry) ServerConfigFor(family, projectRoot string) (*ServerConfig, error) {
 	switch family {
 	case "typescript":
-		return r.resolveTypeScriptServer(workspaceRoot)
+		return r.resolveTypeScriptServer(projectRoot)
 	case "go":
-		return r.resolveGoServer(workspaceRoot)
+		return r.resolveGoServer(projectRoot)
 	case "python":
-		return r.resolvePythonServer(workspaceRoot)
+		return r.resolvePythonServer(projectRoot)
 	default:
 		return nil, fmt.Errorf("no language server configured for %q", family)
 	}
 }
 
-func workspaceLocalNodeBin(workspaceRoot, binary string) string {
-	localBin := filepath.Join(workspaceRoot, "node_modules", ".bin", binary)
+func projectLocalNodeBin(projectRoot, binary string) string {
+	localBin := filepath.Join(projectRoot, "node_modules", ".bin", binary)
 	if runtime.GOOS == "windows" {
 		localBin += ".cmd"
 	}
@@ -96,16 +103,23 @@ func workspaceLocalNodeBin(workspaceRoot, binary string) string {
 }
 
 // resolveTypeScriptServer finds and configures typescript-language-server.
-func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig, error) {
+// The projectRoot argument is the detected nearest TS/JS project root, not
+// necessarily the active workspace root. Lookup order:
+//  1. <projectRoot>/node_modules/.bin/typescript-language-server
+//  2. System PATH (with initOptions.tsserver.path pointing at any
+//     <projectRoot>/node_modules/typescript/lib that exists, so the project's
+//     own TypeScript version is preferred over whatever the global server
+//     bundles).
+func (r *Registry) resolveTypeScriptServer(projectRoot string) (*ServerConfig, error) {
 	binary := "typescript-language-server"
 
-	// 1. Check workspace-local node_modules/.bin/
-	if path, err := exec.LookPath(workspaceLocalNodeBin(workspaceRoot, binary)); err == nil {
+	// 1. Check project-local node_modules/.bin/
+	if path, err := exec.LookPath(projectLocalNodeBin(projectRoot, binary)); err == nil {
 		return &ServerConfig{
 			LanguageFamily: "typescript",
 			Command:        path,
 			Args:           []string{"--stdio"},
-			Dir:            workspaceRoot,
+			Dir:            projectRoot,
 		}, nil
 	}
 
@@ -121,13 +135,14 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 
 	args := []string{"--stdio"}
 
-	// 3. If workspace has local TypeScript lib, tell the system server to use it
-	// via initializationOptions.tsserver.path. This ensures the server uses the
-	// project's TS version rather than whatever TypeScript the global server bundles.
-	// (The --tsserver-path CLI flag was removed in typescript-language-server v4+.)
+	// 3. If the project has its own TypeScript lib, point the system server at
+	// it via initializationOptions.tsserver.path. This ensures the server uses
+	// the project's TS version rather than whatever TypeScript the global
+	// server bundles. (The --tsserver-path CLI flag was removed in
+	// typescript-language-server v4+.)
 	// TODO: Gate behind workspace trust when trust system is implemented.
 	var initOpts any
-	localTSLib := filepath.Join(workspaceRoot, "node_modules", "typescript", "lib")
+	localTSLib := filepath.Join(projectRoot, "node_modules", "typescript", "lib")
 	if _, statErr := os.Stat(filepath.Join(localTSLib, "tsserver.js")); statErr == nil {
 		initOpts = map[string]any{
 			"tsserver": map[string]any{
@@ -140,7 +155,7 @@ func (r *Registry) resolveTypeScriptServer(workspaceRoot string) (*ServerConfig,
 		LanguageFamily: "typescript",
 		Command:        path,
 		Args:           args,
-		Dir:            workspaceRoot,
+		Dir:            projectRoot,
 		InitOptions:    initOpts,
 	}, nil
 }
@@ -167,7 +182,7 @@ func (r *Registry) resolveGoServer(workspaceRoot string) (*ServerConfig, error) 
 func (r *Registry) resolvePythonServer(workspaceRoot string) (*ServerConfig, error) {
 	binary := "pyright-langserver"
 
-	if path, err := exec.LookPath(workspaceLocalNodeBin(workspaceRoot, binary)); err == nil {
+	if path, err := exec.LookPath(projectLocalNodeBin(workspaceRoot, binary)); err == nil {
 		return &ServerConfig{
 			LanguageFamily: "python",
 			Command:        path,

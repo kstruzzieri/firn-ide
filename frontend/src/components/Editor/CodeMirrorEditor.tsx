@@ -24,7 +24,7 @@ import {
   updateEditorDiagnostics,
 } from './codemirror';
 import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
-import { useLSPStore, serverStatusKey } from '../../stores/lspStore';
+import { useLSPStore, findServerStatusForFile } from '../../stores/lspStore';
 import { filePathToURI } from '../../utils/lspUri';
 import { lspFamilyForFile } from '../../utils/lspLanguageId';
 import styles from './CodeMirrorEditor.module.css';
@@ -251,14 +251,14 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       const currentView = editorRef.current;
       if (!currentView) return;
 
-      const workspacePath = useIDEStore.getState().workspace?.path;
-      const status = workspacePath
-        ? useLSPStore.getState().serverStatuses.get(serverStatusKey(workspacePath, family))
-        : undefined;
+      // fileId is the file's local path (EditorFile.id === EditorFile.path).
+      // Status lookup is by file path so nested project-root servers (#20)
+      // drive completion/hover correctly inside monorepo packages.
+      const status = findServerStatusForFile(useLSPStore.getState().serverStatuses, fileId, family);
       const isReady = status?.state === 'ready';
       const triggerCharacters = status?.completionTriggerCharacters ?? [];
       const nextConfigKey = isReady
-        ? `${workspacePath ?? ''}::${family}::${triggerCharacters.join('\u0000')}`
+        ? `${status?.workspace ?? ''}::${family}::${triggerCharacters.join('\u0000')}`
         : null;
 
       if (nextConfigKey === lastConfigKey) return;
@@ -278,16 +278,12 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 
     applyLSPFeatureConfiguration();
 
-    // Use reference equality on the status entry to skip work during unrelated
-    // store updates (e.g. diagnostics arriving on every keystroke).
-    let prevStatus = useLSPStore
-      .getState()
-      .serverStatuses.get(serverStatusKey(useIDEStore.getState().workspace?.path ?? '', family));
+    // Use reference equality on the resolved status entry to skip work during
+    // unrelated store updates (e.g. diagnostics arriving on every keystroke).
+    let prevStatus = findServerStatusForFile(useLSPStore.getState().serverStatuses, fileId, family);
 
     const cancelStatus = useLSPStore.subscribe((state) => {
-      const workspacePath = useIDEStore.getState().workspace?.path;
-      if (!workspacePath) return;
-      const status = state.serverStatuses.get(serverStatusKey(workspacePath, family));
+      const status = findServerStatusForFile(state.serverStatuses, fileId, family);
       if (status === prevStatus) return;
       prevStatus = status;
       applyLSPFeatureConfiguration();

@@ -6,7 +6,10 @@ import {
   useLSPInfoCount,
   useLSPWarningCount,
   useGroupedDiagnostics,
+  findServerStatusForFile,
+  pathContainsOrEquals,
   type LSPDiagnostic,
+  type LSPServerStatus,
 } from '../../stores/lspStore';
 
 beforeEach(() => {
@@ -307,6 +310,123 @@ describe('lspStore', () => {
       useLSPStore.getState().clearWorkspaceState('/project');
 
       expect(useLSPStore.getState().serverStatuses.has('/project::typescript')).toBe(false);
+    });
+
+    it('clears nested project-root statuses inside the workspace', () => {
+      // TypeScript project-root detection (#20) means a single workspace can
+      // host multiple servers keyed by nested project roots. Workspace cleanup
+      // must sweep all of them.
+      const state = useLSPStore.getState();
+      state.setServerStatus({
+        family: 'typescript',
+        workspace: '/project/frontend',
+        state: 'ready',
+      });
+      state.setServerStatus({
+        family: 'typescript',
+        workspace: '/project/admin',
+        state: 'ready',
+      });
+      state.setServerStatus({
+        family: 'typescript',
+        workspace: '/other-project',
+        state: 'ready',
+      });
+
+      useLSPStore.getState().clearWorkspaceState('/project');
+
+      const statuses = useLSPStore.getState().serverStatuses;
+      expect(statuses.size).toBe(1);
+      expect(Array.from(statuses.values())[0].workspace).toBe('/other-project');
+    });
+  });
+
+  describe('pathContainsOrEquals', () => {
+    it('treats equal paths as contained', () => {
+      expect(pathContainsOrEquals('/a/b', '/a/b')).toBe(true);
+    });
+
+    it('accepts strict descendants', () => {
+      expect(pathContainsOrEquals('/a/b', '/a/b/c')).toBe(true);
+      expect(pathContainsOrEquals('/a/b', '/a/b/c/d/e.ts')).toBe(true);
+    });
+
+    it('rejects prefix collisions', () => {
+      expect(pathContainsOrEquals('/a/b', '/a/bc')).toBe(false);
+      expect(pathContainsOrEquals('/foo', '/foobar')).toBe(false);
+    });
+
+    it('rejects ancestors and siblings', () => {
+      expect(pathContainsOrEquals('/a/b', '/a')).toBe(false);
+      expect(pathContainsOrEquals('/a/b', '/a/c')).toBe(false);
+    });
+
+    it('treats empty inputs as not contained', () => {
+      expect(pathContainsOrEquals('', '/a')).toBe(false);
+      expect(pathContainsOrEquals('/a', '')).toBe(false);
+    });
+  });
+
+  describe('findServerStatusForFile', () => {
+    const ready = (workspace: string, family = 'typescript'): LSPServerStatus => ({
+      family,
+      workspace,
+      state: 'ready',
+    });
+
+    it('returns undefined when no status covers the file', () => {
+      const statuses = new Map([['/proj::typescript', ready('/proj')]]);
+      expect(findServerStatusForFile(statuses, '/elsewhere/foo.ts', 'typescript')).toBeUndefined();
+    });
+
+    it('picks the longest-matching workspace root', () => {
+      // Monorepo with a repo-root server (legacy single workspace install) AND
+      // a per-package server. A file inside the package must resolve to the
+      // package-specific status, not the repo-root one.
+      const repoRoot = ready('/repo');
+      const pkgRoot = ready('/repo/packages/ui');
+      const statuses = new Map([
+        ['/repo::typescript', repoRoot],
+        ['/repo/packages/ui::typescript', pkgRoot],
+      ]);
+
+      const got = findServerStatusForFile(
+        statuses,
+        '/repo/packages/ui/src/Button.tsx',
+        'typescript'
+      );
+      expect(got).toBe(pkgRoot);
+    });
+
+    it('falls back to a covering workspace-root status', () => {
+      const statuses = new Map([['/repo::typescript', ready('/repo')]]);
+      const got = findServerStatusForFile(statuses, '/repo/src/index.ts', 'typescript');
+      expect(got?.workspace).toBe('/repo');
+    });
+
+    it('ignores statuses for other families', () => {
+      const statuses = new Map([
+        ['/repo::go', ready('/repo', 'go')],
+        ['/repo/pkg::typescript', ready('/repo/pkg')],
+      ]);
+      const got = findServerStatusForFile(statuses, '/repo/pkg/a.ts', 'go');
+      // No Go status covers /repo/pkg/a.ts because Go status is rooted at /repo
+      // and the file is at /repo/pkg/a.ts — so containment matches but family
+      // discrimination must keep TS out and only the Go status remains.
+      expect(got?.family).toBe('go');
+      expect(got?.workspace).toBe('/repo');
+    });
+
+    it('does not confuse prefix-collision paths', () => {
+      const statuses = new Map([['/repo/ba::typescript', ready('/repo/ba')]]);
+      // /repo/bar/index.ts must NOT match /repo/ba
+      const got = findServerStatusForFile(statuses, '/repo/bar/index.ts', 'typescript');
+      expect(got).toBeUndefined();
+    });
+
+    it('returns undefined for empty file path', () => {
+      const statuses = new Map([['/repo::typescript', ready('/repo')]]);
+      expect(findServerStatusForFile(statuses, '', 'typescript')).toBeUndefined();
     });
   });
 });

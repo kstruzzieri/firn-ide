@@ -144,6 +144,98 @@ func TestResolveTypeScriptServer_NotFound(t *testing.T) {
 	}
 }
 
+// Monorepo case: the repo root has no install, but a nested package has its
+// own typescript-language-server. ServerConfigFor must use the package-local
+// install (and its Dir must be the package, not the repo root).
+//
+// Mirrors the runtime invariant after #20: Manager hands the registry the
+// detected project root, not the active workspace root.
+func TestResolveTypeScriptServer_PrefersPackageLocalInMonorepo(t *testing.T) {
+	repoRoot := t.TempDir()
+	pkgRoot := filepath.Join(repoRoot, "packages", "ui")
+	pkgBinDir := filepath.Join(pkgRoot, "node_modules", ".bin")
+	if err := os.MkdirAll(pkgBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := "typescript-language-server"
+	if runtime.GOOS == "windows" {
+		binary += ".cmd"
+	}
+	pkgBinPath := filepath.Join(pkgBinDir, binary)
+	if err := os.WriteFile(pkgBinPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A different fake server is on PATH; it must lose to the package-local install.
+	systemBinDir := fakeTSLSBin(t)
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", systemBinDir+string(os.PathListSeparator)+origPath)
+
+	registry := NewRegistry()
+	config, err := registry.ServerConfigFor("typescript", pkgRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if config.Command != pkgBinPath {
+		t.Errorf("Command = %q, want package-local %q", config.Command, pkgBinPath)
+	}
+	if config.Dir != pkgRoot {
+		t.Errorf("Dir = %q, want package root %q (not repo root)", config.Dir, pkgRoot)
+	}
+	if config.InitOptions != nil {
+		// No package-local TS lib was created, so tsserver.path must not be set.
+		t.Errorf("InitOptions should be nil for package-local server without local TS lib, got %v", config.InitOptions)
+	}
+}
+
+// Monorepo case 2: package-local install missing, package has its own
+// TypeScript lib. The system server is used, but initializationOptions
+// tsserver.path must point at the PACKAGE's TypeScript lib, not the repo's.
+func TestResolveTypeScriptServer_SystemServerUsesPackageLocalTSLib(t *testing.T) {
+	repoRoot := t.TempDir()
+	pkgRoot := filepath.Join(repoRoot, "packages", "ui")
+	// Package-local TS lib (no package-local server)
+	pkgTSLib := filepath.Join(pkgRoot, "node_modules", "typescript", "lib")
+	if err := os.MkdirAll(pkgTSLib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgTSLib, "tsserver.js"), []byte("// stub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Repo-root TS lib that must NOT be selected
+	repoTSLib := filepath.Join(repoRoot, "node_modules", "typescript", "lib")
+	if err := os.MkdirAll(repoTSLib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoTSLib, "tsserver.js"), []byte("// repo stub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBinDir := fakeTSLSBin(t)
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+origPath)
+
+	registry := NewRegistry()
+	config, err := registry.ServerConfigFor("typescript", pkgRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if config.Dir != pkgRoot {
+		t.Errorf("Dir = %q, want %q", config.Dir, pkgRoot)
+	}
+	opts, ok := config.InitOptions.(map[string]any)
+	if !ok {
+		t.Fatalf("expected tsserver init options for package-local TS lib, got %T", config.InitOptions)
+	}
+	tsserverOpts := opts["tsserver"].(map[string]any)
+	if tsserverOpts["path"] != pkgTSLib {
+		t.Errorf("tsserver.path = %q, want package-local %q (repo-root TS lib must lose)", tsserverOpts["path"], pkgTSLib)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

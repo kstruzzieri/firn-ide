@@ -1,6 +1,28 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { fileURIToPath } from '../utils/lspUri';
+import { getPlatform } from '../utils/platform';
+
+const pathSep = getPlatform() === 'windows' ? '\\' : '/';
+
+/**
+ * Reports whether `child` is exactly `parent` or strictly below it.
+ *
+ * Both arguments must use the host platform's path separator and be
+ * cleaned absolute paths (the backend cleans them via filepath.Clean
+ * before emitting). A separator-suffixed prefix check is used so that
+ * "/foo/bar" is not falsely classified as a child of "/foo/ba".
+ *
+ * Case sensitivity follows the underlying filesystem behavior of the
+ * paths — since both sides come from the same Go source they will be
+ * cased consistently in practice.
+ */
+export function pathContainsOrEquals(parent: string, child: string): boolean {
+  if (!parent || !child) return false;
+  if (parent === child) return true;
+  const parentWithSep = parent.endsWith(pathSep) ? parent : parent + pathSep;
+  return child.startsWith(parentWithSep);
+}
 
 // --- Types ---
 
@@ -124,9 +146,13 @@ export const useLSPStore = create<LSPStore>()(
       clearWorkspaceState: (workspace) =>
         set(
           (state) => {
+            // Server status entries may be keyed by nested project roots
+            // (TypeScript monorepo packages). Clearing a workspace must
+            // sweep every status whose root is at or beneath the cleared
+            // workspace path, not just exact matches.
             const nextStatuses = new Map(state.serverStatuses);
             for (const [key, status] of nextStatuses) {
-              if (status.workspace === workspace) {
+              if (pathContainsOrEquals(workspace, status.workspace)) {
                 nextStatuses.delete(key);
               }
             }
@@ -159,6 +185,41 @@ export const useLSPStore = create<LSPStore>()(
     { name: 'lsp-store' }
   )
 );
+
+/**
+ * Finds the most specific server status for a file path.
+ *
+ * Since TypeScript root detection (#20) keys servers by detected project
+ * root rather than the active workspace, the editor needs to look up
+ * status by the file's path: it picks the status whose `workspace` is
+ * the longest prefix of `filePath` for the matching family. This makes
+ * completion trigger characters and ready-state UX work correctly for
+ * nested monorepo packages.
+ *
+ * For language families that still key by active workspace root, the
+ * lookup also works because the workspace prefix is the only candidate
+ * and it always wins.
+ *
+ * Returns undefined when no server for the family covers the file.
+ */
+export function findServerStatusForFile(
+  serverStatuses: Map<string, LSPServerStatus>,
+  filePath: string,
+  family: string
+): LSPServerStatus | undefined {
+  if (!filePath) return undefined;
+  let best: LSPServerStatus | undefined;
+  let bestLen = -1;
+  for (const status of serverStatuses.values()) {
+    if (status.family !== family) continue;
+    if (!pathContainsOrEquals(status.workspace, filePath)) continue;
+    if (status.workspace.length > bestLen) {
+      best = status;
+      bestLen = status.workspace.length;
+    }
+  }
+  return best;
+}
 
 // --- Reactive selector hooks ---
 
