@@ -2,14 +2,24 @@ import { useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { OutputEntry } from '../../types/runOutput';
 import { diffOutputLines } from '../../utils/diffOutput';
+import { OutputLine } from './OutputLine';
 import styles from './RunOutput.module.css';
 
 interface DiffViewProps {
   entries: OutputEntry[];
   previousEntries: OutputEntry[];
+  workingDir?: string;
+  previousWorkingDir?: string;
+  workspacePath?: string;
 }
 
-export function DiffView({ entries, previousEntries }: DiffViewProps) {
+export function DiffView({
+  entries,
+  previousEntries,
+  workingDir,
+  previousWorkingDir,
+  workspacePath,
+}: DiffViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const diffLines = useMemo(() => {
@@ -75,7 +85,12 @@ export function DiffView({ entries, previousEntries }: DiffViewProps) {
               <span className={styles.diffMarker}>
                 {line.type === 'added' ? '+' : line.type === 'removed' ? '−' : ' '}
               </span>
-              {line.text}
+              <OutputLine
+                text={line.text}
+                className={styles.diffText}
+                workingDir={line.type === 'removed' ? previousWorkingDir : workingDir}
+                workspacePath={workspacePath}
+              />
             </div>
           );
         })}

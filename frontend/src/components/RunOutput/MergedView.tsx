@@ -4,6 +4,7 @@ import type { OutputEntry } from '../../types/runOutput';
 import { isFoldedRegion } from '../../types/runOutput';
 import { foldOutput } from '../../utils/foldOutput';
 import { SmartFold } from './SmartFold';
+import { OutputLine } from './OutputLine';
 import styles from './RunOutput.module.css';
 
 interface MergedViewProps {
@@ -11,9 +12,18 @@ interface MergedViewProps {
   autoScroll: boolean;
   expandedFolds: Set<string>;
   onToggleFold: (foldId: string) => void;
+  workingDir?: string;
+  workspacePath?: string;
 }
 
-export function MergedView({ entries, autoScroll, expandedFolds, onToggleFold }: MergedViewProps) {
+export function MergedView({
+  entries,
+  autoScroll,
+  expandedFolds,
+  onToggleFold,
+  workingDir,
+  workspacePath,
+}: MergedViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => foldOutput(entries), [entries]);
 
@@ -63,9 +73,16 @@ export function MergedView({ entries, autoScroll, expandedFolds, onToggleFold }:
                   fold={item}
                   isExpanded={expandedFolds.has(item.id)}
                   onToggle={onToggleFold}
+                  workingDir={workingDir}
+                  workspacePath={workspacePath}
                 />
               ) : (
-                <div className={`${styles.outputLine} ${styles[item.stream]}`}>{item.text}</div>
+                <OutputLine
+                  text={item.text}
+                  className={`${styles.outputLine} ${styles[item.stream]}`}
+                  workingDir={workingDir}
+                  workspacePath={workspacePath}
+                />
               )}
             </div>
           );

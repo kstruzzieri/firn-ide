@@ -25,8 +25,8 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | UI/UX Polish | **COMPLETE** | #35-36 |
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
 | Milestone 3: Workspace Management | **IN PROGRESS** | #13-15 complete, #53-54 open |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-61 complete; #17-18, #62-64, #71 open |
-| Milestone 5: Language Server Protocol | **IN PROGRESS** | #19-22, #73 complete; #74-76 open |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-62 complete; #17-18, #63-64, #71 open |
+| Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
 | Performance | Not started | #37-39 |
@@ -40,11 +40,11 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-1. **#75 / #76: Finish LSP epic** — apply the `ResolveProjectRoot(filePath, workspaceRoot, markers)` helper landed for #20 to nearest-`go.mod` (Go) and nearest-`pyproject.toml` / `requirements.txt` / `setup.py` (Python) detection. Closes epic #74.
-2. **#62: Run Profiles - Clickable Error Links** — parse common `file:line:col` output formats and jump from run output to source.
-3. **#64: Run Profiles - Environment Variants** — complete `ActiveVariant` env-file resolution and add the frontend variant selector.
-4. **#63: Run Profiles - Compound Profile Execution** — add sequential step execution, stop-on-failure, and per-step UI.
-5. **#53 then #54: Workspace Identity and File Tree Views** — workspace definitions, active accent, selector, then Project/Workspace tree modes.
+Current status: PR #96 is merged into `develop`; the LSP epic (#74), Go integration (#75), and Python integration (#76) are complete. Run output now supports clickable error links (#62).
+
+1. **#64: Run Profiles - Environment Variants** — complete `ActiveVariant` env-file resolution and add the frontend variant selector.
+2. **#63: Run Profiles - Compound Profile Execution** — add sequential step execution, stop-on-failure, and per-step UI.
+3. **#53 then #54: Workspace Identity and File Tree Views** — workspace definitions, active accent, selector, then Project/Workspace tree modes.
 
 ---
 
@@ -163,7 +163,7 @@ Sub-issues:
 - [x] #59: Core Process Runner — `os/exec` implementation, env/cwd/envFile, start/stop bindings
 - [x] #60: Output Streaming — pipe stdout/stderr, Wails events, output panel
 - [x] #61: Process Lifecycle UI — play/stop/restart controls, state indicators
-- [ ] #62: Clickable Error Links — `file:line:col` parsing, jump-to-error
+- [x] #62: Clickable Error Links — `file:line:col` parsing, jump-to-error
 - [ ] #63: Compound Profile Execution — sequential steps, stop-on-failure
 - [ ] #64: Environment Variants — env file swapping by active variant
 
@@ -178,7 +178,7 @@ Sub-issues:
 - [x] Play/stop/restart controls in run profile cards
 - [x] Running status indicators and status badges
 - [x] Output panel with streaming logs
-- [ ] Clickable file:line:col output links
+- [x] Clickable file:line:col output links
 - [ ] Compound execution view with stage indicators
 - [ ] Environment variant selector (`[env: dev ▾]`)
 - [ ] Edit profile form (create/modify saved profiles)
@@ -189,15 +189,16 @@ Sub-issues:
 
 ---
 
-## Milestone 5: Language Server Protocol (IN PROGRESS)
+## Milestone 5: Language Server Protocol (COMPLETE)
 
-### #74: LSP - Language Intelligence [Epic]
+### #74: LSP - Language Intelligence [Epic] ✅
 Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Backend LSP foundation
 - [x] Frontend document sync
 - [x] Diagnostics UX and Problems panel
 - [x] Completion, hover, and definition UX
 - [x] TypeScript project-root detection completion (#20)
+- [x] Go/Python project-root detection completion (#75/#76 via PR #96)
 
 ### #19: LSP - Client Foundation ✅
 - [x] JSON-RPC 2.0 message handling
@@ -221,6 +222,7 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Surface backend LSP status/errors through frontend events
 
 ### #20: LSP - TypeScript Integration ✅
+- [x] PR #95 merged into `develop` with per-package TypeScript project-root detection and nested-root reconnect handling
 - [x] Auto-detect TypeScript/JavaScript projects by nearest `tsconfig.json`, `jsconfig.json`, or `package.json` (bounded by active workspace)
 - [x] Resolve `typescript-language-server` from project-local install first, then PATH
 - [x] Launch `typescript-language-server --stdio`
@@ -244,15 +246,15 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] F12 and Cmd/Ctrl-click go-to-definition
 - [x] Cross-file definition navigation through the existing editor open flow
 
-### #75: LSP - Go Integration
-- [ ] Auto-detect Go workspaces by nearest `go.mod`
+### #75: LSP - Go Integration ✅
+- [x] Auto-detect Go workspaces by nearest `go.mod`
 - [x] Resolve and launch `gopls` through the shared LSP client
 - [x] Use shared diagnostics, hover, definition, and completion plumbing
-- [ ] Handle multi-module edge cases explicitly
+- [x] Handle multi-module edge cases explicitly through nearest-module root routing
 
-### #76: LSP - Python Integration
-- [ ] Auto-detect Python projects by nearest `pyproject.toml`, `requirements.txt`, or `setup.py`
-- [ ] Resolve `pyright-langserver` from active virtual environment before PATH
+### #76: LSP - Python Integration ✅
+- [x] Auto-detect Python projects by nearest `pyproject.toml`, `requirements.txt`, or `setup.py`
+- [x] Resolve `pyright-langserver` from active virtual environment before PATH
 - [x] Resolve and launch `pyright-langserver --stdio` through the shared LSP client
 - [x] Use shared diagnostics, hover, definition, and completion plumbing
 

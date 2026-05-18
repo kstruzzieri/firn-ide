@@ -291,6 +291,25 @@ function getOrCreateAssembler(
   return assembler;
 }
 
+function getProfileWorkingDirSnapshot(
+  state: Pick<IDEState, 'runProfiles'>,
+  profileId: string
+): string | undefined {
+  return state.runProfiles.find((profile) => profile.id === profileId)?.workingDir;
+}
+
+function createRunOutput(profileId: string, workingDir?: string): RunOutput {
+  return {
+    profileId,
+    workingDir,
+    state: 'idle',
+    exitCode: 0,
+    runCount: 0,
+    entries: [],
+    previousEntries: [],
+  };
+}
+
 export const useIDEStore = create<IDEStore>()(
   devtools(
     (set, get) => ({
@@ -591,14 +610,10 @@ export const useIDEStore = create<IDEStore>()(
             (state) => ({
               runOutputs: {
                 ...state.runOutputs,
-                [chunk.profileId]: {
-                  profileId: chunk.profileId,
-                  state: 'idle' as RunState,
-                  exitCode: 0,
-                  runCount: 0,
-                  entries: [],
-                  previousEntries: [],
-                },
+                [chunk.profileId]: createRunOutput(
+                  chunk.profileId,
+                  getProfileWorkingDirSnapshot(state, chunk.profileId)
+                ),
               },
             }),
             false,
@@ -662,14 +677,9 @@ export const useIDEStore = create<IDEStore>()(
 
         set(
           (state) => {
-            const existing = state.runOutputs[profileId] ?? {
-              profileId,
-              state: 'idle' as RunState,
-              exitCode: 0,
-              runCount: 0,
-              entries: [],
-              previousEntries: [],
-            };
+            const runWorkingDir = getProfileWorkingDirSnapshot(state, profileId);
+            const existing =
+              state.runOutputs[profileId] ?? createRunOutput(profileId, runWorkingDir);
 
             // Merge any flushed carry-over entries
             const mergedEntries =
@@ -680,6 +690,9 @@ export const useIDEStore = create<IDEStore>()(
             const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
 
             if (newState === 'running') {
+              const previousWorkingDir = existing.workingDir;
+              updated.workingDir = runWorkingDir;
+              updated.previousWorkingDir = undefined;
               updated.runCount = existing.runCount + 1;
               if (updated.runCount > 1) {
                 let prev = existing.entries;
@@ -687,6 +700,7 @@ export const useIDEStore = create<IDEStore>()(
                   prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
                 }
                 updated.previousEntries = prev;
+                updated.previousWorkingDir = previousWorkingDir;
                 updated.entries = [];
                 lineAssemblers.delete(profileId);
                 assemblerCallbacks.delete(profileId);
@@ -718,14 +732,9 @@ export const useIDEStore = create<IDEStore>()(
         set(
           (state) => {
             // --- RunOutput update (same logic as setRunState) ---
-            const existing = state.runOutputs[profileId] ?? {
-              profileId,
-              state: 'idle' as RunState,
-              exitCode: 0,
-              runCount: 0,
-              entries: [],
-              previousEntries: [],
-            };
+            const runWorkingDir = getProfileWorkingDirSnapshot(state, profileId);
+            const existing =
+              state.runOutputs[profileId] ?? createRunOutput(profileId, runWorkingDir);
 
             const mergedEntries =
               flushedEntries.length > 0
@@ -735,6 +744,9 @@ export const useIDEStore = create<IDEStore>()(
             const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
 
             if (newState === 'running') {
+              const previousWorkingDir = existing.workingDir;
+              updated.workingDir = runWorkingDir;
+              updated.previousWorkingDir = undefined;
               updated.runCount = existing.runCount + 1;
               if (updated.runCount > 1) {
                 let prev = existing.entries;
@@ -742,6 +754,7 @@ export const useIDEStore = create<IDEStore>()(
                   prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
                 }
                 updated.previousEntries = prev;
+                updated.previousWorkingDir = previousWorkingDir;
                 updated.entries = [];
                 lineAssemblers.delete(profileId);
                 assemblerCallbacks.delete(profileId);
@@ -839,7 +852,12 @@ export const useIDEStore = create<IDEStore>()(
               return {
                 runOutputs: {
                   ...state.runOutputs,
-                  [profileId]: { ...existing, entries: [], previousEntries: [] },
+                  [profileId]: {
+                    ...existing,
+                    entries: [],
+                    previousEntries: [],
+                    previousWorkingDir: undefined,
+                  },
                 },
               };
             }
@@ -870,7 +888,12 @@ export const useIDEStore = create<IDEStore>()(
             const preserved: Record<string, RunOutput> = {};
             for (const [id, output] of Object.entries(state.runOutputs)) {
               if (output.state === 'running') {
-                preserved[id] = { ...output, entries: [], previousEntries: [] };
+                preserved[id] = {
+                  ...output,
+                  entries: [],
+                  previousEntries: [],
+                  previousWorkingDir: undefined,
+                };
               }
             }
             const firstId = Object.keys(preserved)[0] ?? null;
@@ -1017,7 +1040,12 @@ export const useIDEStore = create<IDEStore>()(
             const preserved: Record<string, RunOutput> = {};
             for (const [id, output] of Object.entries(state.runOutputs)) {
               if (output.state === 'running') {
-                preserved[id] = { ...output, entries: [], previousEntries: [] };
+                preserved[id] = {
+                  ...output,
+                  entries: [],
+                  previousEntries: [],
+                  previousWorkingDir: undefined,
+                };
               }
             }
             const firstId = Object.keys(preserved)[0] ?? null;
