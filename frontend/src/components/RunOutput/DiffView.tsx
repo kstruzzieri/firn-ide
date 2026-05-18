@@ -9,10 +9,17 @@ interface DiffViewProps {
   entries: OutputEntry[];
   previousEntries: OutputEntry[];
   workingDir?: string;
+  previousWorkingDir?: string;
   workspacePath?: string;
 }
 
-export function DiffView({ entries, previousEntries, workingDir, workspacePath }: DiffViewProps) {
+export function DiffView({
+  entries,
+  previousEntries,
+  workingDir,
+  previousWorkingDir,
+  workspacePath,
+}: DiffViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const diffLines = useMemo(() => {
@@ -81,7 +88,7 @@ export function DiffView({ entries, previousEntries, workingDir, workspacePath }
               <OutputLine
                 text={line.text}
                 className={styles.diffText}
-                workingDir={workingDir}
+                workingDir={line.type === 'removed' ? previousWorkingDir : workingDir}
                 workspacePath={workspacePath}
               />
             </div>

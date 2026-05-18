@@ -7,7 +7,6 @@ import styles from './RunOutput.module.css';
 interface TimelineViewProps {
   runOutputs: Record<string, RunOutput>;
   autoScroll: boolean;
-  profileWorkingDirs: Record<string, string | undefined>;
   workspacePath?: string;
 }
 
@@ -22,12 +21,7 @@ function formatTimestamp(ts: number): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}.${d.getMilliseconds().toString().padStart(3, '0')}`;
 }
 
-export function TimelineView({
-  runOutputs,
-  autoScroll,
-  profileWorkingDirs,
-  workspacePath,
-}: TimelineViewProps) {
+export function TimelineView({ runOutputs, autoScroll, workspacePath }: TimelineViewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const profileIds = useMemo(() => Object.keys(runOutputs), [runOutputs]);
   const profileColorMap = useMemo(() => {
@@ -98,7 +92,7 @@ export function TimelineView({
               <OutputLine
                 text={entry.text}
                 className={`${styles.timelineData} ${entry.stream === 'stderr' ? styles.stderr : ''}`}
-                workingDir={profileWorkingDirs[entry.profileId]}
+                workingDir={runOutputs[entry.profileId]?.workingDir}
                 workspacePath={workspacePath}
               />
             </div>

@@ -1,5 +1,6 @@
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunHistoryEntry } from '../../types/runOutput';
+import type { RunProfile } from '../../types/runProfile';
 
 // Reset lifecycle state between tests
 beforeEach(() => {
@@ -309,6 +310,64 @@ describe('lifecycleStore - stopRequestTimestamps', () => {
     const { handleRunStatus } = useIDEStore.getState();
     handleRunStatus('profile-1', 'running', 0, 11000);
     expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
+  });
+});
+
+describe('lifecycleStore - run output working directory snapshots', () => {
+  const makeProfile = (workingDir: string): RunProfile => ({
+    id: 'profile-1',
+    name: 'test',
+    type: 'single',
+    source: 'user',
+    command: 'npm test',
+    workingDir,
+  });
+
+  beforeEach(() => {
+    useIDEStore.setState({
+      runProfiles: [makeProfile('frontend')],
+      runOutputs: {},
+      activeRunOutputId: null,
+    });
+  });
+
+  it('keeps existing output links tied to the working directory from run start', () => {
+    const store = useIDEStore.getState();
+
+    store.handleRunStatus('profile-1', 'running', 0, 1000);
+    store.appendRunOutput({
+      profileId: 'profile-1',
+      stream: 'stderr',
+      data: 'src/App.tsx:7:11\n',
+      timestamp: 1001,
+    });
+
+    useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
+
+    const output = useIDEStore.getState().runOutputs['profile-1'];
+    expect(output.workingDir).toBe('frontend');
+    expect(output.entries[0].text).toBe('src/App.tsx:7:11');
+  });
+
+  it('preserves previous run working directory separately when a profile is rerun', () => {
+    const store = useIDEStore.getState();
+
+    store.handleRunStatus('profile-1', 'running', 0, 1000);
+    store.appendRunOutput({
+      profileId: 'profile-1',
+      stream: 'stderr',
+      data: 'src/old.ts:1:1\n',
+      timestamp: 1001,
+    });
+    store.handleRunStatus('profile-1', 'failed', 1, 2000);
+
+    useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
+    store.handleRunStatus('profile-1', 'running', 0, 3000);
+
+    const output = useIDEStore.getState().runOutputs['profile-1'];
+    expect(output.workingDir).toBe('packages/web');
+    expect(output.previousWorkingDir).toBe('frontend');
+    expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
   });
 });
 

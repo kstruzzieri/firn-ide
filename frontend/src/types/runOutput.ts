@@ -33,6 +33,8 @@ export type RunOutputViewMode = 'merged' | 'lanes' | 'diff' | 'timeline';
 
 export interface RunOutput {
   profileId: string;
+  workingDir?: string;
+  previousWorkingDir?: string;
   state: RunState;
   exitCode: number;
   runCount: number;
