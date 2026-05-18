@@ -166,7 +166,7 @@ func deepCopyProfile(p RunProfile) RunProfile {
 		p.Env = env
 	}
 	if p.EnvVariants != nil {
-		variants := make([]EnvVariant, len(p.EnvVariants))
+		variants := make(EnvVariants, len(p.EnvVariants))
 		copy(variants, p.EnvVariants)
 		p.EnvVariants = variants
 	}

@@ -25,7 +25,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | UI/UX Polish | **COMPLETE** | #35-36 |
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
 | Milestone 3: Workspace Management | **IN PROGRESS** | #13-15 complete, #53-54 open |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-62 complete; #17-18, #63-64, #71 open |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-62, #64 complete; #17-18, #63, #71 open |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
@@ -40,11 +40,10 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: PR #96 is merged into `develop`; the LSP epic (#74), Go integration (#75), and Python integration (#76) are complete. Run output now supports clickable error links (#62).
+Current status: PR #97 is merged into `develop`, completing Run Profiles clickable error links (#62) with stable run-time working-directory resolution. Run Profiles environment variants (#64) are complete with active variant env-file resolution, persisted selection, and frontend selector support. The LSP epic (#74), Go integration (#75), and Python integration (#76) remain complete from PR #96.
 
-1. **#64: Run Profiles - Environment Variants** — complete `ActiveVariant` env-file resolution and add the frontend variant selector.
-2. **#63: Run Profiles - Compound Profile Execution** — add sequential step execution, stop-on-failure, and per-step UI.
-3. **#53 then #54: Workspace Identity and File Tree Views** — workspace definitions, active accent, selector, then Project/Workspace tree modes.
+1. **#63: Run Profiles - Compound Profile Execution** — add sequential step execution, stop-on-failure, and per-step UI.
+2. **#53 then #54: Workspace Identity and File Tree Views** — workspace definitions, active accent, selector, then Project/Workspace tree modes.
 
 ---
 
@@ -163,9 +162,9 @@ Sub-issues:
 - [x] #59: Core Process Runner — `os/exec` implementation, env/cwd/envFile, start/stop bindings
 - [x] #60: Output Streaming — pipe stdout/stderr, Wails events, output panel
 - [x] #61: Process Lifecycle UI — play/stop/restart controls, state indicators
-- [x] #62: Clickable Error Links — `file:line:col` parsing, jump-to-error
+- [x] #62: Clickable Error Links — `file:line:col` parsing, stable run-time working-dir resolution, jump-to-error
 - [ ] #63: Compound Profile Execution — sequential steps, stop-on-failure
-- [ ] #64: Environment Variants — env file swapping by active variant
+- [x] #64: Environment Variants — env file swapping by active variant
 
 ### #71: Run Profiles - Activated State, Section Reorganization, and Selection Persistence
 - [ ] Activated profile working set
@@ -178,9 +177,9 @@ Sub-issues:
 - [x] Play/stop/restart controls in run profile cards
 - [x] Running status indicators and status badges
 - [x] Output panel with streaming logs
-- [x] Clickable file:line:col output links
+- [x] Clickable file:line:col output links with historical working-dir stability
 - [ ] Compound execution view with stage indicators
-- [ ] Environment variant selector (`[env: dev ▾]`)
+- [x] Environment variant selector (`[env: dev ▾]`)
 - [ ] Edit profile form (create/modify saved profiles)
 - [ ] Profiles grouped by workspace with accent colors (depends on #53)
 - [x] Status bar / output focus integration for running profiles

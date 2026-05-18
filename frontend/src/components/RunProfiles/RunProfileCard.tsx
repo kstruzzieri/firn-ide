@@ -10,6 +10,7 @@ import {
   RestartRunProfile,
   PinRunProfile,
   UnpinRunProfile,
+  SetActiveVariant,
 } from '../../../wailsjs/go/main/App';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
@@ -108,6 +109,7 @@ export function RunProfileCard({
   const clearProfileStopping = useIDEStore((s) => s.clearProfileStopping);
   const setProfileRestarting = useIDEStore((s) => s.setProfileRestarting);
   const clearProfileRestarting = useIDEStore((s) => s.clearProfileRestarting);
+  const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
 
   const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
@@ -161,6 +163,23 @@ export function RunProfileCard({
 
   const handleHide = () => {
     useIDEStore.getState().hideProfile(profile.id);
+  };
+
+  const envVariants = (profile.envVariants ?? []).filter((variant) => variant.name);
+  const hasEnvVariants = envVariants.length > 0;
+
+  const handleVariantChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    e.stopPropagation();
+    const nextVariant = e.currentTarget.value;
+
+    SetActiveVariant(profile.id, nextVariant)
+      .then(() => {
+        addOrUpdateProfile({ ...profile, activeVariant: nextVariant });
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        showToast(`Failed to switch "${profile.name}" env: ${message}`, 'error');
+      });
   };
 
   const isActiveState =
@@ -292,23 +311,47 @@ export function RunProfileCard({
         </div>
       )}
 
-      {/* Row 3: tags */}
-      {profile.tags && profile.tags.length > 0 && (
+      {/* Row 3: tags and env selector */}
+      {((profile.tags && profile.tags.length > 0) || hasEnvVariants) && (
         <div className={styles.rowBottom}>
-          <div className={styles.tags}>
-            {profile.tags.map((tag) => {
-              const color = getTagColor(tag);
-              return (
-                <span
-                  key={tag}
-                  className={styles.tag}
-                  style={{ background: color.background, color: color.text }}
-                >
-                  {tag}
-                </span>
-              );
-            })}
-          </div>
+          {profile.tags && profile.tags.length > 0 && (
+            <div className={styles.tags}>
+              {profile.tags.map((tag) => {
+                const color = getTagColor(tag);
+                return (
+                  <span
+                    key={tag}
+                    className={styles.tag}
+                    style={{ background: color.background, color: color.text }}
+                  >
+                    {tag}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {hasEnvVariants && (
+            <label
+              className={styles.variantSelector}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <span className={styles.variantLabel}>env</span>
+              <select
+                className={styles.variantSelect}
+                value={profile.activeVariant ?? ''}
+                onChange={handleVariantChange}
+                aria-label={`${profile.name} environment variant`}
+              >
+                <option value="">base</option>
+                {envVariants.map((variant) => (
+                  <option key={variant.name} value={variant.name}>
+                    {variant.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       )}
 

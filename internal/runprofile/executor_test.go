@@ -356,7 +356,7 @@ func TestExecutor_EnvFileMerge(t *testing.T) {
 	exec := NewExecutor(spy.emit, out.receive)
 	dir := t.TempDir()
 
-	// Create .env file with SHARED_VAR and FILE_VAR
+	// Create .env file with SHARED_VAR and FILE_VAR.
 	envContent := "SHARED_VAR=from_file\nFILE_VAR=file_only\n"
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0644); err != nil {
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func TestExecutor_EnvFileMerge(t *testing.T) {
 	profile := newTestProfile("test-env-merge", "env")
 	profile.EnvFile = ".env"
 	profile.Env = map[string]string{
-		"SHARED_VAR": "from_inline", // inline should win over file
+		"SHARED_VAR": "from_inline",
 		"INLINE_VAR": "inline_only",
 	}
 	if err := exec.Start(dir, profile); err != nil {
@@ -377,15 +377,115 @@ func TestExecutor_EnvFileMerge(t *testing.T) {
 	}
 
 	output := out.combined()
-	// Inline wins over file
-	if !strings.Contains(output, "SHARED_VAR=from_inline") {
-		t.Errorf("SHARED_VAR should be from_inline (inline wins), output:\n%s", output)
+	if !strings.Contains(output, "SHARED_VAR=from_file") {
+		t.Errorf("SHARED_VAR should be from_file (env file wins over inline env), output:\n%s", output)
 	}
 	if !strings.Contains(output, "FILE_VAR=file_only") {
 		t.Errorf("FILE_VAR should be present from env file, output:\n%s", output)
 	}
 	if !strings.Contains(output, "INLINE_VAR=inline_only") {
 		t.Errorf("INLINE_VAR should be present from inline env, output:\n%s", output)
+	}
+}
+
+func TestExecutor_ActiveVariantEnvFileMerge(t *testing.T) {
+	spy := &emitSpy{}
+	out := &outputSpy{}
+	exec := NewExecutor(spy.emit, out.receive)
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("SHARED_VAR=from_base_file\nBASE_ONLY=base\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env.staging"), []byte("SHARED_VAR=from_variant\nVARIANT_ONLY=staging\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := newTestProfile("test-env-variant", "env")
+	profile.Env = map[string]string{
+		"SHARED_VAR": "from_inline",
+		"INLINE_VAR": "inline",
+	}
+	profile.EnvFile = ".env"
+	profile.EnvVariants = []EnvVariant{
+		{Name: "staging", EnvFile: ".env.staging"},
+	}
+	profile.ActiveVariant = "staging"
+
+	if err := exec.Start(dir, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := spy.waitForState(RunStateSuccess, 5*time.Second); !ok {
+		t.Fatal("timed out waiting for success state")
+	}
+
+	output := out.combined()
+	if !strings.Contains(output, "SHARED_VAR=from_variant") {
+		t.Errorf("SHARED_VAR should come from active variant env file, output:\n%s", output)
+	}
+	if !strings.Contains(output, "BASE_ONLY=base") {
+		t.Errorf("BASE_ONLY should come from base env file, output:\n%s", output)
+	}
+	if !strings.Contains(output, "VARIANT_ONLY=staging") {
+		t.Errorf("VARIANT_ONLY should come from active variant env file, output:\n%s", output)
+	}
+	if !strings.Contains(output, "INLINE_VAR=inline") {
+		t.Errorf("INLINE_VAR should come from profile env, output:\n%s", output)
+	}
+}
+
+func TestExecutor_ActiveVariantEnvFileRelativeToWorkingDir(t *testing.T) {
+	spy := &emitSpy{}
+	out := &outputSpy{}
+	exec := NewExecutor(spy.emit, out.receive)
+	dir := t.TempDir()
+
+	subdir := filepath.Join(dir, "frontend")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subdir, ".env.dev"), []byte("WORKDIR_VARIANT=dev\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := newTestProfile("test-env-variant-workdir", "env")
+	profile.WorkingDir = "frontend"
+	profile.EnvVariants = []EnvVariant{
+		{Name: "dev", EnvFile: ".env.dev"},
+	}
+	profile.ActiveVariant = "dev"
+
+	if err := exec.Start(dir, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := spy.waitForState(RunStateSuccess, 5*time.Second); !ok {
+		t.Fatal("timed out waiting for success state")
+	}
+
+	output := out.combined()
+	if !strings.Contains(output, "WORKDIR_VARIANT=dev") {
+		t.Errorf("WORKDIR_VARIANT should be loaded relative to effective working dir, output:\n%s", output)
+	}
+}
+
+func TestExecutor_ActiveVariantMissing(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	dir := t.TempDir()
+
+	profile := newTestProfile("test-env-variant-missing", "echo hello")
+	profile.EnvVariants = []EnvVariant{
+		{Name: "dev", EnvFile: ".env.dev"},
+	}
+	profile.ActiveVariant = "staging"
+
+	err := exec.Start(dir, profile)
+	if err == nil {
+		t.Fatal("expected error for missing active env variant")
+	}
+	if !strings.Contains(err.Error(), `env variant "staging" not found`) {
+		t.Errorf("error = %q, want missing variant message", err.Error())
 	}
 }
 

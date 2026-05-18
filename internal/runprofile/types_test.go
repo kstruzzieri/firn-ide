@@ -103,6 +103,39 @@ func TestCompoundProfileJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRunProfileEnvVariantsAcceptsMapJSON(t *testing.T) {
+	data := []byte(`{
+		"id": "test-1",
+		"name": "Build",
+		"type": "single",
+		"source": "user",
+		"command": "make build",
+		"envVariants": {
+			"staging": ".env.staging",
+			"dev": ".env.dev"
+		},
+		"activeVariant": "staging"
+	}`)
+
+	var decoded RunProfile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if len(decoded.EnvVariants) != 2 {
+		t.Fatalf("EnvVariants length = %d, want 2", len(decoded.EnvVariants))
+	}
+	if decoded.EnvVariants[0] != (EnvVariant{Name: "dev", EnvFile: ".env.dev"}) {
+		t.Errorf("first variant = %#v, want dev variant", decoded.EnvVariants[0])
+	}
+	if decoded.EnvVariants[1] != (EnvVariant{Name: "staging", EnvFile: ".env.staging"}) {
+		t.Errorf("second variant = %#v, want staging variant", decoded.EnvVariants[1])
+	}
+	if decoded.ActiveVariant != "staging" {
+		t.Errorf("ActiveVariant = %q, want staging", decoded.ActiveVariant)
+	}
+}
+
 func TestOmitemptyFieldsExcludedFromJSON(t *testing.T) {
 	profile := RunProfile{
 		ID:     "minimal",

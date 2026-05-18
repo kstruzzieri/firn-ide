@@ -161,6 +161,41 @@ func TestValidateEnvVariantsMissingEnvFile(t *testing.T) {
 	assertHasFieldError(t, result, "envVariants")
 }
 
+func TestValidateActiveVariantMustMatchConfiguredVariant(t *testing.T) {
+	p := RunProfile{
+		ID:            "test-1",
+		Name:          "Build",
+		Type:          ProfileTypeSingle,
+		Command:       "echo hello",
+		ActiveVariant: "prod",
+		EnvVariants: []EnvVariant{
+			{Name: "staging", EnvFile: ".env.staging"},
+		},
+	}
+	result := Validate(p)
+	if result.Valid {
+		t.Fatal("expected invalid for active variant without matching env variant")
+	}
+	assertHasFieldError(t, result, "activeVariant")
+}
+
+func TestValidateActiveVariantAllowsConfiguredVariant(t *testing.T) {
+	p := RunProfile{
+		ID:            "test-1",
+		Name:          "Build",
+		Type:          ProfileTypeSingle,
+		Command:       "echo hello",
+		ActiveVariant: "staging",
+		EnvVariants: []EnvVariant{
+			{Name: "staging", EnvFile: ".env.staging"},
+		},
+	}
+	result := Validate(p)
+	if !result.Valid {
+		t.Fatalf("expected valid active variant, got errors: %v", result.Errors)
+	}
+}
+
 func TestValidateMultipleErrors(t *testing.T) {
 	p := RunProfile{
 		Type: "bad",
