@@ -2,6 +2,7 @@ import {
   FileIcon as FileIconSvg,
   FolderIcon,
   FolderOpenIcon,
+  FirnGoGopherIcon,
   ImageIcon,
   TextFileIcon,
   ExecutableIcon,
@@ -12,7 +13,6 @@ import {
 } from '../icons';
 import TypescriptOriginal from 'devicons-react/icons/TypescriptOriginal';
 import JavascriptOriginal from 'devicons-react/icons/JavascriptOriginal';
-import GoOriginal from 'devicons-react/icons/GoOriginal';
 import PythonOriginal from 'devicons-react/icons/PythonOriginal';
 import JsonOriginal from 'devicons-react/icons/JsonOriginal';
 import MarkdownOriginal from 'devicons-react/icons/MarkdownOriginal';
@@ -202,7 +202,7 @@ const FILE_TYPE_ICONS: Record<FileType, React.ComponentType<any> | null> = {
   typescript: TypescriptOriginal,
   javascript: JavascriptOriginal,
   react: ReactOriginal,
-  go: GoOriginal,
+  go: null,
   python: PythonOriginal,
   json: JsonOriginal,
   markdown: MarkdownOriginal,
@@ -224,14 +224,12 @@ const FILE_TYPE_ICONS: Record<FileType, React.ComponentType<any> | null> = {
 
 /**
  * CSS filters for devicons that don't render well on dark backgrounds.
- * - markdown/yaml: dark fills → invert to white
- * - go: bright blue/white clash → reduce brightness slightly
+ * - markdown/yaml/xml: dark fills → invert to white
  */
 const DEVICON_FILTERS: Partial<Record<FileType, string>> = {
   markdown: 'invert(1)',
   yaml: 'invert(1)',
   xml: 'invert(1)',
-  go: 'brightness(0.8) saturate(0.7)',
 };
 
 /**
@@ -295,9 +293,10 @@ export function getFolderIconColor(folderType: FolderType): string {
   return FOLDER_TYPE_COLORS[folderType] ?? FOLDER_TYPE_COLORS.default;
 }
 
-/** Custom SVG icons for types without devicons */
+/** Custom SVG icons for specific file types */
 const CUSTOM_ICONS: Partial<Record<FileType, React.ComponentType<React.SVGProps<SVGSVGElement>>>> =
   {
+    go: FirnGoGopherIcon,
     image: ImageIcon,
     text: TextFileIcon,
     executable: ExecutableIcon,

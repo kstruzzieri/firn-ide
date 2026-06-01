@@ -30,9 +30,12 @@ describe('FileIcon', () => {
       expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'react');
     });
 
-    it('renders go icon for .go files', () => {
+    it('renders custom Firn gopher icon for .go files', () => {
       render(<FileIcon name="main.go" isDir={false} />);
-      expect(screen.getByTestId('file-icon')).toHaveAttribute('data-type', 'go');
+      const icon = screen.getByTestId('file-icon');
+      expect(icon).toHaveAttribute('data-type', 'go');
+      expect(icon).toHaveAttribute('data-icon', 'firn-go-gopher');
+      expect(icon.tagName.toLowerCase()).toBe('svg');
     });
 
     it('renders python icon for .py files', () => {

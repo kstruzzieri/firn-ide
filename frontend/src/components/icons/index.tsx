@@ -217,6 +217,69 @@ export function TextFileIcon(props: IconProps) {
   );
 }
 
+export function FirnGoGopherIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 80 92" fill="none" {...props} data-icon="firn-go-gopher">
+      <path d="M17 25c4-15 13-22 24-22 10 0 18 7 22 21-14-6-33-6-46 1z" fill="#0284c7" />
+      <path
+        d="M22 14c7-5 14-7 22-7"
+        fill="none"
+        stroke="#38bdf8"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      <circle cx="62" cy="13" r="6" fill="#eefcff" />
+      <ellipse cx="40" cy="50" rx="25" ry="34" fill="#5ed3e3" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx="19" cy="27" r="5.6" fill="#5ed3e3" stroke="#0f172a" strokeWidth="1.4" />
+      <circle cx="61" cy="27" r="5.6" fill="#5ed3e3" stroke="#0f172a" strokeWidth="1.4" />
+      <path d="M17 27c12-7 32-7 46 0" stroke="#eefcff" strokeWidth="8" strokeLinecap="round" />
+      <path
+        d="M19 27c11-4 29-4 42 0"
+        stroke="#bae6fd"
+        strokeWidth="2"
+        strokeLinecap="round"
+        opacity="0.95"
+      />
+      <circle cx="31" cy="35" r="10" fill="#fff" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx="49" cy="35" r="10" fill="#fff" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx="31" cy="35" r="2.5" fill="#0f172a" />
+      <circle cx="49" cy="35" r="2.5" fill="#0f172a" />
+      <ellipse cx="40" cy="47" rx="4.2" ry="3" fill="#0f172a" />
+      <path
+        d="M35 51c2 4 8 4 10 0"
+        fill="none"
+        stroke="#0f172a"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <rect x="36" y="51" width="4" height="7" rx="1" fill="#fff4de" stroke="#0f172a" />
+      <rect x="40" y="51" width="4" height="7" rx="1" fill="#fff4de" stroke="#0f172a" />
+      <path
+        d="M16 54 7 58M64 54 73 58M24 81 17 89M56 81 63 89"
+        stroke="#f2c08f"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      <path
+        d="M17 62c12 6 31 6 46 0"
+        fill="none"
+        stroke="#eefcff"
+        strokeWidth="8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M18 62c11 5 30 5 44 0"
+        fill="none"
+        stroke="#38bdf8"
+        strokeWidth="5"
+        strokeLinecap="round"
+      />
+      <path d="M51 64 62 76" stroke="#38bdf8" strokeWidth="6" strokeLinecap="round" />
+      <path d="M51 64 62 76" stroke="#eefcff" strokeWidth="2" strokeLinecap="round" opacity="0.9" />
+    </svg>
+  );
+}
+
 export function ExecutableIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
