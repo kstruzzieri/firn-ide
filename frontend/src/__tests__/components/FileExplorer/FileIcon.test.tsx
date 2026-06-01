@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react';
+import { FileIcon } from '../../../components/FileExplorer/FileIcon';
 import {
-  FileIcon,
   getFileIconColor,
   getFolderIconColor,
   getFileType,
   getFolderType,
-} from '../../../components/FileExplorer/FileIcon';
+} from '../../../components/FileExplorer/fileIconUtils';
 
 describe('FileIcon', () => {
   describe('file icons', () => {
