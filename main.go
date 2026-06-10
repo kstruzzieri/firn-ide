@@ -27,11 +27,6 @@ func buildAppMenu(app *App) *menu.Menu {
 		runtime.EventsEmit(app.ctx, "navigate:forward")
 	})
 
-	viewMenu := appMenu.AddSubmenu("View")
-	viewMenu.AddText("Command Palette", keys.CmdOrCtrl("p"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "view:commandpalette")
-	})
-
 	return appMenu
 }
 
