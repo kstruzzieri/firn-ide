@@ -4,10 +4,35 @@ import { isMac } from '../utils/platform';
 import { useIDEStore, type NavigationLocation } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { navigateToEditorLocation } from '../utils/editorNavigation';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
+
+function navigateBack() {
+  const state = useIDEStore.getState();
+  const current = currentEditorLocation(state);
+  if (!current) return;
+  const target = state.goBack(current);
+  if (!target) return;
+  navigateToEditorLocation(target.fileId, target.line, target.column);
+}
+
+function navigateForward() {
+  const state = useIDEStore.getState();
+  const current = currentEditorLocation(state);
+  if (!current) return;
+  const target = state.goForward(current);
+  if (!target) return;
+  navigateToEditorLocation(target.fileId, target.line, target.column);
+}
 
 /**
  * Registers global keyboard shortcuts for the IDE.
  * Call this hook exactly ONCE at the app level (e.g., in IDEShell).
+ *
+ * On macOS, Cmd+[ / Cmd+] are intercepted by WKWebView for browser
+ * back/forward navigation before JavaScript can handle them. The app
+ * registers native Wails menu items with these accelerators, which emit
+ * "navigate:back" / "navigate:forward" events to the frontend. Both
+ * the native events and the JS keydown handler call the same nav functions.
  */
 export function useKeyboardShortcuts() {
   const { openFolder } = useOpenFolder();
@@ -27,9 +52,6 @@ export function useKeyboardShortcuts() {
       }
 
       // Cmd+Shift+F / Ctrl+Shift+F — Workspace search.
-      // Switch the sidebar to the search view, expand the left panel if it's
-      // collapsed, then request input focus. Compare key case-insensitively
-      // because Shift modifies the printed key on some layouts.
       if (modifier && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
         const ide = useIDEStore.getState();
@@ -44,6 +66,8 @@ export function useKeyboardShortcuts() {
       }
 
       // Cmd+[ / Cmd+] on macOS, Alt+Left / Alt+Right elsewhere — editor navigation history.
+      // On macOS these may also arrive via Wails native menu events (navigate:back/forward)
+      // because WKWebView sometimes intercepts Cmd+[/Cmd+] before JavaScript can handle them.
       const isBack = mac
         ? e.metaKey && (e.key === '[' || e.code === 'BracketLeft')
         : e.altKey && e.key === 'ArrowLeft';
@@ -64,8 +88,17 @@ export function useKeyboardShortcuts() {
       }
     };
 
+    // Native menu events from Wails (needed on macOS where WKWebView
+    // may intercept Cmd+[ / Cmd+] for browser navigation).
+    const cancelBack = EventsOn('navigate:back', navigateBack);
+    const cancelForward = EventsOn('navigate:forward', navigateForward);
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      cancelBack();
+      cancelForward();
+    };
   }, [openFolder]);
 }
 

@@ -11,8 +11,11 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
   ReadDirectory: jest.fn().mockResolvedValue([]),
 }));
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockEventsOn = jest.fn<any, [string, () => void]>().mockReturnValue(jest.fn());
 jest.mock('../../../wailsjs/runtime/runtime', () => ({
   WindowSetTitle: jest.fn(),
+  EventsOn: (event: string, callback: () => void) => mockEventsOn(event, callback),
 }));
 
 jest.mock('../../utils/editorNavigation', () => ({
@@ -100,6 +103,8 @@ describe('useKeyboardShortcuts', () => {
     });
 
     expect(mockOpenFolderDialog).not.toHaveBeenCalled();
+    expect(mockEventsOn).toHaveBeenCalledWith('navigate:back', expect.any(Function));
+    expect(mockEventsOn).toHaveBeenCalledWith('navigate:forward', expect.any(Function));
   });
 
   it('should navigate back through editor navigation history', async () => {
@@ -126,6 +131,32 @@ describe('useKeyboardShortcuts', () => {
     expect(useIDEStore.getState().navigationForward).toEqual([
       { fileId: '/current.ts', line: 12, column: 8 },
     ]);
+  });
+
+  it('should navigate back via Wails native menu event', async () => {
+    renderHook(() => useKeyboardShortcuts());
+
+    useIDEStore.setState({
+      activeFileId: '/current.ts',
+      cursorPosition: { line: 9, column: 4 },
+      cursorPositions: { '/current.ts': { line: 12, column: 8 } },
+    });
+    useIDEStore.getState().pushNavigationHistory({
+      fileId: '/definition-source.ts',
+      line: 3,
+      column: 2,
+    });
+
+    // Find the navigate:back callback that was registered with EventsOn
+    const backCall = mockEventsOn.mock.calls.find((call) => call[0] === 'navigate:back');
+    const backCallback = backCall?.[1] as (() => void) | undefined;
+    expect(backCallback).toBeDefined();
+
+    await act(async () => {
+      backCallback!();
+    });
+
+    expect(mockNavigateToEditorLocation).toHaveBeenCalledWith('/definition-source.ts', 3, 2);
   });
 
   describe('search shortcut', () => {

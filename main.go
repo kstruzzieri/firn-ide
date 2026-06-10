@@ -5,19 +5,39 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
+func buildAppMenu(app *App) *menu.Menu {
+	appMenu := menu.NewMenu()
+
+	navigateMenu := appMenu.AddSubmenu("Navigate")
+	navigateMenu.AddText("Go Back", keys.CmdOrCtrl("["), func(_ *menu.CallbackData) {
+		runtime.EventsEmit(app.ctx, "navigate:back")
+	})
+	navigateMenu.AddText("Go Forward", keys.CmdOrCtrl("]"), func(_ *menu.CallbackData) {
+		runtime.EventsEmit(app.ctx, "navigate:forward")
+	})
+
+	viewMenu := appMenu.AddSubmenu("View")
+	viewMenu.AddText("Command Palette", keys.CmdOrCtrl("p"), func(_ *menu.CallbackData) {
+		runtime.EventsEmit(app.ctx, "view:commandpalette")
+	})
+
+	return appMenu
+}
+
 func main() {
-	// Create an instance of the app structure
 	app := NewApp()
 
-	// Create application with options
 	err := wails.Run(&options.App{
 		Title:     "Firn",
 		Width:     1440,
@@ -27,10 +47,10 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		// Firn Glacier theme: --surface-base: #020617
 		BackgroundColour: &options.RGBA{R: 2, G: 6, B: 23, A: 255},
 		OnStartup:        app.startup,
 		OnBeforeClose:    app.beforeClose,
+		Menu:             buildAppMenu(app),
 		Bind: []interface{}{
 			app,
 		},
