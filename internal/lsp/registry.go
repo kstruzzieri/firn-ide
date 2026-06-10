@@ -162,14 +162,20 @@ func (r *Registry) resolveTypeScriptServer(projectRoot string) (*ServerConfig, e
 }
 
 // resolveGoServer finds and configures gopls.
+// When the app is launched outside a terminal (e.g. from Finder or Dock),
+// macOS does not populate PATH with shell-specific entries like $HOME/go/bin.
+// We fall back to well-known Go binary directories in that case.
 func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 	path, err := exec.LookPath("gopls")
 	if err != nil {
-		return nil, fmt.Errorf(
-			"gopls not found: install it with " +
-				"\"go install golang.org/x/tools/gopls@latest\" " +
-				"or add it to PATH",
-		)
+		path = findGoBinary("gopls")
+		if path == "" {
+			return nil, fmt.Errorf(
+				"gopls not found: install it with "+
+					"\"go install golang.org/x/tools/gopls@latest\" "+
+					"or add it to PATH",
+			)
+		}
 	}
 
 	return &ServerConfig{
@@ -177,6 +183,58 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 		Command:        path,
 		Dir:            projectRoot,
 	}, nil
+}
+
+// findGoBinary searches common Go binary directories for a given binary name.
+// This covers the case where the app is launched from Finder/Dock on macOS
+// and the user's shell PATH (containing $HOME/go/bin, etc.) is not available.
+func findGoBinary(name string) string {
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return ""
+	}
+
+	candidates := []string{
+		filepath.Join(homeDir, "go", "bin", name),
+		filepath.Join(homeDir, ".local", "bin", name),
+		"/usr/local/go/bin/" + name,
+		"/opt/homebrew/bin/" + name, // Apple Silicon Homebrew
+		"/usr/local/bin/" + name,    // Intel Homebrew / system
+	}
+
+	if runtime.GOOS == "windows" {
+		candidates = []string{
+			filepath.Join(homeDir, "go", "bin", name+".exe"),
+			filepath.Join(homeDir, ".local", "bin", name+".exe"),
+		}
+	}
+
+	for _, candidate := range candidates {
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+// isExecutableFile reports whether path is a regular, executable file. It
+// mirrors the executability check exec.LookPath performs so the fallback does
+// not return a non-executable candidate (which would fail later at cmd.Start)
+// and skip a genuinely runnable candidate further down the list.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+
+	// On Windows executability is determined by extension, not mode bits; the
+	// candidate list already appends ".exe", so a regular file is sufficient.
+	if runtime.GOOS == "windows" {
+		return true
+	}
+
+	return info.Mode().Perm()&0o111 != 0
 }
 
 // resolvePythonServer finds and configures pyright-langserver.

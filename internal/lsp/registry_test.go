@@ -236,6 +236,72 @@ func TestResolveTypeScriptServer_SystemServerUsesPackageLocalTSLib(t *testing.T)
 	}
 }
 
+func TestFindGoBinary_FallbackFindsGoplsInHome(t *testing.T) {
+	homeDir := t.TempDir()
+	goBin := filepath.Join(homeDir, "go", "bin")
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goplsPath := filepath.Join(goBin, "gopls")
+	if err := os.WriteFile(goplsPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point HOME at our temp dir so findGoBinary picks up the fake binary.
+	t.Setenv("HOME", homeDir)
+	t.Setenv("PATH", "")
+
+	found := findGoBinary("gopls")
+	if found != goplsPath {
+		t.Errorf("findGoBinary(gopls) = %q, want %q", found, goplsPath)
+	}
+}
+
+func TestFindGoBinary_ReturnsEmptyWhenNotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", "")
+
+	found := findGoBinary("gopls")
+	if found != "" {
+		t.Errorf("findGoBinary(gopls) = %q, want empty string", found)
+	}
+}
+
+func TestFindGoBinary_SkipsNonExecutableAndUsesLaterCandidate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executability is determined by extension on Windows")
+	}
+
+	homeDir := t.TempDir()
+
+	// Earlier candidate ($HOME/go/bin) is a non-executable regular file.
+	goBin := filepath.Join(homeDir, "go", "bin")
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goBin, "gopls"), []byte("not executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Later candidate ($HOME/.local/bin) is executable and should win.
+	localBin := filepath.Join(homeDir, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantPath := filepath.Join(localBin, "gopls")
+	if err := os.WriteFile(wantPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	t.Setenv("PATH", "")
+
+	found := findGoBinary("gopls")
+	if found != wantPath {
+		t.Errorf("findGoBinary(gopls) = %q, want %q (non-executable candidate should be skipped)", found, wantPath)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
