@@ -198,7 +198,8 @@ func findGoBinary(name string) string {
 		filepath.Join(homeDir, "go", "bin", name),
 		filepath.Join(homeDir, ".local", "bin", name),
 		"/usr/local/go/bin/" + name,
-		"/usr/local/bin/" + name,
+		"/opt/homebrew/bin/" + name, // Apple Silicon Homebrew
+		"/usr/local/bin/" + name,    // Intel Homebrew / system
 	}
 
 	if runtime.GOOS == "windows" {
