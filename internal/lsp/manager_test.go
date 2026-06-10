@@ -171,6 +171,9 @@ func TestRegistry_GoServerConfigUsesDetectedProjectRoot(t *testing.T) {
 func TestRegistry_GoServerConfigReportsMissingGopls(t *testing.T) {
 	r := NewRegistry()
 	t.Setenv("PATH", "")
+	// Point HOME at a temp directory so findGoBinary fallback doesn't
+	// accidentally find a real gopls installed on the host machine.
+	t.Setenv("HOME", t.TempDir())
 
 	_, err := r.ServerConfigFor("go", t.TempDir())
 	if err == nil {

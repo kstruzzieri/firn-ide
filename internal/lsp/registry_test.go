@@ -236,6 +236,37 @@ func TestResolveTypeScriptServer_SystemServerUsesPackageLocalTSLib(t *testing.T)
 	}
 }
 
+func TestFindGoBinary_FallbackFindsGoplsInHome(t *testing.T) {
+	homeDir := t.TempDir()
+	goBin := filepath.Join(homeDir, "go", "bin")
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goplsPath := filepath.Join(goBin, "gopls")
+	if err := os.WriteFile(goplsPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point HOME at our temp dir so findGoBinary picks up the fake binary.
+	t.Setenv("HOME", homeDir)
+	t.Setenv("PATH", "")
+
+	found := findGoBinary("gopls")
+	if found != goplsPath {
+		t.Errorf("findGoBinary(gopls) = %q, want %q", found, goplsPath)
+	}
+}
+
+func TestFindGoBinary_ReturnsEmptyWhenNotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", "")
+
+	found := findGoBinary("gopls")
+	if found != "" {
+		t.Errorf("findGoBinary(gopls) = %q, want empty string", found)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
