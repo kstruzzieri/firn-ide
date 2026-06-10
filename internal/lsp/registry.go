@@ -209,12 +209,31 @@ func findGoBinary(name string) string {
 	}
 
 	for _, candidate := range candidates {
-		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+		if isExecutableFile(candidate) {
 			return candidate
 		}
 	}
 
 	return ""
+}
+
+// isExecutableFile reports whether path is a regular, executable file. It
+// mirrors the executability check exec.LookPath performs so the fallback does
+// not return a non-executable candidate (which would fail later at cmd.Start)
+// and skip a genuinely runnable candidate further down the list.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+
+	// On Windows executability is determined by extension, not mode bits; the
+	// candidate list already appends ".exe", so a regular file is sufficient.
+	if runtime.GOOS == "windows" {
+		return true
+	}
+
+	return info.Mode().Perm()&0o111 != 0
 }
 
 // resolvePythonServer finds and configures pyright-langserver.
