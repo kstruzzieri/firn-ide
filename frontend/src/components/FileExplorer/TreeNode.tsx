@@ -1,5 +1,6 @@
 import { ChevronRightIcon, ChevronDownIcon } from '../icons';
-import { FileIcon, getFolderType } from './FileIcon';
+import { FileIcon } from './FileIcon';
+import { getFolderType } from './fileIconUtils';
 import type { filesystem } from '../../../wailsjs/go/models';
 import styles from './TreeNode.module.css';
 
