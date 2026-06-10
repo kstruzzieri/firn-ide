@@ -130,6 +130,10 @@ export function SearchWorkspace(arg1) {
   return window['go']['main']['App']['SearchWorkspace'](arg1);
 }
 
+export function SetActiveVariant(arg1, arg2) {
+  return window['go']['main']['App']['SetActiveVariant'](arg1, arg2);
+}
+
 export function SetLSPWorkspaceRoot(arg1) {
   return window['go']['main']['App']['SetLSPWorkspaceRoot'](arg1);
 }

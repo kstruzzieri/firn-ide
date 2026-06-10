@@ -4,6 +4,7 @@ import (
 	"firn/internal/filesystem"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -120,6 +121,39 @@ func (m *Manager) UnpinProfile(id string) error {
 	return nil
 }
 
+// SetActiveVariant updates a profile's active environment variant. Saved
+// profiles are persisted; detected profiles are updated in memory for the
+// current detection snapshot.
+func (m *Manager) SetActiveVariant(id string, variant string) error {
+	activeVariant := strings.TrimSpace(variant)
+
+	for _, profile := range m.store.GetAll() {
+		if profile.ID != id {
+			continue
+		}
+		if err := ensureActiveVariantAllowed(profile, activeVariant); err != nil {
+			return err
+		}
+		profile.ActiveVariant = activeVariant
+		return m.store.Save(profile)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.detected {
+		if m.detected[i].ID != id {
+			continue
+		}
+		if err := ensureActiveVariantAllowed(m.detected[i], activeVariant); err != nil {
+			return err
+		}
+		m.detected[i].ActiveVariant = activeVariant
+		return nil
+	}
+
+	return fmt.Errorf("profile not found: %s", id)
+}
+
 // ReDetect re-runs detection and returns the new detected profiles.
 func (m *Manager) ReDetect() []RunProfile {
 	detected := m.detector.DetectAll()
@@ -152,4 +186,14 @@ func (m *Manager) SetWorkspaceRoot(root string) {
 	m.detector = NewDetector(m.fs, root)
 	m.detected = []RunProfile{}
 	m.mu.Unlock()
+}
+
+func ensureActiveVariantAllowed(profile RunProfile, activeVariant string) error {
+	if activeVariant == "" {
+		return nil
+	}
+	if _, ok := findEnvVariant(profile.EnvVariants, activeVariant); !ok {
+		return fmt.Errorf("env variant %q not found for profile %s", activeVariant, profile.ID)
+	}
+	return nil
 }

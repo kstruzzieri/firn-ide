@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"encoding/json"
 	"firn/internal/filesystem"
 	"io/fs"
 	"testing"
@@ -171,9 +172,102 @@ func TestManagerDeleteProfile(t *testing.T) {
 	}
 }
 
+func TestManagerSetActiveVariantPersistsSavedProfile(t *testing.T) {
+	files := map[string][]byte{}
+	mockFS := newManagerTestFS(files)
+	mgr := NewManager(mockFS, "/workspace")
+	_ = mgr.Load()
+
+	_, err := mgr.SaveProfile(RunProfile{
+		ID:      "p1",
+		Name:    "Web",
+		Type:    ProfileTypeSingle,
+		Command: "npm run dev",
+		EnvVariants: []EnvVariant{
+			{Name: "dev", EnvFile: ".env.dev"},
+			{Name: "staging", EnvFile: ".env.staging"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveProfile() error: %v", err)
+	}
+
+	if err := mgr.SetActiveVariant("p1", "staging"); err != nil {
+		t.Fatalf("SetActiveVariant() error: %v", err)
+	}
+
+	all := mgr.GetAllProfiles()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(all))
+	}
+	if all[0].ActiveVariant != "staging" {
+		t.Fatalf("ActiveVariant = %q, want staging", all[0].ActiveVariant)
+	}
+
+	var persisted ProfilesFile
+	if err := json.Unmarshal(files["/workspace/.firn/run-profiles.json"], &persisted); err != nil {
+		t.Fatalf("persisted JSON did not decode: %v", err)
+	}
+	if persisted.Profiles[0].ActiveVariant != "staging" {
+		t.Errorf("persisted ActiveVariant = %q, want staging", persisted.Profiles[0].ActiveVariant)
+	}
+}
+
+func TestManagerSetActiveVariantCanClearSelection(t *testing.T) {
+	mockFS := newManagerTestFS(map[string][]byte{})
+	mgr := NewManager(mockFS, "/workspace")
+	_ = mgr.Load()
+
+	_, err := mgr.SaveProfile(RunProfile{
+		ID:            "p1",
+		Name:          "Web",
+		Type:          ProfileTypeSingle,
+		Command:       "npm run dev",
+		ActiveVariant: "dev",
+		EnvVariants: []EnvVariant{
+			{Name: "dev", EnvFile: ".env.dev"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveProfile() error: %v", err)
+	}
+
+	if err := mgr.SetActiveVariant("p1", ""); err != nil {
+		t.Fatalf("SetActiveVariant() error: %v", err)
+	}
+
+	all := mgr.GetAllProfiles()
+	if all[0].ActiveVariant != "" {
+		t.Errorf("ActiveVariant = %q, want empty", all[0].ActiveVariant)
+	}
+}
+
+func TestManagerSetActiveVariantRejectsUnknownVariant(t *testing.T) {
+	mockFS := newManagerTestFS(map[string][]byte{})
+	mgr := NewManager(mockFS, "/workspace")
+	_ = mgr.Load()
+
+	_, err := mgr.SaveProfile(RunProfile{
+		ID:      "p1",
+		Name:    "Web",
+		Type:    ProfileTypeSingle,
+		Command: "npm run dev",
+		EnvVariants: []EnvVariant{
+			{Name: "dev", EnvFile: ".env.dev"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveProfile() error: %v", err)
+	}
+
+	if err := mgr.SetActiveVariant("p1", "prod"); err == nil {
+		t.Fatal("expected error for unknown variant")
+	}
+}
+
 func TestManagerSetWorkspaceRoot(t *testing.T) {
 	files := map[string][]byte{
-		"/workspace-a/go.mod": []byte("module a\ngo 1.21\n"),
+		"/workspace-a/go.mod":       []byte("module a\ngo 1.21\n"),
 		"/workspace-b/package.json": []byte(`{"scripts": {"start": "node ."}}`),
 	}
 	mockFS := newManagerTestFS(files)

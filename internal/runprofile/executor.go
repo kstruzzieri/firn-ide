@@ -55,7 +55,7 @@ type Executor struct {
 type runningProcess struct {
 	cmd      *exec.Cmd
 	status   RunStatus
-	stopped  bool         // set by Stop — tells Wait goroutine to use RunStateStopped
+	stopped  bool          // set by Stop — tells Wait goroutine to use RunStateStopped
 	done     chan struct{} // closed when process exits and cleanup is complete
 	stopOnce sync.Once
 }
@@ -105,7 +105,7 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	delete(e.lastStatus, profile.ID)
 
 	// Build environment
-	env, err := buildEnv(profile.Env, profile.EnvFile, effectiveDir)
+	env, err := buildEnv(profile, effectiveDir)
 	if err != nil {
 		e.mu.Unlock()
 		return err
@@ -359,9 +359,9 @@ func resolveWorkingDir(workspaceRoot, workingDir string) (string, error) {
 }
 
 // buildEnv merges environment sources in precedence order:
-// os.Environ() (base) → EnvFile values → profile.Env map (inline wins).
-// Relative envFilePath values are resolved against effectiveWorkingDir.
-func buildEnv(profileEnv map[string]string, envFilePath string, effectiveWorkingDir string) ([]string, error) {
+// os.Environ() → profile.Env → profile.EnvFile → active variant env file.
+// Relative env file paths are resolved against effectiveWorkingDir.
+func buildEnv(profile RunProfile, effectiveWorkingDir string) ([]string, error) {
 	// Start with current environment
 	envMap := make(map[string]string)
 	for _, entry := range os.Environ() {
@@ -370,24 +370,23 @@ func buildEnv(profileEnv map[string]string, envFilePath string, effectiveWorking
 		}
 	}
 
-	// Layer 2: env file (if specified)
-	if envFilePath != "" {
-		resolved := envFilePath
-		if !filepath.IsAbs(resolved) {
-			resolved = filepath.Join(effectiveWorkingDir, resolved)
-		}
-		fileEnv, err := ParseEnvFile(resolved)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range fileEnv {
-			envMap[k] = v
-		}
+	// Layer 2: inline profile env
+	for k, v := range profile.Env {
+		envMap[k] = v
 	}
 
-	// Layer 3: inline env vars (highest precedence)
-	for k, v := range profileEnv {
-		envMap[k] = v
+	// Layer 3: base env file
+	if err := mergeEnvFile(envMap, profile.EnvFile, effectiveWorkingDir); err != nil {
+		return nil, err
+	}
+
+	// Layer 4: active variant env file
+	variantEnvFile, err := activeVariantEnvFile(profile)
+	if err != nil {
+		return nil, err
+	}
+	if err := mergeEnvFile(envMap, variantEnvFile, effectiveWorkingDir); err != nil {
+		return nil, err
 	}
 
 	// Convert back to slice
@@ -396,6 +395,35 @@ func buildEnv(profileEnv map[string]string, envFilePath string, effectiveWorking
 		result = append(result, k+"="+v)
 	}
 	return result, nil
+}
+
+func mergeEnvFile(envMap map[string]string, envFilePath string, effectiveWorkingDir string) error {
+	if strings.TrimSpace(envFilePath) == "" {
+		return nil
+	}
+	resolved := envFilePath
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(effectiveWorkingDir, resolved)
+	}
+	fileEnv, err := ParseEnvFile(resolved)
+	if err != nil {
+		return err
+	}
+	for k, v := range fileEnv {
+		envMap[k] = v
+	}
+	return nil
+}
+
+func activeVariantEnvFile(profile RunProfile) (string, error) {
+	if strings.TrimSpace(profile.ActiveVariant) == "" {
+		return "", nil
+	}
+	variant, ok := findEnvVariant(profile.EnvVariants, profile.ActiveVariant)
+	if !ok {
+		return "", fmt.Errorf("env variant %q not found for profile %s", profile.ActiveVariant, profile.ID)
+	}
+	return variant.EnvFile, nil
 }
 
 // waitExitCode waits for the command to finish and extracts the exit code.

@@ -407,6 +407,26 @@ func (a *App) UnpinRunProfile(id string) error {
 	return nil
 }
 
+// SetActiveVariant selects the env variant for a run profile and emits the updated profile list.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) SetActiveVariant(profileID string, variant string) error {
+	a.profileMu.RLock()
+	if a.profileManager == nil {
+		a.profileMu.RUnlock()
+		return fmt.Errorf("no workspace loaded")
+	}
+
+	if err := a.profileManager.SetActiveVariant(profileID, variant); err != nil {
+		a.profileMu.RUnlock()
+		return err
+	}
+
+	profiles := a.profileManager.GetAllProfiles()
+	a.profileMu.RUnlock()
+	runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
+	return nil
+}
+
 // ValidateRunProfile validates a run profile without saving it.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ValidateRunProfile(profile runprofile.RunProfile) runprofile.ValidationResult {

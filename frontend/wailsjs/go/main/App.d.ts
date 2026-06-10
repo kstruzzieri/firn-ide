@@ -71,6 +71,8 @@ export function SaveWorkspaceState(arg1:workspace.State):Promise<void>;
 
 export function SearchWorkspace(arg1:search.SearchRequest):Promise<search.SearchResponse>;
 
+export function SetActiveVariant(arg1:string,arg2:string):Promise<void>;
+
 export function SetLSPWorkspaceRoot(arg1:string):Promise<void>;
 
 export function StartRunProfile(arg1:string):Promise<void>;

@@ -60,6 +60,15 @@ func Validate(profile RunProfile) ValidationResult {
 		}
 	}
 
+	if strings.TrimSpace(profile.ActiveVariant) != "" {
+		if _, ok := findEnvVariant(profile.EnvVariants, profile.ActiveVariant); !ok {
+			errs = append(errs, ValidationError{
+				Field:   "activeVariant",
+				Message: "activeVariant must match a configured env variant",
+			})
+		}
+	}
+
 	for _, tag := range profile.Tags {
 		if !ValidTags[tag] {
 			errs = append(errs, ValidationError{
@@ -75,3 +84,15 @@ func Validate(profile RunProfile) ValidationResult {
 	}
 }
 
+func findEnvVariant(variants []EnvVariant, name string) (EnvVariant, bool) {
+	active := strings.TrimSpace(name)
+	if active == "" {
+		return EnvVariant{}, false
+	}
+	for _, variant := range variants {
+		if strings.TrimSpace(variant.Name) == active {
+			return variant, true
+		}
+	}
+	return EnvVariant{}, false
+}

@@ -2,6 +2,12 @@
 // Run profiles are first-class build/lint/test/deploy configurations per workspace.
 package runprofile
 
+import (
+	"bytes"
+	"encoding/json"
+	"sort"
+)
+
 // ProfileType distinguishes single-command profiles from compound (multi-step) profiles.
 type ProfileType string
 
@@ -44,6 +50,48 @@ type EnvVariant struct {
 	EnvFile string `json:"envFile"`
 }
 
+// EnvVariants stores environment variants in the canonical array shape while
+// still accepting the issue #64 map shape from hand-written profile files.
+type EnvVariants []EnvVariant
+
+// UnmarshalJSON accepts either:
+//   - [{"name":"dev","envFile":".env.dev"}]
+//   - {"dev":".env.dev"}
+func (v *EnvVariants) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*v = nil
+		return nil
+	}
+
+	if trimmed[0] != '{' {
+		var variants []EnvVariant
+		if err := json.Unmarshal(trimmed, &variants); err != nil {
+			return err
+		}
+		*v = variants
+		return nil
+	}
+
+	var variantMap map[string]string
+	if err := json.Unmarshal(trimmed, &variantMap); err != nil {
+		return err
+	}
+
+	names := make([]string, 0, len(variantMap))
+	for name := range variantMap {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	variants := make([]EnvVariant, 0, len(names))
+	for _, name := range names {
+		variants = append(variants, EnvVariant{Name: name, EnvFile: variantMap[name]})
+	}
+	*v = variants
+	return nil
+}
+
 // RunProfile represents a single run configuration.
 type RunProfile struct {
 	ID            string            `json:"id"`
@@ -54,7 +102,7 @@ type RunProfile struct {
 	WorkingDir    string            `json:"workingDir,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
 	EnvFile       string            `json:"envFile,omitempty"`
-	EnvVariants   []EnvVariant      `json:"envVariants,omitempty"`
+	EnvVariants   EnvVariants       `json:"envVariants,omitempty"`
 	ActiveVariant string            `json:"activeVariant,omitempty"`
 	Tags          []ProfileTag      `json:"tags,omitempty"`
 	Steps         []string          `json:"steps,omitempty"`
