@@ -168,7 +168,7 @@ func TestExecutor_StartCompoundRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for compound profile")
 	}
-	if !strings.Contains(err.Error(), "compound profiles are not supported yet") {
+	if !strings.Contains(err.Error(), "compound profiles require resolved steps") {
 		t.Errorf("error = %q, want compound rejection message", err.Error())
 	}
 }

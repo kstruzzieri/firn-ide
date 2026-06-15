@@ -51,13 +51,23 @@ type Executor struct {
 	outputFn   OutputFunc
 }
 
+type processResult struct {
+	state      RunState
+	exitCode   int
+	err        error
+	workingDir string
+}
+
 // runningProcess tracks a single running profile execution.
 type runningProcess struct {
-	cmd      *exec.Cmd
-	status   RunStatus
-	stopped  bool          // set by Stop — tells Wait goroutine to use RunStateStopped
-	done     chan struct{} // closed when process exits and cleanup is complete
-	stopOnce sync.Once
+	cmd        *exec.Cmd
+	status     RunStatus
+	stopped    bool          // set by Stop — tells Wait goroutine to use RunStateStopped
+	done       chan struct{} // closed when process exits and cleanup is complete
+	stopOnce   sync.Once
+	stdout     io.ReadCloser
+	stderr     io.ReadCloser
+	workingDir string
 }
 
 // NewExecutor creates an Executor.
@@ -75,22 +85,32 @@ func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 // Start begins executing a run profile. Profile resolution (ID → RunProfile)
 // happens at the app.go binding level. The executor receives the resolved profile.
 func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
-	if workspaceRoot == "" {
-		return fmt.Errorf("no workspace loaded")
+	if profile.Type == ProfileTypeCompound {
+		return fmt.Errorf("compound profiles require resolved steps: %s", profile.ID)
 	}
 
-	if profile.Type == ProfileTypeCompound {
-		return fmt.Errorf("compound profiles are not supported yet")
+	rp, err := e.startProcess(profile.ID, profile, workspaceRoot)
+	if err != nil {
+		return err
+	}
+
+	e.emit(rp.status)
+	go e.waitProcess(profile.ID, rp, true, true)
+	return nil
+}
+
+func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot string) (*runningProcess, error) {
+	if workspaceRoot == "" {
+		return nil, fmt.Errorf("no workspace loaded")
 	}
 
 	if strings.TrimSpace(profile.Command) == "" {
-		return fmt.Errorf("profile has no command: %s", profile.ID)
+		return nil, fmt.Errorf("profile has no command: %s", profile.ID)
 	}
 
-	// Resolve effective working directory
 	effectiveDir, err := resolveWorkingDir(workspaceRoot, profile.WorkingDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Hold the lock for the entire setup-through-insert sequence. This prevents
@@ -98,17 +118,17 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	// never see a partially-initialized entry. The locked work is fast: env merging
 	// (small .env file read), pipe setup, and fork.
 	e.mu.Lock()
-	if _, exists := e.processes[profile.ID]; exists {
+	if _, exists := e.processes[key]; exists {
 		e.mu.Unlock()
-		return fmt.Errorf("profile already running: %s", profile.ID)
+		return nil, fmt.Errorf("profile already running: %s", key)
 	}
-	delete(e.lastStatus, profile.ID)
+	delete(e.lastStatus, key)
 
 	// Build environment
 	env, err := buildEnv(profile, effectiveDir)
 	if err != nil {
 		e.mu.Unlock()
-		return err
+		return nil, err
 	}
 
 	// Create command via platform helper
@@ -121,68 +141,76 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("creating stdout pipe: %w", err)
+		return nil, fmt.Errorf("creating stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("creating stderr pipe: %w", err)
+		return nil, fmt.Errorf("creating stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("starting process: %w", err)
+		return nil, fmt.Errorf("starting process: %w", err)
 	}
 
 	rp := &runningProcess{
 		cmd: cmd,
 		status: RunStatus{
-			ProfileID: profile.ID,
+			ProfileID: key,
 			State:     RunStateRunning,
 			Pid:       cmd.Process.Pid,
 		},
-		done: make(chan struct{}),
+		done:       make(chan struct{}),
+		stdout:     stdout,
+		stderr:     stderr,
+		workingDir: effectiveDir,
 	}
-	e.processes[profile.ID] = rp
+	e.processes[key] = rp
 	e.mu.Unlock()
 
-	// Emit running status
-	e.emit(rp.status)
+	return rp, nil
+}
 
-	// Drain stdout/stderr through the output batcher
+func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, retainStatus bool) processResult {
 	batcher := newOutputBatcher(e.outputFn, 16*time.Millisecond)
 	var pipesWg sync.WaitGroup
 	pipesWg.Add(2)
-	go e.drainPipe(&pipesWg, profile.ID, "stdout", stdout, batcher)
-	go e.drainPipe(&pipesWg, profile.ID, "stderr", stderr, batcher)
+	go e.drainPipe(&pipesWg, key, "stdout", rp.stdout, batcher)
+	go e.drainPipe(&pipesWg, key, "stderr", rp.stderr, batcher)
 
-	// Wait for process exit
-	go func() {
-		pipesWg.Wait()
-		batcher.Close()
-		exitCode := waitExitCode(cmd)
+	pipesWg.Wait()
+	batcher.Close()
+	exitCode := waitExitCode(rp.cmd)
 
-		e.mu.Lock()
-		stopped := rp.stopped
-		if stopped {
-			rp.status.State = RunStateStopped
-		} else if exitCode == 0 {
-			rp.status.State = RunStateSuccess
-		} else {
-			rp.status.State = RunStateFailed
-		}
-		rp.status.ExitCode = exitCode
-		rp.status.Pid = 0
-		status := rp.status
-		e.lastStatus[profile.ID] = status
-		delete(e.processes, profile.ID)
-		e.mu.Unlock()
+	e.mu.Lock()
+	stopped := rp.stopped
+	if stopped {
+		rp.status.State = RunStateStopped
+	} else if exitCode == 0 {
+		rp.status.State = RunStateSuccess
+	} else {
+		rp.status.State = RunStateFailed
+	}
+	rp.status.ExitCode = exitCode
+	rp.status.Pid = 0
+	status := rp.status
+	if retainStatus {
+		e.lastStatus[key] = status
+	}
+	delete(e.processes, key)
+	e.mu.Unlock()
 
+	if emitStatus {
 		e.emit(status)
-		close(rp.done)
-	}()
+	}
+	close(rp.done)
 
-	return nil
+	return processResult{
+		state:      status.State,
+		exitCode:   exitCode,
+		workingDir: rp.workingDir,
+	}
 }
 
 // Stop terminates a running profile. Sends SIGTERM, waits up to 3 seconds,
