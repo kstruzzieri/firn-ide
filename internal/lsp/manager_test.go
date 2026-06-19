@@ -525,7 +525,16 @@ func TestManager_StartupFailureStatusIncludesCommandAndInstallHint(t *testing.T)
 	workspace := t.TempDir()
 	mgr, collector := newTestManager(t)
 	mgr.SetWorkspaceRoot(workspace)
+
+	// Make gopls resolution fail deterministically regardless of the host: clear
+	// PATH (defeats exec.LookPath) and point the well-known-dir fallback at an
+	// empty temp dir (defeats findGoBinary, which otherwise resolves $HOME/go/bin
+	// or /opt/homebrew/bin on a developer machine that has gopls installed).
 	t.Setenv("PATH", "")
+	emptyDir := t.TempDir()
+	origDirs := goBinarySearchDirs
+	goBinarySearchDirs = func() []string { return []string{emptyDir} }
+	t.Cleanup(func() { goBinarySearchDirs = origDirs })
 
 	err := mgr.DidOpen(context.Background(), filepath.Join(workspace, "main.go"), "go", 1, "package main")
 	if err == nil {
@@ -893,7 +902,7 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 
 	// Close one file via Manager API — should keep server running
 	closePath := filepath.Join(tmpDir, files[0])
-	mgr.DidClose(ctx, closePath)
+	_ = mgr.DidClose(ctx, closePath)
 
 	mgr.mu.Lock()
 	remaining := len(entry.openDocs)

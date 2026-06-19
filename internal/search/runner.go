@@ -39,13 +39,13 @@ func defaultRunnerConfig() runnerConfig {
 	}
 }
 
-// runErrInvalidRegex is returned by runRipgrep when rg exits with status 2
+// errInvalidRegex is returned by runRipgrep when rg exits with status 2
 // and its stderr indicates a regex parse failure.
-var runErrInvalidRegex = errors.New("invalid regular expression")
+var errInvalidRegex = errors.New("invalid regular expression")
 
-// runErrCanceled is returned when the supplied context is canceled before
+// errCanceled is returned when the supplied context is canceled before
 // rg finishes. The caller maps it to StatusCanceled.
-var runErrCanceled = errors.New("search canceled")
+var errCanceled = errors.New("search canceled")
 
 // isMissingTool reports whether err originated from exec.LookPath failing to
 // find ripgrep on PATH. exec.LookPath returns an *exec.Error wrapping
@@ -108,7 +108,7 @@ func buildArgs(req SearchRequest) []string {
 // runOutcome captures the terminal state of one rg invocation.
 type runOutcome struct {
 	Truncated bool
-	Err       error // typed: nil, runErrInvalidRegex, runErrCanceled, or wrapped failure
+	Err       error // typed: nil, errInvalidRegex, errCanceled, or wrapped failure
 }
 
 // runRipgrep executes ripgrep for req, streaming JSON events to onMatch via
@@ -116,7 +116,7 @@ type runOutcome struct {
 // optional typed error. Exit code 1 is mapped to a successful empty run.
 //
 // The context owned by the caller controls cancelation. When ctx is canceled
-// before rg finishes, runRipgrep returns runErrCanceled. Process group
+// before rg finishes, runRipgrep returns errCanceled. Process group
 // cleanup is delegated to exec.CommandContext + Wait; exec.CommandContext
 // already kills the child process on context expiry on all supported OSes.
 func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatch func(filePath string, m LineMatch) bool) runOutcome {
@@ -189,7 +189,7 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 	// cancel) and runCtx (timeout) separately so we can give a precise
 	// message later if needed.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return runOutcome{Truncated: truncated, Err: runErrCanceled}
+		return runOutcome{Truncated: truncated, Err: errCanceled}
 	}
 
 	if canceledAfterCap {
@@ -217,7 +217,7 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 		case 2:
 			msg := classifyStderr(stderrBytes)
 			if isRegexError(stderrBytes) {
-				return runOutcome{Err: fmt.Errorf("%w: %s", runErrInvalidRegex, msg)}
+				return runOutcome{Err: fmt.Errorf("%w: %s", errInvalidRegex, msg)}
 			}
 			return runOutcome{Err: fmt.Errorf("ripgrep failed: %s", msg)}
 		default:

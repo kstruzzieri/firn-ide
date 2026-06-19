@@ -1,9 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   useActiveRunOutput,
+  useActiveCompoundRun,
   useRunOutputViewMode,
   useRunOutputAutoScroll,
   useRunOutputs,
+  useRunCompounds,
   useWorkspace,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
@@ -12,18 +14,34 @@ import { MergedView } from './MergedView';
 import { LanesView } from './LanesView';
 import { DiffView } from './DiffView';
 import { TimelineView } from './TimelineView';
+// Import the compound view file directly (not the RunProfiles barrel) to avoid a
+// circular import, since CompoundExecutionView imports from ../RunOutput/*.
+import { CompoundExecutionView } from '../RunProfiles/CompoundExecutionView';
 import styles from './RunOutput.module.css';
 
 export function RunOutputPanel() {
   const activeOutput = useActiveRunOutput();
+  const activeCompound = useActiveCompoundRun();
   const viewMode = useRunOutputViewMode();
   const autoScroll = useRunOutputAutoScroll();
   const runOutputs = useRunOutputs();
+  const runCompounds = useRunCompounds();
   const workspace = useWorkspace();
   const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
 
   const workspacePath = workspace?.path;
   const activeWorkingDir = activeOutput?.workingDir;
+
+  // The global timeline is ordinary-profiles-only. A compound emits an aggregate
+  // run:status, so runOutputs[compoundId] exists (for the card badge) but carries
+  // no entries — exclude those so the timeline doesn't render empty sources.
+  const timelineOutputs = useMemo(() => {
+    const filtered: typeof runOutputs = {};
+    for (const [id, output] of Object.entries(runOutputs)) {
+      if (!runCompounds[id]) filtered[id] = output;
+    }
+    return filtered;
+  }, [runOutputs, runCompounds]);
 
   const handleToggleFold = useCallback((foldId: string) => {
     setExpandedFolds((prev) => {
@@ -37,13 +55,25 @@ export function RunOutputPanel() {
     });
   }, []);
 
+  // A compound run owns the entire output surface (it has its own internal
+  // tabs/views), so it takes precedence over the ordinary view modes.
+  if (activeCompound) {
+    return (
+      <div className={styles.panelContainer}>
+        <RunOutputTabs />
+        <RunOutputToolbar />
+        <CompoundExecutionView key={activeCompound.compoundId} compound={activeCompound} />
+      </div>
+    );
+  }
+
   return (
     <div className={styles.panelContainer}>
       <RunOutputTabs />
       <RunOutputToolbar />
       {viewMode === 'timeline' ? (
         <TimelineView
-          runOutputs={runOutputs}
+          runOutputs={timelineOutputs}
           autoScroll={autoScroll}
           workspacePath={workspacePath}
         />

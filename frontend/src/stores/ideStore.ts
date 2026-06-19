@@ -5,6 +5,8 @@ import type { filesystem, workspace } from '../../wailsjs/go/models';
 import type { RunProfile } from '../types/runProfile';
 import { LineAssembler } from '../utils/lineAssembler';
 import type {
+  CompoundRun,
+  CompoundRunEvent,
   OutputChunk,
   OutputEntry,
   RunHistoryEntry,
@@ -13,6 +15,9 @@ import type {
   RunOutputViewMode,
 } from '../types/runOutput';
 import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
+import { parseCompoundStepKey } from '../utils/compoundRunKeys';
+import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
+import { parseFileReferences } from '../utils/parseFileReferences';
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
@@ -129,6 +134,7 @@ interface IDEState {
 
   // Run Output
   runOutputs: Record<string, RunOutput>;
+  runCompounds: Record<string, CompoundRun>;
   activeRunOutputId: string | null;
   runOutputViewMode: RunOutputViewMode;
   runOutputAutoScroll: boolean;
@@ -226,6 +232,9 @@ interface IDEActions {
   ) => void;
   clearRunOutput: (profileId: string) => void;
   clearAllRunOutputs: () => void;
+  handleCompoundRun: (event: CompoundRunEvent) => void;
+  appendCompoundRunOutput: (compoundId: string, stepIdx: number, chunk: OutputChunk) => void;
+  clearCompoundRunOutput: (compoundId: string) => void;
   setActiveRunOutput: (id: string | null) => void;
   setRunOutputViewMode: (mode: RunOutputViewMode) => void;
   toggleAutoScroll: () => void;
@@ -291,6 +300,35 @@ function getOrCreateAssembler(
   return assembler;
 }
 
+// Canonical key for a compound step's line assembler. Used for BOTH routing
+// step output into an assembler and flushing it on terminal, so the two always
+// agree without depending on Go's base64url encoding of the composite key.
+function compoundStepAssemblerKey(compoundId: string, stepIdx: number): string {
+  return JSON.stringify([compoundId, stepIdx]);
+}
+
+// Push a chunk through the assembler for `key` and return the complete lines it
+// emitted. Shared by ordinary and compound output paths.
+function collectChunkEntries(key: string, chunk: OutputChunk): OutputEntry[] {
+  const pending: OutputEntry[] = [];
+  const assembler = getOrCreateAssembler(key, (entry) => pending.push(entry));
+  assembler.push(chunk.stream, chunk.data, chunk.timestamp);
+  return pending;
+}
+
+// Flush any carry-over from the assembler for `key`, returning the flushed
+// entries, then drop the assembler and its callback. No-op (empty) if absent.
+function flushAssembler(key: string): OutputEntry[] {
+  const flushed: OutputEntry[] = [];
+  const assembler = lineAssemblers.get(key);
+  if (!assembler) return flushed;
+  assemblerCallbacks.set(key, (entry) => flushed.push(entry));
+  assembler.flush();
+  lineAssemblers.delete(key);
+  assemblerCallbacks.delete(key);
+  return flushed;
+}
+
 function getProfileWorkingDirSnapshot(
   state: Pick<IDEState, 'runProfiles'>,
   profileId: string
@@ -330,6 +368,7 @@ export const useIDEStore = create<IDEStore>()(
       isLoadingProfiles: false,
       profilesError: null,
       runOutputs: {},
+      runCompounds: {},
       activeRunOutputId: null,
       runOutputViewMode: 'merged' as RunOutputViewMode,
       runOutputAutoScroll: true,
@@ -594,6 +633,19 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
+        // Composite (compound step) output is routed into runCompounds and must
+        // never create an ordinary RunOutput tab, waveform, or lifecycle flag.
+        const compoundKey = parseCompoundStepKey(chunk.profileId);
+        if (compoundKey) {
+          const { compoundId, stepIdx } = compoundKey;
+          if (useIDEStore.getState().runCompounds[compoundId]) {
+            useIDEStore.getState().appendCompoundRunOutput(compoundId, stepIdx, chunk);
+          }
+          // Drop orphan (no compound) or return after routing — never fall
+          // through to ordinary handling.
+          return;
+        }
+
         const currentState = useIDEStore.getState();
 
         if (!currentState.runOutputs[chunk.profileId]) {
@@ -836,7 +888,13 @@ export const useIDEStore = create<IDEStore>()(
         );
       },
 
-      clearRunOutput: (profileId) =>
+      clearRunOutput: (profileId) => {
+        // If this id refers to a compound run, clear its step outputs/assemblers
+        // and keep the run record (mirrors clearCompoundRunOutput).
+        if (useIDEStore.getState().runCompounds[profileId]) {
+          useIDEStore.getState().clearCompoundRunOutput(profileId);
+          return;
+        }
         set(
           (state) => {
             const existing = state.runOutputs[profileId];
@@ -876,7 +934,8 @@ export const useIDEStore = create<IDEStore>()(
           },
           false,
           'clearRunOutput'
-        ),
+        );
+      },
 
       clearAllRunOutputs: () => {
         lineAssemblers.clear();
@@ -896,11 +955,247 @@ export const useIDEStore = create<IDEStore>()(
                 };
               }
             }
-            const firstId = Object.keys(preserved)[0] ?? null;
-            return { runOutputs: preserved, activeRunOutputId: firstId };
+            // Preserve still-running compounds (entries cleared). Dropping them
+            // would orphan composite output chunks for the active step — they
+            // would be ignored by appendRunOutput until the next snapshot.
+            const preservedCompounds: Record<string, CompoundRun> = {};
+            for (const [id, compound] of Object.entries(state.runCompounds)) {
+              if (compound.state === 'running') {
+                preservedCompounds[id] = { ...compound, stepOutputs: {} };
+              }
+            }
+            const firstId = Object.keys(preserved)[0] ?? Object.keys(preservedCompounds)[0] ?? null;
+            const activeStillValid =
+              state.activeRunOutputId != null &&
+              (preserved[state.activeRunOutputId] != null ||
+                preservedCompounds[state.activeRunOutputId] != null);
+            return {
+              runOutputs: preserved,
+              runCompounds: preservedCompounds,
+              activeRunOutputId: activeStillValid ? state.activeRunOutputId : firstId,
+            };
           },
           false,
           'clearAllRunOutputs'
+        );
+      },
+
+      // Compound run actions
+      handleCompoundRun: (event) => {
+        const { compoundId, name, state: aggregateState, currentStep, steps } = event;
+
+        // Snapshot the previous run so we can preserve outputs and detect
+        // step transitions that became terminal this event.
+        const prevRun = useIDEStore.getState().runCompounds[compoundId];
+        const prevStepStates = new Map<number, string>();
+        if (prevRun) {
+          for (const step of prevRun.steps) {
+            prevStepStates.set(step.idx, step.state);
+          }
+        }
+
+        const isStepTerminal = (s: string) => s === 'success' || s === 'failed' || s === 'stopped';
+
+        // Flush assemblers for steps that BECAME terminal this event, collecting
+        // their carry-over before we touch the store (mirrors handleRunStatus).
+        const flushedByStep = new Map<number, OutputEntry[]>();
+        // Steps that transitioned into a terminal state this event (for history).
+        const newlyTerminal: typeof steps = [];
+        for (const step of steps) {
+          const prevState = prevStepStates.get(step.idx);
+          const becameTerminal = isStepTerminal(step.state) && !isStepTerminal(prevState ?? '');
+          if (becameTerminal) {
+            newlyTerminal.push(step);
+            const flushed = flushAssembler(compoundStepAssemblerKey(compoundId, step.idx));
+            if (flushed.length > 0) {
+              flushedByStep.set(step.idx, flushed);
+            }
+          }
+        }
+
+        set(
+          (state) => {
+            const existing = state.runCompounds[compoundId];
+            // A terminal compound transitioning back to running is a NEW run of
+            // the same profile: start its step outputs fresh instead of carrying
+            // the previous execution's output into the new run.
+            const isNewRun =
+              existing != null && isStepTerminal(existing.state) && aggregateState === 'running';
+            const preservedOutputs: Record<number, OutputEntry[]> = isNewRun
+              ? {}
+              : { ...(existing?.stepOutputs ?? {}) };
+
+            // Merge flushed carry-over into the corresponding step outputs.
+            for (const [stepIdx, flushed] of flushedByStep) {
+              const current = preservedOutputs[stepIdx] ?? [];
+              let merged = [...current, ...flushed];
+              if (merged.length > MAX_OUTPUT_ENTRIES) {
+                merged = merged.slice(merged.length - MAX_OUTPUT_ENTRIES);
+              }
+              preservedOutputs[stepIdx] = merged;
+            }
+
+            // --- Selected step ---
+            let selectedStepIdx: number | undefined;
+            const runningStep = steps.find((s) => s.state === 'running');
+            if (runningStep) {
+              selectedStepIdx = runningStep.idx;
+            } else if (aggregateState === 'failed') {
+              selectedStepIdx = steps.find((s) => s.state === 'failed')?.idx;
+            }
+            if (selectedStepIdx == null) {
+              selectedStepIdx = existing?.selectedStepIdx ?? currentStep ?? 0;
+            }
+
+            // --- Run history (only for steps that became terminal this event) ---
+            let runHistory = state.runHistory;
+            for (const step of newlyTerminal) {
+              if (step.startedAt == null || step.endedAt == null) continue;
+              if (step.state !== 'success' && step.state !== 'failed' && step.state !== 'stopped') {
+                continue;
+              }
+              const existingHistory = runHistory[step.profileId] ?? [];
+              const entry: RunHistoryEntry = {
+                state: step.state,
+                duration: step.endedAt - step.startedAt,
+                timestamp: step.endedAt,
+              };
+              const updatedHistory = [...existingHistory, entry];
+              const capped =
+                updatedHistory.length > 50
+                  ? updatedHistory.slice(updatedHistory.length - 50)
+                  : updatedHistory;
+              runHistory = { ...runHistory, [step.profileId]: capped };
+            }
+
+            // --- Failed reference ---
+            let failedReference: CompoundRun['failedReference'];
+            if (aggregateState === 'failed') {
+              const failedStep = steps.find((s) => s.state === 'failed');
+              if (failedStep) {
+                const text = (preservedOutputs[failedStep.idx] ?? [])
+                  .map((entry) => entry.text)
+                  .join('\n');
+                const refs = parseFileReferences(text);
+                if (refs.length > 0) {
+                  const ref = refs[0];
+                  failedReference = {
+                    stepIdx: failedStep.idx,
+                    path: ref.path,
+                    line: ref.line,
+                    column: ref.column,
+                  };
+                }
+              }
+            }
+
+            // --- ETA (best-effort sum of running remaining + pending estimates) ---
+            let etaMs: number | undefined;
+            let etaTotal = 0;
+            let etaHasValue = false;
+            for (const step of steps) {
+              const history = runHistory[step.profileId] ?? [];
+              if (step.state === 'running') {
+                const elapsed = step.startedAt != null ? Date.now() - step.startedAt : 0;
+                const remaining = estimateRemaining(history, Math.max(0, elapsed));
+                if (remaining != null) {
+                  etaTotal += remaining;
+                  etaHasValue = true;
+                }
+              } else if (step.state === 'pending') {
+                const estimate = estimateDuration(history);
+                if (estimate != null) {
+                  etaTotal += estimate;
+                  etaHasValue = true;
+                }
+              }
+            }
+            if (etaHasValue) {
+              etaMs = etaTotal;
+            }
+
+            const newRun: CompoundRun = {
+              compoundId,
+              name,
+              state: aggregateState,
+              currentStep,
+              etaMs,
+              steps,
+              stepOutputs: preservedOutputs,
+              selectedStepIdx,
+              failedReference,
+            };
+
+            return {
+              runCompounds: { ...state.runCompounds, [compoundId]: newRun },
+              runHistory,
+            };
+          },
+          false,
+          'handleCompoundRun'
+        );
+      },
+
+      appendCompoundRunOutput: (compoundId, stepIdx, chunk) => {
+        const pendingEntries = collectChunkEntries(
+          compoundStepAssemblerKey(compoundId, stepIdx),
+          chunk
+        );
+        if (pendingEntries.length === 0) return;
+
+        set(
+          (state) => {
+            const existing = state.runCompounds[compoundId];
+            if (!existing) return state; // compound disappeared between calls
+
+            const current = existing.stepOutputs[stepIdx] ?? [];
+            let entries = [...current, ...pendingEntries];
+            if (entries.length > MAX_OUTPUT_ENTRIES) {
+              entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
+              entries.unshift({
+                stream: 'stdout',
+                text: '[truncated — oldest output removed]',
+                timestamp: entries[0]?.timestamp ?? Date.now(),
+              });
+            }
+
+            return {
+              runCompounds: {
+                ...state.runCompounds,
+                [compoundId]: {
+                  ...existing,
+                  stepOutputs: { ...existing.stepOutputs, [stepIdx]: entries },
+                },
+              },
+            };
+          },
+          false,
+          'appendCompoundRunOutput'
+        );
+      },
+
+      clearCompoundRunOutput: (compoundId) => {
+        const existing = useIDEStore.getState().runCompounds[compoundId];
+        if (existing) {
+          for (const step of existing.steps) {
+            const key = compoundStepAssemblerKey(compoundId, step.idx);
+            lineAssemblers.delete(key);
+            assemblerCallbacks.delete(key);
+          }
+        }
+        set(
+          (state) => {
+            const run = state.runCompounds[compoundId];
+            if (!run) return state;
+            return {
+              runCompounds: {
+                ...state.runCompounds,
+                [compoundId]: { ...run, stepOutputs: {} },
+              },
+            };
+          },
+          false,
+          'clearCompoundRunOutput'
         );
       },
 
@@ -1051,6 +1346,7 @@ export const useIDEStore = create<IDEStore>()(
             const firstId = Object.keys(preserved)[0] ?? null;
             return {
               runOutputs: preserved,
+              runCompounds: {},
               activeRunOutputId: firstId,
               stoppingProfileIds: [],
               restartingProfileIds: [],
@@ -1217,11 +1513,17 @@ export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoading
 export const useProfilesError = () => useIDEStore((state) => state.profilesError);
 export const useRecentWorkspaces = () => useIDEStore((state) => state.recentWorkspaces);
 export const useRunOutputs = () => useIDEStore((state) => state.runOutputs);
+export const useRunCompounds = () => useIDEStore((state) => state.runCompounds);
 export const useActiveRunOutputId = () => useIDEStore((state) => state.activeRunOutputId);
 export const useActiveRunOutput = () =>
   useIDEStore((state) => {
     const id = state.activeRunOutputId;
     return id && id !== '__all__' ? (state.runOutputs[id] ?? null) : null;
+  });
+export const useActiveCompoundRun = () =>
+  useIDEStore((state) => {
+    const id = state.activeRunOutputId;
+    return id ? (state.runCompounds[id] ?? null) : null;
   });
 export const useRunOutputViewMode = () => useIDEStore((state) => state.runOutputViewMode);
 export const useRunOutputAutoScroll = () => useIDEStore((state) => state.runOutputAutoScroll);

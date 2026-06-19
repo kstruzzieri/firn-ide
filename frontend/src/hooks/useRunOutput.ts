@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useIDEStore } from '../stores/ideStore';
-import type { OutputChunk, RunState } from '../types/runOutput';
+import type { OutputChunk, RunState, CompoundRunEvent } from '../types/runOutput';
+import { parseCompoundStepKey } from '../utils/compoundRunKeys';
 
 export function useRunOutputListener(): void {
   useEffect(() => {
@@ -17,7 +18,11 @@ export function useRunOutputListener(): void {
 
     const cleanupOutput = EventsOn('run:output', (chunk: OutputChunk) => {
       useIDEStore.getState().appendRunOutput(chunk);
-      entryCounts.set(chunk.profileId, (entryCounts.get(chunk.profileId) ?? 0) + 1);
+      // Composite step output is routed into compound state, not ordinary
+      // run output — keep waveform data keyed by real profile IDs only.
+      if (parseCompoundStepKey(chunk.profileId) == null) {
+        entryCounts.set(chunk.profileId, (entryCounts.get(chunk.profileId) ?? 0) + 1);
+      }
     });
 
     const cleanupStatus = EventsOn(
@@ -31,9 +36,14 @@ export function useRunOutputListener(): void {
       }
     );
 
+    const cleanupCompound = EventsOn('run:compound', (event: CompoundRunEvent) => {
+      useIDEStore.getState().handleCompoundRun(event);
+    });
+
     return () => {
       cleanupOutput();
       cleanupStatus();
+      cleanupCompound();
       clearInterval(waveformInterval);
     };
   }, []);

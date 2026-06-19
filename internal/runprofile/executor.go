@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -44,20 +45,31 @@ type StatusFunc func(event string, data ...any)
 
 // Executor manages the lifecycle of running profiles.
 type Executor struct {
-	mu         sync.Mutex
-	processes  map[string]*runningProcess
-	lastStatus map[string]RunStatus // terminal status retained after exit
-	emitFn     StatusFunc
-	outputFn   OutputFunc
+	mu             sync.Mutex
+	processes      map[string]*runningProcess
+	processAliases map[string]string       // real profile ID -> process key for compound leaves
+	compounds      map[string]*compoundRun // in-flight compound runs keyed by compound ID
+	lastStatus     map[string]RunStatus    // terminal status retained after exit
+	emitFn         StatusFunc
+	outputFn       OutputFunc
+}
+
+type processResult struct {
+	state      RunState
+	exitCode   int
+	workingDir string
 }
 
 // runningProcess tracks a single running profile execution.
 type runningProcess struct {
-	cmd      *exec.Cmd
-	status   RunStatus
-	stopped  bool          // set by Stop — tells Wait goroutine to use RunStateStopped
-	done     chan struct{} // closed when process exits and cleanup is complete
-	stopOnce sync.Once
+	cmd        *exec.Cmd
+	status     RunStatus
+	stopped    bool          // set by Stop — tells Wait goroutine to use RunStateStopped
+	done       chan struct{} // closed when process exits and cleanup is complete
+	stopOnce   sync.Once
+	stdout     io.ReadCloser
+	stderr     io.ReadCloser
+	workingDir string
 }
 
 // NewExecutor creates an Executor.
@@ -65,32 +77,50 @@ type runningProcess struct {
 // outputFn receives stdout/stderr chunks (nil = drain silently).
 func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 	return &Executor{
-		processes:  make(map[string]*runningProcess),
-		lastStatus: make(map[string]RunStatus),
-		emitFn:     emitFn,
-		outputFn:   outputFn,
+		processes:      make(map[string]*runningProcess),
+		processAliases: make(map[string]string),
+		compounds:      make(map[string]*compoundRun),
+		lastStatus:     make(map[string]RunStatus),
+		emitFn:         emitFn,
+		outputFn:       outputFn,
 	}
 }
 
 // Start begins executing a run profile. Profile resolution (ID → RunProfile)
 // happens at the app.go binding level. The executor receives the resolved profile.
 func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
-	if workspaceRoot == "" {
-		return fmt.Errorf("no workspace loaded")
+	if err := rejectReservedProfileID(profile.ID); err != nil {
+		return err
+	}
+	if profile.Type == ProfileTypeCompound {
+		return fmt.Errorf("compound profiles require resolved steps: %s", profile.ID)
 	}
 
-	if profile.Type == ProfileTypeCompound {
-		return fmt.Errorf("compound profiles are not supported yet")
+	rp, err := e.startProcess(profile.ID, profile, workspaceRoot)
+	if err != nil {
+		return err
+	}
+
+	e.emit(rp.status)
+	go e.waitProcess(profile.ID, rp, true, true)
+	return nil
+}
+
+func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot string) (*runningProcess, error) {
+	if err := rejectReservedProfileID(profile.ID); err != nil {
+		return nil, err
+	}
+	if workspaceRoot == "" {
+		return nil, fmt.Errorf("no workspace loaded")
 	}
 
 	if strings.TrimSpace(profile.Command) == "" {
-		return fmt.Errorf("profile has no command: %s", profile.ID)
+		return nil, fmt.Errorf("profile has no command: %s", profile.ID)
 	}
 
-	// Resolve effective working directory
 	effectiveDir, err := resolveWorkingDir(workspaceRoot, profile.WorkingDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Hold the lock for the entire setup-through-insert sequence. This prevents
@@ -98,17 +128,37 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	// never see a partially-initialized entry. The locked work is fast: env merging
 	// (small .env file read), pipe setup, and fork.
 	e.mu.Lock()
-	if _, exists := e.processes[profile.ID]; exists {
+	if _, exists := e.processes[key]; exists {
 		e.mu.Unlock()
-		return fmt.Errorf("profile already running: %s", profile.ID)
+		return nil, fmt.Errorf("profile already running: %s", key)
 	}
-	delete(e.lastStatus, profile.ID)
+	if existingKey, exists := e.processAliases[key]; exists {
+		if _, running := e.processes[existingKey]; running {
+			e.mu.Unlock()
+			return nil, fmt.Errorf("profile already running: %s", key)
+		}
+		delete(e.processAliases, key)
+	}
+	if key != profile.ID {
+		if _, exists := e.processes[profile.ID]; exists {
+			e.mu.Unlock()
+			return nil, fmt.Errorf("profile already running: %s", profile.ID)
+		}
+		if existingKey, exists := e.processAliases[profile.ID]; exists {
+			if _, running := e.processes[existingKey]; running {
+				e.mu.Unlock()
+				return nil, fmt.Errorf("profile already running: %s", profile.ID)
+			}
+			delete(e.processAliases, profile.ID)
+		}
+	}
+	delete(e.lastStatus, key)
 
 	// Build environment
 	env, err := buildEnv(profile, effectiveDir)
 	if err != nil {
 		e.mu.Unlock()
-		return err
+		return nil, err
 	}
 
 	// Create command via platform helper
@@ -121,81 +171,139 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("creating stdout pipe: %w", err)
+		return nil, fmt.Errorf("creating stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("creating stderr pipe: %w", err)
+		return nil, fmt.Errorf("creating stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("starting process: %w", err)
+		return nil, fmt.Errorf("starting process: %w", err)
 	}
 
 	rp := &runningProcess{
 		cmd: cmd,
 		status: RunStatus{
-			ProfileID: profile.ID,
+			ProfileID: key,
 			State:     RunStateRunning,
 			Pid:       cmd.Process.Pid,
 		},
-		done: make(chan struct{}),
+		done:       make(chan struct{}),
+		stdout:     stdout,
+		stderr:     stderr,
+		workingDir: effectiveDir,
 	}
-	e.processes[profile.ID] = rp
+	e.processes[key] = rp
+	if key != profile.ID {
+		e.processAliases[profile.ID] = key
+	}
 	e.mu.Unlock()
 
-	// Emit running status
-	e.emit(rp.status)
+	return rp, nil
+}
 
-	// Drain stdout/stderr through the output batcher
+func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, retainStatus bool) processResult {
 	batcher := newOutputBatcher(e.outputFn, 16*time.Millisecond)
 	var pipesWg sync.WaitGroup
 	pipesWg.Add(2)
-	go e.drainPipe(&pipesWg, profile.ID, "stdout", stdout, batcher)
-	go e.drainPipe(&pipesWg, profile.ID, "stderr", stderr, batcher)
+	go e.drainPipe(&pipesWg, key, "stdout", rp.stdout, batcher)
+	go e.drainPipe(&pipesWg, key, "stderr", rp.stderr, batcher)
 
-	// Wait for process exit
-	go func() {
-		pipesWg.Wait()
-		batcher.Close()
-		exitCode := waitExitCode(cmd)
+	pipesWg.Wait()
+	batcher.Close()
+	exitCode := waitExitCode(rp.cmd)
 
-		e.mu.Lock()
-		stopped := rp.stopped
-		if stopped {
-			rp.status.State = RunStateStopped
-		} else if exitCode == 0 {
-			rp.status.State = RunStateSuccess
-		} else {
-			rp.status.State = RunStateFailed
+	e.mu.Lock()
+	stopped := rp.stopped
+	if stopped {
+		rp.status.State = RunStateStopped
+	} else if exitCode == 0 {
+		rp.status.State = RunStateSuccess
+	} else {
+		rp.status.State = RunStateFailed
+	}
+	rp.status.ExitCode = exitCode
+	rp.status.Pid = 0
+	status := rp.status
+	if retainStatus {
+		e.lastStatus[key] = status
+	}
+	delete(e.processes, key)
+	for alias, target := range e.processAliases {
+		if target == key {
+			delete(e.processAliases, alias)
 		}
-		rp.status.ExitCode = exitCode
-		rp.status.Pid = 0
-		status := rp.status
-		e.lastStatus[profile.ID] = status
-		delete(e.processes, profile.ID)
-		e.mu.Unlock()
+	}
+	e.mu.Unlock()
 
+	if emitStatus {
 		e.emit(status)
-		close(rp.done)
-	}()
+	}
+	close(rp.done)
 
-	return nil
+	return processResult{
+		state:      status.State,
+		exitCode:   exitCode,
+		workingDir: rp.workingDir,
+	}
 }
 
 // Stop terminates a running profile. Sends SIGTERM, waits up to 3 seconds,
 // then escalates to SIGKILL. Blocks until the process is fully cleaned up.
+//
+// If profileID refers to an in-flight compound run, the compound is cancelled
+// (preventing the next step from starting), the currently-running leaf (if any)
+// is stopped via the leaf path, and Stop blocks until the coordinator finishes.
 func (e *Executor) Stop(profileID string) error {
 	e.mu.Lock()
-	rp, exists := e.processes[profileID]
+	if cr, ok := e.compounds[profileID]; ok {
+		cancel := cr.cancel
+		stepKey := compoundStepKey(profileID, cr.current)
+		_, leafRunning := e.processes[stepKey]
+		done := cr.done
+		e.mu.Unlock()
+
+		cancel()
+		if leafRunning {
+			// Leaf path runs in this (caller) goroutine, distinct from the
+			// coordinator goroutine that closes cr.done, so there is no
+			// self-deadlock. The error is intentionally ignored: the leaf may
+			// already be exiting on its own.
+			_ = e.Stop(stepKey)
+		}
+		<-done
+		return nil
+	}
+
+	processKey := profileID
+	if aliasTarget, ok := e.processAliases[profileID]; ok {
+		processKey = aliasTarget
+	}
+	rp, exists := e.processes[processKey]
 	if !exists {
 		e.mu.Unlock()
 		return fmt.Errorf("profile not running: %s", profileID)
 	}
 	e.mu.Unlock()
 
+	e.signalStop(rp)
+
+	// Block until fully cleaned up
+	<-rp.done
+	return nil
+}
+
+// signalStop sends SIGTERM to a leaf's process group exactly once and escalates
+// to SIGKILL after stopGracePeriod if it has not exited. The escalation runs in
+// a watchdog goroutine, so this is non-blocking: callers that own rp.done (the
+// compound coordinator, which closes it via waitProcess) can call this and keep
+// going, while callers that need full cleanup wait on rp.done afterward. Using
+// rp.stopOnce ensures a single SIGTERM + single escalation even when both an
+// external Stop and the coordinator's start/stop-race fallback target the leaf.
+func (e *Executor) signalStop(rp *runningProcess) {
 	rp.stopOnce.Do(func() {
 		e.mu.Lock()
 		rp.stopped = true
@@ -204,24 +312,27 @@ func (e *Executor) Stop(profileID string) error {
 		pid := rp.cmd.Process.Pid
 		_ = killProcessGroup(pid)
 
-		select {
-		case <-rp.done:
-			return
-		case <-time.After(stopGracePeriod):
-			_ = forceKillProcessGroup(pid)
-		}
+		go func() {
+			select {
+			case <-rp.done:
+			case <-time.After(stopGracePeriod):
+				_ = forceKillProcessGroup(pid)
+			}
+		}()
 	})
-
-	// Block until fully cleaned up
-	<-rp.done
-	return nil
 }
 
 // StopAll terminates all running profiles within the given timeout.
-// Returns true if all processes were cleaned up before the deadline.
+// Returns true if all processes (and compound coordinators) were cleaned up
+// before the deadline.
+//
+// Compound current-step leaves are already in e.processes, so they are included
+// in the process copy and receive SIGTERM. Each compound coordinator is also
+// cancelled so the next step cannot start, and StopAll waits on every compound
+// done channel in addition to every process done channel.
 func (e *Executor) StopAll(timeout time.Duration) bool {
 	e.mu.Lock()
-	if len(e.processes) == 0 {
+	if len(e.processes) == 0 && len(e.compounds) == 0 {
 		e.mu.Unlock()
 		return true
 	}
@@ -236,11 +347,26 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 		entries = append(entries, entry{id, rp})
 	}
 
-	// Mark all as stopped
+	// Copy compound coordinators (cancel + done) for concurrent cancellation.
+	type compoundEntry struct {
+		cancel context.CancelFunc
+		done   chan struct{}
+	}
+	compoundEntries := make([]compoundEntry, 0, len(e.compounds))
+	for _, cr := range e.compounds {
+		compoundEntries = append(compoundEntries, compoundEntry{cancel: cr.cancel, done: cr.done})
+	}
+
+	// Mark all processes as stopped
 	for _, ent := range entries {
 		ent.rp.stopped = true
 	}
 	e.mu.Unlock()
+
+	// Cancel every compound coordinator (prevents the next step starting).
+	for _, ce := range compoundEntries {
+		ce.cancel()
+	}
 
 	// Send SIGTERM to all
 	for _, ent := range entries {
@@ -252,11 +378,30 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 	deadline := time.After(timeout)
 	halfwayTimer := time.After(halfway)
 
-	// Collect done channels
+	// Collect done channels (processes + compound coordinators). The collector
+	// also selects on stopWaiting so it cannot leak if a survivor never exits:
+	// on a deadline miss we close stopWaiting and the goroutine returns instead
+	// of blocking forever on a wedged done channel.
 	allDone := make(chan struct{})
+	stopWaiting := make(chan struct{})
 	go func() {
+		waitDone := func(ch <-chan struct{}) bool {
+			select {
+			case <-ch:
+				return true
+			case <-stopWaiting:
+				return false
+			}
+		}
 		for _, ent := range entries {
-			<-ent.rp.done
+			if !waitDone(ent.rp.done) {
+				return
+			}
+		}
+		for _, ce := range compoundEntries {
+			if !waitDone(ce.done) {
+				return
+			}
 		}
 		close(allDone)
 	}()
@@ -282,6 +427,7 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 	case <-allDone:
 		return true
 	case <-deadline:
+		close(stopWaiting)
 		return false
 	}
 }
@@ -295,6 +441,16 @@ func (e *Executor) GetStatus(profileID string) RunStatus {
 
 	if rp, exists := e.processes[profileID]; exists {
 		return rp.status
+	}
+	if aliasTarget, exists := e.processAliases[profileID]; exists {
+		if rp, running := e.processes[aliasTarget]; running {
+			status := rp.status
+			status.ProfileID = profileID
+			return status
+		}
+	}
+	if cr, exists := e.compounds[profileID]; exists {
+		return cr.status
 	}
 	if last, exists := e.lastStatus[profileID]; exists {
 		return last

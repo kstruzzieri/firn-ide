@@ -1,5 +1,5 @@
 // Jest globals -- no import needed
-import { estimateRemaining } from '../../utils/estimateCompletion';
+import { estimateRemaining, estimateDuration } from '../../utils/estimateCompletion';
 import type { RunHistoryEntry } from '../../types/runOutput';
 
 describe('estimateRemaining', () => {
@@ -39,5 +39,21 @@ describe('estimateRemaining', () => {
       { state: 'success', duration: 6000, timestamp: Date.now() - 1000 },
     ];
     expect(estimateRemaining(history, 2000)).toBe(3000);
+  });
+});
+
+describe('estimateDuration', () => {
+  it('estimates median duration from successful runs only', () => {
+    expect(
+      estimateDuration([
+        { state: 'success', duration: 1000, timestamp: 1 },
+        { state: 'failed', duration: 9999, timestamp: 2 },
+        { state: 'success', duration: 3000, timestamp: 3 },
+      ])
+    ).toBe(2000);
+  });
+
+  it('returns null without two successful samples', () => {
+    expect(estimateDuration([{ state: 'success', duration: 1000, timestamp: 1 }])).toBeNull();
   });
 });

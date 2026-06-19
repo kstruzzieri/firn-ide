@@ -163,7 +163,7 @@ func emitMockDiagnostics(msg *JSONRPCMessage) {
 
 	// Write directly to stdout with Content-Length framing
 	data, _ := json.Marshal(notification)
-	fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(data), data)
+	_, _ = fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(data), data)
 }
 
 func respondWithResult(id json.RawMessage, result any) *JSONRPCMessage {

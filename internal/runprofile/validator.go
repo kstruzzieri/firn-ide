@@ -23,6 +23,11 @@ func Validate(profile RunProfile) ValidationResult {
 
 	if strings.TrimSpace(profile.ID) == "" {
 		errs = append(errs, ValidationError{Field: "id", Message: "id is required"})
+	} else if isReservedProfileID(profile.ID) {
+		errs = append(errs, ValidationError{
+			Field:   "id",
+			Message: "profile id uses reserved namespace \"compound:\"",
+		})
 	}
 
 	if strings.TrimSpace(profile.Name) == "" {

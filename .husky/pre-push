@@ -1,0 +1,27 @@
+# Run golangci-lint before pushing so the GitHub Actions "Lint / golangci-lint"
+# job passes on the PR. The repo is lint-clean under golangci-lint v2 (pinned in
+# .golangci.yml + .github/workflows/lint.yml), so this runs the full check —
+# identical to CI. Bypass with `git push --no-verify`.
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-push: golangci-lint not installed — skipping Go lint."
+  echo "  Install it (CI uses it; pushing unlinted Go risks a red PR):"
+  echo "    brew install golangci-lint"
+  exit 0
+fi
+
+# main.go does `//go:embed all:frontend/dist`, so the linter cannot typecheck the
+# main package until the frontend has been built. Skip cleanly if it is absent.
+if [ ! -d frontend/dist ]; then
+  echo "pre-push: frontend/dist missing — skipping Go lint."
+  echo "  Build it to enable lint on push: (cd frontend && npm run build)"
+  exit 0
+fi
+
+echo "pre-push: golangci-lint run ./..."
+if ! golangci-lint run ./...; then
+  echo ""
+  echo "pre-push: golangci-lint found issues above. Fix them, or bypass with:"
+  echo "    git push --no-verify"
+  exit 1
+fi

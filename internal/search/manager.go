@@ -108,10 +108,10 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse 
 	outcome := runRipgrep(runCtx, m.cfg, req, collector)
 
 	switch {
-	case errors.Is(outcome.Err, runErrCanceled):
+	case errors.Is(outcome.Err, errCanceled):
 		resp.Status = StatusCanceled
 		resp.Message = "search canceled"
-	case errors.Is(outcome.Err, runErrInvalidRegex):
+	case errors.Is(outcome.Err, errInvalidRegex):
 		resp.Status = StatusInvalidRegex
 		resp.Message = outcome.Err.Error()
 	case outcome.Err != nil && isMissingTool(outcome.Err):

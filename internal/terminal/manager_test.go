@@ -6,6 +6,7 @@ import (
 )
 
 func TestManagerCreateUniqueIDs(t *testing.T) {
+	requirePTY(t)
 	mgr := NewManager()
 	defer func() { _ = mgr.CloseAll() }()
 
@@ -25,6 +26,7 @@ func TestManagerCreateUniqueIDs(t *testing.T) {
 }
 
 func TestManagerIDUniquenessAfterDeletion(t *testing.T) {
+	requirePTY(t)
 	mgr := NewManager()
 	defer func() { _ = mgr.CloseAll() }()
 
@@ -117,6 +119,7 @@ func TestManagerConcurrentAccess(t *testing.T) {
 }
 
 func TestManagerCloseAll(t *testing.T) {
+	requirePTY(t)
 	mgr := NewManager()
 
 	_, err := mgr.Create()

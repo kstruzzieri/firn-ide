@@ -55,3 +55,44 @@ export type FoldedItem = OutputEntry | FoldedRegion;
 export function isFoldedRegion(item: FoldedItem): item is FoldedRegion {
   return (item as FoldedRegion).kind === 'fold';
 }
+
+export type CompoundStepState =
+  | 'pending'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'skipped'
+  | 'stopped';
+
+export interface CompoundStep {
+  idx: number;
+  profileId: string;
+  name: string;
+  state: CompoundStepState;
+  exitCode: number;
+  workingDir: string;
+  durationMs: number;
+  startedAt?: number;
+  endedAt?: number;
+  errorMessage?: string;
+}
+
+export interface CompoundRun {
+  compoundId: string;
+  name: string;
+  state: RunState;
+  currentStep: number;
+  etaMs?: number;
+  steps: CompoundStep[];
+  stepOutputs: Record<number, OutputEntry[]>;
+  selectedStepIdx?: number;
+  failedReference?: { stepIdx: number; path: string; line: number; column: number };
+}
+
+export interface CompoundRunEvent {
+  compoundId: string;
+  name: string;
+  state: RunState;
+  currentStep: number;
+  steps: CompoundStep[];
+}
