@@ -1,7 +1,7 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 import { useIDEStore } from '../../stores/ideStore';
-import { LoadWorkspaceState } from '../../../wailsjs/go/main/App';
+import { LoadWorkspaceState, SaveWorkspaceState } from '../../../wailsjs/go/main/App';
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
   SaveWorkspaceState: jest.fn(() => Promise.resolve()),
@@ -71,4 +71,36 @@ it('no saved id leaves the active workspace at project', async () => {
   });
   await waitFor(() => expect(mockLoad).toHaveBeenCalled());
   expect(useIDEStore.getState().activeWorkspaceId).toBe('project');
+});
+
+it('schedules a save when the active workspace changes', async () => {
+  (SaveWorkspaceState as jest.Mock).mockClear();
+  mockLoad.mockResolvedValue(null);
+  useIDEStore.setState({
+    workspaces: defs as never,
+    activeWorkspaceId: 'project',
+  });
+  renderHook(() => useWorkspacePersistence());
+
+  // Set workspace after mount so the hook subscribes first, then restore runs.
+  act(() => {
+    useIDEStore.setState({ workspace: { name: 'repo', path: '/repo' } });
+  });
+
+  // Wait for the restore (mockLoad resolves null) to complete before
+  // switching the active workspace, so isRestoringWorkspace is cleared.
+  await waitFor(() => expect(mockLoad).toHaveBeenCalled());
+
+  // Clear any saves triggered by the restore/initial sequence.
+  (SaveWorkspaceState as jest.Mock).mockClear();
+
+  act(() => {
+    useIDEStore.getState().setActiveWorkspace('frontend');
+  });
+
+  await waitFor(() => expect(SaveWorkspaceState).toHaveBeenCalled(), {
+    timeout: 2000 + 500,
+  });
+  const saved = (SaveWorkspaceState as jest.Mock).mock.calls.at(-1)![0];
+  expect(saved.activeWorkspaceId).toBe('frontend');
 });

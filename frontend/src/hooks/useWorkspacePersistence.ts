@@ -318,7 +318,8 @@ export function useWorkspacePersistence() {
         state.isRootExpanded !== prevState.isRootExpanded ||
         state.scrollPositions !== prevState.scrollPositions ||
         state.cursorPositions !== prevState.cursorPositions ||
-        state.hiddenProfileIds !== prevState.hiddenProfileIds
+        state.hiddenProfileIds !== prevState.hiddenProfileIds ||
+        state.activeWorkspaceId !== prevState.activeWorkspaceId
       ) {
         scheduleSave(shouldSaveTree ? { includeTreeSnapshot: true } : undefined);
       }
