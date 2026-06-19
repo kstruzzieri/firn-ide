@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { VisualState, RunOutput, RunHistoryEntry, OutputEntry } from '../../types/runOutput';
 import type { RunProfile } from '../../types/runProfile';
@@ -57,6 +58,14 @@ function OutputTail({
   profileName?: string;
   onActivate?: () => void;
 }) {
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const preview = previewRef.current;
+    if (!preview) return;
+    preview.scrollTop = preview.scrollHeight;
+  }, [entries]);
+
   if (entries.length === 0) return null;
 
   const interactiveProps = onActivate
@@ -85,7 +94,7 @@ function OutputTail({
     .join(' ');
 
   return (
-    <div className={className} {...interactiveProps}>
+    <div ref={previewRef} className={className} {...interactiveProps}>
       {entries.map((entry, i) => (
         <div
           key={i}

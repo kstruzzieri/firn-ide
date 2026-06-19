@@ -182,6 +182,35 @@ describe('ExpandedPanel output preview', () => {
     expect(screen.getByText('line-9')).toBeInTheDocument();
   });
 
+  it('keeps a long preview scrolled to the newest output', () => {
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollHeight'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get: () => 640,
+    });
+
+    try {
+      renderPanel({
+        visualState: 'success',
+        runHistory: successHistory,
+        runOutput: makeRunOutput(makeEntries(50)),
+      });
+
+      const preview = screen.getByRole('button', { name: /open full output/i });
+
+      expect(preview.scrollTop).toBe(preview.scrollHeight);
+    } finally {
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+      } else {
+        delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      }
+    }
+  });
+
   it('does not render a clickable preview when there is no output', () => {
     renderPanel({ visualState: 'success', runHistory: successHistory });
 
