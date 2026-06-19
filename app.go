@@ -487,6 +487,14 @@ func (a *App) StartRunProfile(profileID string) error {
 		return fmt.Errorf("profile not found: %s", profileID)
 	}
 
+	if profile.Type == runprofile.ProfileTypeCompound {
+		steps, err := runprofile.ResolveSteps(*profile, profiles)
+		if err != nil {
+			return err
+		}
+		return a.executor.StartCompound(workspaceRoot, *profile, steps)
+	}
+
 	return a.executor.Start(workspaceRoot, *profile)
 }
 
