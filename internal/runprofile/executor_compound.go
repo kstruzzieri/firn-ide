@@ -85,6 +85,14 @@ func (e *Executor) emitCompound(snap compoundStatus) {
 // on in a later task; the loop is structured so non-success leaf results break
 // out cleanly without panicking.
 func (e *Executor) StartCompound(workspaceRoot string, compound RunProfile, steps []RunProfile) error {
+	if err := rejectReservedProfileID(compound.ID); err != nil {
+		return err
+	}
+	for _, step := range steps {
+		if err := rejectReservedProfileID(step.ID); err != nil {
+			return err
+		}
+	}
 	if workspaceRoot == "" {
 		return fmt.Errorf("no workspace loaded")
 	}

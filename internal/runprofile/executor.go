@@ -89,6 +89,9 @@ func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 // Start begins executing a run profile. Profile resolution (ID → RunProfile)
 // happens at the app.go binding level. The executor receives the resolved profile.
 func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
+	if err := rejectReservedProfileID(profile.ID); err != nil {
+		return err
+	}
 	if profile.Type == ProfileTypeCompound {
 		return fmt.Errorf("compound profiles require resolved steps: %s", profile.ID)
 	}
@@ -104,6 +107,9 @@ func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 }
 
 func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot string) (*runningProcess, error) {
+	if err := rejectReservedProfileID(profile.ID); err != nil {
+		return nil, err
+	}
 	if workspaceRoot == "" {
 		return nil, fmt.Errorf("no workspace loaded")
 	}

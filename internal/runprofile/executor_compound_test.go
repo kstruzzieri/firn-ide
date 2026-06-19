@@ -568,6 +568,34 @@ func TestExecutor_StartCompoundAllSuccess(t *testing.T) {
 	}
 }
 
+func TestExecutor_StartCompoundRejectsReservedCompoundProfileID(t *testing.T) {
+	spy := &emitSpy{}
+	exec := NewExecutor(spy.emit, nil)
+	dir := t.TempDir()
+
+	step := newTestProfile("build", "echo should-not-run")
+	compound := RunProfile{
+		ID:    "compound:Y2k:0",
+		Name:  "CI",
+		Type:  ProfileTypeCompound,
+		Steps: []string{"build"},
+	}
+
+	err := exec.StartCompound(dir, compound, []RunProfile{step})
+	if err == nil {
+		t.Fatal("StartCompound returned nil; want reserved profile id error")
+	}
+	if !strings.Contains(err.Error(), `profile id uses reserved namespace "compound:"`) {
+		t.Fatalf("StartCompound error = %q, want reserved namespace error", err.Error())
+	}
+	if statuses := spy.statuses(); len(statuses) != 0 {
+		t.Fatalf("expected no status events for rejected compound, got %d", len(statuses))
+	}
+	if snaps := compoundSnapshots(spy); len(snaps) != 0 {
+		t.Fatalf("expected no compound snapshots for rejected compound, got %d", len(snaps))
+	}
+}
+
 func TestExecutor_StartCompoundSequentialOrder(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)

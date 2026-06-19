@@ -5,6 +5,7 @@ import "testing"
 func TestResolveSteps(t *testing.T) {
 	singleA := RunProfile{ID: "build", Name: "Build", Type: ProfileTypeSingle, Command: "echo build"}
 	singleB := RunProfile{ID: "test", Name: "Test", Type: ProfileTypeSingle, Command: "echo test"}
+	reserved := RunProfile{ID: "compound:Y2k:0", Name: "Reserved", Type: ProfileTypeSingle, Command: "echo reserved"}
 	nested := RunProfile{ID: "nested", Name: "Nested", Type: ProfileTypeCompound, Steps: []string{"build"}}
 
 	tests := []struct {
@@ -37,6 +38,12 @@ func TestResolveSteps(t *testing.T) {
 			compound:  RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"nested"}},
 			all:       []RunProfile{singleA, nested},
 			wantError: `compound profile "ci" step "nested" is compound; only single profiles are supported`,
+		},
+		{
+			name:      "reserved step id fails",
+			compound:  RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"compound:Y2k:0"}},
+			all:       []RunProfile{reserved},
+			wantError: `profile id uses reserved namespace "compound:": compound:Y2k:0`,
 		},
 	}
 

@@ -9,6 +9,17 @@ import (
 
 const compoundStepKeyPrefix = "compound:"
 
+func isReservedProfileID(id string) bool {
+	return strings.HasPrefix(id, compoundStepKeyPrefix)
+}
+
+func rejectReservedProfileID(id string) error {
+	if isReservedProfileID(id) {
+		return fmt.Errorf("profile id uses reserved namespace %q: %s", compoundStepKeyPrefix, id)
+	}
+	return nil
+}
+
 func ResolveSteps(compound RunProfile, all []RunProfile) ([]RunProfile, error) {
 	// Reject empty step lists defensively. Validate enforces this for the UI, but
 	// a hand-edited or stale .firn/run-profiles.json can reach the runtime path;
@@ -31,6 +42,9 @@ func ResolveSteps(compound RunProfile, all []RunProfile) ([]RunProfile, error) {
 		}
 		if step.Type == ProfileTypeCompound {
 			return nil, fmt.Errorf("compound profile %q step %q is compound; only single profiles are supported", compound.ID, stepID)
+		}
+		if err := rejectReservedProfileID(step.ID); err != nil {
+			return nil, err
 		}
 		steps = append(steps, step)
 	}
