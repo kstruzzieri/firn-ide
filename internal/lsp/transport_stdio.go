@@ -44,7 +44,7 @@ func NewStdioTransport(name string, dir string, args ...string) (*StdioTransport
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 
@@ -53,7 +53,7 @@ func NewStdioTransport(name string, dir string, args ...string) (*StdioTransport
 	cmd.Stderr = stderrBuf
 
 	if err := cmd.Start(); err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return nil, fmt.Errorf("start %q: %w", name, err)
 	}
 
@@ -117,10 +117,10 @@ func (t *StdioTransport) Close() error {
 	var closeErr error
 	t.closeOnce.Do(func() {
 		// Close stdin to signal the server to exit
-		t.stdin.Close()
+		_ = t.stdin.Close()
 
 		// Close stdout to unblock any pending Receive call
-		t.stdout.Close()
+		_ = t.stdout.Close()
 
 		// Wait for process to finish, with a timeout
 		select {

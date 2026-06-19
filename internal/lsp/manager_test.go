@@ -902,7 +902,7 @@ func TestManager_ConcurrentMultiFile(t *testing.T) {
 
 	// Close one file via Manager API — should keep server running
 	closePath := filepath.Join(tmpDir, files[0])
-	mgr.DidClose(ctx, closePath)
+	_ = mgr.DidClose(ctx, closePath)
 
 	mgr.mu.Lock()
 	remaining := len(entry.openDocs)

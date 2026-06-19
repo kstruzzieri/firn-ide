@@ -443,13 +443,13 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 
 	rootURI, err := FileToURI(key.workspace)
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		m.emitStatus(key.family, key.workspace, "error", err.Error(), config.Command)
 		return nil, fmt.Errorf("invalid workspace path %q: %w", key.workspace, err)
 	}
 	if err := client.Initialize(ctx, rootURI, config.InitOptions); err != nil {
 		// Close waits for the child process and stderr copier so diagnostics are complete.
-		transport.Close()
+		_ = transport.Close()
 		errMsg := err.Error()
 		if stderr := transport.Stderr(); stderr != "" {
 			errMsg = fmt.Sprintf("%s (server stderr: %s)", errMsg, strings.TrimSpace(stderr))

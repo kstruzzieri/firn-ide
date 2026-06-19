@@ -471,8 +471,8 @@ func TestManager_RejectsFileAsRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("temp file: %v", err)
 	}
-	defer os.Remove(tmp.Name())
-	tmp.Close()
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	_ = tmp.Close()
 	resp := mgr.Search(context.Background(), SearchRequest{
 		RequestID: "file",
 		Root:      tmp.Name(),

@@ -12,7 +12,7 @@ func TestNewSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	if session.pty == nil {
 		t.Fatal("expected pty to be set")
@@ -28,7 +28,7 @@ func TestSessionWriteRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	_, err = session.Write([]byte("echo hello\n"))
 	if err != nil {

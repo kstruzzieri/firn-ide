@@ -62,8 +62,8 @@ func startMockTransport(t *testing.T) *StdioTransport {
 	}()
 
 	t.Cleanup(func() {
-		stdin.Close()
-		stdout.Close()
+		_ = stdin.Close()
+		_ = stdout.Close()
 		<-transport.done
 	})
 
