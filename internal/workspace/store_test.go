@@ -502,3 +502,20 @@ func TestStoreLoadReadFails(t *testing.T) {
 		t.Errorf("expected read error, got: %v", err)
 	}
 }
+
+func TestSaveLoad_ActiveWorkspaceID(t *testing.T) {
+	store := NewStore(newMockFS(), "/home/.firn/workspaces")
+	state := testState("/project", "project")
+	state.ActiveWorkspaceID = "frontend"
+
+	if err := store.Save(state); err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+	loaded, err := store.Load("/project")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if loaded.ActiveWorkspaceID != "frontend" {
+		t.Errorf("ActiveWorkspaceID = %q, want %q", loaded.ActiveWorkspaceID, "frontend")
+	}
+}
