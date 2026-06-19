@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import type { VisualState, RunOutput, RunHistoryEntry, OutputEntry } from '../../types/runOutput';
 import type { RunProfile } from '../../types/runProfile';
 import { PlayIcon, StopIcon, RestartIcon } from '../icons';
@@ -6,6 +7,16 @@ import { estimateRemaining } from '../../utils/estimateCompletion';
 import styles from './ExpandedPanel.module.css';
 
 const GRACE_PERIOD_MS = 3000;
+
+/**
+ * Number of trailing output lines kept in the in-card preview. The preview is
+ * scrollable (~10 lines visible at a time) and clicking it opens the full,
+ * virtualized output tab — so this only needs enough scrollback to be useful.
+ * Kept modest on purpose: the preview is NOT virtualized and re-renders on every
+ * output burst of a live run, so a large tail would multiply reconciliation cost
+ * on the streaming hot path. Deep history lives in the virtualized Output tab.
+ */
+const PREVIEW_TAIL_COUNT = 40;
 
 /**
  * Compute stop-progress as a clamped 0-100 integer.
@@ -37,10 +48,44 @@ function getTailEntries(entries: OutputEntry[] | undefined, count: number): Outp
   return entries.slice(-count);
 }
 
-function OutputTail({ entries }: { entries: OutputEntry[] }) {
+function OutputTail({
+  entries,
+  profileName,
+  onActivate,
+}: {
+  entries: OutputEntry[];
+  profileName?: string;
+  onActivate?: () => void;
+}) {
   if (entries.length === 0) return null;
+
+  const interactiveProps = onActivate
+    ? {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': `Open full output${profileName ? ` for ${profileName}` : ''}`,
+        title: 'Open full output',
+        onClick: () => {
+          // Don't hijack the click when the user is drag-selecting text to copy
+          // (e.g. an error line) — only navigate on a plain click.
+          if ((window.getSelection()?.toString().length ?? 0) > 0) return;
+          onActivate();
+        },
+        onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onActivate();
+          }
+        },
+      }
+    : {};
+
+  const className = [styles.outputPreview, onActivate ? styles.outputPreviewClickable : '']
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div className={styles.outputPreview}>
+    <div className={className} {...interactiveProps}>
       {entries.map((entry, i) => (
         <div
           key={i}
@@ -120,17 +165,23 @@ function RunningPanel({
   runOutput,
   runHistory,
   elapsed,
+  onFocusOutput,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
   elapsed: number;
+  onFocusOutput: (profileId: string) => void;
 }) {
-  const tail = getTailEntries(runOutput?.entries, 4);
+  const tail = getTailEntries(runOutput?.entries, PREVIEW_TAIL_COUNT);
   const eta = estimateRemaining(runHistory, elapsed);
   return (
     <>
-      <OutputTail entries={tail} />
+      <OutputTail
+        entries={tail}
+        profileName={profile.name}
+        onActivate={() => onFocusOutput(profile.id)}
+      />
       <StatsRow elapsed={elapsed} profile={profile} runHistory={runHistory} eta={eta} />
     </>
   );
@@ -142,17 +193,19 @@ function StoppingPanel({
   runHistory,
   elapsed,
   stopElapsedMs,
+  onFocusOutput,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
   elapsed: number;
   stopElapsedMs: number;
+  onFocusOutput: (profileId: string) => void;
 }) {
   const progress = getStopProgressPercent(stopElapsedMs, GRACE_PERIOD_MS);
   const remainingMs = Math.max(0, GRACE_PERIOD_MS - stopElapsedMs);
   const remainingSeconds = Math.ceil(remainingMs / 1000);
-  const tail = getTailEntries(runOutput?.entries, 4);
+  const tail = getTailEntries(runOutput?.entries, PREVIEW_TAIL_COUNT);
 
   return (
     <>
@@ -172,7 +225,11 @@ function StoppingPanel({
           />
         </div>
       </div>
-      <OutputTail entries={tail} />
+      <OutputTail
+        entries={tail}
+        profileName={profile.name}
+        onActivate={() => onFocusOutput(profile.id)}
+      />
       <StatsRow elapsed={elapsed} profile={profile} runHistory={runHistory} />
     </>
   );
@@ -183,14 +240,16 @@ function FailedPanel({
   runOutput,
   runHistory,
   elapsed,
+  onFocusOutput,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
   elapsed: number;
+  onFocusOutput: (profileId: string) => void;
 }) {
   const exitCode = runOutput?.exitCode;
-  const tail = getTailEntries(runOutput?.entries, 6);
+  const tail = getTailEntries(runOutput?.entries, PREVIEW_TAIL_COUNT);
 
   return (
     <>
@@ -202,7 +261,11 @@ function FailedPanel({
           <span className={styles.errorLabel}>Process failed</span>
         </div>
       </div>
-      <OutputTail entries={tail} />
+      <OutputTail
+        entries={tail}
+        profileName={profile.name}
+        onActivate={() => onFocusOutput(profile.id)}
+      />
       <StatsRow
         elapsed={runHistory[runHistory.length - 1]?.duration ?? elapsed}
         durationLabel="Duration"
@@ -266,19 +329,25 @@ function IdlePanel({
   runOutput,
   runHistory,
   elapsed,
+  onFocusOutput,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
   elapsed: number;
+  onFocusOutput: (profileId: string) => void;
 }) {
   const lastEntry = runHistory[runHistory.length - 1];
   const resultLabel = getResultLabel(lastEntry);
-  const tail = getTailEntries(runOutput?.entries, 4);
+  const tail = getTailEntries(runOutput?.entries, PREVIEW_TAIL_COUNT);
 
   return (
     <>
-      <OutputTail entries={tail} />
+      <OutputTail
+        entries={tail}
+        profileName={profile.name}
+        onActivate={() => onFocusOutput(profile.id)}
+      />
       <StatsRow
         elapsed={lastEntry?.duration ?? elapsed}
         durationLabel="Duration"
@@ -295,16 +364,22 @@ function SuccessPanel({
   runOutput,
   runHistory,
   elapsed,
+  onFocusOutput,
 }: {
   profile: RunProfile;
   runOutput: RunOutput | undefined;
   runHistory: RunHistoryEntry[];
   elapsed: number;
+  onFocusOutput: (profileId: string) => void;
 }) {
-  const tail = getTailEntries(runOutput?.entries, 4);
+  const tail = getTailEntries(runOutput?.entries, PREVIEW_TAIL_COUNT);
   return (
     <>
-      <OutputTail entries={tail} />
+      <OutputTail
+        entries={tail}
+        profileName={profile.name}
+        onActivate={() => onFocusOutput(profile.id)}
+      />
       <StatsRow
         elapsed={runHistory[runHistory.length - 1]?.duration ?? elapsed}
         durationLabel="Duration"
@@ -455,6 +530,7 @@ export function ExpandedPanel({
             runOutput={runOutput}
             runHistory={runHistory}
             elapsed={elapsed}
+            onFocusOutput={onFocusOutput}
           />
         );
       case 'stopping': {
@@ -468,6 +544,7 @@ export function ExpandedPanel({
             runHistory={runHistory}
             elapsed={elapsed}
             stopElapsedMs={stopElapsedMs}
+            onFocusOutput={onFocusOutput}
           />
         ) : (
           <div className={styles.statRow}>
@@ -485,6 +562,7 @@ export function ExpandedPanel({
             runOutput={runOutput}
             runHistory={runHistory}
             elapsed={elapsed}
+            onFocusOutput={onFocusOutput}
           />
         );
       case 'success':
@@ -494,6 +572,7 @@ export function ExpandedPanel({
             runOutput={runOutput}
             runHistory={runHistory}
             elapsed={elapsed}
+            onFocusOutput={onFocusOutput}
           />
         );
       case 'stopped':
@@ -508,6 +587,7 @@ export function ExpandedPanel({
             runOutput={runOutput}
             runHistory={runHistory}
             elapsed={elapsed}
+            onFocusOutput={onFocusOutput}
           />
         );
       default:

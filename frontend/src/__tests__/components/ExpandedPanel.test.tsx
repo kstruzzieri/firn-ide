@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ExpandedPanel, getStopProgressPercent } from '../../components/RunProfiles/ExpandedPanel';
 import type { RunProfile } from '../../types/runProfile';
-import type { RunHistoryEntry, RunOutput } from '../../types/runOutput';
+import type { OutputEntry, RunHistoryEntry, RunOutput } from '../../types/runOutput';
 
 const mockProfile: RunProfile = {
   id: 'test-1',
@@ -14,16 +14,37 @@ const mockProfile: RunProfile = {
 
 const noop = () => {};
 
+function makeEntries(count: number): OutputEntry[] {
+  return Array.from({ length: count }, (_, i) => ({
+    stream: 'stdout' as const,
+    text: `line-${i}`,
+    timestamp: 1,
+  }));
+}
+
+function makeRunOutput(entries: OutputEntry[], state: RunOutput['state'] = 'success'): RunOutput {
+  return {
+    profileId: 'test-1',
+    state,
+    exitCode: 0,
+    runCount: 1,
+    entries,
+    previousEntries: [],
+  };
+}
+
 function renderPanel({
   visualState = 'idle',
   runHistory = [],
   runOutput,
   stopElapsedMs = 0,
+  onFocusOutput = noop,
 }: {
   visualState?: 'idle' | 'running' | 'stopping' | 'failed' | 'success' | 'stopped';
   runHistory?: RunHistoryEntry[];
   runOutput?: RunOutput;
   stopElapsedMs?: number;
+  onFocusOutput?: (profileId: string) => void;
 } = {}) {
   return render(
     <ExpandedPanel
@@ -33,7 +54,7 @@ function renderPanel({
       runHistory={runHistory}
       elapsed={2000}
       stopElapsedMs={stopElapsedMs}
-      onFocusOutput={noop}
+      onFocusOutput={onFocusOutput}
       onStart={noop}
       onStop={noop}
       onRestart={noop}
@@ -109,5 +130,96 @@ describe('ExpandedPanel', () => {
     renderPanel({ visualState: 'stopping', stopElapsedMs: 0 });
     expect(screen.getByText(/Restarting/)).toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+});
+
+describe('ExpandedPanel output preview', () => {
+  const successHistory: RunHistoryEntry[] = [
+    { state: 'success', duration: 1800, timestamp: Date.now() },
+  ];
+
+  it('opens the full output when the preview is clicked', () => {
+    const onFocusOutput = jest.fn();
+    renderPanel({
+      visualState: 'success',
+      runHistory: successHistory,
+      runOutput: makeRunOutput(makeEntries(5)),
+      onFocusOutput,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /open full output/i }));
+
+    expect(onFocusOutput).toHaveBeenCalledWith('test-1');
+  });
+
+  it('opens the full output via Enter and Space on the preview', () => {
+    const onFocusOutput = jest.fn();
+    renderPanel({
+      visualState: 'success',
+      runHistory: successHistory,
+      runOutput: makeRunOutput(makeEntries(5)),
+      onFocusOutput,
+    });
+
+    const preview = screen.getByRole('button', { name: /open full output/i });
+    fireEvent.keyDown(preview, { key: 'Enter' });
+    fireEvent.keyDown(preview, { key: ' ' });
+
+    expect(onFocusOutput).toHaveBeenCalledTimes(2);
+    expect(onFocusOutput).toHaveBeenNthCalledWith(1, 'test-1');
+    expect(onFocusOutput).toHaveBeenNthCalledWith(2, 'test-1');
+  });
+
+  it('renders more than four preview lines when the output is long', () => {
+    renderPanel({
+      visualState: 'success',
+      runHistory: successHistory,
+      runOutput: makeRunOutput(makeEntries(10)),
+    });
+
+    // Old behaviour capped the tail at 4 lines, hiding the earliest output.
+    expect(screen.getByText('line-0')).toBeInTheDocument();
+    expect(screen.getByText('line-9')).toBeInTheDocument();
+  });
+
+  it('does not render a clickable preview when there is no output', () => {
+    renderPanel({ visualState: 'success', runHistory: successHistory });
+
+    expect(screen.queryByRole('button', { name: /open full output/i })).toBeNull();
+  });
+
+  it('does not open output when the user is selecting text in the preview', () => {
+    const onFocusOutput = jest.fn();
+    const originalGetSelection = window.getSelection;
+    window.getSelection = () => ({ toString: () => 'a copied error line' }) as unknown as Selection;
+
+    try {
+      renderPanel({
+        visualState: 'success',
+        runHistory: successHistory,
+        runOutput: makeRunOutput(makeEntries(5)),
+        onFocusOutput,
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /open full output/i }));
+
+      expect(onFocusOutput).not.toHaveBeenCalled();
+    } finally {
+      window.getSelection = originalGetSelection;
+    }
+  });
+
+  it('opens the full output when the failed-state preview is clicked', () => {
+    const onFocusOutput = jest.fn();
+    renderPanel({
+      visualState: 'failed',
+      runHistory: [{ state: 'failed', duration: 1800, timestamp: Date.now() }],
+      runOutput: makeRunOutput(makeEntries(3), 'failed'),
+      onFocusOutput,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /open full output/i }));
+
+    expect(onFocusOutput).toHaveBeenCalledWith('test-1');
   });
 });
