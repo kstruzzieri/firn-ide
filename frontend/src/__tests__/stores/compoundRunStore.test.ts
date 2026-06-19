@@ -252,3 +252,61 @@ describe('compoundRunStore - resetWorkspaceRunState', () => {
     expect(useIDEStore.getState().runCompounds).toEqual({});
   });
 });
+
+describe('compoundRunStore - rerun resets step output', () => {
+  it('starts step outputs fresh when a terminal compound runs again', () => {
+    // First run: produce output, then go terminal.
+    useIDEStore.getState().handleCompoundRun(makeEvent());
+    useIDEStore.getState().appendRunOutput(makeChunk(STEP0_KEY, 'first run\n'));
+    expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0]).toHaveLength(1);
+    useIDEStore.getState().handleCompoundRun(
+      makeEvent({
+        state: 'success',
+        steps: [
+          {
+            idx: 0,
+            profileId: 'build',
+            name: 'Build',
+            state: 'success',
+            exitCode: 0,
+            workingDir: 'frontend',
+            durationMs: 1000,
+            startedAt: 1000,
+            endedAt: 2000,
+          },
+        ],
+      })
+    );
+
+    // Second run of the same compound: a terminal→running snapshot must drop the
+    // previous run's output rather than carrying it over.
+    useIDEStore.getState().handleCompoundRun(makeEvent());
+    expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0] ?? []).toHaveLength(0);
+
+    useIDEStore.getState().appendRunOutput(makeChunk(STEP0_KEY, 'second run\n'));
+    const outputs = useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0];
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0].text).toBe('second run');
+  });
+});
+
+describe('compoundRunStore - clearAllRunOutputs', () => {
+  it('preserves a still-running compound so later output is not orphaned', () => {
+    useIDEStore.getState().handleCompoundRun(makeEvent());
+    useIDEStore.getState().appendRunOutput(makeChunk(STEP0_KEY, 'before clear\n'));
+
+    useIDEStore.getState().clearAllRunOutputs();
+
+    const run = useIDEStore.getState().runCompounds[COMPOUND_ID];
+    expect(run).toBeDefined();
+    expect(run.state).toBe('running');
+    expect(run.stepOutputs).toEqual({});
+
+    // Composite output produced after the clear must still route into the
+    // preserved compound (not be dropped as orphan).
+    useIDEStore.getState().appendRunOutput(makeChunk(STEP0_KEY, 'after clear\n'));
+    const outputs = useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0];
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0].text).toBe('after clear');
+  });
+});

@@ -955,8 +955,25 @@ export const useIDEStore = create<IDEStore>()(
                 };
               }
             }
-            const firstId = Object.keys(preserved)[0] ?? null;
-            return { runOutputs: preserved, activeRunOutputId: firstId, runCompounds: {} };
+            // Preserve still-running compounds (entries cleared). Dropping them
+            // would orphan composite output chunks for the active step — they
+            // would be ignored by appendRunOutput until the next snapshot.
+            const preservedCompounds: Record<string, CompoundRun> = {};
+            for (const [id, compound] of Object.entries(state.runCompounds)) {
+              if (compound.state === 'running') {
+                preservedCompounds[id] = { ...compound, stepOutputs: {} };
+              }
+            }
+            const firstId = Object.keys(preserved)[0] ?? Object.keys(preservedCompounds)[0] ?? null;
+            const activeStillValid =
+              state.activeRunOutputId != null &&
+              (preserved[state.activeRunOutputId] != null ||
+                preservedCompounds[state.activeRunOutputId] != null);
+            return {
+              runOutputs: preserved,
+              runCompounds: preservedCompounds,
+              activeRunOutputId: activeStillValid ? state.activeRunOutputId : firstId,
+            };
           },
           false,
           'clearAllRunOutputs'
@@ -999,9 +1016,14 @@ export const useIDEStore = create<IDEStore>()(
         set(
           (state) => {
             const existing = state.runCompounds[compoundId];
-            const preservedOutputs: Record<number, OutputEntry[]> = {
-              ...(existing?.stepOutputs ?? {}),
-            };
+            // A terminal compound transitioning back to running is a NEW run of
+            // the same profile: start its step outputs fresh instead of carrying
+            // the previous execution's output into the new run.
+            const isNewRun =
+              existing != null && isStepTerminal(existing.state) && aggregateState === 'running';
+            const preservedOutputs: Record<number, OutputEntry[]> = isNewRun
+              ? {}
+              : { ...(existing?.stepOutputs ?? {}) };
 
             // Merge flushed carry-over into the corresponding step outputs.
             for (const [stepIdx, flushed] of flushedByStep) {
