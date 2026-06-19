@@ -46,10 +46,10 @@ func DetectWorkspaces(fsys filesystem.FileSystem, repoPath string) ([]WorkspaceD
 	result := []WorkspaceDef{projectWorkspace()}
 	var detected []WorkspaceDef
 
-	// Repo-root markers -> a typed entry at relDir "" (id = type name).
+	// Repo-root markers -> a typed entry at relDir "" with a namespaced ID.
 	if typ, accent, ok := classifyDir(fsys, repoPath); ok {
 		detected = append(detected, WorkspaceDef{
-			ID:     string(typ),
+			ID:     rootWorkspaceID(typ),
 			Name:   typeLabel(typ),
 			RelDir: "",
 			Type:   typ,
@@ -90,6 +90,10 @@ func DetectWorkspaces(fsys filesystem.FileSystem, repoPath string) ([]WorkspaceD
 
 func projectWorkspace() WorkspaceDef {
 	return WorkspaceDef{ID: "project", Name: "Project", RelDir: "", Type: TypeProject, Accent: "project"}
+}
+
+func rootWorkspaceID(typ WorkspaceType) string {
+	return "root:" + string(typ)
 }
 
 func workspaceForDir(relDir string, typ WorkspaceType, accent string) WorkspaceDef {

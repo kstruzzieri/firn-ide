@@ -76,7 +76,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/go.mod"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
+				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
 			},
 		},
 		{
@@ -132,7 +132,16 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/package.json", "/repo/go.mod"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "frontend", Name: "Frontend", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+				{ID: "root:frontend", Name: "Frontend", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+			},
+		},
+		{
+			name:  "root marker id does not collide with matching subdir",
+			files: []string{"/repo/package.json", "/repo/frontend/package.json"},
+			want: []WorkspaceDef{
+				project,
+				{ID: "root:frontend", Name: "Frontend", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
 			},
 		},
 	}

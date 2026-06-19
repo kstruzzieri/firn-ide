@@ -129,10 +129,7 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
 
     // Restore active workspace selection
     if (state.activeWorkspaceId) {
-      // Set the raw id; setWorkspaces (run by detection) re-validates it against
-      // the detected list, so this is order-independent w.r.t. detection. The
-      // accent selectors also fall back to "project" while the id is unresolved.
-      useIDEStore.setState({ activeWorkspaceId: state.activeWorkspaceId });
+      restoreActiveWorkspaceId(state.activeWorkspaceId);
     }
 
     // Restore explorer expanded paths
@@ -217,6 +214,18 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
   }
 }
 
+function restoreActiveWorkspaceId(activeWorkspaceId: string): void {
+  const state = useIDEStore.getState();
+  if (state.workspaces.length > 0) {
+    state.setActiveWorkspace(activeWorkspaceId);
+    return;
+  }
+
+  // Detection may not have populated the list yet; setWorkspaces will validate
+  // this raw id when the detected definitions arrive.
+  useIDEStore.setState({ activeWorkspaceId });
+}
+
 /**
  * Main persistence hook. Handles:
  * - Debounced save on any relevant state change
@@ -252,10 +261,16 @@ export function useWorkspacePersistence() {
       };
       pendingSaveOptionsRef.current = {};
 
+      // For workspace switches, capture the old session before restore/detection
+      // clears workspace-scoped state, then wait for any in-flight save.
+      const previousWorkspaceState = identityOverride
+        ? collectWorkspaceState(identityOverride, saveOptions)
+        : null;
+
       // Wait for any in-flight save to complete before collecting a fresh snapshot.
       await savePromiseRef.current;
 
-      const state = collectWorkspaceState(identityOverride, saveOptions);
+      const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;
 
       const promise = SaveWorkspaceState(state)

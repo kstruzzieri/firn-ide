@@ -82,7 +82,7 @@ const (
 // WorkspaceDef is a detected (or synthetic) focused context within a repo.
 // The synthetic "Project" entry represents the whole repo with a neutral accent.
 type WorkspaceDef struct {
-	ID     string        `json:"id"`     // "project" | relDir | type name (root marker)
+	ID     string        `json:"id"`     // "project" | relDir | "root:<type>" for root markers
 	Name   string        `json:"name"`   // human label, e.g. "Project", "Frontend"
 	RelDir string        `json:"relDir"` // "" for project + root-level markers
 	Type   WorkspaceType `json:"type"`
