@@ -6,6 +6,7 @@ import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { openWorkspaceByPath } from '../../utils/workspace';
 import { formatShortcut, isMac } from '../../utils/platform';
 import firnIcon from '../../assets/branding/icon.svg';
+import { WorkspaceSelector } from './WorkspaceSelector';
 
 const MENU_ID = 'workspace-menu';
 
@@ -135,7 +136,7 @@ export function Header() {
           className={styles.workspaceBtn}
           onClick={toggleMenu}
           onKeyDown={handleButtonKeyDown}
-          aria-label="Workspace menu"
+          aria-label="Repository menu"
           aria-expanded={isMenuOpen}
           aria-haspopup="menu"
           aria-controls={isMenuOpen ? MENU_ID : undefined}
@@ -187,6 +188,9 @@ export function Header() {
           </div>
         )}
       </div>
+
+      {/* Workspace selector (within-repo focus) */}
+      <WorkspaceSelector />
 
       {/* Search */}
       <button className={`${styles.headerBtn} ${styles.searchBtn}`} aria-label="Search everywhere">
