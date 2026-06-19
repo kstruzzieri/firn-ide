@@ -464,6 +464,12 @@ func (a *App) ListRecentWorkspaces() ([]workspace.Summary, error) {
 	return a.workspaceStore.ListRecent(0)
 }
 
+// DetectWorkspaces scans the repo at repoPath for focused workspaces.
+// Returns the synthetic "Project" entry followed by detected workspaces.
+func (a *App) DetectWorkspaces(repoPath string) ([]workspace.WorkspaceDef, error) {
+	return workspace.DetectWorkspaces(a.osFS, repoPath)
+}
+
 // StartRunProfile starts executing a run profile by ID.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) StartRunProfile(profileID string) error {

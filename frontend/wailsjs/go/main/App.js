@@ -26,6 +26,10 @@ export function DetectRunProfiles() {
   return window['go']['main']['App']['DetectRunProfiles']();
 }
 
+export function DetectWorkspaces(arg1) {
+  return window['go']['main']['App']['DetectWorkspaces'](arg1);
+}
+
 export function GetAllRunProfiles() {
   return window['go']['main']['App']['GetAllRunProfiles']();
 }

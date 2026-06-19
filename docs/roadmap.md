@@ -125,12 +125,12 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 
 ### #53: Workspace - Identity & Accent System (NEW)
 Defines workspace identity: type, accent color, and how workspaces are configured within a repo.
-- [ ] Workspace configuration schema (name, root dir, type, accent color)
-- [ ] Store workspace definitions in `.firn/workspaces.json`
-- [ ] Auto-detect workspace type from content (package.json → Frontend, go.mod → Go, etc.)
-- [ ] CSS accent system wired to active workspace (`.ide--accent-blue`, `.ide--accent-green`, etc.)
-- [ ] Workspace selector dropdown in header (with accent dot per workspace)
-- [ ] `⌘⇧W` keyboard shortcut for quick workspace switching
+- [x] Workspace configuration schema (name, root dir, type, accent color)
+- [ ] Store workspace definitions in `.firn/workspaces.json` (deferred — detection is read-only/in-memory; see design spec §1)
+- [x] Auto-detect workspace type from content (package.json → Frontend, go.mod → Go, etc.)
+- [x] CSS accent system wired to active workspace (`.ide--accent-blue`, `.ide--accent-green`, etc.)
+- [x] Workspace selector dropdown in header (with accent dot per workspace)
+- [x] `⌘⇧.` keyboard shortcut for quick workspace switching
 
 > **Design spec ref:** Sections 2 (Accent Colors), 4 (Workspace Model & Multi-Workspace Editing)
 

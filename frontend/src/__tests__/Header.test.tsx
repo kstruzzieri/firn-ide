@@ -15,6 +15,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
   WindowSetTitle: jest.fn(),
+  EventsOn: jest.fn(() => jest.fn()),
 }));
 
 import { OpenFolderDialog } from '../../wailsjs/go/main/App';
@@ -63,8 +64,8 @@ describe('Header Component', () => {
 
     render(<Header />);
 
-    // Open the workspace dropdown menu
-    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+    // Open the repository dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
 
     // Click "Open Folder..." in the dropdown
     fireEvent.click(screen.getByText('Open Folder...'));
@@ -79,8 +80,8 @@ describe('Header Component', () => {
 
     render(<Header />);
 
-    // Open the workspace dropdown menu
-    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+    // Open the repository dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
 
     // Click "Open Folder..." in the dropdown
     fireEvent.click(screen.getByText('Open Folder...'));
@@ -110,8 +111,8 @@ describe('Header Component', () => {
 
     render(<Header />);
 
-    // Open the workspace dropdown menu
-    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+    // Open the repository dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
 
     // Current workspace should be filtered out, only "other-project" should appear
     expect(screen.getByText('other-project')).toBeInTheDocument();
@@ -141,7 +142,7 @@ describe('Header Component', () => {
     });
 
     render(<Header />);
-    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+    fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
 
     // The dropdown menu items should include only non-current workspaces.
     // "active-project" text appears in the workspace button label, but should
@@ -169,7 +170,7 @@ describe('Header Component', () => {
     });
 
     render(<Header />);
-    fireEvent.click(screen.getByRole('button', { name: /workspace menu/i }));
+    fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
     fireEvent.click(screen.getByText('target-project'));
 
     // Workspace should switch immediately (synchronous, optimistic update)
@@ -179,5 +180,17 @@ describe('Header Component', () => {
       path: '/Users/test/target-project',
     });
     expect(WindowSetTitle).toHaveBeenCalledWith('target-project \u2014 Firn');
+  });
+
+  it('renders the workspace selector when a repo is open', () => {
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: '/repo' },
+      workspaces: [
+        { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
+      ] as never,
+      activeWorkspaceId: 'project',
+    });
+    render(<Header />);
+    expect(screen.getByRole('button', { name: /workspace selector/i })).toBeInTheDocument();
   });
 });

@@ -47,6 +47,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
   SearchWorkspace: (...args: unknown[]) => mockSearchWorkspace(...args),
   CancelSearch: (...args: unknown[]) => mockCancelSearch(...args),
+  DetectWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({

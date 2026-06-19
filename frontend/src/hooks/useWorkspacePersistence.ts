@@ -68,6 +68,7 @@ function collectWorkspaceState(
     },
     activeSidebar: state.activeSidebarView,
     hiddenProfileIds: state.hiddenProfileIds,
+    activeWorkspaceId: state.activeWorkspaceId,
   } as workspace.State;
 }
 
@@ -124,6 +125,11 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
     // Restore hidden profile IDs
     if (state.hiddenProfileIds) {
       useIDEStore.setState({ hiddenProfileIds: state.hiddenProfileIds });
+    }
+
+    // Restore active workspace selection
+    if (state.activeWorkspaceId) {
+      restoreActiveWorkspaceId(state.activeWorkspaceId);
     }
 
     // Restore explorer expanded paths
@@ -208,6 +214,18 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
   }
 }
 
+function restoreActiveWorkspaceId(activeWorkspaceId: string): void {
+  const state = useIDEStore.getState();
+  if (state.workspaces.length > 0) {
+    state.setActiveWorkspace(activeWorkspaceId);
+    return;
+  }
+
+  // Detection may not have populated the list yet; setWorkspaces will validate
+  // this raw id when the detected definitions arrive.
+  useIDEStore.setState({ activeWorkspaceId });
+}
+
 /**
  * Main persistence hook. Handles:
  * - Debounced save on any relevant state change
@@ -243,10 +261,16 @@ export function useWorkspacePersistence() {
       };
       pendingSaveOptionsRef.current = {};
 
+      // For workspace switches, capture the old session before restore/detection
+      // clears workspace-scoped state, then wait for any in-flight save.
+      const previousWorkspaceState = identityOverride
+        ? collectWorkspaceState(identityOverride, saveOptions)
+        : null;
+
       // Wait for any in-flight save to complete before collecting a fresh snapshot.
       await savePromiseRef.current;
 
-      const state = collectWorkspaceState(identityOverride, saveOptions);
+      const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;
 
       const promise = SaveWorkspaceState(state)
@@ -309,7 +333,8 @@ export function useWorkspacePersistence() {
         state.isRootExpanded !== prevState.isRootExpanded ||
         state.scrollPositions !== prevState.scrollPositions ||
         state.cursorPositions !== prevState.cursorPositions ||
-        state.hiddenProfileIds !== prevState.hiddenProfileIds
+        state.hiddenProfileIds !== prevState.hiddenProfileIds ||
+        state.activeWorkspaceId !== prevState.activeWorkspaceId
       ) {
         scheduleSave(shouldSaveTree ? { includeTreeSnapshot: true } : undefined);
       }

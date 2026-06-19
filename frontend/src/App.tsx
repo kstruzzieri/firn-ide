@@ -20,7 +20,8 @@ import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
-import { useWorkspace, useIDEStore, useSidebarView } from './stores/ideStore';
+import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
+import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
 import { ReadDirectory, ReadFile } from '../wailsjs/go/main/App';
 import type { FileEvent } from './types/watcher';
 
@@ -30,6 +31,7 @@ function App() {
 
   useAutosave();
   useWorkspacePersistence();
+  useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
   useRecentWorkspaces();
@@ -38,6 +40,7 @@ function App() {
   useWorkspaceSearch();
   const workspace = useWorkspace();
   const sidebarView = useSidebarView();
+  const activeAccent = useActiveAccent();
   useRunProfilesLoader(workspace?.path);
 
   const refreshDirectoryTree = useCallback(() => {
@@ -129,7 +132,7 @@ function App() {
   return (
     <ErrorBoundary>
       <IDEShell
-        accent="project"
+        accent={activeAccent}
         header={<Header />}
         sidebar={<Sidebar />}
         leftPanel={sidebarView === 'search' ? <SearchPanel /> : <FileExplorer />}

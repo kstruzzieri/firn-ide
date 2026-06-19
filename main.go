@@ -27,6 +27,11 @@ func buildAppMenu(app *App) *menu.Menu {
 		runtime.EventsEmit(app.ctx, "navigate:forward")
 	})
 
+	workspaceMenu := appMenu.AddSubmenu("Workspace")
+	workspaceMenu.AddText("Switch Workspace", keys.Combo(".", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+		runtime.EventsEmit(app.ctx, "menu:switch-workspace")
+	})
+
 	return appMenu
 }
 

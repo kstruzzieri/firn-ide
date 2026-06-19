@@ -13,14 +13,15 @@ type StateFile struct {
 
 // State is the complete persisted state for one workspace.
 type State struct {
-	WorkspacePath    string      `json:"workspacePath"`
-	WorkspaceName    string      `json:"workspaceName"`
-	LastOpened       string      `json:"lastOpened"` // RFC 3339
-	Layout           Layout      `json:"layout"`
-	Editor           EditorState `json:"editor"`
-	Explorer         Explorer    `json:"explorer"`
-	ActiveSidebar    string      `json:"activeSidebar"`
-	HiddenProfileIDs []string    `json:"hiddenProfileIds,omitempty"`
+	WorkspacePath     string      `json:"workspacePath"`
+	WorkspaceName     string      `json:"workspaceName"`
+	LastOpened        string      `json:"lastOpened"` // RFC 3339
+	Layout            Layout      `json:"layout"`
+	Editor            EditorState `json:"editor"`
+	Explorer          Explorer    `json:"explorer"`
+	ActiveSidebar     string      `json:"activeSidebar"`
+	HiddenProfileIDs  []string    `json:"hiddenProfileIds,omitempty"`
+	ActiveWorkspaceID string      `json:"activeWorkspaceId,omitempty"`
 }
 
 // Layout captures panel sizes and collapsed states.
@@ -64,4 +65,26 @@ type Summary struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	LastOpened string `json:"lastOpened"`
+}
+
+// WorkspaceType identifies the kind of a detected workspace.
+type WorkspaceType string
+
+const (
+	TypeProject  WorkspaceType = "project"
+	TypeFrontend WorkspaceType = "frontend"
+	TypeGo       WorkspaceType = "go"
+	TypePython   WorkspaceType = "python"
+	TypeInfra    WorkspaceType = "infra"
+	TypeGeneral  WorkspaceType = "general" // reserved; no marker produces it yet
+)
+
+// WorkspaceDef is a detected (or synthetic) focused context within a repo.
+// The synthetic "Project" entry represents the whole repo with a neutral accent.
+type WorkspaceDef struct {
+	ID     string        `json:"id"`     // "project" | relDir | "root:<type>" for root markers
+	Name   string        `json:"name"`   // human label, e.g. "Project", "Frontend"
+	RelDir string        `json:"relDir"` // "" for project + root-level markers
+	Type   WorkspaceType `json:"type"`
+	Accent string        `json:"accent"` // project|blue|cyan|green|purple|orange|amber|general
 }
