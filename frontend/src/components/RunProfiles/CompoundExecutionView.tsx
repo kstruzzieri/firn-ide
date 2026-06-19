@@ -12,6 +12,13 @@ interface CompoundExecutionViewProps {
   compound: CompoundRun;
 }
 
+interface CompoundViewState {
+  compoundId: string;
+  selectedStepIdx: number;
+  tab: 'stages' | 'all';
+  expandedFolds: Set<string>;
+}
+
 const STATE_LABELS: Record<CompoundStepState, string> = {
   pending: 'Pending',
   running: 'Running',
@@ -33,55 +40,107 @@ function formatEta(ms: number): string {
   return `~${Math.round(ms / 1000)}s`;
 }
 
+function initialSelectedStepIdx(compound: CompoundRun): number {
+  return compound.steps.find((s) => s.state === 'running')?.idx ?? compound.steps[0]?.idx ?? 0;
+}
+
+function createInitialViewState(compoundId: string, selectedStepIdx: number): CompoundViewState {
+  return {
+    compoundId,
+    selectedStepIdx,
+    tab: 'stages',
+    expandedFolds: new Set(),
+  };
+}
+
+function initialViewState(compound: CompoundRun): CompoundViewState {
+  return createInitialViewState(compound.compoundId, initialSelectedStepIdx(compound));
+}
+
 export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) {
   const workspace = useWorkspace();
   const workspacePath = workspace?.path;
   const autoScroll = useRunOutputAutoScroll();
   const showToast = useIDEStore((s) => s.showToast);
   const requestEditorNavigation = useIDEStore((s) => s.requestEditorNavigation);
-
-  const [selectedStepIdx, setSelectedStepIdx] = useState<number>(
-    () => compound.steps.find((s) => s.state === 'running')?.idx ?? compound.steps[0]?.idx ?? 0
+  const defaultSelectedStepIdx = initialSelectedStepIdx(compound);
+  const currentInitialViewState = useMemo(
+    () => createInitialViewState(compound.compoundId, defaultSelectedStepIdx),
+    [compound.compoundId, defaultSelectedStepIdx]
   );
-  const [tab, setTab] = useState<'stages' | 'all'>('stages');
-  const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
+
+  const [viewState, setViewState] = useState<CompoundViewState>(() => initialViewState(compound));
+  const isCurrentCompound = viewState.compoundId === compound.compoundId;
+  const selectedStepIdx = isCurrentCompound ? viewState.selectedStepIdx : defaultSelectedStepIdx;
+  const tab = isCurrentCompound ? viewState.tab : 'stages';
+  const expandedFolds = isCurrentCompound ? viewState.expandedFolds : new Set<string>();
 
   const runningStepIdx = compound.steps.find((s) => s.state === 'running')?.idx;
   const isAggregateFailed = compound.state === 'failed';
   const firstFailedStepIdx = compound.steps.find((s) => s.state === 'failed')?.idx;
 
+  const setSelectedStage = useCallback(
+    (stepIdx: number) => {
+      setViewState((prev) => {
+        const base = prev.compoundId === compound.compoundId ? prev : currentInitialViewState;
+        if (base.compoundId === compound.compoundId && base.selectedStepIdx === stepIdx) {
+          return base;
+        }
+        return { ...base, selectedStepIdx: stepIdx };
+      });
+    },
+    [compound.compoundId, currentInitialViewState]
+  );
+
+  const setCompoundTab = useCallback(
+    (nextTab: 'stages' | 'all') => {
+      setViewState((prev) => {
+        const base = prev.compoundId === compound.compoundId ? prev : currentInitialViewState;
+        if (base.compoundId === compound.compoundId && base.tab === nextTab) {
+          return base;
+        }
+        return { ...base, tab: nextTab };
+      });
+    },
+    [compound.compoundId, currentInitialViewState]
+  );
+
   // Auto-select the running stage when a step transitions to running.
   useEffect(() => {
     if (runningStepIdx !== undefined) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional auto-follow of the active step
-      setSelectedStepIdx(runningStepIdx);
+      setSelectedStage(runningStepIdx);
     }
-  }, [runningStepIdx]);
+  }, [runningStepIdx, setSelectedStage]);
 
   // Auto-select the first failed stage when the compound aggregate fails.
   useEffect(() => {
     if (isAggregateFailed && firstFailedStepIdx !== undefined) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional jump to the failed step
-      setSelectedStepIdx(firstFailedStepIdx);
+      setSelectedStage(firstFailedStepIdx);
     }
-  }, [isAggregateFailed, firstFailedStepIdx]);
+  }, [isAggregateFailed, firstFailedStepIdx, setSelectedStage]);
 
   const selectedStep: CompoundStep | undefined = compound.steps.find(
     (s) => s.idx === selectedStepIdx
   );
   const selectedEntries = compound.stepOutputs[selectedStepIdx] ?? [];
 
-  const handleToggleFold = useCallback((foldId: string) => {
-    setExpandedFolds((prev) => {
-      const next = new Set(prev);
-      if (next.has(foldId)) {
-        next.delete(foldId);
-      } else {
-        next.add(foldId);
-      }
-      return next;
-    });
-  }, []);
+  const handleToggleFold = useCallback(
+    (foldId: string) => {
+      setViewState((prev) => {
+        const base = prev.compoundId === compound.compoundId ? prev : currentInitialViewState;
+        const next = new Set(base.expandedFolds);
+        if (next.has(foldId)) {
+          next.delete(foldId);
+        } else {
+          next.add(foldId);
+        }
+        return { ...base, expandedFolds: next };
+      });
+    },
+    [compound.compoundId, currentInitialViewState]
+  );
 
   const handleStop = () => {
     StopRunProfile(compound.compoundId).catch((err: unknown) => {
@@ -151,20 +210,22 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
       </div>
 
       <div className={styles.tabBar}>
-        <div className={styles.tabGroup}>
+        <div className={styles.tabGroup} role="tablist" aria-label="Compound output view">
           <button
             type="button"
-            aria-pressed={tab === 'stages'}
+            role="tab"
+            aria-selected={tab === 'stages'}
             className={styles.tabButton}
-            onClick={() => setTab('stages')}
+            onClick={() => setCompoundTab('stages')}
           >
             Stages
           </button>
           <button
             type="button"
-            aria-pressed={tab === 'all'}
+            role="tab"
+            aria-selected={tab === 'all'}
             className={styles.tabButton}
-            onClick={() => setTab('all')}
+            onClick={() => setCompoundTab('all')}
           >
             All steps
           </button>
@@ -184,7 +245,7 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
                   className={`${styles.stageRow} ${isSelected ? styles.selected : ''}`}
                   data-state={step.state}
                   aria-current={isSelected ? 'true' : undefined}
-                  onClick={() => setSelectedStepIdx(step.idx)}
+                  onClick={() => setSelectedStage(step.idx)}
                 >
                   <span className={styles.stageDot} data-state={step.state} aria-hidden="true" />
                   <span className={styles.stageInfo}>

@@ -163,11 +163,26 @@ describe('CompoundExecutionView', () => {
 
     render(<CompoundExecutionView compound={compound} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /all steps/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /all steps/i }));
 
     const timeline = screen.getByTestId('timeline');
     expect(timeline).toHaveTextContent('Lint');
     expect(timeline).toHaveTextContent('Test');
+  });
+
+  it('marks the selected internal tab with aria-selected', () => {
+    render(<CompoundExecutionView compound={makeCompound()} />);
+
+    const stages = screen.getByRole('tab', { name: /stages/i });
+    const allSteps = screen.getByRole('tab', { name: /all steps/i });
+
+    expect(stages).toHaveAttribute('aria-selected', 'true');
+    expect(allSteps).toHaveAttribute('aria-selected', 'false');
+
+    fireEvent.click(allSteps);
+
+    expect(stages).toHaveAttribute('aria-selected', 'false');
+    expect(allSteps).toHaveAttribute('aria-selected', 'true');
   });
 
   it('lets the user select a stage by clicking its row', () => {
@@ -187,6 +202,40 @@ describe('CompoundExecutionView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Second/ }));
     expect(screen.getByTestId('merged')).toHaveTextContent('second output');
+  });
+
+  it('resets selected stage when the compound id changes', () => {
+    const first = makeCompound({
+      compoundId: 'ci',
+      name: 'CI',
+      state: 'running',
+      currentStep: 1,
+      steps: [
+        makeStep({ idx: 0, state: 'success', name: 'Build' }),
+        makeStep({ idx: 1, state: 'running', name: 'Test' }),
+      ],
+      stepOutputs: {
+        0: [entry('build output')],
+        1: [entry('test output')],
+      },
+    });
+    const second = makeCompound({
+      compoundId: 'deploy',
+      name: 'Deploy',
+      state: 'success',
+      currentStep: 0,
+      steps: [makeStep({ idx: 0, state: 'success', name: 'Deploy' })],
+      stepOutputs: {
+        0: [entry('deploy output')],
+      },
+    });
+
+    const { rerender } = render(<CompoundExecutionView compound={first} />);
+    expect(screen.getByTestId('merged')).toHaveTextContent('test output');
+
+    rerender(<CompoundExecutionView compound={second} />);
+
+    expect(screen.getByTestId('merged')).toHaveTextContent('deploy output');
   });
 
   it('shows the step error message when there is no output', () => {

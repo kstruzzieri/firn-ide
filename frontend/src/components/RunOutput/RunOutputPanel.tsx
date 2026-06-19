@@ -62,7 +62,7 @@ export function RunOutputPanel() {
       <div className={styles.panelContainer}>
         <RunOutputTabs />
         <RunOutputToolbar />
-        <CompoundExecutionView compound={activeCompound} />
+        <CompoundExecutionView key={activeCompound.compoundId} compound={activeCompound} />
       </div>
     );
   }
