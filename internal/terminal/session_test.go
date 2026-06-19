@@ -7,6 +7,7 @@ import (
 )
 
 func TestNewSession(t *testing.T) {
+	requirePTY(t)
 	session, err := NewSession()
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
@@ -22,6 +23,7 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestSessionWriteRead(t *testing.T) {
+	requirePTY(t)
 	session, err := NewSession()
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
@@ -67,6 +69,7 @@ func TestSessionWriteRead(t *testing.T) {
 }
 
 func TestSessionCloseGraceful(t *testing.T) {
+	requirePTY(t)
 	session, err := NewSession()
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
@@ -88,6 +91,7 @@ func TestSessionCloseGraceful(t *testing.T) {
 }
 
 func TestSessionCloseTerminatesStubbornProcess(t *testing.T) {
+	requirePTY(t)
 	session, err := NewSession()
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
