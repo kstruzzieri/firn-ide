@@ -1,0 +1,35 @@
+# Run golangci-lint before pushing so the GitHub Actions "Lint / golangci-lint"
+# job passes on the PR. Only issues NEW relative to origin/develop block the
+# push: CI is green on the develop baseline, and the repo carries pre-existing
+# lint debt (errcheck on Close/Fprintf, etc.) that the CI linter version
+# excludes — those must not block unrelated work. Bypass with `git push --no-verify`.
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-push: golangci-lint not installed — skipping Go lint."
+  echo "  Install it (CI uses it; pushing unlinted Go risks a red PR):"
+  echo "    brew install golangci-lint"
+  exit 0
+fi
+
+# main.go does `//go:embed all:frontend/dist`, so the linter cannot typecheck the
+# main package until the frontend has been built. Skip cleanly if it is absent.
+if [ ! -d frontend/dist ]; then
+  echo "pre-push: frontend/dist missing — skipping Go lint."
+  echo "  Build it to enable lint on push: (cd frontend && npm run build)"
+  exit 0
+fi
+
+# Compare against the upstream base. Fall back to the previous commit if a local
+# origin/develop ref is unavailable (e.g. a fresh clone before the first fetch).
+base="origin/develop"
+if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+  base="HEAD~1"
+fi
+
+echo "pre-push: golangci-lint (new issues since $base)..."
+if ! golangci-lint run --new-from-rev "$base" ./...; then
+  echo ""
+  echo "pre-push: golangci-lint found new issues above. Fix them, or bypass with:"
+  echo "    git push --no-verify"
+  exit 1
+fi
