@@ -46,7 +46,8 @@ type StatusFunc func(event string, data ...any)
 type Executor struct {
 	mu         sync.Mutex
 	processes  map[string]*runningProcess
-	lastStatus map[string]RunStatus // terminal status retained after exit
+	compounds  map[string]*compoundRun // in-flight compound runs keyed by compound ID
+	lastStatus map[string]RunStatus    // terminal status retained after exit
 	emitFn     StatusFunc
 	outputFn   OutputFunc
 }
@@ -76,6 +77,7 @@ type runningProcess struct {
 func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 	return &Executor{
 		processes:  make(map[string]*runningProcess),
+		compounds:  make(map[string]*compoundRun),
 		lastStatus: make(map[string]RunStatus),
 		emitFn:     emitFn,
 		outputFn:   outputFn,
@@ -323,6 +325,9 @@ func (e *Executor) GetStatus(profileID string) RunStatus {
 
 	if rp, exists := e.processes[profileID]; exists {
 		return rp.status
+	}
+	if cr, exists := e.compounds[profileID]; exists {
+		return cr.status
 	}
 	if last, exists := e.lastStatus[profileID]; exists {
 		return last
