@@ -171,8 +171,8 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 		path = findGoBinary("gopls")
 		if path == "" {
 			return nil, fmt.Errorf(
-				"gopls not found: install it with "+
-					"\"go install golang.org/x/tools/gopls@latest\" "+
+				"gopls not found: install it with " +
+					"\"go install golang.org/x/tools/gopls@latest\" " +
 					"or add it to PATH",
 			)
 		}
@@ -185,31 +185,45 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 	}, nil
 }
 
+// goBinarySearchDirs returns the directories findGoBinary scans. It is a
+// package variable so tests can override it to make binary resolution
+// deterministic regardless of what is installed on the host machine.
+var goBinarySearchDirs = defaultGoBinarySearchDirs
+
+// defaultGoBinarySearchDirs lists the well-known Go binary directories searched
+// when the app is launched from Finder/Dock on macOS and the user's shell PATH
+// (containing $HOME/go/bin, etc.) is not available.
+func defaultGoBinarySearchDirs() []string {
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return nil
+	}
+
+	dirs := []string{
+		filepath.Join(homeDir, "go", "bin"),
+		filepath.Join(homeDir, ".local", "bin"),
+	}
+	if runtime.GOOS == "windows" {
+		return dirs
+	}
+	return append(dirs,
+		"/usr/local/go/bin",
+		"/opt/homebrew/bin", // Apple Silicon Homebrew
+		"/usr/local/bin",    // Intel Homebrew / system
+	)
+}
+
 // findGoBinary searches common Go binary directories for a given binary name.
 // This covers the case where the app is launched from Finder/Dock on macOS
 // and the user's shell PATH (containing $HOME/go/bin, etc.) is not available.
 func findGoBinary(name string) string {
-	homeDir, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		return ""
-	}
-
-	candidates := []string{
-		filepath.Join(homeDir, "go", "bin", name),
-		filepath.Join(homeDir, ".local", "bin", name),
-		"/usr/local/go/bin/" + name,
-		"/opt/homebrew/bin/" + name, // Apple Silicon Homebrew
-		"/usr/local/bin/" + name,    // Intel Homebrew / system
-	}
-
+	binName := name
 	if runtime.GOOS == "windows" {
-		candidates = []string{
-			filepath.Join(homeDir, "go", "bin", name+".exe"),
-			filepath.Join(homeDir, ".local", "bin", name+".exe"),
-		}
+		binName = name + ".exe"
 	}
 
-	for _, candidate := range candidates {
+	for _, dir := range goBinarySearchDirs() {
+		candidate := filepath.Join(dir, binName)
 		if isExecutableFile(candidate) {
 			return candidate
 		}
