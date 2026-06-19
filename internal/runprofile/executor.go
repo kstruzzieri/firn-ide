@@ -45,12 +45,13 @@ type StatusFunc func(event string, data ...any)
 
 // Executor manages the lifecycle of running profiles.
 type Executor struct {
-	mu         sync.Mutex
-	processes  map[string]*runningProcess
-	compounds  map[string]*compoundRun // in-flight compound runs keyed by compound ID
-	lastStatus map[string]RunStatus    // terminal status retained after exit
-	emitFn     StatusFunc
-	outputFn   OutputFunc
+	mu             sync.Mutex
+	processes      map[string]*runningProcess
+	processAliases map[string]string       // real profile ID -> process key for compound leaves
+	compounds      map[string]*compoundRun // in-flight compound runs keyed by compound ID
+	lastStatus     map[string]RunStatus    // terminal status retained after exit
+	emitFn         StatusFunc
+	outputFn       OutputFunc
 }
 
 type processResult struct {
@@ -76,11 +77,12 @@ type runningProcess struct {
 // outputFn receives stdout/stderr chunks (nil = drain silently).
 func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 	return &Executor{
-		processes:  make(map[string]*runningProcess),
-		compounds:  make(map[string]*compoundRun),
-		lastStatus: make(map[string]RunStatus),
-		emitFn:     emitFn,
-		outputFn:   outputFn,
+		processes:      make(map[string]*runningProcess),
+		processAliases: make(map[string]string),
+		compounds:      make(map[string]*compoundRun),
+		lastStatus:     make(map[string]RunStatus),
+		emitFn:         emitFn,
+		outputFn:       outputFn,
 	}
 }
 
@@ -123,6 +125,26 @@ func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot st
 	if _, exists := e.processes[key]; exists {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("profile already running: %s", key)
+	}
+	if existingKey, exists := e.processAliases[key]; exists {
+		if _, running := e.processes[existingKey]; running {
+			e.mu.Unlock()
+			return nil, fmt.Errorf("profile already running: %s", key)
+		}
+		delete(e.processAliases, key)
+	}
+	if key != profile.ID {
+		if _, exists := e.processes[profile.ID]; exists {
+			e.mu.Unlock()
+			return nil, fmt.Errorf("profile already running: %s", profile.ID)
+		}
+		if existingKey, exists := e.processAliases[profile.ID]; exists {
+			if _, running := e.processes[existingKey]; running {
+				e.mu.Unlock()
+				return nil, fmt.Errorf("profile already running: %s", profile.ID)
+			}
+			delete(e.processAliases, profile.ID)
+		}
 	}
 	delete(e.lastStatus, key)
 
@@ -169,6 +191,9 @@ func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot st
 		workingDir: effectiveDir,
 	}
 	e.processes[key] = rp
+	if key != profile.ID {
+		e.processAliases[profile.ID] = key
+	}
 	e.mu.Unlock()
 
 	return rp, nil
@@ -201,6 +226,11 @@ func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, 
 		e.lastStatus[key] = status
 	}
 	delete(e.processes, key)
+	for alias, target := range e.processAliases {
+		if target == key {
+			delete(e.processAliases, alias)
+		}
+	}
 	e.mu.Unlock()
 
 	if emitStatus {
@@ -242,7 +272,11 @@ func (e *Executor) Stop(profileID string) error {
 		return nil
 	}
 
-	rp, exists := e.processes[profileID]
+	processKey := profileID
+	if aliasTarget, ok := e.processAliases[profileID]; ok {
+		processKey = aliasTarget
+	}
+	rp, exists := e.processes[processKey]
 	if !exists {
 		e.mu.Unlock()
 		return fmt.Errorf("profile not running: %s", profileID)
@@ -401,6 +435,13 @@ func (e *Executor) GetStatus(profileID string) RunStatus {
 
 	if rp, exists := e.processes[profileID]; exists {
 		return rp.status
+	}
+	if aliasTarget, exists := e.processAliases[profileID]; exists {
+		if rp, running := e.processes[aliasTarget]; running {
+			status := rp.status
+			status.ProfileID = profileID
+			return status
+		}
 	}
 	if cr, exists := e.compounds[profileID]; exists {
 		return cr.status

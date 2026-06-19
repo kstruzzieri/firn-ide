@@ -343,6 +343,66 @@ func TestExecutor_StopCompoundMidStep(t *testing.T) {
 	}
 }
 
+func TestExecutor_StartSingleRejectedWhileCompoundStepRunning(t *testing.T) {
+	spy := &emitSpy{}
+	exec := NewExecutor(spy.emit, nil)
+	dir := t.TempDir()
+	defer exec.StopAll(2 * time.Second) //nolint:errcheck
+
+	slow := newTestProfile("slow", "sleep 5")
+	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow"}}
+
+	if err := exec.StartCompound(dir, compound, []RunProfile{slow}); err != nil {
+		t.Fatalf("StartCompound returned error: %v", err)
+	}
+	if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
+		t.Fatal("timed out waiting for compound leaf process")
+	}
+
+	err := exec.Start(dir, slow)
+	if err == nil {
+		t.Fatal("Start returned nil; want already-running error for leaf profile")
+	}
+	if !strings.Contains(err.Error(), "profile already running: slow") {
+		t.Fatalf("Start error = %q, want already-running error for slow", err.Error())
+	}
+}
+
+func TestExecutor_StopSingleIDStopsCompoundStep(t *testing.T) {
+	spy := &emitSpy{}
+	exec := NewExecutor(spy.emit, nil)
+	dir := t.TempDir()
+
+	slow := newTestProfile("slow", "sleep 5")
+	after := newTestProfile("after", "printf never")
+	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow", "after"}}
+
+	if err := exec.StartCompound(dir, compound, []RunProfile{slow, after}); err != nil {
+		t.Fatalf("StartCompound returned error: %v", err)
+	}
+	if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
+		t.Fatal("timed out waiting for compound leaf process")
+	}
+
+	if err := exec.Stop("slow"); err != nil {
+		t.Fatalf("Stop by step profile ID returned error: %v", err)
+	}
+	if !waitForCompoundState(exec, "ci", RunStateStopped, 5*time.Second) {
+		t.Fatal("timed out waiting for aggregate stopped state")
+	}
+
+	states := finalStepStates(compoundSnapshots(spy))
+	if len(states) != 2 {
+		t.Fatalf("expected 2 step states, got %d", len(states))
+	}
+	if states[0] != CompoundStepStopped {
+		t.Errorf("step0 state = %q, want %q", states[0], CompoundStepStopped)
+	}
+	if states[1] != CompoundStepSkipped {
+		t.Errorf("step1 state = %q, want %q", states[1], CompoundStepSkipped)
+	}
+}
+
 // TestExecutor_StopCompoundBetweenSteps is hard to hit deterministically in the
 // true between-steps gap, so per the plan it is implemented as: step0 sleeps
 // briefly, we stop shortly after it starts running, and we assert step0 is
