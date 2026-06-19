@@ -33,6 +33,7 @@
   --accent-orange: #f97316;
   --accent-purple: #a855f7;
   --accent-amber: #f59e0b;
+  --accent-general: #6b7280;
 
   /* Project/Default Accent — Glacier Blue (matches FIRN wordmark) */
   --accent-project: #38bdf8;
@@ -128,4 +129,11 @@
   --accent-dark: #b45309;
   --accent-dim: rgba(245, 158, 11, 0.12);
   --accent-glow: rgba(245, 158, 11, 0.25);
+}
+
+[data-accent='general'] {
+  --accent: var(--accent-general);
+  --accent-dark: #4b5563;
+  --accent-dim: rgba(107, 114, 128, 0.12);
+  --accent-glow: rgba(107, 114, 128, 0.25);
 }

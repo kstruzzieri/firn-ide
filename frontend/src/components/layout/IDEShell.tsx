@@ -6,6 +6,7 @@ import {
   useIsRightPanelCollapsed,
   useIsBottomPanelCollapsed,
 } from '../../stores/ideStore';
+import type { WorkspaceAccent } from '../../stores/ideStore';
 import { ResizeHandle } from './ResizeHandle';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import styles from './IDEShell.module.css';
@@ -41,7 +42,7 @@ interface IDEShellProps {
   rightPanel: ReactNode;
   bottomPanel: ReactNode;
   statusBar: ReactNode;
-  accent?: 'project' | 'blue' | 'green' | 'cyan' | 'orange' | 'purple' | 'amber';
+  accent?: WorkspaceAccent;
 }
 
 export function IDEShell({
