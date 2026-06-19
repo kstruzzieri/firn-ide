@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -217,8 +218,31 @@ func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, 
 
 // Stop terminates a running profile. Sends SIGTERM, waits up to 3 seconds,
 // then escalates to SIGKILL. Blocks until the process is fully cleaned up.
+//
+// If profileID refers to an in-flight compound run, the compound is cancelled
+// (preventing the next step from starting), the currently-running leaf (if any)
+// is stopped via the leaf path, and Stop blocks until the coordinator finishes.
 func (e *Executor) Stop(profileID string) error {
 	e.mu.Lock()
+	if cr, ok := e.compounds[profileID]; ok {
+		cancel := cr.cancel
+		stepKey := compoundStepKey(profileID, cr.current)
+		_, leafRunning := e.processes[stepKey]
+		done := cr.done
+		e.mu.Unlock()
+
+		cancel()
+		if leafRunning {
+			// Leaf path runs in this (caller) goroutine, distinct from the
+			// coordinator goroutine that closes cr.done, so there is no
+			// self-deadlock. The error is intentionally ignored: the leaf may
+			// already be exiting on its own.
+			_ = e.Stop(stepKey)
+		}
+		<-done
+		return nil
+	}
+
 	rp, exists := e.processes[profileID]
 	if !exists {
 		e.mu.Unlock()
@@ -248,10 +272,16 @@ func (e *Executor) Stop(profileID string) error {
 }
 
 // StopAll terminates all running profiles within the given timeout.
-// Returns true if all processes were cleaned up before the deadline.
+// Returns true if all processes (and compound coordinators) were cleaned up
+// before the deadline.
+//
+// Compound current-step leaves are already in e.processes, so they are included
+// in the process copy and receive SIGTERM. Each compound coordinator is also
+// cancelled so the next step cannot start, and StopAll waits on every compound
+// done channel in addition to every process done channel.
 func (e *Executor) StopAll(timeout time.Duration) bool {
 	e.mu.Lock()
-	if len(e.processes) == 0 {
+	if len(e.processes) == 0 && len(e.compounds) == 0 {
 		e.mu.Unlock()
 		return true
 	}
@@ -266,11 +296,26 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 		entries = append(entries, entry{id, rp})
 	}
 
-	// Mark all as stopped
+	// Copy compound coordinators (cancel + done) for concurrent cancellation.
+	type compoundEntry struct {
+		cancel context.CancelFunc
+		done   chan struct{}
+	}
+	compoundEntries := make([]compoundEntry, 0, len(e.compounds))
+	for _, cr := range e.compounds {
+		compoundEntries = append(compoundEntries, compoundEntry{cancel: cr.cancel, done: cr.done})
+	}
+
+	// Mark all processes as stopped
 	for _, ent := range entries {
 		ent.rp.stopped = true
 	}
 	e.mu.Unlock()
+
+	// Cancel every compound coordinator (prevents the next step starting).
+	for _, ce := range compoundEntries {
+		ce.cancel()
+	}
 
 	// Send SIGTERM to all
 	for _, ent := range entries {
@@ -282,11 +327,30 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 	deadline := time.After(timeout)
 	halfwayTimer := time.After(halfway)
 
-	// Collect done channels
+	// Collect done channels (processes + compound coordinators). The collector
+	// also selects on stopWaiting so it cannot leak if a survivor never exits:
+	// on a deadline miss we close stopWaiting and the goroutine returns instead
+	// of blocking forever on a wedged done channel.
 	allDone := make(chan struct{})
+	stopWaiting := make(chan struct{})
 	go func() {
+		waitDone := func(ch <-chan struct{}) bool {
+			select {
+			case <-ch:
+				return true
+			case <-stopWaiting:
+				return false
+			}
+		}
 		for _, ent := range entries {
-			<-ent.rp.done
+			if !waitDone(ent.rp.done) {
+				return
+			}
+		}
+		for _, ce := range compoundEntries {
+			if !waitDone(ce.done) {
+				return
+			}
 		}
 		close(allDone)
 	}()
@@ -312,6 +376,7 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 	case <-allDone:
 		return true
 	case <-deadline:
+		close(stopWaiting)
 		return false
 	}
 }

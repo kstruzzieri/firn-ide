@@ -134,9 +134,29 @@ func (e *Executor) StartCompound(workspaceRoot string, compound RunProfile, step
 }
 
 // runCompound is the coordinator goroutine. It runs each step sequentially,
-// emitting a run:compound snapshot on every transition.
+// emitting a run:compound snapshot on every transition. It computes a final
+// aggregate (state, exitCode) and hands it to finishCompound, which marks any
+// still-pending steps skipped.
+//
+// Aggregate exit code conventions:
+//   - success → 0
+//   - failed  → the failing step's exit code; 1 for setup/spawn errors
+//   - stopped → the stopped leaf's exit code if available, otherwise sentinel
+//     -1 (between-steps cancel with no leaf → -1)
 func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compound RunProfile, steps []RunProfile, cr *compoundRun) {
+	state := RunStateSuccess
+	exitCode := 0
+
 	for i := range steps {
+		// Cancellation observed before this step starts. The step at index i is
+		// still pending, so it and all later steps are marked skipped by
+		// finishCompound. No leaf exists yet → sentinel exit code -1.
+		if ctx.Err() != nil {
+			state = RunStateStopped
+			exitCode = -1
+			break
+		}
+
 		// Transition: step → running.
 		e.mu.Lock()
 		cr.current = i
@@ -149,33 +169,65 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 		stepKey := compoundStepKey(compound.ID, i)
 		rp, err := e.startProcess(stepKey, steps[i], workspaceRoot)
 		if err != nil {
-			// Setup-failure handling is a later task. Record the error on the
-			// step and break out without marking the aggregate; the success-path
-			// tests never reach this branch.
+			// Setup/spawn failure: record the error on the step, surface it as a
+			// stderr chunk for this step's output lane, and fail the aggregate.
 			e.mu.Lock()
 			cr.steps[i].State = CompoundStepFailed
+			cr.steps[i].ExitCode = 1
 			cr.steps[i].EndedAt = time.Now().UnixMilli()
+			cr.steps[i].DurationMs = cr.steps[i].EndedAt - cr.steps[i].StartedAt
 			cr.steps[i].ErrorMessage = err.Error()
 			failSnap := cr.snapshot()
 			e.mu.Unlock()
+
+			if e.outputFn != nil {
+				e.outputFn(stepKey, "stderr", err.Error()+"\n", time.Now().UnixMilli())
+			}
 			e.emitCompound(failSnap)
+
+			state = RunStateFailed
+			exitCode = 1
 			break
+		}
+
+		// Close the start/stop race: a cancel that arrived in the window between
+		// the running-transition unlock and the process registration inside
+		// startProcess could be missed by an external Stop. Mark the leaf stopped
+		// and signal its process group; the following waitProcess closes done.
+		if ctx.Err() != nil {
+			e.mu.Lock()
+			rp.stopped = true
+			e.mu.Unlock()
+			rp.stopOnce.Do(func() {
+				_ = killProcessGroup(rp.cmd.Process.Pid)
+			})
 		}
 
 		res := e.waitProcess(stepKey, rp, false, false)
 
 		if res.state != RunStateSuccess {
-			// Non-success leaf result. Full failure/stop semantics are a later
-			// task; record the terminal step state and break out.
+			// Non-success leaf result (failed or stopped). Record the terminal
+			// step state, emit, and break with the matching aggregate.
 			e.mu.Lock()
+			now := time.Now().UnixMilli()
 			cr.steps[i].State = leafStepState(res.state)
 			cr.steps[i].ExitCode = res.exitCode
 			cr.steps[i].WorkingDir = res.workingDir
-			cr.steps[i].EndedAt = time.Now().UnixMilli()
-			cr.steps[i].DurationMs = cr.steps[i].EndedAt - cr.steps[i].StartedAt
+			cr.steps[i].EndedAt = now
+			cr.steps[i].DurationMs = now - cr.steps[i].StartedAt
 			brokeSnap := cr.snapshot()
 			e.mu.Unlock()
 			e.emitCompound(brokeSnap)
+
+			if res.state == RunStateStopped {
+				// res.exitCode is typically -1 for a signalled process, which
+				// satisfies the stopped sentinel.
+				state = RunStateStopped
+				exitCode = res.exitCode
+			} else {
+				state = RunStateFailed
+				exitCode = res.exitCode
+			}
 			break
 		}
 
@@ -192,16 +244,22 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 		e.emitCompound(successSnap)
 	}
 
-	e.finishCompound(compound.ID, cr)
+	e.finishCompound(compound.ID, cr, state, exitCode)
 }
 
-// finishCompound finalizes an all-success compound run: marks the aggregate
-// status success, retains it as the terminal status, removes the in-flight
-// entry, and emits the terminal aggregate + final compound snapshot.
-func (e *Executor) finishCompound(compoundID string, cr *compoundRun) {
+// finishCompound finalizes a compound run. Any still-pending steps are marked
+// skipped, the aggregate status is set to the computed (state, exitCode), it is
+// retained as the terminal status, the in-flight entry is removed, and the
+// terminal aggregate + final compound snapshot are emitted.
+func (e *Executor) finishCompound(compoundID string, cr *compoundRun, state RunState, exitCode int) {
 	e.mu.Lock()
-	cr.status.State = RunStateSuccess
-	cr.status.ExitCode = 0
+	for i := range cr.steps {
+		if cr.steps[i].State == CompoundStepPending {
+			cr.steps[i].State = CompoundStepSkipped
+		}
+	}
+	cr.status.State = state
+	cr.status.ExitCode = exitCode
 	terminal := cr.status
 	e.lastStatus[compoundID] = terminal
 	finalSnap := cr.snapshot()
