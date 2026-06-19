@@ -24,8 +24,8 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 1: Core File Operations | **COMPLETE** | #3-9 |
 | UI/UX Polish | **COMPLETE** | #35-36 |
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
-| Milestone 3: Workspace Management | **IN PROGRESS** | #13-15 complete, #53-54 open |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16, #59-64 complete; #17-18, #71 open |
+| Milestone 3: Workspace Management | **IN PROGRESS** | #13-15, #53 complete; #54 open |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18, #71, #107 open |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
@@ -40,10 +40,12 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: Compound Profile Execution (#63) is complete — flat sequential steps with stop-on-failure, isolated per-step output under validated composite keys, aggregate `run:status` plus snapshot `run:compound` events, and a dedicated compound execution view (stages + all-steps timeline). This completes the #17 Run Profiles Execution Engine epic (#59-64). Run Profiles environment variants (#64) and clickable error links (#62) remain complete from PRs #97/#98.
+Current status: Workspace Identity & Accent System (#53) is complete (PR #104) — auto-detection, active accent CSS system, header workspace selector, and `⌘⇧.` quick switch. Compound Profile Execution (#63) is complete (PR #102), finishing the #17 Run Profiles Execution Engine epic (#59-64): sequential steps with stop-on-failure, isolated per-step output, aggregate `run:status` plus snapshot `run:compound` events, and a dedicated compound execution view. Run-profile output preview is now scrollable and click-to-open-full-output (PR #106). Environment variants (#64) and clickable error links (#62) remain complete from PRs #97/#98.
 
-1. **#53 then #54: Workspace Identity and File Tree Views** — workspace definitions, active accent, selector, then Project/Workspace tree modes.
-2. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set.
+1. **#54: Workspace File Tree Views** — Project View (unified repo tree with color-coded workspace regions) vs Workspace View (scoped tree with workspace tabs). Builds directly on the #53 identity/accent system; the natural next step in Milestone 3.
+2. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set, and selection persistence.
+3. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
+4. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
 
 ---
 
@@ -123,7 +125,7 @@ Debounced autosave after ~1.5s idle, save on focus loss, Cmd+S support, error to
 - [x] Display in workspace menu
 - [x] Click to reopen project
 
-### #53: Workspace - Identity & Accent System (NEW)
+### #53: Workspace - Identity & Accent System (COMPLETE)
 Defines workspace identity: type, accent color, and how workspaces are configured within a repo.
 - [x] Workspace configuration schema (name, root dir, type, accent color)
 - [ ] Store workspace definitions in `.firn/workspaces.json` (deferred — detection is read-only/in-memory; see design spec §1)
@@ -157,7 +159,7 @@ Project View (unified) vs Workspace View (focused) with color-coded regions.
 - [x] Backend: 7 Wails bindings (Load/GetAll/Save/Delete/Pin/Validate/Detect)
 - [x] Frontend: Zustand store slice, useRunProfiles hook, basic sidebar panel
 
-### #17: Run Profiles - Execution Engine [Epic]
+### #17: Run Profiles - Execution Engine [Epic] ✅
 Sub-issues:
 - [x] #59: Core Process Runner — `os/exec` implementation, env/cwd/envFile, start/stop bindings
 - [x] #60: Output Streaming — pipe stdout/stderr, Wails events, output panel
@@ -185,6 +187,16 @@ Sub-issues:
 - [x] Status bar / output focus integration for running profiles
 
 > **Design spec ref:** Section 5 (Run Profiles UI)
+
+### #107: Run Profiles - LANES Output View Polish
+UI-only follow-up on the run-output LANES tab.
+- [ ] Resizable stdout/stderr columns (currently hard-split 50/50 via `flex: 1`)
+- [ ] STDERR header glyph color (final letter renders off-color; likely sticky-header bleed-through)
+- [ ] Sticky header bleed-through — virtualized rows paint over the header on fast scroll; remove the `.outputContent` top-padding gap above `top: 0`
+
+### Run-output preview (shipped, PR #106)
+- [x] Scrollable in-card output preview (`overflow-y: auto`, taller `max-height`)
+- [x] Click/keyboard-activatable preview opens the full virtualized Output tab; selection-safe click
 
 ---
 
