@@ -16,6 +16,11 @@ export function useWorkspaceDetection() {
       return;
     }
 
+    // Clear any prior repo's workspaces immediately so a stale list/selection
+    // cannot leak across repo switches. setWorkspaces([]) resets the active id
+    // to "project"; detection (and any session restore) repopulate it below.
+    useIDEStore.getState().setWorkspaces([]);
+
     let cancelled = false;
     DetectWorkspaces(repoPath)
       .then((defs) => {

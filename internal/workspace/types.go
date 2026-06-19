@@ -86,5 +86,5 @@ type WorkspaceDef struct {
 	Name   string        `json:"name"`   // human label, e.g. "Project", "Frontend"
 	RelDir string        `json:"relDir"` // "" for project + root-level markers
 	Type   WorkspaceType `json:"type"`
-	Accent string        `json:"accent"` // project|blue|cyan|green|purple|orange|general
+	Accent string        `json:"accent"` // project|blue|cyan|green|purple|orange|amber|general
 }
