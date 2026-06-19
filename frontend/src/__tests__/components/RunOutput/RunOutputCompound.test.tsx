@@ -183,6 +183,23 @@ describe('RunOutputToolbar compound controls', () => {
 
     expect(screen.getByRole('button', { name: 'Merged' })).toBeInTheDocument();
   });
+
+  it('disables Timeline when the only second output is a compound aggregate', () => {
+    // One ordinary profile + one compound aggregate (in runOutputs) is a single
+    // true ordinary output, so the multi-profile Timeline must stay disabled.
+    useIDEStore.setState({
+      runOutputs: {
+        p1: makeRunOutput({ profileId: 'p1' }),
+        ci: makeRunOutput({ profileId: 'ci' }),
+      },
+      runCompounds: { ci: makeCompound({ compoundId: 'ci', name: 'CI' }) },
+      activeRunOutputId: 'p1',
+    });
+
+    render(<RunOutputToolbar />);
+
+    expect(screen.getByRole('button', { name: 'Timeline' })).toBeDisabled();
+  });
 });
 
 // --- Tabs ------------------------------------------------------------------
@@ -256,5 +273,26 @@ describe('RunOutputTabs compound tabs', () => {
     render(<RunOutputTabs />);
 
     expect(screen.getByText('All')).toBeInTheDocument();
+  });
+
+  it('excludes the compound aggregate (in runOutputs) from the ordinary timeline count', () => {
+    // A compound emits an aggregate run:status, so its id also lives in
+    // runOutputs. With one ordinary profile + one compound aggregate the
+    // ordinary count is 1 (not 2), so the All timeline tab must not appear and
+    // the compound must render exactly one tab.
+    useIDEStore.setState({
+      runOutputs: {
+        p1: makeRunOutput({ profileId: 'p1' }),
+        ci: makeRunOutput({ profileId: 'ci' }),
+      },
+      runCompounds: { ci: makeCompound({ compoundId: 'ci', name: 'CI' }) },
+      activeRunOutputId: 'p1',
+    });
+
+    render(<RunOutputTabs />);
+
+    expect(screen.queryByText('All')).not.toBeInTheDocument();
+    expect(screen.getAllByText('CI')).toHaveLength(1);
+    expect(screen.getByText('p1')).toBeInTheDocument();
   });
 });

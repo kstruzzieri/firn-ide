@@ -14,12 +14,15 @@ export function RunOutputTabs() {
   const profiles = useIDEStore((s) => s.runProfiles);
   const runCompounds = useIDEStore((s) => s.runCompounds);
 
-  // Ordinary run outputs, excluding any composite step keys that may leak in.
-  const ordinaryIds = Object.keys(runOutputs).filter((id) => parseCompoundStepKey(id) == null);
-  // Compound runs that do not already have an ordinary output entry.
-  const compoundIds = Object.keys(runCompounds).filter(
-    (id) => !runOutputs[id] && parseCompoundStepKey(id) == null
+  // Ordinary run outputs: exclude composite step keys AND compound aggregates.
+  // A compound emits an aggregate run:status, so runOutputs[compoundId] exists
+  // for the card badge — but it must not be treated as an ordinary timeline
+  // source (its output lives in runCompounds[id].stepOutputs).
+  const ordinaryIds = Object.keys(runOutputs).filter(
+    (id) => parseCompoundStepKey(id) == null && !runCompounds[id]
   );
+  // Compound runs render their own tab (with compound state/name).
+  const compoundIds = Object.keys(runCompounds).filter((id) => parseCompoundStepKey(id) == null);
   const tabIds = [...ordinaryIds, ...compoundIds];
   if (tabIds.length === 0) return null;
 

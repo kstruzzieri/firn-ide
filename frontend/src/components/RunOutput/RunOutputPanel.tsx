@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   useActiveRunOutput,
   useActiveCompoundRun,
   useRunOutputViewMode,
   useRunOutputAutoScroll,
   useRunOutputs,
+  useRunCompounds,
   useWorkspace,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
@@ -24,11 +25,23 @@ export function RunOutputPanel() {
   const viewMode = useRunOutputViewMode();
   const autoScroll = useRunOutputAutoScroll();
   const runOutputs = useRunOutputs();
+  const runCompounds = useRunCompounds();
   const workspace = useWorkspace();
   const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
 
   const workspacePath = workspace?.path;
   const activeWorkingDir = activeOutput?.workingDir;
+
+  // The global timeline is ordinary-profiles-only. A compound emits an aggregate
+  // run:status, so runOutputs[compoundId] exists (for the card badge) but carries
+  // no entries — exclude those so the timeline doesn't render empty sources.
+  const timelineOutputs = useMemo(() => {
+    const filtered: typeof runOutputs = {};
+    for (const [id, output] of Object.entries(runOutputs)) {
+      if (!runCompounds[id]) filtered[id] = output;
+    }
+    return filtered;
+  }, [runOutputs, runCompounds]);
 
   const handleToggleFold = useCallback((foldId: string) => {
     setExpandedFolds((prev) => {
@@ -60,7 +73,7 @@ export function RunOutputPanel() {
       <RunOutputToolbar />
       {viewMode === 'timeline' ? (
         <TimelineView
-          runOutputs={runOutputs}
+          runOutputs={timelineOutputs}
           autoScroll={autoScroll}
           workspacePath={workspacePath}
         />

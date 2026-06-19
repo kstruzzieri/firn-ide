@@ -39,7 +39,10 @@ export function RunOutputToolbar() {
   const activeOutput = hasActiveProfile ? runOutputs[activeId] : undefined;
   const activeCompound = activeId && !isAllProfiles ? runCompounds[activeId] : undefined;
   const isRunning = activeOutput?.state === 'running' || activeCompound?.state === 'running';
-  const outputIds = Object.keys(runOutputs);
+  // Timeline is ordinary-profiles-only: exclude compound aggregates (a compound
+  // emits an aggregate run:status, so runOutputs[compoundId] exists) so they do
+  // not inflate the count or render as empty timeline sources.
+  const outputIds = Object.keys(runOutputs).filter((id) => !runCompounds[id]);
   const canTimeline = outputIds.length >= 2;
 
   const handleViewMode = (mode: RunOutputViewMode) => {
