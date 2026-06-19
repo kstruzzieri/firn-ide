@@ -56,7 +56,6 @@ type Executor struct {
 type processResult struct {
 	state      RunState
 	exitCode   int
-	err        error
 	workingDir string
 }
 
