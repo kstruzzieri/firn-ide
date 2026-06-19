@@ -190,6 +190,16 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 			break
 		}
 
+		// Publish the resolved working directory while the step is still running so
+		// clickable file paths in live output resolve against the step's own cwd
+		// (not the workspace root). startProcess has resolved it; emit an updated
+		// running snapshot before waitProcess begins draining output.
+		e.mu.Lock()
+		cr.steps[i].WorkingDir = rp.workingDir
+		runningDirSnap := cr.snapshot()
+		e.mu.Unlock()
+		e.emitCompound(runningDirSnap)
+
 		// Close the start/stop race: a cancel that arrived in the window between
 		// the running-transition unlock and the process registration inside
 		// startProcess could be missed by an external Stop. Mark the leaf stopped

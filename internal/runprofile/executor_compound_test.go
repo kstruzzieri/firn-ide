@@ -182,6 +182,42 @@ func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {
 	}
 }
 
+func TestExecutor_StartCompoundRunningStepPopulatesWorkingDir(t *testing.T) {
+	spy := &emitSpy{}
+	exec := NewExecutor(spy.emit, nil)
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+
+	step := newTestProfile("worker", "printf done")
+	step.WorkingDir = "sub"
+	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"worker"}}
+
+	if err := exec.StartCompound(dir, compound, []RunProfile{step}); err != nil {
+		t.Fatalf("StartCompound returned error: %v", err)
+	}
+	if _, ok := spy.waitForState(RunStateSuccess, 5*time.Second); !ok {
+		t.Fatal("timed out waiting for aggregate success state")
+	}
+
+	// A running snapshot for step 0 must already carry the resolved working dir,
+	// so clickable paths in live output resolve against the step's cwd rather
+	// than the workspace root before the step terminates.
+	foundRunningWithDir := false
+	for _, snap := range compoundSnapshots(spy) {
+		for _, s := range snap.Steps {
+			if s.Idx == 0 && s.State == CompoundStepRunning && s.WorkingDir == subDir {
+				foundRunningWithDir = true
+			}
+		}
+	}
+	if !foundRunningWithDir {
+		t.Errorf("expected a running snapshot for step 0 with WorkingDir = %q", subDir)
+	}
+}
+
 func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 	spy := &emitSpy{}
 	out := &outputSpy{}
