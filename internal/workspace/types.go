@@ -76,7 +76,7 @@ const (
 	TypeGo       WorkspaceType = "go"
 	TypePython   WorkspaceType = "python"
 	TypeInfra    WorkspaceType = "infra"
-	TypeGeneral  WorkspaceType = "general"
+	TypeGeneral  WorkspaceType = "general" // reserved; no marker produces it yet
 )
 
 // WorkspaceDef is a detected (or synthetic) focused context within a repo.

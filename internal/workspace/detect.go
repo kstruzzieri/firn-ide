@@ -9,6 +9,10 @@ import (
 )
 
 // markerRule maps marker files in a directory to a workspace type + accent.
+// Within a single rule, the file names and the optional suffix are OR-combined:
+// a directory matches the rule if it contains any of files OR any file ending
+// in suffix. Different match behavior for a different type is expressed by a
+// separate rule entry, not by combining unrelated conditions in one rule.
 type markerRule struct {
 	files  []string // exact filenames
 	suffix string   // optional suffix match, e.g. ".tf"
@@ -37,6 +41,7 @@ var ignoredDirs = map[string]bool{
 // DetectWorkspaces scans a repo for focused workspaces. The synthetic "Project"
 // entry (whole repo, neutral accent) is always first. The repo root and its
 // subdirectories up to depth 2 are classified by marker files. Read-only.
+// Directories that cannot be read are silently skipped (best-effort scan).
 func DetectWorkspaces(fsys filesystem.FileSystem, repoPath string) ([]WorkspaceDef, error) {
 	result := []WorkspaceDef{projectWorkspace()}
 	var detected []WorkspaceDef
@@ -59,6 +64,8 @@ func DetectWorkspaces(fsys filesystem.FileSystem, repoPath string) ([]WorkspaceD
 			detected = append(detected, workspaceForDir(child, typ, accent))
 		}
 		for _, grand := range subDirs(fsys, childAbs) {
+			// path.Join (always forward-slash) keeps IDs/relDirs portable across
+			// OSes; do not switch to filepath.Join here.
 			grandRel := path.Join(child, grand)
 			grandAbs := filepath.Join(childAbs, grand)
 			if typ, accent, ok := classifyDir(fsys, grandAbs); ok {

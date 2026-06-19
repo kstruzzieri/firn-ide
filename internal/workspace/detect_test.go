@@ -115,6 +115,26 @@ func TestDetectWorkspaces(t *testing.T) {
 				{ID: "app", Name: "Frontend", RelDir: "app", Type: TypeFrontend, Accent: "blue"},
 			},
 		},
+		{
+			name: "depth-1 workspace with depth-2 child workspace yields both",
+			files: []string{
+				"/repo/backend/go.mod",
+				"/repo/backend/api/go.mod",
+			},
+			want: []WorkspaceDef{
+				project,
+				{ID: "backend", Name: "Go", RelDir: "backend", Type: TypeGo, Accent: "cyan"},
+				{ID: "backend/api", Name: "Go", RelDir: "backend/api", Type: TypeGo, Accent: "cyan"},
+			},
+		},
+		{
+			name:  "multiple root markers pick the highest priority",
+			files: []string{"/repo/package.json", "/repo/go.mod"},
+			want: []WorkspaceDef{
+				project,
+				{ID: "frontend", Name: "Frontend", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
