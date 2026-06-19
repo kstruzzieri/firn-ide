@@ -20,6 +20,7 @@ import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
+import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
 import { ReadDirectory, ReadFile } from '../wailsjs/go/main/App';
 import type { FileEvent } from './types/watcher';
@@ -30,6 +31,7 @@ function App() {
 
   useAutosave();
   useWorkspacePersistence();
+  useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
   useRecentWorkspaces();
