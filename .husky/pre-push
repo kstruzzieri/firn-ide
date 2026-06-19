@@ -1,8 +1,7 @@
 # Run golangci-lint before pushing so the GitHub Actions "Lint / golangci-lint"
-# job passes on the PR. Only issues NEW relative to origin/develop block the
-# push: CI is green on the develop baseline, and the repo carries pre-existing
-# lint debt (errcheck on Close/Fprintf, etc.) that the CI linter version
-# excludes — those must not block unrelated work. Bypass with `git push --no-verify`.
+# job passes on the PR. The repo is lint-clean under golangci-lint v2 (pinned in
+# .golangci.yml + .github/workflows/lint.yml), so this runs the full check —
+# identical to CI. Bypass with `git push --no-verify`.
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "pre-push: golangci-lint not installed — skipping Go lint."
@@ -19,17 +18,10 @@ if [ ! -d frontend/dist ]; then
   exit 0
 fi
 
-# Compare against the upstream base. Fall back to the previous commit if a local
-# origin/develop ref is unavailable (e.g. a fresh clone before the first fetch).
-base="origin/develop"
-if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
-  base="HEAD~1"
-fi
-
-echo "pre-push: golangci-lint (new issues since $base)..."
-if ! golangci-lint run --new-from-rev "$base" ./...; then
+echo "pre-push: golangci-lint run ./..."
+if ! golangci-lint run ./...; then
   echo ""
-  echo "pre-push: golangci-lint found new issues above. Fix them, or bypass with:"
+  echo "pre-push: golangci-lint found issues above. Fix them, or bypass with:"
   echo "    git push --no-verify"
   exit 1
 fi
