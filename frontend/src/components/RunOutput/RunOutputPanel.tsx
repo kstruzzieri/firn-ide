@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   useActiveRunOutput,
+  useActiveCompoundRun,
   useRunOutputViewMode,
   useRunOutputAutoScroll,
   useRunOutputs,
@@ -12,10 +13,14 @@ import { MergedView } from './MergedView';
 import { LanesView } from './LanesView';
 import { DiffView } from './DiffView';
 import { TimelineView } from './TimelineView';
+// Import the compound view file directly (not the RunProfiles barrel) to avoid a
+// circular import, since CompoundExecutionView imports from ../RunOutput/*.
+import { CompoundExecutionView } from '../RunProfiles/CompoundExecutionView';
 import styles from './RunOutput.module.css';
 
 export function RunOutputPanel() {
   const activeOutput = useActiveRunOutput();
+  const activeCompound = useActiveCompoundRun();
   const viewMode = useRunOutputViewMode();
   const autoScroll = useRunOutputAutoScroll();
   const runOutputs = useRunOutputs();
@@ -36,6 +41,18 @@ export function RunOutputPanel() {
       return next;
     });
   }, []);
+
+  // A compound run owns the entire output surface (it has its own internal
+  // tabs/views), so it takes precedence over the ordinary view modes.
+  if (activeCompound) {
+    return (
+      <div className={styles.panelContainer}>
+        <RunOutputTabs />
+        <RunOutputToolbar />
+        <CompoundExecutionView compound={activeCompound} />
+      </div>
+    );
+  }
 
   return (
     <div className={styles.panelContainer}>

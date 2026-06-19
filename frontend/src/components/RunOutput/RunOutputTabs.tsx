@@ -1,5 +1,6 @@
 import { useIDEStore, useRunOutputs, useActiveRunOutputId } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
+import { parseCompoundStepKey } from '../../utils/compoundRunKeys';
 import { ALL_PROFILES_ID } from '../../types/runOutput';
 import type { VisualState } from '../../types/runOutput';
 import styles from './RunOutputTabs.module.css';
@@ -11,21 +12,27 @@ export function RunOutputTabs() {
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
   const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
   const profiles = useIDEStore((s) => s.runProfiles);
+  const runCompounds = useIDEStore((s) => s.runCompounds);
 
-  const outputIds = Object.keys(runOutputs);
-  if (outputIds.length === 0) return null;
+  // Ordinary run outputs, excluding any composite step keys that may leak in.
+  const ordinaryIds = Object.keys(runOutputs).filter((id) => parseCompoundStepKey(id) == null);
+  // Compound runs that do not already have an ordinary output entry.
+  const compoundIds = Object.keys(runCompounds).filter(
+    (id) => !runOutputs[id] && parseCompoundStepKey(id) == null
+  );
+  const tabIds = [...ordinaryIds, ...compoundIds];
+  if (tabIds.length === 0) return null;
 
   const getProfileName = (id: string) => {
-    const profile = profiles.find((p) => p.id === id);
-    return profile?.name ?? id;
+    return profiles.find((p) => p.id === id)?.name ?? runCompounds[id]?.name ?? id;
   };
 
   return (
     <div className={styles.tabBar}>
-      {outputIds.map((id) => {
+      {tabIds.map((id) => {
         const vs: VisualState = getVisualState(
           id,
-          runOutputs[id]?.state,
+          runOutputs[id]?.state ?? runCompounds[id]?.state,
           stoppingIds,
           restartingIds
         );
@@ -43,7 +50,9 @@ export function RunOutputTabs() {
           </button>
         );
       })}
-      {outputIds.length >= 2 && (
+      {/* Timeline ("All") is ordinary-profiles-only; compounds have their own
+          all-steps view, so gate this tab on the ordinary outputs count. */}
+      {ordinaryIds.length >= 2 && (
         <button
           className={`${styles.tab} ${activeId === ALL_PROFILES_ID ? styles.tabActive : ''} ${styles.tabAll}`}
           onClick={() => setActiveRunOutput(ALL_PROFILES_ID)}

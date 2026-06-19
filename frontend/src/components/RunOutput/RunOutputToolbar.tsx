@@ -29,13 +29,16 @@ export function RunOutputToolbar() {
   const toggleAutoScroll = useIDEStore((s) => s.toggleAutoScroll);
   const clearRunOutput = useIDEStore((s) => s.clearRunOutput);
   const clearAllRunOutputs = useIDEStore((s) => s.clearAllRunOutputs);
+  const clearCompoundRunOutput = useIDEStore((s) => s.clearCompoundRunOutput);
   const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
   const runOutputs = useIDEStore((s) => s.runOutputs);
+  const runCompounds = useIDEStore((s) => s.runCompounds);
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
   const hasActiveProfile = activeId && !isAllProfiles;
   const activeOutput = hasActiveProfile ? runOutputs[activeId] : undefined;
-  const isRunning = activeOutput?.state === 'running';
+  const activeCompound = activeId && !isAllProfiles ? runCompounds[activeId] : undefined;
+  const isRunning = activeOutput?.state === 'running' || activeCompound?.state === 'running';
   const outputIds = Object.keys(runOutputs);
   const canTimeline = outputIds.length >= 2;
 
@@ -58,13 +61,16 @@ export function RunOutputToolbar() {
   };
 
   const handleStop = () => {
-    if (hasActiveProfile && isRunning) {
+    // activeId is the compound id for compounds, which the bindings accept directly.
+    if (activeId && isRunning) {
       StopRunProfile(activeId).catch((err: unknown) => showError('stop', activeId, err));
     }
   };
 
   const handleClear = () => {
-    if (isAllProfiles) {
+    if (activeCompound) {
+      clearCompoundRunOutput(activeId as string);
+    } else if (isAllProfiles) {
       clearAllRunOutputs();
     } else if (activeId) {
       clearRunOutput(activeId);
@@ -73,18 +79,22 @@ export function RunOutputToolbar() {
 
   return (
     <div className={styles.toolbar}>
-      <div className={styles.viewModeGroup}>
-        {VIEW_MODES.map(({ id, label }) => (
-          <button
-            key={id}
-            className={`${styles.viewModeBtn} ${viewMode === id ? styles.active : ''}`}
-            onClick={() => handleViewMode(id)}
-            disabled={id === 'timeline' && !canTimeline}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* The compound view owns its own internal tabs, so hide the segmented
+          view-mode group while a compound run is active. */}
+      {!activeCompound && (
+        <div className={styles.viewModeGroup}>
+          {VIEW_MODES.map(({ id, label }) => (
+            <button
+              key={id}
+              className={`${styles.viewModeBtn} ${viewMode === id ? styles.active : ''}`}
+              onClick={() => handleViewMode(id)}
+              disabled={id === 'timeline' && !canTimeline}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className={styles.toolbarDivider} />
 

@@ -1498,5 +1498,10 @@ export const useActiveRunOutput = () =>
     const id = state.activeRunOutputId;
     return id && id !== '__all__' ? (state.runOutputs[id] ?? null) : null;
   });
+export const useActiveCompoundRun = () =>
+  useIDEStore((state) => {
+    const id = state.activeRunOutputId;
+    return id ? (state.runCompounds[id] ?? null) : null;
+  });
 export const useRunOutputViewMode = () => useIDEStore((state) => state.runOutputViewMode);
 export const useRunOutputAutoScroll = () => useIDEStore((state) => state.runOutputAutoScroll);
