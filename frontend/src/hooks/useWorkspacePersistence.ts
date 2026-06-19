@@ -68,6 +68,7 @@ function collectWorkspaceState(
     },
     activeSidebar: state.activeSidebarView,
     hiddenProfileIds: state.hiddenProfileIds,
+    activeWorkspaceId: state.activeWorkspaceId,
   } as workspace.State;
 }
 
@@ -124,6 +125,14 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
     // Restore hidden profile IDs
     if (state.hiddenProfileIds) {
       useIDEStore.setState({ hiddenProfileIds: state.hiddenProfileIds });
+    }
+
+    // Restore active workspace selection
+    if (state.activeWorkspaceId) {
+      // Set the raw id; setWorkspaces (run by detection) re-validates it against
+      // the detected list, so this is order-independent w.r.t. detection. The
+      // accent selectors also fall back to "project" while the id is unresolved.
+      useIDEStore.setState({ activeWorkspaceId: state.activeWorkspaceId });
     }
 
     // Restore explorer expanded paths
