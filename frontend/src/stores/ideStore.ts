@@ -22,6 +22,15 @@ import { parseFileReferences } from '../utils/parseFileReferences';
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
+export type WorkspaceAccent =
+  | 'project'
+  | 'blue'
+  | 'cyan'
+  | 'green'
+  | 'purple'
+  | 'orange'
+  | 'amber'
+  | 'general';
 
 // Re-export FileEntry for convenience
 export type FileEntry = filesystem.FileEntry;
@@ -94,6 +103,10 @@ interface IDEState {
   // Workspace
   workspace: WorkspaceInfo | null;
   isLoading: boolean;
+
+  // Workspace identity (#53)
+  workspaces: workspace.WorkspaceDef[];
+  activeWorkspaceId: string;
 
   // File Explorer
   directoryTree: filesystem.FileEntry[];
@@ -173,6 +186,8 @@ interface IDEState {
 interface IDEActions {
   // Workspace actions
   setWorkspace: (workspace: WorkspaceInfo | null) => void;
+  setWorkspaces: (defs: workspace.WorkspaceDef[]) => void;
+  setActiveWorkspace: (id: string) => void;
   setLoading: (isLoading: boolean) => void;
 
   // File Explorer actions
@@ -354,6 +369,8 @@ export const useIDEStore = create<IDEStore>()(
       // Initial state
       workspace: null,
       isLoading: false,
+      workspaces: [],
+      activeWorkspaceId: 'project',
       directoryTree: [],
       isLoadingTree: false,
       treeError: null,
@@ -388,6 +405,27 @@ export const useIDEStore = create<IDEStore>()(
       // Workspace actions
       setWorkspace: (workspace) =>
         set({ workspace, workingDirectory: workspace?.path ?? '' }, false, 'setWorkspace'),
+
+      setWorkspaces: (defs) =>
+        set(
+          (state) => ({
+            workspaces: defs,
+            activeWorkspaceId: defs.some((d) => d.id === state.activeWorkspaceId)
+              ? state.activeWorkspaceId
+              : 'project',
+          }),
+          false,
+          'setWorkspaces'
+        ),
+
+      setActiveWorkspace: (id) =>
+        set(
+          (state) => ({
+            activeWorkspaceId: state.workspaces.some((d) => d.id === id) ? id : 'project',
+          }),
+          false,
+          'setActiveWorkspace'
+        ),
 
       setLoading: (isLoading) => set({ isLoading }, false, 'setLoading'),
 
@@ -1474,6 +1512,16 @@ export const useIDEStore = create<IDEStore>()(
 // Selector hooks for common use cases
 // These use stable selectors to prevent unnecessary re-renders
 export const useWorkspace = () => useIDEStore((state) => state.workspace);
+export const useWorkspaces = () => useIDEStore((state) => state.workspaces);
+export const useActiveWorkspaceId = () => useIDEStore((state) => state.activeWorkspaceId);
+export const useActiveWorkspace = () =>
+  useIDEStore((state) => state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? null);
+export const useActiveAccent = (): WorkspaceAccent =>
+  useIDEStore(
+    (state) =>
+      (state.workspaces.find((w) => w.id === state.activeWorkspaceId)?.accent as WorkspaceAccent) ??
+      'project'
+  );
 export const useIsLoading = () => useIDEStore((state) => state.isLoading);
 export const useSidebarView = () => useIDEStore((state) => state.activeSidebarView);
 export const useIsLeftPanelCollapsed = () => useIDEStore((state) => state.isLeftPanelCollapsed);
