@@ -21,6 +21,12 @@ func TestResolveSteps(t *testing.T) {
 			wantIDs:  []string{"build", "test", "build"},
 		},
 		{
+			name:      "empty step list fails",
+			compound:  RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{}},
+			all:       []RunProfile{singleA},
+			wantError: `compound profile "ci" must have at least one step`,
+		},
+		{
 			name:      "missing step fails",
 			compound:  RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"missing"}},
 			all:       []RunProfile{singleA},

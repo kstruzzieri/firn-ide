@@ -10,6 +10,14 @@ import (
 const compoundStepKeyPrefix = "compound:"
 
 func ResolveSteps(compound RunProfile, all []RunProfile) ([]RunProfile, error) {
+	// Reject empty step lists defensively. Validate enforces this for the UI, but
+	// a hand-edited or stale .firn/run-profiles.json can reach the runtime path;
+	// without this guard StartCompound would emit running then an immediate
+	// success aggregate without executing anything (a false green).
+	if len(compound.Steps) == 0 {
+		return nil, fmt.Errorf("compound profile %q must have at least one step", compound.ID)
+	}
+
 	byID := make(map[string]RunProfile, len(all))
 	for _, profile := range all {
 		byID[profile.ID] = profile
