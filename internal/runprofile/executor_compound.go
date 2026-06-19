@@ -202,15 +202,12 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 
 		// Close the start/stop race: a cancel that arrived in the window between
 		// the running-transition unlock and the process registration inside
-		// startProcess could be missed by an external Stop. Mark the leaf stopped
-		// and signal its process group; the following waitProcess closes done.
+		// startProcess could be missed by an external Stop. signalStop marks the
+		// leaf stopped, sends SIGTERM, and escalates to SIGKILL after the grace
+		// period (via a watchdog) so a TERM-ignoring child cannot leave the
+		// following waitProcess — and thus Stop/restart/StopAll — blocked.
 		if ctx.Err() != nil {
-			e.mu.Lock()
-			rp.stopped = true
-			e.mu.Unlock()
-			rp.stopOnce.Do(func() {
-				_ = killProcessGroup(rp.cmd.Process.Pid)
-			})
+			e.signalStop(rp)
 		}
 
 		res := e.waitProcess(stepKey, rp, false, false)

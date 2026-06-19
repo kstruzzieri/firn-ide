@@ -249,6 +249,21 @@ func (e *Executor) Stop(profileID string) error {
 	}
 	e.mu.Unlock()
 
+	e.signalStop(rp)
+
+	// Block until fully cleaned up
+	<-rp.done
+	return nil
+}
+
+// signalStop sends SIGTERM to a leaf's process group exactly once and escalates
+// to SIGKILL after stopGracePeriod if it has not exited. The escalation runs in
+// a watchdog goroutine, so this is non-blocking: callers that own rp.done (the
+// compound coordinator, which closes it via waitProcess) can call this and keep
+// going, while callers that need full cleanup wait on rp.done afterward. Using
+// rp.stopOnce ensures a single SIGTERM + single escalation even when both an
+// external Stop and the coordinator's start/stop-race fallback target the leaf.
+func (e *Executor) signalStop(rp *runningProcess) {
 	rp.stopOnce.Do(func() {
 		e.mu.Lock()
 		rp.stopped = true
@@ -257,17 +272,14 @@ func (e *Executor) Stop(profileID string) error {
 		pid := rp.cmd.Process.Pid
 		_ = killProcessGroup(pid)
 
-		select {
-		case <-rp.done:
-			return
-		case <-time.After(stopGracePeriod):
-			_ = forceKillProcessGroup(pid)
-		}
+		go func() {
+			select {
+			case <-rp.done:
+			case <-time.After(stopGracePeriod):
+				_ = forceKillProcessGroup(pid)
+			}
+		}()
 	})
-
-	// Block until fully cleaned up
-	<-rp.done
-	return nil
 }
 
 // StopAll terminates all running profiles within the given timeout.

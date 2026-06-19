@@ -173,6 +173,29 @@ func TestExecutor_StartCompoundRejected(t *testing.T) {
 	}
 }
 
+func TestExecutor_SignalStopEscalatesToSIGKILL(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	dir := t.TempDir()
+	// Trap SIGTERM so the child can only be ended by a SIGKILL escalation.
+	profile := newTestProfile("stubborn", "trap '' TERM; sleep 30")
+
+	rp, err := exec.startProcess("stubborn", profile, dir)
+	if err != nil {
+		t.Fatalf("startProcess returned error: %v", err)
+	}
+	go exec.waitProcess("stubborn", rp, false, false)
+
+	// Non-blocking: SIGTERM now, SIGKILL after the grace period via watchdog.
+	exec.signalStop(rp)
+
+	select {
+	case <-rp.done:
+		// Escalation killed the TERM-ignoring child and cleanup completed.
+	case <-time.After(stopGracePeriod + 5*time.Second):
+		t.Fatal("signalStop did not escalate to SIGKILL; process survived past grace period")
+	}
+}
+
 func TestExecutor_StopGraceful(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
