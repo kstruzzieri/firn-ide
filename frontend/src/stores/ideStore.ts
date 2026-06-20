@@ -1562,6 +1562,10 @@ export const useWorkspaces = () => useIDEStore((state) => state.workspaces);
 export const useActiveWorkspaceId = () => useIDEStore((state) => state.activeWorkspaceId);
 export const useActiveWorkspace = () =>
   useIDEStore((state) => state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? null);
+export const useTreeViewMode = (): 'project' | 'workspace' =>
+  useIDEStore((state) => (state.activeWorkspaceId === 'project' ? 'project' : 'workspace'));
+export const useCanFocusWorkspace = (): boolean =>
+  useIDEStore((state) => state.workspaces.some((w) => w.id !== 'project'));
 export const useActiveAccent = (): WorkspaceAccent =>
   useIDEStore(
     (state) =>

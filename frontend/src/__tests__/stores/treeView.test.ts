@@ -132,3 +132,35 @@ describe('treeView store — setWorkspaces invalidation', () => {
     expect(useIDEStore.getState().lastFocusedWorkspaceId).toBe('frontend');
   });
 });
+
+import { renderHook } from '@testing-library/react';
+import { useTreeViewMode, useCanFocusWorkspace } from '../../stores/ideStore';
+
+describe('treeView store — selectors', () => {
+  beforeEach(() => {
+    useIDEStore.setState({
+      workspaces: [],
+      activeWorkspaceId: 'project',
+      lastFocusedWorkspaceId: null,
+    });
+  });
+
+  it('useTreeViewMode is project when active id is project, else workspace', () => {
+    const { result, rerender } = renderHook(() => useTreeViewMode());
+    expect(result.current).toBe('project');
+    useIDEStore.setState({
+      workspaces: defs,
+      activeWorkspaceId: 'frontend',
+    });
+    rerender();
+    expect(result.current).toBe('workspace');
+  });
+
+  it('useCanFocusWorkspace reflects presence of a non-project workspace', () => {
+    const { result, rerender } = renderHook(() => useCanFocusWorkspace());
+    expect(result.current).toBe(false);
+    useIDEStore.setState({ workspaces: defs });
+    rerender();
+    expect(result.current).toBe(true);
+  });
+});
