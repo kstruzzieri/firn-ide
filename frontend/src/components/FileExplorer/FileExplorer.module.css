@@ -146,3 +146,15 @@
   outline: 2px solid var(--status-error);
   outline-offset: 2px;
 }
+
+/* Workspace-View scoped folder missing from the loaded tree */
+.scopedError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}

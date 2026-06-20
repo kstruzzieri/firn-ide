@@ -1,0 +1,82 @@
+import { render, screen } from '@testing-library/react';
+import { FileExplorer } from '../../components/FileExplorer/FileExplorer';
+import { useIDEStore } from '../../stores/ideStore';
+import type { workspace } from '../../../wailsjs/go/models';
+import type { FileEntry } from '../../stores/ideStore';
+
+// Mock Wails bindings (pulled in transitively via layout/IDEShell and useDirectoryTree)
+jest.mock('../../../wailsjs/go/main/App', () => ({
+  ToggleMaximize: jest.fn(),
+  ReadDirectory: jest.fn(),
+  OpenFolderDialog: jest.fn(),
+}));
+
+jest.mock('../../../wailsjs/runtime/runtime', () => ({
+  WindowSetTitle: jest.fn(),
+}));
+
+// Prevent automatic fetching inside useDirectoryTree hook
+jest.mock('../../components/FileExplorer/useDirectoryTree', () => ({
+  useDirectoryTree: () => ({ refetch: jest.fn() }),
+}));
+
+const root = '/repo';
+const defs = [
+  { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+] as workspace.WorkspaceDef[];
+
+const tree: FileEntry[] = [
+  { name: 'README.md', path: `${root}/README.md`, isDir: false } as FileEntry,
+  {
+    name: 'frontend',
+    path: `${root}/frontend`,
+    isDir: true,
+    children: [{ name: 'App.tsx', path: `${root}/frontend/App.tsx`, isDir: false } as FileEntry],
+  } as FileEntry,
+];
+
+function seed(
+  activeWorkspaceId: string,
+  extra: Partial<ReturnType<typeof useIDEStore.getState>> = {}
+) {
+  useIDEStore.setState({
+    workspace: { name: 'repo', path: root },
+    workspaces: defs,
+    activeWorkspaceId,
+    lastFocusedWorkspaceId: activeWorkspaceId !== 'project' ? activeWorkspaceId : null,
+    directoryTree: tree,
+    expandedPaths: new Set([`${root}/frontend`]),
+    isRootExpanded: true,
+    isLoadingTree: false,
+    treeError: null,
+    ...extra,
+  });
+}
+
+describe('FileExplorer views', () => {
+  it('renders the segmented toggle and no tabs in Project View', () => {
+    seed('project');
+    render(<FileExplorer />);
+    expect(screen.getByRole('button', { name: 'Project' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('tablist')).toBeNull();
+  });
+
+  it('shows the workspace tab strip in Workspace View', () => {
+    seed('frontend');
+    render(<FileExplorer />);
+    expect(screen.getByRole('tablist')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Frontend' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('renders the scoped-error state when the workspace folder is missing', () => {
+    seed('frontend', {
+      workspaces: [
+        defs[0],
+        { id: 'frontend', name: 'Frontend', relDir: 'missing', type: 'frontend', accent: 'blue' },
+      ] as workspace.WorkspaceDef[],
+    });
+    render(<FileExplorer />);
+    expect(screen.getByText(/workspace folder not found/i)).toBeInTheDocument();
+  });
+});
