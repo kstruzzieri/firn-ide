@@ -93,16 +93,28 @@ export function FileExplorer() {
     overscan: 12,
   });
 
+  // Primitive handlers — single source of truth; used by both TreeRow and actions.
+  const handleToggle = useCallback(
+    (kind: 'root' | 'entry', path?: string) =>
+      kind === 'root' ? toggleRootExpanded() : path && toggleExpanded(path),
+    [toggleRootExpanded, toggleExpanded]
+  );
+  const handleSelect = useCallback((path: string) => setSelectedPath(path), [setSelectedPath]);
+  const handleOpen = useCallback((path: string) => void ensureEditorFileOpen(path), []);
+  const handleHidePanel = useCallback(() => toggleLeftPanel(), [toggleLeftPanel]);
+
+  // Keyboard-nav action adapters — thin wrappers over the primitive handlers above.
   const actions = useMemo(
     () => ({
-      toggle: (row: FlatRow) =>
-        row.kind === 'root' ? toggleRootExpanded() : toggleExpanded(row.entry!.path),
-      select: (row: FlatRow) => row.entry && setSelectedPath(row.entry.path),
+      toggle: (row: FlatRow) => handleToggle(row.kind, row.entry?.path),
+      select: (row: FlatRow) => {
+        if (row.entry) handleSelect(row.entry.path);
+      },
       open: (row: FlatRow) => {
-        if (row.entry && !row.entry.isDir) void ensureEditorFileOpen(row.entry.path);
+        if (row.entry && !row.entry.isDir) handleOpen(row.entry.path);
       },
     }),
-    [toggleRootExpanded, toggleExpanded, setSelectedPath]
+    [handleToggle, handleSelect, handleOpen]
   );
 
   const { activeKey, setActiveKey, activeId, onKeyDown } = useTreeKeyboardNav({
@@ -113,26 +125,18 @@ export function FileExplorer() {
 
   // Active-file reveal: once ancestors are expanded and rows recomputed, scroll
   // the selected row into view and mark it the keyboard-active descendant.
+  // lastRevealed guards against re-running when expandedPaths changes (which
+  // rebuilds `rows`) but selectedPath has not changed.
+  const lastRevealed = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedPath) return;
+    if (!selectedPath || selectedPath === lastRevealed.current) return;
     const idx = rows.findIndex((r) => r.kind === 'entry' && r.entry!.path === selectedPath);
     if (idx >= 0) {
-      // Controlled reveal: syncs keyboard focus to the newly selected row; driven
-      // by an external selection change (active editor file), not a render cascade.
-
+      lastRevealed.current = selectedPath;
       setActiveKey(rows[idx].key);
       virtualizer.scrollToIndex(idx, { align: 'auto' });
     }
   }, [selectedPath, rows, virtualizer, setActiveKey]);
-
-  const handleToggle = useCallback(
-    (kind: 'root' | 'entry', path?: string) =>
-      kind === 'root' ? toggleRootExpanded() : path && toggleExpanded(path),
-    [toggleRootExpanded, toggleExpanded]
-  );
-  const handleSelect = useCallback((path: string) => setSelectedPath(path), [setSelectedPath]);
-  const handleOpen = useCallback((path: string) => void ensureEditorFileOpen(path), []);
-  const handleHidePanel = useCallback(() => toggleLeftPanel(), [toggleLeftPanel]);
 
   const renderContent = () => {
     if (isLoadingTree) return <FileExplorerSkeleton />;
