@@ -411,12 +411,26 @@ export const useIDEStore = create<IDEStore>()(
 
       setWorkspaces: (defs) =>
         set(
-          (state) => ({
-            workspaces: defs,
-            activeWorkspaceId: defs.some((d) => d.id === state.activeWorkspaceId)
-              ? state.activeWorkspaceId
-              : 'project',
-          }),
+          (state) => {
+            const activeValid = defs.some((d) => d.id === state.activeWorkspaceId);
+            const nextActive = activeValid ? state.activeWorkspaceId : 'project';
+
+            const lastStillValid =
+              state.lastFocusedWorkspaceId !== null &&
+              defs.some((d) => d.id === state.lastFocusedWorkspaceId);
+            let nextLast = lastStillValid ? state.lastFocusedWorkspaceId : null;
+
+            // If the active workspace is a real (non-project) workspace, lastFocused follows it.
+            if (nextActive !== 'project') {
+              nextLast = nextActive;
+            }
+
+            return {
+              workspaces: defs,
+              activeWorkspaceId: nextActive,
+              lastFocusedWorkspaceId: nextLast,
+            };
+          },
           false,
           'setWorkspaces'
         ),

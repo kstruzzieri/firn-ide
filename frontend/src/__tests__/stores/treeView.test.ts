@@ -98,3 +98,37 @@ describe('treeView store — setTreeViewMode', () => {
     expect(useIDEStore.getState().activeWorkspaceId).toBe('project');
   });
 });
+
+describe('treeView store — setWorkspaces invalidation', () => {
+  beforeEach(() => {
+    useIDEStore.setState({
+      workspaces: [],
+      activeWorkspaceId: 'project',
+      lastFocusedWorkspaceId: null,
+    });
+  });
+
+  it('clears lastFocusedWorkspaceId when it disappears from the new list', () => {
+    useIDEStore.getState().setWorkspaces(defs);
+    useIDEStore.getState().setActiveWorkspace('frontend');
+    useIDEStore.getState().setActiveWorkspace('project'); // active=project, lastFocused=frontend
+    useIDEStore.getState().setWorkspaces([defs[0], defs[2]]); // frontend gone, go stays
+    expect(useIDEStore.getState().lastFocusedWorkspaceId).toBeNull();
+  });
+
+  it('keeps a still-valid lastFocusedWorkspaceId', () => {
+    useIDEStore.getState().setWorkspaces(defs);
+    useIDEStore.getState().setActiveWorkspace('go');
+    useIDEStore.getState().setActiveWorkspace('project'); // lastFocused=go
+    useIDEStore.getState().setWorkspaces(defs); // go still present
+    expect(useIDEStore.getState().lastFocusedWorkspaceId).toBe('go');
+  });
+
+  it('makes lastFocusedWorkspaceId follow a non-project active id (restore path)', () => {
+    // Simulates persistence restore: raw-set active id before workspaces arrive.
+    useIDEStore.setState({ activeWorkspaceId: 'frontend', lastFocusedWorkspaceId: null });
+    useIDEStore.getState().setWorkspaces(defs);
+    expect(useIDEStore.getState().activeWorkspaceId).toBe('frontend');
+    expect(useIDEStore.getState().lastFocusedWorkspaceId).toBe('frontend');
+  });
+});
