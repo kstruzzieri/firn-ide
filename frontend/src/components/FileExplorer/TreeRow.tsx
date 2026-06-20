@@ -114,7 +114,7 @@ function TreeRowImpl({
       aria-setsize={setSize}
       aria-posinset={posInSet}
       aria-expanded={isDir ? isExpanded : undefined}
-      aria-selected={isSelected}
+      aria-selected={isSelected || undefined}
       tabIndex={-1}
     >
       {isDir ? (

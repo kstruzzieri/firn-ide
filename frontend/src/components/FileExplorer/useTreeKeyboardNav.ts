@@ -1,5 +1,5 @@
 // src/components/FileExplorer/useTreeKeyboardNav.ts
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FlatRow } from '../../utils/flattenTree';
 import { rowDomId } from './TreeRow';
 
@@ -46,9 +46,9 @@ export function useTreeKeyboardNav({
   // Derive the effective active key in-render: if storedKey is no longer in the
   // visible row list (rows collapsed, workspace changed), fall back to the first row.
   // This avoids calling setState inside an effect, satisfying react-hooks/set-state-in-effect.
-  const rowKeys = rows.map((r) => r.key);
+  const rowKeySet = useMemo(() => new Set(rows.map((r) => r.key)), [rows]);
   const activeKey =
-    storedKey !== null && rowKeys.includes(storedKey) ? storedKey : (rows[0]?.key ?? null);
+    storedKey !== null && rowKeySet.has(storedKey) ? storedKey : (rows[0]?.key ?? null);
 
   // Sync storedKey when activeKey was derived to a different value.
   // We keep storedKey === activeKey so future renders don't repeat the derivation cost.

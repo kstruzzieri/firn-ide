@@ -129,13 +129,19 @@ export function FileExplorer() {
   // rebuilds `rows`) but selectedPath has not changed.
   const lastRevealed = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedPath || selectedPath === lastRevealed.current) return;
+    if (!selectedPath) return;
     const idx = rows.findIndex((r) => r.kind === 'entry' && r.entry!.path === selectedPath);
-    if (idx >= 0) {
-      lastRevealed.current = selectedPath;
-      setActiveKey(rows[idx].key);
-      virtualizer.scrollToIndex(idx, { align: 'auto' });
+    if (idx < 0) {
+      // Selected row is not currently visible (an ancestor was collapsed). Clear
+      // the guard so the row re-reveals if it reappears, even if selectedPath is
+      // unchanged.
+      lastRevealed.current = null;
+      return;
     }
+    if (selectedPath === lastRevealed.current) return;
+    lastRevealed.current = selectedPath;
+    setActiveKey(rows[idx].key);
+    virtualizer.scrollToIndex(idx, { align: 'auto' });
   }, [selectedPath, rows, virtualizer, setActiveKey]);
 
   const renderContent = () => {
@@ -156,6 +162,11 @@ export function FileExplorer() {
     }
 
     const virtualItems = virtualizer.getVirtualItems();
+    // aria-activedescendant must reference an element that is actually in the DOM.
+    // With virtualization the active row only exists while inside the window, so
+    // omit the attribute when it is scrolled out rather than dangle a missing id.
+    const activeRowRendered =
+      activeId !== undefined && virtualItems.some((vi) => rows[vi.index]?.key === activeKey);
 
     return (
       <div
@@ -163,7 +174,7 @@ export function FileExplorer() {
         className={styles.scrollArea}
         role="tree"
         aria-label="File explorer"
-        aria-activedescendant={activeId}
+        aria-activedescendant={activeRowRendered ? activeId : undefined}
         tabIndex={0}
         onKeyDown={onKeyDown}
         style={

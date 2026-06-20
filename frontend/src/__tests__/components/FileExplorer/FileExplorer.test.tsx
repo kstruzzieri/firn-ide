@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { FileExplorer } from '../../../components/FileExplorer';
+import { FileExplorer, rowDomId } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
 import { ReadDirectory, ReadFile } from '../../../../wailsjs/go/main/App';
 import { filesystem } from '../../../../wailsjs/go/models';
@@ -249,6 +249,25 @@ describe('FileExplorer', () => {
       await waitFor(() => {
         const state = useIDEStore.getState();
         expect(state.activeFileId).toBe('/workspace/src/App.tsx');
+      });
+    });
+
+    it('reveals the active file by marking its row the active descendant', async () => {
+      act(() => {
+        useIDEStore.setState({
+          isRootExpanded: true,
+          expandedPaths: new Set(['/workspace/src']),
+          selectedPath: '/workspace/src/App.tsx',
+        });
+      });
+
+      render(<FileExplorer />);
+
+      // The reveal effect locates the selected row and marks it the active
+      // descendant (and keeps it within the rendered window).
+      await waitFor(() => {
+        const tree = screen.getByRole('tree');
+        expect(tree).toHaveAttribute('aria-activedescendant', rowDomId('/workspace/src/App.tsx'));
       });
     });
 
