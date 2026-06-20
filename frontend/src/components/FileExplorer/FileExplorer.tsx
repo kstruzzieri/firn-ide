@@ -116,7 +116,15 @@ export function FileExplorer() {
     const ChevronIcon = isRootExpanded ? ChevronDownIcon : ChevronRightIcon;
 
     return (
-      <div role="tree" aria-label="File explorer">
+      <div
+        role="tree"
+        aria-label="File explorer"
+        style={
+          treeAccent
+            ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})`, minHeight: '100%' }
+            : undefined
+        }
+      >
         <div
           className={`${treeStyles.row} ${treeStyles.root}`}
           onClick={toggleRootExpanded}
@@ -185,12 +193,7 @@ export function FileExplorer() {
       }
     >
       {mode === 'workspace' && <WorkspaceTabs />}
-      <div
-        className={styles.tree}
-        style={treeAccent ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})` } : undefined}
-      >
-        {renderContent()}
-      </div>
+      <div className={styles.tree}>{renderContent()}</div>
     </Panel>
   );
 }
