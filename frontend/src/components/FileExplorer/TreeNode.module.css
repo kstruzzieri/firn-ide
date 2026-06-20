@@ -16,9 +16,15 @@
   background-color: var(--surface-hover);
 }
 
-/* Project-View region tint (accent at low opacity over the panel surface). */
+/*
+ * Region tint: faint accent wash + a 3px left rail. Because a workspace region
+ * is a contiguous run of rows, the per-row rails stack into one continuous
+ * vertical rail that groups the region (Project View = multi-color per region;
+ * Workspace View = single accent across the tree).
+ */
 .row.tinted {
   background-color: color-mix(in srgb, var(--region-accent) 6%, transparent);
+  box-shadow: inset 3px 0 0 var(--region-accent);
 }
 
 .row.tinted:hover {
