@@ -54,7 +54,6 @@ describe('useFileTreePresentation', () => {
     expect(result.current.roots).toHaveLength(3);
     expect(result.current.rootLabel).toBe('repo');
     expect(result.current.scopedError).toBe(false);
-    expect(result.current.tabs.map((t) => t.id)).toEqual(['frontend', 'go']);
     expect(result.current.getRegionAccent?.(tree[1])).toBe('blue');
   });
 

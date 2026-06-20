@@ -8,7 +8,6 @@ import {
   useCanFocusWorkspace,
 } from '../stores/ideStore';
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
-import type { workspace } from '../../wailsjs/go/models';
 import { createRegionAccentResolver, relativePathFromRoot } from '../utils/workspaceRegions';
 
 export interface FileTreePresentation {
@@ -22,8 +21,6 @@ export interface FileTreePresentation {
   roots: FileEntry[];
   /** True when a workspace's relDir cannot be located in the loaded tree. */
   scopedError: boolean;
-  /** Non-project workspaces, for the Workspace-View tab strip. */
-  tabs: workspace.WorkspaceDef[];
   /** Region tint resolver — present only in Project View. */
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
 }
@@ -57,15 +54,13 @@ export function useFileTreePresentation(): FileTreePresentation {
   const repoRoot = repo?.path ?? '';
   const repoName = repo?.name ?? '';
 
-  const tabs = useMemo(() => workspaces.filter((w) => w.id !== 'project'), [workspaces]);
-
   const getRegionAccent = useMemo(
     () => (mode === 'project' ? createRegionAccentResolver(repoRoot, workspaces) : undefined),
     [mode, repoRoot, workspaces]
   );
 
   return useMemo<FileTreePresentation>(() => {
-    const base = { mode, canFocusWorkspace, tabs };
+    const base = { mode, canFocusWorkspace };
 
     if (mode === 'project') {
       return {
@@ -101,5 +96,5 @@ export function useFileTreePresentation(): FileTreePresentation {
       scopedError: scoped === null,
       getRegionAccent: undefined,
     };
-  }, [mode, canFocusWorkspace, tabs, repoName, repoRoot, tree, active, getRegionAccent]);
+  }, [mode, canFocusWorkspace, repoName, repoRoot, tree, active, getRegionAccent]);
 }
