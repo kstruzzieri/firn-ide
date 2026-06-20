@@ -107,6 +107,7 @@ interface IDEState {
   // Workspace identity (#53)
   workspaces: workspace.WorkspaceDef[];
   activeWorkspaceId: string;
+  lastFocusedWorkspaceId: string | null;
 
   // File Explorer
   directoryTree: filesystem.FileEntry[];
@@ -371,6 +372,7 @@ export const useIDEStore = create<IDEStore>()(
       isLoading: false,
       workspaces: [],
       activeWorkspaceId: 'project',
+      lastFocusedWorkspaceId: null,
       directoryTree: [],
       isLoadingTree: false,
       treeError: null,
@@ -420,9 +422,14 @@ export const useIDEStore = create<IDEStore>()(
 
       setActiveWorkspace: (id) =>
         set(
-          (state) => ({
-            activeWorkspaceId: state.workspaces.some((d) => d.id === id) ? id : 'project',
-          }),
+          (state) => {
+            const valid = state.workspaces.some((d) => d.id === id);
+            const nextId = valid ? id : 'project';
+            return {
+              activeWorkspaceId: nextId,
+              lastFocusedWorkspaceId: nextId !== 'project' ? nextId : state.lastFocusedWorkspaceId,
+            };
+          },
           false,
           'setActiveWorkspace'
         ),
