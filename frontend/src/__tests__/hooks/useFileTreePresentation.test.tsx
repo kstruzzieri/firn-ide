@@ -54,16 +54,20 @@ describe('useFileTreePresentation', () => {
     expect(result.current.roots).toHaveLength(3);
     expect(result.current.rootLabel).toBe('repo');
     expect(result.current.scopedError).toBe(false);
+    expect(result.current.treeAccent).toBeUndefined();
     expect(result.current.getRegionAccent?.(tree[1])).toBe('blue');
   });
 
-  it('workspace mode scopes to the workspace children and drops the resolver', () => {
+  it('workspace mode scopes to the children and washes the tree in the workspace accent', () => {
     seed('go');
     const { result } = renderHook(() => useFileTreePresentation());
     expect(result.current.mode).toBe('workspace');
     expect(result.current.rootLabel).toBe('Go');
     expect(result.current.roots.map((e) => e.name)).toEqual(['main.go']);
-    expect(result.current.getRegionAccent).toBeUndefined();
+    // Uniform wash: every entry resolves to the active workspace's accent.
+    expect(result.current.treeAccent).toBe('cyan');
+    expect(result.current.getRegionAccent?.(tree[0])).toBe('cyan');
+    expect(result.current.getRegionAccent?.(tree[1])).toBe('cyan');
     expect(result.current.scopedError).toBe(false);
   });
 

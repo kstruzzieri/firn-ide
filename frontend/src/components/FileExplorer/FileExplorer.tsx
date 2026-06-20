@@ -47,7 +47,8 @@ export function FileExplorer() {
   const activeFileId = useActiveFileId();
 
   const presentation = useFileTreePresentation();
-  const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent } = presentation;
+  const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
+    presentation;
 
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
   const toggleRootExpanded = useIDEStore((state) => state.toggleRootExpanded);
@@ -184,7 +185,12 @@ export function FileExplorer() {
       }
     >
       {mode === 'workspace' && <WorkspaceTabs />}
-      <div className={styles.tree}>{renderContent()}</div>
+      <div
+        className={styles.tree}
+        style={treeAccent ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})` } : undefined}
+      >
+        {renderContent()}
+      </div>
     </Panel>
   );
 }

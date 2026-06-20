@@ -21,8 +21,16 @@ export interface FileTreePresentation {
   roots: FileEntry[];
   /** True when a workspace's relDir cannot be located in the loaded tree. */
   scopedError: boolean;
-  /** Region tint resolver — present only in Project View. */
+  /**
+   * Per-entry tint resolver. Project View → per-region multi-color resolver.
+   * Workspace View → uniform resolver returning the active workspace accent.
+   */
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
+  /**
+   * Active workspace accent, used for the Workspace-View left rail. Undefined in
+   * Project View (regions are multi-color) and when the workspace has no accent.
+   */
+  treeAccent?: WorkspaceAccent;
 }
 
 /**
@@ -75,6 +83,10 @@ export function useFileTreePresentation(): FileTreePresentation {
 
     const relDir = active?.relDir ?? '';
     const workspaceLabel = active?.name ?? repoName;
+    // Workspace View washes the whole scoped tree in the active workspace's
+    // accent (uniform), reinforcing which workspace the files belong to.
+    const treeAccent = (active?.accent as WorkspaceAccent) || undefined;
+    const workspaceResolver = treeAccent ? () => treeAccent : undefined;
 
     if (relDir === '') {
       return {
@@ -83,7 +95,8 @@ export function useFileTreePresentation(): FileTreePresentation {
         rootPath: repoRoot,
         roots: tree,
         scopedError: false,
-        getRegionAccent: undefined,
+        getRegionAccent: workspaceResolver,
+        treeAccent,
       };
     }
 
@@ -94,7 +107,8 @@ export function useFileTreePresentation(): FileTreePresentation {
       rootPath: scoped?.path ?? `${repoRoot}/${relDir}`,
       roots: scoped?.children ?? [],
       scopedError: scoped === null,
-      getRegionAccent: undefined,
+      getRegionAccent: workspaceResolver,
+      treeAccent,
     };
   }, [mode, canFocusWorkspace, repoName, repoRoot, tree, active, getRegionAccent]);
 }
