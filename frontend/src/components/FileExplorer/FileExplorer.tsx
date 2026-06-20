@@ -1,13 +1,13 @@
-import { useCallback, useEffect } from 'react';
+// src/components/FileExplorer/FileExplorer.tsx
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Panel, PanelAction } from '../layout';
-import { ChevronDownIcon, ChevronRightIcon, MinusIcon, FolderOpenIcon, FolderIcon } from '../icons';
+import { MinusIcon } from '../icons';
 import {
   useIDEStore,
   useExpandedPaths,
   useSelectedPath,
   useIsRootExpanded,
-} from '../../stores/ideStore';
-import {
   useIsLoadingTree,
   useTreeError,
   useActiveFileId,
@@ -16,26 +16,14 @@ import {
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
-import { TreeNode } from './TreeNode';
+import { TreeRow, ROW_HEIGHT, rowDomId } from './TreeRow';
 import { TreeViewToggle } from './TreeViewToggle';
 import { WorkspaceTabs } from './WorkspaceTabs';
-import type { filesystem } from '../../../wailsjs/go/models';
+import { flattenVisibleTree } from '../../utils/flattenTree';
+import type { FlatRow } from '../../utils/flattenTree';
+import { useTreeKeyboardNav } from './useTreeKeyboardNav';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import styles from './FileExplorer.module.css';
-import treeStyles from './TreeNode.module.css';
-
-/** Shortens a file path by replacing home directory with ~ */
-function shortenPath(path: string): string {
-  const home = '/Users/';
-  if (path.startsWith(home)) {
-    const afterHome = path.slice(home.length);
-    const slashIndex = afterHome.indexOf('/');
-    if (slashIndex !== -1) {
-      return '~' + afterHome.slice(slashIndex);
-    }
-  }
-  return path;
-}
 
 export function FileExplorer() {
   const workspace = useWorkspace();
@@ -55,8 +43,8 @@ export function FileExplorer() {
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
   const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
 
-  // Sync active file in editor to file tree selection. Reads expandedPaths from
-  // the store snapshot to avoid a dependency cycle (Set refs change each update).
+  // Sync active editor file into the tree selection + auto-expand its ancestors.
+  // Reads expandedPaths from the store snapshot to avoid a dependency cycle.
   useEffect(() => {
     if (activeFileId && activeFileId !== useIDEStore.getState().selectedPath) {
       setSelectedPath(activeFileId);
@@ -73,7 +61,6 @@ export function FileExplorer() {
           currentPath += '/' + parts[i];
           newExpanded.add(currentPath);
         }
-
         if (newExpanded.size !== currentExpanded.size) {
           useIDEStore.setState({ expandedPaths: newExpanded });
         }
@@ -84,15 +71,67 @@ export function FileExplorer() {
   const { openFolder } = useOpenFolder();
   const { refetch } = useFetchDirectoryTree();
 
-  const handleToggle = useCallback((path: string) => toggleExpanded(path), [toggleExpanded]);
-  const handleSelect = useCallback(
-    (entry: filesystem.FileEntry) => setSelectedPath(entry.path),
-    [setSelectedPath]
+  const rows = useMemo<FlatRow[]>(
+    () =>
+      flattenVisibleTree({
+        roots,
+        expandedPaths,
+        selectedPath,
+        getRegionAccent,
+        isRootExpanded,
+        rootLabel,
+        rootPath,
+      }),
+    [roots, expandedPaths, selectedPath, getRegionAccent, isRootExpanded, rootLabel, rootPath]
   );
-  const handleOpen = useCallback(async (entry: filesystem.FileEntry) => {
-    if (entry.isDir) return;
-    await ensureEditorFileOpen(entry.path);
-  }, []);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+  });
+
+  const actions = useMemo(
+    () => ({
+      toggle: (row: FlatRow) =>
+        row.kind === 'root' ? toggleRootExpanded() : toggleExpanded(row.entry!.path),
+      select: (row: FlatRow) => row.entry && setSelectedPath(row.entry.path),
+      open: (row: FlatRow) => {
+        if (row.entry && !row.entry.isDir) void ensureEditorFileOpen(row.entry.path);
+      },
+    }),
+    [toggleRootExpanded, toggleExpanded, setSelectedPath]
+  );
+
+  const { activeKey, setActiveKey, activeId, onKeyDown } = useTreeKeyboardNav({
+    rows,
+    actions,
+    virtualizer,
+  });
+
+  // Active-file reveal: once ancestors are expanded and rows recomputed, scroll
+  // the selected row into view and mark it the keyboard-active descendant.
+  useEffect(() => {
+    if (!selectedPath) return;
+    const idx = rows.findIndex((r) => r.kind === 'entry' && r.entry!.path === selectedPath);
+    if (idx >= 0) {
+      // Controlled reveal: syncs keyboard focus to the newly selected row; driven
+      // by an external selection change (active editor file), not a render cascade.
+
+      setActiveKey(rows[idx].key);
+      virtualizer.scrollToIndex(idx, { align: 'auto' });
+    }
+  }, [selectedPath, rows, virtualizer, setActiveKey]);
+
+  const handleToggle = useCallback(
+    (kind: 'root' | 'entry', path?: string) =>
+      kind === 'root' ? toggleRootExpanded() : path && toggleExpanded(path),
+    [toggleRootExpanded, toggleExpanded]
+  );
+  const handleSelect = useCallback((path: string) => setSelectedPath(path), [setSelectedPath]);
+  const handleOpen = useCallback((path: string) => void ensureEditorFileOpen(path), []);
   const handleHidePanel = useCallback(() => toggleLeftPanel(), [toggleLeftPanel]);
 
   const renderContent = () => {
@@ -112,70 +151,61 @@ export function FileExplorer() {
       return <FileExplorerEmpty message="No files in workspace" onOpenFolder={openFolder} />;
     }
 
-    const FolderIconComponent = isRootExpanded ? FolderOpenIcon : FolderIcon;
-    const ChevronIcon = isRootExpanded ? ChevronDownIcon : ChevronRightIcon;
+    const virtualItems = virtualizer.getVirtualItems();
 
     return (
       <div
+        ref={scrollRef}
+        className={styles.scrollArea}
         role="tree"
         aria-label="File explorer"
+        aria-activedescendant={activeId}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
         style={
           treeAccent
             ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})`, minHeight: '100%' }
             : undefined
         }
       >
-        <div
-          className={`${treeStyles.row} ${treeStyles.root}`}
-          onClick={toggleRootExpanded}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              toggleRootExpanded();
-            }
-          }}
-          role="treeitem"
-          aria-expanded={isRootExpanded}
-          tabIndex={0}
-        >
-          <button
-            type="button"
-            className={treeStyles.toggle}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleRootExpanded();
-            }}
-            aria-label={`Toggle ${rootLabel}`}
-          >
-            <ChevronIcon aria-hidden="true" />
-          </button>
-          <FolderIconComponent
-            className={treeStyles.icon}
-            style={{ color: isRootExpanded ? '#6A9AB0' : '#4A7080' }}
-            aria-hidden="true"
-          />
-          <span className={treeStyles.name}>{rootLabel}</span>
-          <span className={treeStyles.path}>{shortenPath(rootPath)}</span>
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+          {virtualItems.map((vi) => {
+            const row = rows[vi.index];
+            return (
+              <div
+                key={row.key}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${ROW_HEIGHT}px`,
+                  transform: `translateY(${vi.start}px)`,
+                }}
+              >
+                <TreeRow
+                  kind={row.kind}
+                  path={row.entry?.path}
+                  name={row.name}
+                  depth={row.depth}
+                  level={row.level}
+                  isDir={row.isDir}
+                  isExpanded={row.isExpanded}
+                  isSelected={row.isSelected}
+                  regionAccent={row.regionAccent}
+                  setSize={row.setSize}
+                  posInSet={row.posInSet}
+                  rootPath={row.rootPath}
+                  rowId={rowDomId(row.key)}
+                  isActive={row.key === activeKey}
+                  onToggle={handleToggle}
+                  onSelect={handleSelect}
+                  onOpen={handleOpen}
+                />
+              </div>
+            );
+          })}
         </div>
-
-        {isRootExpanded && (
-          <div role="group">
-            {roots.map((entry) => (
-              <TreeNode
-                key={entry.path}
-                entry={entry}
-                depth={1}
-                isExpanded={expandedPaths.has(entry.path)}
-                expandedPaths={expandedPaths}
-                selectedPath={selectedPath}
-                onToggle={handleToggle}
-                onSelect={handleSelect}
-                onOpen={handleOpen}
-                getRegionAccent={getRegionAccent}
-              />
-            ))}
-          </div>
-        )}
       </div>
     );
   };

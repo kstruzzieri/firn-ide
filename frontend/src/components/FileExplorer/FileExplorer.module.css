@@ -39,6 +39,15 @@
 .tree {
   padding: 4px;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* Virtualizer scroll container: owns vertical scrolling for the windowed tree. */
+.scrollArea {
+  height: 100%;
+  overflow: auto;
 }
 
 /* Empty state */
