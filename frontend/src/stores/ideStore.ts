@@ -189,6 +189,7 @@ interface IDEActions {
   setWorkspace: (workspace: WorkspaceInfo | null) => void;
   setWorkspaces: (defs: workspace.WorkspaceDef[]) => void;
   setActiveWorkspace: (id: string) => void;
+  setTreeViewMode: (mode: 'project' | 'workspace') => void;
   setLoading: (isLoading: boolean) => void;
 
   // File Explorer actions
@@ -432,6 +433,30 @@ export const useIDEStore = create<IDEStore>()(
           },
           false,
           'setActiveWorkspace'
+        ),
+
+      setTreeViewMode: (mode) =>
+        set(
+          (state) => {
+            if (mode === 'project') {
+              return { activeWorkspaceId: 'project' };
+            }
+            const candidates = state.workspaces.filter((w) => w.id !== 'project');
+            const lastValid =
+              state.lastFocusedWorkspaceId &&
+              candidates.some((w) => w.id === state.lastFocusedWorkspaceId)
+                ? state.lastFocusedWorkspaceId
+                : null;
+            const firstNonRoot = candidates.find((w) => w.relDir !== '');
+            const firstRoot = candidates.find((w) => w.relDir === '');
+            const target = lastValid ?? firstNonRoot?.id ?? firstRoot?.id ?? 'project';
+            return {
+              activeWorkspaceId: target,
+              lastFocusedWorkspaceId: target !== 'project' ? target : state.lastFocusedWorkspaceId,
+            };
+          },
+          false,
+          'setTreeViewMode'
         ),
 
       setLoading: (isLoading) => set({ isLoading }, false, 'setLoading'),
