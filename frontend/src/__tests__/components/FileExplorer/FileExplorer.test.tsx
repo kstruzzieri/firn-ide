@@ -218,19 +218,37 @@ describe('FileExplorer', () => {
       expect(screen.queryByText('App.tsx')).not.toBeInTheDocument();
     });
 
-    it('selects file when clicked', async () => {
-      (ReadFile as jest.Mock).mockResolvedValue({ content: 'test', encoding: 'utf-8' });
+    it('selects (but does not open) a file on single click', () => {
+      act(() => {
+        useIDEStore.setState({ selectedPath: null, openFiles: [] });
+      });
 
       render(<FileExplorer />);
 
-      // App.tsx is visible because src is expanded in beforeEach
+      // App.tsx is visible because src is expanded in beforeEach.
       fireEvent.click(screen.getByText('App.tsx'));
 
-      // Should trigger file open action
+      // Single click selects only: selectedPath is set, no file is opened.
+      const state = useIDEStore.getState();
+      expect(state.selectedPath).toBe('/workspace/src/App.tsx');
+      expect(state.openFiles).toHaveLength(0);
+    });
+
+    it('opens a file on double click', async () => {
+      (ReadFile as jest.Mock).mockResolvedValue({ content: 'test', encoding: 'utf-8' });
+      act(() => {
+        useIDEStore.setState({ openFiles: [], activeFileId: null });
+      });
+
+      render(<FileExplorer />);
+
+      // App.tsx is visible because src is expanded in beforeEach.
+      fireEvent.doubleClick(screen.getByText('App.tsx'));
+
+      // Double click opens the file in the editor.
       await waitFor(() => {
         const state = useIDEStore.getState();
-        // File selection should trigger openFile
-        expect(state.activeFileId).toBeDefined();
+        expect(state.activeFileId).toBe('/workspace/src/App.tsx');
       });
     });
 

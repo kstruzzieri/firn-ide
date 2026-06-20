@@ -4,6 +4,7 @@ import { ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { FileIcon } from './FileIcon';
 import { getFolderType } from './fileIconUtils';
 import type { WorkspaceAccent } from '../../stores/ideStore';
+import { shortenPath } from '../../utils/workspace';
 import styles from './TreeRow.module.css';
 
 /** Fixed row height; MUST match `.row { height }` in TreeRow.module.css. */
@@ -12,19 +13,6 @@ export const ROW_HEIGHT = 28;
 /** Stable DOM id for a row, used as aria-activedescendant target. */
 export function rowDomId(key: string): string {
   return `treeitem-${encodeURIComponent(key)}`;
-}
-
-/** Shortens a file path by replacing the home directory with ~. */
-function shortenPath(path: string): string {
-  const home = '/Users/';
-  if (path.startsWith(home)) {
-    const afterHome = path.slice(home.length);
-    const slashIndex = afterHome.indexOf('/');
-    if (slashIndex !== -1) {
-      return '~' + afterHome.slice(slashIndex);
-    }
-  }
-  return path;
 }
 
 export interface TreeRowProps {
