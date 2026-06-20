@@ -2,6 +2,7 @@ import { ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { FileIcon } from './FileIcon';
 import { getFolderType } from './fileIconUtils';
 import type { filesystem } from '../../../wailsjs/go/models';
+import type { WorkspaceAccent } from '../../stores/ideStore';
 import styles from './TreeNode.module.css';
 
 interface TreeNodeProps {
@@ -21,6 +22,8 @@ interface TreeNodeProps {
   onSelect: (entry: filesystem.FileEntry) => void;
   /** Called when a file is double-clicked (open) */
   onOpen: (entry: filesystem.FileEntry) => void;
+  /** Project-View region tint resolver. Absent → no tinting (Workspace View). */
+  getRegionAccent?: (entry: filesystem.FileEntry) => WorkspaceAccent | null;
 }
 
 /**
@@ -36,11 +39,13 @@ export function TreeNode({
   onToggle,
   onSelect,
   onOpen,
+  getRegionAccent,
 }: TreeNodeProps) {
   const isFolder = entry.isDir;
   const indentPx = depth * 16;
   const isSelected = selectedPath === entry.path;
   const isHidden = isFolder && getFolderType(entry.name) === 'hidden';
+  const regionAccent = getRegionAccent?.(entry) ?? null;
 
   const handleToggleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -78,9 +83,16 @@ export function TreeNode({
   return (
     <div data-testid="tree-node" data-depth={depth}>
       <div
-        className={styles.row}
+        className={`${styles.row}${regionAccent ? ` ${styles.tinted}` : ''}`}
         data-hidden={isHidden || undefined}
-        style={{ paddingLeft: `${indentPx}px` }}
+        style={{
+          paddingLeft: `${indentPx}px`,
+          ...(regionAccent
+            ? ({
+                ['--region-accent' as string]: `var(--accent-${regionAccent})`,
+              } as React.CSSProperties)
+            : {}),
+        }}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleKeyDown}
@@ -134,6 +146,7 @@ export function TreeNode({
               onToggle={onToggle}
               onSelect={onSelect}
               onOpen={onOpen}
+              getRegionAccent={getRegionAccent}
             />
           ))}
         </div>

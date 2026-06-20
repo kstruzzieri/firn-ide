@@ -107,6 +107,7 @@ interface IDEState {
   // Workspace identity (#53)
   workspaces: workspace.WorkspaceDef[];
   activeWorkspaceId: string;
+  lastFocusedWorkspaceId: string | null;
 
   // File Explorer
   directoryTree: filesystem.FileEntry[];
@@ -188,6 +189,7 @@ interface IDEActions {
   setWorkspace: (workspace: WorkspaceInfo | null) => void;
   setWorkspaces: (defs: workspace.WorkspaceDef[]) => void;
   setActiveWorkspace: (id: string) => void;
+  setTreeViewMode: (mode: 'project' | 'workspace') => void;
   setLoading: (isLoading: boolean) => void;
 
   // File Explorer actions
@@ -371,6 +373,7 @@ export const useIDEStore = create<IDEStore>()(
       isLoading: false,
       workspaces: [],
       activeWorkspaceId: 'project',
+      lastFocusedWorkspaceId: null,
       directoryTree: [],
       isLoadingTree: false,
       treeError: null,
@@ -408,23 +411,66 @@ export const useIDEStore = create<IDEStore>()(
 
       setWorkspaces: (defs) =>
         set(
-          (state) => ({
-            workspaces: defs,
-            activeWorkspaceId: defs.some((d) => d.id === state.activeWorkspaceId)
-              ? state.activeWorkspaceId
-              : 'project',
-          }),
+          (state) => {
+            const activeValid = defs.some((d) => d.id === state.activeWorkspaceId);
+            const nextActive = activeValid ? state.activeWorkspaceId : 'project';
+
+            const lastStillValid =
+              state.lastFocusedWorkspaceId !== null &&
+              defs.some((d) => d.id === state.lastFocusedWorkspaceId);
+            let nextLast = lastStillValid ? state.lastFocusedWorkspaceId : null;
+
+            // If the active workspace is a real (non-project) workspace, lastFocused follows it.
+            if (nextActive !== 'project') {
+              nextLast = nextActive;
+            }
+
+            return {
+              workspaces: defs,
+              activeWorkspaceId: nextActive,
+              lastFocusedWorkspaceId: nextLast,
+            };
+          },
           false,
           'setWorkspaces'
         ),
 
       setActiveWorkspace: (id) =>
         set(
-          (state) => ({
-            activeWorkspaceId: state.workspaces.some((d) => d.id === id) ? id : 'project',
-          }),
+          (state) => {
+            const valid = state.workspaces.some((d) => d.id === id);
+            const nextId = valid ? id : 'project';
+            return {
+              activeWorkspaceId: nextId,
+              lastFocusedWorkspaceId: nextId !== 'project' ? nextId : state.lastFocusedWorkspaceId,
+            };
+          },
           false,
           'setActiveWorkspace'
+        ),
+
+      setTreeViewMode: (mode) =>
+        set(
+          (state) => {
+            if (mode === 'project') {
+              return { activeWorkspaceId: 'project' };
+            }
+            const candidates = state.workspaces.filter((w) => w.id !== 'project');
+            const lastValid =
+              state.lastFocusedWorkspaceId &&
+              candidates.some((w) => w.id === state.lastFocusedWorkspaceId)
+                ? state.lastFocusedWorkspaceId
+                : null;
+            const firstNonRoot = candidates.find((w) => w.relDir !== '');
+            const firstRoot = candidates.find((w) => w.relDir === '');
+            const target = lastValid ?? firstNonRoot?.id ?? firstRoot?.id ?? 'project';
+            return {
+              activeWorkspaceId: target,
+              lastFocusedWorkspaceId: target !== 'project' ? target : state.lastFocusedWorkspaceId,
+            };
+          },
+          false,
+          'setTreeViewMode'
         ),
 
       setLoading: (isLoading) => set({ isLoading }, false, 'setLoading'),
@@ -1516,6 +1562,10 @@ export const useWorkspaces = () => useIDEStore((state) => state.workspaces);
 export const useActiveWorkspaceId = () => useIDEStore((state) => state.activeWorkspaceId);
 export const useActiveWorkspace = () =>
   useIDEStore((state) => state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? null);
+export const useTreeViewMode = (): 'project' | 'workspace' =>
+  useIDEStore((state) => (state.activeWorkspaceId === 'project' ? 'project' : 'workspace'));
+export const useCanFocusWorkspace = (): boolean =>
+  useIDEStore((state) => state.workspaces.some((w) => w.id !== 'project'));
 export const useActiveAccent = (): WorkspaceAccent =>
   useIDEStore(
     (state) =>

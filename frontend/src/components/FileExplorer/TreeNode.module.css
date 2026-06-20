@@ -1,4 +1,5 @@
 .row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -14,6 +15,32 @@
 
 .row:hover {
   background-color: var(--surface-hover);
+}
+
+/*
+ * Region tint: faint accent wash + a 3px left rail. The rail is a square
+ * pseudo-element (not box-shadow/border) so it ignores the row's border-radius
+ * and stays perfectly straight; because a region is a contiguous run of rows,
+ * the per-row rails butt together into one continuous vertical rail that groups
+ * the region (Project View = multi-color per region; Workspace View = single
+ * accent across the tree).
+ */
+.row.tinted {
+  background-color: color-mix(in srgb, var(--region-accent) 6%, transparent);
+}
+
+.row.tinted::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--region-accent);
+}
+
+.row.tinted:hover {
+  background-color: color-mix(in srgb, var(--region-accent) 12%, transparent);
 }
 
 .row:focus-visible {

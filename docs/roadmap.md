@@ -138,10 +138,12 @@ Defines workspace identity: type, accent color, and how workspaces are configure
 
 ### #54: Workspace - File Tree Views (NEW)
 Project View (unified) vs Workspace View (focused) with color-coded regions.
-- [ ] Toggle dropdown: "PROJECT" vs "WORKSPACE" at top of file tree panel
-- [ ] Project View: full repo tree with color-coded workspace regions (~4% accent tint)
-- [ ] Workspace View: scoped tree with workspace tabs for switching
-- [ ] File type association for tinting (e.g., `docker-compose.yml` gets Infrastructure tint at root)
+- [x] Segmented PROJECT / WORKSPACE toggle at top of file tree panel
+- [x] Project View: full repo tree with color-coded workspace regions (~6% accent tint)
+- [x] Workspace View: scoped tree with workspace tabs for switching
+- [x] File type association for tinting (e.g., `docker-compose.yml` gets Infrastructure tint at root)
+
+> **Bridge note:** Run Profiles grouping/filtering by view intentionally deferred to #71/#18; the Run Profiles panel behavior is unchanged across tree views.
 
 > **Design spec ref:** Section 4 (File Tree Views)
 

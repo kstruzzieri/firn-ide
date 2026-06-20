@@ -1,27 +1,24 @@
 import { useCallback, useEffect } from 'react';
 import { Panel, PanelAction } from '../layout';
+import { ChevronDownIcon, ChevronRightIcon, MinusIcon, FolderOpenIcon, FolderIcon } from '../icons';
 import {
-  HomeIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  MinusIcon,
-  FolderOpenIcon,
-  FolderIcon,
-} from '../icons';
-import {
-  useWorkspace,
   useIDEStore,
-  useDirectoryTree,
   useExpandedPaths,
   useSelectedPath,
   useIsRootExpanded,
+} from '../../stores/ideStore';
+import {
   useIsLoadingTree,
   useTreeError,
   useActiveFileId,
+  useWorkspace,
 } from '../../stores/ideStore';
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
+import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { TreeNode } from './TreeNode';
+import { TreeViewToggle } from './TreeViewToggle';
+import { WorkspaceTabs } from './WorkspaceTabs';
 import type { filesystem } from '../../../wailsjs/go/models';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import styles from './FileExplorer.module.css';
@@ -42,7 +39,6 @@ function shortenPath(path: string): string {
 
 export function FileExplorer() {
   const workspace = useWorkspace();
-  const directoryTree = useDirectoryTree();
   const expandedPaths = useExpandedPaths();
   const selectedPath = useSelectedPath();
   const isRootExpanded = useIsRootExpanded();
@@ -50,19 +46,21 @@ export function FileExplorer() {
   const treeError = useTreeError();
   const activeFileId = useActiveFileId();
 
+  const presentation = useFileTreePresentation();
+  const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
+    presentation;
+
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
   const toggleRootExpanded = useIDEStore((state) => state.toggleRootExpanded);
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
   const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
 
-  // Sync active file in editor to file tree selection.
-  // Only depends on activeFileId — reads expandedPaths from store snapshot
-  // to avoid a dependency cycle (Set references change on every update).
+  // Sync active file in editor to file tree selection. Reads expandedPaths from
+  // the store snapshot to avoid a dependency cycle (Set refs change each update).
   useEffect(() => {
     if (activeFileId && activeFileId !== useIDEStore.getState().selectedPath) {
       setSelectedPath(activeFileId);
 
-      // Expand all parent folders to reveal the file
       const ws = useIDEStore.getState().workspace;
       if (ws) {
         const currentExpanded = useIDEStore.getState().expandedPaths;
@@ -84,63 +82,49 @@ export function FileExplorer() {
   }, [activeFileId, setSelectedPath]);
 
   const { openFolder } = useOpenFolder();
-
-  // Fetch directory tree on workspace change
   const { refetch } = useFetchDirectoryTree();
 
-  const handleToggle = useCallback(
-    (path: string) => {
-      toggleExpanded(path);
-    },
-    [toggleExpanded]
-  );
-
-  // Single click: just select the entry
+  const handleToggle = useCallback((path: string) => toggleExpanded(path), [toggleExpanded]);
   const handleSelect = useCallback(
-    (entry: filesystem.FileEntry) => {
-      setSelectedPath(entry.path);
-    },
+    (entry: filesystem.FileEntry) => setSelectedPath(entry.path),
     [setSelectedPath]
   );
-
-  // Double click: open file in editor
   const handleOpen = useCallback(async (entry: filesystem.FileEntry) => {
     if (entry.isDir) return;
     await ensureEditorFileOpen(entry.path);
   }, []);
-
-  const handleHidePanel = useCallback(() => {
-    toggleLeftPanel();
-  }, [toggleLeftPanel]);
+  const handleHidePanel = useCallback(() => toggleLeftPanel(), [toggleLeftPanel]);
 
   const renderContent = () => {
-    // Loading state
-    if (isLoadingTree) {
-      return <FileExplorerSkeleton />;
-    }
-
-    // Error state
-    if (treeError) {
-      return <FileExplorerError message={treeError} onRetry={refetch} />;
-    }
-
-    // No workspace
+    if (isLoadingTree) return <FileExplorerSkeleton />;
+    if (treeError) return <FileExplorerError message={treeError} onRetry={refetch} />;
     if (!workspace) {
       return <FileExplorerEmpty message="Open a folder to get started" onOpenFolder={openFolder} />;
     }
-
-    // Empty workspace
-    if (directoryTree.length === 0) {
+    if (scopedError) {
+      return (
+        <div className={styles.scopedError} role="status">
+          <p>Workspace folder not found</p>
+        </div>
+      );
+    }
+    if (roots.length === 0) {
       return <FileExplorerEmpty message="No files in workspace" onOpenFolder={openFolder} />;
     }
 
-    // Render tree with root folder
     const FolderIconComponent = isRootExpanded ? FolderOpenIcon : FolderIcon;
     const ChevronIcon = isRootExpanded ? ChevronDownIcon : ChevronRightIcon;
 
     return (
-      <div role="tree" aria-label="File explorer">
-        {/* Root folder entry */}
+      <div
+        role="tree"
+        aria-label="File explorer"
+        style={
+          treeAccent
+            ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})`, minHeight: '100%' }
+            : undefined
+        }
+      >
         <div
           className={`${treeStyles.row} ${treeStyles.root}`}
           onClick={toggleRootExpanded}
@@ -161,7 +145,7 @@ export function FileExplorer() {
               e.stopPropagation();
               toggleRootExpanded();
             }}
-            aria-label={`Toggle ${workspace.name}`}
+            aria-label={`Toggle ${rootLabel}`}
           >
             <ChevronIcon aria-hidden="true" />
           </button>
@@ -170,14 +154,13 @@ export function FileExplorer() {
             style={{ color: isRootExpanded ? '#6A9AB0' : '#4A7080' }}
             aria-hidden="true"
           />
-          <span className={treeStyles.name}>{workspace.name}</span>
-          <span className={treeStyles.path}>{shortenPath(workspace.path)}</span>
+          <span className={treeStyles.name}>{rootLabel}</span>
+          <span className={treeStyles.path}>{shortenPath(rootPath)}</span>
         </div>
 
-        {/* Children when root is expanded */}
         {isRootExpanded && (
           <div role="group">
-            {directoryTree.map((entry) => (
+            {roots.map((entry) => (
               <TreeNode
                 key={entry.path}
                 entry={entry}
@@ -188,6 +171,7 @@ export function FileExplorer() {
                 onToggle={handleToggle}
                 onSelect={handleSelect}
                 onOpen={handleOpen}
+                getRegionAccent={getRegionAccent}
               />
             ))}
           </div>
@@ -198,19 +182,7 @@ export function FileExplorer() {
 
   return (
     <Panel
-      title={
-        <button
-          type="button"
-          className={styles.viewToggle}
-          aria-haspopup="listbox"
-          aria-expanded="false"
-          aria-label="Switch file tree view"
-        >
-          <HomeIcon aria-hidden="true" />
-          <span>PROJECT</span>
-          <ChevronDownIcon aria-hidden="true" />
-        </button>
-      }
+      title={<TreeViewToggle />}
       actions={
         <PanelAction
           icon={<MinusIcon />}
@@ -220,6 +192,7 @@ export function FileExplorer() {
         />
       }
     >
+      {mode === 'workspace' && <WorkspaceTabs />}
       <div className={styles.tree}>{renderContent()}</div>
     </Panel>
   );
