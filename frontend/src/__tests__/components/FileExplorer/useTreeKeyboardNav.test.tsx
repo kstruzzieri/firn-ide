@@ -1,11 +1,9 @@
 // src/__tests__/components/FileExplorer/useTreeKeyboardNav.test.tsx
 import { renderHook, act } from '@testing-library/react';
 import { useTreeKeyboardNav } from '../../../components/FileExplorer/useTreeKeyboardNav';
-import { rowDomId, ROW_HEIGHT } from '../../../components/FileExplorer/TreeRow';
+import { rowDomId } from '../../../components/FileExplorer/TreeRow';
 import { ROOT_ROW_KEY } from '../../../utils/flattenTree';
 import type { FlatRow } from '../../../utils/flattenTree';
-
-void ROW_HEIGHT;
 
 const mkRow = (over: Partial<FlatRow> & { key: string }): FlatRow => ({
   kind: 'entry',
