@@ -1,4 +1,6 @@
 import { normalizePathForComparison } from './lspUri';
+import type { WorkspaceAccent, FileEntry } from '../stores/ideStore';
+import type { workspace } from '../../wailsjs/go/models';
 
 /**
  * Repo-relative, forward-slash path for `absPath` under `repoRoot`.
@@ -27,9 +29,6 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
   }
   return null;
 }
-
-import type { WorkspaceAccent, FileEntry } from '../stores/ideStore';
-import type { workspace } from '../../wailsjs/go/models';
 
 /**
  * Project-View tinting of LOOSE ROOT FILES only. Workspace *directory*
