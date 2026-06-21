@@ -29,7 +29,8 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
-| Performance | Not started | #37-39 |
+| Performance | **IN PROGRESS** | #38 complete; #37 virtualization shipped (#111), lazy-load deferred; #39 open |
+| Editor & LSP DX | Not started | #112-114 open |
 | Dependency Upgrades | **COMPLETE** | #40 |
 | Code Quality | Not started | #41-42 |
 | Accessibility | Not started | #43 |
@@ -40,12 +41,14 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: **Milestone 3 (Workspace Management) is complete.** Workspace File Tree Views (#54) shipped in PR #109 — PROJECT/WORKSPACE segmented toggle, Project-View per-region color-coded tinting with grouping left rails, Workspace-View scoped tree with accent wash + rail, and underline tabs (workspace + terminal). It builds on Workspace Identity & Accent System (#53, PR #104). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Run-profile output preview is scrollable + click-to-open-full-output (PR #106).
+Current status: **Milestone 3 (Workspace Management) complete; file-tree performance shipped.** File Tree Virtualization & Memoization (#37 virtualization half / #38) shipped in PR #111 — flatten the visible tree → window with `@tanstack/react-virtual`, memoized rows over primitive props, per-row region accents precomputed, WAI-ARIA `aria-activedescendant` keyboard nav; selected/active rows now inherit their workspace accent in both Project and Workspace views. Built on Workspace File Tree Views (#54, PR #109) and Workspace Identity & Accent System (#53, PR #104). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) is deferred to its own spec.
 
 1. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set, and selection persistence. **#71 also now owns the Run-Profiles-by-workspace view filtering/grouping** deferred from #54 (Workspace View filters to the active workspace; Project View groups by workspace) — prerequisite is per-workspace detection so profiles carry an owning workspace.
 2. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
 3. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
 4. **#47: Terminal shell integration** — error markers & command separators (last open item in Milestone 2).
+5. **#112-114: Editor & LSP developer experience** (surfaced while testing the Python workspace during #111): #112 auto-provision language servers + wire the project environment (zero-config, no raw error), #113 diagnostic hover tooltip needs an opaque background, #114 syntax-highlighting color pass.
+6. **#37 (Phase 2): File tree lazy loading** — load directory children on expand; own spec (backend per-dir read, watcher reconcile, #54 scoped-tree/active-file reconciliation).
 
 ---
 
@@ -322,14 +325,30 @@ currentColor SVGs, sidebar active indicators, devicons light fills for dark back
 
 ## Performance
 
-### #37: File Tree Virtualization & Lazy Loading
-Virtual scrolling for 10k+ file trees, lazy-load directory children on expand.
+### #37: File Tree Virtualization & Lazy Loading (IN PROGRESS)
+- [x] **Virtualization + memoization — shipped (PR #111).** Pure `flattenVisibleTree` lowers the expanded tree into a flat `FlatRow[]` (precomputed region accent + aria level/setsize/posinset); `@tanstack/react-virtual` mounts only the visible window; `TreeRow` is `React.memo` over primitive props. The region resolver runs once per visible row instead of per node per render. Off-screen rows do not mount (5k-node tree → bounded window, asserted by a regression test). WAI-ARIA single-tab-stop keyboard nav via `aria-activedescendant`. Selected/active rows inherit their region/workspace accent (consistent Project + Workspace views).
+- [ ] **Lazy loading — Phase 2 (remaining).** Load directory children on expand: backend `ReadDirectory`-per-dir, file-watcher reconcile, and reconciling #54 assumptions (scoped-tree lookup, region resolver, active-file ancestor-expand all currently assume the full eager tree). Deferred to its own spec.
 
-### #38: TreeNode Memoization
-`React.memo` with custom comparison to prevent re-renders of unchanged tree nodes.
+### #38: TreeNode Memoization ✅
+Shipped in PR #111 (closed). Flattening lowers `expandedPaths` (a fresh `Set` each update) and the region resolver (a closure) into per-row primitives, so `React.memo` on the row actually holds; toggling/selecting re-renders only changed rows.
 
 ### #39: Dynamic CodeMirror Language Loading
 Dynamic `import()` for language extensions per file type to reduce initial bundle.
+
+---
+
+## Editor & LSP Developer Experience (NEW)
+
+Surfaced while testing a Python workspace (`quantum_trader`) during the file-tree work (#111).
+
+### #112: LSP - auto-provision language servers + wire project environment
+Zero-config language support. Two layers: (a) provision the server **binary** itself (managed download of a pinned version into an app cache — e.g. `basedpyright` standalone to avoid a Node dependency — never the user's global env), and (b) auto-detect and forward the project **environment** (interpreter/venv, `extraPaths` for `src` layouts, `pythonVersion`) via `workspace/configuration` / `didChangeConfiguration`. Today `resolvePythonServer` finds only the binary and sends no env, so imports report false errors. Must generalize to gopls/tsserver/rust-analyzer and degrade to actionable UI (select interpreter / create venv / retry), never a raw error string.
+
+### #113: Editor - diagnostic hover tooltip has no background
+The diagnostic/hover tooltip renders without an opaque surface, so the message blends into the code underneath. Give the CodeMirror `.cm-tooltip` / `.cm-diagnostic` an opaque background, border, padding, shadow, and z-index above content.
+
+### #114: Editor - syntax highlighting color enhancements
+Audit the CodeMirror highlight theme for contrast and token-class distinction (keywords/types/strings/comments/functions/constants) across Python/TS/Go; align with the app's design tokens.
 
 ---
 
