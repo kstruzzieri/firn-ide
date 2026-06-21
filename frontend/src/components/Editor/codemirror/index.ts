@@ -29,6 +29,7 @@ export {
 // Extensions and utilities
 export {
   createEditorExtensions,
+  applyEditorTheme,
   getLanguageExtension,
   getLanguageName,
   languageCompartment,

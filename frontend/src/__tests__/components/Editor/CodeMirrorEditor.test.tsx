@@ -97,6 +97,7 @@ jest.mock('../../../components/Editor/codemirror', () => {
       reconfigure: mockHoverCompartmentReconfigure,
     },
     createEditorExtensions: mockCreateEditorExtensions,
+    applyEditorTheme: jest.fn(),
     reconfigureCompletion: mockReconfigureCompletion,
     reconfigureHover: mockReconfigureHover,
     resetCompletion: mockResetCompletion,
