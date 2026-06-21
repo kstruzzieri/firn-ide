@@ -9,7 +9,12 @@ import { EditorView } from '@codemirror/view';
 import { Extension } from '@codemirror/state';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
-import { type SyntaxPalette, getSyntaxPalette } from './palettes';
+import {
+  type SyntaxPalette,
+  type SyntaxThemeId,
+  DEFAULT_SYNTAX_THEME_ID,
+  getSyntaxPalette,
+} from './palettes';
 
 /**
  * Firn Glacier color palette extracted from design tokens.
@@ -80,12 +85,12 @@ const colors = {
 /**
  * Editor theme - controls the visual appearance of the editor chrome.
  */
-export const firnGlacierTheme = EditorView.theme(
-  {
+export function buildChromeRules(background: string) {
+  return {
     // Root editor styling
     '&': {
       color: colors.foreground,
-      backgroundColor: colors.background,
+      backgroundColor: background,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: '13px',
       lineHeight: '1.6',
@@ -156,7 +161,7 @@ export const firnGlacierTheme = EditorView.theme(
 
     // Gutters (line numbers, fold markers)
     '.cm-gutters': {
-      backgroundColor: colors.gutterBackground,
+      backgroundColor: background,
       color: colors.gutterForeground,
       border: 'none',
       borderRight: `1px solid ${colors.borderSubtle}`,
@@ -925,9 +930,16 @@ export const firnGlacierTheme = EditorView.theme(
       textUnderlineOffset: '2px',
       cursor: 'pointer',
     },
-  },
-  { dark: true }
-);
+  };
+}
+
+/** Builds the editor chrome theme for a palette (canvas background from the palette). */
+export function buildChrome(palette: SyntaxPalette): Extension {
+  return EditorView.theme(buildChromeRules(palette.background), { dark: true });
+}
+
+/** Legacy alias — chrome at the refined Glacier canvas. */
+export const firnGlacierTheme = buildChrome(getSyntaxPalette('glacier'));
 
 /**
  * Builds the ordered tag→style spec for a palette. Exported for unit tests so
@@ -1044,7 +1056,17 @@ export const firnGlacierHighlightStyle = buildHighlightStyle(getSyntaxPalette('g
 /**
  * Complete Firn Glacier theme extension combining editor theme and syntax highlighting.
  */
-export const firnGlacier: Extension = [
-  firnGlacierTheme,
-  syntaxHighlighting(firnGlacierHighlightStyle),
-];
+/** Assembles chrome + syntax highlighting for a theme id. */
+export function buildTheme(id: SyntaxThemeId): Extension {
+  const palette = getSyntaxPalette(id);
+  return [buildChrome(palette), syntaxHighlighting(buildHighlightStyle(palette))];
+}
+
+/** Preferred name for new call sites. */
+export const buildSyntaxTheme = buildTheme;
+
+/** The active default editor theme (Abyssal Current). */
+export const defaultEditorTheme: Extension = buildTheme(DEFAULT_SYNTAX_THEME_ID);
+
+/** Legacy alias — the Firn Glacier look (kept for back-compat / existing imports). */
+export const firnGlacier: Extension = buildTheme('glacier');
