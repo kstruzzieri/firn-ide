@@ -473,8 +473,12 @@ export function buildChromeRules(background: string) {
       borderLeft: `3px solid ${colors.info}`,
       paddingLeft: '8px',
     },
+    '.cm-diagnostic-hint': {
+      borderLeft: `3px solid ${colors.foregroundMuted}`,
+      paddingLeft: '8px',
+    },
     '.cm-diagnosticSource': {
-      color: colors.foregroundMuted,
+      color: colors.foregroundSecondary,
       fontSize: '11px',
     },
     '.cm-diagnosticAction': {

@@ -87,6 +87,7 @@ describe('#113 diagnostic tooltip surface', () => {
     expect(lint).toBeDefined();
     expect(lint.backgroundColor).toBeDefined();
     expect(lint.backgroundColor).not.toBe('transparent');
+    expect(lint.backgroundColor).toBe('#1E293B'); // colors.surface
     expect(lint.border).toBeDefined();
     expect(lint.boxShadow).toBeDefined();
     expect(lint.padding).toBeDefined();
@@ -100,5 +101,7 @@ describe('#113 diagnostic tooltip surface', () => {
     expect(error.borderLeft).toContain('#EF4444');
     expect(warning.borderLeft).toContain('#F59E0B');
     expect(info.borderLeft).toContain('#3B82F6');
+    const hint = rules['.cm-diagnostic-hint'] as Record<string, string>;
+    expect(hint.borderLeft).toContain('#64748B');
   });
 });
