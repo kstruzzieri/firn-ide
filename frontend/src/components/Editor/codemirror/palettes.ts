@@ -159,6 +159,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       escape: '#FB7185',
     },
   },
+  // Aurora Bloom = Ember Bifrost's warm/cool structure rendered in Tropic Reef hues,
+  // so it intentionally shares several role colors with `reef`.
   {
     id: 'aurora',
     label: 'Aurora Bloom',
@@ -216,5 +218,9 @@ export function isSyntaxThemeId(value: unknown): value is SyntaxThemeId {
 }
 
 export function getSyntaxPalette(id: SyntaxThemeId): SyntaxPalette {
-  return (SYNTAX_THEME_BY_ID.get(id) ?? SYNTAX_THEME_BY_ID.get(DEFAULT_SYNTAX_THEME_ID)!).palette;
+  return (
+    SYNTAX_THEME_BY_ID.get(id) ??
+    SYNTAX_THEME_BY_ID.get(DEFAULT_SYNTAX_THEME_ID) ??
+    SYNTAX_THEMES[0]
+  ).palette;
 }

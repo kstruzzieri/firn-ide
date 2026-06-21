@@ -8,24 +8,8 @@ import {
   type SyntaxThemeId,
 } from '../../../../components/Editor/codemirror/palettes';
 
-const ROLES: (keyof SyntaxPalette)[] = [
-  'background',
-  'comment',
-  'keyword',
-  'string',
-  'number',
-  'function',
-  'type',
-  'constant',
-  'operator',
-  'punctuation',
-  'variable',
-  'property',
-  'regexp',
-  'tag',
-  'attribute',
-  'escape',
-];
+// Derive role keys from a live palette so a new SyntaxPalette field is auto-covered.
+const ROLES = Object.keys(SYNTAX_THEMES[0].palette) as (keyof SyntaxPalette)[];
 
 // Relative luminance + contrast ratio (WCAG) for the comment-contrast guard.
 function luminance(hex: string): number {
@@ -63,7 +47,7 @@ describe('syntax palette registry', () => {
       expect(theme.label.length).toBeGreaterThan(0);
       for (const role of ROLES) {
         expect(typeof theme.palette[role]).toBe('string');
-        expect(theme.palette[role].length).toBeGreaterThan(0);
+        expect(theme.palette[role]).toMatch(/^#[0-9A-Fa-f]{6}$/);
       }
     }
   });
@@ -90,7 +74,9 @@ describe('syntax palette registry', () => {
   });
 
   it('isSyntaxThemeId guards unknown values', () => {
-    expect(isSyntaxThemeId('abyssal')).toBe(true);
+    for (const theme of SYNTAX_THEMES) {
+      expect(isSyntaxThemeId(theme.id)).toBe(true);
+    }
     expect(isSyntaxThemeId('nope')).toBe(false);
     expect(isSyntaxThemeId(null)).toBe(false);
     expect(isSyntaxThemeId(42)).toBe(false);
