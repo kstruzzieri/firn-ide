@@ -1,8 +1,9 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { FileExplorer } from '../../../components/FileExplorer';
+import { FileExplorer, rowDomId } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
 import { ReadDirectory, ReadFile } from '../../../../wailsjs/go/main/App';
 import { filesystem } from '../../../../wailsjs/go/models';
+import { installVirtualLayout } from '../../helpers/virtualTree';
 
 // Mock Wails bindings
 jest.mock('../../../../wailsjs/go/main/App', () => ({
@@ -67,7 +68,10 @@ const mockDirectoryTree = [
 ];
 
 describe('FileExplorer', () => {
+  let restoreVirtualLayout: () => void;
+
   beforeEach(() => {
+    restoreVirtualLayout = installVirtualLayout(400);
     jest.clearAllMocks();
     // Default mock that won't resolve during most tests
     (ReadDirectory as jest.Mock).mockImplementation(() => new Promise(() => {}));
@@ -82,6 +86,10 @@ describe('FileExplorer', () => {
       isLoadingTree: false,
       treeError: null,
     });
+  });
+
+  afterEach(() => {
+    restoreVirtualLayout();
   });
 
   describe('loading states', () => {
@@ -143,18 +151,26 @@ describe('FileExplorer', () => {
   describe('tree rendering', () => {
     beforeEach(() => {
       act(() => {
-        useIDEStore.setState({ directoryTree: mockDirectoryTree });
+        useIDEStore.setState({
+          directoryTree: mockDirectoryTree,
+          // isRootExpanded true so the root row + top-level entries are in the flat list
+          isRootExpanded: true,
+        });
       });
     });
 
     it('renders top-level entries', () => {
+      // No expanded paths → only root + top-level files/dirs appear in the flat list.
       render(<FileExplorer />);
+      // The virtualizer now mounts rows (shim provides layout). Flat list contains
+      // the root row, 'src', and 'package.json' at the top level.
       expect(screen.getByText('src')).toBeInTheDocument();
       expect(screen.getByText('package.json')).toBeInTheDocument();
     });
 
     it('does not render nested files when folder is collapsed', () => {
       render(<FileExplorer />);
+      // 'src' is collapsed → its children are absent from the flat list
       expect(screen.queryByText('App.tsx')).not.toBeInTheDocument();
     });
 
@@ -163,6 +179,7 @@ describe('FileExplorer', () => {
         useIDEStore.setState({ expandedPaths: new Set(['/workspace/src']) });
       });
       render(<FileExplorer />);
+      // src expanded → App.tsx and 'components' appear as treeitems
       expect(screen.getByText('App.tsx')).toBeInTheDocument();
       expect(screen.getByText('components')).toBeInTheDocument();
     });
@@ -174,6 +191,7 @@ describe('FileExplorer', () => {
         });
       });
       render(<FileExplorer />);
+      // Both src and src/components expanded → Button.tsx is in the flat list
       expect(screen.getByText('Button.tsx')).toBeInTheDocument();
     });
   });
@@ -184,35 +202,72 @@ describe('FileExplorer', () => {
         useIDEStore.setState({
           directoryTree: mockDirectoryTree,
           expandedPaths: new Set(['/workspace/src']),
+          isRootExpanded: true,
         });
       });
     });
 
     it('toggles folder expansion when chevron is clicked', () => {
       render(<FileExplorer />);
-      const srcFolder = screen.getByText('src').closest('[data-testid="tree-node"]');
-      const toggle = srcFolder?.querySelector('[data-testid="toggle-button"]');
+      // TreeRow renders a toggle button with aria-label "Toggle <name>" for dirs.
+      // The 'src' folder is expanded, so click its toggle to collapse it.
+      const toggle = screen.getByRole('button', { name: /toggle src/i });
+      fireEvent.click(toggle);
 
-      fireEvent.click(toggle!);
-
-      // Check that toggleExpanded was called (via store update)
-      const state = useIDEStore.getState();
-      // The toggle should have been triggered
-      expect(state.expandedPaths.has('/workspace/src')).toBeDefined();
+      // After collapsing, src's children should no longer be in the flat list
+      expect(screen.queryByText('App.tsx')).not.toBeInTheDocument();
     });
 
-    it('selects file when clicked', async () => {
-      (ReadFile as jest.Mock).mockResolvedValue({ content: 'test', encoding: 'utf-8' });
+    it('selects (but does not open) a file on single click', () => {
+      act(() => {
+        useIDEStore.setState({ selectedPath: null, openFiles: [] });
+      });
 
       render(<FileExplorer />);
 
+      // App.tsx is visible because src is expanded in beforeEach.
       fireEvent.click(screen.getByText('App.tsx'));
 
-      // Should trigger file open action
+      // Single click selects only: selectedPath is set, no file is opened.
+      const state = useIDEStore.getState();
+      expect(state.selectedPath).toBe('/workspace/src/App.tsx');
+      expect(state.openFiles).toHaveLength(0);
+    });
+
+    it('opens a file on double click', async () => {
+      (ReadFile as jest.Mock).mockResolvedValue({ content: 'test', encoding: 'utf-8' });
+      act(() => {
+        useIDEStore.setState({ openFiles: [], activeFileId: null });
+      });
+
+      render(<FileExplorer />);
+
+      // App.tsx is visible because src is expanded in beforeEach.
+      fireEvent.doubleClick(screen.getByText('App.tsx'));
+
+      // Double click opens the file in the editor.
       await waitFor(() => {
         const state = useIDEStore.getState();
-        // File selection should trigger openFile
-        expect(state.activeFileId).toBeDefined();
+        expect(state.activeFileId).toBe('/workspace/src/App.tsx');
+      });
+    });
+
+    it('reveals the active file by marking its row the active descendant', async () => {
+      act(() => {
+        useIDEStore.setState({
+          isRootExpanded: true,
+          expandedPaths: new Set(['/workspace/src']),
+          selectedPath: '/workspace/src/App.tsx',
+        });
+      });
+
+      render(<FileExplorer />);
+
+      // The reveal effect locates the selected row and marks it the active
+      // descendant (and keeps it within the rendered window).
+      await waitFor(() => {
+        const tree = screen.getByRole('tree');
+        expect(tree).toHaveAttribute('aria-activedescendant', rowDomId('/workspace/src/App.tsx'));
       });
     });
 
@@ -223,9 +278,10 @@ describe('FileExplorer', () => {
       });
       render(<FileExplorer />);
 
+      // Clicking folder row calls onSelect (which sets selectedPath), not openFile.
+      // Verify openFiles remains empty after clicking 'src'.
       fireEvent.click(screen.getByText('src'));
 
-      // Clicking folder name should toggle, not open
       const state = useIDEStore.getState();
       expect(state.openFiles).toHaveLength(0);
     });
