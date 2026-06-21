@@ -2,6 +2,7 @@ import styles from './StatusBar.module.css';
 import { StatusBranchIcon, CheckIcon, AlertCircleIcon } from '../icons';
 import { useGitBranch, useActiveFile, useCursorPosition } from '../../stores/ideStore';
 import { useLSPErrorCount, useLSPInfoCount, useLSPWarningCount } from '../../stores/lspStore';
+import { EditorThemePicker } from './EditorThemePicker';
 
 export function StatusBar() {
   const gitBranch = useGitBranch();
@@ -24,6 +25,7 @@ export function StatusBar() {
       </div>
       <div className={styles.spacer} />
       <div className={styles.right}>
+        <EditorThemePicker />
         {activeFile && (
           <>
             <span className={styles.item}>{activeFile.language || 'Plain Text'}</span>
