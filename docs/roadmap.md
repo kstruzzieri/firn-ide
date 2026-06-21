@@ -24,8 +24,8 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 1: Core File Operations | **COMPLETE** | #3-9 |
 | UI/UX Polish | **COMPLETE** | #35-36 |
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
-| Milestone 3: Workspace Management | **IN PROGRESS** | #13-15, #53 complete; #54 open |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18, #71, #107 open |
+| Milestone 3: Workspace Management | **COMPLETE** | #13-15, #53-54 complete |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18, #71, #103, #107 open |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
@@ -40,12 +40,12 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: Workspace Identity & Accent System (#53) is complete (PR #104) — auto-detection, active accent CSS system, header workspace selector, and `⌘⇧.` quick switch. Compound Profile Execution (#63) is complete (PR #102), finishing the #17 Run Profiles Execution Engine epic (#59-64): sequential steps with stop-on-failure, isolated per-step output, aggregate `run:status` plus snapshot `run:compound` events, and a dedicated compound execution view. Run-profile output preview is now scrollable and click-to-open-full-output (PR #106). Environment variants (#64) and clickable error links (#62) remain complete from PRs #97/#98.
+Current status: **Milestone 3 (Workspace Management) is complete.** Workspace File Tree Views (#54) shipped in PR #109 — PROJECT/WORKSPACE segmented toggle, Project-View per-region color-coded tinting with grouping left rails, Workspace-View scoped tree with accent wash + rail, and underline tabs (workspace + terminal). It builds on Workspace Identity & Accent System (#53, PR #104). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Run-profile output preview is scrollable + click-to-open-full-output (PR #106).
 
-1. **#54: Workspace File Tree Views** — Project View (unified repo tree with color-coded workspace regions) vs Workspace View (scoped tree with workspace tabs). Builds directly on the #53 identity/accent system; the natural next step in Milestone 3.
-2. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set, and selection persistence.
-3. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
-4. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
+1. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set, and selection persistence. **#71 also now owns the Run-Profiles-by-workspace view filtering/grouping** deferred from #54 (Workspace View filters to the active workspace; Project View groups by workspace) — prerequisite is per-workspace detection so profiles carry an owning workspace.
+2. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
+3. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
+4. **#47: Terminal shell integration** — error markers & command separators (last open item in Milestone 2).
 
 ---
 
