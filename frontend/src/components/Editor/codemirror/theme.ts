@@ -1012,6 +1012,8 @@ export function buildHighlightSpec(palette: SyntaxPalette) {
     { tag: t.heading2, color: palette.function, fontWeight: 'bold', fontSize: '1.2em' },
     { tag: t.heading3, color: palette.function, fontWeight: 'bold' },
 
+    // The following markdown/link/label/invalid tokens use the shared chrome
+    // `colors` (not the palette), so they stay constant across syntax themes.
     // Markdown specific (shared chrome accent)
     { tag: t.link, color: colors.accent, textDecoration: 'underline' },
     { tag: t.url, color: colors.accent },
@@ -1033,7 +1035,10 @@ export function buildHighlightStyle(palette: SyntaxPalette): HighlightStyle {
   return HighlightStyle.define(buildHighlightSpec(palette));
 }
 
-/** Legacy alias — the refined Firn Glacier highlight style. */
+/**
+ * Highlight style for the Glacier palette. Named export kept for back-compat
+ * (re-exported from index.ts and consumed by the `firnGlacier` extension below).
+ */
 export const firnGlacierHighlightStyle = buildHighlightStyle(getSyntaxPalette('glacier'));
 
 /**

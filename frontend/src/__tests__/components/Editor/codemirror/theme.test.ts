@@ -1,4 +1,5 @@
 import { tags as t } from '@lezer/highlight';
+import { HighlightStyle } from '@codemirror/language';
 import {
   buildHighlightSpec,
   buildHighlightStyle,
@@ -6,7 +7,7 @@ import {
 } from '../../../../components/Editor/codemirror/theme';
 import { getSyntaxPalette } from '../../../../components/Editor/codemirror/palettes';
 
-describe('buildHighlightSpec', () => {
+describe('highlight-style builders', () => {
   it('maps token roles to the supplied palette colors', () => {
     const palette = getSyntaxPalette('abyssal');
     const spec = buildHighlightSpec(palette);
@@ -18,6 +19,8 @@ describe('buildHighlightSpec', () => {
     expect(colorFor(t.number)).toBe(palette.number);
     expect(colorFor(t.typeName)).toBe(palette.type);
     expect(colorFor(t.regexp)).toBe(palette.regexp);
+    // Compound tag (most likely to be mis-nested) — function(variableName).
+    expect(colorFor(t.function(t.variableName))).toBe(palette.function);
   });
 
   it('builds a defined HighlightStyle for every palette', () => {
@@ -30,11 +33,11 @@ describe('buildHighlightSpec', () => {
       'aurora',
       'abyssal',
     ] as const) {
-      expect(buildHighlightStyle(getSyntaxPalette(id))).toBeDefined();
+      expect(buildHighlightStyle(getSyntaxPalette(id))).toBeInstanceOf(HighlightStyle);
     }
   });
 
   it('keeps the legacy firnGlacierHighlightStyle export', () => {
-    expect(firnGlacierHighlightStyle).toBeDefined();
+    expect(firnGlacierHighlightStyle).toBeInstanceOf(HighlightStyle);
   });
 });
