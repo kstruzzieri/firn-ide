@@ -1104,10 +1104,20 @@ export function buildHighlightStyle(palette: SyntaxPalette): HighlightStyle {
  */
 export const firnGlacierHighlightStyle = buildHighlightStyle(getSyntaxPalette('glacier'));
 
-/** Assembles chrome + syntax highlighting for a theme id. */
+const themeCache = new Map<SyntaxThemeId, Extension>();
+
+/**
+ * Assembles chrome + syntax highlighting for a theme id. Memoized: palettes are
+ * static, so a theme's assembled extension is immutable and safely shared across
+ * editor views and reused across swaps.
+ */
 export function buildTheme(id: SyntaxThemeId): Extension {
+  const cached = themeCache.get(id);
+  if (cached) return cached;
   const palette = getSyntaxPalette(id);
-  return [buildChrome(palette), syntaxHighlighting(buildHighlightStyle(palette))];
+  const theme: Extension = [buildChrome(palette), syntaxHighlighting(buildHighlightStyle(palette))];
+  themeCache.set(id, theme);
+  return theme;
 }
 
 /** Alias of `buildTheme` with a more descriptive name; both are equivalent. */
