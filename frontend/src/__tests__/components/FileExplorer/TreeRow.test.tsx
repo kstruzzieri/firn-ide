@@ -132,6 +132,31 @@ describe('TreeRow', () => {
     expect(row).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('exposes both tinted and active classes for the active region row', () => {
+    // Precondition for the .row.tinted.active rule that draws the focus/active
+    // outline in the region accent instead of the global --accent.
+    const { container } = render(
+      <TreeRow
+        {...baseProps}
+        isActive={true}
+        kind="entry"
+        path="/repo/frontend/x.ts"
+        name="x.ts"
+        depth={2}
+        level={3}
+        isDir={false}
+        isExpanded={false}
+        isSelected={false}
+        regionAccent="blue"
+        setSize={1}
+        posInSet={1}
+      />
+    );
+    const row = container.querySelector('[role="treeitem"]') as HTMLElement;
+    expect(row.className).toContain('tinted');
+    expect(row.className).toContain('active');
+  });
+
   it('sets aria attributes from the flat data', () => {
     render(
       <TreeRow

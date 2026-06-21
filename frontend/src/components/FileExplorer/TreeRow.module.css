@@ -69,6 +69,17 @@
   outline-offset: -2px;
 }
 
+/*
+ * Tinted rows draw their focus/active outline in their own region accent rather
+ * than the global --accent (which tracks the active workspace and reads cyan in
+ * Project View). Keeps the selection border consistent with the row's workspace
+ * color across both views; untinted loose files keep the global --accent.
+ */
+.row.tinted.active,
+.row.tinted:focus-visible {
+  outline-color: var(--region-accent);
+}
+
 .row[aria-selected='true'] {
   background-color: var(--accent-dim);
 }
