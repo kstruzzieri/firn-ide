@@ -2,6 +2,7 @@ import {
   SYNTAX_THEMES,
   SYNTAX_THEME_BY_ID,
   DEFAULT_SYNTAX_THEME_ID,
+  getSyntaxPalette,
   isSyntaxThemeId,
   type SyntaxPalette,
   type SyntaxThemeId,
@@ -93,5 +94,13 @@ describe('syntax palette registry', () => {
     expect(isSyntaxThemeId('nope')).toBe(false);
     expect(isSyntaxThemeId(null)).toBe(false);
     expect(isSyntaxThemeId(42)).toBe(false);
+  });
+
+  it('getSyntaxPalette returns the matching palette and falls back to the default for unknown ids', () => {
+    expect(getSyntaxPalette('reef')).toBe(SYNTAX_THEME_BY_ID.get('reef')!.palette);
+    // Unknown id falls back to the default (abyssal) palette.
+    expect(getSyntaxPalette('does-not-exist' as SyntaxThemeId)).toBe(
+      SYNTAX_THEME_BY_ID.get(DEFAULT_SYNTAX_THEME_ID)!.palette
+    );
   });
 });
