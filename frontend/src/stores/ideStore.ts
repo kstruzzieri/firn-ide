@@ -26,7 +26,7 @@ import {
 
 const SYNTAX_THEME_STORAGE_KEY = 'firn.editorSyntaxTheme';
 
-function loadInitialSyntaxTheme(): SyntaxThemeId {
+export function loadInitialSyntaxTheme(): SyntaxThemeId {
   try {
     const raw =
       typeof localStorage !== 'undefined' ? localStorage.getItem(SYNTAX_THEME_STORAGE_KEY) : null;
@@ -1501,6 +1501,7 @@ export const useIDEStore = create<IDEStore>()(
 
       setEditorSyntaxTheme: (id) => {
         if (!isSyntaxThemeId(id)) return;
+        set({ editorSyntaxTheme: id }, false, 'setEditorSyntaxTheme');
         try {
           if (typeof localStorage !== 'undefined') {
             localStorage.setItem(SYNTAX_THEME_STORAGE_KEY, id);
@@ -1508,7 +1509,6 @@ export const useIDEStore = create<IDEStore>()(
         } catch {
           // localStorage may be unavailable (private mode / WebView quirks); state still updates.
         }
-        set({ editorSyntaxTheme: id }, false, 'setEditorSyntaxTheme');
       },
 
       // Editor navigation actions

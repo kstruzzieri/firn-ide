@@ -1,4 +1,4 @@
-import { useIDEStore, useEditorSyntaxTheme } from '../../stores/ideStore';
+import { useIDEStore, useEditorSyntaxTheme, loadInitialSyntaxTheme } from '../../stores/ideStore';
 import { renderHook } from '@testing-library/react';
 
 const KEY = 'firn.editorSyntaxTheme';
@@ -9,7 +9,7 @@ describe('editorSyntaxTheme store slice', () => {
     useIDEStore.getState().setEditorSyntaxTheme('abyssal');
   });
 
-  it('defaults to abyssal', () => {
+  it('state is abyssal after reset', () => {
     expect(useIDEStore.getState().editorSyntaxTheme).toBe('abyssal');
   });
 
@@ -30,5 +30,26 @@ describe('editorSyntaxTheme store slice', () => {
     useIDEStore.getState().setEditorSyntaxTheme('solar');
     const { result } = renderHook(() => useEditorSyntaxTheme());
     expect(result.current).toBe('solar');
+  });
+});
+
+describe('loadInitialSyntaxTheme', () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('hydrates a valid persisted value', () => {
+    localStorage.setItem('firn.editorSyntaxTheme', 'nebula');
+    expect(loadInitialSyntaxTheme()).toBe('nebula');
+  });
+
+  it('falls back to the default for a corrupt persisted value', () => {
+    localStorage.setItem('firn.editorSyntaxTheme', 'not-a-real-theme');
+    expect(loadInitialSyntaxTheme()).toBe('abyssal');
+  });
+
+  it('falls back to the default when nothing is persisted', () => {
+    localStorage.removeItem('firn.editorSyntaxTheme');
+    expect(loadInitialSyntaxTheme()).toBe('abyssal');
   });
 });
