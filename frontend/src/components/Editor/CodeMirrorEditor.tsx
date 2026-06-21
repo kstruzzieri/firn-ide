@@ -242,12 +242,10 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     return cancel;
   }, [fileId]);
 
-  // Live-swap the editor theme when the global syntax theme changes.
+  // Live-swap the editor theme when the global syntax theme changes. The initial
+  // theme is baked in by createEditorExtensions, so we only handle later changes.
   useEffect(() => {
     let prev = useIDEStore.getState().editorSyntaxTheme;
-    const view = editorRef.current;
-    if (view) applyEditorTheme(view, prev);
-
     return useIDEStore.subscribe((state) => {
       const next = state.editorSyntaxTheme;
       if (next === prev) return;
