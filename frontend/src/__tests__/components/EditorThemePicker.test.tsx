@@ -23,4 +23,12 @@ describe('EditorThemePicker', () => {
     fireEvent.change(select, { target: { value: 'reef' } });
     expect(useIDEStore.getState().editorSyntaxTheme).toBe('reef');
   });
+
+  it('ignores a non-theme value without changing the store', () => {
+    render(<EditorThemePicker />);
+    const select = screen.getByLabelText('Editor theme');
+    const before = useIDEStore.getState().editorSyntaxTheme;
+    fireEvent.change(select, { target: { value: 'not-a-theme' } });
+    expect(useIDEStore.getState().editorSyntaxTheme).toBe(before);
+  });
 });

@@ -4,6 +4,7 @@
 }
 
 .select {
+  /* max-width hard-clips long labels; native <select> ignores text-overflow on WebKit. */
   max-width: 140px;
   background: transparent;
   border: none;
@@ -12,7 +13,6 @@
   font-size: 11px;
   padding: 0 4px;
   cursor: pointer;
-  text-overflow: ellipsis;
 }
 
 .select:hover {
@@ -28,16 +28,4 @@
 .select option {
   background: var(--surface-panel);
   color: var(--text-primary);
-}
-
-.srOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }

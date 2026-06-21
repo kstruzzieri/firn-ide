@@ -11,8 +11,7 @@ export function EditorThemePicker() {
   const setTheme = useIDEStore((state) => state.setEditorSyntaxTheme);
 
   return (
-    <label className={styles.picker}>
-      <span className={styles.srOnly}>Editor theme</span>
+    <div className={styles.picker}>
       <select
         aria-label="Editor theme"
         className={styles.select}
@@ -28,6 +27,6 @@ export function EditorThemePicker() {
           </option>
         ))}
       </select>
-    </label>
+    </div>
   );
 }
