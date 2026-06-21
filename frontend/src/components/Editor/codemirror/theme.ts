@@ -72,7 +72,6 @@ const colors = {
   searchMatchSelectedBorder: '#F59E0B',
 
   // Gutter
-  gutterBackground: '#0F172A',
   gutterForeground: '#475569',
   gutterActiveForeground: '#64748B',
 
@@ -938,7 +937,7 @@ export function buildChrome(palette: SyntaxPalette): Extension {
   return EditorView.theme(buildChromeRules(palette.background), { dark: true });
 }
 
-/** Legacy alias — chrome at the refined Glacier canvas. */
+/** Legacy alias — chrome-only theme at the Glacier canvas. @see firnGlacier for chrome + syntax. */
 export const firnGlacierTheme = buildChrome(getSyntaxPalette('glacier'));
 
 /**
@@ -1053,20 +1052,17 @@ export function buildHighlightStyle(palette: SyntaxPalette): HighlightStyle {
  */
 export const firnGlacierHighlightStyle = buildHighlightStyle(getSyntaxPalette('glacier'));
 
-/**
- * Complete Firn Glacier theme extension combining editor theme and syntax highlighting.
- */
 /** Assembles chrome + syntax highlighting for a theme id. */
 export function buildTheme(id: SyntaxThemeId): Extension {
   const palette = getSyntaxPalette(id);
   return [buildChrome(palette), syntaxHighlighting(buildHighlightStyle(palette))];
 }
 
-/** Preferred name for new call sites. */
+/** Alias of `buildTheme` with a more descriptive name; both are equivalent. */
 export const buildSyntaxTheme = buildTheme;
 
-/** The active default editor theme (Abyssal Current). */
+/** The active default editor theme (the palette named by DEFAULT_SYNTAX_THEME_ID). */
 export const defaultEditorTheme: Extension = buildTheme(DEFAULT_SYNTAX_THEME_ID);
 
-/** Legacy alias — the Firn Glacier look (kept for back-compat / existing imports). */
+/** Legacy alias — the Firn Glacier look (chrome + syntax). @see firnGlacierTheme for chrome only. */
 export const firnGlacier: Extension = buildTheme('glacier');

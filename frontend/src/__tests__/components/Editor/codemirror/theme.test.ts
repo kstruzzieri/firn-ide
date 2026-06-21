@@ -52,6 +52,8 @@ describe('buildChromeRules', () => {
     const rules = buildChromeRules('#08111C');
     expect((rules['&'] as Record<string, string>).backgroundColor).toBe('#08111C');
     expect((rules['.cm-gutters'] as Record<string, string>).backgroundColor).toBe('#08111C');
+    // Guard against accidental truncation of the chrome rule set.
+    expect(Object.keys(rules).length).toBeGreaterThan(20);
   });
 });
 
