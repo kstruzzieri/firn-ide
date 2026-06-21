@@ -18,6 +18,23 @@ import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
 import { parseCompoundStepKey } from '../utils/compoundRunKeys';
 import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
 import { parseFileReferences } from '../utils/parseFileReferences';
+import {
+  type SyntaxThemeId,
+  DEFAULT_SYNTAX_THEME_ID,
+  isSyntaxThemeId,
+} from '../components/Editor/codemirror/palettes';
+
+const SYNTAX_THEME_STORAGE_KEY = 'firn.editorSyntaxTheme';
+
+function loadInitialSyntaxTheme(): SyntaxThemeId {
+  try {
+    const raw =
+      typeof localStorage !== 'undefined' ? localStorage.getItem(SYNTAX_THEME_STORAGE_KEY) : null;
+    return isSyntaxThemeId(raw) ? raw : DEFAULT_SYNTAX_THEME_ID;
+  } catch {
+    return DEFAULT_SYNTAX_THEME_ID;
+  }
+}
 
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
@@ -175,6 +192,7 @@ interface IDEState {
 
   // Status
   gitBranch: string;
+  editorSyntaxTheme: SyntaxThemeId;
 
   // Editor navigation
   pendingEditorNavigation: EditorNavigationRequest | null;
@@ -281,6 +299,7 @@ interface IDEActions {
 
   // Status actions
   setGitBranch: (branch: string) => void;
+  setEditorSyntaxTheme: (id: SyntaxThemeId) => void;
 
   // Editor navigation actions
   requestEditorNavigation: (fileId: string, line: number, column: number) => void;
@@ -403,6 +422,7 @@ export const useIDEStore = create<IDEStore>()(
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
       gitBranch: '',
+      editorSyntaxTheme: loadInitialSyntaxTheme(),
       pendingEditorNavigation: null,
 
       // Workspace actions
@@ -1479,6 +1499,18 @@ export const useIDEStore = create<IDEStore>()(
       // Status actions
       setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
 
+      setEditorSyntaxTheme: (id) => {
+        if (!isSyntaxThemeId(id)) return;
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(SYNTAX_THEME_STORAGE_KEY, id);
+          }
+        } catch {
+          // localStorage may be unavailable (private mode / WebView quirks); state still updates.
+        }
+        set({ editorSyntaxTheme: id }, false, 'setEditorSyntaxTheme');
+      },
+
       // Editor navigation actions
       requestEditorNavigation: (fileId, line, column) =>
         set(
@@ -1595,6 +1627,8 @@ export const useActiveTerminalSession = () =>
     return id ? (state.terminalSessions.find((s) => s.id === id) ?? null) : null;
   });
 export const useGitBranch = () => useIDEStore((state) => state.gitBranch);
+export const useEditorSyntaxTheme = (): SyntaxThemeId =>
+  useIDEStore((state) => state.editorSyntaxTheme);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);
 export const useExpandedPaths = () => useIDEStore((state) => state.expandedPaths);
 export const useSelectedPath = () => useIDEStore((state) => state.selectedPath);
