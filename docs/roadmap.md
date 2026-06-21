@@ -30,7 +30,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization shipped (#111), lazy-load deferred; #39 open |
-| Editor & LSP DX | Not started | #112-114 open |
+| Editor & LSP DX | **IN PROGRESS** | #113 tooltip + #114 theme system shipped; #112 open |
 | Dependency Upgrades | **COMPLETE** | #40 |
 | Code Quality | Not started | #41-42 |
 | Accessibility | Not started | #43 |
@@ -47,7 +47,7 @@ Current status: **Milestone 3 (Workspace Management) complete; file-tree perform
 2. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
 3. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
 4. **#47: Terminal shell integration** — error markers & command separators (last open item in Milestone 2).
-5. **#112-114: Editor & LSP developer experience** (surfaced while testing the Python workspace during #111): #112 auto-provision language servers + wire the project environment (zero-config, no raw error), #113 diagnostic hover tooltip needs an opaque background, #114 syntax-highlighting color pass.
+5. **#112: Editor & LSP developer experience** (surfaced while testing the Python workspace during #111): auto-provision language servers + wire the project environment (zero-config, no raw error). **#113 (opaque diagnostic tooltip surface) and #114 (selectable syntax theme system — 7 themes, default Abyssal Current, StatusBar picker, localStorage-persisted) shipped together;** #112 remains the larger follow-up.
 6. **#37 (Phase 2): File tree lazy loading** — load directory children on expand; own spec (backend per-dir read, watcher reconcile, #54 scoped-tree/active-file reconciliation).
 
 ---
@@ -344,11 +344,11 @@ Surfaced while testing a Python workspace (`quantum_trader`) during the file-tre
 ### #112: LSP - auto-provision language servers + wire project environment
 Zero-config language support. Two layers: (a) provision the server **binary** itself (managed download of a pinned version into an app cache — e.g. `basedpyright` standalone to avoid a Node dependency — never the user's global env), and (b) auto-detect and forward the project **environment** (interpreter/venv, `extraPaths` for `src` layouts, `pythonVersion`) via `workspace/configuration` / `didChangeConfiguration`. Today `resolvePythonServer` finds only the binary and sends no env, so imports report false errors. Must generalize to gopls/tsserver/rust-analyzer and degrade to actionable UI (select interpreter / create venv / retry), never a raw error string.
 
-### #113: Editor - diagnostic hover tooltip has no background
-The diagnostic/hover tooltip renders without an opaque surface, so the message blends into the code underneath. Give the CodeMirror `.cm-tooltip` / `.cm-diagnostic` an opaque background, border, padding, shadow, and z-index above content.
+### #113: Editor - diagnostic hover tooltip has no background ✅
+Shipped: the lint tooltip content (`.cm-tooltip-lint`, which renders inside the intentionally-transparent `.cm-tooltip-hover` container) now gets an opaque surface — background, border, padding, shadow, z-index — with per-severity (error/warning/info/hint) left-accent borders, all from the shared chrome design tokens.
 
-### #114: Editor - syntax highlighting color enhancements
-Audit the CodeMirror highlight theme for contrast and token-class distinction (keywords/types/strings/comments/functions/constants) across Python/TS/Go; align with the app's design tokens.
+### #114: Editor - syntax highlighting color enhancements ✅
+Shipped as a **selectable syntax theme system**: `theme.ts` refactored into a pure palette registry (`palettes.ts`) + builders (`buildHighlightStyle` / `buildChrome` / `buildTheme`); 7 themes (Firn Glacier refined, Solar Flare, Tropic Coral Reef, Nebula Jewel, Ember Bifrost, Aurora Bloom, and the default Abyssal Current with its own deeper canvas), live-swapped via the editor `themeCompartment`, chosen from a StatusBar picker, and persisted globally in `localStorage`. Follow-up: per-workspace theme override (Go workspace field + regenerated bindings) and an optional darker-canvas toggle for the other themes.
 
 ---
 
