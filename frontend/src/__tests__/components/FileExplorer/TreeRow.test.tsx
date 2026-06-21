@@ -106,6 +106,32 @@ describe('TreeRow', () => {
     expect(row.getAttribute('style')).toContain('--region-accent');
   });
 
+  it('exposes both tinted and aria-selected when a region file is selected', () => {
+    // Precondition for the .row.tinted[aria-selected='true'] rule that makes a
+    // selected file inherit its region/workspace accent (Project + Workspace
+    // consistent). Both hooks must coexist on the row.
+    const { container } = render(
+      <TreeRow
+        {...baseProps}
+        kind="entry"
+        path="/repo/frontend/x.ts"
+        name="x.ts"
+        depth={2}
+        level={3}
+        isDir={false}
+        isExpanded={false}
+        isSelected={true}
+        regionAccent="blue"
+        setSize={1}
+        posInSet={1}
+      />
+    );
+    const row = container.querySelector('[role="treeitem"]') as HTMLElement;
+    expect(row.className).toContain('tinted');
+    expect(row.getAttribute('style')).toContain('--region-accent');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('sets aria attributes from the flat data', () => {
     render(
       <TreeRow
