@@ -78,3 +78,27 @@ describe('buildTheme', () => {
     expect(firnGlacierTheme).toBeDefined();
   });
 });
+
+describe('#113 diagnostic tooltip surface', () => {
+  const rules = buildChromeRules('#0F172A');
+
+  it('gives the lint tooltip an opaque surface', () => {
+    const lint = rules['.cm-tooltip-lint'] as Record<string, string>;
+    expect(lint).toBeDefined();
+    expect(lint.backgroundColor).toBeDefined();
+    expect(lint.backgroundColor).not.toBe('transparent');
+    expect(lint.border).toBeDefined();
+    expect(lint.boxShadow).toBeDefined();
+    expect(lint.padding).toBeDefined();
+  });
+
+  it('styles diagnostics and per-severity accents', () => {
+    expect(rules['.cm-diagnostic']).toBeDefined();
+    const error = rules['.cm-diagnostic-error'] as Record<string, string>;
+    const warning = rules['.cm-diagnostic-warning'] as Record<string, string>;
+    const info = rules['.cm-diagnostic-info'] as Record<string, string>;
+    expect(error.borderLeft).toContain('#EF4444');
+    expect(warning.borderLeft).toContain('#F59E0B');
+    expect(info.borderLeft).toContain('#3B82F6');
+  });
+});

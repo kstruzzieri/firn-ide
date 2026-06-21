@@ -440,6 +440,54 @@ export function buildChromeRules(background: string) {
       outlineOffset: '1px',
     },
 
+    // Diagnostic (lint) hover tooltip surface (#113). The lint content renders
+    // as `.cm-tooltip-lint` inside the transparent `.cm-tooltip-hover` container;
+    // background is not inherited, so an opaque surface here fixes the blend.
+    '.cm-tooltip-lint': {
+      backgroundColor: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: '7px',
+      padding: '8px 10px',
+      boxShadow: '0 12px 30px rgba(0, 0, 0, 0.34)',
+      color: colors.foreground,
+      fontSize: '12px',
+      lineHeight: '1.5',
+      maxWidth: '460px',
+      zIndex: '1300',
+    },
+    '.cm-diagnostic': {
+      padding: '2px 0',
+      marginLeft: '0',
+      borderLeft: 'none',
+      whiteSpace: 'pre-wrap',
+    },
+    '.cm-diagnostic-error': {
+      borderLeft: `3px solid ${colors.error}`,
+      paddingLeft: '8px',
+    },
+    '.cm-diagnostic-warning': {
+      borderLeft: `3px solid ${colors.warning}`,
+      paddingLeft: '8px',
+    },
+    '.cm-diagnostic-info': {
+      borderLeft: `3px solid ${colors.info}`,
+      paddingLeft: '8px',
+    },
+    '.cm-diagnosticSource': {
+      color: colors.foregroundMuted,
+      fontSize: '11px',
+    },
+    '.cm-diagnosticAction': {
+      backgroundColor: colors.surfaceActive,
+      border: `1px solid ${colors.border}`,
+      borderRadius: '4px',
+      color: colors.foreground,
+      margin: '0 0 0 8px',
+      padding: '1px 6px',
+      fontSize: '11px',
+      cursor: 'pointer',
+    },
+
     // Linting
     '.cm-lintRange-error': {
       backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23EF4444' fill='none' stroke-width='1.2'/></svg>")`,
