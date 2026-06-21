@@ -9,6 +9,7 @@ import { EditorView } from '@codemirror/view';
 import { Extension } from '@codemirror/state';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
+import { type SyntaxPalette, getSyntaxPalette } from './palettes';
 
 /**
  * Firn Glacier color palette extracted from design tokens.
@@ -929,101 +930,111 @@ export const firnGlacierTheme = EditorView.theme(
 );
 
 /**
- * Syntax highlighting styles for the Firn Glacier theme.
- * Uses semantic token types from @lezer/highlight.
+ * Builds the ordered tag→style spec for a palette. Exported for unit tests so
+ * palette wiring can be asserted without instantiating a HighlightStyle.
  */
-export const firnGlacierHighlightStyle = HighlightStyle.define([
-  // Comments
-  { tag: t.comment, color: colors.comment, fontStyle: 'italic' },
-  { tag: t.lineComment, color: colors.comment, fontStyle: 'italic' },
-  { tag: t.blockComment, color: colors.comment, fontStyle: 'italic' },
-  { tag: t.docComment, color: colors.comment, fontStyle: 'italic' },
+export function buildHighlightSpec(palette: SyntaxPalette) {
+  return [
+    // Comments
+    { tag: t.comment, color: palette.comment, fontStyle: 'italic' },
+    { tag: t.lineComment, color: palette.comment, fontStyle: 'italic' },
+    { tag: t.blockComment, color: palette.comment, fontStyle: 'italic' },
+    { tag: t.docComment, color: palette.comment, fontStyle: 'italic' },
 
-  // Strings
-  { tag: t.string, color: colors.string },
-  { tag: t.special(t.string), color: colors.string },
-  { tag: t.character, color: colors.string },
-  { tag: t.escape, color: colors.operator },
+    // Strings
+    { tag: t.string, color: palette.string },
+    { tag: t.special(t.string), color: palette.string },
+    { tag: t.character, color: palette.string },
+    { tag: t.escape, color: palette.escape },
 
-  // Numbers
-  { tag: t.number, color: colors.number },
-  { tag: t.integer, color: colors.number },
-  { tag: t.float, color: colors.number },
+    // Numbers
+    { tag: t.number, color: palette.number },
+    { tag: t.integer, color: palette.number },
+    { tag: t.float, color: palette.number },
 
-  // Keywords
-  { tag: t.keyword, color: colors.keyword },
-  { tag: t.modifier, color: colors.keyword },
-  { tag: t.controlKeyword, color: colors.keyword },
-  { tag: t.operatorKeyword, color: colors.keyword },
-  { tag: t.definitionKeyword, color: colors.keyword },
-  { tag: t.moduleKeyword, color: colors.keyword },
+    // Keywords
+    { tag: t.keyword, color: palette.keyword },
+    { tag: t.modifier, color: palette.keyword },
+    { tag: t.controlKeyword, color: palette.keyword },
+    { tag: t.operatorKeyword, color: palette.keyword },
+    { tag: t.definitionKeyword, color: palette.keyword },
+    { tag: t.moduleKeyword, color: palette.keyword },
 
-  // Operators and punctuation
-  { tag: t.operator, color: colors.operator },
-  { tag: t.compareOperator, color: colors.operator },
-  { tag: t.arithmeticOperator, color: colors.operator },
-  { tag: t.logicOperator, color: colors.operator },
-  { tag: t.bitwiseOperator, color: colors.operator },
-  { tag: t.punctuation, color: colors.punctuation },
-  { tag: t.paren, color: colors.punctuation },
-  { tag: t.brace, color: colors.punctuation },
-  { tag: t.bracket, color: colors.punctuation },
-  { tag: t.separator, color: colors.punctuation },
+    // Operators and punctuation
+    { tag: t.operator, color: palette.operator },
+    { tag: t.compareOperator, color: palette.operator },
+    { tag: t.arithmeticOperator, color: palette.operator },
+    { tag: t.logicOperator, color: palette.operator },
+    { tag: t.bitwiseOperator, color: palette.operator },
+    { tag: t.punctuation, color: palette.punctuation },
+    { tag: t.paren, color: palette.punctuation },
+    { tag: t.brace, color: palette.punctuation },
+    { tag: t.bracket, color: palette.punctuation },
+    { tag: t.separator, color: palette.punctuation },
 
-  // Variables and properties
-  { tag: t.variableName, color: colors.foreground },
-  { tag: t.definition(t.variableName), color: colors.variable },
-  { tag: t.propertyName, color: colors.variable },
-  { tag: t.definition(t.propertyName), color: colors.variable },
+    // Variables and properties
+    { tag: t.variableName, color: palette.variable },
+    { tag: t.definition(t.variableName), color: palette.variable },
+    { tag: t.propertyName, color: palette.property },
+    { tag: t.definition(t.propertyName), color: palette.property },
 
-  // Functions
-  { tag: t.function(t.variableName), color: colors.function },
-  { tag: t.definition(t.function(t.variableName)), color: colors.function },
-  { tag: t.function(t.propertyName), color: colors.function },
+    // Functions
+    { tag: t.function(t.variableName), color: palette.function },
+    { tag: t.definition(t.function(t.variableName)), color: palette.function },
+    { tag: t.function(t.propertyName), color: palette.function },
 
-  // Types
-  { tag: t.typeName, color: colors.type },
-  { tag: t.className, color: colors.type },
-  { tag: t.namespace, color: colors.type },
-  { tag: t.annotation, color: colors.type },
-  { tag: t.self, color: colors.keyword },
+    // Types
+    { tag: t.typeName, color: palette.type },
+    { tag: t.className, color: palette.type },
+    { tag: t.namespace, color: palette.type },
+    { tag: t.annotation, color: palette.type },
+    { tag: t.self, color: palette.keyword },
 
-  // Constants and special values
-  { tag: t.constant(t.variableName), color: colors.constant },
-  { tag: t.bool, color: colors.constant },
-  { tag: t.null, color: colors.constant },
-  { tag: t.atom, color: colors.constant },
-  { tag: t.unit, color: colors.constant },
+    // Constants and special values
+    { tag: t.constant(t.variableName), color: palette.constant },
+    { tag: t.bool, color: palette.constant },
+    { tag: t.null, color: palette.constant },
+    { tag: t.atom, color: palette.constant },
+    { tag: t.unit, color: palette.constant },
 
-  // HTML/JSX tags
-  { tag: t.tagName, color: colors.tag },
-  { tag: t.angleBracket, color: colors.punctuation },
-  { tag: t.attributeName, color: colors.attribute },
-  { tag: t.attributeValue, color: colors.string },
+    // HTML/JSX tags
+    { tag: t.tagName, color: palette.tag },
+    { tag: t.angleBracket, color: palette.punctuation },
+    { tag: t.attributeName, color: palette.attribute },
+    { tag: t.attributeValue, color: palette.string },
 
-  // Regular expressions
-  { tag: t.regexp, color: colors.regexp },
+    // Regular expressions
+    { tag: t.regexp, color: palette.regexp },
 
-  // Headings (Markdown)
-  { tag: t.heading, color: colors.function, fontWeight: 'bold' },
-  { tag: t.heading1, color: colors.function, fontWeight: 'bold', fontSize: '1.4em' },
-  { tag: t.heading2, color: colors.function, fontWeight: 'bold', fontSize: '1.2em' },
-  { tag: t.heading3, color: colors.function, fontWeight: 'bold' },
+    // Headings (Markdown)
+    { tag: t.heading, color: palette.function, fontWeight: 'bold' },
+    { tag: t.heading1, color: palette.function, fontWeight: 'bold', fontSize: '1.4em' },
+    { tag: t.heading2, color: palette.function, fontWeight: 'bold', fontSize: '1.2em' },
+    { tag: t.heading3, color: palette.function, fontWeight: 'bold' },
 
-  // Markdown specific
-  { tag: t.link, color: colors.accent, textDecoration: 'underline' },
-  { tag: t.url, color: colors.accent },
-  { tag: t.emphasis, fontStyle: 'italic' },
-  { tag: t.strong, fontWeight: 'bold' },
-  { tag: t.strikethrough, textDecoration: 'line-through' },
-  { tag: t.quote, color: colors.foregroundSecondary, fontStyle: 'italic' },
+    // Markdown specific (shared chrome accent)
+    { tag: t.link, color: colors.accent, textDecoration: 'underline' },
+    { tag: t.url, color: colors.accent },
+    { tag: t.emphasis, fontStyle: 'italic' },
+    { tag: t.strong, fontWeight: 'bold' },
+    { tag: t.strikethrough, textDecoration: 'line-through' },
+    { tag: t.quote, color: colors.foregroundSecondary, fontStyle: 'italic' },
 
-  // Labels (goto, break targets)
-  { tag: t.labelName, color: colors.accent },
+    // Labels (goto, break targets)
+    { tag: t.labelName, color: colors.accent },
 
-  // Invalid/error
-  { tag: t.invalid, color: colors.error },
-]);
+    // Invalid/error
+    { tag: t.invalid, color: colors.error },
+  ];
+}
+
+/** Builds a CodeMirror HighlightStyle for a palette. */
+export function buildHighlightStyle(palette: SyntaxPalette): HighlightStyle {
+  return HighlightStyle.define(buildHighlightSpec(palette));
+}
+
+/** Legacy alias — the refined Firn Glacier highlight style. */
+export const firnGlacierHighlightStyle = buildHighlightStyle(getSyntaxPalette('glacier'));
 
 /**
  * Complete Firn Glacier theme extension combining editor theme and syntax highlighting.
