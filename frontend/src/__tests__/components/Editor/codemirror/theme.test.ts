@@ -61,9 +61,14 @@ describe('buildChromeRules', () => {
   it('colours the python overlay token classes from the palette', () => {
     const palette = getSyntaxPalette('abyssal');
     const rules = buildChromeRules(palette);
-    expect((rules['.firn-tok-self'] as Record<string, string>).color).toBe(palette.keyword);
-    expect((rules['.firn-tok-builtin'] as Record<string, string>).color).toBe(palette.type);
-    expect((rules['.firn-tok-decorator'] as Record<string, string>).color).toBe(palette.function);
+    expect((rules['.firn-tok-self'] as Record<string, string>).color).toContain(palette.keyword);
+    expect((rules['.firn-tok-builtin'] as Record<string, string>).color).toContain(palette.type);
+    expect((rules['.firn-tok-decorator'] as Record<string, string>).color).toContain(
+      palette.function
+    );
+    expect((rules['.firn-tok-param'] as Record<string, string>).color).toContain(palette.property);
+    // Overlay must win the cascade against syntax highlighting.
+    expect((rules['.firn-tok-self'] as Record<string, string>).color).toContain('!important');
   });
 });
 

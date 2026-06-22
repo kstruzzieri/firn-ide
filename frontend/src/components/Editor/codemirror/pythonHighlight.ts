@@ -2,16 +2,19 @@
  * Python-specific highlight overlay.
  *
  * lezer-python tags `self`/`cls`, builtin types/functions (`dict`, `str`, `float`,
- * …), and decorator names all as plain `VariableName`/`PropertyName` — the same tag
- * as any user identifier — so the syntax theme's HighlightStyle cannot distinguish
- * them. This ViewPlugin walks the syntax tree and marks those tokens with CSS classes
- * that the active theme colours (see `buildChromeRules` in theme.ts):
+ * …), decorator names, and keyword-argument names all as plain `VariableName`/
+ * `PropertyName` — the same tag as any user identifier — so the syntax theme's
+ * HighlightStyle cannot distinguish them. This ViewPlugin walks the syntax tree
+ * and marks those tokens with CSS classes the active theme colours (see
+ * `buildChromeRules` in theme.ts):
  *   - `.firn-tok-self`      → palette.keyword  (self / cls)
  *   - `.firn-tok-builtin`   → palette.type     (dict / str / float / len / …)
- *   - `.firn-tok-decorator` → palette.function (the name in `@property`, `@app.route`)
+ *   - `.firn-tok-decorator` → palette.function (name in `@property`, `@app.route`)
+ *   - `.firn-tok-param`     → palette.property (keyword-arg names: `Foo(id=…)`)
  *
- * Scope this to Python documents only — other languages share the `VariableName` tag
- * and would mis-colour identifiers like a JS variable named `self`.
+ * Runs at `Prec.highest` so its mark spans nest *inside* the syntax-highlight spans
+ * and win the colour cascade. Scope to Python documents only — other languages share
+ * the `VariableName` tag and would be mis-coloured.
  */
 
 import {
@@ -22,8 +25,8 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { RangeSetBuilder, type Extension } from '@codemirror/state';
-import type { SyntaxNode } from '@lezer/common';
+import { Prec, RangeSetBuilder, type EditorState, type Extension } from '@codemirror/state';
+import type { SyntaxNode, SyntaxNodeRef, Tree } from '@lezer/common';
 
 /** Python identifiers conventionally highlighted like keywords. */
 export const PY_SELF_NAMES = new Set(['self', 'cls']);
@@ -101,19 +104,34 @@ export const PY_BUILTINS = new Set([
   'zip',
 ]);
 
-export type PythonTokenClass = 'firn-tok-self' | 'firn-tok-builtin' | 'firn-tok-decorator';
+export type PythonTokenClass =
+  | 'firn-tok-self'
+  | 'firn-tok-builtin'
+  | 'firn-tok-decorator'
+  | 'firn-tok-param';
+
+export interface PythonTokenContext {
+  /** Node is the callee/name of a decorator. */
+  decoratorName: boolean;
+  /** Node is a keyword-argument name (`name=` inside a call's ArgList). */
+  kwargName: boolean;
+}
 
 /**
- * Pure classifier (exported for tests). Decorator-name detection takes precedence so
- * `@property` colours `property` as a decorator rather than as the `property` builtin.
+ * Pure classifier (exported for tests). Decorator-name and kwarg-name context take
+ * precedence so e.g. `@property` colours `property` as a decorator rather than as the
+ * `property` builtin.
  */
 export function pythonTokenClass(
   nodeName: string,
   text: string,
-  isDecoratorName: boolean
+  ctx: PythonTokenContext
 ): PythonTokenClass | null {
-  if (isDecoratorName && (nodeName === 'VariableName' || nodeName === 'PropertyName')) {
+  if (ctx.decoratorName && (nodeName === 'VariableName' || nodeName === 'PropertyName')) {
     return 'firn-tok-decorator';
+  }
+  if (ctx.kwargName && nodeName === 'VariableName') {
+    return 'firn-tok-param';
   }
   if (nodeName !== 'VariableName') return null;
   if (PY_SELF_NAMES.has(text)) return 'firn-tok-self';
@@ -122,9 +140,9 @@ export function pythonTokenClass(
 }
 
 /**
- * True when `node` is the callee/name of a decorator (lives inside a `Decorator`
- * node and is NOT one of its call arguments). `@wraps(func)` → `wraps` is a name,
- * `func` is an argument (inside `ArgList`) and is left alone.
+ * True when `node` is the callee/name of a decorator (inside a `Decorator` node and
+ * NOT one of its call arguments). `@wraps(func)` → `wraps` is a name, `func` is an
+ * argument (inside `ArgList`) and is left alone.
  */
 function isDecoratorName(node: SyntaxNode): boolean {
   for (let cur: SyntaxNode | null = node.parent; cur; cur = cur.parent) {
@@ -134,24 +152,54 @@ function isDecoratorName(node: SyntaxNode): boolean {
   return false;
 }
 
+/** True when `node` is the `name` in a `name=value` keyword argument. */
+function isKwargName(node: SyntaxNode): boolean {
+  return node.parent?.name === 'ArgList' && node.nextSibling?.name === 'AssignOp';
+}
+
+function classifyNode(state: EditorState, ref: SyntaxNodeRef): PythonTokenClass | null {
+  if (ref.name !== 'VariableName' && ref.name !== 'PropertyName') return null;
+  const node = ref.node;
+  return pythonTokenClass(ref.name, state.sliceDoc(ref.from, ref.to), {
+    decoratorName: isDecoratorName(node),
+    kwargName: isKwargName(node),
+  });
+}
+
+/**
+ * Collects every overlay mark in the document. Exported for tests so the tree-walk +
+ * classification can be verified without rendering.
+ */
+export function collectPythonMarks(
+  state: EditorState,
+  tree: Tree = syntaxTree(state)
+): { from: number; to: number; cls: PythonTokenClass }[] {
+  const out: { from: number; to: number; cls: PythonTokenClass }[] = [];
+  tree.iterate({
+    enter: (ref) => {
+      const cls = classifyNode(state, ref);
+      if (cls) out.push({ from: ref.from, to: ref.to, cls });
+    },
+  });
+  return out;
+}
+
 const MARKS: Record<PythonTokenClass, Decoration> = {
   'firn-tok-self': Decoration.mark({ class: 'firn-tok-self' }),
   'firn-tok-builtin': Decoration.mark({ class: 'firn-tok-builtin' }),
   'firn-tok-decorator': Decoration.mark({ class: 'firn-tok-decorator' }),
+  'firn-tok-param': Decoration.mark({ class: 'firn-tok-param' }),
 };
 
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const tree = syntaxTree(view.state);
   for (const { from, to } of view.visibleRanges) {
-    tree.iterate({
+    syntaxTree(view.state).iterate({
       from,
       to,
-      enter: (node) => {
-        if (node.name !== 'VariableName' && node.name !== 'PropertyName') return;
-        const text = view.state.sliceDoc(node.from, node.to);
-        const cls = pythonTokenClass(node.name, text, isDecoratorName(node.node));
-        if (cls) builder.add(node.from, node.to, MARKS[cls]);
+      enter: (ref) => {
+        const cls = classifyNode(view.state, ref);
+        if (cls) builder.add(ref.from, ref.to, MARKS[cls]);
       },
     });
   }
@@ -162,24 +210,26 @@ function buildDecorations(view: EditorView): DecorationSet {
  * Python highlight overlay extension. Add only for Python documents.
  */
 export function pythonHighlightExtensions(): Extension {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
+  return Prec.highest(
+    ViewPlugin.fromClass(
+      class {
+        decorations: DecorationSet;
 
-      constructor(view: EditorView) {
-        this.decorations = buildDecorations(view);
-      }
-
-      update(update: ViewUpdate) {
-        if (
-          update.docChanged ||
-          update.viewportChanged ||
-          syntaxTree(update.startState) !== syntaxTree(update.state)
-        ) {
-          this.decorations = buildDecorations(update.view);
+        constructor(view: EditorView) {
+          this.decorations = buildDecorations(view);
         }
-      }
-    },
-    { decorations: (plugin) => plugin.decorations }
+
+        update(update: ViewUpdate) {
+          if (
+            update.docChanged ||
+            update.viewportChanged ||
+            syntaxTree(update.startState) !== syntaxTree(update.state)
+          ) {
+            this.decorations = buildDecorations(update.view);
+          }
+        }
+      },
+      { decorations: (plugin) => plugin.decorations }
+    )
   );
 }

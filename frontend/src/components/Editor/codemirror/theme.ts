@@ -91,11 +91,13 @@ export function buildChromeRules(palette: SyntaxPalette) {
       lineHeight: '1.6',
     },
 
-    // Python overlay token colours (see pythonHighlight.ts) — palette-driven so
-    // they swap with the active theme.
-    '.firn-tok-self': { color: palette.keyword },
-    '.firn-tok-builtin': { color: palette.type },
-    '.firn-tok-decorator': { color: palette.function },
+    // Python overlay token colours (see pythonHighlight.ts) — palette-driven so they
+    // swap with the active theme. `!important` wins the merged-span case where the
+    // overlay mark coincides exactly with a syntax-highlight span.
+    '.firn-tok-self': { color: `${palette.keyword} !important` },
+    '.firn-tok-builtin': { color: `${palette.type} !important` },
+    '.firn-tok-decorator': { color: `${palette.function} !important` },
+    '.firn-tok-param': { color: `${palette.property} !important` },
 
     // Content area
     '.cm-content': {

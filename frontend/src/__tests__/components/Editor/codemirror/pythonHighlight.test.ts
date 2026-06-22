@@ -1,33 +1,46 @@
 import { EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { ensureSyntaxTree } from '@codemirror/language';
 import { python } from '@codemirror/lang-python';
 import {
   PY_BUILTINS,
   PY_SELF_NAMES,
   pythonTokenClass,
+  collectPythonMarks,
   pythonHighlightExtensions,
+  type PythonTokenContext,
 } from '../../../../components/Editor/codemirror/pythonHighlight';
+
+const ctx = (over: Partial<PythonTokenContext> = {}): PythonTokenContext => ({
+  decoratorName: false,
+  kwargName: false,
+  ...over,
+});
 
 describe('pythonTokenClass', () => {
   it('classifies self and cls as self', () => {
-    expect(pythonTokenClass('VariableName', 'self', false)).toBe('firn-tok-self');
-    expect(pythonTokenClass('VariableName', 'cls', false)).toBe('firn-tok-self');
+    expect(pythonTokenClass('VariableName', 'self', ctx())).toBe('firn-tok-self');
+    expect(pythonTokenClass('VariableName', 'cls', ctx())).toBe('firn-tok-self');
   });
 
   it('classifies builtin types/functions as builtin', () => {
     for (const name of ['dict', 'str', 'float', 'int', 'list', 'len', 'print']) {
-      expect(pythonTokenClass('VariableName', name, false)).toBe('firn-tok-builtin');
+      expect(pythonTokenClass('VariableName', name, ctx())).toBe('firn-tok-builtin');
     }
   });
 
-  it('treats a decorator name as decorator even when it is also a builtin', () => {
-    expect(pythonTokenClass('VariableName', 'property', true)).toBe('firn-tok-decorator');
-    expect(pythonTokenClass('PropertyName', 'route', true)).toBe('firn-tok-decorator');
+  it('lets decorator and kwarg context win, even for builtin names', () => {
+    expect(pythonTokenClass('VariableName', 'property', ctx({ decoratorName: true }))).toBe(
+      'firn-tok-decorator'
+    );
+    expect(pythonTokenClass('PropertyName', 'route', ctx({ decoratorName: true }))).toBe(
+      'firn-tok-decorator'
+    );
+    expect(pythonTokenClass('VariableName', 'id', ctx({ kwargName: true }))).toBe('firn-tok-param');
   });
 
   it('leaves ordinary identifiers and non-decorator property names alone', () => {
-    expect(pythonTokenClass('VariableName', 'my_var', false)).toBeNull();
-    expect(pythonTokenClass('PropertyName', 'value', false)).toBeNull();
+    expect(pythonTokenClass('VariableName', 'my_var', ctx())).toBeNull();
+    expect(pythonTokenClass('PropertyName', 'value', ctx())).toBeNull();
   });
 
   it('exposes the builtin and self name sets', () => {
@@ -38,15 +51,34 @@ describe('pythonTokenClass', () => {
   });
 });
 
+describe('collectPythonMarks (syntax-tree walk)', () => {
+  const doc = '@staticmethod\ndef f(self, x: dict):\n    return Foo(id=x)\n';
+  const state = EditorState.create({ doc, extensions: [python()] });
+  // Force a full parse — without a view, lezer parses lazily.
+  const tree = ensureSyntaxTree(state, doc.length, 5000)!;
+  const marks = collectPythonMarks(state, tree);
+  const textFor = (cls: string) =>
+    marks.filter((mark) => mark.cls === cls).map((mark) => doc.slice(mark.from, mark.to));
+
+  it('marks the decorator name (not just the @)', () => {
+    expect(textFor('firn-tok-decorator')).toContain('staticmethod');
+  });
+
+  it('marks self', () => {
+    expect(textFor('firn-tok-self')).toContain('self');
+  });
+
+  it('marks builtin types', () => {
+    expect(textFor('firn-tok-builtin')).toContain('dict');
+  });
+
+  it('marks keyword-argument names', () => {
+    expect(textFor('firn-tok-param')).toContain('id');
+  });
+});
+
 describe('pythonHighlightExtensions', () => {
-  it('mounts on a python document without throwing', () => {
-    const view = new EditorView({
-      state: EditorState.create({
-        doc: '@property\ndef f(self):\n    return dict()\n',
-        extensions: [python(), pythonHighlightExtensions()],
-      }),
-    });
-    expect(view).toBeDefined();
-    view.destroy();
+  it('returns a defined extension', () => {
+    expect(pythonHighlightExtensions()).toBeDefined();
   });
 });
