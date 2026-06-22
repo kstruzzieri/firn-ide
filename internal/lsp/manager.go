@@ -43,8 +43,9 @@ type EventEmitter func(event string, data ...any)
 
 // Manager owns workspace-scoped language server instances.
 type Manager struct {
-	registry *Registry
-	emitter  EventEmitter
+	registry       *Registry
+	emitter        EventEmitter
+	configProvider WorkspaceConfigProvider
 
 	mu      sync.Mutex
 	servers map[serverKey]*serverEntry
@@ -94,10 +95,11 @@ type serverEntry struct {
 // NewManager creates a new LSP manager with the given event emitter.
 func NewManager(emitter EventEmitter) *Manager {
 	return &Manager{
-		registry: NewRegistry(),
-		emitter:  emitter,
-		servers:  make(map[serverKey]*serverEntry),
-		docKeys:  make(map[string]serverKey),
+		registry:       NewRegistry(),
+		emitter:        emitter,
+		configProvider: newEnvConfigProvider(),
+		servers:        make(map[serverKey]*serverEntry),
+		docKeys:        make(map[string]serverKey),
 	}
 }
 
@@ -440,6 +442,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 		m.handleNotification(key, method, params)
 	})
 	entry.client = client
+	client.SetServerRequestHandler(m.serverRequestHandler(key))
 
 	rootURI, err := FileToURI(key.workspace)
 	if err != nil {
@@ -793,6 +796,22 @@ func (m *Manager) handleNotification(key serverKey, method string, params json.R
 			"version":     diagParams.Version,
 			"diagnostics": diagParams.Diagnostics,
 		})
+	}
+}
+
+// serverRequestHandler returns a ServerRequestHandler bound to a server key.
+// It answers workspace/configuration via the configProvider and declines all
+// other server-to-client methods (the client then replies -32601).
+func (m *Manager) serverRequestHandler(key serverKey) ServerRequestHandler {
+	return func(method string, params json.RawMessage) (any, bool, *JSONRPCError) {
+		if method != "workspace/configuration" {
+			return nil, false, nil
+		}
+		var cfgParams ConfigurationParams
+		if err := json.Unmarshal(params, &cfgParams); err != nil {
+			return nil, true, &JSONRPCError{Code: -32602, Message: "invalid workspace/configuration params: " + err.Error()}
+		}
+		return m.configProvider.Configuration(key.family, key.workspace, cfgParams.Items), true, nil
 	}
 }
 
