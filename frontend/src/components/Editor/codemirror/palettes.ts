@@ -29,6 +29,10 @@ export interface SyntaxPalette {
   attribute: string;
   /** String-escape sequences. */
   escape: string;
+  /** Decorator marker + name (`@property`). */
+  decorator: string;
+  /** Keyword-argument / call parameter names (`Foo(id=…)`). */
+  param: string;
 }
 
 export type SyntaxThemeId =
@@ -69,6 +73,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#FDA4AF',
       attribute: '#FCD34D',
       escape: '#22D3EE',
+      decorator: '#FBBF24',
+      param: '#C084FC',
     },
   },
   {
@@ -91,6 +97,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#FB7185',
       attribute: '#FBBF24',
       escape: '#F472B6',
+      decorator: '#C084FC',
+      param: '#67E8F9',
     },
   },
   {
@@ -113,6 +121,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#FF6B9D',
       attribute: '#FFC857',
       escape: '#7DD3FC',
+      decorator: '#A78BFA',
+      param: '#38BDF8',
     },
   },
   {
@@ -135,6 +145,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#C084FC',
       attribute: '#A3E635',
       escape: '#2DD4BF',
+      decorator: '#FBBF24',
+      param: '#F0ABFC',
     },
   },
   {
@@ -157,6 +169,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#F97316',
       attribute: '#FBBF24',
       escape: '#FB7185',
+      decorator: '#F472B6',
+      param: '#A78BFA',
     },
   },
   // Aurora Bloom = Ember Bifrost's warm/cool structure rendered in Tropic Reef hues,
@@ -181,6 +195,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#FF6B9D',
       attribute: '#FFC857',
       escape: '#FB7185',
+      decorator: '#A78BFA',
+      param: '#FBBF24',
     },
   },
   {
@@ -203,6 +219,8 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
       tag: '#F472B6',
       attribute: '#FBBF24',
       escape: '#67E8F9',
+      decorator: '#FBBF24',
+      param: '#A78BFA',
     },
   },
 ];

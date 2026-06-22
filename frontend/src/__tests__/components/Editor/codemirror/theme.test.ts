@@ -26,8 +26,8 @@ describe('highlight-style builders', () => {
     expect(colorFor(t.regexp)).toBe(palette.regexp);
     // Compound tag (most likely to be mis-nested) — function(variableName).
     expect(colorFor(t.function(t.variableName))).toBe(palette.function);
-    // Decorator marker (@) — t.meta — must map to the function color.
-    expect(colorFor(t.meta)).toBe(palette.function);
+    // Decorator marker (@) — t.meta — must map to the decorator color.
+    expect(colorFor(t.meta)).toBe(palette.decorator);
   });
 
   it('builds a defined HighlightStyle for every palette', () => {
@@ -64,9 +64,9 @@ describe('buildChromeRules', () => {
     expect((rules['.firn-tok-self'] as Record<string, string>).color).toContain(palette.keyword);
     expect((rules['.firn-tok-builtin'] as Record<string, string>).color).toContain(palette.type);
     expect((rules['.firn-tok-decorator'] as Record<string, string>).color).toContain(
-      palette.function
+      palette.decorator
     );
-    expect((rules['.firn-tok-param'] as Record<string, string>).color).toContain(palette.property);
+    expect((rules['.firn-tok-param'] as Record<string, string>).color).toContain(palette.param);
     // Overlay must win the cascade against syntax highlighting.
     expect((rules['.firn-tok-self'] as Record<string, string>).color).toContain('!important');
   });

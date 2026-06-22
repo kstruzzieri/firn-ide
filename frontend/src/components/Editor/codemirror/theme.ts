@@ -96,8 +96,8 @@ export function buildChromeRules(palette: SyntaxPalette) {
     // overlay mark coincides exactly with a syntax-highlight span.
     '.firn-tok-self': { color: `${palette.keyword} !important` },
     '.firn-tok-builtin': { color: `${palette.type} !important` },
-    '.firn-tok-decorator': { color: `${palette.function} !important` },
-    '.firn-tok-param': { color: `${palette.property} !important` },
+    '.firn-tok-decorator': { color: `${palette.decorator} !important` },
+    '.firn-tok-param': { color: `${palette.param} !important` },
 
     // Content area
     '.cm-content': {
@@ -1038,7 +1038,7 @@ export function buildHighlightSpec(palette: SyntaxPalette) {
     { tag: t.separator, color: palette.punctuation },
 
     // Decorators (@ = t.meta) + operators lezer-python emits that were uncolored.
-    { tag: t.meta, color: palette.function },
+    { tag: t.meta, color: palette.decorator },
     { tag: t.updateOperator, color: palette.operator },
     { tag: t.definitionOperator, color: palette.operator },
     { tag: t.derefOperator, color: palette.punctuation },
