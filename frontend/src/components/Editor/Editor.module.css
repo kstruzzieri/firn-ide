@@ -25,12 +25,17 @@
   background: var(--surface-tab-bar);
   flex-shrink: 0;
   min-height: 38px;
+  /* overflow-x: auto forces overflow-y to compute to auto too (CSS spec), which
+     showed a stray vertical scrollbar when tabs slightly exceed the bar height.
+     Pin the cross axis hidden and fully suppress the (still-scrollable) x-bar. */
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-bottom: none;
 }
 
 .tabBar::-webkit-scrollbar {
-  height: 0;
+  display: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════

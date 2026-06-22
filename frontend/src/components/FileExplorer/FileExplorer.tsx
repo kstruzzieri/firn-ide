@@ -237,8 +237,10 @@ export function FileExplorer() {
         />
       }
     >
-      {mode === 'workspace' && <WorkspaceTabs />}
-      <div className={styles.tree}>{renderContent()}</div>
+      <div className={styles.explorerBody}>
+        {mode === 'workspace' && <WorkspaceTabs />}
+        <div className={styles.tree}>{renderContent()}</div>
+      </div>
     </Panel>
   );
 }
