@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -35,7 +36,16 @@ func NewSession() (*Session, error) {
 	cmd := exec.Command(shell)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		return nil, err
+		// ENXIO ("device not configured") from /dev/ptmx means the system PTY
+		// pool is exhausted (macOS caps it at kern.tty.ptmx_max). Surface an
+		// actionable message instead of the raw errno.
+		if errors.Is(err, syscall.ENXIO) {
+			return nil, fmt.Errorf(
+				"no pseudo-terminals available: the system PTY limit (kern.tty.ptmx_max) is exhausted — close terminal-heavy apps or raise the limit: %w",
+				err,
+			)
+		}
+		return nil, fmt.Errorf("starting shell %q: %w", shell, err)
 	}
 	return &Session{cmd: cmd, running: true, pty: ptmx}, nil
 }
