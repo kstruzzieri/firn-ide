@@ -71,10 +71,6 @@ const colors = {
   searchMatchSelected: 'rgba(245, 158, 11, 0.55)',
   searchMatchSelectedBorder: '#F59E0B',
 
-  // Gutter
-  gutterForeground: '#475569',
-  gutterActiveForeground: '#64748B',
-
   // Status
   error: '#EF4444',
   warning: '#F59E0B',
@@ -167,26 +163,23 @@ export function buildChromeRules(palette: SyntaxPalette) {
     // Gutters (line numbers, fold markers)
     '.cm-gutters': {
       backgroundColor: palette.background,
-      color: colors.gutterForeground,
+      color: palette.comment,
       border: 'none',
       borderRight: `1px solid ${colors.borderSubtle}`,
     },
 
-    '.cm-gutter': {
-      minWidth: '48px',
-    },
-
-    // Line numbers
+    // Line numbers — size to content (no fixed-width empty gutter) and tint with
+    // the palette comment color so the gutter fits each theme instead of a fixed gray.
     '.cm-lineNumbers .cm-gutterElement': {
-      padding: '0 12px 0 8px',
-      minWidth: '40px',
+      padding: '0 6px 0 10px',
+      minWidth: '20px',
       textAlign: 'right',
     },
 
-    // Active line number
+    // Active line number — brighter palette tone than the muted comment color.
     '.cm-activeLineGutter': {
       backgroundColor: colors.activeLine,
-      color: colors.gutterActiveForeground,
+      color: palette.punctuation,
     },
 
     // Fold markers

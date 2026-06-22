@@ -9,26 +9,28 @@ describe('EditorThemePicker', () => {
     useIDEStore.getState().setEditorSyntaxTheme('abyssal');
   });
 
-  it('renders all themes and reflects the active one', () => {
+  it('shows the active theme label and is collapsed by default', () => {
     render(<EditorThemePicker />);
-    const select = screen.getByLabelText('Editor theme') as HTMLSelectElement;
-    expect(select).toBeInTheDocument();
-    expect(select.options).toHaveLength(SYNTAX_THEMES.length);
-    expect(select.value).toBe('abyssal');
+    const trigger = screen.getByLabelText('Editor theme');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveTextContent('Abyssal Current');
+    expect(screen.queryByRole('listbox')).toBeNull();
   });
 
-  it('changing the select updates the store', () => {
+  it('opens a listbox of all themes on click, marking the active one', () => {
     render(<EditorThemePicker />);
-    const select = screen.getByLabelText('Editor theme');
-    fireEvent.change(select, { target: { value: 'reef' } });
+    fireEvent.click(screen.getByLabelText('Editor theme'));
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(SYNTAX_THEMES.length);
+    const selected = options.find((option) => option.getAttribute('aria-selected') === 'true');
+    expect(selected).toHaveTextContent('Abyssal Current');
+  });
+
+  it('selecting an option updates the store and closes the menu', () => {
+    render(<EditorThemePicker />);
+    fireEvent.click(screen.getByLabelText('Editor theme'));
+    fireEvent.click(screen.getByText('Tropic Coral Reef'));
     expect(useIDEStore.getState().editorSyntaxTheme).toBe('reef');
-  });
-
-  it('ignores a non-theme value without changing the store', () => {
-    render(<EditorThemePicker />);
-    const select = screen.getByLabelText('Editor theme');
-    const before = useIDEStore.getState().editorSyntaxTheme;
-    fireEvent.change(select, { target: { value: 'not-a-theme' } });
-    expect(useIDEStore.getState().editorSyntaxTheme).toBe(before);
+    expect(screen.queryByRole('listbox')).toBeNull();
   });
 });
