@@ -5,11 +5,31 @@
  */
 
 // Theme
-export { firnGlacier, firnGlacierTheme, firnGlacierHighlightStyle } from './theme';
+export {
+  firnGlacier,
+  firnGlacierTheme,
+  firnGlacierHighlightStyle,
+  buildTheme,
+  buildSyntaxTheme,
+  buildChrome,
+  buildHighlightStyle,
+  defaultEditorTheme,
+} from './theme';
+export {
+  SYNTAX_THEMES,
+  SYNTAX_THEME_BY_ID,
+  DEFAULT_SYNTAX_THEME_ID,
+  isSyntaxThemeId,
+  getSyntaxPalette,
+  type SyntaxThemeId,
+  type SyntaxPalette,
+  type SyntaxThemeDefinition,
+} from './palettes';
 
 // Extensions and utilities
 export {
   createEditorExtensions,
+  applyEditorTheme,
   getLanguageExtension,
   getLanguageName,
   languageCompartment,

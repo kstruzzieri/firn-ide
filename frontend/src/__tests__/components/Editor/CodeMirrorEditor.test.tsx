@@ -97,6 +97,7 @@ jest.mock('../../../components/Editor/codemirror', () => {
       reconfigure: mockHoverCompartmentReconfigure,
     },
     createEditorExtensions: mockCreateEditorExtensions,
+    applyEditorTheme: jest.fn(),
     reconfigureCompletion: mockReconfigureCompletion,
     reconfigureHover: mockReconfigureHover,
     resetCompletion: mockResetCompletion,
@@ -105,6 +106,7 @@ jest.mock('../../../components/Editor/codemirror', () => {
 });
 
 import { CodeMirrorEditor } from '../../../components/Editor/CodeMirrorEditor';
+import { applyEditorTheme } from '../../../components/Editor/codemirror';
 import { useIDEStore } from '../../../stores/ideStore';
 import { useLSPStore } from '../../../stores/lspStore';
 
@@ -120,6 +122,18 @@ beforeEach(() => {
 });
 
 describe('CodeMirrorEditor', () => {
+  it('reconfigures the editor theme when the global syntax theme changes', () => {
+    render(<CodeMirrorEditor fileId="file-1" filename="main.ts" content={'x = 1'} />);
+    (applyEditorTheme as jest.Mock).mockClear();
+
+    act(() => {
+      useIDEStore.getState().setEditorSyntaxTheme('reef');
+    });
+
+    expect(applyEditorTheme).toHaveBeenCalled();
+    expect((applyEditorTheme as jest.Mock).mock.calls.at(-1)?.[1]).toBe('reef');
+  });
+
   it('applies restored cursor and scroll when they arrive after mount', async () => {
     const { rerender } = render(
       <CodeMirrorEditor fileId="file-1" filename="main.ts" content={'one\ntwo\nthree'} />

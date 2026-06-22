@@ -54,11 +54,13 @@ import { xml } from '@codemirror/lang-xml';
 import { yaml } from '@codemirror/lang-yaml';
 import { rust } from '@codemirror/lang-rust';
 
-import { firnGlacier } from './theme';
+import { buildTheme } from './theme';
+import { type SyntaxThemeId, DEFAULT_SYNTAX_THEME_ID } from './palettes';
 import { diagnosticsExtensions } from './diagnostics';
 import { completionExtensions } from './completion';
 import { hoverExtensions } from './hover';
 import { definitionExtensions } from './definition';
+import { pythonHighlightExtensions } from './pythonHighlight';
 export { getLanguageName } from '../../../utils/editorLanguage';
 
 /**
@@ -295,6 +297,7 @@ export function createEditorExtensions(options: {
   readOnly?: boolean;
   tabSize?: number;
   placeholder?: string;
+  syntaxThemeId?: SyntaxThemeId;
   onChange?: (content: string) => void;
   onCursorChange?: (line: number, column: number) => void;
 }): Extension[] {
@@ -304,15 +307,18 @@ export function createEditorExtensions(options: {
     readOnly: isReadOnly = false,
     tabSize: tabs = 2,
     placeholder,
+    syntaxThemeId = DEFAULT_SYNTAX_THEME_ID,
     onChange,
     onCursorChange,
   } = options;
 
   const language = getLanguageExtension(filename);
+  const fileExt = filename.split('.').pop()?.toLowerCase();
+  const isPython = fileExt === 'py' || fileExt === 'pyw' || fileExt === 'pyi';
 
   const extensions: Extension[] = [
     // Theme
-    themeCompartment.of(firnGlacier),
+    themeCompartment.of(buildTheme(syntaxThemeId)),
 
     // Core functionality
     ...coreExtensions(),
@@ -337,6 +343,9 @@ export function createEditorExtensions(options: {
 
     // Language (in compartment for dynamic switching)
     languageCompartment.of(language || []),
+
+    // Python-only semantic overlay (self/cls, builtins, decorator names)
+    ...(isPython ? [pythonHighlightExtensions()] : []),
 
     // Diagnostics (lint gutter + underlines, populated dynamically)
     ...diagnosticsExtensions(),
@@ -381,4 +390,9 @@ export function createEditorExtensions(options: {
   }
 
   return extensions;
+}
+
+/** Reconfigures a live editor's theme compartment to the given syntax theme. */
+export function applyEditorTheme(view: EditorView, id: SyntaxThemeId): void {
+  view.dispatch({ effects: themeCompartment.reconfigure(buildTheme(id)) });
 }

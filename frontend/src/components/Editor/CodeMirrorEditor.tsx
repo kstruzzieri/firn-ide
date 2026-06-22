@@ -16,6 +16,7 @@ import {
   EditorView,
   EditorState,
   createEditorExtensions,
+  applyEditorTheme,
   completionCompartment,
   hoverCompartment,
   reconfigureCompletion,
@@ -140,6 +141,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       filePath: fileId,
       readOnly,
       tabSize,
+      syntaxThemeId: useIDEStore.getState().editorSyntaxTheme,
       onChange: handleContentChange,
       onCursorChange,
     });
@@ -239,6 +241,19 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 
     return cancel;
   }, [fileId]);
+
+  // Live-swap the editor theme when the global syntax theme changes. The initial
+  // theme is baked in by createEditorExtensions, so we only handle later changes.
+  useEffect(() => {
+    let prev = useIDEStore.getState().editorSyntaxTheme;
+    return useIDEStore.subscribe((state) => {
+      const next = state.editorSyntaxTheme;
+      if (next === prev) return;
+      prev = next;
+      const currentView = editorRef.current;
+      if (currentView) applyEditorTheme(currentView, next);
+    });
+  }, []);
 
   // Enable LSP completion/hover when the matching server becomes ready.
   useEffect(() => {
