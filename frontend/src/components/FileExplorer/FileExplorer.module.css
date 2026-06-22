@@ -36,9 +36,20 @@
   color: var(--text-muted);
 }
 
+/* Flex column filling the Panel content so only the inner .scrollArea scrolls.
+   Without this, the workspace tabs + a height:100% tree overflow the Panel's
+   own overflow:auto content, producing a second (outer) scrollbar. */
+.explorerBody {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .tree {
   padding: 4px;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
   box-sizing: border-box;
