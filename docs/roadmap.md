@@ -23,14 +23,14 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Infrastructure | **COMPLETE** | #28-32 |
 | Milestone 1: Core File Operations | **COMPLETE** | #3-9 |
 | UI/UX Polish | **COMPLETE** | #35-36 |
-| Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 complete, #47 open |
+| Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 + #116 complete, #47 open |
 | Milestone 3: Workspace Management | **COMPLETE** | #13-15, #53-54 complete |
 | Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18, #71, #103, #107 open |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization shipped (#111), lazy-load deferred; #39 open |
-| Editor & LSP DX | **IN PROGRESS** | #113 tooltip + #114 theme system shipped; #112 open |
+| Editor & LSP DX | **IN PROGRESS** | #113/#114 theme system + #119 picker a11y shipped; #112 open |
 | Dependency Upgrades | **COMPLETE** | #40 |
 | Code Quality | Not started | #41-42 |
 | Accessibility | Not started | #43 |
@@ -41,14 +41,15 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: **Milestone 3 (Workspace Management) complete; file-tree performance shipped.** File Tree Virtualization & Memoization (#37 virtualization half / #38) shipped in PR #111 — flatten the visible tree → window with `@tanstack/react-virtual`, memoized rows over primitive props, per-row region accents precomputed, WAI-ARIA `aria-activedescendant` keyboard nav; selected/active rows now inherit their workspace accent in both Project and Workspace views. Built on Workspace File Tree Views (#54, PR #109) and Workspace Identity & Accent System (#53, PR #104). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) is deferred to its own spec.
+Current status: **Editor theme system + diagnostic tooltip (#113/#114) shipped via PR #117** — 7 selectable syntax themes (default Abyssal Current, refactored `palettes.ts`/`buildTheme` registry), StatusBar popover picker, Python highlight overlay (self/cls, builtins, decorators, kwargs via a syntax-tree decoration overlay), palette-tinted gutter, opaque lint tooltip; picker keyboard-focus polish in #119. Also shipped: **terminal PTY-exhaustion actionable error (#116)** and **file-tree / tab-bar scrollbar fixes (#118)**. Milestone 3 (Workspace Management) complete; file-tree virtualization shipped (#37/#38, PR #111). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) deferred to its own spec.
 
 1. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set, and selection persistence. **#71 also now owns the Run-Profiles-by-workspace view filtering/grouping** deferred from #54 (Workspace View filters to the active workspace; Project View groups by workspace) — prerequisite is per-workspace detection so profiles carry an owning workspace.
 2. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
 3. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
 4. **#47: Terminal shell integration** — error markers & command separators (last open item in Milestone 2).
-5. **#112: Editor & LSP developer experience** (surfaced while testing the Python workspace during #111): auto-provision language servers + wire the project environment (zero-config, no raw error). **#113 (opaque diagnostic tooltip surface) and #114 (selectable syntax theme system — 7 themes, default Abyssal Current, StatusBar picker, localStorage-persisted) shipped together;** #112 remains the larger follow-up.
+5. **#112: Editor & LSP developer experience** (surfaced while testing the Python workspace during #111): auto-provision language servers + wire the project environment (zero-config, no raw error). The larger remaining Editor/LSP item now that #113/#114 are shipped.
 6. **#37 (Phase 2): File tree lazy loading** — load directory children on expand; own spec (backend per-dir read, watcher reconcile, #54 scoped-tree/active-file reconciliation).
+7. **NEW (needs issue): Workspace-colored open-file tabs** — surfaced while reviewing #117: open editor tabs should always carry their owning workspace's accent (tab/font) regardless of the active workspace, so files are instantly attributable; future stretch is filtering open tabs to the active workspace. Bundle the **button-in-button DOM fix** in the editor tab bar (close `<button>` nested inside the tab `<button role="tab">` → React hydration warning) since it touches the same component.
 
 ---
 
