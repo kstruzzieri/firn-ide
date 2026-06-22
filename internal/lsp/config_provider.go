@@ -41,6 +41,8 @@ func (p *envConfigProvider) Configuration(family, projectRoot string, items []Co
 	}
 	env := p.PythonEnv(projectRoot)
 	pythonSection, analysisSection := pythonSettingSections(env)
+	// item.ScopeURI is intentionally ignored in Phase 1: the project-level env
+	// detected from projectRoot applies uniformly to all files in the workspace.
 	for i, item := range items {
 		results[i] = settingForSection(item.Section, pythonSection, analysisSection)
 	}
@@ -50,20 +52,12 @@ func (p *envConfigProvider) Configuration(family, projectRoot string, items []Co
 // settingForSection answers a requested config section dialect-agnostically:
 // any "*.analysis" object section maps to analysis settings; the bare server
 // section (python, pyright, basedpyright) maps to interpreter settings; leaf
-// sections (python.pythonPath, python.analysis.extraPaths, etc.) return a
-// scalar/array. The client bakes in none of these names.
+// sections are matched by suffix so pyright.pythonPath and python.pythonPath
+// behave identically — the client bakes in none of these names.
 func settingForSection(section string, pythonSection, analysisSection map[string]any) any {
 	switch {
 	case section == "":
 		return nil
-	case section == "python.pythonPath":
-		return pythonSection["pythonPath"]
-	case section == "python.defaultInterpreterPath":
-		return pythonSection["defaultInterpreterPath"]
-	case section == "python.venvPath":
-		return pythonSection["venvPath"]
-	case section == "python.venv":
-		return pythonSection["venv"]
 	case strings.HasSuffix(section, ".analysis.extraPaths"):
 		return analysisSection["extraPaths"]
 	case strings.HasSuffix(section, ".analysis.pythonVersion"):
@@ -73,6 +67,14 @@ func settingForSection(section string, pythonSection, analysisSection map[string
 			return nil
 		}
 		return analysisSection
+	case strings.HasSuffix(section, ".defaultInterpreterPath"):
+		return pythonSection["defaultInterpreterPath"]
+	case strings.HasSuffix(section, ".pythonPath"):
+		return pythonSection["pythonPath"]
+	case strings.HasSuffix(section, ".venvPath"):
+		return pythonSection["venvPath"]
+	case strings.HasSuffix(section, ".venv"):
+		return pythonSection["venv"]
 	case section == "python" || section == "pyright" || section == "basedpyright":
 		if len(pythonSection) == 0 {
 			return nil

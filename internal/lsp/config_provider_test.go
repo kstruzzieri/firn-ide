@@ -97,3 +97,34 @@ func TestEnvConfigProvider_NonPythonEmpty(t *testing.T) {
 		t.Fatalf("results = %v, want [nil] for non-python family", results)
 	}
 }
+
+func TestEnvConfigProvider_EmptyPythonEnvReturnsNil(t *testing.T) {
+	p := stubProvider(pythonenv.Env{})
+	results := p.Configuration("python", "/proj", []ConfigurationItem{
+		{Section: "python"},
+		{Section: "python.analysis"},
+	})
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0] != nil || results[1] != nil {
+		t.Fatalf("results = %v, want [nil nil] for empty env", results)
+	}
+}
+
+func TestEnvConfigProvider_DialectLeafSections(t *testing.T) {
+	p := stubProvider(pythonenv.Env{
+		InterpreterPath: "/proj/.venv/bin/python",
+		VenvDir:         "/proj/.venv",
+	})
+	results := p.Configuration("python", "/proj", []ConfigurationItem{
+		{Section: "basedpyright.pythonPath"},
+		{Section: "pyright.venvPath"},
+	})
+	if results[0] != "/proj/.venv/bin/python" {
+		t.Errorf("basedpyright.pythonPath = %v, want /proj/.venv/bin/python", results[0])
+	}
+	if results[1] != "/proj" {
+		t.Errorf("pyright.venvPath = %v, want /proj (parent of venv dir)", results[1])
+	}
+}
