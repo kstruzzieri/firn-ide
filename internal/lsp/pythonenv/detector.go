@@ -181,7 +181,7 @@ func readPythonVersionFile(projectRoot string, deps Deps) string {
 		return ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
 			return line
 		}
 	}
@@ -237,7 +237,9 @@ func tomlSectionHasKey(content, section, key string) bool {
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") {
-			inSection = trimmed == header
+			inSection = trimmed == header ||
+				(strings.HasPrefix(trimmed, header) &&
+					(trimmed[len(header)] == ' ' || trimmed[len(header)] == '\t' || trimmed[len(header)] == '#'))
 			continue
 		}
 		if inSection {
@@ -251,7 +253,7 @@ func tomlSectionHasKey(content, section, key string) bool {
 	return false
 }
 
-var requiresPythonRe = regexp.MustCompile(`(\d+\.\d+)`)
+var requiresPythonRe = regexp.MustCompile(`[><=!~^]+\s*(\d+\.\d+)`)
 
 func requiresPythonVersion(projectRoot string, deps Deps) string {
 	if projectRoot == "" {
@@ -263,8 +265,8 @@ func requiresPythonVersion(projectRoot string, deps Deps) string {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "requires-python") {
-			if m := requiresPythonRe.FindString(line); m != "" {
-				return m
+			if m := requiresPythonRe.FindStringSubmatch(line); m != nil {
+				return m[1]
 			}
 		}
 	}

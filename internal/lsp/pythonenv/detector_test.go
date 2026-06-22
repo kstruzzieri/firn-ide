@@ -180,6 +180,36 @@ func TestDetect_NoInterpreterFallsBackToVersion(t *testing.T) {
 	}
 }
 
+func TestDetect_PyenvResolvesFromVersionFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".python-version"), []byte("3.11.2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pyenvRoot := t.TempDir()
+	interp := filepath.Join(pyenvRoot, "versions", "3.11.2", "bin", "python")
+	if runtime.GOOS == "windows" {
+		interp = filepath.Join(pyenvRoot, "versions", "3.11.2", "python.exe")
+	}
+	if err := os.MkdirAll(filepath.Dir(interp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(interp, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env := pythonenv.Detect(root, depsWith(map[string]string{"PYENV_ROOT": pyenvRoot}, noPython))
+
+	if env.Source != "pyenv" {
+		t.Fatalf("Source = %q, want pyenv", env.Source)
+	}
+	if env.Confidence != "high" {
+		t.Errorf("Confidence = %q, want high", env.Confidence)
+	}
+	if env.InterpreterPath != interp {
+		t.Errorf("InterpreterPath = %q, want %q", env.InterpreterPath, interp)
+	}
+}
+
 func TestDetect_SystemFallbackIsLowConfidence(t *testing.T) {
 	root := t.TempDir()
 	lookPath := func(name string) (string, error) {
