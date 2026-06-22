@@ -17,6 +17,10 @@ const DefaultRequestTimeout = 10 * time.Second
 // clientCapabilities is the static capabilities blob sent during initialization.
 // These don't change at runtime. Go code never reads them back — they're write-once for the server.
 var clientCapabilities = json.RawMessage(`{
+	"workspace": {
+		"configuration": true,
+		"didChangeConfiguration": {"dynamicRegistration": false}
+	},
 	"textDocument": {
 		"synchronization": {"didSave": true},
 		"completion": {
@@ -37,6 +41,13 @@ var clientCapabilities = json.RawMessage(`{
 // NotificationHandler is called when the server sends a notification.
 type NotificationHandler func(method string, params json.RawMessage)
 
+// ServerRequestHandler handles a server-to-client request. handled must be true
+// for the handler's result/rpcErr to be sent; when false the client replies
+// with the default -32601. The explicit flag is required because a nil result
+// is a valid successful JSON-RPC response and cannot be distinguished from
+// "not handled" by nil alone.
+type ServerRequestHandler func(method string, params json.RawMessage) (result any, handled bool, rpcErr *JSONRPCError)
+
 // ClientState represents the lifecycle state of the LSP client.
 type ClientState int
 
@@ -52,6 +63,9 @@ const (
 type Client struct {
 	transport Transport
 	handler   NotificationHandler
+
+	serverRequestHandler ServerRequestHandler
+	srhMu                sync.RWMutex
 
 	nextID    atomic.Int64
 	pending   map[int64]chan *JSONRPCMessage
@@ -77,6 +91,15 @@ func NewClient(transport Transport, handler NotificationHandler) *Client {
 	}
 	go c.readLoop()
 	return c
+}
+
+// SetServerRequestHandler registers a handler for server-to-client requests
+// (e.g. workspace/configuration). Set it before Initialize so the handler is
+// in place before the server begins pulling configuration.
+func (c *Client) SetServerRequestHandler(h ServerRequestHandler) {
+	c.srhMu.Lock()
+	c.serverRequestHandler = h
+	c.srhMu.Unlock()
 }
 
 // Initialize sends the initialize request and the initialized notification.
@@ -204,6 +227,13 @@ func (c *Client) DidClose(uri string) error {
 	return c.notify("textDocument/didClose", DidCloseTextDocumentParams{
 		TextDocument: TextDocumentIdentifier{URI: uri},
 	})
+}
+
+// DidChangeConfiguration notifies the server that configuration changed,
+// prompting servers that pull settings (e.g. pyright) to re-request them via
+// workspace/configuration.
+func (c *Client) DidChangeConfiguration(settings any) error {
+	return c.notify("workspace/didChangeConfiguration", map[string]any{"settings": settings})
 }
 
 // Hover sends a textDocument/hover request.
@@ -464,16 +494,34 @@ func (c *Client) dispatchResponse(msg *JSONRPCMessage) {
 	}
 }
 
-// respondToServerRequest handles server-to-client requests with a generic response.
+// respondToServerRequest dispatches a server-to-client request to the registered
+// handler if any; otherwise (or when the handler declines) it replies -32601.
 func (c *Client) respondToServerRequest(msg *JSONRPCMessage) {
-	resp := &JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      msg.ID,
-		Error: &JSONRPCError{
-			Code:    -32601,
-			Message: "method not found",
-		},
+	c.srhMu.RLock()
+	h := c.serverRequestHandler
+	c.srhMu.RUnlock()
+
+	resp := &JSONRPCMessage{JSONRPC: "2.0", ID: msg.ID}
+
+	if h != nil {
+		result, handled, rpcErr := h(msg.Method, msg.Params)
+		if handled {
+			if rpcErr != nil {
+				resp.Error = rpcErr
+			} else if data, err := json.Marshal(result); err != nil {
+				resp.Error = &JSONRPCError{Code: -32603, Message: "marshal server-request result: " + err.Error()}
+			} else {
+				resp.Result = data
+			}
+			if err := c.transport.Send(resp); err != nil {
+				log.Printf("lsp: failed to respond to server request %s: %v", msg.Method, err)
+			}
+			return
+		}
 	}
+
+	log.Printf("lsp: unhandled server request %s -> -32601", msg.Method)
+	resp.Error = &JSONRPCError{Code: -32601, Message: "method not found"}
 	if err := c.transport.Send(resp); err != nil {
 		log.Printf("lsp: failed to respond to server request %s: %v", msg.Method, err)
 	}
