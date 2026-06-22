@@ -263,6 +263,7 @@ func (a *App) ToggleMaximize() {
 func (a *App) CreateTerminal() (string, error) {
 	id, err := a.termManager.Create()
 	if err != nil {
+		runtime.LogErrorf(a.ctx, "CreateTerminal failed: %v", err)
 		return "", err
 	}
 

@@ -186,7 +186,7 @@ export function Terminal() {
           markInitialSessionCreated();
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
+        const message = err instanceof Error ? err.message : String(err) || 'Unknown error';
         showToast(`Failed to create terminal: ${message}`, 'error');
       } finally {
         isCreatingRef.current = false;
