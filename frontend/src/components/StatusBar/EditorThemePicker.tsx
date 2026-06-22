@@ -20,9 +20,13 @@ export function EditorThemePicker() {
 
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const optionRefs = useRef<Array<HTMLLIElement | null>>([]);
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback((restoreFocus = false) => {
+    setOpen(false);
+    if (restoreFocus) triggerRef.current?.focus();
+  }, []);
 
   // Close on click outside the picker.
   useEffect(() => {
@@ -46,9 +50,9 @@ export function EditorThemePicker() {
   const choose = useCallback(
     (id: SyntaxThemeId) => {
       setTheme(id);
-      setOpen(false);
+      close(true);
     },
-    [setTheme]
+    [close, setTheme]
   );
 
   const moveFocus = (from: number, delta: number) => {
@@ -57,9 +61,19 @@ export function EditorThemePicker() {
   };
 
   return (
-    <div className={styles.picker} ref={containerRef}>
+    <div
+      className={styles.picker}
+      ref={containerRef}
+      onBlur={(event) => {
+        if (!open) return;
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        close();
+      }}
+    >
       <button
         type="button"
+        ref={triggerRef}
         className={styles.trigger}
         aria-label="Editor theme"
         aria-haspopup="listbox"
@@ -106,7 +120,7 @@ export function EditorThemePicker() {
                     moveFocus(index, -1);
                   } else if (event.key === 'Escape') {
                     event.preventDefault();
-                    close();
+                    close(true);
                   }
                 }}
               >
