@@ -84,16 +84,22 @@ const colors = {
 /**
  * Editor theme - controls the visual appearance of the editor chrome.
  */
-export function buildChromeRules(background: string) {
+export function buildChromeRules(palette: SyntaxPalette) {
   return {
     // Root editor styling
     '&': {
       color: colors.foreground,
-      backgroundColor: background,
+      backgroundColor: palette.background,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: '13px',
       lineHeight: '1.6',
     },
+
+    // Python overlay token colours (see pythonHighlight.ts) — palette-driven so
+    // they swap with the active theme.
+    '.firn-tok-self': { color: palette.keyword },
+    '.firn-tok-builtin': { color: palette.type },
+    '.firn-tok-decorator': { color: palette.function },
 
     // Content area
     '.cm-content': {
@@ -160,7 +166,7 @@ export function buildChromeRules(background: string) {
 
     // Gutters (line numbers, fold markers)
     '.cm-gutters': {
-      backgroundColor: background,
+      backgroundColor: palette.background,
       color: colors.gutterForeground,
       border: 'none',
       borderRight: `1px solid ${colors.borderSubtle}`,
@@ -986,7 +992,7 @@ export function buildChromeRules(background: string) {
 
 /** Builds the editor chrome theme for a palette (canvas background from the palette). */
 export function buildChrome(palette: SyntaxPalette): Extension {
-  return EditorView.theme(buildChromeRules(palette.background), { dark: true });
+  return EditorView.theme(buildChromeRules(palette), { dark: true });
 }
 
 /** Legacy alias — chrome-only theme at the Glacier canvas. @see firnGlacier for chrome + syntax. */
@@ -1033,7 +1039,14 @@ export function buildHighlightSpec(palette: SyntaxPalette) {
     { tag: t.paren, color: palette.punctuation },
     { tag: t.brace, color: palette.punctuation },
     { tag: t.bracket, color: palette.punctuation },
+    { tag: t.squareBracket, color: palette.punctuation },
     { tag: t.separator, color: palette.punctuation },
+
+    // Decorators (@ = t.meta) + operators lezer-python emits that were uncolored.
+    { tag: t.meta, color: palette.function },
+    { tag: t.updateOperator, color: palette.operator },
+    { tag: t.definitionOperator, color: palette.operator },
+    { tag: t.derefOperator, color: palette.punctuation },
 
     // Variables and properties
     { tag: t.variableName, color: palette.variable },

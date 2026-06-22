@@ -26,6 +26,8 @@ describe('highlight-style builders', () => {
     expect(colorFor(t.regexp)).toBe(palette.regexp);
     // Compound tag (most likely to be mis-nested) — function(variableName).
     expect(colorFor(t.function(t.variableName))).toBe(palette.function);
+    // Decorator marker (@) — t.meta — must map to the function color.
+    expect(colorFor(t.meta)).toBe(palette.function);
   });
 
   it('builds a defined HighlightStyle for every palette', () => {
@@ -48,12 +50,20 @@ describe('highlight-style builders', () => {
 });
 
 describe('buildChromeRules', () => {
-  it('uses the supplied background for canvas and gutters', () => {
-    const rules = buildChromeRules('#08111C');
+  it('uses the palette background for canvas and gutters', () => {
+    const rules = buildChromeRules(getSyntaxPalette('abyssal'));
     expect((rules['&'] as Record<string, string>).backgroundColor).toBe('#08111C');
     expect((rules['.cm-gutters'] as Record<string, string>).backgroundColor).toBe('#08111C');
     // Guard against accidental truncation of the chrome rule set.
     expect(Object.keys(rules).length).toBeGreaterThan(20);
+  });
+
+  it('colours the python overlay token classes from the palette', () => {
+    const palette = getSyntaxPalette('abyssal');
+    const rules = buildChromeRules(palette);
+    expect((rules['.firn-tok-self'] as Record<string, string>).color).toBe(palette.keyword);
+    expect((rules['.firn-tok-builtin'] as Record<string, string>).color).toBe(palette.type);
+    expect((rules['.firn-tok-decorator'] as Record<string, string>).color).toBe(palette.function);
   });
 });
 
@@ -80,7 +90,7 @@ describe('buildTheme', () => {
 });
 
 describe('#113 diagnostic tooltip surface', () => {
-  const rules = buildChromeRules('#0F172A');
+  const rules = buildChromeRules(getSyntaxPalette('glacier'));
 
   it('gives the lint tooltip an opaque surface', () => {
     const lint = rules['.cm-tooltip-lint'] as Record<string, string>;

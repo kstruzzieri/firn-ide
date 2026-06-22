@@ -60,6 +60,7 @@ import { diagnosticsExtensions } from './diagnostics';
 import { completionExtensions } from './completion';
 import { hoverExtensions } from './hover';
 import { definitionExtensions } from './definition';
+import { pythonHighlightExtensions } from './pythonHighlight';
 export { getLanguageName } from '../../../utils/editorLanguage';
 
 /**
@@ -312,6 +313,8 @@ export function createEditorExtensions(options: {
   } = options;
 
   const language = getLanguageExtension(filename);
+  const fileExt = filename.split('.').pop()?.toLowerCase();
+  const isPython = fileExt === 'py' || fileExt === 'pyw' || fileExt === 'pyi';
 
   const extensions: Extension[] = [
     // Theme
@@ -340,6 +343,9 @@ export function createEditorExtensions(options: {
 
     // Language (in compartment for dynamic switching)
     languageCompartment.of(language || []),
+
+    // Python-only semantic overlay (self/cls, builtins, decorator names)
+    ...(isPython ? [pythonHighlightExtensions()] : []),
 
     // Diagnostics (lint gutter + underlines, populated dynamically)
     ...diagnosticsExtensions(),
