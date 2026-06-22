@@ -34,6 +34,24 @@ func (p *envConfigProvider) PythonEnv(projectRoot string) pythonenv.Env {
 	return p.detectPython(projectRoot, p.pythonDeps)
 }
 
+// pythonEnvReader is satisfied by envConfigProvider and any other provider that
+// exposes PythonEnv. It is used by pythonEnvFromProvider to retrieve the
+// environment without a second independent detect call.
+type pythonEnvReader interface {
+	PythonEnv(projectRoot string) pythonenv.Env
+}
+
+// pythonEnvFromProvider retrieves the Python environment via provider if it
+// implements pythonEnvReader; otherwise falls back to a fresh OS-backed detect.
+// This ensures emitStatus enrichment reuses the same detection path as
+// workspace/configuration, so the two can never drift.
+func pythonEnvFromProvider(provider WorkspaceConfigProvider, projectRoot string) pythonenv.Env {
+	if p, ok := provider.(pythonEnvReader); ok {
+		return p.PythonEnv(projectRoot)
+	}
+	return pythonenv.Detect(projectRoot, pythonenv.OSDeps())
+}
+
 func (p *envConfigProvider) Configuration(family, projectRoot string, items []ConfigurationItem) []any {
 	results := make([]any, len(items))
 	if family != "python" {

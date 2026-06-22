@@ -36,6 +36,14 @@ type ServerStatus struct {
 	State                       string   `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
 	Error                       string   `json:"error,omitempty"`
 	CompletionTriggerCharacters []string `json:"completionTriggerCharacters,omitempty"`
+	SetupState                  string   `json:"setupState,omitempty"` // ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable
+	InterpreterPath             string   `json:"interpreterPath,omitempty"`
+	ProjectRoot                 string   `json:"projectRoot,omitempty"`
+	ConfigSource                string   `json:"configSource,omitempty"`
+	ExtraPaths                  []string `json:"extraPaths,omitempty"`
+	PythonVersion               string   `json:"pythonVersion,omitempty"`
+	Action                      string   `json:"action,omitempty"` // create_venv|select_interpreter|retry|""
+	DetailCode                  string   `json:"detailCode,omitempty"`
 }
 
 // EventEmitter is the callback signature for emitting events to the frontend.
@@ -837,7 +845,56 @@ func (m *Manager) emitStatus(family, workspace, state, errMsg string, command ..
 		}
 		m.mu.Unlock()
 	}
+	m.enrichPythonSetup(&status)
 	m.emitter("lsp:status", status)
+}
+
+// enrichPythonSetup populates typed setup-status fields for the Python family
+// so the frontend can render an actionable card instead of a raw error string.
+// Other families are left untouched.
+func (m *Manager) enrichPythonSetup(status *ServerStatus) {
+	if status.Family != "python" {
+		return
+	}
+	status.ProjectRoot = status.Workspace
+
+	switch status.State {
+	case "error":
+		if strings.Contains(strings.ToLower(status.Error), "not found") {
+			status.SetupState = "missing_server"
+			status.DetailCode = "server_not_found"
+		} else {
+			status.SetupState = "retryable"
+			status.DetailCode = "server_start_failed"
+			status.Action = "retry"
+		}
+	case "ready":
+		env := pythonEnvFromProvider(m.configProvider, status.Workspace)
+		status.InterpreterPath = env.InterpreterPath
+		status.ExtraPaths = env.ExtraPaths
+		status.PythonVersion = env.PythonVersion
+		if env.InterpreterPath == "" {
+			status.ConfigSource = "none"
+		} else {
+			status.ConfigSource = "detected"
+		}
+		switch {
+		case len(env.Diagnostics) > 0:
+			status.SetupState = "misconfigured_env"
+			status.DetailCode = "venv_without_interpreter"
+			status.Action = "select_interpreter"
+		case env.Source == "none" || env.InterpreterPath == "":
+			status.SetupState = "missing_interpreter"
+			status.DetailCode = "no_interpreter"
+			status.Action = "create_venv"
+		case env.Confidence == "low":
+			status.SetupState = "config_degraded"
+			status.DetailCode = "system_fallback"
+			status.Action = "select_interpreter"
+		default:
+			status.SetupState = "ready"
+		}
+	}
 }
 
 // emitError emits an lsp:error event with a user-facing message.
