@@ -1675,6 +1675,9 @@ func TestEmitStatus_PythonReadyEnriched(t *testing.T) {
 	if len(got.ExtraPaths) != 1 || got.ExtraPaths[0] != "src" {
 		t.Errorf("ExtraPaths = %v, want [src]", got.ExtraPaths)
 	}
+	if got.ConfigSource != "detected" {
+		t.Errorf("ConfigSource = %q, want detected", got.ConfigSource)
+	}
 }
 
 func TestEmitStatus_PythonMisconfiguredVenv(t *testing.T) {
@@ -1727,6 +1730,9 @@ func TestEmitStatus_PythonMissingInterpreter(t *testing.T) {
 	if got.Action != "create_venv" {
 		t.Errorf("Action = %q, want create_venv", got.Action)
 	}
+	if got.ConfigSource != "none" {
+		t.Errorf("ConfigSource = %q, want none", got.ConfigSource)
+	}
 }
 
 func TestEmitStatus_PythonConfigDegraded(t *testing.T) {
@@ -1762,6 +1768,8 @@ func TestEmitStatus_PythonMissingServer(t *testing.T) {
 		}
 	})
 
+	// The error path does not invoke pythonEnvFromProvider, so no configProvider
+	// override is needed here.
 	m.emitStatus("python", "/proj", "error", "pyright-langserver not found: install it", "pyright-langserver")
 
 	if got.SetupState != "missing_server" {

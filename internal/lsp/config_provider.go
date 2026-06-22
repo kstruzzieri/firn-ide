@@ -41,10 +41,14 @@ type pythonEnvReader interface {
 	PythonEnv(projectRoot string) pythonenv.Env
 }
 
+// envConfigProvider is the default provider; this assertion guarantees the
+// pythonEnvFromProvider fast path (no re-detection) is always taken in production.
+var _ pythonEnvReader = (*envConfigProvider)(nil)
+
 // pythonEnvFromProvider retrieves the Python environment via provider if it
-// implements pythonEnvReader; otherwise falls back to a fresh OS-backed detect.
-// This ensures emitStatus enrichment reuses the same detection path as
-// workspace/configuration, so the two can never drift.
+// implements pythonEnvReader; otherwise falls back to an independent OS-backed
+// detection run. The fallback may diverge from a custom provider's view and
+// exists only for providers that don't implement pythonEnvReader.
 func pythonEnvFromProvider(provider WorkspaceConfigProvider, projectRoot string) pythonenv.Env {
 	if p, ok := provider.(pythonEnvReader); ok {
 		return p.PythonEnv(projectRoot)

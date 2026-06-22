@@ -823,7 +823,8 @@ func (m *Manager) serverRequestHandler(key serverKey) ServerRequestHandler {
 	}
 }
 
-// emitStatus emits an lsp:status event.
+// emitStatus emits an lsp:status event. Must NOT be called while m.mu is held
+// (enrichPythonSetup performs filesystem detection for the Python family).
 func (m *Manager) emitStatus(family, workspace, state, errMsg string, command ...string) {
 	if m.emitter == nil {
 		return
@@ -856,11 +857,13 @@ func (m *Manager) enrichPythonSetup(status *ServerStatus) {
 	if status.Family != "python" {
 		return
 	}
-	status.ProjectRoot = status.Workspace
 
 	switch status.State {
 	case "error":
-		if strings.Contains(strings.ToLower(status.Error), "not found") {
+		status.ProjectRoot = status.Workspace
+		errLower := strings.ToLower(status.Error)
+		cmdBase := strings.ToLower(filepath.Base(status.Command))
+		if cmdBase != "" && strings.Contains(errLower, cmdBase) && strings.Contains(errLower, "not found") {
 			status.SetupState = "missing_server"
 			status.DetailCode = "server_not_found"
 		} else {
@@ -869,6 +872,7 @@ func (m *Manager) enrichPythonSetup(status *ServerStatus) {
 			status.Action = "retry"
 		}
 	case "ready":
+		status.ProjectRoot = status.Workspace
 		env := pythonEnvFromProvider(m.configProvider, status.Workspace)
 		status.InterpreterPath = env.InterpreterPath
 		status.ExtraPaths = env.ExtraPaths
