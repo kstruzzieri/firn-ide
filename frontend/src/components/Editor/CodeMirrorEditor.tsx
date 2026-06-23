@@ -262,7 +262,10 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   // Enable LSP completion/hover when the matching server becomes ready.
   useEffect(() => {
     const family = lspFamilyForFile(filename);
-    if (!family) return;
+    if (!family) {
+      setSetupStatus(undefined);
+      return;
+    }
 
     let lastConfigKey: string | null = null;
 

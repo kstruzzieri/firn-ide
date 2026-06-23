@@ -52,7 +52,7 @@ export type LSPSetupState =
   | 'config_degraded'
   | 'retryable';
 
-export type LSPSetupAction = 'create_venv' | 'select_interpreter' | 'retry' | '';
+export type LSPSetupAction = 'create_venv' | 'select_interpreter' | 'retry';
 
 export interface LSPServerStatus {
   family: string;

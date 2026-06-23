@@ -1794,3 +1794,44 @@ func TestEmitStatus_NonPythonUnaffected(t *testing.T) {
 		t.Fatalf("SetupState = %q, want empty for non-python", got.SetupState)
 	}
 }
+
+func TestGetStatus_PythonReadyEnriched(t *testing.T) {
+	m := NewManager(nil)
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{
+				InterpreterPath: "/proj/.venv/bin/python",
+				VenvDir:         "/proj/.venv",
+				ExtraPaths:      []string{"src"},
+				Source:          ".venv",
+				Confidence:      "high",
+			}
+		},
+		pythonDeps: pythonenv.Deps{},
+	}
+
+	m.mu.Lock()
+	m.servers[serverKey{family: "python", workspace: "/proj"}] = &serverEntry{
+		client: &Client{state: ClientStateReady},
+		config: &ServerConfig{Command: "pyright-langserver"},
+	}
+	m.mu.Unlock()
+
+	statuses := m.GetStatus()
+	if len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+	got := statuses[0]
+	if got.SetupState != "ready" {
+		t.Fatalf("SetupState = %q, want ready", got.SetupState)
+	}
+	if got.InterpreterPath != "/proj/.venv/bin/python" {
+		t.Errorf("InterpreterPath = %q", got.InterpreterPath)
+	}
+	if len(got.ExtraPaths) != 1 || got.ExtraPaths[0] != "src" {
+		t.Errorf("ExtraPaths = %v, want [src]", got.ExtraPaths)
+	}
+	if got.ConfigSource != "detected" {
+		t.Errorf("ConfigSource = %q, want detected", got.ConfigSource)
+	}
+}

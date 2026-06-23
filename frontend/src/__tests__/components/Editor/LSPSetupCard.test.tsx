@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import { describeSetup, LSPSetupCard } from '../../../components/Editor/LSPSetupCard';
+import { LSPSetupCard } from '../../../components/Editor/LSPSetupCard';
+import { describeSetup } from '../../../components/Editor/lspSetupNotice';
 import type { LSPServerStatus } from '../../../stores/lspStore';
 
 function status(overrides: Partial<LSPServerStatus>): LSPServerStatus {

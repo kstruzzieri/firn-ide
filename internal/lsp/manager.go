@@ -352,7 +352,6 @@ func (m *Manager) ResolveCompletionItem(ctx context.Context, path string, item C
 // GetStatus returns the status of all running language servers.
 func (m *Manager) GetStatus() []ServerStatus {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	statuses := make([]ServerStatus, 0, len(m.servers))
 	for key, entry := range m.servers {
@@ -380,6 +379,12 @@ func (m *Manager) GetStatus() []ServerStatus {
 		}
 		statuses = append(statuses, status)
 	}
+	m.mu.Unlock()
+
+	for i := range statuses {
+		m.enrichPythonSetup(&statuses[i])
+	}
+
 	return statuses
 }
 
