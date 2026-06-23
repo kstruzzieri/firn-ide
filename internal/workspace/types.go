@@ -71,12 +71,13 @@ type Summary struct {
 type WorkspaceType string
 
 const (
-	TypeProject  WorkspaceType = "project"
-	TypeFrontend WorkspaceType = "frontend"
-	TypeGo       WorkspaceType = "go"
-	TypePython   WorkspaceType = "python"
-	TypeInfra    WorkspaceType = "infra"
-	TypeGeneral  WorkspaceType = "general" // reserved; no marker produces it yet
+	TypeProject   WorkspaceType = "project"
+	TypeFrontend  WorkspaceType = "frontend"
+	TypeGo        WorkspaceType = "go"
+	TypePython    WorkspaceType = "python"
+	TypeDocker    WorkspaceType = "docker"
+	TypeTerraform WorkspaceType = "terraform"
+	TypeGeneral   WorkspaceType = "general" // reserved; no marker produces it yet
 )
 
 // WorkspaceDef is a detected (or synthetic) focused context within a repo.

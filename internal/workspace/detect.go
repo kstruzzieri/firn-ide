@@ -30,7 +30,8 @@ var markerRules = []markerRule{
 	{files: []string{"go.mod"}, typ: TypeGo, accent: "cyan"},
 	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "green"},
 	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
-	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, suffix: ".tf", typ: TypeInfra, accent: "purple"},
+	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, typ: TypeDocker, accent: "purple"},
+	{suffix: ".tf", typ: TypeTerraform, accent: "amber"},
 }
 
 // ignoredDirs are never scanned or treated as workspaces.
@@ -177,8 +178,10 @@ func typeLabel(t WorkspaceType) string {
 		return "Go"
 	case TypePython:
 		return "Python"
-	case TypeInfra:
-		return "Infrastructure"
+	case TypeDocker:
+		return "Docker"
+	case TypeTerraform:
+		return "Terraform"
 	default:
 		return "General"
 	}

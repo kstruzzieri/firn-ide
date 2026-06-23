@@ -96,7 +96,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/infra/docker-compose.yml"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "infra", Name: "Infrastructure", RelDir: "infra", Type: TypeInfra, Accent: "purple"},
+				{ID: "infra", Name: "Docker", RelDir: "infra", Type: TypeDocker, Accent: "purple"},
 			},
 		},
 		{
@@ -104,7 +104,15 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/terraform/main.tf"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "terraform", Name: "Infrastructure", RelDir: "terraform", Type: TypeInfra, Accent: "purple"},
+				{ID: "terraform", Name: "Terraform", RelDir: "terraform", Type: TypeTerraform, Accent: "amber"},
+			},
+		},
+		{
+			name:  "compose-only root classifies as Docker",
+			files: []string{"/repo/docker-compose.yml"},
+			want: []WorkspaceDef{
+				project,
+				{ID: "root:docker", Name: "Docker", RelDir: "", Type: TypeDocker, Accent: "purple"},
 			},
 		},
 		{
