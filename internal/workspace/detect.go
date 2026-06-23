@@ -22,10 +22,10 @@ type markerRule struct {
 
 // markerRules is evaluated in priority order; the first match classifies a dir.
 var markerRules = []markerRule{
-	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
 	{files: []string{"go.mod"}, typ: TypeGo, accent: "cyan"},
 	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "green"},
 	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, suffix: ".tf", typ: TypeInfra, accent: "purple"},
+	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
 }
 
 // ignoredDirs are never scanned or treated as workspaces.
@@ -85,6 +85,22 @@ func DetectWorkspaces(fsys filesystem.FileSystem, repoPath string) ([]WorkspaceD
 		return detected[i].RelDir < detected[j].RelDir
 	})
 
+	// Disambiguate duplicate display names (e.g. two Frontend subdirs) so tabs
+	// are distinguishable. Single-of-a-kind names are left clean.
+	nameCounts := map[string]int{}
+	for _, d := range detected {
+		nameCounts[d.Name]++
+	}
+	for i := range detected {
+		if nameCounts[detected[i].Name] > 1 {
+			loc := detected[i].RelDir
+			if loc == "" {
+				loc = "root"
+			}
+			detected[i].Name = detected[i].Name + " (" + loc + ")"
+		}
+	}
+
 	return append(result, detected...), nil
 }
 
@@ -108,7 +124,7 @@ func subDirs(fsys filesystem.FileSystem, dir string) []string {
 	}
 	var names []string
 	for _, e := range entries {
-		if e.IsDir() && !ignoredDirs[e.Name()] {
+		if e.IsDir() && !ignoredDirs[e.Name()] && !strings.HasPrefix(e.Name(), ".") {
 			names = append(names, e.Name())
 		}
 	}

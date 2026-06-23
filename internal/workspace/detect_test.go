@@ -123,8 +123,8 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "backend", Name: "Go", RelDir: "backend", Type: TypeGo, Accent: "cyan"},
-				{ID: "backend/api", Name: "Go", RelDir: "backend/api", Type: TypeGo, Accent: "cyan"},
+				{ID: "backend", Name: "Go (backend)", RelDir: "backend", Type: TypeGo, Accent: "cyan"},
+				{ID: "backend/api", Name: "Go (backend/api)", RelDir: "backend/api", Type: TypeGo, Accent: "cyan"},
 			},
 		},
 		{
@@ -132,7 +132,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/package.json", "/repo/go.mod"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:frontend", Name: "Frontend", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
 			},
 		},
 		{
@@ -140,8 +140,44 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/package.json", "/repo/frontend/package.json"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:frontend", Name: "Frontend", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+				{ID: "root:frontend", Name: "Frontend (root)", RelDir: "", Type: TypeFrontend, Accent: "blue"},
+				{ID: "frontend", Name: "Frontend (frontend)", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+			},
+		},
+		{
+			name: "wails root: go.mod beats tooling package.json, frontend subdir distinct",
+			files: []string{
+				"/repo/go.mod",
+				"/repo/package.json",
+				"/repo/frontend/package.json",
+			},
+			want: []WorkspaceDef{
+				project,
+				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
 				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+			},
+		},
+		{
+			name: "hidden/dot dirs are skipped (e.g. .worktrees copies)",
+			files: []string{
+				"/repo/.worktrees/wt/package.json",
+				"/repo/app/package.json",
+			},
+			want: []WorkspaceDef{
+				project,
+				{ID: "app", Name: "Frontend", RelDir: "app", Type: TypeFrontend, Accent: "blue"},
+			},
+		},
+		{
+			name: "two same-type subdirs get disambiguated names",
+			files: []string{
+				"/repo/web/package.json",
+				"/repo/admin/package.json",
+			},
+			want: []WorkspaceDef{
+				project,
+				{ID: "admin", Name: "Frontend (admin)", RelDir: "admin", Type: TypeFrontend, Accent: "blue"},
+				{ID: "web", Name: "Frontend (web)", RelDir: "web", Type: TypeFrontend, Accent: "blue"},
 			},
 		},
 	}
