@@ -324,7 +324,16 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 	}
 	a.profileWorkspaceRoot = workspacePath
 
-	return a.profileManager.Load()
+	if err := a.profileManager.Load(); err != nil {
+		return err
+	}
+	// Surface non-fatal load issues (unreadable workspace store, migration that
+	// could not be written back) instead of swallowing them. A degraded load
+	// still yields a usable profile list.
+	for _, w := range a.profileManager.Warnings() {
+		runtime.LogWarningf(a.ctx, "run profiles: %s", w)
+	}
+	return nil
 }
 
 // GetAllRunProfiles returns all run profiles (saved + detected, deduplicated).
@@ -429,7 +438,16 @@ func (a *App) SetActiveVariant(profileID string, variant string) error {
 // ValidateRunProfile validates a run profile without saving it.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ValidateRunProfile(profile runprofile.RunProfile) runprofile.ValidationResult {
-	return runprofile.Validate(profile)
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+
+	// Use the coordinator so the workspace-membership check matches what
+	// SaveRunProfile will accept; fall back to the pure validator when no
+	// workspace is loaded.
+	if a.profileManager == nil {
+		return runprofile.Validate(profile)
+	}
+	return a.profileManager.ValidateProfile(profile)
 }
 
 // DetectRunProfiles re-runs auto-detection and returns detected profiles.

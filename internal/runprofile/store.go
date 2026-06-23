@@ -24,6 +24,10 @@ type Store struct {
 	mu            sync.RWMutex
 	profiles      []RunProfile
 	scope         MigrationScope
+	// Warnings collects non-fatal load issues (e.g. a v1->v2 migration that
+	// could not be written back to a read-only directory). The migrated data is
+	// still usable in memory; callers surface these rather than failing the load.
+	Warnings []string
 }
 
 // SetScope assigns the owning-workspace identity used when migrating a legacy
@@ -46,6 +50,8 @@ func (s *Store) Load() ([]RunProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.Warnings = nil
+
 	path := filepath.Join(s.workspaceRoot, profilesFileName)
 	data, err := s.fs.ReadFile(path)
 	if err != nil {
@@ -66,8 +72,11 @@ func (s *Store) Load() ([]RunProfile, error) {
 		migrated, changed := migrateV1Profiles(orEmptyProfiles(pf.Profiles), s.scope)
 		s.profiles = migrated
 		if changed {
+			// Persist is best-effort: a successful migration must not be lost
+			// just because the directory is read-only. Keep the migrated data
+			// in memory and record a warning instead of failing the load.
 			if err := s.persist(); err != nil {
-				return nil, fmt.Errorf("persisting migrated profiles: %w", err)
+				s.Warnings = append(s.Warnings, fmt.Sprintf("could not write migrated profiles to %s: %v", path, err))
 			}
 		}
 	case profilesFileVersion:
@@ -123,6 +132,19 @@ func (s *Store) GetAll() []RunProfile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.copyProfiles()
+}
+
+// Contains reports whether a saved profile with the given ID exists, without
+// deep-copying the profile list (unlike GetAll).
+func (s *Store) Contains(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.profiles {
+		if s.profiles[i].ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Pin converts a detected profile to a user profile and persists it.

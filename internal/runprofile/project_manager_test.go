@@ -250,3 +250,56 @@ func TestProjectManagerHandleFileChangeRoutesToDeepestWorkspace(t *testing.T) {
 		t.Errorf("expected 8 profiles, got %d", len(all))
 	}
 }
+
+func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
+	files := monorepoFixture()
+	// Corrupt the frontend workspace's saved-profile store with invalid JSON.
+	files["/repo/frontend/.firn/run-profiles.json"] = []byte("{ not valid json")
+
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() must not fail when one workspace store is corrupt: %v", err)
+	}
+
+	all := pm.GetAllProfiles()
+	// Other workspaces are unaffected.
+	if findProfile(all, "detected-root-go-go-mod-build") == nil {
+		t.Error("go profiles should survive a corrupt frontend store")
+	}
+	if findProfile(all, "detected-backend-python-pyproject-toml-test") == nil {
+		t.Error("python profiles should survive a corrupt frontend store")
+	}
+	// The corrupt unit still contributes detected profiles (only its saved
+	// store failed to load).
+	if findProfile(all, "detected-frontend-package-json-dev") == nil {
+		t.Error("frontend detected profiles should still show despite the corrupt store")
+	}
+	// The failure is surfaced as a warning, not swallowed.
+	if len(pm.Warnings()) == 0 {
+		t.Error("expected a warning for the corrupt frontend store")
+	}
+}
+
+func TestProjectManagerValidateProfileChecksWorkspace(t *testing.T) {
+	pm := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Known workspace → valid.
+	if res := pm.ValidateProfile(RunProfile{ID: "a", Name: "A", Type: ProfileTypeSingle, Command: "x", WorkspaceID: "frontend"}); !res.Valid {
+		t.Errorf("known workspace should validate: %+v", res)
+	}
+	// Empty workspace → valid (routes to repo root).
+	if res := pm.ValidateProfile(RunProfile{ID: "b", Name: "B", Type: ProfileTypeSingle, Command: "x"}); !res.Valid {
+		t.Errorf("empty workspace should validate: %+v", res)
+	}
+	// Unknown workspace → invalid.
+	if res := pm.ValidateProfile(RunProfile{ID: "c", Name: "C", Type: ProfileTypeSingle, Command: "x", WorkspaceID: "ghost"}); res.Valid {
+		t.Error("unknown workspace should be invalid")
+	}
+	// Base validation still applies (missing name) regardless of workspace.
+	if res := pm.ValidateProfile(RunProfile{ID: "d", Type: ProfileTypeSingle, Command: "x", WorkspaceID: "frontend"}); res.Valid {
+		t.Error("missing name should be invalid")
+	}
+}

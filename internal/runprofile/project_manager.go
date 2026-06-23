@@ -34,6 +34,7 @@ type ProjectRunProfileManager struct {
 	order       []string                          // relDirs in display order
 	ownerRelDir map[string]string                 // workspaceId -> relDir
 	ownerDefs   map[string]workspace.WorkspaceDef // workspaceId -> def
+	warnings    []string                          // non-fatal issues from the last Load
 }
 
 // NewProjectManager creates a coordinator rooted at the opened repo.
@@ -47,20 +48,26 @@ func NewProjectManager(fsys filesystem.FileSystem, repoRoot string) *ProjectRunP
 	}
 }
 
-// Load detects workspaces, then builds and loads one unit per detection target.
+// Load detects workspaces, then builds one unit per detection target.
+//
+// The whole working set is built into local maps first and swapped into place
+// under the lock only after the build completes, so a failure mid-build can
+// never leave the coordinator in a half-populated state. A single workspace
+// whose saved-profile store cannot be read (corrupt JSON, unreadable file)
+// degrades to a warning — its detected profiles still surface and the rest of
+// the repo is unaffected. Only a failure to enumerate the repo's workspaces is
+// fatal, since without that there is nothing to load.
 func (m *ProjectRunProfileManager) Load() error {
 	defs, err := workspace.DetectWorkspaces(m.fs, m.repoRoot)
 	if err != nil {
 		return fmt.Errorf("detect workspaces: %w", err)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.units = map[string]*storeUnit{}
-	m.order = nil
-	m.ownerRelDir = map[string]string{}
-	m.ownerDefs = map[string]workspace.WorkspaceDef{}
+	units := map[string]*storeUnit{}
+	var order []string
+	ownerRelDir := map[string]string{}
+	ownerDefs := map[string]workspace.WorkspaceDef{}
+	var warnings []string
 
 	// Repo-root owner: the typed root-marker def if present, else project.
 	rootOwner := workspace.WorkspaceDef{ID: "project", Name: "Project", RelDir: ""}
@@ -72,8 +79,8 @@ func (m *ProjectRunProfileManager) Load() error {
 	}
 
 	for _, d := range defs {
-		m.ownerRelDir[d.ID] = d.RelDir
-		m.ownerDefs[d.ID] = d
+		ownerRelDir[d.ID] = d.RelDir
+		ownerDefs[d.ID] = d
 	}
 
 	// Distinct detection targets (relDirs) and the owner def for each.
@@ -101,38 +108,58 @@ func (m *ProjectRunProfileManager) Load() error {
 		store := NewStore(m.fs, root)
 		store.SetScope(scope)
 		if _, err := store.Load(); err != nil {
-			return fmt.Errorf("load profiles for %q: %w", relDir, err)
+			// Degrade, don't fail the whole repo: keep the unit so its detected
+			// profiles still surface, and record why its saved profiles are gone.
+			warnings = append(warnings, fmt.Sprintf("workspace %q: could not load saved profiles: %v", owner.ID, err))
 		}
+		warnings = append(warnings, store.Warnings...)
 
 		det := NewDetector(m.fs, root)
 		det.SetScope(scope)
+		detected := det.DetectAll()
+		warnings = append(warnings, det.Warnings...)
 
-		unit := &storeUnit{
+		units[relDir] = &storeUnit{
 			relDir:   relDir,
 			ownerID:  owner.ID,
 			store:    store,
 			detector: det,
-			detected: det.DetectAll(),
+			detected: detected,
 		}
-		m.units[relDir] = unit
-		m.order = append(m.order, relDir)
+		order = append(order, relDir)
 	}
 
-	m.sortOrderLocked()
+	// Repo root first, then subdir relDirs ascending — deterministic regardless
+	// of map iteration order above.
+	sort.SliceStable(order, func(i, j int) bool {
+		if order[i] == "" {
+			return true
+		}
+		if order[j] == "" {
+			return false
+		}
+		return order[i] < order[j]
+	})
+
+	m.mu.Lock()
+	m.units = units
+	m.order = order
+	m.ownerRelDir = ownerRelDir
+	m.ownerDefs = ownerDefs
+	m.warnings = warnings
+	m.mu.Unlock()
 	return nil
 }
 
-// sortOrderLocked orders units: repo root first, then subdir relDirs ascending.
-func (m *ProjectRunProfileManager) sortOrderLocked() {
-	sort.SliceStable(m.order, func(i, j int) bool {
-		if m.order[i] == "" {
-			return true
-		}
-		if m.order[j] == "" {
-			return false
-		}
-		return m.order[i] < m.order[j]
-	})
+// Warnings returns a copy of the non-fatal issues recorded by the last Load
+// (e.g. an unreadable workspace store, or a migration that could not be written
+// back). The combined list is otherwise complete and usable.
+func (m *ProjectRunProfileManager) Warnings() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, len(m.warnings))
+	copy(out, m.warnings)
+	return out
 }
 
 // GetAllProfiles merges every unit's (saved + non-shadowed detected) into one
@@ -190,27 +217,30 @@ func (m *ProjectRunProfileManager) normalizeOwner(p RunProfile, u *storeUnit) Ru
 }
 
 // unitForWorkspaceLocked resolves a workspace id to its owning unit. Empty id
-// routes to the repo-root unit. Unknown non-empty id returns (nil, false).
+// routes to the repo-root unit. Returns (nil, false) for an unknown id or when
+// the resolved unit is not present (e.g. before a successful Load), so callers
+// can rely on ok implying a non-nil unit.
 func (m *ProjectRunProfileManager) unitForWorkspaceLocked(workspaceID string) (*storeUnit, bool) {
-	if workspaceID == "" {
-		return m.units[""], true
+	relDir := ""
+	if workspaceID != "" {
+		rd, ok := m.ownerRelDir[workspaceID]
+		if !ok {
+			return nil, false
+		}
+		relDir = rd
 	}
-	relDir, ok := m.ownerRelDir[workspaceID]
-	if !ok {
-		return nil, false
-	}
-	return m.units[relDir], true
+	u, ok := m.units[relDir]
+	return u, ok && u != nil
 }
 
 // unitForProfileIDLocked finds the unit that currently owns a profile id
-// (searching saved then detected across units).
+// (searching saved then detected across units). The saved lookup uses
+// Store.Contains to avoid deep-copying every unit's profile list.
 func (m *ProjectRunProfileManager) unitForProfileIDLocked(id string) *storeUnit {
 	for _, relDir := range m.order {
 		u := m.units[relDir]
-		for _, p := range u.store.GetAll() {
-			if p.ID == id {
-				return u
-			}
+		if u.store.Contains(id) {
+			return u
 		}
 		for _, d := range u.detected {
 			if d.ID == id {
@@ -219,6 +249,25 @@ func (m *ProjectRunProfileManager) unitForProfileIDLocked(id string) *storeUnit 
 		}
 	}
 	return nil
+}
+
+// ValidateProfile validates a profile and additionally checks that its target
+// workspace is known to this repo, so the frontend's pre-save validation
+// matches what SaveProfile will actually accept. An empty workspaceId is valid
+// (it routes to the repo-root owner).
+func (m *ProjectRunProfileManager) ValidateProfile(p RunProfile) ValidationResult {
+	result := Validate(p)
+	if !result.Valid {
+		return result
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.unitForWorkspaceLocked(p.WorkspaceID); !ok {
+		return ValidationResult{Valid: false, Errors: []ValidationError{
+			{Field: "workspaceId", Message: fmt.Sprintf("unknown workspace: %q", p.WorkspaceID)},
+		}}
+	}
+	return result
 }
 
 // SaveProfile validates and saves a profile to its owning workspace store.
@@ -288,7 +337,7 @@ func (m *ProjectRunProfileManager) UnpinProfile(id string) error {
 	defer m.mu.Unlock()
 	unit := m.unitForProfileIDLocked(id)
 	if unit == nil {
-		return fmt.Errorf("unpin profile %s: not found", id)
+		return fmt.Errorf("profile not found: %s", id)
 	}
 	if err := unit.store.Delete(id); err != nil {
 		return fmt.Errorf("unpin profile %s: %w", id, err)
@@ -380,7 +429,7 @@ func (m *ProjectRunProfileManager) HandleFileChange(path string) bool {
 			}
 			continue
 		}
-		if (dir == relDir || hasPathPrefix(dir, relDir)) && len(relDir) > bestLen {
+		if hasPathPrefix(dir, relDir) && len(relDir) > bestLen {
 			best, bestLen = relDir, len(relDir)
 		}
 	}
