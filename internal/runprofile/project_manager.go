@@ -216,23 +216,6 @@ func (m *ProjectRunProfileManager) normalizeOwner(p RunProfile, u *storeUnit) Ru
 	return p
 }
 
-// unitForWorkspaceLocked resolves a workspace id to its owning unit. Empty id
-// routes to the repo-root unit. Returns (nil, false) for an unknown id or when
-// the resolved unit is not present (e.g. before a successful Load), so callers
-// can rely on ok implying a non-nil unit.
-func (m *ProjectRunProfileManager) unitForWorkspaceLocked(workspaceID string) (*storeUnit, bool) {
-	relDir := ""
-	if workspaceID != "" {
-		rd, ok := m.ownerRelDir[workspaceID]
-		if !ok {
-			return nil, false
-		}
-		relDir = rd
-	}
-	u, ok := m.units[relDir]
-	return u, ok && u != nil
-}
-
 // unitAndOwnerForWorkspaceLocked resolves a workspace id to its owning unit and
 // the exact owner def to persist. Empty id routes to the repo-root unit owner for
 // backward compatibility; non-empty ids preserve the requested owner even when
