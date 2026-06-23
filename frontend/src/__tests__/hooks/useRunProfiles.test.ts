@@ -142,6 +142,34 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().runProfiles).toEqual(profilesB);
   });
 
+  it('carries workspace ownership fields through normalization', async () => {
+    mockGetAllRunProfiles.mockResolvedValueOnce([
+      {
+        id: 'detected-frontend-package-json-dev',
+        name: 'npm run dev',
+        type: 'single',
+        source: 'detected',
+        command: 'npm run dev',
+        workingDir: 'frontend',
+        workspaceId: 'frontend',
+        workspaceName: 'Frontend',
+        workspaceRelDir: 'frontend',
+      },
+    ] as unknown as RunProfile[]);
+
+    renderHook(() => useRunProfilesLoader('/workspace'));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const profiles = useIDEStore.getState().runProfiles;
+    expect(profiles[0]?.workspaceId).toBe('frontend');
+    expect(profiles[0]?.workspaceName).toBe('Frontend');
+    expect(profiles[0]?.workspaceRelDir).toBe('frontend');
+  });
+
   it('should update profiles when reactive event fires', async () => {
     let eventCallback: (profiles: RunProfile[]) => void = () => {};
     mockEventsOn.mockImplementationOnce((_event: string, cb: (profiles: unknown) => void) => {

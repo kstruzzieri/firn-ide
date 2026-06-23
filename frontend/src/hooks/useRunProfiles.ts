@@ -60,6 +60,9 @@ function normalizeRunProfiles(rawProfiles: unknown): RunProfile[] {
       steps: profile.steps,
       detectedFrom: profile.detectedFrom,
       order: profile.order,
+      workspaceId: profile.workspaceId,
+      workspaceName: profile.workspaceName,
+      workspaceRelDir: profile.workspaceRelDir,
     });
   }
 

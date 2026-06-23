@@ -316,6 +316,14 @@ export namespace lsp {
 	    state: string;
 	    error?: string;
 	    completionTriggerCharacters?: string[];
+	    setupState?: string;
+	    interpreterPath?: string;
+	    projectRoot?: string;
+	    configSource?: string;
+	    extraPaths?: string[];
+	    pythonVersion?: string;
+	    action?: string;
+	    detailCode?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerStatus(source);
@@ -329,6 +337,14 @@ export namespace lsp {
 	        this.state = source["state"];
 	        this.error = source["error"];
 	        this.completionTriggerCharacters = source["completionTriggerCharacters"];
+	        this.setupState = source["setupState"];
+	        this.interpreterPath = source["interpreterPath"];
+	        this.projectRoot = source["projectRoot"];
+	        this.configSource = source["configSource"];
+	        this.extraPaths = source["extraPaths"];
+	        this.pythonVersion = source["pythonVersion"];
+	        this.action = source["action"];
+	        this.detailCode = source["detailCode"];
 	    }
 	}
 	export class TextDocumentContentChangeEvent {
@@ -416,6 +432,9 @@ export namespace runprofile {
 	    steps?: string[];
 	    detectedFrom?: string;
 	    order?: number;
+	    workspaceId?: string;
+	    workspaceName?: string;
+	    workspaceRelDir?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RunProfile(source);
@@ -437,6 +456,9 @@ export namespace runprofile {
 	        this.steps = source["steps"];
 	        this.detectedFrom = source["detectedFrom"];
 	        this.order = source["order"];
+	        this.workspaceId = source["workspaceId"];
+	        this.workspaceName = source["workspaceName"];
+	        this.workspaceRelDir = source["workspaceRelDir"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
