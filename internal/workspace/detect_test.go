@@ -180,6 +180,29 @@ func TestDetectWorkspaces(t *testing.T) {
 				{ID: "web", Name: "Frontend (web)", RelDir: "web", Type: TypeFrontend, Accent: "blue"},
 			},
 		},
+		{
+			name: "frontend that ships a Dockerfile stays Frontend (infra never shadows a language)",
+			files: []string{
+				"/repo/frontend/package.json",
+				"/repo/frontend/Dockerfile",
+				"/repo/frontend/nginx.conf",
+			},
+			want: []WorkspaceDef{
+				project,
+				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+			},
+		},
+		{
+			name: "python service with a Dockerfile stays Python",
+			files: []string{
+				"/repo/api/pyproject.toml",
+				"/repo/api/Dockerfile",
+			},
+			want: []WorkspaceDef{
+				project,
+				{ID: "api", Name: "Python", RelDir: "api", Type: TypePython, Accent: "green"},
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

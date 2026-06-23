@@ -21,11 +21,16 @@ type markerRule struct {
 }
 
 // markerRules is evaluated in priority order; the first match classifies a dir.
+// Language/project markers (go.mod, pyproject, package.json) rank ABOVE infra so
+// a service that merely ships a Dockerfile keeps its real language identity;
+// infra wins only for dirs with no language marker (pure terraform or
+// compose-only orchestration). go.mod is first so a polyglot root with a tooling
+// package.json classifies as Go.
 var markerRules = []markerRule{
 	{files: []string{"go.mod"}, typ: TypeGo, accent: "cyan"},
 	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "green"},
-	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, suffix: ".tf", typ: TypeInfra, accent: "purple"},
 	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
+	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, suffix: ".tf", typ: TypeInfra, accent: "purple"},
 }
 
 // ignoredDirs are never scanned or treated as workspaces.
