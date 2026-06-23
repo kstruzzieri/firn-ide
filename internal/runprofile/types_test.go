@@ -2,6 +2,7 @@ package runprofile
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -193,5 +194,38 @@ func TestProfilesFileJSONRoundTrip(t *testing.T) {
 	}
 	if decoded.Profiles[0].ID != "p1" {
 		t.Errorf("Profile ID mismatch: got %q, want %q", decoded.Profiles[0].ID, "p1")
+	}
+}
+
+func TestRunProfileWorkspaceOwnershipRoundTrips(t *testing.T) {
+	profile := RunProfile{
+		ID:              "detected-frontend-package-json-dev",
+		Name:            "npm run dev",
+		Type:            ProfileTypeSingle,
+		Source:          ProfileSourceDetected,
+		Command:         "npm run dev",
+		WorkingDir:      "frontend",
+		WorkspaceID:     "frontend",
+		WorkspaceName:   "Frontend",
+		WorkspaceRelDir: "frontend",
+	}
+
+	data, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatalf("Marshal() error: %v", err)
+	}
+
+	var decoded RunProfile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error: %v", err)
+	}
+	if decoded.WorkspaceID != "frontend" || decoded.WorkspaceName != "Frontend" || decoded.WorkspaceRelDir != "frontend" {
+		t.Errorf("workspace fields lost: %+v", decoded)
+	}
+
+	// omitempty: an unscoped profile must not emit the workspace keys.
+	bare, _ := json.Marshal(RunProfile{ID: "x", Name: "y", Type: ProfileTypeSingle})
+	if strings.Contains(string(bare), "workspaceId") {
+		t.Errorf("expected workspaceId omitted when empty, got %s", bare)
 	}
 }

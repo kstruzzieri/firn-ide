@@ -94,20 +94,23 @@ func (v *EnvVariants) UnmarshalJSON(data []byte) error {
 
 // RunProfile represents a single run configuration.
 type RunProfile struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Type          ProfileType       `json:"type"`
-	Source        ProfileSource     `json:"source"`
-	Command       string            `json:"command,omitempty"`
-	WorkingDir    string            `json:"workingDir,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	EnvFile       string            `json:"envFile,omitempty"`
-	EnvVariants   EnvVariants       `json:"envVariants,omitempty"`
-	ActiveVariant string            `json:"activeVariant,omitempty"`
-	Tags          []ProfileTag      `json:"tags,omitempty"`
-	Steps         []string          `json:"steps,omitempty"`
-	DetectedFrom  string            `json:"detectedFrom,omitempty"`
-	Order         int               `json:"order,omitempty"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Type            ProfileType       `json:"type"`
+	Source          ProfileSource     `json:"source"`
+	Command         string            `json:"command,omitempty"`
+	WorkingDir      string            `json:"workingDir,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	EnvFile         string            `json:"envFile,omitempty"`
+	EnvVariants     EnvVariants       `json:"envVariants,omitempty"`
+	ActiveVariant   string            `json:"activeVariant,omitempty"`
+	Tags            []ProfileTag      `json:"tags,omitempty"`
+	Steps           []string          `json:"steps,omitempty"`
+	DetectedFrom    string            `json:"detectedFrom,omitempty"`
+	Order           int               `json:"order,omitempty"`
+	WorkspaceID     string            `json:"workspaceId,omitempty"`     // owner: "frontend" | "root:go" | "project"
+	WorkspaceName   string            `json:"workspaceName,omitempty"`   // display label, e.g. "Frontend"
+	WorkspaceRelDir string            `json:"workspaceRelDir,omitempty"` // "" for repo-root profiles
 }
 
 // ProfilesFile is the on-disk format for .firn/run-profiles.json.
