@@ -12,12 +12,24 @@ import (
 
 const profilesFileName = ".firn/run-profiles.json"
 
+// profilesFileVersion is the current on-disk schema version. v2 adds workspace
+// ownership fields and workspace-scoped detected IDs. v1 files are migrated on
+// load (see migrateV1Profiles).
+const profilesFileVersion = 2
+
 // Store manages persistent storage of run profiles in .firn/run-profiles.json.
 type Store struct {
 	fs            filesystem.FileSystem
 	workspaceRoot string
 	mu            sync.RWMutex
 	profiles      []RunProfile
+	scope         MigrationScope
+}
+
+// SetScope assigns the owning-workspace identity used when migrating a legacy
+// v1 file loaded by this store. Call before Load.
+func (s *Store) SetScope(scope MigrationScope) {
+	s.scope = scope
 }
 
 // NewStore creates a Store for the given workspace root directory.
@@ -49,13 +61,19 @@ func (s *Store) Load() ([]RunProfile, error) {
 		return nil, fmt.Errorf("parsing profiles file: %w", err)
 	}
 
-	if pf.Version != 1 {
-		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1)", pf.Version)
-	}
-
-	s.profiles = pf.Profiles
-	if s.profiles == nil {
-		s.profiles = []RunProfile{}
+	switch pf.Version {
+	case 1:
+		migrated, changed := migrateV1Profiles(orEmptyProfiles(pf.Profiles), s.scope)
+		s.profiles = migrated
+		if changed {
+			if err := s.persist(); err != nil {
+				return nil, fmt.Errorf("persisting migrated profiles: %w", err)
+			}
+		}
+	case profilesFileVersion:
+		s.profiles = orEmptyProfiles(pf.Profiles)
+	default:
+		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1 or %d)", pf.Version, profilesFileVersion)
 	}
 	return s.copyProfiles(), nil
 }
@@ -130,7 +148,7 @@ func (s *Store) persist() error {
 		profiles = []RunProfile{}
 	}
 	pf := ProfilesFile{
-		Version:  1,
+		Version:  profilesFileVersion,
 		Profiles: profiles,
 	}
 
@@ -145,6 +163,14 @@ func (s *Store) persist() error {
 	}
 
 	return nil
+}
+
+// orEmptyProfiles returns a non-nil slice for a possibly-nil profile list.
+func orEmptyProfiles(p []RunProfile) []RunProfile {
+	if p == nil {
+		return []RunProfile{}
+	}
+	return p
 }
 
 func (s *Store) copyProfiles() []RunProfile {
