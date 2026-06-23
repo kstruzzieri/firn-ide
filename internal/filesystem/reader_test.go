@@ -239,6 +239,59 @@ func TestReadDirectory_RespectsGitignore(t *testing.T) {
 	}
 }
 
+func TestReadDirectory_HidesDotDirectories(t *testing.T) {
+	modTime := time.Now()
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			if path == "/test" {
+				return []fs.DirEntry{
+					&mockDirEntry{name: ".git", isDir: true},
+					&mockDirEntry{name: ".github", isDir: true},
+					&mockDirEntry{name: "src", isDir: true},
+					&mockDirEntry{name: ".env", isDir: false},
+					&mockDirEntry{name: "main.go", isDir: false},
+				}, nil
+			}
+			return nil, nil
+		},
+		StatFunc: func(path string) (fs.FileInfo, error) {
+			return &mockFileInfo{
+				size:    100,
+				modTime: modTime,
+			}, nil
+		},
+	}
+
+	reader := NewDirectoryReader(mockFS)
+	entries, err := reader.ReadDirectory("/test")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	names := make(map[string]bool)
+	for _, e := range entries {
+		names[e.Name] = true
+	}
+
+	// Dot-directories must be hidden.
+	if names[".git"] {
+		t.Error(".git directory should be hidden from the tree")
+	}
+	if names[".github"] {
+		t.Error(".github directory should be hidden from the tree")
+	}
+	// Normal dir and dot-files must remain visible.
+	if !names["src"] {
+		t.Error("src directory should be visible")
+	}
+	if !names[".env"] {
+		t.Error(".env file should remain visible")
+	}
+	if !names["main.go"] {
+		t.Error("main.go file should be visible")
+	}
+}
+
 func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 	modTime := time.Now()
 	permErr := errors.New("permission denied")

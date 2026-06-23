@@ -21,11 +21,17 @@ type markerRule struct {
 }
 
 // markerRules is evaluated in priority order; the first match classifies a dir.
+// Language/project markers (go.mod, pyproject, package.json) rank ABOVE infra so
+// a service that merely ships a Dockerfile keeps its real language identity;
+// infra wins only for dirs with no language marker (pure terraform or
+// compose-only orchestration). go.mod is first so a polyglot root with a tooling
+// package.json classifies as Go.
 var markerRules = []markerRule{
-	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
 	{files: []string{"go.mod"}, typ: TypeGo, accent: "cyan"},
 	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "green"},
-	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, suffix: ".tf", typ: TypeInfra, accent: "purple"},
+	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
+	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, typ: TypeDocker, accent: "purple"},
+	{suffix: ".tf", typ: TypeTerraform, accent: "amber"},
 }
 
 // ignoredDirs are never scanned or treated as workspaces.
@@ -85,6 +91,22 @@ func DetectWorkspaces(fsys filesystem.FileSystem, repoPath string) ([]WorkspaceD
 		return detected[i].RelDir < detected[j].RelDir
 	})
 
+	// Disambiguate duplicate display names (e.g. two Frontend subdirs) so tabs
+	// are distinguishable. Single-of-a-kind names are left clean.
+	nameCounts := map[string]int{}
+	for _, d := range detected {
+		nameCounts[d.Name]++
+	}
+	for i := range detected {
+		if nameCounts[detected[i].Name] > 1 {
+			loc := detected[i].RelDir
+			if loc == "" {
+				loc = "root"
+			}
+			detected[i].Name = detected[i].Name + " (" + loc + ")"
+		}
+	}
+
 	return append(result, detected...), nil
 }
 
@@ -108,7 +130,7 @@ func subDirs(fsys filesystem.FileSystem, dir string) []string {
 	}
 	var names []string
 	for _, e := range entries {
-		if e.IsDir() && !ignoredDirs[e.Name()] {
+		if e.IsDir() && !ignoredDirs[e.Name()] && !strings.HasPrefix(e.Name(), ".") {
 			names = append(names, e.Name())
 		}
 	}
@@ -156,8 +178,10 @@ func typeLabel(t WorkspaceType) string {
 		return "Go"
 	case TypePython:
 		return "Python"
-	case TypeInfra:
-		return "Infrastructure"
+	case TypeDocker:
+		return "Docker"
+	case TypeTerraform:
+		return "Terraform"
 	default:
 		return "General"
 	}

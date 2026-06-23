@@ -12,12 +12,28 @@ import (
 
 const profilesFileName = ".firn/run-profiles.json"
 
+// profilesFileVersion is the current on-disk schema version. v2 adds workspace
+// ownership fields and workspace-scoped detected IDs. v1 files are migrated on
+// load (see migrateV1Profiles).
+const profilesFileVersion = 2
+
 // Store manages persistent storage of run profiles in .firn/run-profiles.json.
 type Store struct {
 	fs            filesystem.FileSystem
 	workspaceRoot string
 	mu            sync.RWMutex
 	profiles      []RunProfile
+	scope         MigrationScope
+	// Warnings collects non-fatal load issues (e.g. a v1->v2 migration that
+	// could not be written back to a read-only directory). The migrated data is
+	// still usable in memory; callers surface these rather than failing the load.
+	Warnings []string
+}
+
+// SetScope assigns the owning-workspace identity used when migrating a legacy
+// v1 file loaded by this store. Call before Load.
+func (s *Store) SetScope(scope MigrationScope) {
+	s.scope = scope
 }
 
 // NewStore creates a Store for the given workspace root directory.
@@ -34,6 +50,8 @@ func (s *Store) Load() ([]RunProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.Warnings = nil
+
 	path := filepath.Join(s.workspaceRoot, profilesFileName)
 	data, err := s.fs.ReadFile(path)
 	if err != nil {
@@ -49,13 +67,22 @@ func (s *Store) Load() ([]RunProfile, error) {
 		return nil, fmt.Errorf("parsing profiles file: %w", err)
 	}
 
-	if pf.Version != 1 {
-		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1)", pf.Version)
-	}
-
-	s.profiles = pf.Profiles
-	if s.profiles == nil {
-		s.profiles = []RunProfile{}
+	switch pf.Version {
+	case 1:
+		migrated, changed := migrateV1Profiles(orEmptyProfiles(pf.Profiles), s.scope)
+		s.profiles = migrated
+		if changed {
+			// Persist is best-effort: a successful migration must not be lost
+			// just because the directory is read-only. Keep the migrated data
+			// in memory and record a warning instead of failing the load.
+			if err := s.persist(); err != nil {
+				s.Warnings = append(s.Warnings, fmt.Sprintf("could not write migrated profiles to %s: %v", path, err))
+			}
+		}
+	case profilesFileVersion:
+		s.profiles = orEmptyProfiles(pf.Profiles)
+	default:
+		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1 or %d)", pf.Version, profilesFileVersion)
 	}
 	return s.copyProfiles(), nil
 }
@@ -107,6 +134,19 @@ func (s *Store) GetAll() []RunProfile {
 	return s.copyProfiles()
 }
 
+// Contains reports whether a saved profile with the given ID exists, without
+// deep-copying the profile list (unlike GetAll).
+func (s *Store) Contains(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.profiles {
+		if s.profiles[i].ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Pin converts a detected profile to a user profile and persists it.
 func (s *Store) Pin(profile RunProfile) error {
 	profile.Source = ProfileSourceUser
@@ -130,7 +170,7 @@ func (s *Store) persist() error {
 		profiles = []RunProfile{}
 	}
 	pf := ProfilesFile{
-		Version:  1,
+		Version:  profilesFileVersion,
 		Profiles: profiles,
 	}
 
@@ -145,6 +185,14 @@ func (s *Store) persist() error {
 	}
 
 	return nil
+}
+
+// orEmptyProfiles returns a non-nil slice for a possibly-nil profile list.
+func orEmptyProfiles(p []RunProfile) []RunProfile {
+	if p == nil {
+		return []RunProfile{}
+	}
+	return p
 }
 
 func (s *Store) copyProfiles() []RunProfile {

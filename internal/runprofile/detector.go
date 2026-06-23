@@ -28,6 +28,7 @@ var ConfigFiles = []string{
 type Detector struct {
 	fs            filesystem.FileSystem
 	workspaceRoot string
+	scope         MigrationScope // zero value = unscoped (legacy single-workspace path)
 	Warnings      []string
 }
 
@@ -37,6 +38,22 @@ func NewDetector(fsys filesystem.FileSystem, workspaceRoot string) *Detector {
 		fs:            fsys,
 		workspaceRoot: workspaceRoot,
 	}
+}
+
+// SetScope assigns the owning-workspace identity used to scope detected IDs
+// and stamp ownership. Call before DetectAll.
+func (d *Detector) SetScope(scope MigrationScope) {
+	d.scope = scope
+}
+
+// profileID scopes a generated ID by workspace when a scope is set, preserving
+// the legacy format (and the unpin determinism invariant) when unscoped.
+func (d *Detector) profileID(source, name string) string {
+	base := generateID(source, name)
+	if d.scope.WorkspaceID == "" {
+		return base
+	}
+	return "detected-" + scopeSlug(d.scope.WorkspaceID) + "-" + strings.TrimPrefix(base, "detected-")
 }
 
 // DetectAll scans for all recognized config files and returns detected profiles.
@@ -74,6 +91,17 @@ func (d *Detector) DetectAll() []RunProfile {
 		}
 
 		profiles = append(profiles, detected...)
+	}
+
+	if d.scope.WorkspaceID != "" {
+		for i := range profiles {
+			profiles[i].WorkspaceID = d.scope.WorkspaceID
+			profiles[i].WorkspaceName = d.scope.WorkspaceName
+			profiles[i].WorkspaceRelDir = d.scope.WorkspaceRelDir
+			if profiles[i].WorkingDir == "" {
+				profiles[i].WorkingDir = d.scope.WorkspaceRelDir
+			}
+		}
 	}
 
 	return profiles
@@ -117,7 +145,7 @@ func (d *Detector) detectPackageJSON(path string) []RunProfile {
 	for _, name := range scriptNames {
 		order++
 		profiles = append(profiles, RunProfile{
-			ID:           generateID("package.json", name),
+			ID:           d.profileID("package.json", name),
 			Name:         "npm run " + name,
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -134,7 +162,7 @@ func (d *Detector) detectPackageJSON(path string) []RunProfile {
 func (d *Detector) detectGoMod() []RunProfile {
 	return []RunProfile{
 		{
-			ID:           generateID("go.mod", "build"),
+			ID:           d.profileID("go.mod", "build"),
 			Name:         "go build",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -144,7 +172,7 @@ func (d *Detector) detectGoMod() []RunProfile {
 			Order:        1,
 		},
 		{
-			ID:           generateID("go.mod", "test"),
+			ID:           d.profileID("go.mod", "test"),
 			Name:         "go test",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -154,7 +182,7 @@ func (d *Detector) detectGoMod() []RunProfile {
 			Order:        2,
 		},
 		{
-			ID:           generateID("go.mod", "vet"),
+			ID:           d.profileID("go.mod", "vet"),
 			Name:         "go vet",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -164,7 +192,7 @@ func (d *Detector) detectGoMod() []RunProfile {
 			Order:        3,
 		},
 		{
-			ID:           generateID("go.mod", "run"),
+			ID:           d.profileID("go.mod", "run"),
 			Name:         "go run",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -206,7 +234,7 @@ func (d *Detector) detectMakefile(path string) []RunProfile {
 
 		order++
 		profiles = append(profiles, RunProfile{
-			ID:           generateID("Makefile", target),
+			ID:           d.profileID("Makefile", target),
 			Name:         "make " + target,
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -223,7 +251,7 @@ func (d *Detector) detectMakefile(path string) []RunProfile {
 func (d *Detector) detectPyproject() []RunProfile {
 	return []RunProfile{
 		{
-			ID:           generateID("pyproject.toml", "test"),
+			ID:           d.profileID("pyproject.toml", "test"),
 			Name:         "pytest",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -233,7 +261,7 @@ func (d *Detector) detectPyproject() []RunProfile {
 			Order:        1,
 		},
 		{
-			ID:           generateID("pyproject.toml", "run"),
+			ID:           d.profileID("pyproject.toml", "run"),
 			Name:         "python -m",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -248,7 +276,7 @@ func (d *Detector) detectPyproject() []RunProfile {
 func (d *Detector) detectDockerCompose(filename string) []RunProfile {
 	return []RunProfile{
 		{
-			ID:           generateID("docker-compose", "up"),
+			ID:           d.profileID("docker-compose", "up"),
 			Name:         "docker compose up",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -258,7 +286,7 @@ func (d *Detector) detectDockerCompose(filename string) []RunProfile {
 			Order:        1,
 		},
 		{
-			ID:           generateID("docker-compose", "down"),
+			ID:           d.profileID("docker-compose", "down"),
 			Name:         "docker compose down",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,
@@ -268,7 +296,7 @@ func (d *Detector) detectDockerCompose(filename string) []RunProfile {
 			Order:        2,
 		},
 		{
-			ID:           generateID("docker-compose", "build"),
+			ID:           d.profileID("docker-compose", "build"),
 			Name:         "docker compose build",
 			Type:         ProfileTypeSingle,
 			Source:       ProfileSourceDetected,

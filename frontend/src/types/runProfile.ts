@@ -22,6 +22,9 @@ export interface RunProfile {
   steps?: string[];
   detectedFrom?: string;
   order?: number;
+  workspaceId?: string;
+  workspaceName?: string;
+  workspaceRelDir?: string;
 }
 
 export interface ValidationError {

@@ -91,6 +91,13 @@ func (d *DirectoryReader) readDirRecursive(path string, ignorePatterns []string)
 	for _, de := range dirEntries {
 		name := de.Name()
 
+		// Hide dot-directories (.git, .github, .husky, .firn, .worktrees, …) —
+		// they are not relevant to workspaces. Dot-FILES (.env, .dockerignore,
+		// .gitignore) remain visible.
+		if de.IsDir() && strings.HasPrefix(name, ".") {
+			continue
+		}
+
 		// Check if should be ignored (but always include .gitignore itself)
 		if name != ".gitignore" && d.shouldIgnore(name, de.IsDir(), ignorePatterns) {
 			continue
