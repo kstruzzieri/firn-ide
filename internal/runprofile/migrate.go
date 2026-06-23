@@ -1,6 +1,9 @@
 package runprofile
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // MigrationScope carries the owning-workspace identity the coordinator supplies
 // when loading a per-workspace store, used both to stamp ownership on legacy
@@ -33,6 +36,36 @@ func scopedID(workspaceID, oldID string) string {
 	return "detected-" + scopeSlug(workspaceID) + "-" + rest
 }
 
+// cleanSlash normalizes a relative path to forward slashes for stable on-disk
+// profile JSON, independent of the host OS path separator.
+func cleanSlash(p string) string {
+	return filepath.ToSlash(filepath.Clean(strings.ReplaceAll(p, "\\", "/")))
+}
+
+// normalizeMigratedWorkingDir converts legacy per-store relative working dirs to
+// the P1 repo-root-relative invariant. A subdirectory-store workingDir like
+// "scripts" becomes "frontend/scripts"; already-rooted values and absolute paths
+// are preserved.
+func normalizeMigratedWorkingDir(workingDir string, scope MigrationScope) (string, bool) {
+	if scope.WorkspaceRelDir == "" || filepath.IsAbs(workingDir) {
+		return workingDir, false
+	}
+
+	relDir := cleanSlash(scope.WorkspaceRelDir)
+	if workingDir == "" {
+		return relDir, true
+	}
+
+	wd := cleanSlash(workingDir)
+	if wd == "." {
+		return relDir, workingDir != relDir
+	}
+	if wd == relDir || strings.HasPrefix(wd, relDir+"/") {
+		return wd, wd != workingDir
+	}
+	return relDir + "/" + wd, true
+}
+
 // migrateV1Profiles upgrades a v1 profile list in place-by-value to the v2
 // shape: stamps ownership, scopes detected IDs, and rewrites intra-file
 // compound step references. Returns the migrated slice and whether anything
@@ -50,12 +83,18 @@ func migrateV1Profiles(profiles []RunProfile, scope MigrationScope) ([]RunProfil
 		}
 		if p.WorkspaceID == "" && scope.WorkspaceID != "" {
 			p.WorkspaceID = scope.WorkspaceID
+			changed = true
+		}
+		if p.WorkspaceName == "" && scope.WorkspaceName != "" {
 			p.WorkspaceName = scope.WorkspaceName
+			changed = true
+		}
+		if p.WorkspaceRelDir == "" && scope.WorkspaceRelDir != "" {
 			p.WorkspaceRelDir = scope.WorkspaceRelDir
 			changed = true
 		}
-		if p.WorkingDir == "" && scope.WorkspaceRelDir != "" {
-			p.WorkingDir = scope.WorkspaceRelDir
+		if wd, wdChanged := normalizeMigratedWorkingDir(p.WorkingDir, scope); wdChanged {
+			p.WorkingDir = wd
 			changed = true
 		}
 		out[i] = p

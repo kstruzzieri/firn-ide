@@ -233,6 +233,30 @@ func (m *ProjectRunProfileManager) unitForWorkspaceLocked(workspaceID string) (*
 	return u, ok && u != nil
 }
 
+// unitAndOwnerForWorkspaceLocked resolves a workspace id to its owning unit and
+// the exact owner def to persist. Empty id routes to the repo-root unit owner for
+// backward compatibility; non-empty ids preserve the requested owner even when
+// multiple owners share one unit (e.g. "project" and "root:go").
+func (m *ProjectRunProfileManager) unitAndOwnerForWorkspaceLocked(workspaceID string) (*storeUnit, workspace.WorkspaceDef, bool) {
+	if workspaceID == "" {
+		u := m.units[""]
+		if u == nil {
+			return nil, workspace.WorkspaceDef{}, false
+		}
+		return u, m.ownerDefs[u.ownerID], true
+	}
+
+	relDir, ok := m.ownerRelDir[workspaceID]
+	if !ok {
+		return nil, workspace.WorkspaceDef{}, false
+	}
+	u := m.units[relDir]
+	if u == nil {
+		return nil, workspace.WorkspaceDef{}, false
+	}
+	return u, m.ownerDefs[workspaceID], true
+}
+
 // unitForProfileIDLocked finds the unit that currently owns a profile id
 // (searching saved then detected across units). The saved lookup uses
 // Store.Contains to avoid deep-copying every unit's profile list.
@@ -251,6 +275,27 @@ func (m *ProjectRunProfileManager) unitForProfileIDLocked(id string) *storeUnit 
 	return nil
 }
 
+// profileIDExistsOutsideUnitLocked prevents ambiguous ID-only operations. Public
+// runtime and mutation APIs still address profiles by ID only, so saved profile
+// IDs must be globally unique across units.
+func (m *ProjectRunProfileManager) profileIDExistsOutsideUnitLocked(id string, allowed *storeUnit) bool {
+	for _, relDir := range m.order {
+		u := m.units[relDir]
+		if u == nil || u == allowed {
+			continue
+		}
+		if u.store.Contains(id) {
+			return true
+		}
+		for _, d := range u.detected {
+			if d.ID == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ValidateProfile validates a profile and additionally checks that its target
 // workspace is known to this repo, so the frontend's pre-save validation
 // matches what SaveProfile will actually accept. An empty workspaceId is valid
@@ -262,7 +307,7 @@ func (m *ProjectRunProfileManager) ValidateProfile(p RunProfile) ValidationResul
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if _, ok := m.unitForWorkspaceLocked(p.WorkspaceID); !ok {
+	if _, _, ok := m.unitAndOwnerForWorkspaceLocked(p.WorkspaceID); !ok {
 		return ValidationResult{Valid: false, Errors: []ValidationError{
 			{Field: "workspaceId", Message: fmt.Sprintf("unknown workspace: %q", p.WorkspaceID)},
 		}}
@@ -280,21 +325,22 @@ func (m *ProjectRunProfileManager) SaveProfile(p RunProfile) (ValidationResult, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	unit, ok := m.unitForWorkspaceLocked(p.WorkspaceID)
+	unit, owner, ok := m.unitAndOwnerForWorkspaceLocked(p.WorkspaceID)
 	if !ok || unit == nil {
 		return ValidationResult{Valid: false, Errors: []ValidationError{
 			{Field: "workspaceId", Message: fmt.Sprintf("unknown workspace: %q", p.WorkspaceID)},
 		}}, nil
 	}
+	if m.profileIDExistsOutsideUnitLocked(p.ID, unit) {
+		return ValidationResult{Valid: false, Errors: []ValidationError{
+			{Field: "id", Message: fmt.Sprintf("profile id already exists in another workspace: %s", p.ID)},
+		}}, nil
+	}
 
-	def := m.ownerDefs[unit.ownerID]
 	p.Source = ProfileSourceUser
-	// Normalize to the resolved owner id: a profile saved with an empty
-	// workspaceId reads back owned by the repo-root owner (root-marker or
-	// "project"), keeping the merged list internally consistent.
-	p.WorkspaceID = unit.ownerID
-	p.WorkspaceName = def.Name
-	p.WorkspaceRelDir = unit.relDir
+	p.WorkspaceID = owner.ID
+	p.WorkspaceName = owner.Name
+	p.WorkspaceRelDir = owner.RelDir
 	if p.WorkingDir == "" && unit.relDir != "" {
 		p.WorkingDir = unit.relDir
 	}

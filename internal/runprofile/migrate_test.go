@@ -67,10 +67,53 @@ func TestMigrateV1RewritesIntraFileCompoundSteps(t *testing.T) {
 	}
 }
 
+func TestMigrateV1RebasesRelativeWorkingDirToRepoRoot(t *testing.T) {
+	scope := MigrationScope{WorkspaceID: "frontend", WorkspaceName: "Frontend", WorkspaceRelDir: "frontend"}
+	in := []RunProfile{
+		{ID: "custom-script", Name: "Script", Type: ProfileTypeSingle, WorkingDir: "scripts"},
+		{ID: "already-rooted", Name: "Rooted", Type: ProfileTypeSingle, WorkingDir: "frontend/tools"},
+	}
+	out, changed := migrateV1Profiles(in, scope)
+	if !changed {
+		t.Fatal("expected changed=true")
+	}
+	if out[0].WorkingDir != "frontend/scripts" {
+		t.Errorf("workingDir should be repo-root-relative, got %q", out[0].WorkingDir)
+	}
+	if out[1].WorkingDir != "frontend/tools" {
+		t.Errorf("already-rooted workingDir changed incorrectly: %q", out[1].WorkingDir)
+	}
+}
+
+func TestMigrateV1LeavesAbsoluteWorkingDirAlone(t *testing.T) {
+	scope := MigrationScope{WorkspaceID: "frontend", WorkspaceName: "Frontend", WorkspaceRelDir: "frontend"}
+	in := []RunProfile{
+		{ID: "absolute", Name: "Absolute", Type: ProfileTypeSingle, WorkingDir: "/tmp/project"},
+	}
+	out, _ := migrateV1Profiles(in, scope)
+	if out[0].WorkingDir != "/tmp/project" {
+		t.Errorf("absolute workingDir changed: %q", out[0].WorkingDir)
+	}
+}
+
+func TestMigrateV1FillsPartialOwnership(t *testing.T) {
+	scope := MigrationScope{WorkspaceID: "frontend", WorkspaceName: "Frontend", WorkspaceRelDir: "frontend"}
+	in := []RunProfile{
+		{ID: "custom", Name: "Custom", Type: ProfileTypeSingle, WorkspaceID: "frontend"},
+	}
+	out, changed := migrateV1Profiles(in, scope)
+	if !changed {
+		t.Fatal("expected changed=true")
+	}
+	if out[0].WorkspaceName != "Frontend" || out[0].WorkspaceRelDir != "frontend" {
+		t.Errorf("partial ownership not filled: %+v", out[0])
+	}
+}
+
 func TestMigrateV1NoChangeWhenAlreadyScopedAndStamped(t *testing.T) {
 	scope := MigrationScope{WorkspaceID: "frontend", WorkspaceName: "Frontend", WorkspaceRelDir: "frontend"}
 	in := []RunProfile{
-		{ID: "my-custom", Name: "Custom", Type: ProfileTypeSingle, WorkspaceID: "frontend", WorkspaceRelDir: "frontend", WorkingDir: "frontend"},
+		{ID: "my-custom", Name: "Custom", Type: ProfileTypeSingle, WorkspaceID: "frontend", WorkspaceName: "Frontend", WorkspaceRelDir: "frontend", WorkingDir: "frontend"},
 	}
 	_, changed := migrateV1Profiles(in, scope)
 	if changed {

@@ -182,10 +182,57 @@ func TestProjectManagerSaveEmptyWorkspaceDefaultsToRepoRoot(t *testing.T) {
 func TestProjectManagerSaveUnknownWorkspaceErrors(t *testing.T) {
 	pm := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
 	_ = pm.Load()
-	if res, _ := pm.SaveProfile(RunProfile{
+	res, err := pm.SaveProfile(RunProfile{
 		ID: "x", Name: "X", Type: ProfileTypeSingle, Command: "echo", WorkspaceID: "nope",
-	}); res.Valid {
-		t.Error("expected invalid result for unknown workspaceId")
+	})
+	if err != nil {
+		t.Fatalf("SaveProfile() returned unexpected transport error: %v", err)
+	}
+	if res.Valid || len(res.Errors) == 0 || res.Errors[0].Field != "workspaceId" {
+		t.Fatalf("expected workspaceId validation error, got %+v", res)
+	}
+}
+
+func TestProjectManagerSaveProjectOwnerInRootStore(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	_ = pm.Load()
+
+	res, err := pm.SaveProfile(RunProfile{
+		ID: "project-note", Name: "Repo Check", Type: ProfileTypeSingle, Command: "echo ok", WorkspaceID: "project",
+	})
+	if err != nil || !res.Valid {
+		t.Fatalf("SaveProfile() err=%v res=%+v", err, res)
+	}
+	raw := files["/repo/.firn/run-profiles.json"]
+	var pf ProfilesFile
+	if err := json.Unmarshal(raw, &pf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(pf.Profiles) != 1 || pf.Profiles[0].WorkspaceID != "project" {
+		t.Fatalf("explicit project owner was not preserved: %+v", pf.Profiles)
+	}
+}
+
+func TestProjectManagerSaveRejectsCrossWorkspaceDuplicateID(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	_ = pm.Load()
+
+	res, err := pm.SaveProfile(RunProfile{
+		ID: "shared-custom", Name: "Frontend", Type: ProfileTypeSingle, Command: "npm test", WorkspaceID: "frontend",
+	})
+	if err != nil || !res.Valid {
+		t.Fatalf("first SaveProfile() err=%v res=%+v", err, res)
+	}
+	res, err = pm.SaveProfile(RunProfile{
+		ID: "shared-custom", Name: "Python", Type: ProfileTypeSingle, Command: "pytest", WorkspaceID: "backend/python",
+	})
+	if err != nil {
+		t.Fatalf("second SaveProfile() returned unexpected transport error: %v", err)
+	}
+	if res.Valid || len(res.Errors) == 0 || res.Errors[0].Field != "id" {
+		t.Fatalf("expected duplicate id validation error, got %+v", res)
 	}
 }
 
