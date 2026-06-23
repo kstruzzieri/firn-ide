@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"encoding/json"
 	"firn/internal/filesystem"
 	"io/fs"
 	"strings"
@@ -126,5 +127,103 @@ func TestProjectManagerScopesIDsToAvoidCollision(t *testing.T) {
 	}
 	if findProfile(all, "detected-web-package-json-test") == nil {
 		t.Error("missing web-scoped test id")
+	}
+}
+
+func TestProjectManagerRoutesSaveToOwningWorkspaceFile(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	res, err := pm.SaveProfile(RunProfile{
+		ID:          "custom-fe",
+		Name:        "Storybook",
+		Type:        ProfileTypeSingle,
+		Command:     "npm run storybook",
+		WorkspaceID: "frontend",
+	})
+	if err != nil || !res.Valid {
+		t.Fatalf("SaveProfile() err=%v res=%+v", err, res)
+	}
+
+	raw, ok := files["/repo/frontend/.firn/run-profiles.json"]
+	if !ok {
+		t.Fatal("expected saved profile in frontend/.firn, not found")
+	}
+	var pf ProfilesFile
+	if err := json.Unmarshal(raw, &pf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if pf.Version != 2 || len(pf.Profiles) != 1 || pf.Profiles[0].ID != "custom-fe" {
+		t.Errorf("frontend store wrong: %+v", pf)
+	}
+	if _, leaked := files["/repo/.firn/run-profiles.json"]; leaked {
+		t.Error("frontend profile must not be written to repo-root store")
+	}
+}
+
+func TestProjectManagerSaveEmptyWorkspaceDefaultsToRepoRoot(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	_ = pm.Load()
+
+	if _, err := pm.SaveProfile(RunProfile{
+		ID: "root-custom", Name: "Tidy", Type: ProfileTypeSingle, Command: "go mod tidy",
+	}); err != nil {
+		t.Fatalf("SaveProfile() error: %v", err)
+	}
+	if _, ok := files["/repo/.firn/run-profiles.json"]; !ok {
+		t.Error("empty workspaceId should route to repo-root store")
+	}
+}
+
+func TestProjectManagerSaveUnknownWorkspaceErrors(t *testing.T) {
+	pm := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
+	_ = pm.Load()
+	if res, _ := pm.SaveProfile(RunProfile{
+		ID: "x", Name: "X", Type: ProfileTypeSingle, Command: "echo", WorkspaceID: "nope",
+	}); res.Valid {
+		t.Error("expected invalid result for unknown workspaceId")
+	}
+}
+
+func TestProjectManagerPinRoutesToOwningWorkspace(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	_ = pm.Load()
+
+	if err := pm.PinProfile("detected-frontend-package-json-dev"); err != nil {
+		t.Fatalf("PinProfile() error: %v", err)
+	}
+	raw := files["/repo/frontend/.firn/run-profiles.json"]
+	if raw == nil || !strings.Contains(string(raw), "detected-frontend-package-json-dev") {
+		t.Errorf("pinned profile not written to frontend store: %s", raw)
+	}
+	if len(pm.GetAllProfiles()) != 8 {
+		t.Errorf("expected 8 after pin, got %d", len(pm.GetAllProfiles()))
+	}
+}
+
+func TestProjectManagerMutationUnknownIDErrors(t *testing.T) {
+	pm := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
+	_ = pm.Load()
+	if err := pm.DeleteProfile("does-not-exist"); err == nil {
+		t.Error("expected not-found error from DeleteProfile")
+	}
+}
+
+func TestProjectManagerHandleFileChangeRedetectsOneWorkspace(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	_ = pm.Load()
+
+	files["/repo/frontend/package.json"] = []byte(`{"scripts":{"dev":"vite","test":"jest","lint":"eslint ."}}`)
+	if !pm.HandleFileChange("/repo/frontend/package.json") {
+		t.Fatal("expected HandleFileChange to report a config change")
+	}
+	if findProfile(pm.GetAllProfiles(), "detected-frontend-package-json-lint") == nil {
+		t.Error("re-detected frontend lint profile missing")
 	}
 }
