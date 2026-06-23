@@ -86,6 +86,10 @@ func findProfile(profiles []RunProfile, id string) *RunProfile {
 	return nil
 }
 
+func scopedDetectedID(workspaceID, source, name string) string {
+	return scopedID(workspaceID, generateID(source, name))
+}
+
 func TestProjectManagerDetectsAllWorkspacesWithOwnership(t *testing.T) {
 	pm := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
 	if err := pm.Load(); err != nil {
@@ -98,15 +102,15 @@ func TestProjectManagerDetectsAllWorkspacesWithOwnership(t *testing.T) {
 		t.Fatalf("expected 8 profiles, got %d: %+v", len(all), all)
 	}
 
-	goBuild := findProfile(all, "detected-root-go-go-mod-build")
+	goBuild := findProfile(all, scopedDetectedID("root:go", "go.mod", "build"))
 	if goBuild == nil || goBuild.WorkspaceID != "root:go" || goBuild.WorkingDir != "" {
 		t.Errorf("go build ownership wrong: %+v", goBuild)
 	}
-	feDev := findProfile(all, "detected-frontend-package-json-dev")
+	feDev := findProfile(all, scopedDetectedID("frontend", "package.json", "dev"))
 	if feDev == nil || feDev.WorkspaceID != "frontend" || feDev.WorkingDir != "frontend" {
 		t.Errorf("frontend dev ownership wrong: %+v", feDev)
 	}
-	pyTest := findProfile(all, "detected-backend-python-pyproject-toml-test")
+	pyTest := findProfile(all, scopedDetectedID("backend/python", "pyproject.toml", "test"))
 	if pyTest == nil || pyTest.WorkspaceID != "backend/python" || pyTest.WorkingDir != "backend/python" {
 		t.Errorf("python test ownership wrong: %+v", pyTest)
 	}
@@ -122,10 +126,10 @@ func TestProjectManagerScopesIDsToAvoidCollision(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 	all := pm.GetAllProfiles()
-	if findProfile(all, "detected-frontend-package-json-test") == nil {
+	if findProfile(all, scopedDetectedID("frontend", "package.json", "test")) == nil {
 		t.Error("missing frontend-scoped test id")
 	}
-	if findProfile(all, "detected-web-package-json-test") == nil {
+	if findProfile(all, scopedDetectedID("web", "package.json", "test")) == nil {
 		t.Error("missing web-scoped test id")
 	}
 }
@@ -241,11 +245,12 @@ func TestProjectManagerPinRoutesToOwningWorkspace(t *testing.T) {
 	pm := NewProjectManager(newProjectTestFS(files), "/repo")
 	_ = pm.Load()
 
-	if err := pm.PinProfile("detected-frontend-package-json-dev"); err != nil {
+	frontendDevID := scopedDetectedID("frontend", "package.json", "dev")
+	if err := pm.PinProfile(frontendDevID); err != nil {
 		t.Fatalf("PinProfile() error: %v", err)
 	}
 	raw := files["/repo/frontend/.firn/run-profiles.json"]
-	if raw == nil || !strings.Contains(string(raw), "detected-frontend-package-json-dev") {
+	if raw == nil || !strings.Contains(string(raw), frontendDevID) {
 		t.Errorf("pinned profile not written to frontend store: %s", raw)
 	}
 	if len(pm.GetAllProfiles()) != 8 {
@@ -270,7 +275,7 @@ func TestProjectManagerHandleFileChangeRedetectsOneWorkspace(t *testing.T) {
 	if !pm.HandleFileChange("/repo/frontend/package.json") {
 		t.Fatal("expected HandleFileChange to report a config change")
 	}
-	if findProfile(pm.GetAllProfiles(), "detected-frontend-package-json-lint") == nil {
+	if findProfile(pm.GetAllProfiles(), scopedDetectedID("frontend", "package.json", "lint")) == nil {
 		t.Error("re-detected frontend lint profile missing")
 	}
 }
@@ -287,10 +292,10 @@ func TestProjectManagerHandleFileChangeRoutesToDeepestWorkspace(t *testing.T) {
 	}
 	all := pm.GetAllProfiles()
 	// python profiles still present (re-detected), frontend + go untouched.
-	if findProfile(all, "detected-backend-python-pyproject-toml-test") == nil {
+	if findProfile(all, scopedDetectedID("backend/python", "pyproject.toml", "test")) == nil {
 		t.Error("python profile missing after re-detect")
 	}
-	if findProfile(all, "detected-frontend-package-json-dev") == nil {
+	if findProfile(all, scopedDetectedID("frontend", "package.json", "dev")) == nil {
 		t.Error("frontend profile should be unaffected")
 	}
 	if len(all) != 8 {
@@ -310,15 +315,15 @@ func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
 
 	all := pm.GetAllProfiles()
 	// Other workspaces are unaffected.
-	if findProfile(all, "detected-root-go-go-mod-build") == nil {
+	if findProfile(all, scopedDetectedID("root:go", "go.mod", "build")) == nil {
 		t.Error("go profiles should survive a corrupt frontend store")
 	}
-	if findProfile(all, "detected-backend-python-pyproject-toml-test") == nil {
+	if findProfile(all, scopedDetectedID("backend/python", "pyproject.toml", "test")) == nil {
 		t.Error("python profiles should survive a corrupt frontend store")
 	}
 	// The corrupt unit still contributes detected profiles (only its saved
 	// store failed to load).
-	if findProfile(all, "detected-frontend-package-json-dev") == nil {
+	if findProfile(all, scopedDetectedID("frontend", "package.json", "dev")) == nil {
 		t.Error("frontend detected profiles should still show despite the corrupt store")
 	}
 	// The failure is surfaced as a warning, not swallowed.

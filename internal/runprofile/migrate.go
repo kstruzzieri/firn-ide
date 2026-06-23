@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 )
@@ -15,10 +16,16 @@ type MigrationScope struct {
 	WorkspaceRelDir string
 }
 
-// scopeSlug normalizes a workspace id into an ID-safe segment.
-// "root:go" -> "root-go", "backend/python" -> "backend-python".
+// scopeSlug converts a workspace id into an ID-safe, collision-proof segment.
+// It keeps a readable sanitized prefix and appends a hex encoding of the exact
+// original id so different IDs like "root:go" and "root-go" cannot collapse.
 func scopeSlug(workspaceID string) string {
-	return sanitizeDashes(workspaceID)
+	encoded := hex.EncodeToString([]byte(workspaceID))
+	readable := sanitizeDashes(workspaceID)
+	if readable == "" {
+		return "ws-" + encoded
+	}
+	return readable + "-ws-" + encoded
 }
 
 // looksLikeDetectedID reports whether an ID was produced by generateID.

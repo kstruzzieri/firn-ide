@@ -35,7 +35,7 @@ func TestDetectorScopeScopesIDsAndStampsOwnership(t *testing.T) {
 		t.Fatalf("expected 1 profile, got %d", len(profiles))
 	}
 	p := profiles[0]
-	if p.ID != "detected-frontend-package-json-dev" {
+	if p.ID != scopedID("frontend", generateID("package.json", "dev")) {
 		t.Errorf("scoped ID = %q", p.ID)
 	}
 	if p.WorkspaceID != "frontend" || p.WorkspaceRelDir != "frontend" || p.WorkingDir != "frontend" {

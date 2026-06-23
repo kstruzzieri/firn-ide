@@ -1,21 +1,39 @@
 package runprofile
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScopedIDInsertsWorkspaceScope(t *testing.T) {
 	got := scopedID("frontend", "detected-package-json-test")
-	want := "detected-frontend-package-json-test"
+	want := "detected-frontend-ws-66726f6e74656e64-package-json-test"
 	if got != want {
 		t.Errorf("scopedID = %q, want %q", got, want)
 	}
 }
 
 func TestScopedIDSanitizesRootMarkerAndPath(t *testing.T) {
-	if got := scopedID("root:go", "detected-go-mod-test"); got != "detected-root-go-go-mod-test" {
+	if got := scopedID("root:go", "detected-go-mod-test"); got != "detected-root-go-ws-726f6f743a676f-go-mod-test" {
 		t.Errorf("root marker scope = %q", got)
 	}
-	if got := scopedID("backend/python", "detected-pyproject-toml-test"); got != "detected-backend-python-pyproject-toml-test" {
+	if got := scopedID("backend/python", "detected-pyproject-toml-test"); got != "detected-backend-python-ws-6261636b656e642f707974686f6e-pyproject-toml-test" {
 		t.Errorf("path scope = %q", got)
+	}
+}
+
+func TestScopedIDDistinguishesWorkspaceIDsWithSameSanitizedSlug(t *testing.T) {
+	rootMarker := scopedID("root:go", "detected-go-mod-test")
+	subdir := scopedID("root-go", "detected-go-mod-test")
+
+	if rootMarker == subdir {
+		t.Fatalf("scoped IDs collided: %q", rootMarker)
+	}
+	if !strings.HasPrefix(rootMarker, "detected-root-go-ws-") || !strings.HasSuffix(rootMarker, "-go-mod-test") {
+		t.Fatalf("root marker ID lost readable scope/suffix: %q", rootMarker)
+	}
+	if !strings.HasPrefix(subdir, "detected-root-go-ws-") || !strings.HasSuffix(subdir, "-go-mod-test") {
+		t.Fatalf("subdir ID lost readable scope/suffix: %q", subdir)
 	}
 }
 
@@ -38,7 +56,7 @@ func TestMigrateV1StampsOwnershipAndRewritesIDs(t *testing.T) {
 		t.Fatal("expected changed=true")
 	}
 	p := out[0]
-	if p.ID != "detected-frontend-package-json-test" {
+	if p.ID != scopedID("frontend", "detected-package-json-test") {
 		t.Errorf("ID = %q", p.ID)
 	}
 	if p.WorkspaceID != "frontend" || p.WorkspaceRelDir != "frontend" || p.WorkingDir != "frontend" {
@@ -62,7 +80,7 @@ func TestMigrateV1RewritesIntraFileCompoundSteps(t *testing.T) {
 			compound = p
 		}
 	}
-	if len(compound.Steps) != 1 || compound.Steps[0] != "detected-frontend-package-json-dev" {
+	if len(compound.Steps) != 1 || compound.Steps[0] != scopedID("frontend", "detected-package-json-dev") {
 		t.Errorf("compound step not rewritten: %v", compound.Steps)
 	}
 }

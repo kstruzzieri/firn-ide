@@ -25,6 +25,7 @@ func storeMigrationFS(files map[string][]byte) *filesystem.Mock {
 }
 
 func TestStoreLoadMigratesV1AndPersistsV2(t *testing.T) {
+	expectedID := scopedID("frontend", "detected-package-json-test")
 	v1, _ := json.Marshal(ProfilesFile{
 		Version: 1,
 		Profiles: []RunProfile{
@@ -39,7 +40,7 @@ func TestStoreLoadMigratesV1AndPersistsV2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if len(loaded) != 1 || loaded[0].ID != "detected-frontend-package-json-test" {
+	if len(loaded) != 1 || loaded[0].ID != expectedID {
 		t.Fatalf("migrated profile wrong: %+v", loaded)
 	}
 	if loaded[0].WorkspaceID != "frontend" {
@@ -53,7 +54,7 @@ func TestStoreLoadMigratesV1AndPersistsV2(t *testing.T) {
 	if persisted.Version != 2 {
 		t.Errorf("expected persisted version 2, got %d", persisted.Version)
 	}
-	if persisted.Profiles[0].ID != "detected-frontend-package-json-test" {
+	if persisted.Profiles[0].ID != expectedID {
 		t.Errorf("persisted ID not migrated: %q", persisted.Profiles[0].ID)
 	}
 }
@@ -78,6 +79,7 @@ func TestStoreLoadV2Untouched(t *testing.T) {
 }
 
 func TestStoreLoadMigrationPersistFailureIsNonFatal(t *testing.T) {
+	expectedID := scopedID("frontend", "detected-package-json-test")
 	v1, _ := json.Marshal(ProfilesFile{
 		Version: 1,
 		Profiles: []RunProfile{
@@ -107,7 +109,7 @@ func TestStoreLoadMigrationPersistFailureIsNonFatal(t *testing.T) {
 		t.Fatalf("Load() must not fail when the migrated file cannot be written: %v", err)
 	}
 	// Migration still applied in memory.
-	if len(loaded) != 1 || loaded[0].ID != "detected-frontend-package-json-test" {
+	if len(loaded) != 1 || loaded[0].ID != expectedID {
 		t.Fatalf("migrated data must be returned even when persist fails: %+v", loaded)
 	}
 	// The persist failure is surfaced as a warning, not swallowed.
