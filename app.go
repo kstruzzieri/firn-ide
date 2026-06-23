@@ -28,7 +28,7 @@ type App struct {
 	fileWatcher          watcher.Watcher
 	termManager          *terminal.Manager
 	profileMu            sync.RWMutex
-	profileManager       *runprofile.Manager
+	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
 	executor             *runprofile.Executor
 	osFS                 filesystem.FileSystem
@@ -319,10 +319,8 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 		a.executor.ClearTerminalStatuses()
 	}
 
-	if a.profileManager == nil {
-		a.profileManager = runprofile.NewManager(a.osFS, workspacePath)
-	} else {
-		a.profileManager.SetWorkspaceRoot(workspacePath)
+	if a.profileManager == nil || a.profileWorkspaceRoot != workspacePath {
+		a.profileManager = runprofile.NewProjectManager(a.osFS, workspacePath)
 	}
 	a.profileWorkspaceRoot = workspacePath
 
