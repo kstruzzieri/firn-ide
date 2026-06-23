@@ -227,3 +227,26 @@ func TestProjectManagerHandleFileChangeRedetectsOneWorkspace(t *testing.T) {
 		t.Error("re-detected frontend lint profile missing")
 	}
 }
+
+func TestProjectManagerHandleFileChangeRoutesToDeepestWorkspace(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	_ = pm.Load()
+
+	// Change the nested python workspace's config; only it should re-detect.
+	files["/repo/backend/python/pyproject.toml"] = []byte("[project]\nname='x'\n[tool.poetry]\n")
+	if !pm.HandleFileChange("/repo/backend/python/pyproject.toml") {
+		t.Fatal("expected config change to be handled")
+	}
+	all := pm.GetAllProfiles()
+	// python profiles still present (re-detected), frontend + go untouched.
+	if findProfile(all, "detected-backend-python-pyproject-toml-test") == nil {
+		t.Error("python profile missing after re-detect")
+	}
+	if findProfile(all, "detected-frontend-package-json-dev") == nil {
+		t.Error("frontend profile should be unaffected")
+	}
+	if len(all) != 8 {
+		t.Errorf("expected 8 profiles, got %d", len(all))
+	}
+}

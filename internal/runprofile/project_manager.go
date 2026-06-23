@@ -240,6 +240,9 @@ func (m *ProjectRunProfileManager) SaveProfile(p RunProfile) (ValidationResult, 
 
 	def := m.ownerDefs[unit.ownerID]
 	p.Source = ProfileSourceUser
+	// Normalize to the resolved owner id: a profile saved with an empty
+	// workspaceId reads back owned by the repo-root owner (root-marker or
+	// "project"), keeping the merged list internally consistent.
 	p.WorkspaceID = unit.ownerID
 	p.WorkspaceName = def.Name
 	p.WorkspaceRelDir = unit.relDir
@@ -296,6 +299,8 @@ func (m *ProjectRunProfileManager) UnpinProfile(id string) error {
 // SetActiveVariant updates a profile's env variant, routing saved profiles to
 // their store and detected profiles to the in-memory snapshot.
 func (m *ProjectRunProfileManager) SetActiveVariant(id string, variant string) error {
+	activeVariant := strings.TrimSpace(variant)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -308,20 +313,20 @@ func (m *ProjectRunProfileManager) SetActiveVariant(id string, variant string) e
 		if profile.ID != id {
 			continue
 		}
-		if err := ensureActiveVariantAllowed(profile, variant); err != nil {
+		if err := ensureActiveVariantAllowed(profile, activeVariant); err != nil {
 			return err
 		}
-		profile.ActiveVariant = variant
+		profile.ActiveVariant = activeVariant
 		return unit.store.Save(profile)
 	}
 	for i := range unit.detected {
 		if unit.detected[i].ID != id {
 			continue
 		}
-		if err := ensureActiveVariantAllowed(unit.detected[i], variant); err != nil {
+		if err := ensureActiveVariantAllowed(unit.detected[i], activeVariant); err != nil {
 			return err
 		}
-		unit.detected[i].ActiveVariant = variant
+		unit.detected[i].ActiveVariant = activeVariant
 		return nil
 	}
 	return fmt.Errorf("profile not found: %s", id)
