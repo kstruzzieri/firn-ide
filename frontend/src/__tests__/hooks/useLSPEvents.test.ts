@@ -173,6 +173,26 @@ describe('useLSPEvents', () => {
     expect(toast!.message).toContain('typescript-language-server not found');
   });
 
+  it('does not show a raw Toast when lsp:status carries typed setup status', () => {
+    const handlers = captureEventHandlers();
+    renderHook(() => useLSPEvents());
+
+    act(() => {
+      handlers['lsp:status']({
+        family: 'python',
+        workspace: '/project',
+        state: 'error',
+        error: 'pyright-langserver not found: install it with "npm install -g pyright"',
+        setupState: 'missing_server',
+        detailCode: 'server_not_found',
+      });
+    });
+
+    const status = useLSPStore.getState().serverStatuses.get('/project::python');
+    expect(status?.setupState).toBe('missing_server');
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
   it('does not show Toast on non-error lsp:status events', () => {
     const handlers = captureEventHandlers();
     renderHook(() => useLSPEvents());

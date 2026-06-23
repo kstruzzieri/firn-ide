@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 
 type DispatchSpec = {
   selection?: { anchor: number };
@@ -254,5 +254,49 @@ describe('CodeMirrorEditor', () => {
         },
       ],
     });
+  });
+
+  it('renders the LSP setup card when a python file reports a missing interpreter', async () => {
+    render(<CodeMirrorEditor fileId="/project/app.py" filename="app.py" content="x = 1" />);
+
+    act(() => {
+      useIDEStore.getState().setWorkspace({ name: 'project', path: '/project' });
+      useLSPStore.getState().setServerStatus({
+        family: 'python',
+        workspace: '/project',
+        state: 'ready',
+        setupState: 'missing_interpreter',
+        action: 'create_venv',
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText(/no python interpreter/i)).toBeInTheDocument());
+  });
+
+  it('clears the LSP setup card when reused for a file without an LSP family', async () => {
+    const { rerender } = render(
+      <CodeMirrorEditor fileId="/project/app.py" filename="app.py" content="x = 1" />
+    );
+
+    act(() => {
+      useIDEStore.getState().setWorkspace({ name: 'project', path: '/project' });
+      useLSPStore.getState().setServerStatus({
+        family: 'python',
+        workspace: '/project',
+        state: 'ready',
+        setupState: 'missing_interpreter',
+        action: 'create_venv',
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText(/no python interpreter/i)).toBeInTheDocument());
+
+    rerender(
+      <CodeMirrorEditor fileId="/project/README.md" filename="README.md" content="# Docs" />
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText(/no python interpreter/i)).not.toBeInTheDocument()
+    );
   });
 });

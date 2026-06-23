@@ -74,7 +74,9 @@ export function useLSPEvents() {
 
       useLSPStore.getState().setServerStatus(payload);
 
-      if (payload.state === 'error' && payload.error) {
+      const hasTypedSetupStatus = Boolean(payload.setupState);
+
+      if (payload.state === 'error' && payload.error && !hasTypedSetupStatus) {
         // Deduplicate: only toast once per workspace::family error state
         const dedupeKey = `${payload.workspace}::${payload.family}`;
         if (!toastedErrors.current.has(dedupeKey)) {

@@ -36,6 +36,14 @@ type ServerStatus struct {
 	State                       string   `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
 	Error                       string   `json:"error,omitempty"`
 	CompletionTriggerCharacters []string `json:"completionTriggerCharacters,omitempty"`
+	SetupState                  string   `json:"setupState,omitempty"` // ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable
+	InterpreterPath             string   `json:"interpreterPath,omitempty"`
+	ProjectRoot                 string   `json:"projectRoot,omitempty"`
+	ConfigSource                string   `json:"configSource,omitempty"`
+	ExtraPaths                  []string `json:"extraPaths,omitempty"`
+	PythonVersion               string   `json:"pythonVersion,omitempty"`
+	Action                      string   `json:"action,omitempty"` // create_venv|select_interpreter|retry|""
+	DetailCode                  string   `json:"detailCode,omitempty"`
 }
 
 // EventEmitter is the callback signature for emitting events to the frontend.
@@ -43,8 +51,9 @@ type EventEmitter func(event string, data ...any)
 
 // Manager owns workspace-scoped language server instances.
 type Manager struct {
-	registry *Registry
-	emitter  EventEmitter
+	registry       *Registry
+	emitter        EventEmitter
+	configProvider WorkspaceConfigProvider
 
 	mu      sync.Mutex
 	servers map[serverKey]*serverEntry
@@ -94,10 +103,11 @@ type serverEntry struct {
 // NewManager creates a new LSP manager with the given event emitter.
 func NewManager(emitter EventEmitter) *Manager {
 	return &Manager{
-		registry: NewRegistry(),
-		emitter:  emitter,
-		servers:  make(map[serverKey]*serverEntry),
-		docKeys:  make(map[string]serverKey),
+		registry:       NewRegistry(),
+		emitter:        emitter,
+		configProvider: newEnvConfigProvider(),
+		servers:        make(map[serverKey]*serverEntry),
+		docKeys:        make(map[string]serverKey),
 	}
 }
 
@@ -342,7 +352,6 @@ func (m *Manager) ResolveCompletionItem(ctx context.Context, path string, item C
 // GetStatus returns the status of all running language servers.
 func (m *Manager) GetStatus() []ServerStatus {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	statuses := make([]ServerStatus, 0, len(m.servers))
 	for key, entry := range m.servers {
@@ -370,6 +379,12 @@ func (m *Manager) GetStatus() []ServerStatus {
 		}
 		statuses = append(statuses, status)
 	}
+	m.mu.Unlock()
+
+	for i := range statuses {
+		m.enrichPythonSetup(&statuses[i])
+	}
+
 	return statuses
 }
 
@@ -440,6 +455,7 @@ func (m *Manager) startServer(ctx context.Context, key serverKey, config *Server
 		m.handleNotification(key, method, params)
 	})
 	entry.client = client
+	client.SetServerRequestHandler(m.serverRequestHandler(key))
 
 	rootURI, err := FileToURI(key.workspace)
 	if err != nil {
@@ -796,7 +812,24 @@ func (m *Manager) handleNotification(key serverKey, method string, params json.R
 	}
 }
 
-// emitStatus emits an lsp:status event.
+// serverRequestHandler returns a ServerRequestHandler bound to a server key.
+// It answers workspace/configuration via the configProvider and declines all
+// other server-to-client methods (the client then replies -32601).
+func (m *Manager) serverRequestHandler(key serverKey) ServerRequestHandler {
+	return func(method string, params json.RawMessage) (any, bool, *JSONRPCError) {
+		if method != "workspace/configuration" {
+			return nil, false, nil
+		}
+		var cfgParams ConfigurationParams
+		if err := json.Unmarshal(params, &cfgParams); err != nil {
+			return nil, true, &JSONRPCError{Code: -32602, Message: "invalid workspace/configuration params: " + err.Error()}
+		}
+		return m.configProvider.Configuration(key.family, key.workspace, cfgParams.Items), true, nil
+	}
+}
+
+// emitStatus emits an lsp:status event. Must NOT be called while m.mu is held
+// (enrichPythonSetup performs filesystem detection for the Python family).
 func (m *Manager) emitStatus(family, workspace, state, errMsg string, command ...string) {
 	if m.emitter == nil {
 		return
@@ -818,7 +851,59 @@ func (m *Manager) emitStatus(family, workspace, state, errMsg string, command ..
 		}
 		m.mu.Unlock()
 	}
+	m.enrichPythonSetup(&status)
 	m.emitter("lsp:status", status)
+}
+
+// enrichPythonSetup populates typed setup-status fields for the Python family
+// so the frontend can render an actionable card instead of a raw error string.
+// Other families are left untouched.
+func (m *Manager) enrichPythonSetup(status *ServerStatus) {
+	if status.Family != "python" {
+		return
+	}
+
+	switch status.State {
+	case "error":
+		status.ProjectRoot = status.Workspace
+		errLower := strings.ToLower(status.Error)
+		cmdBase := strings.ToLower(filepath.Base(status.Command))
+		if cmdBase != "" && strings.Contains(errLower, cmdBase) && strings.Contains(errLower, "not found") {
+			status.SetupState = "missing_server"
+			status.DetailCode = "server_not_found"
+		} else {
+			status.SetupState = "retryable"
+			status.DetailCode = "server_start_failed"
+			status.Action = "retry"
+		}
+	case "ready":
+		status.ProjectRoot = status.Workspace
+		env := pythonEnvFromProvider(m.configProvider, status.Workspace)
+		status.InterpreterPath = env.InterpreterPath
+		status.ExtraPaths = env.ExtraPaths
+		status.PythonVersion = env.PythonVersion
+		if env.InterpreterPath == "" {
+			status.ConfigSource = "none"
+		} else {
+			status.ConfigSource = "detected"
+		}
+		switch {
+		case len(env.Diagnostics) > 0:
+			status.SetupState = "misconfigured_env"
+			status.DetailCode = "venv_without_interpreter"
+			status.Action = "select_interpreter"
+		case env.Source == "none" || env.InterpreterPath == "":
+			status.SetupState = "missing_interpreter"
+			status.DetailCode = "no_interpreter"
+			status.Action = "create_venv"
+		case env.Confidence == "low":
+			status.SetupState = "config_degraded"
+			status.DetailCode = "system_fallback"
+			status.Action = "select_interpreter"
+		default:
+			status.SetupState = "ready"
+		}
+	}
 }
 
 // emitError emits an lsp:error event with a user-facing message.

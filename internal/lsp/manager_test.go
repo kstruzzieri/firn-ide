@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"firn/internal/lsp/pythonenv"
 )
 
 // newTestManager creates a Manager with a mock transport factory.
@@ -1637,5 +1639,199 @@ func TestManager_ShutdownAllTearsDownAllRoots(t *testing.T) {
 	mgr.mu.Unlock()
 	if afterCount != 0 {
 		t.Errorf("expected 0 servers after ShutdownAll, got %d", afterCount)
+	}
+}
+
+func TestEmitStatus_PythonReadyEnriched(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			if s, ok := data[0].(ServerStatus); ok {
+				got = s
+			}
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{
+				InterpreterPath: "/proj/.venv/bin/python",
+				VenvDir:         "/proj/.venv",
+				ExtraPaths:      []string{"src"},
+				Source:          ".venv",
+				Confidence:      "high",
+			}
+		},
+		pythonDeps: pythonenv.Deps{},
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "ready" {
+		t.Fatalf("SetupState = %q, want ready", got.SetupState)
+	}
+	if got.InterpreterPath != "/proj/.venv/bin/python" {
+		t.Errorf("InterpreterPath = %q", got.InterpreterPath)
+	}
+	if len(got.ExtraPaths) != 1 || got.ExtraPaths[0] != "src" {
+		t.Errorf("ExtraPaths = %v, want [src]", got.ExtraPaths)
+	}
+	if got.ConfigSource != "detected" {
+		t.Errorf("ConfigSource = %q, want detected", got.ConfigSource)
+	}
+}
+
+func TestEmitStatus_PythonMisconfiguredVenv(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{
+				Source:      "none",
+				Confidence:  "low",
+				Diagnostics: []string{"venv_without_interpreter:/proj/.venv"},
+			}
+		},
+		pythonDeps: pythonenv.Deps{},
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "misconfigured_env" {
+		t.Fatalf("SetupState = %q, want misconfigured_env", got.SetupState)
+	}
+	if got.DetailCode != "venv_without_interpreter" {
+		t.Errorf("DetailCode = %q, want venv_without_interpreter", got.DetailCode)
+	}
+}
+
+func TestEmitStatus_PythonMissingInterpreter(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{Source: "none", Confidence: "low"}
+		},
+		pythonDeps: pythonenv.Deps{},
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "missing_interpreter" {
+		t.Fatalf("SetupState = %q, want missing_interpreter", got.SetupState)
+	}
+	if got.Action != "create_venv" {
+		t.Errorf("Action = %q, want create_venv", got.Action)
+	}
+	if got.ConfigSource != "none" {
+		t.Errorf("ConfigSource = %q, want none", got.ConfigSource)
+	}
+}
+
+func TestEmitStatus_PythonConfigDegraded(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{
+				InterpreterPath: "/proj/.venv/bin/python",
+				Source:          "system",
+				Confidence:      "low",
+			}
+		},
+		pythonDeps: pythonenv.Deps{},
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "config_degraded" {
+		t.Fatalf("SetupState = %q, want config_degraded", got.SetupState)
+	}
+}
+
+func TestEmitStatus_PythonMissingServer(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+
+	// The error path does not invoke pythonEnvFromProvider, so no configProvider
+	// override is needed here.
+	m.emitStatus("python", "/proj", "error", "pyright-langserver not found: install it", "pyright-langserver")
+
+	if got.SetupState != "missing_server" {
+		t.Fatalf("SetupState = %q, want missing_server", got.SetupState)
+	}
+	if got.DetailCode != "server_not_found" {
+		t.Errorf("DetailCode = %q, want server_not_found", got.DetailCode)
+	}
+}
+
+func TestEmitStatus_NonPythonUnaffected(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+
+	m.emitStatus("go", "/proj", "error", "gopls not found", "gopls")
+
+	if got.SetupState != "" {
+		t.Fatalf("SetupState = %q, want empty for non-python", got.SetupState)
+	}
+}
+
+func TestGetStatus_PythonReadyEnriched(t *testing.T) {
+	m := NewManager(nil)
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{
+				InterpreterPath: "/proj/.venv/bin/python",
+				VenvDir:         "/proj/.venv",
+				ExtraPaths:      []string{"src"},
+				Source:          ".venv",
+				Confidence:      "high",
+			}
+		},
+		pythonDeps: pythonenv.Deps{},
+	}
+
+	m.mu.Lock()
+	m.servers[serverKey{family: "python", workspace: "/proj"}] = &serverEntry{
+		client: &Client{state: ClientStateReady},
+		config: &ServerConfig{Command: "pyright-langserver"},
+	}
+	m.mu.Unlock()
+
+	statuses := m.GetStatus()
+	if len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+	got := statuses[0]
+	if got.SetupState != "ready" {
+		t.Fatalf("SetupState = %q, want ready", got.SetupState)
+	}
+	if got.InterpreterPath != "/proj/.venv/bin/python" {
+		t.Errorf("InterpreterPath = %q", got.InterpreterPath)
+	}
+	if len(got.ExtraPaths) != 1 || got.ExtraPaths[0] != "src" {
+		t.Errorf("ExtraPaths = %v, want [src]", got.ExtraPaths)
+	}
+	if got.ConfigSource != "detected" {
+		t.Errorf("ConfigSource = %q, want detected", got.ConfigSource)
 	}
 }

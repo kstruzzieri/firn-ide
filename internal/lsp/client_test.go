@@ -3,6 +3,8 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -275,4 +277,103 @@ func TestClient_RequestTimeout(t *testing.T) {
 	_, _ = client.Hover(shortCtx, "file:///tmp/test/main.ts", 0, 0)
 
 	_ = client.Shutdown(ctx)
+}
+
+// fakeTransport is an in-process Transport for driving server-to-client requests
+// and capturing the client's responses, without a subprocess.
+type fakeTransport struct {
+	incoming chan *JSONRPCMessage // server to client (returned by Receive)
+	outgoing chan *JSONRPCMessage // client to server (captured from Send)
+	closed   chan struct{}
+	once     sync.Once
+}
+
+func newFakeTransport() *fakeTransport {
+	return &fakeTransport{
+		incoming: make(chan *JSONRPCMessage, 16),
+		outgoing: make(chan *JSONRPCMessage, 16),
+		closed:   make(chan struct{}),
+	}
+}
+
+func (f *fakeTransport) Send(msg *JSONRPCMessage) error {
+	select {
+	case f.outgoing <- msg:
+		return nil
+	case <-f.closed:
+		return io.EOF
+	}
+}
+
+func (f *fakeTransport) Receive() (*JSONRPCMessage, error) {
+	select {
+	case msg := <-f.incoming:
+		return msg, nil
+	case <-f.closed:
+		return nil, io.EOF
+	}
+}
+
+func (f *fakeTransport) Close() error {
+	f.once.Do(func() { close(f.closed) })
+	return nil
+}
+
+func TestClient_ServerConfigurationRequest_Handled(t *testing.T) {
+	transport := newFakeTransport()
+	client := NewClient(transport, nil)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	client.SetServerRequestHandler(func(method string, _ json.RawMessage) (any, bool, *JSONRPCError) {
+		if method != "workspace/configuration" {
+			return nil, false, nil
+		}
+		return []any{
+			map[string]any{"pythonPath": "/proj/.venv/bin/python", "venvPath": "/proj"},
+			map[string]any{"extraPaths": []string{"src"}},
+		}, true, nil
+	})
+
+	transport.incoming <- &JSONRPCMessage{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`7`),
+		Method:  "workspace/configuration",
+		Params:  json.RawMessage(`{"items":[{"section":"python"},{"section":"python.analysis"}]}`),
+	}
+
+	select {
+	case resp := <-transport.outgoing:
+		if resp.Error != nil {
+			t.Fatalf("response had error %+v, want result", resp.Error)
+		}
+		got := string(resp.Result)
+		if !strings.Contains(got, `"pythonPath"`) || !strings.Contains(got, `"venvPath"`) || !strings.Contains(got, `"extraPaths"`) {
+			t.Fatalf("response result missing python settings: %s", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for client response to workspace/configuration")
+	}
+}
+
+func TestClient_UnknownServerRequest_MethodNotFound(t *testing.T) {
+	transport := newFakeTransport()
+	client := NewClient(transport, nil)
+	t.Cleanup(func() { _ = transport.Close() })
+	_ = client
+
+	transport.incoming <- &JSONRPCMessage{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`9`),
+		Method:  "window/showMessageRequest",
+		Params:  json.RawMessage(`{}`),
+	}
+
+	select {
+	case resp := <-transport.outgoing:
+		if resp.Error == nil || resp.Error.Code != -32601 {
+			t.Fatalf("response = %+v, want error code -32601", resp.Error)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for -32601 response")
+	}
 }

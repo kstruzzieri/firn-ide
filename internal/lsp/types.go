@@ -219,6 +219,18 @@ type CompletionParams struct {
 	Context      *CompletionContext     `json:"context,omitempty"`
 }
 
+// ConfigurationItem identifies a configuration section the server wants to read
+// via a workspace/configuration request.
+type ConfigurationItem struct {
+	ScopeURI string `json:"scopeUri,omitempty"`
+	Section  string `json:"section,omitempty"`
+}
+
+// ConfigurationParams are the params of a workspace/configuration request.
+type ConfigurationParams struct {
+	Items []ConfigurationItem `json:"items"`
+}
+
 // --- JSON-RPC types ---
 
 // JSONRPCMessage is a raw JSON-RPC 2.0 message.

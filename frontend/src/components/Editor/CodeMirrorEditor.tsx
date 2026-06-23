@@ -11,7 +11,7 @@
  * - Proper cleanup on unmount
  */
 
-import { useEffect, useRef, useCallback, memo } from 'react';
+import { useEffect, useRef, useCallback, memo, useState } from 'react';
 import {
   EditorView,
   EditorState,
@@ -26,6 +26,8 @@ import {
 } from './codemirror';
 import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
 import { useLSPStore, findServerStatusForFile } from '../../stores/lspStore';
+import type { LSPServerStatus } from '../../stores/lspStore';
+import { LSPSetupCard } from './LSPSetupCard';
 import { filePathToURI } from '../../utils/lspUri';
 import { lspFamilyForFile } from '../../utils/lspLanguageId';
 import styles from './CodeMirrorEditor.module.css';
@@ -85,6 +87,8 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   const hasAppliedInitialScrollRef = useRef(false);
   // Flag to skip onChange during external content sync
   const isSyncingRef = useRef(false);
+
+  const [setupStatus, setSetupStatus] = useState<LSPServerStatus | undefined>(undefined);
 
   // Keep refs in sync
   fileIdRef.current = fileId;
@@ -258,7 +262,10 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   // Enable LSP completion/hover when the matching server becomes ready.
   useEffect(() => {
     const family = lspFamilyForFile(filename);
-    if (!family) return;
+    if (!family) {
+      setSetupStatus(undefined);
+      return;
+    }
 
     let lastConfigKey: string | null = null;
 
@@ -270,6 +277,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       // Status lookup is by file path so nested project-root servers (#20)
       // drive completion/hover correctly inside monorepo packages.
       const status = findServerStatusForFile(useLSPStore.getState().serverStatuses, fileId, family);
+      setSetupStatus(status);
       const isReady = status?.state === 'ready';
       const triggerCharacters = status?.completionTriggerCharacters ?? [];
       const nextConfigKey = isReady
@@ -340,7 +348,12 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     return cancel;
   }, [fileId]);
 
-  return <div ref={containerRef} className={styles.container} data-testid="codemirror-editor" />;
+  return (
+    <div className={styles.editorRoot}>
+      <LSPSetupCard status={setupStatus} />
+      <div ref={containerRef} className={styles.container} data-testid="codemirror-editor" />
+    </div>
+  );
 });
 
 CodeMirrorEditor.displayName = 'CodeMirrorEditor';

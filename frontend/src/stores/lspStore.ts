@@ -44,6 +44,16 @@ export interface LSPDiagnostic {
   message: string;
 }
 
+export type LSPSetupState =
+  | 'ready'
+  | 'missing_server'
+  | 'missing_interpreter'
+  | 'misconfigured_env'
+  | 'config_degraded'
+  | 'retryable';
+
+export type LSPSetupAction = 'create_venv' | 'select_interpreter' | 'retry';
+
 export interface LSPServerStatus {
   family: string;
   workspace: string;
@@ -51,6 +61,14 @@ export interface LSPServerStatus {
   state: 'starting' | 'ready' | 'stopping' | 'stopped' | 'error';
   error?: string;
   completionTriggerCharacters?: string[];
+  setupState?: LSPSetupState;
+  interpreterPath?: string;
+  projectRoot?: string;
+  configSource?: string;
+  extraPaths?: string[];
+  pythonVersion?: string;
+  action?: LSPSetupAction;
+  detailCode?: string;
 }
 
 // --- Store ---
