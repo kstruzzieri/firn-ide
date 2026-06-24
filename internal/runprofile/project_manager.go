@@ -107,7 +107,8 @@ func (m *ProjectRunProfileManager) Load() error {
 
 		store := NewStore(m.fs, root)
 		store.SetScope(scope)
-		if _, err := store.Load(); err != nil {
+		saved, err := store.Load()
+		if err != nil {
 			// Degrade, don't fail the whole repo: keep the unit so its detected
 			// profiles still surface, and record why its saved profiles are gone.
 			warnings = append(warnings, fmt.Sprintf("workspace %q: could not load saved profiles: %v", owner.ID, err))
@@ -118,6 +119,20 @@ func (m *ProjectRunProfileManager) Load() error {
 		det.SetScope(scope)
 		detected := det.DetectAll()
 		warnings = append(warnings, det.Warnings...)
+
+		// Drop profileState entries whose profile no longer exists (saved or
+		// detected), so recency for deleted profiles does not accumulate.
+		// Adopted entries are preserved through temporary branch churn.
+		valid := make(map[string]bool, len(saved)+len(detected))
+		for _, p := range saved {
+			valid[p.ID] = true
+		}
+		for _, p := range detected {
+			valid[p.ID] = true
+		}
+		if err := store.PruneState(valid); err != nil {
+			warnings = append(warnings, fmt.Sprintf("workspace %q: could not prune stale profile state: %v", owner.ID, err))
+		}
 
 		units[relDir] = &storeUnit{
 			relDir:   relDir,

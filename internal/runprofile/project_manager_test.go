@@ -397,10 +397,10 @@ func TestProjectManagerAdoptPersistsToOwningStoreFile(t *testing.T) {
 		t.Fatalf("RecordRun(%q, 777): %v", id, err)
 	}
 
-	// --- Assert state was persisted to the OWNING workspace's store file. ---
+	// --- Adoption persists to the OWNING workspace's profiles file. ---
 	raw, ok := files["/repo/frontend/.firn/run-profiles.json"]
 	if !ok {
-		t.Fatal("expected AdoptProfile/RecordRun to write /repo/frontend/.firn/run-profiles.json")
+		t.Fatal("expected AdoptProfile to write /repo/frontend/.firn/run-profiles.json")
 	}
 	var pf ProfilesFile
 	if err := json.Unmarshal(raw, &pf); err != nil {
@@ -416,8 +416,22 @@ func TestProjectManagerAdoptPersistsToOwningStoreFile(t *testing.T) {
 	if !st.Adopted {
 		t.Errorf("ProfileState[%q].Adopted = false, want true", id)
 	}
-	if st.LastRunAt != 777 {
-		t.Errorf("ProfileState[%q].LastRunAt = %d, want 777", id, st.LastRunAt)
+	// Recency must NOT bloat the profiles file — it lives in the sidecar.
+	if st.LastRunAt != 0 {
+		t.Errorf("profiles file must not carry recency; ProfileState[%q].LastRunAt = %d", id, st.LastRunAt)
+	}
+
+	// --- Recency persists to the OWNING workspace's recency sidecar. ---
+	recRaw, ok := files["/repo/frontend/.firn/run-recency.json"]
+	if !ok {
+		t.Fatal("expected RecordRun to write /repo/frontend/.firn/run-recency.json")
+	}
+	var rf RecencyFile
+	if err := json.Unmarshal(recRaw, &rf); err != nil {
+		t.Fatalf("unmarshal frontend recency sidecar: %v", err)
+	}
+	if rf.Recency[id] != 777 {
+		t.Errorf("recency sidecar[%q] = %d, want 777", id, rf.Recency[id])
 	}
 
 	// --- Assert the state did NOT leak into a different workspace's store file. ---

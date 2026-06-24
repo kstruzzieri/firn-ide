@@ -490,6 +490,9 @@ func (a *App) DetectWorkspaces(repoPath string) ([]workspace.WorkspaceDef, error
 // StartRunProfile starts executing a run profile by ID.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) StartRunProfile(profileID string) error {
+	if a.executor == nil {
+		return fmt.Errorf("application not initialized")
+	}
 	a.profileMu.RLock()
 	if a.profileManager == nil {
 		a.profileMu.RUnlock()
