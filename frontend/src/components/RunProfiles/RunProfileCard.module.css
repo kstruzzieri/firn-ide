@@ -73,9 +73,9 @@
   will-change: transform, opacity;
 }
 
-/* Default hover (neutral/gray category) — brighter slate lift */
+/* Default hover — subtle lift + border */
 .card:hover {
-  border-color: rgba(148, 163, 184, 0.4);
+  border-color: rgba(56, 189, 248, 0.35);
   background: var(--surface-active);
 }
 
@@ -310,11 +310,6 @@
   color: #f59e0b;
 }
 
-.stopping:hover {
-  border-color: rgba(245, 158, 11, 0.45);
-  background: var(--surface-active);
-}
-
 /* ── State: Failed ──────────────────────────────────────────── */
 
 .failed {
@@ -345,7 +340,7 @@
 }
 
 .dormant:hover {
-  border-color: rgba(148, 163, 184, 0.4);
+  border-color: rgba(56, 189, 248, 0.35);
   border-style: solid;
   background: var(--surface-active);
 }
@@ -497,12 +492,6 @@
   border-left: 2px solid var(--accent);
   /* Compensate left padding so inner content stays aligned */
   padding-left: 14px;
-}
-
-/* Recency/accent card hover — pronounced brighter accent (not the neutral gray) */
-.justRan:hover {
-  background: color-mix(in srgb, var(--accent) 20%, var(--surface-active));
-  border-color: var(--accent);
 }
 
 /* Small accent "just ran" chip in row 1, alongside the status badge. */
