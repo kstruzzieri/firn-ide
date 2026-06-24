@@ -101,6 +101,27 @@ describe('RunProfileCard adopt control', () => {
     });
   });
 
+  it('reverts optimistic adopt state when AdoptRunProfile rejects', async () => {
+    mockAdoptRunProfile.mockRejectedValueOnce(new Error('boom'));
+    useIDEStore.setState({ runProfileState: {} });
+
+    render(
+      <RunProfileCard profile={detectedProfile} {...baseProps} isDormant={false} section="recent" />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /adopt lint/i }));
+
+    // Optimistic local update flips adopted true immediately.
+    expect(useIDEStore.getState().runProfileState['lint']?.adopted).toBe(true);
+
+    // After the rejection settles, the optimistic state is reverted.
+    await waitFor(() => {
+      expect(useIDEStore.getState().runProfileState['lint']?.adopted).toBeFalsy();
+    });
+    expect(mockAdoptRunProfile).toHaveBeenCalledWith('lint');
+    expect(useIDEStore.getState().toast?.type).toBe('error');
+  });
+
   it('does not show adopt button when section is undefined', () => {
     render(<RunProfileCard profile={detectedProfile} {...baseProps} isDormant={false} />);
 
