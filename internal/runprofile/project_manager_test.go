@@ -368,6 +368,70 @@ func TestProjectManagerAdoptAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestProjectManagerAdoptPersistsToOwningStoreFile(t *testing.T) {
+	files := monorepoFixture()
+	m := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := m.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Pick a profile that is deterministically owned by the "frontend" workspace.
+	id := scopedDetectedID("frontend", "package.json", "dev")
+	if findProfile(m.GetAllProfiles(), id) == nil {
+		t.Fatalf("fixture missing expected frontend dev profile %q", id)
+	}
+
+	if err := m.AdoptProfile(id); err != nil {
+		t.Fatalf("AdoptProfile(%q): %v", id, err)
+	}
+	if err := m.RecordRun(id, 777); err != nil {
+		t.Fatalf("RecordRun(%q, 777): %v", id, err)
+	}
+
+	// --- Assert state was persisted to the OWNING workspace's store file. ---
+	raw, ok := files["/repo/frontend/.firn/run-profiles.json"]
+	if !ok {
+		t.Fatal("expected AdoptProfile/RecordRun to write /repo/frontend/.firn/run-profiles.json")
+	}
+	var pf ProfilesFile
+	if err := json.Unmarshal(raw, &pf); err != nil {
+		t.Fatalf("unmarshal frontend store: %v", err)
+	}
+	if pf.Version != 3 {
+		t.Errorf("frontend store version = %d, want 3", pf.Version)
+	}
+	st, exists := pf.ProfileState[id]
+	if !exists {
+		t.Fatalf("id %q not found in frontend store ProfileState", id)
+	}
+	if !st.Adopted {
+		t.Errorf("ProfileState[%q].Adopted = false, want true", id)
+	}
+	if st.LastRunAt != 777 {
+		t.Errorf("ProfileState[%q].LastRunAt = %d, want 777", id, st.LastRunAt)
+	}
+
+	// --- Assert the state did NOT leak into a different workspace's store file. ---
+	otherRaw, leaked := files["/repo/backend/python/.firn/run-profiles.json"]
+	if leaked {
+		var other ProfilesFile
+		if err := json.Unmarshal(otherRaw, &other); err == nil {
+			if _, found := other.ProfileState[id]; found {
+				t.Errorf("frontend profile %q must not appear in backend/python store", id)
+			}
+		}
+	}
+	// Also confirm the root store (if written) does not contain the id.
+	if rootRaw, written := files["/repo/.firn/run-profiles.json"]; written {
+		var root ProfilesFile
+		if err := json.Unmarshal(rootRaw, &root); err == nil {
+			if _, found := root.ProfileState[id]; found {
+				t.Errorf("frontend profile %q must not appear in root store", id)
+			}
+		}
+	}
+}
+
 func TestProjectManagerAdoptUnknownIDErrors(t *testing.T) {
 	m := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
 	if err := m.Load(); err != nil {
