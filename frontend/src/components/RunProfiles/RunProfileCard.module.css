@@ -500,3 +500,17 @@
   /* Compensate left padding so inner content stays aligned */
   padding-left: 14px;
 }
+
+/* Small accent "just ran" chip in row 1, alongside the status badge. */
+.justRanChip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  white-space: nowrap;
+}

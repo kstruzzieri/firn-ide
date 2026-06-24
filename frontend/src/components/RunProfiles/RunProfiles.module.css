@@ -100,6 +100,16 @@
   color: var(--text-secondary);
 }
 
+/* Per-workspace total in Project-View group headers (the "· M" in "● N running · M") */
+.groupTotal {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
+}
+
 .workspaceDot {
   width: 8px;
   height: 8px;

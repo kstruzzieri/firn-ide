@@ -328,6 +328,7 @@ export function RunProfileCard({
         {renderActionButton()}
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />
+        {isFreshestRun && <span className={styles.justRanChip}>just ran</span>}
         {durationLabel && <span className={styles.duration}>{durationLabel}</span>}
         {(section === 'recent' || section === 'detected') && (
           <button

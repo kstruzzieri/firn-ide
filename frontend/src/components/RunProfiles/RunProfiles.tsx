@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
 import { ProfileBrowser } from './ProfileBrowser';
+import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';
 import {
   useRunProfiles,
   useIsLoadingProfiles,
@@ -10,12 +11,36 @@ import {
   useRunProfileState,
   useTreeViewMode,
   useActiveWorkspaceId,
+  useWorkspaces,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
 import { estimateRemaining } from '../../utils/estimateCompletion';
-import { groupProfiles, SECTION_LABEL, type SectionGroup } from '../../utils/groupProfiles';
+import {
+  groupProfiles,
+  SECTION_LABEL,
+  type SectionGroup,
+  type WorkspaceGroup,
+} from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfiles.module.css';
+
+// Accents that have a defined --accent-{name} token; anything else falls back to
+// the neutral "project" accent. Mirrors WorkspaceSelector/WorkspaceTabs so the
+// per-workspace dot here colors identically to the rest of the IDE.
+const VALID_ACCENTS = new Set([
+  'project',
+  'blue',
+  'cyan',
+  'green',
+  'purple',
+  'orange',
+  'amber',
+  'general',
+]);
+
+function accentVar(accent: string | undefined): string {
+  return `var(--accent-${accent && VALID_ACCENTS.has(accent) ? accent : 'project'})`;
+}
 
 export function RunProfiles() {
   const profiles = useRunProfiles();
@@ -31,6 +56,7 @@ export function RunProfiles() {
   const runProfileState = useRunProfileState();
   const viewMode = useTreeViewMode(); // 'project' | 'workspace'
   const activeWorkspaceId = useActiveWorkspaceId();
+  const workspaces = useWorkspaces();
 
   // Filter out hidden profiles
   const visibleProfiles = useMemo(
@@ -155,17 +181,32 @@ export function RunProfiles() {
         : visibleProfiles,
     [visibleProfiles, viewMode, activeWorkspaceId]
   );
-  const runningCount = scopedProfiles.filter(
-    (p) => getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
-  ).length;
+  // Running count for an arbitrary profile list (used for both the global header
+  // counter and the per-workspace group counter in Project View).
+  const countRunning = (list: RunProfile[]): number =>
+    list.filter(
+      (p) => getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+    ).length;
+  const runningCount = countRunning(scopedProfiles);
   const totalCountScoped = scopedProfiles.length;
 
-  // Derive hidden count from intersection with current profiles to avoid
-  // stale IDs inflating the counter after profiles are removed/renamed
+  // Per-workspace running·total for Project-View group headers. Flatten the
+  // group's section profiles so the counter reflects that workspace only.
+  const groupCounts = (wg: WorkspaceGroup): { running: number; total: number } => {
+    const groupProfilesList = wg.sections.flatMap((s) => s.profiles);
+    return { running: countRunning(groupProfilesList), total: groupProfilesList.length };
+  };
+
+  // Derive hidden count from intersection with the *view-scoped* profile set so a
+  // hidden profile in another workspace doesn't inflate the Workspace-View count.
   const hiddenCount = useMemo(() => {
-    const profileIds = new Set(profiles.map((p) => p.id));
+    const scopedHideable =
+      viewMode === 'workspace'
+        ? profiles.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
+        : profiles;
+    const profileIds = new Set(scopedHideable.map((p) => p.id));
     return hiddenProfileIds.filter((id) => profileIds.has(id)).length;
-  }, [profiles, hiddenProfileIds]);
+  }, [profiles, hiddenProfileIds, viewMode, activeWorkspaceId]);
 
   const title = (
     <>
@@ -176,10 +217,21 @@ export function RunProfiles() {
     </>
   );
 
+  // View-aware "nothing to show" gate. The active workspace may have zero
+  // profiles while other workspaces have some, so we can't gate on the global
+  // visible list — that left Workspace View blank. Gate on the rendered set.
+  const isViewEmpty =
+    viewMode === 'project' ? grouped.workspaceGroups.length === 0 : grouped.sections.length === 0;
+
   return (
     <Panel
       title={title}
-      actions={<ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />}
+      actions={
+        <>
+          <TreeViewToggle />
+          <ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />
+        </>
+      }
     >
       <div className={styles.list}>
         {isLoading ? (
@@ -190,18 +242,26 @@ export function RunProfiles() {
           <div className={styles.empty}>
             <p className={styles.errorText}>{error}</p>
           </div>
-        ) : visibleProfiles.length === 0 ? (
+        ) : isViewEmpty ? (
           <RunProfilesEmpty />
         ) : viewMode === 'project' ? (
-          grouped.workspaceGroups.map((wg) => (
-            <div key={wg.workspaceId} className={styles.workspaceGroup}>
-              <div className={styles.workspaceHeader}>
-                <span className={styles.workspaceDot} />
-                <span className={styles.workspaceName}>{wg.workspaceName}</span>
+          grouped.workspaceGroups.map((wg) => {
+            const counts = groupCounts(wg);
+            const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
+            return (
+              <div key={wg.workspaceId} className={styles.workspaceGroup}>
+                <div className={styles.workspaceHeader}>
+                  <span className={styles.workspaceDot} style={{ background: accentVar(accent) }} />
+                  <span className={styles.workspaceName}>{wg.workspaceName}</span>
+                  {counts.running > 0 && (
+                    <span className={styles.runningCount}>● {counts.running} running</span>
+                  )}
+                  <span className={styles.groupTotal}>· {counts.total}</span>
+                </div>
+                {wg.sections.map((s) => renderSection(s, true))}
               </div>
-              {wg.sections.map((s) => renderSection(s, true))}
-            </div>
-          ))
+            );
+          })
         ) : (
           grouped.sections.map((s) => renderSection(s, false))
         )}
