@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile, RunProfileUIState } from '../../types/runProfile';
@@ -188,5 +189,70 @@ describe('RunProfiles panel — empty state', () => {
     render(<RunProfiles />);
 
     expect(screen.getByText(/No profiles detected\./i)).toBeInTheDocument();
+  });
+
+  it('renders the empty-state hint in Workspace View when the active workspace has no profiles but another does', () => {
+    // Active workspace ('frontend') owns zero profiles; another workspace ('go')
+    // owns one. The view-aware gate must show the empty hint, not blank.
+    useIDEStore.setState({
+      runProfiles: [goDetectedProfile], // belongs to workspace 'go'
+      runProfileState: {},
+      activeWorkspaceId: WS, // workspace view, scoped to 'frontend' (empty)
+      runOutputs: {},
+      runHistory: {},
+      runStartTimestamps: {},
+      hiddenProfileIds: [],
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      isLoadingProfiles: false,
+      profilesError: null,
+      toast: null,
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/No profiles detected\./i)).toBeInTheDocument();
+  });
+});
+
+describe('RunProfiles panel — view toggle', () => {
+  it('renders a Workspace/Project segmented toggle and switching to Project drives setTreeViewMode', async () => {
+    const user = userEvent.setup();
+    // Provide a real non-project workspace so the Workspace segment is enabled
+    // and setTreeViewMode('workspace') has a valid target.
+    useIDEStore.setState({
+      runProfiles: allProfiles,
+      runProfileState: profileState,
+      workspaces: [
+        { id: 'project', name: 'Project', relDir: '', accent: 'project' },
+        { id: WS, name: 'Frontend', relDir: 'frontend', accent: 'blue' },
+      ] as never,
+      activeWorkspaceId: WS, // start in workspace view
+      runOutputs: {},
+      runHistory: {},
+      runStartTimestamps: {},
+      hiddenProfileIds: [],
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      isLoadingProfiles: false,
+      profilesError: null,
+      toast: null,
+    });
+
+    render(<RunProfiles />);
+
+    const projectBtn = screen.getByRole('button', { name: 'Project' });
+    const workspaceBtn = screen.getByRole('button', { name: 'Workspace' });
+    expect(projectBtn).toBeInTheDocument();
+    expect(workspaceBtn).toBeInTheDocument();
+    // Currently in workspace view
+    expect(workspaceBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(projectBtn).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(projectBtn);
+
+    // setTreeViewMode('project') sets activeWorkspaceId to 'project'
+    expect(useIDEStore.getState().activeWorkspaceId).toBe('project');
+    expect(screen.getByRole('button', { name: 'Project' })).toHaveAttribute('aria-pressed', 'true');
   });
 });

@@ -39,7 +39,6 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
   LoadRunProfiles: jest.fn(() => Promise.resolve()),
-  GetAllRunProfiles: jest.fn(() => Promise.resolve([])),
   GetRunProfilesSnapshot: jest.fn(() => Promise.resolve({ profiles: [], profileState: {} })),
   SetActiveVariant: jest.fn(() => Promise.resolve()),
   LSPDidOpen: (...args: unknown[]) => mockDidOpen(...args),

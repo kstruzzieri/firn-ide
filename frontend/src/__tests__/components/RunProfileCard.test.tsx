@@ -114,4 +114,16 @@ describe('RunProfileCard adopt control', () => {
 
     expect(container.querySelector('[class*="justRan"]')).not.toBeNull();
   });
+
+  it('renders a "just ran" chip when isFreshestRun is true', () => {
+    render(<RunProfileCard profile={detectedProfile} {...baseProps} isFreshestRun={true} />);
+
+    expect(screen.getByText('just ran')).toBeInTheDocument();
+  });
+
+  it('does not render the "just ran" chip when isFreshestRun is false', () => {
+    render(<RunProfileCard profile={detectedProfile} {...baseProps} isFreshestRun={false} />);
+
+    expect(screen.queryByText('just ran')).not.toBeInTheDocument();
+  });
 });
