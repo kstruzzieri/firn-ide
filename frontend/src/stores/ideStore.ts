@@ -251,7 +251,6 @@ interface IDEActions {
   setWorkingDirectory: (path: string) => void;
 
   // Run Profile actions
-  setRunProfiles: (profiles: RunProfile[]) => void;
   setRunProfilesSnapshot: (
     profiles: RunProfile[],
     profileState: Record<string, RunProfileUIState>
@@ -706,13 +705,6 @@ export const useIDEStore = create<IDEStore>()(
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Run Profile actions
-      setRunProfiles: (runProfiles) =>
-        set(
-          { runProfiles, profilesError: null, isLoadingProfiles: false },
-          false,
-          'setRunProfiles'
-        ),
-
       setRunProfilesSnapshot: (runProfiles, runProfileState) =>
         set(
           { runProfiles, runProfileState, profilesError: null, isLoadingProfiles: false },
