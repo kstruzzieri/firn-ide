@@ -4,10 +4,10 @@ import type { RunProfile } from '../../types/runProfile';
 
 // Mock Wails App bindings
 const mockLoadRunProfiles = jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined);
-const mockGetAllRunProfiles = jest.fn<Promise<RunProfile[]>, []>().mockResolvedValue([]);
+const mockGetRunProfilesSnapshot = jest.fn().mockResolvedValue({ profiles: [], profileState: {} });
 jest.mock('../../../wailsjs/go/main/App', () => ({
   LoadRunProfiles: mockLoadRunProfiles,
-  GetAllRunProfiles: mockGetAllRunProfiles,
+  GetRunProfilesSnapshot: mockGetRunProfilesSnapshot,
 }));
 
 // Mock Wails runtime
@@ -19,7 +19,7 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
 }));
 
 // Import after mocks
-import { useRunProfilesLoader } from '../../hooks/useRunProfiles';
+import { useRunProfilesLoader, normalizeProfileState } from '../../hooks/useRunProfiles';
 
 const sampleProfiles: RunProfile[] = [
   {
@@ -41,7 +41,20 @@ beforeEach(() => {
     profilesError: null,
   });
   mockLoadRunProfiles.mockResolvedValue(undefined);
-  mockGetAllRunProfiles.mockResolvedValue(sampleProfiles);
+  mockGetRunProfilesSnapshot.mockResolvedValue({ profiles: sampleProfiles, profileState: {} });
+});
+
+describe('normalizeProfileState', () => {
+  test('normalizeProfileState keeps valid entries, drops malformed', () => {
+    const out = normalizeProfileState({
+      a: { adopted: true, lastRunAt: 5 },
+      b: { adopted: 'nope', lastRunAt: 'x' },
+      c: null,
+    });
+    expect(out.a).toEqual({ adopted: true, lastRunAt: 5 });
+    expect(out.b).toEqual({ adopted: false, lastRunAt: 0 });
+    expect(out.c).toBeUndefined();
+  });
 });
 
 describe('useRunProfilesLoader', () => {
@@ -63,7 +76,7 @@ describe('useRunProfilesLoader', () => {
     });
 
     expect(mockLoadRunProfiles).toHaveBeenCalledWith('/workspace');
-    expect(mockGetAllRunProfiles).toHaveBeenCalled();
+    expect(mockGetRunProfilesSnapshot).toHaveBeenCalled();
     expect(useIDEStore.getState().runProfiles).toEqual(sampleProfiles);
     expect(useIDEStore.getState().isLoadingProfiles).toBe(false);
   });
@@ -118,7 +131,7 @@ describe('useRunProfilesLoader', () => {
       { id: 'b1', name: 'B profile', type: 'single', source: 'user', command: 'echo b' },
     ];
     mockLoadRunProfiles.mockResolvedValueOnce(undefined);
-    mockGetAllRunProfiles.mockResolvedValueOnce(profilesB);
+    mockGetRunProfilesSnapshot.mockResolvedValueOnce({ profiles: profilesB, profileState: {} });
 
     rerender({ path: '/workspace-b' });
 
@@ -131,7 +144,10 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().runProfiles).toEqual(profilesB);
 
     // Now let workspace A resolve — it should be discarded
-    mockGetAllRunProfiles.mockResolvedValueOnce(sampleProfiles);
+    mockGetRunProfilesSnapshot.mockResolvedValueOnce({
+      profiles: sampleProfiles,
+      profileState: {},
+    });
     resolveA();
     await act(async () => {
       await Promise.resolve();
@@ -143,19 +159,22 @@ describe('useRunProfilesLoader', () => {
   });
 
   it('carries workspace ownership fields through normalization', async () => {
-    mockGetAllRunProfiles.mockResolvedValueOnce([
-      {
-        id: 'detected-frontend-package-json-dev',
-        name: 'npm run dev',
-        type: 'single',
-        source: 'detected',
-        command: 'npm run dev',
-        workingDir: 'frontend',
-        workspaceId: 'frontend',
-        workspaceName: 'Frontend',
-        workspaceRelDir: 'frontend',
-      },
-    ] as unknown as RunProfile[]);
+    mockGetRunProfilesSnapshot.mockResolvedValueOnce({
+      profiles: [
+        {
+          id: 'detected-frontend-package-json-dev',
+          name: 'npm run dev',
+          type: 'single',
+          source: 'detected',
+          command: 'npm run dev',
+          workingDir: 'frontend',
+          workspaceId: 'frontend',
+          workspaceName: 'Frontend',
+          workspaceRelDir: 'frontend',
+        },
+      ],
+      profileState: {},
+    });
 
     renderHook(() => useRunProfilesLoader('/workspace'));
 
@@ -171,9 +190,9 @@ describe('useRunProfilesLoader', () => {
   });
 
   it('should update profiles when reactive event fires', async () => {
-    let eventCallback: (profiles: RunProfile[]) => void = () => {};
-    mockEventsOn.mockImplementationOnce((_event: string, cb: (profiles: unknown) => void) => {
-      eventCallback = cb as (profiles: RunProfile[]) => void;
+    let eventCallback: (snap: unknown) => void = () => {};
+    mockEventsOn.mockImplementationOnce((_event: string, cb: (snap: unknown) => void) => {
+      eventCallback = cb;
       return jest.fn();
     });
 
@@ -192,7 +211,7 @@ describe('useRunProfilesLoader', () => {
     ];
 
     act(() => {
-      eventCallback(updatedProfiles);
+      eventCallback({ profiles: updatedProfiles, profileState: {} });
     });
 
     expect(useIDEStore.getState().runProfiles).toEqual(updatedProfiles);

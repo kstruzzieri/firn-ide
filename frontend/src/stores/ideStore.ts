@@ -714,7 +714,11 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       setRunProfilesSnapshot: (runProfiles, runProfileState) =>
-        set({ runProfiles, runProfileState }, false, 'setRunProfilesSnapshot'),
+        set(
+          { runProfiles, runProfileState, profilesError: null, isLoadingProfiles: false },
+          false,
+          'setRunProfilesSnapshot'
+        ),
 
       adoptProfileLocal: (id) =>
         set(
