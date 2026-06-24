@@ -25,7 +25,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | UI/UX Polish | **COMPLETE** | #35-36 |
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 + #116 complete, #47 open |
 | Milestone 3: Workspace Management | **COMPLETE** | #13-15, #53-54 complete |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18, #71, #103, #107 open |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18/#71 Phase 1 (workspace-owned detection + identity) shipped via #123; #18/#71 UI (P2–P4), #103, #107 open |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
@@ -41,15 +41,21 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: **#112 Phase 1 (Python LSP environment auto-wiring) shipped via PR #121** — pyright now resolves imports/types in a standard `src`-layout uv/venv project with zero per-project config. New pure `internal/lsp/pythonenv` interpreter/venv detector; the client answers pyright's `workspace/configuration` pull (was replying `-32601` to all server requests — the root cause) and advertises the capability + `didChangeConfiguration`; a Manager-owned, dialect-agnostic `WorkspaceConfigProvider` forwards `pythonPath`/`venvPath`/`analysis.extraPaths`; raw server errors are replaced by a typed setup status + non-blocking `LSPSetupCard`. Earlier shipped: **editor theme system + diagnostic tooltip (#113/#114, PR #117)** with #119 picker focus polish, **terminal PTY-exhaustion actionable error (#116)**, **file-tree / tab-bar scrollbar fixes (#118)**. Milestone 3 (Workspace Management) complete; file-tree virtualization shipped (#37/#38, PR #111). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) deferred to its own spec.
+Current status: **Milestone 4 Phase 1 (workspace-owned run profiles) shipped via PR #123** — run profiles are now workspace-aware. A repo-scoped `ProjectRunProfileManager` detects profiles across every workspace at load, stamps owning-workspace identity + workspace-scoped deterministic IDs, persists per-workspace (`.firn/run-profiles.json`) with v1→v2 migration, and routes save/pin/delete by owner; Load is resilient (atomic swap, degrade-on-corrupt-store, non-fatal migration, surfaced warnings). The same PR hardened workspace detection: language markers now beat infra (a Dockerfile no longer shadows a service's real type), the infra type split into Docker/Terraform, dot-directories are skipped (no phantom `.worktrees` workspaces), duplicate workspace names are disambiguated, and the file tree hides dot-folders. This is the prerequisite that unblocks the #71/#18 Run Profiles UI layer.
 
-1. **#18 / #71: Run Profiles UI Integration and Activated State** — profile selector dropdown, edit form, activation working set, and selection persistence. **#71 also now owns the Run-Profiles-by-workspace view filtering/grouping** deferred from #54 (Workspace View filters to the active workspace; Project View groups by workspace) — prerequisite is per-workspace detection so profiles carry an owning workspace.
+Earlier: **#112 Phase 1 (Python LSP environment auto-wiring) shipped via PR #121** — pyright now resolves imports/types in a standard `src`-layout uv/venv project with zero per-project config. New pure `internal/lsp/pythonenv` interpreter/venv detector; the client answers pyright's `workspace/configuration` pull (was replying `-32601` to all server requests — the root cause) and advertises the capability + `didChangeConfiguration`; a Manager-owned, dialect-agnostic `WorkspaceConfigProvider` forwards `pythonPath`/`venvPath`/`analysis.extraPaths`; raw server errors are replaced by a typed setup status + non-blocking `LSPSetupCard`. Earlier shipped: **editor theme system + diagnostic tooltip (#113/#114, PR #117)** with #119 picker focus polish, **terminal PTY-exhaustion actionable error (#116)**, **file-tree / tab-bar scrollbar fixes (#118)**. Milestone 3 (Workspace Management) complete; file-tree virtualization shipped (#37/#38, PR #111). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) deferred to its own spec.
+
+1. **#18 / #71: Run Profiles UI (Phases 2–4)** — the Phase 1 backend prerequisite (workspace-owned detection + identity) shipped via #123, so profiles now carry an owning workspace. Remaining is the UI layer, best done as a mockup-driven panel design pass:
+   - **P2 (#71):** activation working set + section reorg (Activated / Pinned / Detected) + **RECENT** section (a just-run profile floats above Detected unless it's already saved/pinned) + active/total header counter + per-workspace activation persistence + Workspace/Project view filter & grouping (Workspace View filters to the active workspace; Project View groups by workspace) + more pronounced cards / palette so the just-ran profile is easy to spot.
+   - **P3 (#18):** header `[▶ Profile ▾]` selector dropdown (grouped by workspace/source) with run controls.
+   - **P4 (#18):** create/edit profile form wired to `SaveRunProfile`.
 2. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
 3. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
 4. **#47: Terminal shell integration** — error markers & command separators (last open item in Milestone 2).
 5. **#112 Phase 2: LSP managed server provisioning** (Phase 1 env auto-wiring shipped via #121) — download a pinned server binary (`basedpyright` standalone, no Node dependency) into an app cache (`~/.firn/servers/<lang>/<version>/`) when none is found locally/on PATH, with offline/failure → actionable install/retry UI (the `download_available`/`offline` states reserved in Phase 1). Lazy (active workspace only); never mutates the user's global env/PATH. Smaller Phase 1 follow-ups: command-backed uv/poetry env discovery outside the project root, and the interactive interpreter picker / "Doctor" panel (the `action`/`detailCode` status fields already carry the data).
 6. **#37 (Phase 2): File tree lazy loading** — load directory children on expand; own spec (backend per-dir read, watcher reconcile, #54 scoped-tree/active-file reconciliation).
 7. **NEW (needs issue): Workspace-colored open-file tabs** — surfaced while reviewing #117: open editor tabs should always carry their owning workspace's accent (tab/font) regardless of the active workspace, so files are instantly attributable; future stretch is filtering open tabs to the active workspace. Bundle the **button-in-button DOM fix** in the editor tab bar (close `<button>` nested inside the tab `<button role="tab">` → React hydration warning) since it touches the same component.
+8. **NEW (needs issue): File-level infra accent in the tree** — surfaced during #123 testing: infra files (`Dockerfile`, `docker-compose.y*ml`, `.dockerignore`, `*.tf`/`*.tfvars`) should render with the Docker (purple) / Terraform (amber) accent even when shown inside another workspace's tree, so deployment/infra files are spottable regardless of the active workspace. File-level decoration layered on the existing per-workspace tinting.
 
 ---
 
@@ -174,11 +180,23 @@ Sub-issues:
 - [x] #63: Compound Profile Execution — sequential steps, stop-on-failure
 - [x] #64: Environment Variants — env file swapping by active variant
 
-### #71: Run Profiles - Activated State, Section Reorganization, and Selection Persistence
+### #18 / #71 Phase 1: Workspace-Owned Detection & Identity ✅ (PR #123)
+Backend prerequisite for the Run Profiles UI — profiles now carry an owning workspace.
+- [x] Repo-scoped `ProjectRunProfileManager`: eager multi-root detection across all workspaces → one combined list
+- [x] `WorkspaceID`/`WorkspaceName`/`WorkspaceRelDir` on RunProfile; workspace-scoped deterministic detected IDs (no cross-workspace collisions; unpin invariant preserved)
+- [x] Per-workspace `.firn/run-profiles.json` with v1→v2 migration (ownership stamp, ID scope, intra-file compound-step rewrite, repo-root-relative `workingDir` rebase)
+- [x] Owner-routed save/pin/delete/variant; explicit owner preserved (`project` vs `root:go`); cross-workspace duplicate IDs rejected
+- [x] Load resilience: atomic build-then-swap, degrade-on-corrupt-store, non-fatal migration persist, surfaced warnings
+- [x] Workspace detector fixes: language markers beat infra; infra split → Docker (purple) / Terraform (amber); dot-directories skipped (no phantom `.worktrees` workspaces); duplicate workspace names disambiguated; file-explorer tree hides dot-folders (dot-files stay)
+
+### #71: Run Profiles - Activated State, Section Reorganization, and Selection Persistence (P2)
 - [ ] Activated profile working set
 - [ ] Reorganize sections into Activated, Pinned, and Detected
+- [ ] RECENT section: a just-run profile floats above Detected unless already saved/pinned
 - [ ] Persist activation state per workspace
 - [ ] Header counter with active/total counts
+- [ ] Workspace/Project view filter & grouping (unblocked by #123 workspace ownership)
+- [ ] More pronounced cards / palette to distinguish the just-ran profile
 
 ### #18: Run Profiles - UI Integration
 - [ ] Profile selector dropdown in header toolbar (`[▶ Profile ▾]`)
