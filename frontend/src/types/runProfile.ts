@@ -27,6 +27,16 @@ export interface RunProfile {
   workspaceRelDir?: string;
 }
 
+export interface RunProfileUIState {
+  adopted?: boolean;
+  lastRunAt?: number;
+}
+
+export interface RunProfilesSnapshot {
+  profiles: RunProfile[];
+  profileState: Record<string, RunProfileUIState>;
+}
+
 export interface ValidationError {
   field: string;
   message: string;
