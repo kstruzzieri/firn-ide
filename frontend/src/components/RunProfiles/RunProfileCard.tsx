@@ -11,10 +11,13 @@ import {
   PinRunProfile,
   UnpinRunProfile,
   SetActiveVariant,
+  AdoptRunProfile,
+  UnadoptRunProfile,
 } from '../../../wailsjs/go/main/App';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
 import type { VisualState, RunHistoryEntry, RunOutput } from '../../types/runOutput';
+import type { ProfileSection } from '../../utils/groupProfiles';
 import styles from './RunProfileCard.module.css';
 
 /**
@@ -48,6 +51,8 @@ interface RunProfileCardProps {
   isDormant: boolean;
   isDuplicate: boolean;
   onFocusOutput: (profileId: string) => void;
+  section?: ProfileSection;
+  isFreshestRun?: boolean;
 }
 
 function getStateClass(visualState: VisualState): string {
@@ -104,6 +109,8 @@ export function RunProfileCard({
   isDormant,
   isDuplicate,
   onFocusOutput,
+  section,
+  isFreshestRun,
 }: RunProfileCardProps) {
   const setProfileStopping = useIDEStore((s) => s.setProfileStopping);
   const clearProfileStopping = useIDEStore((s) => s.clearProfileStopping);
@@ -165,6 +172,28 @@ export function RunProfileCard({
     useIDEStore.getState().hideProfile(profile.id);
   };
 
+  const handleAdopt = () => {
+    useIDEStore.getState().adoptProfileLocal(profile.id);
+    AdoptRunProfile(profile.id).catch((err: unknown) => {
+      useIDEStore.getState().unadoptProfileLocal(profile.id);
+      showToast(
+        `Failed to adopt "${profile.name}": ${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      );
+    });
+  };
+
+  const handleUnadopt = () => {
+    useIDEStore.getState().unadoptProfileLocal(profile.id);
+    UnadoptRunProfile(profile.id).catch((err: unknown) => {
+      useIDEStore.getState().adoptProfileLocal(profile.id);
+      showToast(
+        `Failed to remove "${profile.name}": ${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      );
+    });
+  };
+
   const envVariants = (profile.envVariants ?? []).filter((variant) => variant.name);
   const hasEnvVariants = envVariants.length > 0;
 
@@ -221,6 +250,7 @@ export function RunProfileCard({
     isDormant ? styles.dormant : '',
     isActiveState ? styles.forceExpand : '',
     !isActiveState && isExpanded ? styles.expanded : '',
+    isFreshestRun ? styles.justRan : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -299,6 +329,18 @@ export function RunProfileCard({
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />
         {durationLabel && <span className={styles.duration}>{durationLabel}</span>}
+        {(section === 'recent' || section === 'detected') && (
+          <button
+            className={styles.adoptBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAdopt();
+            }}
+            aria-label={`Adopt ${profile.name}`}
+          >
+            <span aria-hidden="true">+</span> adopt
+          </button>
+        )}
       </div>
 
       {/* Row 2: command line */}
@@ -371,6 +413,7 @@ export function RunProfileCard({
           onPin={handlePin}
           onUnpin={handleUnpin}
           onHide={handleHide}
+          onUnadopt={section === 'activated' ? handleUnadopt : undefined}
         />
       </div>
     </div>
