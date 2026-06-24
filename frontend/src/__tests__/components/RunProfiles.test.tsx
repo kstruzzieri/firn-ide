@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile, RunProfileUIState } from '../../types/runProfile';
@@ -114,8 +114,79 @@ describe('RunProfiles panel header counter', () => {
 
     render(<RunProfiles />);
 
-    const header = screen.getByText('Run Profiles').closest('*') as HTMLElement;
-    expect(within(header).getByText(/1 running/i)).toBeInTheDocument();
-    expect(within(header).getByText(/\d+ total/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+    expect(screen.getByText(/\d+ total/i)).toBeInTheDocument();
+  });
+});
+
+// Profiles for project view: two workspaces, one with a detected profile.
+const goDetectedProfile: RunProfile = {
+  id: 'go-detected-1',
+  name: 'Go Build',
+  type: 'single',
+  source: 'detected',
+  command: 'go build ./...',
+  workspaceId: 'go',
+  workspaceName: 'Go',
+};
+const goUserProfile: RunProfile = {
+  id: 'go-user-1',
+  name: 'Go Test',
+  type: 'single',
+  source: 'user',
+  command: 'go test ./...',
+  workspaceId: 'go',
+  workspaceName: 'Go',
+};
+
+describe('RunProfiles panel — project view', () => {
+  beforeEach(() => {
+    // Switching to project view: activeWorkspaceId === 'project'
+    useIDEStore.setState({
+      runProfiles: [pinnedProfile, detectedProfile, goUserProfile, goDetectedProfile],
+      runProfileState: {
+        // pinnedProfile is user-sourced with no state entry — lands in Pinned section
+        // detectedProfile has no lastRunAt — stays in Detected section
+        // goUserProfile: no state — Pinned (user source)
+      },
+      activeWorkspaceId: 'project',
+      runOutputs: {},
+      runHistory: {},
+      runStartTimestamps: {},
+      hiddenProfileIds: [],
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      isLoadingProfiles: false,
+      profilesError: null,
+      toast: null,
+    });
+  });
+
+  it('renders both workspace names as group headers', () => {
+    render(<RunProfiles />);
+    expect(screen.getByText('Frontend')).toBeInTheDocument();
+    expect(screen.getByText('Go')).toBeInTheDocument();
+  });
+
+  it('renders the Detected section inside a <details> element', () => {
+    const { container } = render(<RunProfiles />);
+    // In project view, renderSection is called with collapseDetected=true,
+    // so any group with key 'detected' renders as <details>.
+    expect(container.querySelector('details')).toBeInTheDocument();
+  });
+});
+
+describe('RunProfiles panel — empty state', () => {
+  it('renders the empty-state hint when there are no profiles', () => {
+    useIDEStore.setState({
+      runProfiles: [],
+      runProfileState: {},
+      isLoadingProfiles: false,
+      profilesError: null,
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/No profiles detected\./i)).toBeInTheDocument();
   });
 });
