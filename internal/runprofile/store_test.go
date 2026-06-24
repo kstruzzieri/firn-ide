@@ -9,10 +9,18 @@ import (
 )
 
 func newMockFS() *filesystem.Mock {
+	m, _ := newMockFSWithFiles()
+	return m
+}
+
+// newMockFSWithFiles is like newMockFS but also returns the backing file map so
+// tests can assert on what was actually written to disk (e.g. that the atomic
+// temp+rename persist left no stray .tmp file behind).
+func newMockFSWithFiles() (*filesystem.Mock, map[string][]byte) {
 	files := map[string][]byte{}
 	dirs := map[string]bool{}
 
-	return &filesystem.Mock{
+	m := &filesystem.Mock{
 		ReadFileFunc: func(path string) ([]byte, error) {
 			data, ok := files[path]
 			if !ok {
@@ -28,7 +36,17 @@ func newMockFS() *filesystem.Mock {
 			dirs[path] = true
 			return nil
 		},
+		RenameFunc: func(oldpath, newpath string) error {
+			data, ok := files[oldpath]
+			if !ok {
+				return fs.ErrNotExist
+			}
+			files[newpath] = data
+			delete(files, oldpath)
+			return nil
+		},
 	}
+	return m, files
 }
 
 func TestStoreLoadNoFile(t *testing.T) {
@@ -311,5 +329,61 @@ func TestStoreGetAllReturnsCopyDeepFields(t *testing.T) {
 	}
 	if internal[0].Steps[0] != "step1" {
 		t.Errorf("GetAll() Steps should be a deep copy; internal was mutated to %q", internal[0].Steps[0])
+	}
+}
+
+func TestStorePersistIsAtomic(t *testing.T) {
+	mockFS, files := newMockFSWithFiles()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	finalPath := "/workspace/" + profilesFileName
+	tmpPath := finalPath + ".tmp"
+
+	// A frequent-write path: recency + adoption both persist.
+	if err := store.SetAdopted("detected-a", true); err != nil {
+		t.Fatalf("SetAdopted: %v", err)
+	}
+	if err := store.RecordRun("detected-a", 4242); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+
+	// Final file exists.
+	data, ok := files[finalPath]
+	if !ok {
+		t.Fatalf("expected final profiles file at %q after persist", finalPath)
+	}
+
+	// No stray temp file left behind (rename moved it into place).
+	if _, ok := files[tmpPath]; ok {
+		t.Errorf("expected temp file %q to be gone after atomic rename", tmpPath)
+	}
+
+	// Content round-trips with the expected recency/adoption state.
+	var pf ProfilesFile
+	if err := json.Unmarshal(data, &pf); err != nil {
+		t.Fatalf("unmarshal persisted file: %v", err)
+	}
+	if pf.Version != profilesFileVersion {
+		t.Errorf("expected version %d, got %d", profilesFileVersion, pf.Version)
+	}
+	st, ok := pf.ProfileState["detected-a"]
+	if !ok {
+		t.Fatalf("expected profileState entry for detected-a, got %+v", pf.ProfileState)
+	}
+	if !st.Adopted || st.LastRunAt != 4242 {
+		t.Errorf("expected adopted=true lastRunAt=4242, got %+v", st)
+	}
+
+	// And a fresh store Loads the same state from the final file.
+	reloaded := NewStore(mockFS, "/workspace")
+	if _, err := reloaded.Load(); err != nil {
+		t.Fatalf("reload Load: %v", err)
+	}
+	got := reloaded.GetState()["detected-a"]
+	if !got.Adopted || got.LastRunAt != 4242 {
+		t.Errorf("reloaded state mismatch: %+v", got)
 	}
 }

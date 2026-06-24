@@ -36,3 +36,7 @@ func (o *OS) MkdirAll(path string, perm fs.FileMode) error {
 func (o *OS) Remove(path string) error {
 	return os.Remove(path)
 }
+
+func (o *OS) Rename(oldpath, newpath string) error {
+	return os.Rename(oldpath, newpath)
+}

@@ -33,6 +33,15 @@ func newManagerTestFS(files map[string][]byte) *filesystem.Mock {
 			delete(files, path)
 			return nil
 		},
+		RenameFunc: func(oldpath, newpath string) error {
+			data, ok := files[oldpath]
+			if !ok {
+				return fs.ErrNotExist
+			}
+			files[newpath] = data
+			delete(files, oldpath)
+			return nil
+		},
 	}
 }
 

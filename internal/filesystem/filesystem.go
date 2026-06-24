@@ -25,4 +25,7 @@ type FileSystem interface {
 
 	// Remove removes a file or empty directory.
 	Remove(path string) error
+
+	// Rename atomically renames (moves) oldpath to newpath, replacing newpath if it exists.
+	Rename(oldpath, newpath string) error
 }

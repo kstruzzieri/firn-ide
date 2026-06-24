@@ -209,10 +209,10 @@ func (s *Store) GetState() map[string]ProfileUIState {
 }
 
 // persist writes the current profiles to disk.
-// Note: This is not atomic (no write-to-temp + rename) because the
-// filesystem.FileSystem interface does not expose Rename. If atomic writes
-// become necessary, add Rename to the interface. The risk of corruption is
-// low since the file is small and written infrequently.
+// The write is atomic: data is written to a sibling temp file and then renamed
+// into place, so a torn write can never corrupt the existing file. This matters
+// because run recency now rewrites this file on every run (frequent writes),
+// and a crash mid-write must not destroy the user's saved profiles.
 func (s *Store) persist() error {
 	dir := filepath.Join(s.workspaceRoot, ".firn")
 	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
@@ -234,11 +234,14 @@ func (s *Store) persist() error {
 		return fmt.Errorf("marshaling profiles: %w", err)
 	}
 
-	path := filepath.Join(s.workspaceRoot, profilesFileName)
-	if err := s.fs.WriteFile(path, data, fs.FileMode(0o644)); err != nil {
-		return fmt.Errorf("writing profiles file: %w", err)
+	finalPath := filepath.Join(s.workspaceRoot, profilesFileName)
+	tmpPath := finalPath + ".tmp"
+	if err := s.fs.WriteFile(tmpPath, data, fs.FileMode(0o644)); err != nil {
+		return fmt.Errorf("writing temp profiles file: %w", err)
 	}
-
+	if err := s.fs.Rename(tmpPath, finalPath); err != nil {
+		return fmt.Errorf("renaming profiles file into place: %w", err)
+	}
 	return nil
 }
 
