@@ -13,6 +13,12 @@ export const SECTION_LABEL: Record<ProfileSection, string> = {
 
 const RECENT_CAP = 5;
 
+export const JUST_RAN_WINDOW_MS = 5 * 60 * 1000; // 5 min: "just ran" highlight recency window
+
+export function isJustRan(lastRunAt: number | undefined, nowMs: number): boolean {
+  return typeof lastRunAt === 'number' && lastRunAt > 0 && nowMs - lastRunAt <= JUST_RAN_WINDOW_MS;
+}
+
 export interface SectionGroup {
   key: ProfileSection;
   profiles: RunProfile[];

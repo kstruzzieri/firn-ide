@@ -17,6 +17,7 @@ import { getVisualState } from '../../utils/visualState';
 import { estimateRemaining } from '../../utils/estimateCompletion';
 import {
   groupProfiles,
+  isJustRan,
   SECTION_LABEL,
   type SectionGroup,
   type WorkspaceGroup,
@@ -57,6 +58,10 @@ export function RunProfiles() {
   const viewMode = useTreeViewMode(); // 'project' | 'workspace'
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
+
+  // Render-time "now" for the just-ran recency window. Kept out of any memo deps
+  // so grouping stays pure/memoized; recomputed each render (e.g. via etaTick).
+  const nowMs = Date.now();
 
   // Filter out hidden profiles
   const visibleProfiles = useMemo(
@@ -146,7 +151,10 @@ export function RunProfiles() {
         isDormant={isDormant}
         isDuplicate={isDuplicate}
         section={section}
-        isFreshestRun={grouped.freshestRunId === profile.id}
+        isFreshestRun={
+          grouped.freshestRunId === profile.id &&
+          isJustRan(runProfileState[profile.id]?.lastRunAt, nowMs)
+        }
         onFocusOutput={focusProfileOutput}
       />
     );

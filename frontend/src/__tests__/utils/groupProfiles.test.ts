@@ -1,4 +1,9 @@
-import { groupProfiles, type ProfileSection } from '../../utils/groupProfiles';
+import {
+  groupProfiles,
+  isJustRan,
+  JUST_RAN_WINDOW_MS,
+  type ProfileSection,
+} from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
 
 const p = (over: Partial<RunProfile>): RunProfile => ({
@@ -122,6 +127,30 @@ test('freshestRunId is null when nothing has run', () => {
     { viewMode: 'workspace', activeWorkspaceId: 'frontend' }
   );
   expect(groups.freshestRunId).toBeNull();
+});
+
+describe('isJustRan recency window', () => {
+  const now = 1_700_000_000_000;
+
+  test('run at exactly now is within the window', () => {
+    expect(isJustRan(now, now)).toBe(true);
+  });
+
+  test('run older than the window is not just-ran', () => {
+    expect(isJustRan(now - 6 * 60 * 1000, now)).toBe(false);
+  });
+
+  test('run at the window boundary is still just-ran', () => {
+    expect(isJustRan(now - JUST_RAN_WINDOW_MS, now)).toBe(true);
+  });
+
+  test('lastRunAt of 0 (never ran) is not just-ran', () => {
+    expect(isJustRan(0, now)).toBe(false);
+  });
+
+  test('undefined lastRunAt is not just-ran', () => {
+    expect(isJustRan(undefined, now)).toBe(false);
+  });
 });
 
 test('adopted user profile classifies as pinned, not activated', () => {

@@ -726,12 +726,19 @@ export const useIDEStore = create<IDEStore>()(
 
       unadoptProfileLocal: (id) =>
         set(
-          (state) => ({
-            runProfileState: {
-              ...state.runProfileState,
-              [id]: { ...state.runProfileState[id], adopted: false },
-            },
-          }),
+          (state) => {
+            // Mirror the backend (store.go SetAdopted): clearing adoption on an
+            // entry with no recency drops the entry entirely so the optimistic
+            // map matches what the server persists.
+            const prev = state.runProfileState[id];
+            const next = { ...state.runProfileState };
+            if (prev?.lastRunAt) {
+              next[id] = { ...prev, adopted: false };
+            } else {
+              delete next[id];
+            }
+            return { runProfileState: next };
+          },
           false,
           'unadoptProfileLocal'
         ),
