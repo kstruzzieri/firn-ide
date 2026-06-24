@@ -24,7 +24,7 @@ func storeMigrationFS(files map[string][]byte) *filesystem.Mock {
 	}
 }
 
-func TestStoreLoadMigratesV1AndPersistsV2(t *testing.T) {
+func TestStoreLoadMigratesV1AndPersistsV3(t *testing.T) {
 	expectedID := scopedID("frontend", "detected-package-json-test")
 	v1, _ := json.Marshal(ProfilesFile{
 		Version: 1,
@@ -51,11 +51,46 @@ func TestStoreLoadMigratesV1AndPersistsV2(t *testing.T) {
 	if err := json.Unmarshal(files["/repo/frontend/.firn/run-profiles.json"], &persisted); err != nil {
 		t.Fatalf("decode persisted: %v", err)
 	}
-	if persisted.Version != 2 {
-		t.Errorf("expected persisted version 2, got %d", persisted.Version)
+	if persisted.Version != 3 {
+		t.Errorf("expected persisted version 3, got %d", persisted.Version)
 	}
 	if persisted.Profiles[0].ID != expectedID {
 		t.Errorf("persisted ID not migrated: %q", persisted.Profiles[0].ID)
+	}
+}
+
+func TestStoreLoadsV2FileWithEmptyState(t *testing.T) {
+	v2 := `{"version":2,"profiles":[{"id":"detected-a","name":"Dev","type":"single","source":"detected"}]}`
+	files := map[string][]byte{"/ws/.firn/run-profiles.json": []byte(v2)}
+	s := NewStore(storeMigrationFS(files), "/ws")
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("load v2: %v", err)
+	}
+	if got := s.GetState(); len(got) != 0 {
+		t.Errorf("v2 load should yield empty state, got %v", got)
+	}
+}
+
+func TestStorePersistsAndReloadsProfileState(t *testing.T) {
+	files := map[string][]byte{}
+	fsys := storeMigrationFS(files)
+	s := NewStore(fsys, "/ws")
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAdopted("detected-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordRun("detected-a", 1719100000000); err != nil {
+		t.Fatal(err)
+	}
+	s2 := NewStore(fsys, "/ws")
+	if _, err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	st := s2.GetState()["detected-a"]
+	if !st.Adopted || st.LastRunAt != 1719100000000 {
+		t.Errorf("reloaded state = %+v, want adopted+ts", st)
 	}
 }
 

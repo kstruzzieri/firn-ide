@@ -212,6 +212,73 @@ func TestStoreGetAllReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestStoreSetAdoptedToggles(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set adopted true and verify
+	if err := store.SetAdopted("detected-a", true); err != nil {
+		t.Fatalf("SetAdopted(true): %v", err)
+	}
+	st := store.GetState()
+	if !st["detected-a"].Adopted {
+		t.Errorf("expected adopted=true after SetAdopted(true), got %+v", st)
+	}
+
+	// Set adopted false and verify (no lastRunAt so entry should be dropped)
+	if err := store.SetAdopted("detected-a", false); err != nil {
+		t.Fatalf("SetAdopted(false): %v", err)
+	}
+	st = store.GetState()
+	if entry, ok := st["detected-a"]; ok {
+		t.Errorf("expected entry removed when unadopted with no recency, got %+v", entry)
+	}
+}
+
+func TestStoreRecordRunPreservesAdopted(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.SetAdopted("detected-a", true); err != nil {
+		t.Fatalf("SetAdopted: %v", err)
+	}
+	if err := store.RecordRun("detected-a", 999); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+	st := store.GetState()["detected-a"]
+	if !st.Adopted || st.LastRunAt != 999 {
+		t.Errorf("expected adopted=true and lastRunAt=999, got %+v", st)
+	}
+}
+
+func TestStoreGetStateReturnsCopy(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.SetAdopted("detected-a", true); err != nil {
+		t.Fatalf("SetAdopted: %v", err)
+	}
+
+	// Mutate returned map
+	got := store.GetState()
+	got["detected-a"] = ProfileUIState{Adopted: false, LastRunAt: 12345}
+
+	// Internal state must be unchanged
+	internal := store.GetState()
+	if !internal["detected-a"].Adopted || internal["detected-a"].LastRunAt != 0 {
+		t.Errorf("GetState must return a copy; internal was mutated: %+v", internal["detected-a"])
+	}
+}
+
 func TestStoreGetAllReturnsCopyDeepFields(t *testing.T) {
 	mockFS := newMockFS()
 	store := NewStore(mockFS, "/workspace")

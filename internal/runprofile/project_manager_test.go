@@ -160,7 +160,7 @@ func TestProjectManagerRoutesSaveToOwningWorkspaceFile(t *testing.T) {
 	if err := json.Unmarshal(raw, &pf); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if pf.Version != 2 || len(pf.Profiles) != 1 || pf.Profiles[0].ID != "custom-fe" {
+	if pf.Version != 3 || len(pf.Profiles) != 1 || pf.Profiles[0].ID != "custom-fe" {
 		t.Errorf("frontend store wrong: %+v", pf)
 	}
 	if _, leaked := files["/repo/.firn/run-profiles.json"]; leaked {
