@@ -2,16 +2,20 @@ import { useTreeViewMode, useCanFocusWorkspace, useIDEStore } from '../../stores
 import styles from './TreeViewToggle.module.css';
 
 /**
- * Segmented Project | Workspace control for the file-tree panel header.
+ * Segmented Project | Workspace control for panel headers.
  * Workspace is disabled when no non-project workspace exists.
+ *
+ * @param ariaLabel - Accessible label for the group landmark. Defaults to
+ *   "File tree view" to preserve the FileExplorer context. Pass a distinct
+ *   label whenever the toggle is reused in another panel (e.g. "Run profiles view").
  */
-export function TreeViewToggle() {
+export function TreeViewToggle({ ariaLabel = 'File tree view' }: { ariaLabel?: string }) {
   const mode = useTreeViewMode();
   const canFocus = useCanFocusWorkspace();
   const setTreeViewMode = useIDEStore((s) => s.setTreeViewMode);
 
   return (
-    <div className={styles.toggle} role="group" aria-label="File tree view">
+    <div className={styles.toggle} role="group" aria-label={ariaLabel}>
       <button
         type="button"
         className={styles.segment}

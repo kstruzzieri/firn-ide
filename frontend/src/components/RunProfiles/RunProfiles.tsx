@@ -228,7 +228,7 @@ export function RunProfiles() {
       title={title}
       actions={
         <>
-          <TreeViewToggle />
+          <TreeViewToggle ariaLabel="Run profiles view" />
           <ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />
         </>
       }
