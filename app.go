@@ -372,8 +372,7 @@ func (a *App) UnadoptRunProfile(id string) error {
 	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.UnadoptProfile(id) })
 }
 
-// mutateAndEmitProfiles runs a manager mutation under the read lock, then emits
-// the full snapshot on success.
+// mutateAndEmitProfiles runs a manager mutation under the app read lock, then emits the full snapshot on success. Centralizes the lock/emit dance shared by pin/unpin/variant/adopt/unadopt.
 func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager) error) error {
 	a.profileMu.RLock()
 	if a.profileManager == nil {
@@ -525,16 +524,20 @@ func (a *App) StartRunProfile(profileID string) error {
 	if startErr == nil {
 		// Stamp run recency (best-effort; must not fail the run).
 		a.profileMu.RLock()
-		if a.profileManager != nil {
-			if err := a.profileManager.RecordRun(profileID, nowMillis()); err == nil {
-				snap := a.profileManager.Snapshot()
-				a.profileMu.RUnlock()
-				runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
+		mgr := a.profileManager
+		var snap runprofile.RunProfilesSnapshot
+		emit := false
+		if mgr != nil {
+			if err := mgr.RecordRun(profileID, nowMillis()); err == nil {
+				snap = mgr.Snapshot()
+				emit = true
 			} else {
-				a.profileMu.RUnlock()
+				runtime.LogWarningf(a.ctx, "could not record run recency for %s: %v", profileID, err)
 			}
-		} else {
-			a.profileMu.RUnlock()
+		}
+		a.profileMu.RUnlock()
+		if emit {
+			runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
 		}
 	}
 
