@@ -2,6 +2,7 @@ package runprofile
 
 import (
 	"encoding/json"
+	"errors"
 	"firn/internal/filesystem"
 	"io/fs"
 	"strings"
@@ -256,6 +257,52 @@ func TestStoreSetAdoptedToggles(t *testing.T) {
 	}
 }
 
+func TestStoreSetAdoptedRollsBackOnPersistFailure(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	persistErr := errors.New("disk full")
+	mockFS.RenameFunc = func(oldpath, newpath string) error {
+		return persistErr
+	}
+
+	err := store.SetAdopted("detected-a", true)
+	if !errors.Is(err, persistErr) {
+		t.Fatalf("SetAdopted error = %v, want %v", err, persistErr)
+	}
+	if entry, ok := store.GetState()["detected-a"]; ok {
+		t.Fatalf("failed adopt must not remain in memory, got %+v", entry)
+	}
+}
+
+func TestStoreSetAdoptedFailurePreservesPreviousState(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAdopted("detected-a", true); err != nil {
+		t.Fatalf("initial SetAdopted: %v", err)
+	}
+
+	persistErr := errors.New("read-only workspace")
+	mockFS.RenameFunc = func(oldpath, newpath string) error {
+		return persistErr
+	}
+
+	err := store.SetAdopted("detected-a", false)
+	if !errors.Is(err, persistErr) {
+		t.Fatalf("SetAdopted error = %v, want %v", err, persistErr)
+	}
+	st := store.GetState()["detected-a"]
+	if !st.Adopted {
+		t.Fatalf("failed unadopt must preserve previous adopted state, got %+v", st)
+	}
+}
+
 func TestStoreRecordRunPreservesAdopted(t *testing.T) {
 	mockFS := newMockFS()
 	store := NewStore(mockFS, "/workspace")
@@ -272,6 +319,31 @@ func TestStoreRecordRunPreservesAdopted(t *testing.T) {
 	st := store.GetState()["detected-a"]
 	if !st.Adopted || st.LastRunAt != 999 {
 		t.Errorf("expected adopted=true and lastRunAt=999, got %+v", st)
+	}
+}
+
+func TestStoreRecordRunRollsBackOnPersistFailure(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, "/workspace")
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordRun("detected-a", 111); err != nil {
+		t.Fatalf("initial RecordRun: %v", err)
+	}
+
+	persistErr := errors.New("rename failed")
+	mockFS.RenameFunc = func(oldpath, newpath string) error {
+		return persistErr
+	}
+
+	err := store.RecordRun("detected-a", 222)
+	if !errors.Is(err, persistErr) {
+		t.Fatalf("RecordRun error = %v, want %v", err, persistErr)
+	}
+	st := store.GetState()["detected-a"]
+	if st.LastRunAt != 111 {
+		t.Fatalf("failed RecordRun must preserve previous lastRunAt, got %+v", st)
 	}
 }
 

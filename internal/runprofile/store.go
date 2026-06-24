@@ -171,30 +171,26 @@ func (s *Store) Pin(profile RunProfile) error {
 func (s *Store) SetAdopted(id string, adopted bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == nil {
-		s.state = map[string]ProfileUIState{}
-	}
-	st := s.state[id]
+	next := copyProfileState(s.state)
+	st := next[id]
 	st.Adopted = adopted
 	if !st.Adopted && st.LastRunAt == 0 {
-		delete(s.state, id)
+		delete(next, id)
 	} else {
-		s.state[id] = st
+		next[id] = st
 	}
-	return s.persist()
+	return s.persistState(next)
 }
 
 // RecordRun stamps the last-run timestamp (epoch millis) for a profile ID and persists.
 func (s *Store) RecordRun(id string, ts int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == nil {
-		s.state = map[string]ProfileUIState{}
-	}
-	st := s.state[id]
+	next := copyProfileState(s.state)
+	st := next[id]
 	st.LastRunAt = ts
-	s.state[id] = st
-	return s.persist()
+	next[id] = st
+	return s.persistState(next)
 }
 
 // GetState returns a copy of the per-profile UI state map.
@@ -214,6 +210,10 @@ func (s *Store) GetState() map[string]ProfileUIState {
 // because run recency now rewrites this file on every run (frequent writes),
 // and a crash mid-write must not destroy the user's saved profiles.
 func (s *Store) persist() error {
+	return s.persistState(s.state)
+}
+
+func (s *Store) persistState(state map[string]ProfileUIState) error {
 	dir := filepath.Join(s.workspaceRoot, ".firn")
 	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating .firn directory: %w", err)
@@ -226,7 +226,7 @@ func (s *Store) persist() error {
 	pf := ProfilesFile{
 		Version:      profilesFileVersion,
 		Profiles:     profiles,
-		ProfileState: s.state,
+		ProfileState: state,
 	}
 
 	data, err := json.MarshalIndent(pf, "", "  ")
@@ -242,6 +242,7 @@ func (s *Store) persist() error {
 	if err := s.fs.Rename(tmpPath, finalPath); err != nil {
 		return fmt.Errorf("renaming profiles file into place: %w", err)
 	}
+	s.state = state
 	return nil
 }
 
@@ -251,6 +252,14 @@ func orEmptyProfiles(p []RunProfile) []RunProfile {
 		return []RunProfile{}
 	}
 	return p
+}
+
+func copyProfileState(in map[string]ProfileUIState) map[string]ProfileUIState {
+	out := make(map[string]ProfileUIState, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *Store) copyProfiles() []RunProfile {

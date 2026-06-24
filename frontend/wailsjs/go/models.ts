@@ -420,11 +420,11 @@ export namespace runprofile {
 	export class ProfileUIState {
 	    adopted?: boolean;
 	    lastRunAt?: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProfileUIState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.adopted = source["adopted"];
@@ -496,17 +496,17 @@ export namespace runprofile {
 	export class RunProfilesSnapshot {
 	    profiles: RunProfile[];
 	    profileState: Record<string, ProfileUIState>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RunProfilesSnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profiles = this.convertValues(source["profiles"], RunProfile);
 	        this.profileState = this.convertValues(source["profileState"], ProfileUIState, true);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
