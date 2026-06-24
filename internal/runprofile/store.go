@@ -87,9 +87,10 @@ func (s *Store) Load() ([]RunProfile, error) {
 	case 2:
 		// v2 → v3: additive upgrade; profileState stays empty.
 		s.profiles = orEmptyProfiles(pf.Profiles)
-	case 3:
+	case profilesFileVersion:
 		s.profiles = orEmptyProfiles(pf.Profiles)
 		if pf.ProfileState != nil {
+			// Store takes ownership of the unmarshalled map (pf is function-local).
 			s.state = pf.ProfileState
 		}
 	default:
