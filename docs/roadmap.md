@@ -25,7 +25,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | UI/UX Polish | **COMPLETE** | #35-36 |
 | Milestone 2: Terminal Integration | **IN PROGRESS** | #10-12 + #116 complete, #47 open |
 | Milestone 3: Workspace Management | **COMPLETE** | #13-15, #53-54 complete |
-| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18/#71 Phase 1 (workspace-owned detection + identity) shipped via #123; #18/#71 UI (P2–P4), #103, #107 open |
+| Milestone 4: Run Profiles | **IN PROGRESS** | #16-17, #59-64 complete; #18/#71 Phase 1 (#123) + #71 P2 panel (#125) shipped; #18 P3/P4, #103, #107 open |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | Not started | #26-27 |
@@ -41,14 +41,13 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: **Milestone 4 Phase 1 (workspace-owned run profiles) shipped via PR #123** — run profiles are now workspace-aware. A repo-scoped `ProjectRunProfileManager` detects profiles across every workspace at load, stamps owning-workspace identity + workspace-scoped deterministic IDs, persists per-workspace (`.firn/run-profiles.json`) with v1→v2 migration, and routes save/pin/delete by owner; Load is resilient (atomic swap, degrade-on-corrupt-store, non-fatal migration, surfaced warnings). The same PR hardened workspace detection: language markers now beat infra (a Dockerfile no longer shadows a service's real type), the infra type split into Docker/Terraform, dot-directories are skipped (no phantom `.worktrees` workspaces), duplicate workspace names are disambiguated, and the file tree hides dot-folders. This is the prerequisite that unblocks the #71/#18 Run Profiles UI layer.
+Current status: **Milestone 4 #71 P2 (Run Profiles panel UX) shipped via PR #125** — the panel is now a four-section working set (Working Set / Pinned / RECENT / Detected) driven by a pure `groupProfiles` selector, with per-workspace adoption + run-recency persisted in `.firn/run-profiles.json` **v3** (additive `profileState{adopted,lastRunAt}` map; persist made atomic via temp+rename, since recency rewrites the file on every run), a `RunProfilesSnapshot{profiles, profileState}` single hydration contract emitted on every `runprofiles:changed`, Workspace/Project views (reusing the tree-view toggle, single source of truth), view-scoped `● N running · M total` counters, and a 5-min-windowed workspace-accent "just-ran" highlight. New app bindings `AdoptRunProfile`/`UnadoptRunProfile`/`GetRunProfilesSnapshot`. Earlier: **Phase 1 (workspace-owned detection + identity) shipped via #123** — repo-scoped `ProjectRunProfileManager`, owning-workspace identity + workspace-scoped IDs, per-workspace store with v1→v2 migration, owner-routed save/pin/delete, plus detector hardening (language markers beat infra; infra split Docker/Terraform; dot-dirs skipped). Remaining Run Profiles UI: **P3** header `[▶ Profile ▾]` selector (#18) and **P4** create/edit form (#18).
 
 Earlier: **#112 Phase 1 (Python LSP environment auto-wiring) shipped via PR #121** — pyright now resolves imports/types in a standard `src`-layout uv/venv project with zero per-project config. New pure `internal/lsp/pythonenv` interpreter/venv detector; the client answers pyright's `workspace/configuration` pull (was replying `-32601` to all server requests — the root cause) and advertises the capability + `didChangeConfiguration`; a Manager-owned, dialect-agnostic `WorkspaceConfigProvider` forwards `pythonPath`/`venvPath`/`analysis.extraPaths`; raw server errors are replaced by a typed setup status + non-blocking `LSPSetupCard`. Earlier shipped: **editor theme system + diagnostic tooltip (#113/#114, PR #117)** with #119 picker focus polish, **terminal PTY-exhaustion actionable error (#116)**, **file-tree / tab-bar scrollbar fixes (#118)**. Milestone 3 (Workspace Management) complete; file-tree virtualization shipped (#37/#38, PR #111). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) deferred to its own spec.
 
-1. **#18 / #71: Run Profiles UI (Phases 2–4)** — the Phase 1 backend prerequisite (workspace-owned detection + identity) shipped via #123, so profiles now carry an owning workspace. Remaining is the UI layer, best done as a mockup-driven panel design pass:
-   - **P2 (#71):** activation working set + section reorg (Activated / Pinned / Detected) + **RECENT** section (a just-run profile floats above Detected unless it's already saved/pinned) + active/total header counter + per-workspace activation persistence + Workspace/Project view filter & grouping (Workspace View filters to the active workspace; Project View groups by workspace) + more pronounced cards / palette so the just-ran profile is easy to spot.
-   - **P3 (#18):** header `[▶ Profile ▾]` selector dropdown (grouped by workspace/source) with run controls.
-   - **P4 (#18):** create/edit profile form wired to `SaveRunProfile`.
+1. **#18: Run Profiles UI (Phases 3–4)** — Phase 1 (#123) + P2 panel (#71, PR #125) shipped; profiles carry an owning workspace and the panel is the four-section working set. Remaining:
+   - **P3:** header `[▶ Profile ▾]` selector dropdown (grouped by workspace/source) with run controls.
+   - **P4:** create/edit profile form wired to `SaveRunProfile`.
 2. **#107: LANES output view polish** — resizable stdout/stderr columns, STDERR header glyph color, and sticky-header bleed-through on scroll (UI-only follow-up).
 3. **#103: Formalize run execution identity for compound profiles** — follow-up hardening spun out of #63.
 4. **#47: Terminal shell integration** — error markers & command separators (last open item in Milestone 2).
@@ -189,14 +188,14 @@ Backend prerequisite for the Run Profiles UI — profiles now carry an owning wo
 - [x] Load resilience: atomic build-then-swap, degrade-on-corrupt-store, non-fatal migration persist, surfaced warnings
 - [x] Workspace detector fixes: language markers beat infra; infra split → Docker (purple) / Terraform (amber); dot-directories skipped (no phantom `.worktrees` workspaces); duplicate workspace names disambiguated; file-explorer tree hides dot-folders (dot-files stay)
 
-### #71: Run Profiles - Activated State, Section Reorganization, and Selection Persistence (P2)
-- [ ] Activated profile working set
-- [ ] Reorganize sections into Activated, Pinned, and Detected
-- [ ] RECENT section: a just-run profile floats above Detected unless already saved/pinned
-- [ ] Persist activation state per workspace
-- [ ] Header counter with active/total counts
-- [ ] Workspace/Project view filter & grouping (unblocked by #123 workspace ownership)
-- [ ] More pronounced cards / palette to distinguish the just-ran profile
+### #71: Run Profiles - Activated State, Section Reorganization, and Selection Persistence (P2) ✅ (PR #125)
+- [x] Activated profile working set (adopt/unadopt; persisted per workspace)
+- [x] Reorganize sections into Working Set / Pinned / RECENT / Detected (four-section cascade via pure `groupProfiles`)
+- [x] RECENT section: a just-run profile floats above Detected unless already saved/pinned
+- [x] Persist activation + run-recency per workspace (`.firn/run-profiles.json` v3, atomic write)
+- [x] Header counter with running/total counts (view-scoped)
+- [x] Workspace/Project view filter & grouping (reuses tree-view toggle, single source of truth)
+- [x] Workspace-accent just-ran highlight (5-min window) to distinguish the just-ran profile
 
 ### #18: Run Profiles - UI Integration
 - [ ] Profile selector dropdown in header toolbar (`[▶ Profile ▾]`)
@@ -207,7 +206,7 @@ Backend prerequisite for the Run Profiles UI — profiles now carry an owning wo
 - [x] Compound execution view with stage indicators
 - [x] Environment variant selector (`[env: dev ▾]`)
 - [ ] Edit profile form (create/modify saved profiles)
-- [ ] Profiles grouped by workspace with accent colors (depends on #53)
+- [x] Profiles grouped by workspace with accent colors (Project View, PR #125)
 - [x] Status bar / output focus integration for running profiles
 
 > **Design spec ref:** Section 5 (Run Profiles UI)
