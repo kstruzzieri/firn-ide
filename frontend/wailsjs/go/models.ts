@@ -417,6 +417,20 @@ export namespace runprofile {
 	        this.envFile = source["envFile"];
 	    }
 	}
+	export class ProfileUIState {
+	    adopted?: boolean;
+	    lastRunAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileUIState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.adopted = source["adopted"];
+	        this.lastRunAt = source["lastRunAt"];
+	    }
+	}
 	export class RunProfile {
 	    id: string;
 	    name: string;
@@ -459,6 +473,38 @@ export namespace runprofile {
 	        this.workspaceId = source["workspaceId"];
 	        this.workspaceName = source["workspaceName"];
 	        this.workspaceRelDir = source["workspaceRelDir"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RunProfilesSnapshot {
+	    profiles: RunProfile[];
+	    profileState: Record<string, ProfileUIState>;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunProfilesSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profiles = this.convertValues(source["profiles"], RunProfile);
+	        this.profileState = this.convertValues(source["profileState"], ProfileUIState, true);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

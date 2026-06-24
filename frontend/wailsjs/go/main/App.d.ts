@@ -7,6 +7,8 @@ import {main} from '../models';
 import {filesystem} from '../models';
 import {search} from '../models';
 
+export function AdoptRunProfile(arg1:string):Promise<void>;
+
 export function CancelSearch(arg1:string):Promise<void>;
 
 export function CloseTerminal(arg1:string):Promise<void>;
@@ -24,6 +26,8 @@ export function DetectWorkspaces(arg1:string):Promise<Array<workspace.WorkspaceD
 export function GetAllRunProfiles():Promise<Array<runprofile.RunProfile>>;
 
 export function GetLSPStatus():Promise<Array<lsp.ServerStatus>>;
+
+export function GetRunProfilesSnapshot():Promise<runprofile.RunProfilesSnapshot>;
 
 export function GetRunStatus(arg1:string):Promise<runprofile.RunStatus>;
 
@@ -86,6 +90,8 @@ export function StopRunProfile(arg1:string):Promise<void>;
 export function StopWatching():Promise<void>;
 
 export function ToggleMaximize():Promise<void>;
+
+export function UnadoptRunProfile(arg1:string):Promise<void>;
 
 export function UnpinRunProfile(arg1:string):Promise<void>;
 
