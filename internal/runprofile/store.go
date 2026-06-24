@@ -14,8 +14,9 @@ const profilesFileName = ".firn/run-profiles.json"
 
 // profilesFileVersion is the current on-disk schema version. v2 adds workspace
 // ownership fields and workspace-scoped detected IDs. v1 files are migrated on
-// load (see migrateV1Profiles).
-const profilesFileVersion = 2
+// load (see migrateV1Profiles). v3 adds profileState (adoption + run recency),
+// keyed by profile ID.
+const profilesFileVersion = 3
 
 // Store manages persistent storage of run profiles in .firn/run-profiles.json.
 type Store struct {
@@ -23,6 +24,7 @@ type Store struct {
 	workspaceRoot string
 	mu            sync.RWMutex
 	profiles      []RunProfile
+	state         map[string]ProfileUIState
 	scope         MigrationScope
 	// Warnings collects non-fatal load issues (e.g. a v1->v2 migration that
 	// could not be written back to a read-only directory). The migrated data is
@@ -42,6 +44,7 @@ func NewStore(fsys filesystem.FileSystem, workspaceRoot string) *Store {
 		fs:            fsys,
 		workspaceRoot: workspaceRoot,
 		profiles:      []RunProfile{},
+		state:         map[string]ProfileUIState{},
 	}
 }
 
@@ -57,6 +60,7 @@ func (s *Store) Load() ([]RunProfile, error) {
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			s.profiles = []RunProfile{}
+			s.state = map[string]ProfileUIState{}
 			return s.profiles, nil
 		}
 		return nil, fmt.Errorf("reading profiles file: %w", err)
@@ -67,6 +71,7 @@ func (s *Store) Load() ([]RunProfile, error) {
 		return nil, fmt.Errorf("parsing profiles file: %w", err)
 	}
 
+	s.state = map[string]ProfileUIState{}
 	switch pf.Version {
 	case 1:
 		migrated, changed := migrateV1Profiles(orEmptyProfiles(pf.Profiles), s.scope)
@@ -79,10 +84,16 @@ func (s *Store) Load() ([]RunProfile, error) {
 				s.Warnings = append(s.Warnings, fmt.Sprintf("could not write migrated profiles to %s: %v", path, err))
 			}
 		}
-	case profilesFileVersion:
+	case 2:
+		// v2 → v3: additive upgrade; profileState stays empty.
 		s.profiles = orEmptyProfiles(pf.Profiles)
+	case 3:
+		s.profiles = orEmptyProfiles(pf.Profiles)
+		if pf.ProfileState != nil {
+			s.state = pf.ProfileState
+		}
 	default:
-		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1 or %d)", pf.Version, profilesFileVersion)
+		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1-%d)", pf.Version, profilesFileVersion)
 	}
 	return s.copyProfiles(), nil
 }
@@ -154,6 +165,48 @@ func (s *Store) Pin(profile RunProfile) error {
 	return s.Save(profile)
 }
 
+// SetAdopted sets the per-workspace adoption flag for a profile ID and persists.
+// Clearing adoption on an entry with no recency drops the entry to keep the map tidy.
+func (s *Store) SetAdopted(id string, adopted bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		s.state = map[string]ProfileUIState{}
+	}
+	st := s.state[id]
+	st.Adopted = adopted
+	if !st.Adopted && st.LastRunAt == 0 {
+		delete(s.state, id)
+	} else {
+		s.state[id] = st
+	}
+	return s.persist()
+}
+
+// RecordRun stamps the last-run timestamp (epoch millis) for a profile ID and persists.
+func (s *Store) RecordRun(id string, ts int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		s.state = map[string]ProfileUIState{}
+	}
+	st := s.state[id]
+	st.LastRunAt = ts
+	s.state[id] = st
+	return s.persist()
+}
+
+// GetState returns a copy of the per-profile UI state map.
+func (s *Store) GetState() map[string]ProfileUIState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]ProfileUIState, len(s.state))
+	for k, v := range s.state {
+		out[k] = v
+	}
+	return out
+}
+
 // persist writes the current profiles to disk.
 // Note: This is not atomic (no write-to-temp + rename) because the
 // filesystem.FileSystem interface does not expose Rename. If atomic writes
@@ -170,8 +223,9 @@ func (s *Store) persist() error {
 		profiles = []RunProfile{}
 	}
 	pf := ProfilesFile{
-		Version:  profilesFileVersion,
-		Profiles: profiles,
+		Version:      profilesFileVersion,
+		Profiles:     profiles,
+		ProfileState: s.state,
 	}
 
 	data, err := json.MarshalIndent(pf, "", "  ")
