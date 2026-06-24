@@ -40,6 +40,7 @@ export interface ExpandedPanelProps {
   onPin: () => void;
   onUnpin: () => void;
   onHide: () => void;
+  onUnadopt?: () => void;
 }
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -429,6 +430,7 @@ function ActionsRow({
   onPin,
   onUnpin,
   onHide,
+  onUnadopt,
 }: {
   profile: RunProfile;
   visualState: VisualState;
@@ -440,6 +442,7 @@ function ActionsRow({
   onPin: () => void;
   onUnpin: () => void;
   onHide: () => void;
+  onUnadopt?: () => void;
 }) {
   const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
   const isStopping = visualState === 'stopping';
@@ -493,6 +496,15 @@ function ActionsRow({
         </button>
       )}
       <span className={styles.spacer} />
+      {onUnadopt && (
+        <button
+          className={styles.actionGhost}
+          onClick={onUnadopt}
+          aria-label={`Remove ${profile.name} from working set`}
+        >
+          Remove from working set
+        </button>
+      )}
       {profile.source === 'detected' ? (
         <button className={styles.actionGhost} onClick={onPin} aria-label={`Pin ${profile.name}`}>
           Pin
@@ -529,6 +541,7 @@ export function ExpandedPanel({
   onPin,
   onUnpin,
   onHide,
+  onUnadopt,
 }: ExpandedPanelProps) {
   function renderPanel() {
     switch (visualState) {
@@ -618,6 +631,7 @@ export function ExpandedPanel({
         onPin={onPin}
         onUnpin={onUnpin}
         onHide={onHide}
+        onUnadopt={onUnadopt}
       />
     </div>
   );

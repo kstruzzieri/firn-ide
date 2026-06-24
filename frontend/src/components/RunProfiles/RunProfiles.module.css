@@ -52,19 +52,72 @@
 
 /* Header counters */
 .totalCount {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  color: rgba(56, 189, 248, 0.6);
+  color: rgba(56, 189, 248, 0.95);
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
   letter-spacing: 0.03em;
   margin-left: 4px;
 }
 
 .hiddenCount {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  color: rgba(168, 85, 247, 0.5);
+  color: rgba(168, 85, 247, 0.85);
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
   letter-spacing: 0.03em;
   margin-left: 4px;
+}
+
+.sectionCount {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.runningCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: 6px;
+  letter-spacing: 0.03em;
+}
+
+.workspaceGroup {
+  margin-bottom: 14px;
+}
+
+.workspaceHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.workspaceName {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Per-workspace total in Project-View group headers (the "· M" in "● N running · M") */
+.groupTotal {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
+}
+
+.workspaceDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+details.group > summary {
+  cursor: pointer;
+  list-style: revert;
 }

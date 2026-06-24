@@ -471,6 +471,66 @@ func (m *ProjectRunProfileManager) HandleFileChange(path string) bool {
 	return true
 }
 
+// RunProfilesSnapshot is the combined repo-wide view consumed by the frontend:
+// the merged profile list plus per-profile UI state keyed by (globally unique)
+// profile ID. It is the single hydration contract for initial load and the
+// runprofiles:changed event.
+type RunProfilesSnapshot struct {
+	Profiles     []RunProfile              `json:"profiles"`
+	ProfileState map[string]ProfileUIState `json:"profileState"`
+}
+
+// Snapshot returns the merged profile list and the union of every unit's
+// per-profile UI state. IDs are workspace-scoped and globally unique (Phase 1),
+// so a flat merged map is unambiguous.
+func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var merged []RunProfile
+	state := map[string]ProfileUIState{}
+	for _, relDir := range m.order {
+		u := m.units[relDir]
+		merged = append(merged, m.combineUnitLocked(u)...)
+		if u == nil {
+			continue
+		}
+		for k, v := range u.store.GetState() {
+			state[k] = v
+		}
+	}
+	if merged == nil {
+		merged = []RunProfile{}
+	}
+	return RunProfilesSnapshot{Profiles: merged, ProfileState: state}
+}
+
+// AdoptProfile marks a profile (by ID) as adopted into the owning workspace's working set.
+func (m *ProjectRunProfileManager) AdoptProfile(id string) error { return m.setAdopted(id, true) }
+
+// UnadoptProfile clears the adoption flag for a profile (by ID).
+func (m *ProjectRunProfileManager) UnadoptProfile(id string) error { return m.setAdopted(id, false) }
+
+func (m *ProjectRunProfileManager) setAdopted(id string, adopted bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	unit := m.unitForProfileIDLocked(id)
+	if unit == nil {
+		return fmt.Errorf("profile not found: %s", id)
+	}
+	return unit.store.SetAdopted(id, adopted)
+}
+
+// RecordRun stamps run recency (epoch millis) for a profile (by ID) in its owning workspace store.
+func (m *ProjectRunProfileManager) RecordRun(id string, ts int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	unit := m.unitForProfileIDLocked(id)
+	if unit == nil {
+		return fmt.Errorf("profile not found: %s", id)
+	}
+	return unit.store.RecordRun(id, ts)
+}
+
 // hasPathPrefix reports whether p is within the directory prefix (forward-slash
 // aware), e.g. hasPathPrefix("backend/python/sub", "backend/python") == true.
 func hasPathPrefix(p, prefix string) bool {

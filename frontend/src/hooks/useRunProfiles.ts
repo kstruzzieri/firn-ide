@@ -1,9 +1,15 @@
 import { useEffect } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { LoadRunProfiles, GetAllRunProfiles } from '../../wailsjs/go/main/App';
+import { LoadRunProfiles, GetRunProfilesSnapshot } from '../../wailsjs/go/main/App';
 import type { runprofile } from '../../wailsjs/go/models';
 import { useIDEStore } from '../stores/ideStore';
-import type { ProfileSource, ProfileTag, ProfileType, RunProfile } from '../types/runProfile';
+import type {
+  ProfileSource,
+  ProfileTag,
+  ProfileType,
+  RunProfile,
+  RunProfileUIState,
+} from '../types/runProfile';
 
 const VALID_PROFILE_TYPES: ReadonlySet<string> = new Set(['single', 'compound']);
 const VALID_PROFILE_SOURCES: ReadonlySet<string> = new Set(['user', 'detected']);
@@ -69,6 +75,31 @@ function normalizeRunProfiles(rawProfiles: unknown): RunProfile[] {
   return normalized;
 }
 
+export function normalizeProfileState(raw: unknown): Record<string, RunProfileUIState> {
+  const out: Record<string, RunProfileUIState> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    const v = value as Record<string, unknown>;
+    out[id] = {
+      adopted: v.adopted === true,
+      lastRunAt: typeof v.lastRunAt === 'number' ? v.lastRunAt : 0,
+    };
+  }
+  return out;
+}
+
+function normalizeSnapshot(raw: unknown): {
+  profiles: RunProfile[];
+  profileState: Record<string, RunProfileUIState>;
+} {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    profiles: normalizeRunProfiles(obj.profiles),
+    profileState: normalizeProfileState(obj.profileState),
+  };
+}
+
 /**
  * Hook to load and reactively update run profiles for a workspace.
  *
@@ -83,15 +114,16 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     useIDEStore.getState().resetWorkspaceRunState();
 
     let cancelled = false;
-    const { setProfilesLoading, setRunProfiles, setProfilesError } = useIDEStore.getState();
+    const { setProfilesLoading, setRunProfilesSnapshot, setProfilesError } = useIDEStore.getState();
 
     setProfilesLoading(true);
 
     LoadRunProfiles(workspacePath)
-      .then(() => GetAllRunProfiles())
-      .then((profiles: runprofile.RunProfile[]) => {
+      .then(() => GetRunProfilesSnapshot())
+      .then((snap: unknown) => {
         if (!cancelled) {
-          setRunProfiles(normalizeRunProfiles(profiles));
+          const { profiles, profileState } = normalizeSnapshot(snap);
+          setRunProfilesSnapshot(profiles, profileState);
         }
       })
       .catch((err: unknown) => {
@@ -105,9 +137,10 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     // These events are emitted by the StartWatching callback in app.go when
     // a config file (package.json, go.mod, etc.) changes. The watcher must
     // be started separately (e.g., via useFileWatcher) for events to fire.
-    const cleanup = EventsOn('runprofiles:changed', (profiles: unknown) => {
+    const cleanup = EventsOn('runprofiles:changed', (snap: unknown) => {
       if (!cancelled) {
-        setRunProfiles(normalizeRunProfiles(profiles));
+        const { profiles, profileState } = normalizeSnapshot(snap);
+        setRunProfilesSnapshot(profiles, profileState);
       }
     });
 

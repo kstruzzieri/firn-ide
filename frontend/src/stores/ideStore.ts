@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import type { filesystem, workspace } from '../../wailsjs/go/models';
-import type { RunProfile } from '../types/runProfile';
+import type { RunProfile, RunProfileUIState } from '../types/runProfile';
 import { LineAssembler } from '../utils/lineAssembler';
 import type {
   CompoundRun,
@@ -160,6 +160,7 @@ interface IDEState {
 
   // Run Profiles
   runProfiles: RunProfile[];
+  runProfileState: Record<string, RunProfileUIState>;
   isLoadingProfiles: boolean;
   profilesError: string | null;
 
@@ -250,7 +251,12 @@ interface IDEActions {
   setWorkingDirectory: (path: string) => void;
 
   // Run Profile actions
-  setRunProfiles: (profiles: RunProfile[]) => void;
+  setRunProfilesSnapshot: (
+    profiles: RunProfile[],
+    profileState: Record<string, RunProfileUIState>
+  ) => void;
+  adoptProfileLocal: (id: string) => void;
+  unadoptProfileLocal: (id: string) => void;
   setProfilesLoading: (loading: boolean) => void;
   setProfilesError: (error: string | null) => void;
   addOrUpdateProfile: (profile: RunProfile) => void;
@@ -404,6 +410,7 @@ export const useIDEStore = create<IDEStore>()(
       hasAutoCreatedInitialTerminalSession: false,
       workingDirectory: '',
       runProfiles: [],
+      runProfileState: {},
       isLoadingProfiles: false,
       profilesError: null,
       runOutputs: {},
@@ -698,11 +705,42 @@ export const useIDEStore = create<IDEStore>()(
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Run Profile actions
-      setRunProfiles: (runProfiles) =>
+      setRunProfilesSnapshot: (runProfiles, runProfileState) =>
         set(
-          { runProfiles, profilesError: null, isLoadingProfiles: false },
+          { runProfiles, runProfileState, profilesError: null, isLoadingProfiles: false },
           false,
-          'setRunProfiles'
+          'setRunProfilesSnapshot'
+        ),
+
+      adoptProfileLocal: (id) =>
+        set(
+          (state) => ({
+            runProfileState: {
+              ...state.runProfileState,
+              [id]: { ...state.runProfileState[id], adopted: true },
+            },
+          }),
+          false,
+          'adoptProfileLocal'
+        ),
+
+      unadoptProfileLocal: (id) =>
+        set(
+          (state) => {
+            // Mirror the backend (store.go SetAdopted): clearing adoption on an
+            // entry with no recency drops the entry entirely so the optimistic
+            // map matches what the server persists.
+            const prev = state.runProfileState[id];
+            const next = { ...state.runProfileState };
+            if (prev?.lastRunAt) {
+              next[id] = { ...prev, adopted: false };
+            } else {
+              delete next[id];
+            }
+            return { runProfileState: next };
+          },
+          false,
+          'unadoptProfileLocal'
         ),
 
       setProfilesLoading: (isLoadingProfiles) =>
@@ -1459,6 +1497,7 @@ export const useIDEStore = create<IDEStore>()(
               hiddenProfileIds: [],
               runStartTimestamps: {},
               stopRequestTimestamps: {},
+              runProfileState: {},
             };
           },
           false,
@@ -1637,6 +1676,7 @@ export const useIsLoadingTree = () => useIDEStore((state) => state.isLoadingTree
 export const useTreeError = () => useIDEStore((state) => state.treeError);
 export const useToast = () => useIDEStore((state) => state.toast);
 export const useRunProfiles = () => useIDEStore((state) => state.runProfiles);
+export const useRunProfileState = () => useIDEStore((state) => state.runProfileState);
 export const useDetectedProfiles = () =>
   useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'detected')));
 export const useSavedProfiles = () =>

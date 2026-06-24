@@ -12,6 +12,7 @@ type Mock struct {
 	StatFunc      func(path string) (fs.FileInfo, error)
 	MkdirAllFunc  func(path string, perm fs.FileMode) error
 	RemoveFunc    func(path string) error
+	RenameFunc    func(oldpath, newpath string) error
 }
 
 func (m *Mock) ReadDir(path string) ([]fs.DirEntry, error) {
@@ -52,6 +53,13 @@ func (m *Mock) MkdirAll(path string, perm fs.FileMode) error {
 func (m *Mock) Remove(path string) error {
 	if m.RemoveFunc != nil {
 		return m.RemoveFunc(path)
+	}
+	return nil
+}
+
+func (m *Mock) Rename(oldpath, newpath string) error {
+	if m.RenameFunc != nil {
+		return m.RenameFunc(oldpath, newpath)
 	}
 	return nil
 }

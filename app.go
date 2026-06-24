@@ -213,14 +213,14 @@ func (a *App) StartWatching(path string) error {
 		}
 
 		changed := a.profileManager.HandleFileChange(event.Path)
-		var profiles []runprofile.RunProfile
+		var snap runprofile.RunProfilesSnapshot
 		if changed {
-			profiles = a.profileManager.GetAllProfiles()
+			snap = a.profileManager.Snapshot()
 		}
 		a.profileMu.RUnlock()
 
 		if changed {
-			runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
+			runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
 		}
 	})
 }
@@ -348,6 +348,47 @@ func (a *App) GetAllRunProfiles() []runprofile.RunProfile {
 	return a.profileManager.GetAllProfiles()
 }
 
+// GetRunProfilesSnapshot returns the combined profile list plus per-profile UI
+// state (adoption + run recency). This is the P2 hydration contract.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GetRunProfilesSnapshot() runprofile.RunProfilesSnapshot {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+	if a.profileManager == nil {
+		return runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}}
+	}
+	return a.profileManager.Snapshot()
+}
+
+// AdoptRunProfile adds a profile to its workspace working set and emits an update.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) AdoptRunProfile(id string) error {
+	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.AdoptProfile(id) })
+}
+
+// UnadoptRunProfile removes a profile from its workspace working set and emits an update.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) UnadoptRunProfile(id string) error {
+	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.UnadoptProfile(id) })
+}
+
+// mutateAndEmitProfiles runs a manager mutation under the app read lock, then emits the full snapshot on success. Centralizes the lock/emit dance shared by pin/unpin/variant/adopt/unadopt.
+func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager) error) error {
+	a.profileMu.RLock()
+	if a.profileManager == nil {
+		a.profileMu.RUnlock()
+		return fmt.Errorf("no workspace loaded")
+	}
+	if err := fn(a.profileManager); err != nil {
+		a.profileMu.RUnlock()
+		return err
+	}
+	snap := a.profileManager.Snapshot()
+	a.profileMu.RUnlock()
+	runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
+	return nil
+}
+
 // SaveRunProfile validates and saves a run profile.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) SaveRunProfile(profile runprofile.RunProfile) (runprofile.ValidationResult, error) {
@@ -377,62 +418,21 @@ func (a *App) DeleteRunProfile(id string) error {
 // PinRunProfile converts a detected profile to a saved profile and emits an update event.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) PinRunProfile(id string) error {
-	a.profileMu.RLock()
-	if a.profileManager == nil {
-		a.profileMu.RUnlock()
-		return fmt.Errorf("no workspace loaded")
-	}
-
-	if err := a.profileManager.PinProfile(id); err != nil {
-		a.profileMu.RUnlock()
-		return err
-	}
-
-	// Emit updated profiles so frontend reflects the pin immediately
-	profiles := a.profileManager.GetAllProfiles()
-	a.profileMu.RUnlock()
-	runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
-	return nil
+	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.PinProfile(id) })
 }
 
 // UnpinRunProfile reverts a saved (pinned) profile back to detected status.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) UnpinRunProfile(id string) error {
-	a.profileMu.RLock()
-	if a.profileManager == nil {
-		a.profileMu.RUnlock()
-		return fmt.Errorf("no workspace loaded")
-	}
-
-	if err := a.profileManager.UnpinProfile(id); err != nil {
-		a.profileMu.RUnlock()
-		return err
-	}
-
-	profiles := a.profileManager.GetAllProfiles()
-	a.profileMu.RUnlock()
-	runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
-	return nil
+	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.UnpinProfile(id) })
 }
 
 // SetActiveVariant selects the env variant for a run profile and emits the updated profile list.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) SetActiveVariant(profileID string, variant string) error {
-	a.profileMu.RLock()
-	if a.profileManager == nil {
-		a.profileMu.RUnlock()
-		return fmt.Errorf("no workspace loaded")
-	}
-
-	if err := a.profileManager.SetActiveVariant(profileID, variant); err != nil {
-		a.profileMu.RUnlock()
-		return err
-	}
-
-	profiles := a.profileManager.GetAllProfiles()
-	a.profileMu.RUnlock()
-	runtime.EventsEmit(a.ctx, "runprofiles:changed", profiles)
-	return nil
+	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error {
+		return m.SetActiveVariant(profileID, variant)
+	})
 }
 
 // ValidateRunProfile validates a run profile without saving it.
@@ -510,15 +510,38 @@ func (a *App) StartRunProfile(profileID string) error {
 		return fmt.Errorf("profile not found: %s", profileID)
 	}
 
+	var startErr error
 	if profile.Type == runprofile.ProfileTypeCompound {
 		steps, err := runprofile.ResolveSteps(*profile, profiles)
 		if err != nil {
 			return err
 		}
-		return a.executor.StartCompound(workspaceRoot, *profile, steps)
+		startErr = a.executor.StartCompound(workspaceRoot, *profile, steps)
+	} else {
+		startErr = a.executor.Start(workspaceRoot, *profile)
 	}
 
-	return a.executor.Start(workspaceRoot, *profile)
+	if startErr == nil {
+		// Stamp run recency (best-effort; must not fail the run).
+		a.profileMu.RLock()
+		mgr := a.profileManager
+		var snap runprofile.RunProfilesSnapshot
+		emit := false
+		if mgr != nil {
+			if err := mgr.RecordRun(profileID, nowMillis()); err == nil {
+				snap = mgr.Snapshot()
+				emit = true
+			} else {
+				runtime.LogWarningf(a.ctx, "could not record run recency for %s: %v", profileID, err)
+			}
+		}
+		a.profileMu.RUnlock()
+		if emit {
+			runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
+		}
+	}
+
+	return startErr
 }
 
 // StopRunProfile stops a running profile (SIGTERM → 3s → SIGKILL).
@@ -708,3 +731,6 @@ func (a *App) CancelSearch(requestID string) {
 	}
 	a.searchManager.Cancel(requestID)
 }
+
+// nowMillis returns the current time as Unix milliseconds.
+func nowMillis() int64 { return time.Now().UnixMilli() }

@@ -206,6 +206,51 @@ store.setGitBranch('main');
 
 For LSP diagnostics and workspace search state, use `lspStore` and `searchStore` actions rather than adding parallel counters or result state to `ideStore`.
 
+## Run Profiles: Persistence and UI State
+
+Run profiles live in a per-workspace `.firn/run-profiles.json` file owned by the `internal/runprofile` package. Saved profiles capture the user's run configuration; a separate UI-state map tracks how the profile panel presents detected profiles.
+
+### File Schema (v3)
+
+The on-disk file is versioned. **v3** adds a `profileState` map keyed by profile ID, alongside the unchanged `profiles` array:
+
+```jsonc
+{
+  "version": 3,
+  "profiles": [ /* saved run profiles — unchanged from v2 */ ],
+  "profileState": {
+    "<profileId>": {
+      "adopted": true,      // working-set membership (user pulled a detected profile in)
+      "lastRunAt": 1700000000000  // run recency, epoch milliseconds
+    }
+  }
+}
+```
+
+`v2 → v3` migration is **additive**: a v2 file loads cleanly with an empty `profileState`, and the saved `profiles` are untouched. Both `profileState` fields are optional and default to zero values.
+
+### Snapshot Hydration Contract
+
+`RunProfilesSnapshot{ profiles, profileState }` (defined in `internal/runprofile/project_manager.go`) is the single contract the frontend hydrates from. It is:
+
+- Returned by `App.GetRunProfilesSnapshot()` for the initial load.
+- Emitted on the `runprofiles:changed` Wails event after every state change — initial load, pin/unpin, variant change, adopt/unadopt, and a successful run.
+
+The frontend re-validates the payload with `normalizeSnapshot` (`hooks/useRunProfiles.ts`) before storing it via `setRunProfilesSnapshot`, so `runProfiles` and `runProfileState` in `ideStore` always come from a validated snapshot rather than ad-hoc updates. Adopt/unadopt apply an optimistic local change first (`adoptProfileLocal`/`unadoptProfileLocal`) and revert it if the backend call rejects; the next snapshot reconciles the authoritative state.
+
+### Section Model
+
+The panel renders each profile in the **first** matching section (`utils/groupProfiles.ts`):
+
+| Section | Membership |
+|---------|------------|
+| Activated (Working Set) | Detected profile that has been adopted |
+| Pinned | Saved/user profiles |
+| Recent | Detected, previously run, top 5 by `lastRunAt` |
+| Detected | Everything else detected |
+
+Run recency drives both the Recent ranking and the "just ran" indicator. For a compound profile, launching it records `lastRunAt` only for the launched profile — its child steps are not stamped.
+
 ## Adding New Features
 
 Follow this guide when adding new functionality to Firn IDE.

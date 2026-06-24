@@ -197,6 +197,41 @@ func TestProfilesFileJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProfilesFileV3RoundTrip(t *testing.T) {
+	in := ProfilesFile{
+		Version:  3,
+		Profiles: []RunProfile{{ID: "detected-x", Name: "Dev", Type: ProfileTypeSingle, Source: ProfileSourceDetected}},
+		ProfileState: map[string]ProfileUIState{
+			"detected-x": {Adopted: true, LastRunAt: 1719100000000},
+		},
+	}
+	data, err := json.MarshalIndent(in, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out ProfilesFile
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Version != 3 {
+		t.Errorf("version = %d, want 3", out.Version)
+	}
+	st, ok := out.ProfileState["detected-x"]
+	if !ok || !st.Adopted || st.LastRunAt != 1719100000000 {
+		t.Errorf("profileState round-trip lost data: %+v", out.ProfileState)
+	}
+}
+
+func TestProfileUIStateOmitsZeroValues(t *testing.T) {
+	data, err := json.Marshal(ProfileUIState{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(data) != "{}" {
+		t.Errorf("zero ProfileUIState = %s, want {}", data)
+	}
+}
+
 func TestRunProfileWorkspaceOwnershipRoundTrips(t *testing.T) {
 	profile := RunProfile{
 		ID:              "detected-frontend-package-json-dev",

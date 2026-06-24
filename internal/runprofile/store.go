@@ -14,8 +14,9 @@ const profilesFileName = ".firn/run-profiles.json"
 
 // profilesFileVersion is the current on-disk schema version. v2 adds workspace
 // ownership fields and workspace-scoped detected IDs. v1 files are migrated on
-// load (see migrateV1Profiles).
-const profilesFileVersion = 2
+// load (see migrateV1Profiles). v3 adds profileState (adoption + run recency),
+// keyed by profile ID.
+const profilesFileVersion = 3
 
 // Store manages persistent storage of run profiles in .firn/run-profiles.json.
 type Store struct {
@@ -23,6 +24,7 @@ type Store struct {
 	workspaceRoot string
 	mu            sync.RWMutex
 	profiles      []RunProfile
+	state         map[string]ProfileUIState
 	scope         MigrationScope
 	// Warnings collects non-fatal load issues (e.g. a v1->v2 migration that
 	// could not be written back to a read-only directory). The migrated data is
@@ -42,6 +44,7 @@ func NewStore(fsys filesystem.FileSystem, workspaceRoot string) *Store {
 		fs:            fsys,
 		workspaceRoot: workspaceRoot,
 		profiles:      []RunProfile{},
+		state:         map[string]ProfileUIState{},
 	}
 }
 
@@ -57,6 +60,7 @@ func (s *Store) Load() ([]RunProfile, error) {
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			s.profiles = []RunProfile{}
+			s.state = map[string]ProfileUIState{}
 			return s.profiles, nil
 		}
 		return nil, fmt.Errorf("reading profiles file: %w", err)
@@ -67,6 +71,7 @@ func (s *Store) Load() ([]RunProfile, error) {
 		return nil, fmt.Errorf("parsing profiles file: %w", err)
 	}
 
+	s.state = map[string]ProfileUIState{}
 	switch pf.Version {
 	case 1:
 		migrated, changed := migrateV1Profiles(orEmptyProfiles(pf.Profiles), s.scope)
@@ -79,10 +84,17 @@ func (s *Store) Load() ([]RunProfile, error) {
 				s.Warnings = append(s.Warnings, fmt.Sprintf("could not write migrated profiles to %s: %v", path, err))
 			}
 		}
+	case 2:
+		// v2 → v3: additive upgrade; profileState stays empty.
+		s.profiles = orEmptyProfiles(pf.Profiles)
 	case profilesFileVersion:
 		s.profiles = orEmptyProfiles(pf.Profiles)
+		if pf.ProfileState != nil {
+			// Store takes ownership of the unmarshalled map (pf is function-local).
+			s.state = pf.ProfileState
+		}
 	default:
-		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1 or %d)", pf.Version, profilesFileVersion)
+		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1-%d)", pf.Version, profilesFileVersion)
 	}
 	return s.copyProfiles(), nil
 }
@@ -154,12 +166,54 @@ func (s *Store) Pin(profile RunProfile) error {
 	return s.Save(profile)
 }
 
+// SetAdopted sets the per-workspace adoption flag for a profile ID and persists.
+// Clearing adoption on an entry with no recency drops the entry to keep the map tidy.
+func (s *Store) SetAdopted(id string, adopted bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := copyProfileState(s.state)
+	st := next[id]
+	st.Adopted = adopted
+	if !st.Adopted && st.LastRunAt == 0 {
+		delete(next, id)
+	} else {
+		next[id] = st
+	}
+	return s.persistState(next)
+}
+
+// RecordRun stamps the last-run timestamp (epoch millis) for a profile ID and persists.
+func (s *Store) RecordRun(id string, ts int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := copyProfileState(s.state)
+	st := next[id]
+	st.LastRunAt = ts
+	next[id] = st
+	return s.persistState(next)
+}
+
+// GetState returns a copy of the per-profile UI state map.
+func (s *Store) GetState() map[string]ProfileUIState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]ProfileUIState, len(s.state))
+	for k, v := range s.state {
+		out[k] = v
+	}
+	return out
+}
+
 // persist writes the current profiles to disk.
-// Note: This is not atomic (no write-to-temp + rename) because the
-// filesystem.FileSystem interface does not expose Rename. If atomic writes
-// become necessary, add Rename to the interface. The risk of corruption is
-// low since the file is small and written infrequently.
+// The write is atomic: data is written to a sibling temp file and then renamed
+// into place, so a torn write can never corrupt the existing file. This matters
+// because run recency now rewrites this file on every run (frequent writes),
+// and a crash mid-write must not destroy the user's saved profiles.
 func (s *Store) persist() error {
+	return s.persistState(s.state)
+}
+
+func (s *Store) persistState(state map[string]ProfileUIState) error {
 	dir := filepath.Join(s.workspaceRoot, ".firn")
 	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating .firn directory: %w", err)
@@ -170,8 +224,9 @@ func (s *Store) persist() error {
 		profiles = []RunProfile{}
 	}
 	pf := ProfilesFile{
-		Version:  profilesFileVersion,
-		Profiles: profiles,
+		Version:      profilesFileVersion,
+		Profiles:     profiles,
+		ProfileState: state,
 	}
 
 	data, err := json.MarshalIndent(pf, "", "  ")
@@ -179,11 +234,15 @@ func (s *Store) persist() error {
 		return fmt.Errorf("marshaling profiles: %w", err)
 	}
 
-	path := filepath.Join(s.workspaceRoot, profilesFileName)
-	if err := s.fs.WriteFile(path, data, fs.FileMode(0o644)); err != nil {
-		return fmt.Errorf("writing profiles file: %w", err)
+	finalPath := filepath.Join(s.workspaceRoot, profilesFileName)
+	tmpPath := finalPath + ".tmp"
+	if err := s.fs.WriteFile(tmpPath, data, fs.FileMode(0o644)); err != nil {
+		return fmt.Errorf("writing temp profiles file: %w", err)
 	}
-
+	if err := s.fs.Rename(tmpPath, finalPath); err != nil {
+		return fmt.Errorf("renaming profiles file into place: %w", err)
+	}
+	s.state = state
 	return nil
 }
 
@@ -193,6 +252,14 @@ func orEmptyProfiles(p []RunProfile) []RunProfile {
 		return []RunProfile{}
 	}
 	return p
+}
+
+func copyProfileState(in map[string]ProfileUIState) map[string]ProfileUIState {
+	out := make(map[string]ProfileUIState, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *Store) copyProfiles() []RunProfile {

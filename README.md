@@ -233,6 +233,8 @@ go test ./...
 
 Do not commit mode-only churn in generated bindings. If `git diff --summary frontend/wailsjs` shows only `100644 => 100755`, clear it with `chmod 644 frontend/wailsjs/go/main/App.d.ts frontend/wailsjs/go/main/App.js frontend/wailsjs/go/models.ts frontend/wailsjs/runtime/*`. If your local filesystem keeps flipping executable bits, use `git config core.filemode false` locally.
 
+`wails generate` / `wails build` also re-emits trailing whitespace on blank lines inside `models.ts` (and the exec-bit above) every run, so a regen with no real API change shows a spurious whitespace diff. The committed copies are the prettier-cleaned versions — the `lint-staged` pre-commit hook strips that whitespace automatically. If you regenerated without any Go-facing API/model change, discard the noise with `git restore frontend/wailsjs` rather than committing it.
+
 ## Design Documentation
 
 The [Design Specification](docs/design-specification.md) contains the complete UI/UX blueprint:

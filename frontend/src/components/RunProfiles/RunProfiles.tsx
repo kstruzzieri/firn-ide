@@ -2,16 +2,46 @@ import { useEffect, useMemo, useState } from 'react';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
 import { ProfileBrowser } from './ProfileBrowser';
+import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';
 import {
   useRunProfiles,
   useIsLoadingProfiles,
   useProfilesError,
   useIDEStore,
+  useRunProfileState,
+  useTreeViewMode,
+  useActiveWorkspaceId,
+  useWorkspaces,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
 import { estimateRemaining } from '../../utils/estimateCompletion';
+import {
+  groupProfiles,
+  isJustRan,
+  SECTION_LABEL,
+  type SectionGroup,
+  type WorkspaceGroup,
+} from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfiles.module.css';
+
+// Accents that have a defined --accent-{name} token; anything else falls back to
+// the neutral "project" accent. Mirrors WorkspaceSelector/WorkspaceTabs so the
+// per-workspace dot here colors identically to the rest of the IDE.
+const VALID_ACCENTS = new Set([
+  'project',
+  'blue',
+  'cyan',
+  'green',
+  'purple',
+  'orange',
+  'amber',
+  'general',
+]);
+
+function accentVar(accent: string | undefined): string {
+  return `var(--accent-${accent && VALID_ACCENTS.has(accent) ? accent : 'project'})`;
+}
 
 export function RunProfiles() {
   const profiles = useRunProfiles();
@@ -24,6 +54,14 @@ export function RunProfiles() {
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
   const runStartTimestamps = useIDEStore((s) => s.runStartTimestamps);
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
+  const runProfileState = useRunProfileState();
+  const viewMode = useTreeViewMode(); // 'project' | 'workspace'
+  const activeWorkspaceId = useActiveWorkspaceId();
+  const workspaces = useWorkspaces();
+
+  // Render-time "now" for the just-ran recency window. Kept out of any memo deps
+  // so grouping stays pure/memoized; recomputed each render (e.g. via etaTick).
+  const nowMs = Date.now();
 
   // Filter out hidden profiles
   const visibleProfiles = useMemo(
@@ -85,16 +123,15 @@ export function RunProfiles() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- etaTick forces re-sort when ETA estimates update
   }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
 
-  const savedProfiles = useMemo(
-    () => sortByEta(visibleProfiles.filter((p) => p.source === 'user')),
-    [visibleProfiles, sortByEta]
-  );
-  const detectedProfiles = useMemo(
-    () => sortByEta(visibleProfiles.filter((p) => p.source === 'detected')),
-    [visibleProfiles, sortByEta]
+  // Apply ETA sort BEFORE grouping so running-soonest profiles bubble up within
+  // their section (groupProfiles preserves input order for activated/pinned/detected).
+  const sortedVisible = useMemo(() => sortByEta(visibleProfiles), [visibleProfiles, sortByEta]);
+  const grouped = useMemo(
+    () => groupProfiles(sortedVisible, runProfileState, { viewMode, activeWorkspaceId }),
+    [sortedVisible, runProfileState, viewMode, activeWorkspaceId]
   );
 
-  const renderCard = (profile: RunProfile) => {
+  const renderCard = (profile: RunProfile, section: SectionGroup['key']) => {
     const vs = getVisualState(
       profile.id,
       runOutputs[profile.id]?.state,
@@ -113,30 +150,96 @@ export function RunProfiles() {
         runHistory={runHistory[profile.id] ?? []}
         isDormant={isDormant}
         isDuplicate={isDuplicate}
+        section={section}
+        isFreshestRun={
+          grouped.freshestRunId === profile.id &&
+          isJustRan(runProfileState[profile.id]?.lastRunAt, nowMs)
+        }
         onFocusOutput={focusProfileOutput}
       />
     );
   };
 
-  const totalCount = profiles.length;
-  // Derive hidden count from intersection with current profiles to avoid
-  // stale IDs inflating the counter after profiles are removed/renamed
+  const renderSection = (g: SectionGroup, collapseDetected: boolean) => {
+    if (collapseDetected && g.key === 'detected') {
+      return (
+        <details key={g.key} className={styles.group}>
+          <summary className={styles.groupLabel}>
+            {SECTION_LABEL[g.key]} <span className={styles.sectionCount}>{g.profiles.length}</span>
+          </summary>
+          {g.profiles.map((p) => renderCard(p, g.key))}
+        </details>
+      );
+    }
+    return (
+      <div key={g.key} className={styles.group}>
+        <span className={styles.groupLabel}>
+          {SECTION_LABEL[g.key]} <span className={styles.sectionCount}>{g.profiles.length}</span>
+        </span>
+        {g.profiles.map((p) => renderCard(p, g.key))}
+      </div>
+    );
+  };
+
+  // Counter scoped to the current view: running count + total.
+  const scopedProfiles = useMemo(
+    () =>
+      viewMode === 'workspace'
+        ? visibleProfiles.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
+        : visibleProfiles,
+    [visibleProfiles, viewMode, activeWorkspaceId]
+  );
+  // Running count for an arbitrary profile list (used for both the global header
+  // counter and the per-workspace group counter in Project View).
+  const countRunning = (list: RunProfile[]): number =>
+    list.filter(
+      (p) => getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+    ).length;
+  const runningCount = countRunning(scopedProfiles);
+  const totalCountScoped = scopedProfiles.length;
+
+  // Per-workspace running·total for Project-View group headers. Flatten the
+  // group's section profiles so the counter reflects that workspace only.
+  const groupCounts = (wg: WorkspaceGroup): { running: number; total: number } => {
+    const groupProfilesList = wg.sections.flatMap((s) => s.profiles);
+    return { running: countRunning(groupProfilesList), total: groupProfilesList.length };
+  };
+
+  // Derive hidden count from intersection with the *view-scoped* profile set so a
+  // hidden profile in another workspace doesn't inflate the Workspace-View count.
   const hiddenCount = useMemo(() => {
-    const profileIds = new Set(profiles.map((p) => p.id));
+    const scopedHideable =
+      viewMode === 'workspace'
+        ? profiles.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
+        : profiles;
+    const profileIds = new Set(scopedHideable.map((p) => p.id));
     return hiddenProfileIds.filter((id) => profileIds.has(id)).length;
-  }, [profiles, hiddenProfileIds]);
+  }, [profiles, hiddenProfileIds, viewMode, activeWorkspaceId]);
 
   const title = (
     <>
-      Run Profiles <span className={styles.totalCount}>{totalCount} TOTAL</span>
-      {hiddenCount > 0 && <span className={styles.hiddenCount}>({hiddenCount} HIDDEN)</span>}
+      Run Profiles
+      {runningCount > 0 && <span className={styles.runningCount}>● {runningCount} running</span>}
+      <span className={styles.totalCount}>{totalCountScoped} total</span>
+      {hiddenCount > 0 && <span className={styles.hiddenCount}>({hiddenCount} hidden)</span>}
     </>
   );
+
+  // View-aware "nothing to show" gate. The active workspace may have zero
+  // profiles while other workspaces have some, so we can't gate on the global
+  // visible list — that left Workspace View blank. Gate on the rendered set.
+  const isViewEmpty =
+    viewMode === 'project' ? grouped.workspaceGroups.length === 0 : grouped.sections.length === 0;
 
   return (
     <Panel
       title={title}
-      actions={<ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />}
+      actions={
+        <>
+          <TreeViewToggle ariaLabel="Run profiles view" />
+          <ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />
+        </>
+      }
     >
       <div className={styles.list}>
         {isLoading ? (
@@ -147,23 +250,28 @@ export function RunProfiles() {
           <div className={styles.empty}>
             <p className={styles.errorText}>{error}</p>
           </div>
-        ) : visibleProfiles.length === 0 ? (
+        ) : isViewEmpty ? (
           <RunProfilesEmpty />
+        ) : viewMode === 'project' ? (
+          grouped.workspaceGroups.map((wg) => {
+            const counts = groupCounts(wg);
+            const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
+            return (
+              <div key={wg.workspaceId} className={styles.workspaceGroup}>
+                <div className={styles.workspaceHeader}>
+                  <span className={styles.workspaceDot} style={{ background: accentVar(accent) }} />
+                  <span className={styles.workspaceName}>{wg.workspaceName}</span>
+                  {counts.running > 0 && (
+                    <span className={styles.runningCount}>● {counts.running} running</span>
+                  )}
+                  <span className={styles.groupTotal}>· {counts.total}</span>
+                </div>
+                {wg.sections.map((s) => renderSection(s, true))}
+              </div>
+            );
+          })
         ) : (
-          <>
-            {savedProfiles.length > 0 && (
-              <div className={styles.group}>
-                <span className={styles.groupLabel}>Saved</span>
-                {savedProfiles.map(renderCard)}
-              </div>
-            )}
-            {detectedProfiles.length > 0 && (
-              <div className={styles.group}>
-                <span className={styles.groupLabel}>Detected</span>
-                {detectedProfiles.map(renderCard)}
-              </div>
-            )}
-          </>
+          grouped.sections.map((s) => renderSection(s, false))
         )}
       </div>
     </Panel>

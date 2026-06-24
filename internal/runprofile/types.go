@@ -113,8 +113,18 @@ type RunProfile struct {
 	WorkspaceRelDir string            `json:"workspaceRelDir,omitempty"` // "" for repo-root profiles
 }
 
+// ProfileUIState is per-workspace, per-profile working-set state: whether a
+// detected profile has been adopted into the working set, and when it last ran.
+// Both fields are additive (P2); a v2 file loads with an empty ProfileState map.
+type ProfileUIState struct {
+	Adopted   bool  `json:"adopted,omitempty"`
+	LastRunAt int64 `json:"lastRunAt,omitempty"`
+}
+
 // ProfilesFile is the on-disk format for .firn/run-profiles.json.
+// v3 adds ProfileState (adoption + run recency), keyed by profile ID.
 type ProfilesFile struct {
-	Version  int          `json:"version"`
-	Profiles []RunProfile `json:"profiles"`
+	Version      int                       `json:"version"`
+	Profiles     []RunProfile              `json:"profiles"`
+	ProfileState map[string]ProfileUIState `json:"profileState,omitempty"`
 }

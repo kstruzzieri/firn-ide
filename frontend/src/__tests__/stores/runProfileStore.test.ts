@@ -37,20 +37,6 @@ describe('ideStore - run profile state', () => {
     expect(state.profilesError).toBeNull();
   });
 
-  it('should set run profiles and clear loading/error', () => {
-    const { setProfilesLoading, setRunProfiles } = useIDEStore.getState();
-
-    setProfilesLoading(true);
-    expect(useIDEStore.getState().isLoadingProfiles).toBe(true);
-
-    setRunProfiles([sampleDetected, sampleSaved]);
-
-    const state = useIDEStore.getState();
-    expect(state.runProfiles).toHaveLength(2);
-    expect(state.isLoadingProfiles).toBe(false);
-    expect(state.profilesError).toBeNull();
-  });
-
   it('should set profiles error and clear loading', () => {
     const { setProfilesLoading, setProfilesError } = useIDEStore.getState();
 
