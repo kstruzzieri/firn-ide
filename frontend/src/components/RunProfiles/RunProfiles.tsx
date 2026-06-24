@@ -7,9 +7,13 @@ import {
   useIsLoadingProfiles,
   useProfilesError,
   useIDEStore,
+  useRunProfileState,
+  useTreeViewMode,
+  useActiveWorkspaceId,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
 import { estimateRemaining } from '../../utils/estimateCompletion';
+import { groupProfiles, SECTION_LABEL, type SectionGroup } from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfiles.module.css';
 
@@ -24,6 +28,9 @@ export function RunProfiles() {
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
   const runStartTimestamps = useIDEStore((s) => s.runStartTimestamps);
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
+  const runProfileState = useRunProfileState();
+  const viewMode = useTreeViewMode(); // 'project' | 'workspace'
+  const activeWorkspaceId = useActiveWorkspaceId();
 
   // Filter out hidden profiles
   const visibleProfiles = useMemo(
@@ -85,16 +92,15 @@ export function RunProfiles() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- etaTick forces re-sort when ETA estimates update
   }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
 
-  const savedProfiles = useMemo(
-    () => sortByEta(visibleProfiles.filter((p) => p.source === 'user')),
-    [visibleProfiles, sortByEta]
-  );
-  const detectedProfiles = useMemo(
-    () => sortByEta(visibleProfiles.filter((p) => p.source === 'detected')),
-    [visibleProfiles, sortByEta]
+  // Apply ETA sort BEFORE grouping so running-soonest profiles bubble up within
+  // their section (groupProfiles preserves input order for activated/pinned/detected).
+  const sortedVisible = useMemo(() => sortByEta(visibleProfiles), [visibleProfiles, sortByEta]);
+  const grouped = useMemo(
+    () => groupProfiles(sortedVisible, runProfileState, { viewMode, activeWorkspaceId }),
+    [sortedVisible, runProfileState, viewMode, activeWorkspaceId]
   );
 
-  const renderCard = (profile: RunProfile) => {
+  const renderCard = (profile: RunProfile, section: SectionGroup['key']) => {
     const vs = getVisualState(
       profile.id,
       runOutputs[profile.id]?.state,
@@ -113,12 +119,47 @@ export function RunProfiles() {
         runHistory={runHistory[profile.id] ?? []}
         isDormant={isDormant}
         isDuplicate={isDuplicate}
+        section={section}
+        isFreshestRun={grouped.freshestRunId === profile.id}
         onFocusOutput={focusProfileOutput}
       />
     );
   };
 
-  const totalCount = profiles.length;
+  const renderSection = (g: SectionGroup, collapseDetected: boolean) => {
+    if (collapseDetected && g.key === 'detected') {
+      return (
+        <details key={g.key} className={styles.group}>
+          <summary className={styles.groupLabel}>
+            {SECTION_LABEL[g.key]} <span className={styles.sectionCount}>{g.profiles.length}</span>
+          </summary>
+          {g.profiles.map((p) => renderCard(p, g.key))}
+        </details>
+      );
+    }
+    return (
+      <div key={g.key} className={styles.group}>
+        <span className={styles.groupLabel}>
+          {SECTION_LABEL[g.key]} <span className={styles.sectionCount}>{g.profiles.length}</span>
+        </span>
+        {g.profiles.map((p) => renderCard(p, g.key))}
+      </div>
+    );
+  };
+
+  // Counter scoped to the current view: running count + total.
+  const scopedProfiles = useMemo(
+    () =>
+      viewMode === 'workspace'
+        ? visibleProfiles.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
+        : visibleProfiles,
+    [visibleProfiles, viewMode, activeWorkspaceId]
+  );
+  const runningCount = scopedProfiles.filter(
+    (p) => getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+  ).length;
+  const totalCountScoped = scopedProfiles.length;
+
   // Derive hidden count from intersection with current profiles to avoid
   // stale IDs inflating the counter after profiles are removed/renamed
   const hiddenCount = useMemo(() => {
@@ -128,8 +169,10 @@ export function RunProfiles() {
 
   const title = (
     <>
-      Run Profiles <span className={styles.totalCount}>{totalCount} TOTAL</span>
-      {hiddenCount > 0 && <span className={styles.hiddenCount}>({hiddenCount} HIDDEN)</span>}
+      Run Profiles
+      {runningCount > 0 && <span className={styles.runningCount}>● {runningCount} running</span>}
+      <span className={styles.totalCount}>{totalCountScoped} total</span>
+      {hiddenCount > 0 && <span className={styles.hiddenCount}>({hiddenCount} hidden)</span>}
     </>
   );
 
@@ -149,21 +192,18 @@ export function RunProfiles() {
           </div>
         ) : visibleProfiles.length === 0 ? (
           <RunProfilesEmpty />
+        ) : viewMode === 'project' ? (
+          grouped.workspaceGroups.map((wg) => (
+            <div key={wg.workspaceId} className={styles.workspaceGroup}>
+              <div className={styles.workspaceHeader}>
+                <span className={styles.workspaceDot} />
+                <span className={styles.workspaceName}>{wg.workspaceName}</span>
+              </div>
+              {wg.sections.map((s) => renderSection(s, true))}
+            </div>
+          ))
         ) : (
-          <>
-            {savedProfiles.length > 0 && (
-              <div className={styles.group}>
-                <span className={styles.groupLabel}>Saved</span>
-                {savedProfiles.map(renderCard)}
-              </div>
-            )}
-            {detectedProfiles.length > 0 && (
-              <div className={styles.group}>
-                <span className={styles.groupLabel}>Detected</span>
-                {detectedProfiles.map(renderCard)}
-              </div>
-            )}
-          </>
+          grouped.sections.map((s) => renderSection(s, false))
         )}
       </div>
     </Panel>

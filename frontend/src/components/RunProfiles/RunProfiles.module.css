@@ -68,3 +68,46 @@
   letter-spacing: 0.03em;
   margin-left: 4px;
 }
+
+.sectionCount {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.runningCount {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: 6px;
+  letter-spacing: 0.03em;
+}
+
+.workspaceGroup {
+  margin-bottom: 14px;
+}
+
+.workspaceHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.workspaceName {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.workspaceDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+details.group > summary {
+  cursor: pointer;
+  list-style: revert;
+}
