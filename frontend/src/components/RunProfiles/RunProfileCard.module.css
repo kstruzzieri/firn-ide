@@ -54,8 +54,8 @@
   padding: 14px 16px;
   margin-bottom: 8px;
   border-radius: 10px;
-  background: #151515;
-  border: 1px solid #1e1e1e;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
   cursor: default;
@@ -75,8 +75,8 @@
 
 /* Default hover — subtle lift + border */
 .card:hover {
-  border-color: rgba(56, 189, 248, 0.12);
-  background: #171717;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: var(--surface-active);
 }
 
 /* ── Layout Rows ────────────────────────────────────────────── */
@@ -112,14 +112,14 @@
 .duration {
   font-size: 10px;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
-  color: #444;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .cmd {
   font-size: 11px;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
-  color: #3a3a3a;
+  color: var(--text-secondary);
   margin-top: 3px;
   margin-left: 34px;
   white-space: nowrap;
@@ -260,8 +260,8 @@
 /* ── State: Running ─────────────────────────────────────────── */
 
 .running {
-  background: #171717;
-  border-color: rgba(34, 197, 94, 0.2);
+  background: var(--surface-active);
+  border-color: rgba(34, 197, 94, 0.35);
   box-shadow:
     0 2px 12px rgba(34, 197, 94, 0.06),
     0 1px 3px rgba(0, 0, 0, 0.2);
@@ -313,8 +313,8 @@
 /* ── State: Failed ──────────────────────────────────────────── */
 
 .failed {
-  border-color: rgba(239, 68, 68, 0.15);
-  background: linear-gradient(135deg, #151515, rgba(239, 68, 68, 0.02));
+  border-color: rgba(239, 68, 68, 0.3);
+  background: linear-gradient(135deg, var(--surface-hover), rgba(239, 68, 68, 0.07));
   animation: failedPulse 1s ease-out 1;
 }
 
@@ -335,29 +335,22 @@
 /* ── State: Dormant (never run) ────────────────────────────── */
 
 .dormant {
-  opacity: 0.78;
-  border-color: #222;
+  border-color: var(--surface-border-subtle);
   border-style: dashed;
-  background: #131313;
 }
 
 .dormant:hover {
-  opacity: 1;
-  border-color: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.35);
   border-style: solid;
-  background: #161616;
-}
-
-.dormant .actionBtnPlay {
-  opacity: 0.85;
+  background: var(--surface-active);
 }
 
 .dormant .cmd {
-  color: #444;
+  color: var(--text-secondary);
 }
 
 .dormant .name {
-  color: #999;
+  color: var(--text-primary);
 }
 
 /* ── Hover Reveal ───────────────────────────────────────────── */
