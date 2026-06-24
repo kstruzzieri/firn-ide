@@ -332,6 +332,52 @@ func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
 	}
 }
 
+func TestProjectManagerAdoptAndSnapshot(t *testing.T) {
+	files := monorepoFixture()
+	m := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := m.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	all := m.GetAllProfiles()
+	if len(all) == 0 {
+		t.Fatal("fixture produced no profiles")
+	}
+	id := all[0].ID
+
+	if err := m.AdoptProfile(id); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	if err := m.RecordRun(id, 12345); err != nil {
+		t.Fatalf("record run: %v", err)
+	}
+
+	snap := m.Snapshot()
+	if len(snap.Profiles) != len(all) {
+		t.Errorf("snapshot profiles = %d, want %d", len(snap.Profiles), len(all))
+	}
+	st, ok := snap.ProfileState[id]
+	if !ok || !st.Adopted || st.LastRunAt != 12345 {
+		t.Errorf("snapshot state[%s] = %+v, want adopted+ts", id, st)
+	}
+
+	if err := m.UnadoptProfile(id); err != nil {
+		t.Fatalf("unadopt: %v", err)
+	}
+	if m.Snapshot().ProfileState[id].Adopted {
+		t.Error("expected adopted=false after unadopt")
+	}
+}
+
+func TestProjectManagerAdoptUnknownIDErrors(t *testing.T) {
+	m := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
+	if err := m.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if err := m.AdoptProfile("nope-not-a-real-id"); err == nil {
+		t.Error("expected error adopting unknown id")
+	}
+}
+
 func TestProjectManagerValidateProfileChecksWorkspace(t *testing.T) {
 	pm := NewProjectManager(newProjectTestFS(monorepoFixture()), "/repo")
 	if err := pm.Load(); err != nil {
