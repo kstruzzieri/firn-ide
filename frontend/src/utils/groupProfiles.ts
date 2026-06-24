@@ -5,7 +5,7 @@ export type ProfileSection = 'activated' | 'pinned' | 'recent' | 'detected';
 export const SECTION_ORDER: ProfileSection[] = ['activated', 'pinned', 'recent', 'detected'];
 
 export const SECTION_LABEL: Record<ProfileSection, string> = {
-  activated: 'Working Set',
+  activated: 'Working Set', // UI label; "Activated" stays in code/tests per spec
   pinned: 'Pinned',
   recent: 'Recent',
   detected: 'Detected',
@@ -48,19 +48,24 @@ export function groupProfiles(
       ? profiles.filter((p) => (p.workspaceId ?? '') === opts.activeWorkspaceId)
       : profiles;
 
-  const recentEligible = scoped
-    .filter((p) => p.source === 'detected' && !state[p.id]?.adopted && lastRunAt(state, p.id) > 0)
-    .sort((a, b) => lastRunAt(state, b.id) - lastRunAt(state, a.id));
-  const recentIds = new Set(recentEligible.slice(0, RECENT_CAP).map((p) => p.id));
-
-  const sectionFor = (p: RunProfile): ProfileSection => {
-    if (p.source === 'detected' && state[p.id]?.adopted) return 'activated';
-    if (p.source === 'user') return 'pinned';
-    if (recentIds.has(p.id)) return 'recent';
-    return 'detected';
-  };
-
   const buildSections = (list: RunProfile[]): SectionGroup[] => {
+    // RECENT is capped per rendered list: in Project View each workspace group
+    // shows its own top-5 recently-run, non-adopted detected profiles.
+    const recentIds = new Set(
+      list
+        .filter(
+          (p) => p.source === 'detected' && !state[p.id]?.adopted && lastRunAt(state, p.id) > 0
+        )
+        .sort((a, b) => lastRunAt(state, b.id) - lastRunAt(state, a.id))
+        .slice(0, RECENT_CAP)
+        .map((p) => p.id)
+    );
+    const sectionFor = (p: RunProfile): ProfileSection => {
+      if (p.source === 'detected' && state[p.id]?.adopted) return 'activated';
+      if (p.source === 'user') return 'pinned';
+      if (recentIds.has(p.id)) return 'recent';
+      return 'detected';
+    };
     const byKey: Record<ProfileSection, RunProfile[]> = {
       activated: [],
       pinned: [],
@@ -68,6 +73,7 @@ export function groupProfiles(
       detected: [],
     };
     for (const p of list) byKey[sectionFor(p)].push(p);
+    // RECENT ordered by recency; other sections keep input order.
     byKey.recent.sort((a, b) => lastRunAt(state, b.id) - lastRunAt(state, a.id));
     return SECTION_ORDER.map((key) => ({ key, profiles: byKey[key] })).filter(
       (g) => g.profiles.length > 0

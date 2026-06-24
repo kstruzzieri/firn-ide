@@ -87,3 +87,49 @@ test('project view groups by workspace, sections nested', () => {
     1
   );
 });
+
+test('project view caps RECENT independently per workspace group', () => {
+  const mk = (ws: string, n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      p({ id: `${ws}-r${i}`, workspaceId: ws, workspaceName: ws, source: 'detected' })
+    );
+  const profiles = [...mk('frontend', 6), ...mk('go', 6)];
+  const state: Record<string, { lastRunAt: number }> = {};
+  profiles.forEach((pr, i) => (state[pr.id] = { lastRunAt: i + 1 }));
+  const groups = groupProfiles(profiles, state, {
+    viewMode: 'project',
+    activeWorkspaceId: 'project',
+  });
+  const recentLen = (ws: string) =>
+    groups.workspaceGroups
+      .find((g) => g.workspaceId === ws)!
+      .sections.find((s) => s.key === 'recent')?.profiles.length ?? 0;
+  expect(recentLen('frontend')).toBe(5);
+  expect(recentLen('go')).toBe(5);
+});
+
+test('empty input yields empty groups and null freshest', () => {
+  const groups = groupProfiles([], {}, { viewMode: 'workspace', activeWorkspaceId: 'frontend' });
+  expect(groups.sections).toEqual([]);
+  expect(groups.workspaceGroups).toEqual([]);
+  expect(groups.freshestRunId).toBeNull();
+});
+
+test('freshestRunId is null when nothing has run', () => {
+  const groups = groupProfiles(
+    [p({ id: 'a' })],
+    {},
+    { viewMode: 'workspace', activeWorkspaceId: 'frontend' }
+  );
+  expect(groups.freshestRunId).toBeNull();
+});
+
+test('adopted user profile classifies as pinned, not activated', () => {
+  const groups = groupProfiles(
+    [p({ id: 'a', source: 'user' })],
+    { a: { adopted: true } },
+    { viewMode: 'workspace', activeWorkspaceId: 'frontend' }
+  );
+  expect(groups.sections.find((s) => s.key === 'pinned')?.profiles).toHaveLength(1);
+  expect(groups.sections.find((s) => s.key === 'activated')?.profiles ?? []).toHaveLength(0);
+});
