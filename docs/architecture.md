@@ -208,11 +208,11 @@ For LSP diagnostics and workspace search state, use `lspStore` and `searchStore`
 
 ## Run Profiles: Persistence and UI State
 
-Run profiles live in a per-workspace `.firn/run-profiles.json` file owned by the `internal/runprofile` package. Saved profiles capture the user's run configuration; a separate UI-state map tracks how the profile panel presents detected profiles.
+Run profiles live in per-workspace `.firn/` metadata owned by the `internal/runprofile` package. Saved profile definitions and adoption live in `.firn/run-profiles.json`; volatile run recency lives in `.firn/run-recency.json`.
 
 ### File Schema (v3)
 
-The on-disk file is versioned. **v3** adds a `profileState` map keyed by profile ID, alongside the unchanged `profiles` array:
+The profiles file is versioned. **v3** adds an adoption-only `profileState` map keyed by profile ID, alongside the unchanged `profiles` array:
 
 ```jsonc
 {
@@ -220,14 +220,24 @@ The on-disk file is versioned. **v3** adds a `profileState` map keyed by profile
   "profiles": [ /* saved run profiles — unchanged from v2 */ ],
   "profileState": {
     "<profileId>": {
-      "adopted": true,      // working-set membership (user pulled a detected profile in)
-      "lastRunAt": 1700000000000  // run recency, epoch milliseconds
+      "adopted": true  // working-set membership (user pulled a detected profile in)
     }
   }
 }
 ```
 
-`v2 → v3` migration is **additive**: a v2 file loads cleanly with an empty `profileState`, and the saved `profiles` are untouched. Both `profileState` fields are optional and default to zero values.
+`v2 → v3` migration is **additive**: a v2 file loads cleanly with an empty `profileState`, and the saved `profiles` are untouched. Older v3 files that embedded `lastRunAt` are migrated into `.firn/run-recency.json` on load.
+
+Run recency is stored separately:
+
+```jsonc
+{
+  "version": 1,
+  "recency": {
+    "<profileId>": 1700000000000
+  }
+}
+```
 
 ### Snapshot Hydration Contract
 

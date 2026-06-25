@@ -5,5 +5,5 @@
 #
 # Each clone must enable the filter once (CI/passthrough is safe without it):
 #   git config filter.trimws.clean "sed -E 's/[[:space:]]+$//'"
-frontend/wailsjs/go/*.ts filter=trimws
+frontend/wailsjs/**/*.ts filter=trimws
 frontend/wailsjs/**/*.js filter=trimws
