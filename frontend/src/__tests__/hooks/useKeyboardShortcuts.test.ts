@@ -6,9 +6,14 @@ import { useSearchStore } from '../../stores/searchStore';
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
 const mockNavigateToEditorLocation = jest.fn();
+const mockStartProfile = jest.fn().mockResolvedValue(undefined);
+const mockRestartProfile = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: (...args: unknown[]) => mockOpenFolderDialog(...args),
   ReadDirectory: jest.fn().mockResolvedValue([]),
+  StartRunProfile: (...a: unknown[]) => mockStartProfile(...a),
+  RestartRunProfile: (...a: unknown[]) => mockRestartProfile(...a),
+  StopRunProfile: jest.fn().mockResolvedValue(undefined),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -258,5 +263,60 @@ describe('useKeyboardShortcuts', () => {
       { fileId: '/definition-source.ts', line: 3, column: 2 },
     ]);
     expect(useIDEStore.getState().navigationForward).toEqual([]);
+  });
+});
+
+function runShortcutEvent(): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key: 'r',
+    ctrlKey: !isMac,
+    metaKey: isMac,
+    bubbles: true,
+    cancelable: true,
+  });
+}
+
+describe('Cmd/Ctrl+R run target', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useIDEStore.setState({
+      runProfiles: [{ id: 'p1', name: 'dev', type: 'single', source: 'user', workspaceId: 'ws1' }],
+      runProfileState: {},
+      runOutputs: {},
+      hiddenProfileIds: [],
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      activeWorkspaceId: 'ws1',
+      selectedProfileId: 'p1',
+    });
+  });
+
+  test('starts the target when idle and prevents default (no page reload)', () => {
+    renderHook(() => useKeyboardShortcuts());
+    const ev = runShortcutEvent();
+    act(() => {
+      window.dispatchEvent(ev);
+    });
+    expect(mockStartProfile).toHaveBeenCalledWith('p1');
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  test('restarts the target when running', () => {
+    useIDEStore.setState({ runOutputs: { p1: { state: 'running' } } as never });
+    renderHook(() => useKeyboardShortcuts());
+    act(() => {
+      window.dispatchEvent(runShortcutEvent());
+    });
+    expect(mockRestartProfile).toHaveBeenCalledWith('p1');
+  });
+
+  test('no-op while stopping', () => {
+    useIDEStore.setState({ stoppingProfileIds: ['p1'] });
+    renderHook(() => useKeyboardShortcuts());
+    act(() => {
+      window.dispatchEvent(runShortcutEvent());
+    });
+    expect(mockStartProfile).not.toHaveBeenCalled();
+    expect(mockRestartProfile).not.toHaveBeenCalled();
   });
 });

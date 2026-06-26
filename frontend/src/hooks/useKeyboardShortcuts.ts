@@ -5,6 +5,9 @@ import { useIDEStore, type NavigationLocation } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { navigateToEditorLocation } from '../utils/editorNavigation';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { resolveEffectiveRunTargetId } from '../utils/resolveEffectiveRunTarget';
+import { getVisualState } from '../utils/visualState';
+import { startProfile, restartProfile } from '../utils/profileActions';
 
 function navigateBack() {
   const state = useIDEStore.getState();
@@ -48,6 +51,34 @@ export function useKeyboardShortcuts() {
       if (modifier && e.key === 'o') {
         e.preventDefault();
         openFolder();
+        return;
+      }
+
+      // Cmd+R / Ctrl+R — run (or restart) the selected run-profile target.
+      // preventDefault is essential: WKWebView treats Cmd+R as page reload.
+      if (modifier && (e.key === 'r' || e.key === 'R') && !e.shiftKey) {
+        e.preventDefault();
+        const s = useIDEStore.getState();
+        const id = resolveEffectiveRunTargetId({
+          selectedProfileId: s.selectedProfileId,
+          profiles: s.runProfiles,
+          profileState: s.runProfileState,
+          hiddenProfileIds: s.hiddenProfileIds,
+          activeWorkspaceId: s.activeWorkspaceId,
+        });
+        if (!id) return;
+        if (s.restartingProfileIds.includes(id)) return; // restart already in flight
+        const target = s.runProfiles.find((p) => p.id === id);
+        if (!target) return;
+        const vs = getVisualState(
+          id,
+          s.runOutputs[id]?.state,
+          s.stoppingProfileIds,
+          s.restartingProfileIds
+        );
+        if (vs === 'stopping') return; // includes stop-in-flight
+        if (vs === 'running') restartProfile(id, target.name);
+        else startProfile(id, target.name);
         return;
       }
 
