@@ -31,6 +31,16 @@ export function RunProfileSelector() {
 
   const target = profiles.find((p) => p.id === effectiveId) ?? null;
   const visible = profiles.filter((p) => !hiddenProfileIds.includes(p.id));
+  // Ids actually rendered by renderSections(visible): workspace view scopes to the
+  // active workspace; project view shows all. The effective target may sit outside
+  // this set (a pick in another workspace) — surface it explicitly so it's never hidden.
+  const renderedIds = new Set(
+    (viewMode === 'workspace'
+      ? visible.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
+      : visible
+    ).map((p) => p.id)
+  );
+  const targetOutsideView = !!target && !renderedIds.has(target.id);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -198,7 +208,7 @@ export function RunProfileSelector() {
             if (e.key === 'Escape') setIsOpen(false);
           }}
         >
-          {target && !visible.some((p) => p.id === target.id) && (
+          {targetOutsideView && (
             <div className={styles.section}>
               <div className={styles.sectionLabel}>Selected (outside this view)</div>
               {renderRow(target)}
