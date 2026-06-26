@@ -51,6 +51,7 @@ interface RunProfileCardProps {
   onFocusOutput: (profileId: string) => void;
   section?: ProfileSection;
   isFreshestRun?: boolean;
+  isSelectedTarget?: boolean;
 }
 
 function getStateClass(visualState: VisualState): string {
@@ -109,6 +110,7 @@ export function RunProfileCard({
   onFocusOutput,
   section,
   isFreshestRun,
+  isSelectedTarget,
 }: RunProfileCardProps) {
   const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
@@ -169,6 +171,11 @@ export function RunProfileCard({
     });
   };
 
+  const handleSelectTarget = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    useIDEStore.getState().setSelectedProfile(profile.id);
+  };
+
   const envVariants = (profile.envVariants ?? []).filter((variant) => variant.name);
   const hasEnvVariants = envVariants.length > 0;
 
@@ -226,6 +233,7 @@ export function RunProfileCard({
     isActiveState ? styles.forceExpand : '',
     !isActiveState && isExpanded ? styles.expanded : '',
     isFreshestRun ? styles.justRan : '',
+    isSelectedTarget ? styles.selectedTarget : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -300,6 +308,18 @@ export function RunProfileCard({
     >
       {/* Row 1: action button + name + duration */}
       <div className={styles.row1}>
+        <button
+          type="button"
+          className={`${styles.targetToggle} ${isSelectedTarget ? styles.targetToggleOn : ''}`}
+          onClick={handleSelectTarget}
+          aria-pressed={isSelectedTarget ? true : false}
+          aria-label={
+            isSelectedTarget ? `Run target: ${profile.name}` : `Set as run target: ${profile.name}`
+          }
+          title="Cmd+R target"
+        >
+          <span aria-hidden="true">{isSelectedTarget ? '◉' : '○'}</span>
+        </button>
         {renderActionButton()}
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />

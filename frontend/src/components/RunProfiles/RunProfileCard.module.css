@@ -507,3 +507,29 @@
   color: var(--accent);
   white-space: nowrap;
 }
+
+/* ── Selected-target toggle ─────────────────────────────────── */
+
+.targetToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary, #888);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.targetToggle:hover {
+  color: var(--text-secondary, #bbb);
+}
+.targetToggleOn {
+  color: var(--accent-blue, #6ea8fe);
+}
+.selectedTarget {
+  box-shadow: inset 2px 0 0 var(--accent-blue, #6ea8fe);
+}
