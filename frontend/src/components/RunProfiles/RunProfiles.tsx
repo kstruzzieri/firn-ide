@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
 import { ProfileBrowser } from './ProfileBrowser';
@@ -58,6 +59,7 @@ export function RunProfiles() {
   const viewMode = useTreeViewMode(); // 'project' | 'workspace'
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
+  const effectiveTargetId = useEffectiveRunTarget();
 
   // Render-time "now" for the just-ran recency window. Kept out of any memo deps
   // so grouping stays pure/memoized; recomputed each render (e.g. via etaTick).
@@ -151,6 +153,7 @@ export function RunProfiles() {
         isDormant={isDormant}
         isDuplicate={isDuplicate}
         section={section}
+        isSelectedTarget={effectiveTargetId === profile.id}
         isFreshestRun={
           grouped.freshestRunId === profile.id &&
           isJustRan(runProfileState[profile.id]?.lastRunAt, nowMs)
