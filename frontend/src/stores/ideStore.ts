@@ -163,6 +163,9 @@ interface IDEState {
   runProfileState: Record<string, RunProfileUIState>;
   isLoadingProfiles: boolean;
   profilesError: string | null;
+  // Header selector: session-only single Cmd+R target. Not persisted; the
+  // effective target re-resolves from recency on launch (see resolveEffectiveRunTarget).
+  selectedProfileId: string | null;
 
   // Run Output
   runOutputs: Record<string, RunOutput>;
@@ -255,6 +258,7 @@ interface IDEActions {
     profiles: RunProfile[],
     profileState: Record<string, RunProfileUIState>
   ) => void;
+  setSelectedProfile: (id: string | null) => void;
   adoptProfileLocal: (id: string) => void;
   unadoptProfileLocal: (id: string) => void;
   setProfilesLoading: (loading: boolean) => void;
@@ -413,6 +417,7 @@ export const useIDEStore = create<IDEStore>()(
       runProfileState: {},
       isLoadingProfiles: false,
       profilesError: null,
+      selectedProfileId: null,
       runOutputs: {},
       runCompounds: {},
       activeRunOutputId: null,
@@ -711,6 +716,8 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'setRunProfilesSnapshot'
         ),
+
+      setSelectedProfile: (id) => set({ selectedProfileId: id }, false, 'setSelectedProfile'),
 
       adoptProfileLocal: (id) =>
         set(
@@ -1635,6 +1642,8 @@ export const useActiveWorkspace = () =>
   useIDEStore((state) => state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? null);
 export const useTreeViewMode = (): 'project' | 'workspace' =>
   useIDEStore((state) => (state.activeWorkspaceId === 'project' ? 'project' : 'workspace'));
+export const useSelectedProfileId = (): string | null =>
+  useIDEStore((state) => state.selectedProfileId);
 export const useCanFocusWorkspace = (): boolean =>
   useIDEStore((state) => state.workspaces.some((w) => w.id !== 'project'));
 export const useActiveAccent = (): WorkspaceAccent =>
