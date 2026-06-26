@@ -411,10 +411,10 @@ func TestStorePersistIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	finalPath := "/workspace/" + profilesFileName
-	tmpPath := finalPath + ".tmp"
+	profilesPath := "/workspace/" + profilesFileName
+	recencyPath := "/workspace/" + recencyFileName
 
-	// A frequent-write path: recency + adoption both persist.
+	// Adoption persists to the profiles file; recency to the sidecar.
 	if err := store.SetAdopted("detected-a", true); err != nil {
 		t.Fatalf("SetAdopted: %v", err)
 	}
@@ -422,34 +422,40 @@ func TestStorePersistIsAtomic(t *testing.T) {
 		t.Fatalf("RecordRun: %v", err)
 	}
 
-	// Final file exists.
-	data, ok := files[finalPath]
-	if !ok {
-		t.Fatalf("expected final profiles file at %q after persist", finalPath)
+	// Both files exist with no stray temp files (atomic rename moved them).
+	for _, p := range []string{profilesPath, recencyPath} {
+		if _, ok := files[p]; !ok {
+			t.Fatalf("expected file at %q after persist", p)
+		}
+		if _, ok := files[p+".tmp"]; ok {
+			t.Errorf("expected temp file %q.tmp to be gone after atomic rename", p)
+		}
 	}
 
-	// No stray temp file left behind (rename moved it into place).
-	if _, ok := files[tmpPath]; ok {
-		t.Errorf("expected temp file %q to be gone after atomic rename", tmpPath)
-	}
-
-	// Content round-trips with the expected recency/adoption state.
+	// Profiles file carries adoption only — never recency.
 	var pf ProfilesFile
-	if err := json.Unmarshal(data, &pf); err != nil {
-		t.Fatalf("unmarshal persisted file: %v", err)
+	if err := json.Unmarshal(files[profilesPath], &pf); err != nil {
+		t.Fatalf("unmarshal profiles file: %v", err)
 	}
 	if pf.Version != profilesFileVersion {
 		t.Errorf("expected version %d, got %d", profilesFileVersion, pf.Version)
 	}
-	st, ok := pf.ProfileState["detected-a"]
-	if !ok {
-		t.Fatalf("expected profileState entry for detected-a, got %+v", pf.ProfileState)
-	}
-	if !st.Adopted || st.LastRunAt != 4242 {
-		t.Errorf("expected adopted=true lastRunAt=4242, got %+v", st)
+	if st, ok := pf.ProfileState["detected-a"]; !ok || !st.Adopted {
+		t.Errorf("expected adopted entry in profiles file, got %+v", pf.ProfileState)
+	} else if st.LastRunAt != 0 {
+		t.Errorf("profiles file must not carry recency, got lastRunAt=%d", st.LastRunAt)
 	}
 
-	// And a fresh store Loads the same state from the final file.
+	// Recency sidecar carries the timestamp.
+	var rf RecencyFile
+	if err := json.Unmarshal(files[recencyPath], &rf); err != nil {
+		t.Fatalf("unmarshal recency sidecar: %v", err)
+	}
+	if rf.Recency["detected-a"] != 4242 {
+		t.Errorf("expected recency 4242 in sidecar, got %+v", rf.Recency)
+	}
+
+	// A fresh store merges both files back into the combined state.
 	reloaded := NewStore(mockFS, "/workspace")
 	if _, err := reloaded.Load(); err != nil {
 		t.Fatalf("reload Load: %v", err)

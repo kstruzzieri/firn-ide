@@ -121,10 +121,20 @@ type ProfileUIState struct {
 	LastRunAt int64 `json:"lastRunAt,omitempty"`
 }
 
-// ProfilesFile is the on-disk format for .firn/run-profiles.json.
-// v3 adds ProfileState (adoption + run recency), keyed by profile ID.
+// ProfilesFile is the on-disk format for .firn/run-profiles.json — profile
+// definitions plus adoption. As of the recency-sidecar split, ProfileState
+// carries adoption only; run recency lives in RecencyFile. Older v3 files may
+// still embed lastRunAt here, which Load migrates into the sidecar.
 type ProfilesFile struct {
 	Version      int                       `json:"version"`
 	Profiles     []RunProfile              `json:"profiles"`
 	ProfileState map[string]ProfileUIState `json:"profileState,omitempty"`
+}
+
+// RecencyFile is the on-disk format for the .firn/run-recency.json sidecar:
+// per-profile last-run timestamps (epoch millis), kept separate from
+// run-profiles.json so stamping a run never rewrites profile definitions.
+type RecencyFile struct {
+	Version int              `json:"version"`
+	Recency map[string]int64 `json:"recency,omitempty"`
 }

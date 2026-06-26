@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,20 @@ func TestWorkspaceInfoStruct(t *testing.T) {
 	}
 	if info.Path != "/path/to/project" {
 		t.Errorf("Expected Path '/path/to/project', got %q", info.Path)
+	}
+}
+
+// StartRunProfile must guard a nil executor the same way StopRunProfile does,
+// rather than dereferencing it and panicking before the app has started up.
+func TestStartRunProfileNilExecutor(t *testing.T) {
+	app := &App{}
+
+	err := app.StartRunProfile("any-id")
+	if err == nil {
+		t.Fatal("expected error when executor is nil, got nil")
+	}
+	if !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("expected 'not initialized' error, got %v", err)
 	}
 }
 

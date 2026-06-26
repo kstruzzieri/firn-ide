@@ -14,11 +14,20 @@ const profilesFileName = ".firn/run-profiles.json"
 
 // profilesFileVersion is the current on-disk schema version. v2 adds workspace
 // ownership fields and workspace-scoped detected IDs. v1 files are migrated on
-// load (see migrateV1Profiles). v3 adds profileState (adoption + run recency),
-// keyed by profile ID.
+// load (see migrateV1Profiles). v3 adds profileState; as of the recency-sidecar
+// split, profileState carries adoption only — run recency lives in the sidecar.
 const profilesFileVersion = 3
 
-// Store manages persistent storage of run profiles in .firn/run-profiles.json.
+// recencyFileName / recencyFileVersion identify the run-recency sidecar. Run
+// recency is volatile and written once per run, so it is kept out of
+// run-profiles.json: stamping a run must not rewrite profile definitions.
+const recencyFileName = ".firn/run-recency.json"
+const recencyFileVersion = 1
+
+// Store manages persistent storage of run profiles. Durable config (profile
+// definitions + adoption) lives in run-profiles.json; volatile run recency
+// lives in the run-recency.json sidecar. In memory the two are merged into a
+// single per-profile ProfileUIState map.
 type Store struct {
 	fs            filesystem.FileSystem
 	workspaceRoot string
@@ -59,8 +68,11 @@ func (s *Store) Load() ([]RunProfile, error) {
 	data, err := s.fs.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			// No profiles file, but a recency sidecar may still exist on its own
+			// (a run was recorded for a detected profile that was never saved).
 			s.profiles = []RunProfile{}
 			s.state = map[string]ProfileUIState{}
+			s.loadRecencyLocked()
 			return s.profiles, nil
 		}
 		return nil, fmt.Errorf("reading profiles file: %w", err)
@@ -96,7 +108,60 @@ func (s *Store) Load() ([]RunProfile, error) {
 	default:
 		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1-%d)", pf.Version, profilesFileVersion)
 	}
+
+	// Merge run recency from the sidecar (authoritative over any legacy recency
+	// embedded in an older profiles file).
+	s.loadRecencyLocked()
+
 	return s.copyProfiles(), nil
+}
+
+// loadRecencyLocked merges run recency from the sidecar into s.state. If the
+// sidecar is absent but the profiles file carried legacy recency (pre-split
+// v3), it migrates that recency into the sidecar once so it survives the
+// profiles file dropping recency on its next write. Best-effort: a read/parse
+// failure degrades to a warning, never a failed load. Caller holds s.mu.
+func (s *Store) loadRecencyLocked() {
+	path := filepath.Join(s.workspaceRoot, recencyFileName)
+	data, err := s.fs.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if hasRecency(s.state) {
+				if werr := s.writeRecencyLocked(s.state); werr != nil {
+					s.Warnings = append(s.Warnings, fmt.Sprintf("could not migrate recency to %s: %v", path, werr))
+				}
+			}
+			return
+		}
+		s.Warnings = append(s.Warnings, fmt.Sprintf("could not read recency sidecar %s: %v", path, err))
+		return
+	}
+
+	var rf RecencyFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		s.Warnings = append(s.Warnings, fmt.Sprintf("could not parse recency sidecar %s: %v", path, err))
+		return
+	}
+
+	// The sidecar is the sole authority for recency. Drop any legacy recency a
+	// pre-split profiles file embedded before applying it, so a timestamp the
+	// sidecar no longer lists (e.g. pruned) does not linger.
+	for id, st := range s.state {
+		if st.LastRunAt == 0 {
+			continue
+		}
+		st.LastRunAt = 0
+		if st.Adopted {
+			s.state[id] = st
+		} else {
+			delete(s.state, id) // was recency-only; nothing left to keep
+		}
+	}
+	for id, ts := range rf.Recency {
+		st := s.state[id]
+		st.LastRunAt = ts
+		s.state[id] = st
+	}
 }
 
 // Save upserts a profile by ID and persists to disk.
@@ -179,10 +244,14 @@ func (s *Store) SetAdopted(id string, adopted bool) error {
 	} else {
 		next[id] = st
 	}
-	return s.persistState(next)
+	return s.persistProfiles(next)
 }
 
-// RecordRun stamps the last-run timestamp (epoch millis) for a profile ID and persists.
+// RecordRun stamps the last-run timestamp (epoch millis) for a profile ID and
+// persists it to the recency sidecar. The write is synchronous and tiny — it
+// records one timestamp without rewriting profile definitions — and the
+// in-memory value is rolled back if the write fails, so the caller (and its
+// logs) observe the error.
 func (s *Store) RecordRun(id string, ts int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -190,7 +259,30 @@ func (s *Store) RecordRun(id string, ts int64) error {
 	st := next[id]
 	st.LastRunAt = ts
 	next[id] = st
-	return s.persistState(next)
+	return s.persistRecency(next)
+}
+
+// PruneState drops profileState entries whose ID is not in validIDs, except
+// adopted entries — those survive so a workspace's working set is not lost when
+// a detected profile temporarily disappears (e.g. a git branch switch). Pruned
+// entries are recency-only (adopted entries are kept), so only the recency
+// sidecar is rewritten, and only when something was actually removed.
+func (s *Store) PruneState(validIDs map[string]bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := copyProfileState(s.state)
+	changed := false
+	for id, st := range next {
+		if validIDs[id] || st.Adopted {
+			continue
+		}
+		delete(next, id)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return s.persistRecency(next)
 }
 
 // GetState returns a copy of the per-profile UI state map.
@@ -204,21 +296,39 @@ func (s *Store) GetState() map[string]ProfileUIState {
 	return out
 }
 
-// persist writes the current profiles to disk.
-// The write is atomic: data is written to a sibling temp file and then renamed
-// into place, so a torn write can never corrupt the existing file. This matters
-// because run recency now rewrites this file on every run (frequent writes),
-// and a crash mid-write must not destroy the user's saved profiles.
+// persist writes the profiles file (definitions + adoption) for the current
+// in-memory state.
 func (s *Store) persist() error {
-	return s.persistState(s.state)
+	return s.persistProfiles(s.state)
 }
 
-func (s *Store) persistState(state map[string]ProfileUIState) error {
-	dir := filepath.Join(s.workspaceRoot, ".firn")
-	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating .firn directory: %w", err)
+// persistProfiles writes run-profiles.json (definitions + adoption) for the
+// given state and, on success, commits the state to memory. Used by the durable
+// config writers (Save/Delete/Pin/SetAdopted).
+func (s *Store) persistProfiles(state map[string]ProfileUIState) error {
+	if err := s.writeProfilesLocked(state); err != nil {
+		return err
 	}
+	s.state = state
+	return nil
+}
 
+// persistRecency writes the run-recency sidecar for the given state and, on
+// success, commits the state to memory. Used by the hot path (RecordRun) and by
+// prune, neither of which touch profile definitions or adoption.
+func (s *Store) persistRecency(state map[string]ProfileUIState) error {
+	if err := s.writeRecencyLocked(state); err != nil {
+		return err
+	}
+	s.state = state
+	return nil
+}
+
+// writeProfilesLocked atomically writes profile definitions plus adoption flags
+// to run-profiles.json. Recency is intentionally excluded — it lives in the
+// sidecar — so this file changes only on user actions, not on every run. Caller
+// holds s.mu.
+func (s *Store) writeProfilesLocked(state map[string]ProfileUIState) error {
 	profiles := s.profiles
 	if profiles == nil {
 		profiles = []RunProfile{}
@@ -226,24 +336,80 @@ func (s *Store) persistState(state map[string]ProfileUIState) error {
 	pf := ProfilesFile{
 		Version:      profilesFileVersion,
 		Profiles:     profiles,
-		ProfileState: state,
+		ProfileState: adoptionState(state),
 	}
-
 	data, err := json.MarshalIndent(pf, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling profiles: %w", err)
 	}
+	return s.atomicWriteLocked(profilesFileName, data)
+}
 
-	finalPath := filepath.Join(s.workspaceRoot, profilesFileName)
+// writeRecencyLocked atomically writes the run-recency sidecar. This is the hot
+// path (one write per run); it is deliberately tiny and never rewrites profile
+// definitions. Caller holds s.mu.
+func (s *Store) writeRecencyLocked(state map[string]ProfileUIState) error {
+	rf := RecencyFile{
+		Version: recencyFileVersion,
+		Recency: recencyMap(state),
+	}
+	data, err := json.MarshalIndent(rf, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling recency: %w", err)
+	}
+	return s.atomicWriteLocked(recencyFileName, data)
+}
+
+// atomicWriteLocked writes data to <root>/<relName> via a sibling temp file and
+// a rename, so a torn write can never corrupt the destination — important
+// because the recency sidecar is written frequently. Caller holds s.mu.
+func (s *Store) atomicWriteLocked(relName string, data []byte) error {
+	dir := filepath.Join(s.workspaceRoot, ".firn")
+	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating .firn directory: %w", err)
+	}
+	finalPath := filepath.Join(s.workspaceRoot, relName)
 	tmpPath := finalPath + ".tmp"
 	if err := s.fs.WriteFile(tmpPath, data, fs.FileMode(0o644)); err != nil {
-		return fmt.Errorf("writing temp profiles file: %w", err)
+		return fmt.Errorf("writing temp file %s: %w", relName, err)
 	}
 	if err := s.fs.Rename(tmpPath, finalPath); err != nil {
-		return fmt.Errorf("renaming profiles file into place: %w", err)
+		return fmt.Errorf("renaming %s into place: %w", relName, err)
 	}
-	s.state = state
 	return nil
+}
+
+// adoptionState projects the durable adoption flags out of the combined UI
+// state; recency is excluded (it lives in the sidecar).
+func adoptionState(state map[string]ProfileUIState) map[string]ProfileUIState {
+	out := map[string]ProfileUIState{}
+	for id, st := range state {
+		if st.Adopted {
+			out[id] = ProfileUIState{Adopted: true}
+		}
+	}
+	return out
+}
+
+// recencyMap projects last-run timestamps out of the combined UI state.
+func recencyMap(state map[string]ProfileUIState) map[string]int64 {
+	out := map[string]int64{}
+	for id, st := range state {
+		if st.LastRunAt != 0 {
+			out[id] = st.LastRunAt
+		}
+	}
+	return out
+}
+
+// hasRecency reports whether any entry carries a last-run timestamp.
+func hasRecency(state map[string]ProfileUIState) bool {
+	for _, st := range state {
+		if st.LastRunAt != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // orEmptyProfiles returns a non-nil slice for a possibly-nil profile list.
