@@ -89,6 +89,44 @@ func TestDetectPackageJSON(t *testing.T) {
 	}
 }
 
+func TestDetectPackageJSONSkipsLifecycleScripts(t *testing.T) {
+	files := map[string][]byte{
+		"/workspace/package.json": []byte(`{
+			"scripts": {
+				"prepare": "husky",
+				"preinstall": "echo pre",
+				"postinstall": "echo post",
+				"prepublishOnly": "echo pub",
+				"build": "tsc",
+				"start": "node .",
+				"test": "jest"
+			}
+		}`),
+	}
+	detector := NewDetector(newDetectorMockFS(files), "/workspace")
+
+	names := map[string]bool{}
+	for _, p := range detector.DetectAll() {
+		names[p.Name] = true
+	}
+
+	// Real run targets are still detected (start/test are not lifecycle hooks).
+	for _, want := range []string{"npm run build", "npm run start", "npm run test"} {
+		if !names[want] {
+			t.Errorf("expected %q to be detected", want)
+		}
+	}
+	// npm install/publish lifecycle hooks run automatically and are not run
+	// targets, so they must not surface as profiles (e.g. husky "prepare").
+	for _, skip := range []string{
+		"npm run prepare", "npm run preinstall", "npm run postinstall", "npm run prepublishOnly",
+	} {
+		if names[skip] {
+			t.Errorf("expected lifecycle script %q to be skipped", skip)
+		}
+	}
+}
+
 func TestDetectGoMod(t *testing.T) {
 	files := map[string][]byte{
 		"/workspace/go.mod": []byte("module example.com/foo\n\ngo 1.21\n"),
