@@ -1,0 +1,56 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.action,
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  color: var(--text-primary, #e6e6e6);
+  cursor: pointer;
+  font-size: 12px;
+}
+.action {
+  border-radius: 6px 0 0 6px;
+  border-right: none;
+  padding: 0 8px;
+}
+.trigger {
+  border-radius: 0 6px 6px 0;
+  padding: 0 8px;
+  font-weight: 600;
+  max-width: 180px;
+}
+.action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chevron {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+}
+.dot[data-state='running'] {
+  background: var(--status-running, #5fd08a);
+}
+.dot[data-state='failed'] {
+  background: var(--status-failed, #e06c6c);
+}
+.dot[data-state='stopping'] {
+  background: var(--status-warn, #e0a458);
+}
