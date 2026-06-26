@@ -17,6 +17,14 @@ test('explicit selection wins when visible', () => {
   ).toBe('b');
 });
 
+test('explicit selection wins even when profile is in a different workspace', () => {
+  // Selection is global, NOT workspace-scoped (spec §5 step 1).
+  const profiles = [p('a', { workspaceId: 'ws1' }), p('b', { workspaceId: 'ws2' })];
+  expect(
+    resolveEffectiveRunTargetId({ ...base, selectedProfileId: 'b', profiles, profileState: {} })
+  ).toBe('b');
+});
+
 test('hidden explicit selection falls through to default', () => {
   const profiles = [p('a', { source: 'user' }), p('b')];
   const r = resolveEffectiveRunTargetId({
