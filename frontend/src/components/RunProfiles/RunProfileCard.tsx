@@ -318,7 +318,7 @@ export function RunProfileCard({
           }
           title="Cmd+R target"
         >
-          <span aria-hidden="true">{isSelectedTarget ? '◉' : '○'}</span>
+          <span aria-hidden="true">{isSelectedTarget ? '◎' : '○'}</span>
         </button>
         {renderActionButton()}
         <span className={styles.name}>{profile.name}</span>

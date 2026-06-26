@@ -3,11 +3,13 @@ import { RunProfileSelector } from '../../components/Header/RunProfileSelector';
 import { useIDEStore } from '../../stores/ideStore';
 
 const mockStart = jest.fn().mockResolvedValue(undefined);
+const mockStop = jest.fn().mockResolvedValue(undefined);
+const mockRestart = jest.fn().mockResolvedValue(undefined);
 const mockSetVariant = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../../wailsjs/go/main/App', () => ({
   StartRunProfile: (...a: unknown[]) => mockStart(...a),
-  StopRunProfile: jest.fn().mockResolvedValue(undefined),
-  RestartRunProfile: jest.fn().mockResolvedValue(undefined),
+  StopRunProfile: (...a: unknown[]) => mockStop(...a),
+  RestartRunProfile: (...a: unknown[]) => mockRestart(...a),
   SetActiveVariant: (...a: unknown[]) => mockSetVariant(...a),
 }));
 
@@ -58,9 +60,55 @@ test('inline run button runs that row immediately', () => {
   expect(mockStart).toHaveBeenCalledWith('p2');
 });
 
+test('inline action stops a running row', () => {
+  useIDEStore.setState({
+    runOutputs: {
+      p2: {
+        profileId: 'p2',
+        state: 'running',
+        exitCode: 0,
+        runCount: 1,
+        entries: [],
+        previousEntries: [],
+      },
+    },
+  });
+  open();
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Stop test/i }));
+  expect(mockStop).toHaveBeenCalledWith('p2');
+});
+
+test('inline action restarts a failed row', () => {
+  useIDEStore.setState({
+    runOutputs: {
+      p2: {
+        profileId: 'p2',
+        state: 'failed',
+        exitCode: 1,
+        runCount: 1,
+        entries: [],
+        previousEntries: [],
+      },
+    },
+  });
+  open();
+  fireEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: /Restart test/i })
+  );
+  expect(mockRestart).toHaveBeenCalledWith('p2');
+});
+
 test('Escape closes the popover', () => {
   open();
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /dev/i, expanded: false })).toHaveFocus();
+});
+
+test('clicking the trigger again closes the popover', () => {
+  open();
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /dev/i, expanded: true }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
@@ -123,6 +171,36 @@ test('changing the env variant calls SetActiveVariant', () => {
     target: { value: 'prod' },
   });
   expect(mockSetVariant).toHaveBeenCalledWith('p1', 'prod');
+});
+
+test('env variant selector preserves base as the empty value', () => {
+  useIDEStore.setState({
+    runProfiles: [
+      {
+        id: 'p1',
+        name: 'dev',
+        type: 'single',
+        source: 'user',
+        workspaceId: 'ws1',
+        envVariants: [
+          { name: 'dev', envFile: '.env' },
+          { name: 'prod', envFile: '.env.prod' },
+        ],
+      },
+    ],
+    activeWorkspaceId: 'ws1',
+    selectedProfileId: 'p1',
+  });
+  open();
+  const select = within(screen.getByRole('dialog')).getByLabelText(
+    'Env variant for dev'
+  ) as HTMLSelectElement;
+  expect(select.value).toBe('');
+  expect(within(select).getByRole('option', { name: 'base' })).toHaveValue('');
+
+  fireEvent.change(select, { target: { value: 'prod' } });
+  fireEvent.change(select, { target: { value: '' } });
+  expect(mockSetVariant).toHaveBeenLastCalledWith('p1', '');
 });
 
 test('shows the selected target as an outside-view row when it is in another workspace', () => {

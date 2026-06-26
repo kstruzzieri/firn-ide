@@ -108,7 +108,7 @@
   background: rgba(255, 255, 255, 0.05);
 }
 .rowSel {
-  box-shadow: inset 2px 0 0 var(--accent-blue, #6ea8fe);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .rowSelect {
   flex: 1;
@@ -125,7 +125,7 @@
 }
 .mk {
   width: 11px;
-  color: var(--accent-blue, #6ea8fe);
+  color: var(--accent);
   text-align: center;
 }
 .rowName {

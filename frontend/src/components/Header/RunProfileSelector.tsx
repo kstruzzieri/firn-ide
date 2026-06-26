@@ -27,6 +27,7 @@ export function RunProfileSelector() {
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
   const popRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const effectiveId = useEffectiveRunTarget();
 
   const target = profiles.find((p) => p.id === effectiveId) ?? null;
@@ -45,7 +46,15 @@ export function RunProfileSelector() {
   useEffect(() => {
     if (!isOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) setIsOpen(false);
+      const node = e.target as Node;
+      if (
+        popRef.current &&
+        !popRef.current.contains(node) &&
+        triggerRef.current &&
+        !triggerRef.current.contains(node)
+      ) {
+        setIsOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -54,8 +63,14 @@ export function RunProfileSelector() {
   const selectRow = (id: string) => {
     setSelectedProfile(id);
     setIsOpen(false);
+    triggerRef.current?.focus();
   };
-  const runRow = (p: RunProfile) => startProfile(p.id, p.name);
+  const actOnRow = (p: RunProfile, visualState: ReturnType<typeof getVisualState>) => {
+    if (visualState === 'stopping') return;
+    if (visualState === 'running') stopProfile(p.id, p.name);
+    else if (visualState === 'failed' || visualState === 'stopped') restartProfile(p.id, p.name);
+    else startProfile(p.id, p.name);
+  };
   const onVariantChange = (p: RunProfile, value: string) => {
     SetActiveVariant(p.id, value)
       .then(() => useIDEStore.getState().addOrUpdateProfile({ ...p, activeVariant: value }))
@@ -71,6 +86,16 @@ export function RunProfileSelector() {
   const renderRow = (p: RunProfile) => {
     const rvs = getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds);
     const variants = (p.envVariants ?? []).filter((v) => v.name);
+    const rowActionLabel =
+      rvs === 'running'
+        ? `Stop ${p.name}`
+        : rvs === 'stopping'
+          ? `Stopping ${p.name}`
+          : rvs === 'failed' || rvs === 'stopped'
+            ? `Restart ${p.name}`
+            : `Run ${p.name}`;
+    const RowActionIcon =
+      rvs === 'running' ? StopIcon : rvs === 'failed' || rvs === 'stopped' ? RestartIcon : PlayIcon;
     return (
       <div key={p.id} className={`${styles.row} ${p.id === effectiveId ? styles.rowSel : ''}`}>
         <button
@@ -80,7 +105,7 @@ export function RunProfileSelector() {
           aria-pressed={p.id === effectiveId}
         >
           <span className={styles.mk} aria-hidden="true">
-            {p.id === effectiveId ? '◉' : ''}
+            {p.id === effectiveId ? '◎' : ''}
           </span>
           <span className={styles.rowName}>{p.name}</span>
           {p.id === effectiveId && <span className={styles.srOnly}>Selected target</span>}
@@ -88,10 +113,11 @@ export function RunProfileSelector() {
         {variants.length > 0 && (
           <select
             className={styles.env}
-            value={p.activeVariant ?? variants[0].name}
+            value={p.activeVariant ?? ''}
             aria-label={`Env variant for ${p.name}`}
             onChange={(e) => onVariantChange(p, e.currentTarget.value)}
           >
+            <option value="">base</option>
             {variants.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name}
@@ -102,11 +128,11 @@ export function RunProfileSelector() {
         <button
           type="button"
           className={styles.rowRun}
-          onClick={() => runRow(p)}
-          disabled={rvs === 'running' || rvs === 'stopping'}
-          aria-label={`Run ${p.name}`}
+          onClick={() => actOnRow(p, rvs)}
+          disabled={rvs === 'stopping'}
+          aria-label={rowActionLabel}
         >
-          <PlayIcon aria-hidden="true" />
+          <RowActionIcon aria-hidden="true" />
         </button>
       </div>
     );
@@ -187,6 +213,7 @@ export function RunProfileSelector() {
         {actionIcon}
       </button>
       <button
+        ref={triggerRef}
         type="button"
         className={styles.trigger}
         onClick={() => setIsOpen((o) => !o)}
@@ -205,7 +232,10 @@ export function RunProfileSelector() {
           role="dialog"
           aria-label="Run profiles"
           onKeyDown={(e) => {
-            if (e.key === 'Escape') setIsOpen(false);
+            if (e.key === 'Escape') {
+              setIsOpen(false);
+              triggerRef.current?.focus();
+            }
           }}
         >
           {targetOutsideView && (
@@ -216,7 +246,7 @@ export function RunProfileSelector() {
           )}
           {renderSections(visible)}
           <div className={styles.footer}>
-            <span>⌘R runs ◉ selected</span>
+            <span>⌘R runs ◎ selected</span>
           </div>
         </div>
       )}
