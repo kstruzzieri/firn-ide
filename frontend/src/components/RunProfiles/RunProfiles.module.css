@@ -121,3 +121,40 @@ details.group > summary {
   cursor: pointer;
   list-style: revert;
 }
+
+.createButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 15px;
+}
+.createButton:hover {
+  color: #cfcfcf;
+}
+.hiddenRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+}
+.hiddenName {
+  font-size: 11px;
+  color: #ccc;
+}
+.hiddenShow {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #38bdf8;
+  border: none;
+  cursor: pointer;
+}

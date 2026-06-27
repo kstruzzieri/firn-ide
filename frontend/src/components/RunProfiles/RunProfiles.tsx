@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
-import { ProfileBrowser } from './ProfileBrowser';
+import { RunProfileForm } from './RunProfileForm';
 import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';
 import {
   useRunProfiles,
@@ -10,6 +10,7 @@ import {
   useProfilesError,
   useIDEStore,
   useRunProfileState,
+  useRunProfileForm,
   useTreeViewMode,
   useActiveWorkspaceId,
   useWorkspaces,
@@ -56,6 +57,8 @@ export function RunProfiles() {
   const runStartTimestamps = useIDEStore((s) => s.runStartTimestamps);
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
   const runProfileState = useRunProfileState();
+  const runProfileForm = useRunProfileForm();
+  const openRunProfileForm = useIDEStore((s) => s.openRunProfileForm);
   const viewMode = useTreeViewMode(); // 'project' | 'workspace'
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
@@ -238,46 +241,90 @@ export function RunProfiles() {
     <Panel
       title={title}
       actions={
-        <>
-          <TreeViewToggle ariaLabel="Run profiles view" />
-          <ProfileBrowser allProfiles={profiles} hiddenProfileIds={hiddenProfileIds} />
-        </>
+        runProfileForm ? null : (
+          <>
+            <TreeViewToggle ariaLabel="Run profiles view" />
+            <button
+              className={styles.createButton}
+              onClick={() => openRunProfileForm({ mode: 'create' })}
+              aria-label="New profile"
+              title="New profile"
+            >
+              +
+            </button>
+          </>
+        )
       }
     >
-      <div className={styles.list}>
-        {isLoading ? (
-          <div className={styles.empty}>
-            <p>Loading profiles...</p>
-          </div>
-        ) : error ? (
-          <div className={styles.empty}>
-            <p className={styles.errorText}>{error}</p>
-          </div>
-        ) : isViewEmpty ? (
-          <RunProfilesEmpty />
-        ) : viewMode === 'project' ? (
-          grouped.workspaceGroups.map((wg) => {
-            const counts = groupCounts(wg);
-            const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
-            return (
-              <div key={wg.workspaceId} className={styles.workspaceGroup}>
-                <div className={styles.workspaceHeader}>
-                  <span className={styles.workspaceDot} style={{ background: accentVar(accent) }} />
-                  <span className={styles.workspaceName}>{wg.workspaceName}</span>
-                  {counts.running > 0 && (
-                    <span className={styles.runningCount}>● {counts.running} running</span>
-                  )}
-                  <span className={styles.groupTotal}>· {counts.total}</span>
+      {runProfileForm ? (
+        <RunProfileForm state={runProfileForm} />
+      ) : (
+        <div className={styles.list}>
+          {isLoading ? (
+            <div className={styles.empty}>
+              <p>Loading profiles...</p>
+            </div>
+          ) : error ? (
+            <div className={styles.empty}>
+              <p className={styles.errorText}>{error}</p>
+            </div>
+          ) : isViewEmpty ? (
+            <RunProfilesEmpty />
+          ) : viewMode === 'project' ? (
+            grouped.workspaceGroups.map((wg) => {
+              const counts = groupCounts(wg);
+              const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
+              return (
+                <div key={wg.workspaceId} className={styles.workspaceGroup}>
+                  <div className={styles.workspaceHeader}>
+                    <span
+                      className={styles.workspaceDot}
+                      style={{ background: accentVar(accent) }}
+                    />
+                    <span className={styles.workspaceName}>{wg.workspaceName}</span>
+                    {counts.running > 0 && (
+                      <span className={styles.runningCount}>● {counts.running} running</span>
+                    )}
+                    <span className={styles.groupTotal}>· {counts.total}</span>
+                  </div>
+                  {wg.sections.map((s) => renderSection(s, true))}
                 </div>
-                {wg.sections.map((s) => renderSection(s, true))}
-              </div>
-            );
-          })
-        ) : (
-          grouped.sections.map((s) => renderSection(s, false))
-        )}
-      </div>
+              );
+            })
+          ) : (
+            grouped.sections.map((s) => renderSection(s, false))
+          )}
+          <HiddenSection profiles={profiles} hiddenProfileIds={hiddenProfileIds} />
+        </div>
+      )}
     </Panel>
+  );
+}
+
+function HiddenSection({
+  profiles,
+  hiddenProfileIds,
+}: {
+  profiles: RunProfile[];
+  hiddenProfileIds: string[];
+}) {
+  const unhideProfile = useIDEStore((s) => s.unhideProfile);
+  const hidden = profiles.filter((p) => hiddenProfileIds.includes(p.id));
+  if (hidden.length === 0) return null;
+  return (
+    <details className={styles.group}>
+      <summary className={styles.groupLabel}>
+        Hidden <span className={styles.sectionCount}>{hidden.length}</span>
+      </summary>
+      {hidden.map((p) => (
+        <div key={p.id} className={styles.hiddenRow}>
+          <div className={styles.hiddenName}>{p.name}</div>
+          <button className={styles.hiddenShow} onClick={() => unhideProfile(p.id)}>
+            Show
+          </button>
+        </div>
+      ))}
+    </details>
   );
 }
 
