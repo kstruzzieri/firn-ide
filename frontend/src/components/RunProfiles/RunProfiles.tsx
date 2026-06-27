@@ -211,16 +211,20 @@ export function RunProfiles() {
     return { running: countRunning(groupProfilesList), total: groupProfilesList.length };
   };
 
+  const hideableProfiles = useMemo(
+    () =>
+      viewMode === 'workspace'
+        ? profiles.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
+        : profiles,
+    [profiles, viewMode, activeWorkspaceId]
+  );
+
   // Derive hidden count from intersection with the *view-scoped* profile set so a
   // hidden profile in another workspace doesn't inflate the Workspace-View count.
   const hiddenCount = useMemo(() => {
-    const scopedHideable =
-      viewMode === 'workspace'
-        ? profiles.filter((p) => (p.workspaceId ?? '') === activeWorkspaceId)
-        : profiles;
-    const profileIds = new Set(scopedHideable.map((p) => p.id));
+    const profileIds = new Set(hideableProfiles.map((p) => p.id));
     return hiddenProfileIds.filter((id) => profileIds.has(id)).length;
-  }, [profiles, hiddenProfileIds, viewMode, activeWorkspaceId]);
+  }, [hideableProfiles, hiddenProfileIds]);
 
   const title = (
     <>
@@ -294,7 +298,7 @@ export function RunProfiles() {
           ) : (
             grouped.sections.map((s) => renderSection(s, false))
           )}
-          <HiddenSection profiles={profiles} hiddenProfileIds={hiddenProfileIds} />
+          <HiddenSection profiles={hideableProfiles} hiddenProfileIds={hiddenProfileIds} />
         </div>
       )}
     </Panel>

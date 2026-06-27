@@ -249,6 +249,30 @@ describe('RunProfiles panel — create form', () => {
   });
 });
 
+describe('RunProfiles panel — hidden section', () => {
+  it('does not show hidden profiles from other workspaces in Workspace view', () => {
+    useIDEStore.setState({
+      runProfiles: [pinnedProfile, detectedProfile, goUserProfile],
+      runProfileState: {},
+      activeWorkspaceId: WS,
+      hiddenProfileIds: [goUserProfile.id],
+      runOutputs: {},
+      runHistory: {},
+      runStartTimestamps: {},
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      isLoadingProfiles: false,
+      profilesError: null,
+      toast: null,
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.queryByText('Hidden')).not.toBeInTheDocument();
+    expect(screen.queryByText('Go Test')).not.toBeInTheDocument();
+  });
+});
+
 describe('RunProfiles panel — view toggle', () => {
   it('renders a Workspace/Project segmented toggle and switching to Project drives setTreeViewMode', async () => {
     const user = userEvent.setup();
