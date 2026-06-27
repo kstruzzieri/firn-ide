@@ -118,6 +118,30 @@ func IsConfigFile(filename string) bool {
 	return false
 }
 
+// npmLifecycleScripts are npm-managed install/publish/pack/version lifecycle hooks
+// that npm runs automatically and are not manual run targets, so they are not
+// surfaced as run profiles (e.g. a polyglot root whose only package.json script
+// is husky "prepare"). Manual targets like start/test/stop/restart/build and
+// npm v7+ uninstall names are intentionally absent so they keep being detected.
+var npmLifecycleScripts = map[string]bool{
+	"prepare":        true,
+	"preprepare":     true,
+	"postprepare":    true,
+	"prepublish":     true,
+	"prepublishOnly": true,
+	"publish":        true,
+	"postpublish":    true,
+	"prepack":        true,
+	"postpack":       true,
+	"dependencies":   true,
+	"preinstall":     true,
+	"install":        true,
+	"postinstall":    true,
+	"preversion":     true,
+	"version":        true,
+	"postversion":    true,
+}
+
 func (d *Detector) detectPackageJSON(path string) []RunProfile {
 	data, err := d.fs.ReadFile(path)
 	if err != nil {
@@ -143,6 +167,9 @@ func (d *Detector) detectPackageJSON(path string) []RunProfile {
 	var profiles []RunProfile
 	order := 0
 	for _, name := range scriptNames {
+		if npmLifecycleScripts[name] {
+			continue
+		}
 		order++
 		profiles = append(profiles, RunProfile{
 			ID:           d.profileID("package.json", name),
