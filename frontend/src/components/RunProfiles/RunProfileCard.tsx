@@ -5,9 +5,6 @@ import { getTagColor } from '../../utils/tagColors';
 import { formatDuration } from '../../utils/formatDuration';
 import { PlayIcon, StopIcon, RestartIcon, LoaderIcon } from '../icons';
 import {
-  StartRunProfile,
-  StopRunProfile,
-  RestartRunProfile,
   PinRunProfile,
   UnpinRunProfile,
   SetActiveVariant,
@@ -15,6 +12,7 @@ import {
   UnadoptRunProfile,
 } from '../../../wailsjs/go/main/App';
 import { useIDEStore } from '../../stores/ideStore';
+import { useProfileActions } from '../../hooks/useProfileActions';
 import type { RunProfile } from '../../types/runProfile';
 import type { VisualState, RunHistoryEntry, RunOutput } from '../../types/runOutput';
 import type { ProfileSection } from '../../utils/groupProfiles';
@@ -53,6 +51,7 @@ interface RunProfileCardProps {
   onFocusOutput: (profileId: string) => void;
   section?: ProfileSection;
   isFreshestRun?: boolean;
+  isSelectedTarget?: boolean;
 }
 
 function getStateClass(visualState: VisualState): string {
@@ -111,11 +110,8 @@ export function RunProfileCard({
   onFocusOutput,
   section,
   isFreshestRun,
+  isSelectedTarget,
 }: RunProfileCardProps) {
-  const setProfileStopping = useIDEStore((s) => s.setProfileStopping);
-  const clearProfileStopping = useIDEStore((s) => s.clearProfileStopping);
-  const setProfileRestarting = useIDEStore((s) => s.setProfileRestarting);
-  const clearProfileRestarting = useIDEStore((s) => s.clearProfileRestarting);
   const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
 
@@ -129,30 +125,11 @@ export function RunProfileCard({
   );
 
   // Shared action handlers — used by both inline action button and ExpandedPanel
-  const handleStart = () => {
-    StartRunProfile(profile.id).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      showToast(`Failed to start "${profile.name}": ${message}`, 'error');
-    });
-  };
-
-  const handleStop = () => {
-    setProfileStopping(profile.id);
-    StopRunProfile(profile.id).catch((err: unknown) => {
-      clearProfileStopping(profile.id);
-      const message = err instanceof Error ? err.message : String(err);
-      showToast(`Failed to stop "${profile.name}": ${message}`, 'error');
-    });
-  };
-
-  const handleRestart = () => {
-    setProfileRestarting(profile.id);
-    RestartRunProfile(profile.id).catch((err: unknown) => {
-      clearProfileRestarting(profile.id);
-      const message = err instanceof Error ? err.message : String(err);
-      showToast(`Failed to restart "${profile.name}": ${message}`, 'error');
-    });
-  };
+  const {
+    start: handleStart,
+    stop: handleStop,
+    restart: handleRestart,
+  } = useProfileActions(profile);
 
   const handlePin = () => {
     PinRunProfile(profile.id).catch((err: unknown) => {
@@ -192,6 +169,11 @@ export function RunProfileCard({
         'error'
       );
     });
+  };
+
+  const handleSelectTarget = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    useIDEStore.getState().setSelectedProfile(profile.id);
   };
 
   const envVariants = (profile.envVariants ?? []).filter((variant) => variant.name);
@@ -251,6 +233,7 @@ export function RunProfileCard({
     isActiveState ? styles.forceExpand : '',
     !isActiveState && isExpanded ? styles.expanded : '',
     isFreshestRun ? styles.justRan : '',
+    isSelectedTarget ? styles.selectedTarget : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -325,6 +308,18 @@ export function RunProfileCard({
     >
       {/* Row 1: action button + name + duration */}
       <div className={styles.row1}>
+        <button
+          type="button"
+          className={`${styles.targetToggle} ${isSelectedTarget ? styles.targetToggleOn : ''}`}
+          onClick={handleSelectTarget}
+          aria-pressed={isSelectedTarget ? true : false}
+          aria-label={
+            isSelectedTarget ? `Run target: ${profile.name}` : `Set as run target: ${profile.name}`
+          }
+          title="Cmd+R target"
+        >
+          <span aria-hidden="true">{isSelectedTarget ? '◎' : '○'}</span>
+        </button>
         {renderActionButton()}
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />

@@ -7,6 +7,7 @@ import { openWorkspaceByPath } from '../../utils/workspace';
 import { formatShortcut, isMac } from '../../utils/platform';
 import firnIcon from '../../assets/branding/icon.svg';
 import { WorkspaceSelector } from './WorkspaceSelector';
+import { RunProfileSelector } from './RunProfileSelector';
 
 const MENU_ID = 'workspace-menu';
 
@@ -201,6 +202,9 @@ export function Header() {
 
       {/* Spacer */}
       <div className={styles.spacer} />
+
+      {/* Run-profile selector (right-aligned) */}
+      <RunProfileSelector />
     </>
   );
 }

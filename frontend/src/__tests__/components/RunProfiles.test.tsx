@@ -215,6 +215,21 @@ describe('RunProfiles panel — empty state', () => {
   });
 });
 
+test('marks the effective run target card as selected', () => {
+  useIDEStore.setState({
+    runProfiles: [{ id: 'p1', name: 'dev', type: 'single', source: 'user', workspaceId: WS }],
+    runProfileState: {},
+    hiddenProfileIds: [],
+    activeWorkspaceId: WS,
+    selectedProfileId: 'p1',
+  });
+  render(<RunProfiles />);
+  expect(screen.getByRole('button', { name: /Run target: dev/i })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  );
+});
+
 describe('RunProfiles panel — view toggle', () => {
   it('renders a Workspace/Project segmented toggle and switching to Project drives setTreeViewMode', async () => {
     const user = userEvent.setup();
