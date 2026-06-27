@@ -34,21 +34,25 @@ function makeRunOutput(entries: OutputEntry[], state: RunOutput['state'] = 'succ
 }
 
 function renderPanel({
+  profile = mockProfile,
   visualState = 'idle',
   runHistory = [],
   runOutput,
   stopElapsedMs = 0,
   onFocusOutput = noop,
+  onEdit,
 }: {
+  profile?: RunProfile;
   visualState?: 'idle' | 'running' | 'stopping' | 'failed' | 'success' | 'stopped';
   runHistory?: RunHistoryEntry[];
   runOutput?: RunOutput;
   stopElapsedMs?: number;
   onFocusOutput?: (profileId: string) => void;
+  onEdit?: () => void;
 } = {}) {
   return render(
     <ExpandedPanel
-      profile={mockProfile}
+      profile={profile}
       visualState={visualState}
       runOutput={runOutput}
       runHistory={runHistory}
@@ -61,6 +65,7 @@ function renderPanel({
       onPin={noop}
       onUnpin={noop}
       onHide={noop}
+      onEdit={onEdit}
     />
   );
 }
@@ -250,5 +255,45 @@ describe('ExpandedPanel output preview', () => {
     fireEvent.click(screen.getByRole('button', { name: /open full output/i }));
 
     expect(onFocusOutput).toHaveBeenCalledWith('test-1');
+  });
+});
+
+describe('ExpandedPanel edit action', () => {
+  it('shows Edit for a user single profile and opens the edit form', () => {
+    const onEdit = jest.fn();
+    renderPanel({
+      profile: { id: 'u1', name: 'Dev', type: 'single', source: 'user', command: 'npm run dev' },
+      onEdit,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels the action "Customize" for a detected profile', () => {
+    renderPanel({
+      profile: {
+        id: 'd1',
+        name: 'npm run dev',
+        type: 'single',
+        source: 'detected',
+        command: 'npm run dev',
+      },
+      onEdit: jest.fn(),
+    });
+    expect(screen.getByRole('button', { name: /customize/i })).toBeInTheDocument();
+  });
+
+  it('hides Edit/Customize for compound profiles', () => {
+    renderPanel({
+      profile: {
+        id: 'c1',
+        name: 'CI',
+        type: 'compound',
+        source: 'detected',
+        steps: ['a'],
+      } as RunProfile,
+      onEdit: jest.fn(),
+    });
+    expect(screen.queryByRole('button', { name: /edit|customize/i })).not.toBeInTheDocument();
   });
 });
