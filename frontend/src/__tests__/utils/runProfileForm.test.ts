@@ -6,6 +6,7 @@ import {
   relativizeWorkingDir,
   buildProfileFromForm,
   type EnvRow,
+  type RunProfileFormValues,
 } from '../../utils/runProfileForm';
 import type { RunProfile } from '../../types/runProfile';
 
@@ -92,13 +93,13 @@ describe('relativizeWorkingDir', () => {
 });
 
 describe('buildProfileFromForm', () => {
-  const values = {
+  const values: RunProfileFormValues = {
     name: '  Dev  ',
     command: '  npm run dev  ',
     workingDir: ' frontend ',
     envRows: [{ key: 'A', value: '1' }] as EnvRow[],
     envFile: ' .env ',
-    tags: ['dev'] as RunProfile['tags'],
+    tags: ['dev'],
     workspaceId: 'frontend',
   };
 
