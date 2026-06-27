@@ -133,18 +133,22 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const onBrowse = async () => {
     setDirError(null);
     const root = workspace?.path;
-    const picked = await OpenFolderDialog();
-    if (!picked) return;
-    if (!root) {
-      patch({ workingDir: picked });
-      return;
+    try {
+      const picked = await OpenFolderDialog();
+      if (!picked) return;
+      if (!root) {
+        patch({ workingDir: picked });
+        return;
+      }
+      const rel = relativizeWorkingDir(picked, root);
+      if (!rel.ok) {
+        setDirError('Folder must be inside the workspace.');
+        return;
+      }
+      patch({ workingDir: rel.relDir });
+    } catch (err) {
+      setDirError(err instanceof Error ? err.message : 'Could not open the folder picker.');
     }
-    const rel = relativizeWorkingDir(picked, root);
-    if (!rel.ok) {
-      setDirError('Folder must be inside the workspace.');
-      return;
-    }
-    patch({ workingDir: rel.relDir });
   };
 
   const addEnvRow = () => patch({ envRows: [...values.envRows, { key: '', value: '' }] });
@@ -167,9 +171,20 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
         close(); // backend emits runprofiles:changed → list refreshes
         return;
       }
+      // name/command render inline; surface every other backend error in the
+      // form-level banner so no validation failure is silently swallowed.
       const errs: Record<string, string> = {};
-      for (const e of result.errors ?? []) errs[e.field] = e.message;
+      const other: string[] = [];
+      for (const e of result.errors ?? []) {
+        if (e.field === 'name' || e.field === 'command') errs[e.field] = e.message;
+        else other.push(e.message);
+      }
       setFieldErrors(errs);
+      if (other.length > 0) {
+        setFormError(other.join('; '));
+      } else if (Object.keys(errs).length === 0) {
+        setFormError('Could not save profile.');
+      }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {

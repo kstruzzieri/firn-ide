@@ -103,6 +103,28 @@ it('renders backend field errors inline and stays open', async () => {
   expect(useIDEStore.getState().runProfileForm).not.toBeNull();
 });
 
+it('surfaces backend errors not tied to an inline field (no silent failure)', async () => {
+  (SaveRunProfile as jest.Mock).mockResolvedValue({
+    valid: false,
+    errors: [{ field: 'id', message: 'profile id already exists in another workspace' }],
+  });
+  useIDEStore.getState().openRunProfileForm({ mode: 'create' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Dup' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'echo hi' } });
+  fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(await screen.findByText(/already exists in another workspace/i)).toBeInTheDocument();
+  expect(useIDEStore.getState().runProfileForm).not.toBeNull();
+});
+
+it('shows an inline error when the folder picker fails', async () => {
+  (OpenFolderDialog as jest.Mock).mockRejectedValue(new Error('dialog unavailable'));
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  fireEvent.click(screen.getByRole('button', { name: /browse/i }));
+  expect(await screen.findByText(/dialog unavailable/i)).toBeInTheDocument();
+});
+
 it('seeds name/command from a detected command via Start from', () => {
   render(<RunProfileForm state={{ mode: 'create' }} />);
   fireEvent.change(screen.getByLabelText(/start from/i), {
