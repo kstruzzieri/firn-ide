@@ -3,6 +3,7 @@ import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import type { filesystem, workspace } from '../../wailsjs/go/models';
 import type { RunProfile, RunProfileUIState } from '../types/runProfile';
+import type { FormState } from '../utils/runProfileForm';
 import { LineAssembler } from '../utils/lineAssembler';
 import type {
   CompoundRun,
@@ -161,6 +162,8 @@ interface IDEState {
   // Run Profiles
   runProfiles: RunProfile[];
   runProfileState: Record<string, RunProfileUIState>;
+  // Run-profile create/edit form view-state (null = list view)
+  runProfileForm: FormState;
   isLoadingProfiles: boolean;
   profilesError: string | null;
   // Header selector: session-only single Cmd+R target. Not persisted; the
@@ -265,6 +268,8 @@ interface IDEActions {
   setProfilesError: (error: string | null) => void;
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
+  openRunProfileForm: (state: Exclude<FormState, null>) => void;
+  closeRunProfileForm: () => void;
 
   // Run Output actions
   appendRunOutput: (chunk: OutputChunk) => void;
@@ -415,6 +420,7 @@ export const useIDEStore = create<IDEStore>()(
       workingDirectory: '',
       runProfiles: [],
       runProfileState: {},
+      runProfileForm: null,
       isLoadingProfiles: false,
       profilesError: null,
       selectedProfileId: null,
@@ -755,6 +761,9 @@ export const useIDEStore = create<IDEStore>()(
 
       setProfilesError: (profilesError) =>
         set({ profilesError, isLoadingProfiles: false }, false, 'setProfilesError'),
+
+      openRunProfileForm: (state) => set({ runProfileForm: state }, false, 'openRunProfileForm'),
+      closeRunProfileForm: () => set({ runProfileForm: null }, false, 'closeRunProfileForm'),
 
       addOrUpdateProfile: (profile) =>
         set(
@@ -1502,6 +1511,7 @@ export const useIDEStore = create<IDEStore>()(
               runHistory: {},
               waveformData: {},
               hiddenProfileIds: [],
+              runProfileForm: null,
               runStartTimestamps: {},
               stopRequestTimestamps: {},
               runProfileState: {},
@@ -1686,6 +1696,7 @@ export const useTreeError = () => useIDEStore((state) => state.treeError);
 export const useToast = () => useIDEStore((state) => state.toast);
 export const useRunProfiles = () => useIDEStore((state) => state.runProfiles);
 export const useRunProfileState = () => useIDEStore((state) => state.runProfileState);
+export const useRunProfileForm = () => useIDEStore((state) => state.runProfileForm);
 export const useDetectedProfiles = () =>
   useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'detected')));
 export const useSavedProfiles = () =>
