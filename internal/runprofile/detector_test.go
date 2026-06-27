@@ -94,9 +94,16 @@ func TestDetectPackageJSONSkipsLifecycleScripts(t *testing.T) {
 		"/workspace/package.json": []byte(`{
 			"scripts": {
 				"prepare": "husky",
+				"preprepare": "echo preprepare",
+				"postprepare": "echo postprepare",
 				"preinstall": "echo pre",
 				"postinstall": "echo post",
 				"prepublishOnly": "echo pub",
+				"publish": "echo publish",
+				"postpublish": "echo postpublish",
+				"preuninstall": "echo before cleanup",
+				"uninstall": "node cleanup.js",
+				"postuninstall": "echo after cleanup",
 				"build": "tsc",
 				"start": "node .",
 				"test": "jest"
@@ -110,8 +117,12 @@ func TestDetectPackageJSONSkipsLifecycleScripts(t *testing.T) {
 		names[p.Name] = true
 	}
 
-	// Real run targets are still detected (start/test are not lifecycle hooks).
-	for _, want := range []string{"npm run build", "npm run start", "npm run test"} {
+	// Real run targets are still detected (start/test are not lifecycle hooks, and
+	// uninstall scripts are not implemented by npm v7+).
+	for _, want := range []string{
+		"npm run build", "npm run start", "npm run test",
+		"npm run preuninstall", "npm run uninstall", "npm run postuninstall",
+	} {
 		if !names[want] {
 			t.Errorf("expected %q to be detected", want)
 		}
@@ -119,7 +130,9 @@ func TestDetectPackageJSONSkipsLifecycleScripts(t *testing.T) {
 	// npm install/publish lifecycle hooks run automatically and are not run
 	// targets, so they must not surface as profiles (e.g. husky "prepare").
 	for _, skip := range []string{
-		"npm run prepare", "npm run preinstall", "npm run postinstall", "npm run prepublishOnly",
+		"npm run prepare", "npm run preprepare", "npm run postprepare",
+		"npm run preinstall", "npm run postinstall", "npm run prepublishOnly",
+		"npm run publish", "npm run postpublish",
 	} {
 		if names[skip] {
 			t.Errorf("expected lifecycle script %q to be skipped", skip)

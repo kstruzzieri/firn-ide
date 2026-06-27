@@ -118,24 +118,25 @@ func IsConfigFile(filename string) bool {
 	return false
 }
 
-// npmLifecycleScripts are npm-managed install/publish/pack lifecycle hooks that
-// npm runs automatically and are not manual run targets, so they are not
+// npmLifecycleScripts are npm-managed install/publish/pack/version lifecycle hooks
+// that npm runs automatically and are not manual run targets, so they are not
 // surfaced as run profiles (e.g. a polyglot root whose only package.json script
-// is husky "prepare"). Manual targets like start/test/stop/restart/build are
-// intentionally absent so they keep being detected.
+// is husky "prepare"). Manual targets like start/test/stop/restart/build and
+// npm v7+ uninstall names are intentionally absent so they keep being detected.
 var npmLifecycleScripts = map[string]bool{
 	"prepare":        true,
+	"preprepare":     true,
+	"postprepare":    true,
 	"prepublish":     true,
 	"prepublishOnly": true,
+	"publish":        true,
+	"postpublish":    true,
 	"prepack":        true,
 	"postpack":       true,
 	"dependencies":   true,
 	"preinstall":     true,
 	"install":        true,
 	"postinstall":    true,
-	"preuninstall":   true,
-	"uninstall":      true,
-	"postuninstall":  true,
 	"preversion":     true,
 	"version":        true,
 	"postversion":    true,
