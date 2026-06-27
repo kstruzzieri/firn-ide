@@ -319,7 +319,11 @@ function HiddenSection({
       {hidden.map((p) => (
         <div key={p.id} className={styles.hiddenRow}>
           <div className={styles.hiddenName}>{p.name}</div>
-          <button className={styles.hiddenShow} onClick={() => unhideProfile(p.id)}>
+          <button
+            className={styles.hiddenShow}
+            onClick={() => unhideProfile(p.id)}
+            aria-label={`Show ${p.name}`}
+          >
             Show
           </button>
         </div>

@@ -219,7 +219,12 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
         <button className={styles.cancel} onClick={close}>
           Cancel
         </button>
-        <button className={styles.save} onClick={onSave} disabled={!canSave} aria-label="Save">
+        <button
+          className={styles.save}
+          onClick={onSave}
+          disabled={!canSave}
+          aria-label={saving ? 'Saving' : 'Save'}
+        >
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -373,6 +378,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
                 <button
                   className={styles.deleteConfirm}
                   onClick={onDelete}
+                  disabled={saving}
                   aria-label="Confirm delete"
                 >
                   Confirm delete
