@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
@@ -94,6 +94,9 @@ beforeEach(() => {
     profilesError: null,
     toast: null,
   });
+  // Form state persists across tests in the singleton store; reset it so a
+  // leaked open-form from one test doesn't render over the list in the next.
+  useIDEStore.getState().closeRunProfileForm();
 });
 
 describe('RunProfiles panel grouping (workspace view)', () => {
@@ -228,6 +231,46 @@ test('marks the effective run target card as selected', () => {
     'aria-pressed',
     'true'
   );
+});
+
+describe('RunProfiles panel — create form', () => {
+  it('opens the create form from the header + button', () => {
+    render(<RunProfiles />);
+    fireEvent.click(screen.getByRole('button', { name: /new profile/i }));
+    expect(useIDEStore.getState().runProfileForm).toEqual({ mode: 'create' });
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+  });
+
+  it('renders the form instead of the list when a form is active', () => {
+    useIDEStore.getState().openRunProfileForm({ mode: 'create' });
+    render(<RunProfiles />);
+    expect(screen.queryByRole('button', { name: /new profile/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+  });
+});
+
+describe('RunProfiles panel — hidden section', () => {
+  it('does not show hidden profiles from other workspaces in Workspace view', () => {
+    useIDEStore.setState({
+      runProfiles: [pinnedProfile, detectedProfile, goUserProfile],
+      runProfileState: {},
+      activeWorkspaceId: WS,
+      hiddenProfileIds: [goUserProfile.id],
+      runOutputs: {},
+      runHistory: {},
+      runStartTimestamps: {},
+      stoppingProfileIds: [],
+      restartingProfileIds: [],
+      isLoadingProfiles: false,
+      profilesError: null,
+      toast: null,
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.queryByText('Hidden')).not.toBeInTheDocument();
+    expect(screen.queryByText('Go Test')).not.toBeInTheDocument();
+  });
 });
 
 describe('RunProfiles panel — view toggle', () => {

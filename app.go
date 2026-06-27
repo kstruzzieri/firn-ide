@@ -30,6 +30,8 @@ type App struct {
 	profileMu            sync.RWMutex
 	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
+	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
+	emitFn func(event string, data ...any)
 	executor             *runprofile.Executor
 	osFS                 filesystem.FileSystem
 	workspaceStore       *workspace.Store
@@ -372,6 +374,15 @@ func (a *App) UnadoptRunProfile(id string) error {
 	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.UnadoptProfile(id) })
 }
 
+// emit sends a Wails event, or routes to emitFn when set (tests).
+func (a *App) emit(event string, data ...any) {
+	if a.emitFn != nil {
+		a.emitFn(event, data...)
+		return
+	}
+	runtime.EventsEmit(a.ctx, event, data...)
+}
+
 // mutateAndEmitProfiles runs a manager mutation under the app read lock, then emits the full snapshot on success. Centralizes the lock/emit dance shared by pin/unpin/variant/adopt/unadopt.
 func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager) error) error {
 	a.profileMu.RLock()
@@ -385,34 +396,51 @@ func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager
 	}
 	snap := a.profileManager.Snapshot()
 	a.profileMu.RUnlock()
-	runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
+	a.emit("runprofiles:changed", snap)
 	return nil
 }
 
-// SaveRunProfile validates and saves a run profile.
-// This is exposed to the frontend via Wails bindings.
+// SaveRunProfile validates and saves a run profile, emitting runprofiles:changed
+// on a successful, valid save. This is exposed to the frontend via Wails bindings.
 func (a *App) SaveRunProfile(profile runprofile.RunProfile) (runprofile.ValidationResult, error) {
 	a.profileMu.RLock()
-	defer a.profileMu.RUnlock()
-
 	if a.profileManager == nil {
+		a.profileMu.RUnlock()
 		return runprofile.ValidationResult{Valid: false, Errors: []runprofile.ValidationError{
 			{Field: "workspace", Message: "no workspace loaded"},
 		}}, nil
 	}
-	return a.profileManager.SaveProfile(profile)
+	result, err := a.profileManager.SaveProfile(profile)
+	var snap runprofile.RunProfilesSnapshot
+	shouldEmit := err == nil && result.Valid
+	if shouldEmit {
+		snap = a.profileManager.Snapshot()
+	}
+	a.profileMu.RUnlock()
+	if shouldEmit {
+		a.emit("runprofiles:changed", snap)
+	}
+	return result, err
 }
 
-// DeleteRunProfile removes a saved run profile by ID.
-// This is exposed to the frontend via Wails bindings.
+// DeleteRunProfile removes a saved run profile by ID, emitting runprofiles:changed
+// on success. This is exposed to the frontend via Wails bindings.
 func (a *App) DeleteRunProfile(id string) error {
 	a.profileMu.RLock()
-	defer a.profileMu.RUnlock()
-
 	if a.profileManager == nil {
+		a.profileMu.RUnlock()
 		return fmt.Errorf("no workspace loaded")
 	}
-	return a.profileManager.DeleteProfile(id)
+	err := a.profileManager.DeleteProfile(id)
+	var snap runprofile.RunProfilesSnapshot
+	if err == nil {
+		snap = a.profileManager.Snapshot()
+	}
+	a.profileMu.RUnlock()
+	if err == nil {
+		a.emit("runprofiles:changed", snap)
+	}
+	return err
 }
 
 // PinRunProfile converts a detected profile to a saved profile and emits an update event.

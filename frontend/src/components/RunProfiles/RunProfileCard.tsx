@@ -114,6 +114,7 @@ export function RunProfileCard({
 }: RunProfileCardProps) {
   const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
+  const openRunProfileForm = useIDEStore((s) => s.openRunProfileForm);
 
   const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
   const stopRequestTs = useIDEStore((s) => s.stopRequestTimestamps[profile.id]);
@@ -130,6 +131,8 @@ export function RunProfileCard({
     stop: handleStop,
     restart: handleRestart,
   } = useProfileActions(profile);
+
+  const handleEdit = () => openRunProfileForm({ mode: 'edit', profile });
 
   const handlePin = () => {
     PinRunProfile(profile.id).catch((err: unknown) => {
@@ -409,6 +412,7 @@ export function RunProfileCard({
           onPin={handlePin}
           onUnpin={handleUnpin}
           onHide={handleHide}
+          onEdit={handleEdit}
           onUnadopt={section === 'activated' ? handleUnadopt : undefined}
         />
       </div>

@@ -40,6 +40,7 @@ export interface ExpandedPanelProps {
   onPin: () => void;
   onUnpin: () => void;
   onHide: () => void;
+  onEdit?: () => void;
   onUnadopt?: () => void;
 }
 
@@ -430,6 +431,7 @@ function ActionsRow({
   onPin,
   onUnpin,
   onHide,
+  onEdit,
   onUnadopt,
 }: {
   profile: RunProfile;
@@ -442,6 +444,7 @@ function ActionsRow({
   onPin: () => void;
   onUnpin: () => void;
   onHide: () => void;
+  onEdit?: () => void;
   onUnadopt?: () => void;
 }) {
   const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
@@ -518,6 +521,15 @@ function ActionsRow({
           Unpin
         </button>
       )}
+      {onEdit && profile.type === 'single' && (
+        <button
+          className={styles.actionGhost}
+          onClick={onEdit}
+          aria-label={`${profile.source === 'detected' ? 'Customize' : 'Edit'} ${profile.name}`}
+        >
+          {profile.source === 'detected' ? 'Customize' : 'Edit'}
+        </button>
+      )}
       <button className={styles.actionGhost} onClick={onHide} aria-label={`Hide ${profile.name}`}>
         Hide
       </button>
@@ -541,6 +553,7 @@ export function ExpandedPanel({
   onPin,
   onUnpin,
   onHide,
+  onEdit,
   onUnadopt,
 }: ExpandedPanelProps) {
   function renderPanel() {
@@ -631,6 +644,7 @@ export function ExpandedPanel({
         onPin={onPin}
         onUnpin={onUnpin}
         onHide={onHide}
+        onEdit={onEdit}
         onUnadopt={onUnadopt}
       />
     </div>
