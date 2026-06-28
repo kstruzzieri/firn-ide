@@ -236,7 +236,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           <label className={styles.group}>
             <span className={styles.label}>Start from</span>
             <select
-              className={styles.input}
+              className={`${styles.input} ${styles.select}`}
               defaultValue=""
               onChange={(e) => onPickStartFrom(e.target.value)}
               aria-label="Start from detected command"
@@ -256,7 +256,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           <label className={styles.group}>
             <span className={styles.label}>Workspace</span>
             <select
-              className={styles.input}
+              className={`${styles.input} ${styles.select}`}
               value={values.workspaceId}
               onChange={(e) => patch({ workspaceId: e.target.value })}
               aria-label="Workspace"
@@ -345,7 +345,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           </button>
         </div>
 
-        <label className={styles.group}>
+        <div className={styles.group}>
           <span className={styles.label}>Env file</span>
           <input
             className={`${styles.input} ${styles.mono}`}
@@ -354,7 +354,8 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
             onChange={(e) => patch({ envFile: e.target.value })}
             aria-label="Env file"
           />
-        </label>
+          <span className={styles.hint}>Relative to the working directory.</span>
+        </div>
 
         {values.tags.length > 0 && (
           <div className={styles.group}>

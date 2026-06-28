@@ -43,3 +43,9 @@ test('clicking the toggle selects the profile and does not expand the card', () 
   fireEvent.click(screen.getByRole('button', { name: /run target/i }));
   expect(useIDEStore.getState().selectedProfileId).toBe('p1');
 });
+
+test('dormant cards can be selected from the keyboard', () => {
+  render(<RunProfileCard {...common} isDormant={true} isSelectedTarget={false} />);
+  fireEvent.keyDown(screen.getByRole('button', { name: /^dev$/ }), { key: 'Enter' });
+  expect(useIDEStore.getState().selectedProfileId).toBe('p1');
+});

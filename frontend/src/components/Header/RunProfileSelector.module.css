@@ -19,6 +19,9 @@
   border-radius: 6px 0 0 6px;
   border-right: none;
   padding: 0 8px;
+  /* Center the play/stop glyph; the status dot is a corner pip (absolute below). */
+  justify-content: center;
+  position: relative;
 }
 .trigger {
   border-radius: 0 6px 6px 0;
@@ -30,6 +33,11 @@
   opacity: 0.5;
   cursor: default;
 }
+.action svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
 .name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -40,8 +48,11 @@
   flex-shrink: 0;
 }
 .dot {
-  width: 7px;
-  height: 7px;
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: transparent;
 }

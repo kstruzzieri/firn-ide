@@ -2,6 +2,9 @@
   padding: 8px;
   height: 100%;
   overflow-y: auto;
+  /* Darker than the --surface-panel section so the panel reads recessed and the
+     flat (transparent) cards sit on a uniform dark field like the file tree. */
+  background: var(--surface-frame);
 }
 
 .group {
