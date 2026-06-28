@@ -298,18 +298,14 @@ export function RunProfileCard({
     <div
       className={cardClassName}
       onClick={handleCardClick}
-      tabIndex={isDormant ? undefined : 0}
-      onKeyDown={
-        isDormant
-          ? undefined
-          : (e) => {
-              if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-                e.preventDefault();
-                handleCardClick();
-              }
-            }
-      }
-      role={isDormant ? undefined : 'button'}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+          e.preventDefault();
+          handleCardClick();
+        }
+      }}
+      role="button"
       aria-label={profile.name}
     >
       {/* Row 1: action button + name + duration */}
