@@ -279,7 +279,13 @@ export function RunProfiles() {
               const counts = groupCounts(wg);
               const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
               return (
-                <div key={wg.workspaceId} className={styles.workspaceGroup}>
+                <div
+                  key={wg.workspaceId}
+                  className={styles.workspaceGroup}
+                  style={
+                    { ['--region-accent' as string]: accentVar(accent) } as React.CSSProperties
+                  }
+                >
                   <div className={styles.workspaceHeader}>
                     <span
                       className={styles.workspaceDot}

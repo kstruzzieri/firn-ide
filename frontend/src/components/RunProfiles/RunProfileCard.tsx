@@ -204,6 +204,9 @@ export function RunProfileCard({
   const isExpanded = !isActiveState && manualExpanded;
 
   const handleCardClick = () => {
+    // Clicking anywhere on the card selects it as the Cmd+R target...
+    useIDEStore.getState().setSelectedProfile(profile.id);
+    // ...and still toggles the expanded detail for non-dormant, non-active cards.
     if (!isDormant && !isActiveState) {
       setManualExpanded((prev) => !prev);
     }
@@ -294,7 +297,7 @@ export function RunProfileCard({
   return (
     <div
       className={cardClassName}
-      onClick={isDormant ? undefined : handleCardClick}
+      onClick={handleCardClick}
       tabIndex={isDormant ? undefined : 0}
       onKeyDown={
         isDormant
@@ -321,7 +324,7 @@ export function RunProfileCard({
           }
           title="Cmd+R target"
         >
-          <span aria-hidden="true">{isSelectedTarget ? '◎' : '○'}</span>
+          <span className={styles.targetDot} aria-hidden="true" />
         </button>
         {renderActionButton()}
         <span className={styles.name}>{profile.name}</span>
