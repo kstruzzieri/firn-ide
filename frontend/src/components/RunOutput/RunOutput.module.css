@@ -246,16 +246,26 @@
   overflow: hidden;
 }
 
+/* Lanes own their own padding via cells, so the scroll parent has none — this
+   removes the 8px top gap where rows would otherwise show above the sticky
+   header (#107). */
+.lanesScroll {
+  padding: 0;
+}
+
 .laneHeaders {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--lane-split, 50%) 1fr;
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3;
   background: #040406;
+  /* Promote to its own compositor layer so momentum-scrolled rows (each a GPU
+     layer via translateY) can't paint over the sticky header in WebView. */
+  will-change: transform;
 }
 
 .laneHeader {
-  flex: 1;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -289,12 +299,47 @@
   flex-shrink: 0;
 }
 
+/* Draggable column boundary. Lives in the sticky header (always visible) and is
+   positioned at the split fraction; the visual line continues down the body via
+   the .laneLine.stderr border-left. */
+.laneDivider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.laneDivider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.laneDivider:hover::before {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* Isolated stacking context so the absolutely-positioned, transformed virtual
+   rows are contained strictly below the sticky header (#107). */
+.laneRows {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+}
+
 .laneRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--lane-split, 50%) 1fr;
 }
 
 .laneLine {
-  flex: 1;
   min-height: 20px;
   min-width: 0;
   white-space: pre-wrap;
