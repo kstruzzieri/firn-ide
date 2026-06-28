@@ -5,6 +5,7 @@ import {
   useState,
   useCallback,
   type CSSProperties,
+  type KeyboardEvent,
   type PointerEvent,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -58,6 +59,7 @@ export function LanesView({ entries, autoScroll, workingDir, workspacePath }: La
   const parentRef = useRef<HTMLDivElement>(null);
   const [split, setSplit] = useState<number>(loadSplit);
   const splitRef = useRef(split);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   splitRef.current = split;
 
   const rows = useMemo(() => {
@@ -82,24 +84,58 @@ export function LanesView({ entries, autoScroll, workingDir, workspacePath }: La
     }
   }, [rows.length, autoScroll, virtualizer]);
 
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+
+  const commitSplit = useCallback((value: number) => {
+    const next = clampSplit(value);
+    splitRef.current = next;
+    setSplit(next);
+    writeSplit(next);
+  }, []);
+
   const onDividerDown = useCallback((e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const el = parentRef.current;
     if (!el) return;
+    dragCleanupRef.current?.();
     const rect = el.getBoundingClientRect();
     let latest = splitRef.current;
     const move = (ev: globalThis.PointerEvent) => {
       latest = clampSplit((ev.clientX - rect.left) / rect.width);
       setSplit(latest);
     };
-    const up = () => {
+    const stop = () => {
+      if (dragCleanupRef.current !== stop) return;
+      dragCleanupRef.current = null;
       document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointerup', stop);
+      document.removeEventListener('pointercancel', stop);
+      window.removeEventListener('blur', stop);
       writeSplit(latest);
     };
+    dragCleanupRef.current = stop;
     document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', up);
+    document.addEventListener('pointerup', stop);
+    document.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
   }, []);
+
+  const onDividerKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 0.05 : 0.01;
+      let next: number | null = null;
+
+      if (e.key === 'ArrowLeft') next = splitRef.current - step;
+      if (e.key === 'ArrowRight') next = splitRef.current + step;
+      if (e.key === 'Home') next = MIN_SPLIT;
+      if (e.key === 'End') next = MAX_SPLIT;
+      if (next == null) return;
+
+      e.preventDefault();
+      commitSplit(next);
+    },
+    [commitSplit]
+  );
 
   if (entries.length === 0) {
     return (
@@ -128,9 +164,14 @@ export function LanesView({ entries, autoScroll, workingDir, workspacePath }: La
           className={styles.laneDivider}
           style={{ left: `${split * 100}%` }}
           onPointerDown={onDividerDown}
+          onKeyDown={onDividerKeyDown}
           role="separator"
+          tabIndex={0}
           aria-orientation="vertical"
           aria-label="Resize stdout and stderr lanes"
+          aria-valuemin={MIN_SPLIT * 100}
+          aria-valuemax={MAX_SPLIT * 100}
+          aria-valuenow={Math.round(split * 100)}
         />
       </div>
       <div className={styles.laneRows} style={{ height: `${virtualizer.getTotalSize()}px` }}>
