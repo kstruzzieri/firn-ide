@@ -116,8 +116,12 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Purpose-built expanded panels per state (activity graph, output preview, stats, error detail, SIGTERM progress)
 - [x] Predicted completion ETA with median-based estimation and running card sort
 - [x] Failed-state attention pulse animation
-- [x] Profile browser for hidden profile management
 - [x] Reactive re-detection on config file changes via file watcher
+- [x] Workspace-owned detection and identity — each profile owns a workspace, with workspace-scoped IDs and a per-workspace `.firn/run-profiles.json`
+- [x] Four-section working set (Working Set / Pinned / Recent / Detected) with per-workspace adoption and Workspace/Project views
+- [x] Header profile selector with a single `Cmd+R` run target, shared with the panel
+- [x] Create / edit / customize / delete profile form (Start-from picker, inline env vars, working-dir folder picker, env variants)
+- [x] Hidden-profile section to unhide, and header **+** to create a profile
 
 **Frontend (React/TypeScript)**
 - [x] CodeMirror 6 editor with Firn Glacier theme
@@ -160,11 +164,10 @@ The roadmap includes a built-in AI assistant panel with:
 
 ### Planned
 
-- [ ] Complete TypeScript project-root detection for nearest `tsconfig.json`, `jsconfig.json`, or `package.json`
+- [ ] Terminal shell integration — command separators and error markers
+- [ ] Managed LSP server provisioning — download pinned servers into an app cache with offline/retry UI
+- [ ] File-tree lazy loading — load directory children on expand
 - [ ] Git integration
-- [ ] Run output clickable `file:line:col` links
-- [ ] Run Profile environment variants and compound execution
-- [ ] Workspace identity and Project/Workspace file tree views
 - [ ] AI Chat Panel
 
 ## Project Structure
