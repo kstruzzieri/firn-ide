@@ -169,19 +169,31 @@ func (s *Store) Save(profile RunProfile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Apply to a fresh slice so a persist failure can restore the prior in-memory
+	// state — otherwise memory and disk diverge (and the emit-on-change path would
+	// surface a profile that was never written).
+	prev := s.profiles
+	updated := make([]RunProfile, len(s.profiles))
+	copy(updated, s.profiles)
+
 	found := false
-	for i, p := range s.profiles {
+	for i, p := range updated {
 		if p.ID == profile.ID {
-			s.profiles[i] = profile
+			updated[i] = profile
 			found = true
 			break
 		}
 	}
 	if !found {
-		s.profiles = append(s.profiles, profile)
+		updated = append(updated, profile)
 	}
+	s.profiles = updated
 
-	return s.persist()
+	if err := s.persist(); err != nil {
+		s.profiles = prev
+		return err
+	}
+	return nil
 }
 
 // Delete removes a profile by ID and persists to disk.
@@ -200,8 +212,19 @@ func (s *Store) Delete(id string) error {
 		return fmt.Errorf("profile not found: %s", id)
 	}
 
-	s.profiles = append(s.profiles[:idx], s.profiles[idx+1:]...)
-	return s.persist()
+	// Remove into a fresh slice so a persist failure can restore the original
+	// (the prior in-place splice mutated the backing array, corrupting any rollback).
+	prev := s.profiles
+	updated := make([]RunProfile, 0, len(s.profiles)-1)
+	updated = append(updated, s.profiles[:idx]...)
+	updated = append(updated, s.profiles[idx+1:]...)
+	s.profiles = updated
+
+	if err := s.persist(); err != nil {
+		s.profiles = prev
+		return err
+	}
+	return nil
 }
 
 // GetAll returns a copy of all stored profiles.

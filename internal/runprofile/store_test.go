@@ -50,6 +50,67 @@ func newMockFSWithFiles() (*filesystem.Mock, map[string][]byte) {
 	return m, files
 }
 
+func TestStoreSaveRollsBackOnPersistError(t *testing.T) {
+	mockFS, _ := newMockFSWithFiles()
+	store := NewStore(mockFS, "/workspace")
+
+	mockFS.WriteFileFunc = func(string, []byte, fs.FileMode) error {
+		return errors.New("disk full")
+	}
+
+	err := store.Save(RunProfile{ID: "p1", Name: "Dev", Type: ProfileTypeSingle, Command: "x"})
+	if err == nil {
+		t.Fatal("expected Save to return an error when persist fails")
+	}
+	if store.Contains("p1") {
+		t.Fatal("Save must not leave a profile in memory when the disk write fails")
+	}
+	if got := store.GetAll(); len(got) != 0 {
+		t.Fatalf("expected empty store after a failed save, got %d profiles", len(got))
+	}
+}
+
+func TestStoreSaveRollsBackUpdateOnPersistError(t *testing.T) {
+	mockFS, _ := newMockFSWithFiles()
+	store := NewStore(mockFS, "/workspace")
+	if err := store.Save(RunProfile{ID: "p1", Name: "Old", Type: ProfileTypeSingle, Command: "x"}); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	mockFS.WriteFileFunc = func(string, []byte, fs.FileMode) error {
+		return errors.New("disk full")
+	}
+
+	err := store.Save(RunProfile{ID: "p1", Name: "New", Type: ProfileTypeSingle, Command: "y"})
+	if err == nil {
+		t.Fatal("expected error when persisting an update fails")
+	}
+	got := store.GetAll()
+	if len(got) != 1 || got[0].Name != "Old" || got[0].Command != "x" {
+		t.Fatalf("a failed update must restore the prior value, got %+v", got)
+	}
+}
+
+func TestStoreDeleteRollsBackOnPersistError(t *testing.T) {
+	mockFS, _ := newMockFSWithFiles()
+	store := NewStore(mockFS, "/workspace")
+	if err := store.Save(RunProfile{ID: "p1", Name: "Dev", Type: ProfileTypeSingle, Command: "x"}); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	mockFS.WriteFileFunc = func(string, []byte, fs.FileMode) error {
+		return errors.New("disk full")
+	}
+
+	err := store.Delete("p1")
+	if err == nil {
+		t.Fatal("expected Delete to return an error when persist fails")
+	}
+	if !store.Contains("p1") {
+		t.Fatal("Delete must keep the profile in memory when the disk write fails")
+	}
+}
+
 func TestStoreLoadNoFile(t *testing.T) {
 	mockFS := newMockFS()
 	store := NewStore(mockFS, "/workspace")
