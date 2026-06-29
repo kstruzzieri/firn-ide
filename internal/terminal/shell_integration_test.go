@@ -92,3 +92,76 @@ func TestEnsureWrapperFiles(t *testing.T) {
 		t.Errorf("repaired firn.bashrc perm = %o, want 600", info.Mode().Perm())
 	}
 }
+
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+func envValue(env []string, key string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		e := env[i]
+		if strings.HasPrefix(e, key+"=") {
+			return strings.TrimPrefix(e, key+"="), true
+		}
+	}
+	return "", false
+}
+
+func TestIntegratedCommandZsh(t *testing.T) {
+	root := t.TempDir()
+	cmd := integratedCommand("/bin/zsh", root)
+
+	if cmd.Path != "/bin/zsh" {
+		t.Errorf("Path = %q", cmd.Path)
+	}
+	zdot, ok := envValue(cmd.Env, "ZDOTDIR")
+	if !ok || !strings.Contains(zdot, "shell-integration") {
+		t.Errorf("ZDOTDIR = %q ok=%v", zdot, ok)
+	}
+	if _, ok := envValue(cmd.Env, "USER_ZDOTDIR"); !ok {
+		t.Error("USER_ZDOTDIR not set")
+	}
+}
+
+func TestIntegratedCommandBash(t *testing.T) {
+	root := t.TempDir()
+	cmd := integratedCommand("/usr/bin/bash", root)
+
+	if !hasArg(cmd.Args, "--rcfile") || !hasArg(cmd.Args, "-i") {
+		t.Errorf("bash args missing --rcfile/-i: %v", cmd.Args)
+	}
+}
+
+func TestIntegratedCommandUnsupportedIsPlain(t *testing.T) {
+	root := t.TempDir()
+	for _, sh := range []string{"/bin/sh", "/usr/bin/fish"} {
+		cmd := integratedCommand(sh, root)
+		if len(cmd.Args) != 1 {
+			t.Errorf("%s: expected plain command, got args %v", sh, cmd.Args)
+		}
+		if cmd.Env != nil {
+			t.Errorf("%s: plain command should not set Env, got %v", sh, cmd.Env)
+		}
+	}
+}
+
+func TestIntegratedCommandFailsOpen(t *testing.T) {
+	// A root that cannot be created (a file, not a dir) forces ensureWrapperFiles
+	// to fail; integratedCommand must still return a usable plain zsh command.
+	f := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := integratedCommand("/bin/zsh", f)
+	if cmd == nil || cmd.Path == "" {
+		t.Fatal("expected plain command on setup failure")
+	}
+	if cmd.Env != nil {
+		t.Fatalf("fail-open should return plain command with nil Env, got %v", cmd.Env)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -55,6 +56,40 @@ func ensureWrapperFiles(root string) (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+// integratedCommand builds the shell command with OSC 133 integration when the
+// shell is supported and wrapper setup succeeds. It is FAIL-OPEN: any failure
+// yields a plain shell command so terminal creation never breaks on integration.
+func integratedCommand(shellPath, cacheRoot string) *exec.Cmd {
+	plain := exec.Command(shellPath)
+
+	kind := shellKind(shellPath)
+	if kind == "" || cacheRoot == "" {
+		return plain
+	}
+	dir, err := ensureWrapperFiles(cacheRoot)
+	if err != nil {
+		return plain
+	}
+
+	switch kind {
+	case "zsh":
+		cmd := exec.Command(shellPath)
+		userZdotdir := os.Getenv("ZDOTDIR")
+		if userZdotdir == "" {
+			userZdotdir = os.Getenv("HOME")
+		}
+		cmd.Env = append(os.Environ(),
+			"ZDOTDIR="+dir,
+			"USER_ZDOTDIR="+userZdotdir,
+		)
+		return cmd
+	case "bash":
+		return exec.Command(shellPath, "--rcfile", filepath.Join(dir, "firn.bashrc"), "-i")
+	default:
+		return plain
+	}
 }
 
 // shellKind returns "zsh", "bash", or "" (unsupported) for a shell path.
