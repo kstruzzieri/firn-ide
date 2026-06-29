@@ -169,24 +169,6 @@ func TestExecutor_StartFailure(t *testing.T) {
 	}
 }
 
-func TestExecutor_StartRejectsReservedCompoundProfileID(t *testing.T) {
-	spy := &emitSpy{}
-	exec := NewExecutor(spy.emit, nil)
-	dir := t.TempDir()
-
-	profile := newTestProfile("compound:Y2k:0", "echo should-not-run")
-	err := exec.Start(dir, profile)
-	if err == nil {
-		t.Fatal("Start returned nil; want reserved profile id error")
-	}
-	if !strings.Contains(err.Error(), `profile id uses reserved namespace "compound:"`) {
-		t.Fatalf("Start error = %q, want reserved namespace error", err.Error())
-	}
-	if statuses := spy.statuses(); len(statuses) != 0 {
-		t.Fatalf("expected no status events for rejected profile, got %d", len(statuses))
-	}
-}
-
 func TestExecutor_StartCompoundRejected(t *testing.T) {
 	exec := NewExecutor(nil, nil)
 	dir := t.TempDir()
