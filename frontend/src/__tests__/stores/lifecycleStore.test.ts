@@ -476,6 +476,72 @@ describe('lifecycleStore - run output working directory snapshots', () => {
     expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
     expect(output.entries[0].text).toBe('new line');
   });
+
+  it('drops stale terminal status after rerun output provisioned a newer buffer', () => {
+    const store = useIDEStore.getState();
+
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stderr',
+      data: 'old line\n',
+      timestamp: 1001,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2000,
+    });
+
+    store.appendRunOutput({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stdout',
+      data: 'new line\n',
+      timestamp: 2500,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2600,
+    });
+
+    const output = useIDEStore.getState().runOutputs['profile-1'];
+    expect(output.runInstanceId).toBe('r2');
+    expect(output.state).toBe('failed');
+    expect(output.entries.map((entry) => entry.text)).toEqual(['new line']);
+    expect(output.previousEntries.map((entry) => entry.text)).toEqual(['old line']);
+
+    store.handleRunStatus({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 3000,
+    });
+
+    const runningOutput = useIDEStore.getState().runOutputs['profile-1'];
+    expect(runningOutput.runInstanceId).toBe('r2');
+    expect(runningOutput.state).toBe('running');
+    expect(runningOutput.entries.map((entry) => entry.text)).toEqual(['new line']);
+  });
 });
 
 describe('lifecycleStore - resetWorkspaceRunState', () => {

@@ -880,12 +880,13 @@ export const useIDEStore = create<IDEStore>()(
         if (parentRunInstanceId) return; // steps flow only via run:compound
 
         const existingBefore = get().runOutputs[profileId];
-        // Stale guard: a mismatched instance while the current run is still
-        // active is a late event from a superseded run — drop before flushing.
+        // Stale guard: a mismatched non-running status is always stale once a
+        // newer buffer exists. A mismatched running status is only accepted when
+        // the existing buffer is terminal, which is how reruns rotate.
         if (
           existingBefore &&
           existingBefore.runInstanceId !== runInstanceId &&
-          existingBefore.state === 'running'
+          (newState !== 'running' || existingBefore.state === 'running')
         ) {
           return;
         }
