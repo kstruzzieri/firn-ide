@@ -1,6 +1,5 @@
 import { useIDEStore, useRunOutputs, useActiveRunOutputId } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
-import { parseCompoundStepKey } from '../../utils/compoundRunKeys';
 import { ALL_PROFILES_ID } from '../../types/runOutput';
 import type { VisualState } from '../../types/runOutput';
 import styles from './RunOutputTabs.module.css';
@@ -14,15 +13,13 @@ export function RunOutputTabs() {
   const profiles = useIDEStore((s) => s.runProfiles);
   const runCompounds = useIDEStore((s) => s.runCompounds);
 
-  // Ordinary run outputs: exclude composite step keys AND compound aggregates.
-  // A compound emits an aggregate run:status, so runOutputs[compoundId] exists
-  // for the card badge — but it must not be treated as an ordinary timeline
-  // source (its output lives in runCompounds[id].stepOutputs).
-  const ordinaryIds = Object.keys(runOutputs).filter(
-    (id) => parseCompoundStepKey(id) == null && !runCompounds[id]
-  );
+  // Ordinary run outputs: exclude compound aggregates. A compound emits an
+  // aggregate run:status, so runOutputs[compoundId] exists for the card badge —
+  // but it must not be treated as an ordinary timeline source (its output lives
+  // in runCompounds[id].stepOutputs).
+  const ordinaryIds = Object.keys(runOutputs).filter((id) => !runCompounds[id]);
   // Compound runs render their own tab (with compound state/name).
-  const compoundIds = Object.keys(runCompounds).filter((id) => parseCompoundStepKey(id) == null);
+  const compoundIds = Object.keys(runCompounds);
   const tabIds = [...ordinaryIds, ...compoundIds];
   if (tabIds.length === 0) return null;
 
