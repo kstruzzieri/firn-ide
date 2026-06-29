@@ -10,7 +10,7 @@ interface FakeDecoration {
 }
 
 function makeFakeTerm() {
-  const markers: { disposed: boolean }[] = [];
+  const markers: { disposed: boolean; dispose(): void }[] = [];
   const decorations: FakeDecoration[] = [];
   let osc: ((data: string) => boolean) | null = null;
 
@@ -23,10 +23,15 @@ function makeFakeTerm() {
       },
     },
     registerMarker: () => {
+      const listeners: Array<() => void> = [];
       const m = {
         disposed: false,
         dispose() {
           this.disposed = true;
+          for (const l of listeners) l();
+        },
+        onDispose(cb: () => void) {
+          listeners.push(cb);
         },
       };
       markers.push(m);
@@ -136,6 +141,19 @@ describe('createShellIntegration', () => {
     const sep = f.decorations[2];
     sep.render();
     expect(sep.el.style.borderTop).toContain('1px solid');
+  });
+
+  it('prunes a finished command block when its marker is disposed (scrolled out)', () => {
+    const f = makeFakeTerm();
+    const integ = createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;1'); // block decorated, marker 0 + decoration 0 retained
+    // xterm disposes the marker when its line scrolls out of the scrollback buffer.
+    f.markers[0].dispose();
+    // The block is pruned, so a later dispose() no longer touches its decoration.
+    integ.dispose();
+    expect(f.decorations[0].disposed).toBe(false);
   });
 
   it('fails open when the terminal exposes no OSC parser (headless/jsdom)', () => {

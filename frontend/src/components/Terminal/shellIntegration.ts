@@ -18,6 +18,9 @@ interface Disposable {
 
 interface Marker extends Disposable {
   dispose(): void;
+  // Fired when xterm disposes the marker (e.g. its line scrolls out of the
+  // scrollback buffer). Optional: absent on minimal/test doubles.
+  onDispose?(listener: () => void): void;
 }
 
 interface Decoration extends Disposable {
@@ -39,6 +42,7 @@ interface PromptBlock {
   marker: Marker;
   executed: boolean;
   decorated: boolean;
+  decorations: Decoration[];
 }
 
 export function createShellIntegration(
@@ -47,8 +51,9 @@ export function createShellIntegration(
 ): ShellIntegration {
   let current: PromptBlock | null = null;
   let decoratedCount = 0;
-  const tracked: Disposable[] = [];
-  const markers: Marker[] = [];
+  // Live command blocks. Pruned as xterm disposes their markers (lines scrolling
+  // out of scrollback), so this stays bounded over a long-lived terminal.
+  const blocks = new Set<PromptBlock>();
 
   // Fail open: xterm.open() may not initialize the parser in headless/jsdom
   // environments (term.parser is undefined). Without the OSC parser there is
@@ -64,11 +69,18 @@ export function createShellIntegration(
       case 'A': {
         // Drop a stale marker from a prompt that ran no command (empty enters).
         if (current && !current.executed && !current.decorated) {
-          current.marker.dispose();
+          discard(current);
         }
         const marker = term.registerMarker();
-        if (marker) markers.push(marker);
-        current = marker ? { marker, executed: false, decorated: false } : null;
+        if (marker) {
+          const block: PromptBlock = { marker, executed: false, decorated: false, decorations: [] };
+          blocks.add(block);
+          // When xterm disposes the marker, drop our reference so blocks stays bounded.
+          marker.onDispose?.(() => blocks.delete(block));
+          current = block;
+        } else {
+          current = null;
+        }
         break;
       }
       case 'C':
@@ -78,7 +90,7 @@ export function createShellIntegration(
         if (current && current.executed && !current.decorated) {
           const exit = Number.parseInt(parts[1] ?? '0', 10);
           const failed = !Number.isNaN(exit) && exit !== 0;
-          decorate(current.marker, failed, decoratedCount > 0);
+          decorate(current, failed, decoratedCount > 0);
           current.decorated = true;
           decoratedCount += 1;
         }
@@ -87,23 +99,31 @@ export function createShellIntegration(
     return true; // handled — xterm will not print the sequence
   });
 
-  function decorate(marker: Marker, failed: boolean, withSeparator: boolean): void {
-    const bar = term.registerDecoration({ marker, x: 0, width: 1 });
+  function discard(block: PromptBlock): void {
+    for (const d of block.decorations) d.dispose();
+    block.marker.dispose();
+    blocks.delete(block);
+  }
+
+  function decorate(block: PromptBlock, failed: boolean, withSeparator: boolean): void {
+    const bar = term.registerDecoration({ marker: block.marker, x: 0, width: 1 });
     if (bar) {
       bar.onRender((el) => {
         el.style.backgroundColor = failed ? colors.fail : colors.ok;
         el.style.width = '3px';
       });
-      tracked.push(bar);
+      block.decorations.push(bar);
     }
     if (withSeparator) {
-      const sep = term.registerDecoration({ marker, x: 0, width: term.cols });
+      // ponytail: separator width is fixed at the column count when drawn; it
+      // does not re-flow if the terminal is later resized wider. Fine for a hairline.
+      const sep = term.registerDecoration({ marker: block.marker, x: 0, width: term.cols });
       if (sep) {
         sep.onRender((el) => {
           el.style.borderTop = `1px solid ${colors.separator}`;
           el.style.pointerEvents = 'none';
         });
-        tracked.push(sep);
+        block.decorations.push(sep);
       }
     }
   }
@@ -111,10 +131,11 @@ export function createShellIntegration(
   return {
     dispose(): void {
       handler.dispose();
-      for (const d of tracked) d.dispose();
-      for (const marker of markers) marker.dispose();
-      tracked.length = 0;
-      markers.length = 0;
+      for (const block of blocks) {
+        for (const d of block.decorations) d.dispose();
+        block.marker.dispose();
+      }
+      blocks.clear();
       current = null;
     },
   };
