@@ -120,8 +120,8 @@ func (e *Executor) StartCompound(workspaceRoot string, compound RunProfile, step
 	cr := &compoundRun{
 		cancel: cancel,
 		status: RunStatus{
-			ProfileID: compound.ID,
-			State:     RunStateRunning,
+			RunIdentity: RunIdentity{ProfileID: compound.ID},
+			State:       RunStateRunning,
 		},
 		steps:   stepStatuses,
 		current: 0,
@@ -189,7 +189,7 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 			e.mu.Unlock()
 
 			if e.outputFn != nil {
-				e.outputFn(stepKey, "stderr", err.Error()+"\n", time.Now().UnixMilli())
+				e.outputFn(RunIdentity{RunInstanceID: stepKey, ProfileID: steps[i].ID}, "stderr", err.Error()+"\n", time.Now().UnixMilli())
 			}
 			e.emitCompound(failSnap)
 

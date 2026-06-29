@@ -27,18 +27,27 @@ const stopGracePeriod = 3 * time.Second
 
 // RunStatus is emitted to the frontend on every state transition.
 type RunStatus struct {
-	ProfileID string   `json:"profileId"`
+	RunIdentity
 	State     RunState `json:"state"`
 	ExitCode  int      `json:"exitCode"`
 	Pid       int      `json:"pid,omitempty"`
 	Timestamp int64    `json:"timestamp"`
 }
 
-// OutputFunc receives streaming process output.
-// stream is "stdout" or "stderr". data is the raw chunk.
-// timestamp is the Unix millisecond time when the data was read.
+// OutputChunk is the run:output event payload. It embeds RunIdentity so output
+// routes by explicit fields rather than a parsed synthetic profile id.
+type OutputChunk struct {
+	RunIdentity
+	Stream    string `json:"stream"`
+	Data      string `json:"data"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// OutputFunc receives streaming process output for one execution instance.
+// stream is "stdout" or "stderr". data is the raw chunk. timestamp is the Unix
+// millisecond time when the data was read.
 // The caller is responsible for buffering or backpressure.
-type OutputFunc func(profileID, stream, data string, timestamp int64)
+type OutputFunc func(id RunIdentity, stream, data string, timestamp int64)
 
 // StatusFunc emits run status events (wraps runtime.EventsEmit in production).
 type StatusFunc func(event string, data ...any)
@@ -64,6 +73,7 @@ type processResult struct {
 // runningProcess tracks a single running profile execution.
 type runningProcess struct {
 	cmd        *exec.Cmd
+	identity   RunIdentity
 	status     RunStatus
 	stopped    bool          // set by Stop — tells Wait goroutine to use RunStateStopped
 	done       chan struct{} // closed when process exits and cleanup is complete
@@ -186,11 +196,12 @@ func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot st
 	}
 
 	rp := &runningProcess{
-		cmd: cmd,
+		cmd:      cmd,
+		identity: RunIdentity{RunInstanceID: key, ProfileID: profile.ID},
 		status: RunStatus{
-			ProfileID: key,
-			State:     RunStateRunning,
-			Pid:       cmd.Process.Pid,
+			RunIdentity: RunIdentity{RunInstanceID: key, ProfileID: profile.ID},
+			State:       RunStateRunning,
+			Pid:         cmd.Process.Pid,
 		},
 		done:       make(chan struct{}),
 		stdout:     stdout,
@@ -210,8 +221,8 @@ func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, 
 	batcher := newOutputBatcher(e.outputFn, 16*time.Millisecond)
 	var pipesWg sync.WaitGroup
 	pipesWg.Add(2)
-	go e.drainPipe(&pipesWg, key, "stdout", rp.stdout, batcher)
-	go e.drainPipe(&pipesWg, key, "stderr", rp.stderr, batcher)
+	go e.drainPipe(&pipesWg, rp.identity, "stdout", rp.stdout, batcher)
+	go e.drainPipe(&pipesWg, rp.identity, "stderr", rp.stderr, batcher)
 
 	pipesWg.Wait()
 	batcher.Close()
@@ -456,7 +467,7 @@ func (e *Executor) GetStatus(profileID string) RunStatus {
 	if last, exists := e.lastStatus[profileID]; exists {
 		return last
 	}
-	return RunStatus{ProfileID: profileID, State: RunStateIdle}
+	return RunStatus{RunIdentity: RunIdentity{ProfileID: profileID}, State: RunStateIdle}
 }
 
 // ClearTerminalStatuses removes all retained terminal statuses.
@@ -477,13 +488,13 @@ func (e *Executor) emit(status RunStatus) {
 }
 
 // drainPipe reads from a pipe and forwards chunks to the output batcher.
-func (e *Executor) drainPipe(wg *sync.WaitGroup, profileID, stream string, pipe io.ReadCloser, batcher *outputBatcher) {
+func (e *Executor) drainPipe(wg *sync.WaitGroup, id RunIdentity, stream string, pipe io.ReadCloser, batcher *outputBatcher) {
 	defer wg.Done()
 	buf := make([]byte, 4096)
 	for {
 		n, err := pipe.Read(buf)
 		if n > 0 {
-			batcher.Write(profileID, stream, string(buf[:n]), time.Now().UnixMilli())
+			batcher.Write(id, stream, string(buf[:n]), time.Now().UnixMilli())
 		}
 		if err != nil {
 			return

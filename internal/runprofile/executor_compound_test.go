@@ -32,7 +32,7 @@ func outputByProfileID(o *outputSpy, profileID string) string {
 	defer o.mu.Unlock()
 	var combined string
 	for _, e := range o.entries {
-		if e.profileID == profileID {
+		if e.identity.RunInstanceID == profileID {
 			combined += e.data
 		}
 	}

@@ -75,12 +75,12 @@ func (a *App) startup(ctx context.Context) {
 		func(event string, data ...any) {
 			runtime.EventsEmit(a.ctx, event, data...)
 		},
-		func(profileID, stream, data string, timestamp int64) {
-			runtime.EventsEmit(a.ctx, "run:output", map[string]any{
-				"profileId": profileID,
-				"stream":    stream,
-				"data":      data,
-				"timestamp": timestamp,
+		func(id runprofile.RunIdentity, stream, data string, timestamp int64) {
+			runtime.EventsEmit(a.ctx, "run:output", runprofile.OutputChunk{
+				RunIdentity: id,
+				Stream:      stream,
+				Data:        data,
+				Timestamp:   timestamp,
 			})
 		},
 	)
@@ -599,7 +599,7 @@ func (a *App) RestartRunProfile(profileID string) error {
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GetRunStatus(profileID string) runprofile.RunStatus {
 	if a.executor == nil {
-		return runprofile.RunStatus{ProfileID: profileID, State: runprofile.RunStateIdle}
+		return runprofile.RunStatus{RunIdentity: runprofile.RunIdentity{ProfileID: profileID}, State: runprofile.RunStateIdle}
 	}
 	return a.executor.GetStatus(profileID)
 }

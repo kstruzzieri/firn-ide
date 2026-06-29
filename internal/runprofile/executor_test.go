@@ -66,16 +66,16 @@ type outputSpy struct {
 }
 
 type outputEntry struct {
-	profileID string
+	identity  RunIdentity
 	stream    string
 	data      string
 	timestamp int64
 }
 
-func (o *outputSpy) receive(profileID, stream, data string, timestamp int64) {
+func (o *outputSpy) receive(id RunIdentity, stream, data string, timestamp int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.entries = append(o.entries, outputEntry{profileID, stream, data, timestamp})
+	o.entries = append(o.entries, outputEntry{id, stream, data, timestamp})
 }
 
 func (o *outputSpy) combined() string {
