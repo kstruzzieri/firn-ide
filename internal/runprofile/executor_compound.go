@@ -173,24 +173,22 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 			break
 		}
 
-		// Transition: step → running.
+		// Transition: step → running, and capture this step's execution identity
+		// from the preassigned status (both reads are guarded fields) in the same
+		// locked section.
 		e.mu.Lock()
 		cr.current = i
 		cr.steps[i].State = CompoundStepRunning
 		cr.steps[i].StartedAt = time.Now().UnixMilli()
-		runningSnap := cr.snapshot()
-		e.mu.Unlock()
-		e.emitCompound(runningSnap)
-
-		// Build this step's execution identity from the preassigned status.
-		e.mu.Lock()
 		stepIdentity := RunIdentity{
 			RunInstanceID:       cr.steps[i].RunInstanceID,
 			ProfileID:           steps[i].ID,
 			ParentRunInstanceID: cr.status.RunInstanceID,
 			StepIdx:             i,
 		}
+		runningSnap := cr.snapshot()
 		e.mu.Unlock()
+		e.emitCompound(runningSnap)
 
 		rp, err := e.startProcess(stepIdentity, steps[i], workspaceRoot)
 		if err != nil {

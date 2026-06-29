@@ -576,6 +576,10 @@ func (a *App) StartRunProfile(profileID string) error {
 }
 
 // StopRunProfile stops a running profile (SIGTERM → 3s → SIGKILL).
+// The id resolves via the executor's active-run table: a single profile's id
+// stops that run; a compound profile's id cancels the coordinator and stops the
+// current step's leaf; a step profile's own id stops just that leaf (which halts
+// the surrounding compound). An idle/unknown id is a no-op (returns nil).
 // This is exposed to the frontend via Wails bindings.
 func (a *App) StopRunProfile(profileID string) error {
 	if a.executor == nil {
@@ -594,8 +598,10 @@ func (a *App) RestartRunProfile(profileID string) error {
 	return a.StartRunProfile(profileID)
 }
 
-// GetRunStatus returns the current run status of a profile.
-// Returns RunStateIdle for profiles that are not running.
+// GetRunStatus returns the current run status of a profile. A compound
+// profile's id returns its aggregate status. Returns the retained terminal
+// status if the profile finished but has not been restarted, or RunStateIdle
+// if it is not running and has no retained status.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GetRunStatus(profileID string) runprofile.RunStatus {
 	if a.executor == nil {

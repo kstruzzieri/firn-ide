@@ -1502,6 +1502,11 @@ export const useIDEStore = create<IDEStore>()(
               }
             }
             const firstId = Object.keys(preserved)[0] ?? null;
+            // Unlike clearAllRunOutputs (which preserves still-running compounds
+            // and rebuilds compoundIdByRunInstance for them), a workspace switch
+            // discards all compound UI state: the backend LoadRunProfiles path
+            // runs StopAll right after this, terminating every run. Clearing the
+            // index here is deliberate — there is nothing live left to route to.
             return {
               runOutputs: preserved,
               runCompounds: {},
