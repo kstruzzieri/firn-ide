@@ -377,13 +377,13 @@
   width: 100%;
 }
 
-/* Draggable column boundary, anchored to the body so it spans the full height. */
+/* Draggable column boundary, anchored on the stderr side so it does not cover
+   stdout's right-edge scrollbar on platforms with visible scrollbars. */
 .laneDivider {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 9px;
-  transform: translateX(-50%);
   cursor: col-resize;
   z-index: 1;
 }
@@ -393,7 +393,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  left: 0;
   width: 1px;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
