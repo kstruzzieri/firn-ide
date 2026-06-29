@@ -1,10 +1,15 @@
 package terminal
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/creack/pty"
 )
 
 func TestShellKind(t *testing.T) {
@@ -163,5 +168,68 @@ func TestIntegratedCommandFailsOpen(t *testing.T) {
 	}
 	if cmd.Env != nil {
 		t.Fatalf("fail-open should return plain command with nil Env, got %v", cmd.Env)
+	}
+}
+
+// TestIntegratedShellEmitsOSC133 spawns the integrated shell in a real PTY and
+// asserts the embedded scripts emit the OSC 133 "command finished" marker with a
+// non-zero exit code. PTY-gated (skipped on headless CI) and shell-gated via
+// LookPath. Reads until the marker appears or a timeout fires — no fixed sleeps.
+func TestIntegratedShellEmitsOSC133(t *testing.T) {
+	requirePTY(t)
+
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			path, err := exec.LookPath(shell)
+			if err != nil {
+				t.Skipf("%s not installed", shell)
+			}
+
+			cmd := integratedCommand(path, t.TempDir())
+			ptmx, err := pty.Start(cmd)
+			if err != nil {
+				t.Fatalf("pty.Start(%s) error: %v", shell, err)
+			}
+			defer func() {
+				_ = ptmx.Close()
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}()
+
+			// `false` exits 1; precmd emits "\e]133;D;1\a" on the next prompt.
+			if _, err := ptmx.Write([]byte("false\nexit\n")); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			want := []byte("\033]133;D;1\007")
+			result := make(chan bool, 1)
+			go func() {
+				var seen []byte
+				buf := make([]byte, 4096)
+				for {
+					n, err := ptmx.Read(buf)
+					if n > 0 {
+						seen = append(seen, buf[:n]...)
+						if bytes.Contains(seen, want) {
+							result <- true
+							return
+						}
+					}
+					if err != nil {
+						result <- false
+						return
+					}
+				}
+			}()
+
+			select {
+			case ok := <-result:
+				if !ok {
+					t.Fatalf("%s: shell exited before emitting OSC 133 D;1 marker", shell)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s: timed out waiting for OSC 133 D;1 marker", shell)
+			}
+		})
 	}
 }
