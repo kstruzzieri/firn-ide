@@ -109,6 +109,20 @@ func newTestProfile(id, command string) RunProfile {
 	}
 }
 
+func waitForTerminalInstanceID(t *testing.T, e *Executor, profileID string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st := e.GetStatus(profileID)
+		if st.State == RunStateSuccess || st.State == RunStateFailed || st.State == RunStateStopped {
+			return st.RunInstanceID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("profile %q did not reach a terminal state", profileID)
+	return ""
+}
+
 func TestExecutor_StartSuccess(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
@@ -197,11 +211,11 @@ func TestExecutor_SignalStopEscalatesToSIGKILL(t *testing.T) {
 	// Trap SIGTERM so the child can only be ended by a SIGKILL escalation.
 	profile := newTestProfile("stubborn", "trap '' TERM; sleep 30")
 
-	rp, err := exec.startProcess("stubborn", profile, dir)
+	rp, err := exec.startProcess(RunIdentity{RunInstanceID: "stubborn", ProfileID: "stubborn"}, profile, dir)
 	if err != nil {
 		t.Fatalf("startProcess returned error: %v", err)
 	}
-	go exec.waitProcess("stubborn", rp, false, false)
+	go exec.waitProcess(rp, false, false)
 
 	// Non-blocking: SIGTERM now, SIGKILL after the grace period via watchdog.
 	exec.signalStop(rp)
@@ -291,12 +305,9 @@ func TestExecutor_DuplicateStart(t *testing.T) {
 
 func TestExecutor_StopNonExistent(t *testing.T) {
 	exec := NewExecutor(nil, nil)
-	err := exec.Stop("bogus-id")
-	if err == nil {
-		t.Fatal("expected error for non-existent profile")
-	}
-	if !strings.Contains(err.Error(), "not running") {
-		t.Errorf("error = %q, want 'not running'", err.Error())
+	// Stop is idempotent: stopping an unknown/idle profile is a no-op (#103).
+	if err := exec.Stop("bogus-id"); err != nil {
+		t.Fatalf("Stop on idle profile returned error: %v", err)
 	}
 }
 
@@ -825,5 +836,64 @@ func TestExecutor_OutputCallback(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "stderr_test") {
 		t.Errorf("stderr should contain 'stderr_test', got: %q", stderr)
+	}
+}
+
+func TestExecutor_SingleRunHasInstanceIDAndActiveLookup(t *testing.T) {
+	var statuses []RunStatus
+	e := NewExecutor(func(_ string, data ...any) {
+		if s, ok := data[0].(RunStatus); ok {
+			statuses = append(statuses, s)
+		}
+	}, nil)
+
+	p := newTestProfile("echoer", "echo hi")
+	if err := e.Start(t.TempDir(), p); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Active lookup reflects the run while it is alive or just after.
+	st := e.GetStatus("echoer")
+	if st.RunInstanceID == "" {
+		t.Fatalf("expected a runInstanceId, got empty")
+	}
+	if st.ProfileID != "echoer" {
+		t.Fatalf("profileId = %q, want echoer", st.ProfileID)
+	}
+}
+
+func TestExecutor_DuplicateStartRejected(t *testing.T) {
+	e := NewExecutor(nil, nil)
+	p := newTestProfile("slow", "sleep 2")
+	root := t.TempDir()
+	if err := e.Start(root, p); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := e.Start(root, p); err == nil {
+		t.Fatalf("expected duplicate start to be rejected")
+	}
+	_ = e.Stop("slow")
+}
+
+func TestExecutor_RerunGetsNewInstanceID(t *testing.T) {
+	e := NewExecutor(nil, nil)
+	p := newTestProfile("once", "true")
+	root := t.TempDir()
+	if err := e.Start(root, p); err != nil {
+		t.Fatal(err)
+	}
+	id1 := waitForTerminalInstanceID(t, e, "once")
+	if err := e.Start(root, p); err != nil {
+		t.Fatal(err)
+	}
+	id2 := waitForTerminalInstanceID(t, e, "once")
+	if id1 == id2 || id1 == "" || id2 == "" {
+		t.Fatalf("expected distinct instance ids, got %q and %q", id1, id2)
+	}
+}
+
+func TestExecutor_StopIdleIsNoop(t *testing.T) {
+	e := NewExecutor(nil, nil)
+	if err := e.Stop("bogus-id"); err != nil {
+		t.Fatalf("Stop on idle profile returned error: %v", err)
 	}
 }

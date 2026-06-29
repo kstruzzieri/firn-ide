@@ -54,14 +54,14 @@ type StatusFunc func(event string, data ...any)
 
 // Executor manages the lifecycle of running profiles.
 type Executor struct {
-	mu             sync.Mutex
-	nextRunSeq     uint64
-	processes      map[string]*runningProcess
-	processAliases map[string]string       // real profile ID -> process key for compound leaves
-	compounds      map[string]*compoundRun // in-flight compound runs keyed by compound ID
-	lastStatus     map[string]RunStatus    // terminal status retained after exit
-	emitFn         StatusFunc
-	outputFn       OutputFunc
+	mu              sync.Mutex
+	nextRunSeq      uint64
+	processes       map[string]*runningProcess // keyed by runInstanceId
+	activeByProfile map[string]string          // profileId -> active runInstanceId
+	compounds       map[string]*compoundRun    // keyed by aggregate runInstanceId
+	lastStatus      map[string]RunStatus       // keyed by profileId (top-level only)
+	emitFn          StatusFunc
+	outputFn        OutputFunc
 }
 
 type processResult struct {
@@ -88,43 +88,45 @@ type runningProcess struct {
 // outputFn receives stdout/stderr chunks (nil = drain silently).
 func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 	return &Executor{
-		processes:      make(map[string]*runningProcess),
-		processAliases: make(map[string]string),
-		compounds:      make(map[string]*compoundRun),
-		lastStatus:     make(map[string]RunStatus),
-		emitFn:         emitFn,
-		outputFn:       outputFn,
+		processes:       make(map[string]*runningProcess),
+		activeByProfile: make(map[string]string),
+		compounds:       make(map[string]*compoundRun),
+		lastStatus:      make(map[string]RunStatus),
+		emitFn:          emitFn,
+		outputFn:        outputFn,
 	}
 }
 
 // Start begins executing a run profile. Profile resolution (ID → RunProfile)
 // happens at the app.go binding level. The executor receives the resolved profile.
 func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
-	if err := rejectReservedProfileID(profile.ID); err != nil {
-		return err
-	}
 	if profile.Type == ProfileTypeCompound {
 		return fmt.Errorf("compound profiles require resolved steps: %s", profile.ID)
 	}
 
-	rp, err := e.startProcess(profile.ID, profile, workspaceRoot)
+	e.mu.Lock()
+	id := e.nextRunInstanceIDLocked()
+	e.mu.Unlock()
+
+	identity := RunIdentity{RunInstanceID: id, ProfileID: profile.ID}
+	rp, err := e.startProcess(identity, profile, workspaceRoot)
 	if err != nil {
 		return err
 	}
 
 	e.emit(rp.status)
-	go e.waitProcess(profile.ID, rp, true, true)
+	go e.waitProcess(rp, true, true)
 	return nil
 }
 
-func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot string) (*runningProcess, error) {
-	if err := rejectReservedProfileID(profile.ID); err != nil {
-		return nil, err
-	}
+// startProcess launches one execution. identity.RunInstanceID is the unique key
+// under which the process is registered. For single runs identity is built by
+// Start; for compound steps it is preassigned by StartCompound and carries
+// ParentRunInstanceID + StepIdx.
+func (e *Executor) startProcess(identity RunIdentity, profile RunProfile, workspaceRoot string) (*runningProcess, error) {
 	if workspaceRoot == "" {
 		return nil, fmt.Errorf("no workspace loaded")
 	}
-
 	if strings.TrimSpace(profile.Command) == "" {
 		return nil, fmt.Errorf("profile has no command: %s", profile.ID)
 	}
@@ -134,51 +136,36 @@ func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot st
 		return nil, err
 	}
 
-	// Hold the lock for the entire setup-through-insert sequence. This prevents
-	// concurrent starts for the same profile ID (TOCTOU) and ensures Stop/StopAll
-	// never see a partially-initialized entry. The locked work is fast: env merging
-	// (small .env file read), pipe setup, and fork.
 	e.mu.Lock()
-	if _, exists := e.processes[key]; exists {
-		e.mu.Unlock()
-		return nil, fmt.Errorf("profile already running: %s", key)
-	}
-	if existingKey, exists := e.processAliases[key]; exists {
-		if _, running := e.processes[existingKey]; running {
-			e.mu.Unlock()
-			return nil, fmt.Errorf("profile already running: %s", key)
-		}
-		delete(e.processAliases, key)
-	}
-	if key != profile.ID {
-		if _, exists := e.processes[profile.ID]; exists {
+	// One active execution per profile: reject if a live run already owns this id.
+	if active, exists := e.activeByProfile[profile.ID]; exists {
+		if _, running := e.processes[active]; running {
 			e.mu.Unlock()
 			return nil, fmt.Errorf("profile already running: %s", profile.ID)
 		}
-		if existingKey, exists := e.processAliases[profile.ID]; exists {
-			if _, running := e.processes[existingKey]; running {
-				e.mu.Unlock()
-				return nil, fmt.Errorf("profile already running: %s", profile.ID)
-			}
-			delete(e.processAliases, profile.ID)
+		if _, running := e.compounds[active]; running {
+			e.mu.Unlock()
+			return nil, fmt.Errorf("profile already running: %s", profile.ID)
 		}
+		delete(e.activeByProfile, profile.ID) // stale entry, no live run
 	}
-	delete(e.lastStatus, key)
+	if identity.ParentRunInstanceID == "" {
+		// Top-level runs replace their own retained terminal status. Compound
+		// leaves must not clear a previous standalone status for the same profile.
+		delete(e.lastStatus, profile.ID)
+	}
 
-	// Build environment
 	env, err := buildEnv(profile, effectiveDir)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
 	}
 
-	// Create command via platform helper
 	cmd := shellCommand(profile.Command)
 	cmd.Dir = effectiveDir
 	cmd.Env = env
 	setSysProcAttr(cmd)
 
-	// Set up pipes
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		e.mu.Unlock()
@@ -197,9 +184,9 @@ func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot st
 
 	rp := &runningProcess{
 		cmd:      cmd,
-		identity: RunIdentity{RunInstanceID: key, ProfileID: profile.ID},
+		identity: identity,
 		status: RunStatus{
-			RunIdentity: RunIdentity{RunInstanceID: key, ProfileID: profile.ID},
+			RunIdentity: identity,
 			State:       RunStateRunning,
 			Pid:         cmd.Process.Pid,
 		},
@@ -208,16 +195,14 @@ func (e *Executor) startProcess(key string, profile RunProfile, workspaceRoot st
 		stderr:     stderr,
 		workingDir: effectiveDir,
 	}
-	e.processes[key] = rp
-	if key != profile.ID {
-		e.processAliases[profile.ID] = key
-	}
+	e.processes[identity.RunInstanceID] = rp
+	e.activeByProfile[profile.ID] = identity.RunInstanceID
 	e.mu.Unlock()
 
 	return rp, nil
 }
 
-func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, retainStatus bool) processResult {
+func (e *Executor) waitProcess(rp *runningProcess, emitStatus bool, retainStatus bool) processResult {
 	batcher := newOutputBatcher(e.outputFn, 16*time.Millisecond)
 	var pipesWg sync.WaitGroup
 	pipesWg.Add(2)
@@ -241,13 +226,13 @@ func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, 
 	rp.status.Pid = 0
 	status := rp.status
 	if retainStatus {
-		e.lastStatus[key] = status
+		e.lastStatus[rp.identity.ProfileID] = status
 	}
-	delete(e.processes, key)
-	for alias, target := range e.processAliases {
-		if target == key {
-			delete(e.processAliases, alias)
-		}
+	delete(e.processes, rp.identity.RunInstanceID)
+	// Guarded delete: only clear the active pointer if it still points at this
+	// instance, so a fast rerun's fresh entry is not wiped by our teardown.
+	if e.activeByProfile[rp.identity.ProfileID] == rp.identity.RunInstanceID {
+		delete(e.activeByProfile, rp.identity.ProfileID)
 	}
 	e.mu.Unlock()
 
@@ -271,39 +256,54 @@ func (e *Executor) waitProcess(key string, rp *runningProcess, emitStatus bool, 
 // is stopped via the leaf path, and Stop blocks until the coordinator finishes.
 func (e *Executor) Stop(profileID string) error {
 	e.mu.Lock()
-	if cr, ok := e.compounds[profileID]; ok {
+	rid, ok := e.activeByProfile[profileID]
+	if !ok {
+		e.mu.Unlock()
+		return nil
+	}
+	if cr, isCompound := e.compounds[rid]; isCompound {
 		cancel := cr.cancel
-		stepKey := compoundStepKey(profileID, cr.current)
-		_, leafRunning := e.processes[stepKey]
+		leafRID := ""
+		if cr.current >= 0 && cr.current < len(cr.steps) {
+			leafRID = cr.steps[cr.current].RunInstanceID
+		}
+		_, leafRunning := e.processes[leafRID]
 		done := cr.done
 		e.mu.Unlock()
 
 		cancel()
 		if leafRunning {
-			// Leaf path runs in this (caller) goroutine, distinct from the
-			// coordinator goroutine that closes cr.done, so there is no
-			// self-deadlock. The error is intentionally ignored: the leaf may
-			// already be exiting on its own.
-			_ = e.Stop(stepKey)
+			_ = e.stopByRunInstance(leafRID)
 		}
 		<-done
 		return nil
 	}
-
-	processKey := profileID
-	if aliasTarget, ok := e.processAliases[profileID]; ok {
-		processKey = aliasTarget
-	}
-	rp, exists := e.processes[processKey]
+	rp, exists := e.processes[rid]
 	if !exists {
+		if e.activeByProfile[profileID] == rid {
+			delete(e.activeByProfile, profileID)
+		}
 		e.mu.Unlock()
-		return fmt.Errorf("profile not running: %s", profileID)
+		return nil
 	}
 	e.mu.Unlock()
 
 	e.signalStop(rp)
+	<-rp.done
+	return nil
+}
 
-	// Block until fully cleaned up
+// stopByRunInstance signals a single process (identified by its runInstanceId)
+// and blocks until it is fully cleaned up. Used to stop a compound's current
+// leaf from the Stop(compound) path.
+func (e *Executor) stopByRunInstance(runInstanceID string) error {
+	e.mu.Lock()
+	rp, ok := e.processes[runInstanceID]
+	e.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("run instance not running: %s", runInstanceID)
+	}
+	e.signalStop(rp)
 	<-rp.done
 	return nil
 }
@@ -451,18 +451,13 @@ func (e *Executor) GetStatus(profileID string) RunStatus {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if rp, exists := e.processes[profileID]; exists {
-		return rp.status
-	}
-	if aliasTarget, exists := e.processAliases[profileID]; exists {
-		if rp, running := e.processes[aliasTarget]; running {
-			status := rp.status
-			status.ProfileID = profileID
-			return status
+	if rid, ok := e.activeByProfile[profileID]; ok {
+		if rp, running := e.processes[rid]; running {
+			return rp.status
 		}
-	}
-	if cr, exists := e.compounds[profileID]; exists {
-		return cr.status
+		if cr, running := e.compounds[rid]; running {
+			return cr.status
+		}
 	}
 	if last, exists := e.lastStatus[profileID]; exists {
 		return last
