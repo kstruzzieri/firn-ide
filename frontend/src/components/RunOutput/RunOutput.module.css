@@ -244,31 +244,39 @@
   height: 100%;
   flex: 1;
   overflow: hidden;
+  background: #040406; /* Glacier glow — near-black void, matches terminal */
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-/* Lanes own their own padding via cells, so the scroll parent has none — this
-   removes the 8px top gap where rows would otherwise show above the sticky
-   header (#107). */
-.lanesScroll {
-  padding: 0;
-}
-
-.laneHeaders {
+/* Two side-by-side lanes split by --lane-split. Each lane scrolls on its own, so
+   the body itself does not scroll; it only anchors the full-height divider. */
+.laneBody {
+  position: relative;
   display: grid;
   grid-template-columns: var(--lane-split, 50%) 1fr;
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  background: #040406;
-  /* Promote to its own compositor layer so momentum-scrolled rows (each a GPU
-     layer via translateY) can't paint over the sticky header in WebView. */
-  will-change: transform;
+  flex: 1;
+  min-height: 0;
+}
+
+/* One stream's column: a fixed header above an independent scroll region. */
+.lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .laneHeader {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Fixed height so the stderr lane's toggle button can't push its header
+     taller than stdout's and misalign the two scroll columns. */
+  min-height: 28px;
+  box-sizing: border-box;
   padding: 4px 14px 6px;
   font-size: 10px;
   font-weight: 600;
@@ -288,10 +296,6 @@
   opacity: 0.6;
 }
 
-.stderrHeader {
-  border-left: 1px solid color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
 .laneDot {
   width: 6px;
   height: 6px;
@@ -299,15 +303,87 @@
   flex-shrink: 0;
 }
 
-/* Draggable column boundary. Lives in the sticky header (always visible) and is
-   positioned at the split fraction; the visual line continues down the body via
-   the .laneLine.stderr border-left. */
+/* Compact sync-scroll toggle, pinned to the right edge of the stderr header. */
+.laneSyncToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.laneSyncToggle:hover {
+  color: var(--text-secondary);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.laneSyncToggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.laneSyncToggle[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.laneSyncDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.laneSyncToggle[aria-pressed='true'] .laneSyncDot {
+  opacity: 1;
+}
+
+/* Independent scroll region for one lane — packs only its own stream's lines. */
+.laneColumn {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.laneColumn::-webkit-scrollbar {
+  width: 8px;
+}
+
+.laneColumn::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.laneColumn::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-radius: 4px;
+}
+
+.laneColumn::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.laneColumnInner {
+  position: relative;
+  width: 100%;
+}
+
+/* Draggable column boundary, anchored on the stderr side so it does not cover
+   stdout's right-edge scrollbar on platforms with visible scrollbars. */
 .laneDivider {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 9px;
-  transform: translateX(-50%);
   cursor: col-resize;
   z-index: 1;
 }
@@ -317,26 +393,13 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  left: 0;
   width: 1px;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .laneDivider:hover::before {
   background: color-mix(in srgb, var(--accent) 50%, transparent);
-}
-
-/* Isolated stacking context so the absolutely-positioned, transformed virtual
-   rows are contained strictly below the sticky header (#107). */
-.laneRows {
-  position: relative;
-  z-index: 0;
-  isolation: isolate;
-}
-
-.laneRow {
-  display: grid;
-  grid-template-columns: var(--lane-split, 50%) 1fr;
 }
 
 .laneLine {
@@ -350,7 +413,6 @@
 
 .laneLine.stderr {
   color: #fca5a5;
-  border-left: 1px solid color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* ── Diff View ─────────────────────────────────────────── */
