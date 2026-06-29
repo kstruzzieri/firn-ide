@@ -67,3 +67,8 @@ jobs:
           # Pinned (with .golangci.yml version "2") so CI and the local
           # .husky/pre-push hook run identical checks.
           version: v2.11.4
+          # Skip the action's remote JSON-schema fetch for config validation:
+          # that network call to golangci-lint.run times out intermittently and
+          # fails otherwise-green runs. golangci-lint still errors on a genuinely
+          # broken config at runtime.
+          verify: false
