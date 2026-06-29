@@ -46,6 +46,7 @@ type StatusFunc func(event string, data ...any)
 // Executor manages the lifecycle of running profiles.
 type Executor struct {
 	mu             sync.Mutex
+	nextRunSeq     uint64
 	processes      map[string]*runningProcess
 	processAliases map[string]string       // real profile ID -> process key for compound leaves
 	compounds      map[string]*compoundRun // in-flight compound runs keyed by compound ID
