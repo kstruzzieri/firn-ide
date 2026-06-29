@@ -33,7 +33,8 @@ func NewSession() (*Session, error) {
 	if shell == "" {
 		shell = defaultShell()
 	}
-	cmd := exec.Command(shell)
+	cacheRoot, _ := os.UserCacheDir() // empty on error → integratedCommand falls open to plain
+	cmd := integratedCommand(shell, cacheRoot)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		// ENXIO ("device not configured") from /dev/ptmx means the system PTY
