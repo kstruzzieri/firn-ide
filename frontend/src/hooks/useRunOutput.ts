@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useIDEStore } from '../stores/ideStore';
-import type { OutputChunk, RunState, CompoundRunEvent } from '../types/runOutput';
-import { parseCompoundStepKey } from '../utils/compoundRunKeys';
+import type { OutputChunk, CompoundRunEvent, RunStatusEvent } from '../types/runOutput';
 
 export function useRunOutputListener(): void {
   useEffect(() => {
@@ -18,23 +17,15 @@ export function useRunOutputListener(): void {
 
     const cleanupOutput = EventsOn('run:output', (chunk: OutputChunk) => {
       useIDEStore.getState().appendRunOutput(chunk);
-      // Composite step output is routed into compound state, not ordinary
-      // run output — keep waveform data keyed by real profile IDs only.
-      if (parseCompoundStepKey(chunk.profileId) == null) {
+      // Waveform tracks ordinary profiles only; compound step output has a parent.
+      if (chunk.parentRunInstanceId == null) {
         entryCounts.set(chunk.profileId, (entryCounts.get(chunk.profileId) ?? 0) + 1);
       }
     });
 
-    const cleanupStatus = EventsOn(
-      'run:status',
-      (status: { profileId: string; state: string; exitCode: number; timestamp?: number }) => {
-        const ts = status.timestamp ?? Date.now();
-        // Single atomic update — prevents render cascade from multiple set() calls
-        useIDEStore
-          .getState()
-          .handleRunStatus(status.profileId, status.state as RunState, status.exitCode, ts);
-      }
-    );
+    const cleanupStatus = EventsOn('run:status', (status: RunStatusEvent) => {
+      useIDEStore.getState().handleRunStatus(status);
+    });
 
     const cleanupCompound = EventsOn('run:compound', (event: CompoundRunEvent) => {
       useIDEStore.getState().handleCompoundRun(event);

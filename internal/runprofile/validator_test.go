@@ -44,20 +44,6 @@ func TestValidateMissingID(t *testing.T) {
 	assertHasFieldError(t, result, "id")
 }
 
-func TestValidateReservedCompoundProfileID(t *testing.T) {
-	p := RunProfile{
-		ID:      "compound:Y2k:0",
-		Name:    "Build",
-		Type:    ProfileTypeSingle,
-		Command: "echo hello",
-	}
-	result := Validate(p)
-	if result.Valid {
-		t.Fatal("expected invalid for reserved compound profile id")
-	}
-	assertHasFieldError(t, result, "id")
-}
-
 func TestValidateMissingName(t *testing.T) {
 	p := RunProfile{
 		ID:      "test-1",

@@ -64,6 +64,7 @@ test('inline action stops a running row', () => {
   useIDEStore.setState({
     runOutputs: {
       p2: {
+        runInstanceId: 'r1',
         profileId: 'p2',
         state: 'running',
         exitCode: 0,
@@ -82,6 +83,7 @@ test('inline action restarts a failed row', () => {
   useIDEStore.setState({
     runOutputs: {
       p2: {
+        runInstanceId: 'r1',
         profileId: 'p2',
         state: 'failed',
         exitCode: 1,

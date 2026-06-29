@@ -38,6 +38,7 @@ jest.mock('../../../components/RunOutput/TimelineView', () => ({
 
 function makeCompound(overrides: Partial<CompoundRun> = {}): CompoundRun {
   return {
+    runInstanceId: 'r1',
     compoundId: 'ci',
     name: 'CI',
     state: 'running',
@@ -50,6 +51,7 @@ function makeCompound(overrides: Partial<CompoundRun> = {}): CompoundRun {
 
 function makeRunOutput(overrides: Partial<RunOutput> = {}): RunOutput {
   return {
+    runInstanceId: 'r1',
     profileId: 'p1',
     state: 'running',
     exitCode: 0,
@@ -214,34 +216,6 @@ describe('RunOutputTabs compound tabs', () => {
 
     render(<RunOutputTabs />);
 
-    expect(screen.getByText('CI')).toBeInTheDocument();
-  });
-
-  it('does not render composite step keys as tabs', () => {
-    const compositeKey = 'compound:Y2k:0';
-    useIDEStore.setState({
-      runOutputs: {},
-      runCompounds: { ci: makeCompound({ name: 'CI' }) },
-      activeRunOutputId: 'ci',
-    });
-
-    render(<RunOutputTabs />);
-
-    expect(screen.queryByText(compositeKey)).not.toBeInTheDocument();
-    expect(screen.getByText('CI')).toBeInTheDocument();
-  });
-
-  it('filters out composite step keys that leak into runOutputs', () => {
-    const compositeKey = 'compound:Y2k:0';
-    useIDEStore.setState({
-      runOutputs: { [compositeKey]: makeRunOutput({ profileId: compositeKey }) },
-      runCompounds: { ci: makeCompound({ name: 'CI' }) },
-      activeRunOutputId: 'ci',
-    });
-
-    render(<RunOutputTabs />);
-
-    expect(screen.queryByText(compositeKey)).not.toBeInTheDocument();
     expect(screen.getByText('CI')).toBeInTheDocument();
   });
 

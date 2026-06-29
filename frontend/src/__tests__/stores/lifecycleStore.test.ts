@@ -295,20 +295,36 @@ describe('lifecycleStore - stopRequestTimestamps', () => {
 
   it('handleRunStatus with terminal state clears stopRequestTimestamps', () => {
     useIDEStore.setState({
+      runOutputs: {},
       stopRequestTimestamps: { 'profile-1': 10000 },
       runStartTimestamps: { 'profile-1': 9000 },
     });
     const { handleRunStatus } = useIDEStore.getState();
-    handleRunStatus('profile-1', 'stopped', 0, 11000);
+    handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'stopped',
+      exitCode: 0,
+      timestamp: 11000,
+    });
     expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
   });
 
   it('handleRunStatus with running state clears stopRequestTimestamps (restart)', () => {
     useIDEStore.setState({
+      runOutputs: {},
       stopRequestTimestamps: { 'profile-1': 10000 },
     });
     const { handleRunStatus } = useIDEStore.getState();
-    handleRunStatus('profile-1', 'running', 0, 11000);
+    handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 11000,
+    });
     expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
   });
 });
@@ -334,9 +350,18 @@ describe('lifecycleStore - run output working directory snapshots', () => {
   it('keeps existing output links tied to the working directory from run start', () => {
     const store = useIDEStore.getState();
 
-    store.handleRunStatus('profile-1', 'running', 0, 1000);
-    store.appendRunOutput({
+    store.handleRunStatus({
+      runInstanceId: 'r1',
       profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
       stream: 'stderr',
       data: 'src/App.tsx:7:11\n',
       timestamp: 1001,
@@ -352,22 +377,170 @@ describe('lifecycleStore - run output working directory snapshots', () => {
   it('preserves previous run working directory separately when a profile is rerun', () => {
     const store = useIDEStore.getState();
 
-    store.handleRunStatus('profile-1', 'running', 0, 1000);
-    store.appendRunOutput({
+    store.handleRunStatus({
+      runInstanceId: 'r1',
       profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
       stream: 'stderr',
       data: 'src/old.ts:1:1\n',
       timestamp: 1001,
     });
-    store.handleRunStatus('profile-1', 'failed', 1, 2000);
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2000,
+    });
 
     useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
-    store.handleRunStatus('profile-1', 'running', 0, 3000);
+    store.handleRunStatus({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 3000,
+    });
 
     const output = useIDEStore.getState().runOutputs['profile-1'];
     expect(output.workingDir).toBe('packages/web');
     expect(output.previousWorkingDir).toBe('frontend');
     expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
+  });
+
+  it('preserves previousWorkingDir when rerun output arrives before its running status', () => {
+    const store = useIDEStore.getState();
+
+    // First run r1 (default profile workingDir 'frontend').
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stderr',
+      data: 'src/old.ts:1:1\n',
+      timestamp: 1001,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2000,
+    });
+
+    // Rerun r2: output arrives BEFORE the running status, so appendRunOutput
+    // provisions/rotates the buffer (setting previousWorkingDir from r1).
+    useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
+    store.appendRunOutput({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stdout',
+      data: 'new line\n',
+      timestamp: 2500,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 3000,
+    });
+
+    const output = useIDEStore.getState().runOutputs['profile-1'];
+    expect(output.runInstanceId).toBe('r2');
+    expect(output.workingDir).toBe('packages/web');
+    // Regression (criticize-review bug #1): the running status must NOT clobber
+    // the previousWorkingDir the provision path set from the prior run.
+    expect(output.previousWorkingDir).toBe('frontend');
+    expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
+    expect(output.entries[0].text).toBe('new line');
+  });
+
+  it('drops stale terminal status after rerun output provisioned a newer buffer', () => {
+    const store = useIDEStore.getState();
+
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stderr',
+      data: 'old line\n',
+      timestamp: 1001,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2000,
+    });
+
+    store.appendRunOutput({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stdout',
+      data: 'new line\n',
+      timestamp: 2500,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2600,
+    });
+
+    const output = useIDEStore.getState().runOutputs['profile-1'];
+    expect(output.runInstanceId).toBe('r2');
+    expect(output.state).toBe('failed');
+    expect(output.entries.map((entry) => entry.text)).toEqual(['new line']);
+    expect(output.previousEntries.map((entry) => entry.text)).toEqual(['old line']);
+
+    store.handleRunStatus({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 3000,
+    });
+
+    const runningOutput = useIDEStore.getState().runOutputs['profile-1'];
+    expect(runningOutput.runInstanceId).toBe('r2');
+    expect(runningOutput.state).toBe('running');
+    expect(runningOutput.entries.map((entry) => entry.text)).toEqual(['new line']);
   });
 });
 

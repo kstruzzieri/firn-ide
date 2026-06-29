@@ -69,6 +69,7 @@ const profileState: Record<string, RunProfileUIState> = {
 
 function makeRunOutput(profileId: string, state: RunOutput['state']): RunOutput {
   return {
+    runInstanceId: 'r1',
     profileId,
     state,
     exitCode: 0,

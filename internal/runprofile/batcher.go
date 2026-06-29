@@ -9,7 +9,7 @@ import (
 // pendingWrite is a coalesced segment of output for one stream,
 // preserving insertion order across interleaved stdout/stderr.
 type pendingWrite struct {
-	profileID string
+	id        RunIdentity
 	stream    string
 	data      strings.Builder
 	timestamp int64 // timestamp of the first write in this segment
@@ -17,7 +17,7 @@ type pendingWrite struct {
 
 // writeMsg is sent over writeCh to the timer goroutine.
 type writeMsg struct {
-	profileID string
+	id        RunIdentity
 	stream    string
 	data      string
 	timestamp int64
@@ -54,9 +54,9 @@ func newOutputBatcher(outputFn OutputFunc, interval time.Duration) *outputBatche
 
 // Write enqueues a chunk for batching. Safe to call from multiple goroutines.
 // Silently drops the write if the batcher has been closed.
-func (b *outputBatcher) Write(profileID, stream, data string, timestamp int64) {
+func (b *outputBatcher) Write(id RunIdentity, stream, data string, timestamp int64) {
 	select {
-	case b.writeCh <- writeMsg{profileID, stream, data, timestamp}:
+	case b.writeCh <- writeMsg{id, stream, data, timestamp}:
 	case <-b.closed:
 		// batcher is closed; discard
 	}
@@ -85,16 +85,16 @@ func (b *outputBatcher) run() {
 	var pending []*pendingWrite
 
 	accumulate := func(msg writeMsg) {
-		// Coalesce with the last segment if same profile+stream
+		// Coalesce with the last segment if same run instance + stream
 		if n := len(pending); n > 0 {
 			last := pending[n-1]
-			if last.profileID == msg.profileID && last.stream == msg.stream {
+			if last.id.RunInstanceID == msg.id.RunInstanceID && last.stream == msg.stream {
 				last.data.WriteString(msg.data)
 				return
 			}
 		}
 		pw := &pendingWrite{
-			profileID: msg.profileID,
+			id:        msg.id,
 			stream:    msg.stream,
 			timestamp: msg.timestamp,
 		}
@@ -105,7 +105,7 @@ func (b *outputBatcher) run() {
 	flush := func() {
 		if b.outputFn != nil {
 			for _, pw := range pending {
-				b.outputFn(pw.profileID, pw.stream, pw.data.String(), pw.timestamp)
+				b.outputFn(pw.id, pw.stream, pw.data.String(), pw.timestamp)
 			}
 		}
 		pending = pending[:0]

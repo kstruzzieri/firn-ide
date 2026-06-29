@@ -24,6 +24,7 @@ function makeEntries(count: number): OutputEntry[] {
 
 function makeRunOutput(entries: OutputEntry[], state: RunOutput['state'] = 'success'): RunOutput {
   return {
+    runInstanceId: 'r1',
     profileId: 'test-1',
     state,
     exitCode: 0,
@@ -101,6 +102,7 @@ describe('ExpandedPanel', () => {
     renderPanel({
       visualState: 'failed',
       runOutput: {
+        runInstanceId: 'r1',
         profileId: 'test-1',
         state: 'failed',
         exitCode: 2,
@@ -119,6 +121,7 @@ describe('ExpandedPanel', () => {
       visualState: 'stopping',
       stopElapsedMs: 1500,
       runOutput: {
+        runInstanceId: 'r1',
         profileId: 'test-1',
         state: 'running',
         exitCode: 0,

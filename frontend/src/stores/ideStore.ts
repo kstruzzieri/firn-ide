@@ -12,11 +12,10 @@ import type {
   OutputEntry,
   RunHistoryEntry,
   RunOutput,
-  RunState,
+  RunStatusEvent,
   RunOutputViewMode,
 } from '../types/runOutput';
 import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
-import { parseCompoundStepKey } from '../utils/compoundRunKeys';
 import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
 import { parseFileReferences } from '../utils/parseFileReferences';
 import {
@@ -173,6 +172,7 @@ interface IDEState {
   // Run Output
   runOutputs: Record<string, RunOutput>;
   runCompounds: Record<string, CompoundRun>;
+  compoundIdByRunInstance: Record<string, string>; // aggregate runInstanceId -> compoundId
   activeRunOutputId: string | null;
   runOutputViewMode: RunOutputViewMode;
   runOutputAutoScroll: boolean;
@@ -273,13 +273,7 @@ interface IDEActions {
 
   // Run Output actions
   appendRunOutput: (chunk: OutputChunk) => void;
-  setRunState: (profileId: string, state: RunState, exitCode: number) => void;
-  handleRunStatus: (
-    profileId: string,
-    state: RunState,
-    exitCode: number,
-    timestamp: number
-  ) => void;
+  handleRunStatus: (status: RunStatusEvent) => void;
   clearRunOutput: (profileId: string) => void;
   clearAllRunOutputs: () => void;
   handleCompoundRun: (event: CompoundRunEvent) => void;
@@ -353,7 +347,8 @@ function getOrCreateAssembler(
 
 // Canonical key for a compound step's line assembler. Used for BOTH routing
 // step output into an assembler and flushing it on terminal, so the two always
-// agree without depending on Go's base64url encoding of the composite key.
+// agree, keyed purely on (compoundId, stepIdx) with no dependency on any
+// backend key encoding.
 function compoundStepAssemblerKey(compoundId: string, stepIdx: number): string {
   return JSON.stringify([compoundId, stepIdx]);
 }
@@ -390,6 +385,7 @@ function getProfileWorkingDirSnapshot(
 function createRunOutput(profileId: string, workingDir?: string): RunOutput {
   return {
     profileId,
+    runInstanceId: '',
     workingDir,
     state: 'idle',
     exitCode: 0,
@@ -426,6 +422,7 @@ export const useIDEStore = create<IDEStore>()(
       selectedProfileId: null,
       runOutputs: {},
       runCompounds: {},
+      compoundIdByRunInstance: {},
       activeRunOutputId: null,
       runOutputViewMode: 'merged' as RunOutputViewMode,
       runOutputAutoScroll: true,
@@ -791,64 +788,77 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
-        // Composite (compound step) output is routed into runCompounds and must
-        // never create an ordinary RunOutput tab, waveform, or lifecycle flag.
-        const compoundKey = parseCompoundStepKey(chunk.profileId);
-        if (compoundKey) {
-          const { compoundId, stepIdx } = compoundKey;
-          if (useIDEStore.getState().runCompounds[compoundId]) {
-            useIDEStore.getState().appendCompoundRunOutput(compoundId, stepIdx, chunk);
-          }
-          // Drop orphan (no compound) or return after routing — never fall
-          // through to ordinary handling.
+        // Compound step output → routed by explicit fields into runCompounds.
+        if (chunk.parentRunInstanceId) {
+          const state = useIDEStore.getState();
+          const compoundId = state.compoundIdByRunInstance[chunk.parentRunInstanceId];
+          if (!compoundId) return; // orphan parent → drop
+          const run = state.runCompounds[compoundId];
+          if (!run || run.runInstanceId !== chunk.parentRunInstanceId) return; // stale → drop
+          state.appendCompoundRunOutput(compoundId, chunk.stepIdx, chunk);
           return;
         }
 
-        const currentState = useIDEStore.getState();
+        const existing = useIDEStore.getState().runOutputs[chunk.profileId];
 
-        if (!currentState.runOutputs[chunk.profileId]) {
-          // Profile-specific stale event check: only drop if THIS profile is stopping/restarting
-          const isStale =
-            currentState.stoppingProfileIds.includes(chunk.profileId) ||
-            currentState.restartingProfileIds.includes(chunk.profileId);
-          if (isStale) return;
+        // Mismatched instance: stale only if the existing buffer is still running.
+        if (
+          existing &&
+          existing.runInstanceId !== chunk.runInstanceId &&
+          existing.state === 'running'
+        ) {
+          return;
+        }
 
-          // Create provisional RunOutput record — setRunState will upgrade it
-          // when run:status arrives. This handles the race where run:output
-          // arrives before run:status.
+        // No buffer, or a terminal buffer with a different id (a rerun whose
+        // output beat its running status) → provision/rotate a fresh buffer.
+        if (!existing || existing.runInstanceId !== chunk.runInstanceId) {
           set(
-            (state) => ({
-              runOutputs: {
-                ...state.runOutputs,
-                [chunk.profileId]: createRunOutput(
-                  chunk.profileId,
-                  getProfileWorkingDirSnapshot(state, chunk.profileId)
-                ),
-              },
-            }),
+            (state) => {
+              const prev = state.runOutputs[chunk.profileId];
+              const wd = getProfileWorkingDirSnapshot(state, chunk.profileId);
+              let provisioned: RunOutput;
+              if (prev) {
+                let prevEntries = prev.entries;
+                if (prevEntries.length > MAX_OUTPUT_ENTRIES) {
+                  prevEntries = prevEntries.slice(prevEntries.length - MAX_OUTPUT_ENTRIES);
+                }
+                provisioned = {
+                  ...prev,
+                  runInstanceId: chunk.runInstanceId,
+                  entries: [],
+                  previousEntries: prevEntries,
+                  previousWorkingDir: prev.workingDir,
+                  workingDir: wd,
+                };
+              } else {
+                provisioned = {
+                  ...createRunOutput(chunk.profileId, wd),
+                  runInstanceId: chunk.runInstanceId,
+                };
+              }
+              // Reset assembler so old carry-over does not leak into the new run.
+              lineAssemblers.delete(chunk.profileId);
+              assemblerCallbacks.delete(chunk.profileId);
+              return { runOutputs: { ...state.runOutputs, [chunk.profileId]: provisioned } };
+            },
             false,
             'appendRunOutput:provision'
           );
         }
 
-        // Collect all lines from this chunk into a local array, then commit
-        // to the store in a single set() call. This avoids store thrashing
-        // when a chunk contains many newlines (e.g. npm install burst).
         const pendingEntries: OutputEntry[] = [];
-        const collector = (entry: OutputEntry) => {
-          pendingEntries.push(entry);
-        };
-
-        const assembler = getOrCreateAssembler(chunk.profileId, collector);
+        const assembler = getOrCreateAssembler(chunk.profileId, (entry) =>
+          pendingEntries.push(entry)
+        );
         assembler.push(chunk.stream, chunk.data, chunk.timestamp);
-
         if (pendingEntries.length === 0) return;
 
         set(
           (state) => {
-            const existing = state.runOutputs[chunk.profileId];
-            if (!existing) return state; // profile was cleared between check and set
-            let entries = [...existing.entries, ...pendingEntries];
+            const ex = state.runOutputs[chunk.profileId];
+            if (!ex) return state;
+            let entries = [...ex.entries, ...pendingEntries];
             if (entries.length > MAX_OUTPUT_ENTRIES) {
               entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
               entries.unshift({
@@ -857,23 +867,31 @@ export const useIDEStore = create<IDEStore>()(
                 timestamp: entries[0]?.timestamp ?? Date.now(),
               });
             }
-            return {
-              runOutputs: {
-                ...state.runOutputs,
-                [chunk.profileId]: { ...existing, entries },
-              },
-            };
+            return { runOutputs: { ...state.runOutputs, [chunk.profileId]: { ...ex, entries } } };
           },
           false,
           'appendRunOutput'
         );
       },
 
-      setRunState: (profileId, newState, exitCode) => {
-        // On terminal states, flush the line assembler's carry-over into a local
-        // array so we can merge it into the store in a single set() call.
-        // We can't reuse the appendRunOutput collector because it references a
-        // dead pendingEntries array from a previous call.
+      handleRunStatus: (status) => {
+        const { profileId, runInstanceId, parentRunInstanceId, state: newState, exitCode } = status;
+        const timestamp = status.timestamp ?? Date.now();
+        if (parentRunInstanceId) return; // steps flow only via run:compound
+
+        const existingBefore = get().runOutputs[profileId];
+        // Stale guard: a mismatched non-running status is always stale once a
+        // newer buffer exists. A mismatched running status is only accepted when
+        // the existing buffer is terminal, which is how reruns rotate.
+        if (
+          existingBefore &&
+          existingBefore.runInstanceId !== runInstanceId &&
+          (newState !== 'running' || existingBefore.state === 'running')
+        ) {
+          return;
+        }
+
+        // Flush the assembler on terminal states (only reached for the live run).
         const flushedEntries: OutputEntry[] = [];
         if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
           const assembler = lineAssemblers.get(profileId);
@@ -888,87 +906,47 @@ export const useIDEStore = create<IDEStore>()(
         set(
           (state) => {
             const runWorkingDir = getProfileWorkingDirSnapshot(state, profileId);
-            const existing =
-              state.runOutputs[profileId] ?? createRunOutput(profileId, runWorkingDir);
-
-            // Merge any flushed carry-over entries
-            const mergedEntries =
-              flushedEntries.length > 0
-                ? [...existing.entries, ...flushedEntries]
-                : existing.entries;
-
-            const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
-
-            if (newState === 'running') {
-              const previousWorkingDir = existing.workingDir;
-              updated.workingDir = runWorkingDir;
-              updated.previousWorkingDir = undefined;
-              updated.runCount = existing.runCount + 1;
-              if (updated.runCount > 1) {
-                let prev = existing.entries;
-                if (prev.length > MAX_OUTPUT_ENTRIES) {
-                  prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
-                }
-                updated.previousEntries = prev;
-                updated.previousWorkingDir = previousWorkingDir;
-                updated.entries = [];
-                lineAssemblers.delete(profileId);
-                assemblerCallbacks.delete(profileId);
-              }
-            }
-
-            return {
-              runOutputs: { ...state.runOutputs, [profileId]: updated },
+            const existing = state.runOutputs[profileId] ?? {
+              ...createRunOutput(profileId, runWorkingDir),
+              runInstanceId,
             };
-          },
-          false,
-          'setRunState'
-        );
-      },
-
-      handleRunStatus: (profileId, newState, exitCode, timestamp) => {
-        // Flush line assembler on terminal states (same as setRunState)
-        const flushedEntries: OutputEntry[] = [];
-        if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
-          const assembler = lineAssemblers.get(profileId);
-          if (assembler) {
-            assemblerCallbacks.set(profileId, (entry) => flushedEntries.push(entry));
-            assembler.flush();
-            lineAssemblers.delete(profileId);
-            assemblerCallbacks.delete(profileId);
-          }
-        }
-
-        set(
-          (state) => {
-            // --- RunOutput update (same logic as setRunState) ---
-            const runWorkingDir = getProfileWorkingDirSnapshot(state, profileId);
-            const existing =
-              state.runOutputs[profileId] ?? createRunOutput(profileId, runWorkingDir);
 
             const mergedEntries =
               flushedEntries.length > 0
                 ? [...existing.entries, ...flushedEntries]
                 : existing.entries;
 
-            const updated = { ...existing, state: newState, exitCode, entries: mergedEntries };
+            const updated = {
+              ...existing,
+              runInstanceId,
+              state: newState,
+              exitCode,
+              entries: mergedEntries,
+            };
 
             if (newState === 'running') {
               const previousWorkingDir = existing.workingDir;
               updated.workingDir = runWorkingDir;
-              updated.previousWorkingDir = undefined;
               updated.runCount = existing.runCount + 1;
-              if (updated.runCount > 1) {
+              // Rotate when this running event is a different instance than what
+              // the buffer currently holds (covers reruns; '' = never-run buffer).
+              const isRotation =
+                existing.runInstanceId !== '' && existing.runInstanceId !== runInstanceId;
+              if (isRotation) {
                 let prev = existing.entries;
-                if (prev.length > MAX_OUTPUT_ENTRIES) {
+                if (prev.length > MAX_OUTPUT_ENTRIES)
                   prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
-                }
                 updated.previousEntries = prev;
                 updated.previousWorkingDir = previousWorkingDir;
                 updated.entries = [];
                 lineAssemblers.delete(profileId);
                 assemblerCallbacks.delete(profileId);
               }
+              // No unconditional previousWorkingDir clear: a fresh first run
+              // already has it undefined, and when appendRunOutput provisioned
+              // this rerun's buffer (output arrived before this running status,
+              // so isRotation is false) it already set previousWorkingDir from
+              // the prior run — clearing here would clobber that.
             }
 
             // --- Lifecycle flags ---
@@ -1127,9 +1105,14 @@ export const useIDEStore = create<IDEStore>()(
               state.activeRunOutputId != null &&
               (preserved[state.activeRunOutputId] != null ||
                 preservedCompounds[state.activeRunOutputId] != null);
+            const preservedIndex: Record<string, string> = {};
+            for (const [id, compound] of Object.entries(preservedCompounds)) {
+              if (compound.runInstanceId) preservedIndex[compound.runInstanceId] = id;
+            }
             return {
               runOutputs: preserved,
               runCompounds: preservedCompounds,
+              compoundIdByRunInstance: preservedIndex,
               activeRunOutputId: activeStillValid ? state.activeRunOutputId : firstId,
             };
           },
@@ -1140,11 +1123,23 @@ export const useIDEStore = create<IDEStore>()(
 
       // Compound run actions
       handleCompoundRun: (event) => {
-        const { compoundId, name, state: aggregateState, currentStep, steps } = event;
+        const {
+          compoundId,
+          runInstanceId,
+          name,
+          state: aggregateState,
+          currentStep,
+          steps,
+        } = event;
 
         // Snapshot the previous run so we can preserve outputs and detect
         // step transitions that became terminal this event.
         const prevRun = useIDEStore.getState().runCompounds[compoundId];
+        // Stale guard: a different-instance event while the current run is still
+        // running is a late snapshot from a superseded run — drop before flushing.
+        if (prevRun && prevRun.runInstanceId !== runInstanceId && prevRun.state === 'running') {
+          return;
+        }
         const prevStepStates = new Map<number, string>();
         if (prevRun) {
           for (const step of prevRun.steps) {
@@ -1274,6 +1269,7 @@ export const useIDEStore = create<IDEStore>()(
 
             const newRun: CompoundRun = {
               compoundId,
+              runInstanceId,
               name,
               state: aggregateState,
               currentStep,
@@ -1284,8 +1280,17 @@ export const useIDEStore = create<IDEStore>()(
               failedReference,
             };
 
+            // Maintain aggregate-runInstanceId -> compoundId index. On rotation,
+            // drop the previous instance's mapping.
+            const index = { ...state.compoundIdByRunInstance };
+            if (prevRun && prevRun.runInstanceId && prevRun.runInstanceId !== runInstanceId) {
+              delete index[prevRun.runInstanceId];
+            }
+            index[runInstanceId] = compoundId;
+
             return {
               runCompounds: { ...state.runCompounds, [compoundId]: newRun },
+              compoundIdByRunInstance: index,
               runHistory,
             };
           },
@@ -1502,9 +1507,15 @@ export const useIDEStore = create<IDEStore>()(
               }
             }
             const firstId = Object.keys(preserved)[0] ?? null;
+            // Unlike clearAllRunOutputs (which preserves still-running compounds
+            // and rebuilds compoundIdByRunInstance for them), a workspace switch
+            // discards all compound UI state: the backend LoadRunProfiles path
+            // runs StopAll right after this, terminating every run. Clearing the
+            // index here is deliberate — there is nothing live left to route to.
             return {
               runOutputs: preserved,
               runCompounds: {},
+              compoundIdByRunInstance: {},
               activeRunOutputId: firstId,
               stoppingProfileIds: [],
               restartingProfileIds: [],
