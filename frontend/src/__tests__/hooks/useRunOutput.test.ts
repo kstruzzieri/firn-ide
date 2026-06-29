@@ -89,16 +89,31 @@ describe('useRunOutputListener', () => {
       const outputCallback = mockEventsOn.mock.calls.find(([event]) => event === 'run:output')?.[1];
       expect(outputCallback).toBeDefined();
 
-      // compound:Y2k:0 is a composite step key (decodes to compoundId "ci", step 0);
-      // a plain id ("real") is a normal profile and SHOULD be counted.
-      outputCallback!({ profileId: 'compound:Y2k:0', stream: 'stdout', data: 'x\n', timestamp: 1 });
-      outputCallback!({ profileId: 'real', stream: 'stdout', data: 'y\n', timestamp: 2 });
+      // A chunk with a parentRunInstanceId is compound step output and must NOT
+      // be counted; a plain chunk ("real") is a normal profile and SHOULD be.
+      outputCallback!({
+        runInstanceId: 'step-r1',
+        profileId: 'build',
+        parentRunInstanceId: 'agg-r1',
+        stepIdx: 0,
+        stream: 'stdout',
+        data: 'x\n',
+        timestamp: 1,
+      });
+      outputCallback!({
+        runInstanceId: 'r1',
+        profileId: 'real',
+        stepIdx: 0,
+        stream: 'stdout',
+        data: 'y\n',
+        timestamp: 2,
+      });
 
       // Drive the 500ms waveform flush interval.
       jest.advanceTimersByTime(600);
 
       expect(updateWaveform).toHaveBeenCalledWith('real', expect.any(Number));
-      expect(updateWaveform).not.toHaveBeenCalledWith('compound:Y2k:0', expect.anything());
+      expect(updateWaveform).not.toHaveBeenCalledWith('build', expect.anything());
     } finally {
       jest.useRealTimers();
     }

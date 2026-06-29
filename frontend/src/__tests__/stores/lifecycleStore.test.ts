@@ -295,20 +295,36 @@ describe('lifecycleStore - stopRequestTimestamps', () => {
 
   it('handleRunStatus with terminal state clears stopRequestTimestamps', () => {
     useIDEStore.setState({
+      runOutputs: {},
       stopRequestTimestamps: { 'profile-1': 10000 },
       runStartTimestamps: { 'profile-1': 9000 },
     });
     const { handleRunStatus } = useIDEStore.getState();
-    handleRunStatus('profile-1', 'stopped', 0, 11000);
+    handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'stopped',
+      exitCode: 0,
+      timestamp: 11000,
+    });
     expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
   });
 
   it('handleRunStatus with running state clears stopRequestTimestamps (restart)', () => {
     useIDEStore.setState({
+      runOutputs: {},
       stopRequestTimestamps: { 'profile-1': 10000 },
     });
     const { handleRunStatus } = useIDEStore.getState();
-    handleRunStatus('profile-1', 'running', 0, 11000);
+    handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 11000,
+    });
     expect(useIDEStore.getState().stopRequestTimestamps['profile-1']).toBeUndefined();
   });
 });
@@ -334,9 +350,18 @@ describe('lifecycleStore - run output working directory snapshots', () => {
   it('keeps existing output links tied to the working directory from run start', () => {
     const store = useIDEStore.getState();
 
-    store.handleRunStatus('profile-1', 'running', 0, 1000);
-    store.appendRunOutput({
+    store.handleRunStatus({
+      runInstanceId: 'r1',
       profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
       stream: 'stderr',
       data: 'src/App.tsx:7:11\n',
       timestamp: 1001,
@@ -352,17 +377,40 @@ describe('lifecycleStore - run output working directory snapshots', () => {
   it('preserves previous run working directory separately when a profile is rerun', () => {
     const store = useIDEStore.getState();
 
-    store.handleRunStatus('profile-1', 'running', 0, 1000);
-    store.appendRunOutput({
+    store.handleRunStatus({
+      runInstanceId: 'r1',
       profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
       stream: 'stderr',
       data: 'src/old.ts:1:1\n',
       timestamp: 1001,
     });
-    store.handleRunStatus('profile-1', 'failed', 1, 2000);
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2000,
+    });
 
     useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
-    store.handleRunStatus('profile-1', 'running', 0, 3000);
+    store.handleRunStatus({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 3000,
+    });
 
     const output = useIDEStore.getState().runOutputs['profile-1'];
     expect(output.workingDir).toBe('packages/web');

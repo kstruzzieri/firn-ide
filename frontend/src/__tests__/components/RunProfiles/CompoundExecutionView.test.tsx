@@ -39,6 +39,7 @@ function entry(text: string, ts = 1): OutputEntry {
 
 function makeStep(overrides: Partial<CompoundStep> & { idx: number }): CompoundStep {
   return {
+    runInstanceId: `step-r${overrides.idx}`,
     profileId: `p${overrides.idx}`,
     name: `Step ${overrides.idx}`,
     state: 'pending',
@@ -51,6 +52,7 @@ function makeStep(overrides: Partial<CompoundStep> & { idx: number }): CompoundS
 
 function makeCompound(overrides: Partial<CompoundRun> = {}): CompoundRun {
   return {
+    runInstanceId: 'r1',
     compoundId: 'compound-1',
     name: 'Build & Deploy',
     state: 'running',
