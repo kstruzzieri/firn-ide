@@ -347,7 +347,8 @@ function getOrCreateAssembler(
 
 // Canonical key for a compound step's line assembler. Used for BOTH routing
 // step output into an assembler and flushing it on terminal, so the two always
-// agree without depending on Go's base64url encoding of the composite key.
+// agree, keyed purely on (compoundId, stepIdx) with no dependency on any
+// backend key encoding.
 function compoundStepAssemblerKey(compoundId: string, stepIdx: number): string {
   return JSON.stringify([compoundId, stepIdx]);
 }

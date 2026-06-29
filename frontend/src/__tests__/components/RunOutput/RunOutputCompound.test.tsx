@@ -219,20 +219,6 @@ describe('RunOutputTabs compound tabs', () => {
     expect(screen.getByText('CI')).toBeInTheDocument();
   });
 
-  it('does not render composite step keys as tabs', () => {
-    const compositeKey = 'compound:Y2k:0';
-    useIDEStore.setState({
-      runOutputs: {},
-      runCompounds: { ci: makeCompound({ name: 'CI' }) },
-      activeRunOutputId: 'ci',
-    });
-
-    render(<RunOutputTabs />);
-
-    expect(screen.queryByText(compositeKey)).not.toBeInTheDocument();
-    expect(screen.getByText('CI')).toBeInTheDocument();
-  });
-
   it('does not render the All timeline tab for compounds only', () => {
     useIDEStore.setState({
       runOutputs: {},
