@@ -1,0 +1,151 @@
+import { createShellIntegration, type IntegrationTerminal } from './shellIntegration';
+
+const COLORS = { fail: '#F87171', ok: '#334155', separator: 'rgba(148,163,184,0.2)' };
+
+interface FakeDecoration {
+  opts: { marker: unknown; x?: number; width?: number };
+  el: HTMLElement;
+  render: () => void;
+  disposed: boolean;
+}
+
+function makeFakeTerm() {
+  const markers: { disposed: boolean }[] = [];
+  const decorations: FakeDecoration[] = [];
+  let osc: ((data: string) => boolean) | null = null;
+
+  const term: IntegrationTerminal = {
+    cols: 80,
+    parser: {
+      registerOscHandler: (_id, cb) => {
+        osc = cb;
+        return { dispose: () => {} };
+      },
+    },
+    registerMarker: () => {
+      const m = {
+        disposed: false,
+        dispose() {
+          this.disposed = true;
+        },
+      };
+      markers.push(m);
+      return m;
+    },
+    registerDecoration: (opts) => {
+      let cb: ((el: HTMLElement) => void) | null = null;
+      const el = document.createElement('div');
+      const d: FakeDecoration = {
+        opts,
+        el,
+        render: () => cb?.(el),
+        disposed: false,
+      };
+      decorations.push(d);
+      return {
+        onRender: (fn) => {
+          cb = fn;
+        },
+        dispose() {
+          d.disposed = true;
+        },
+      };
+    },
+  };
+
+  return {
+    term,
+    markers,
+    decorations,
+    fire: (d: string) => osc?.(d),
+  };
+}
+
+describe('createShellIntegration', () => {
+  it('decorates an executed command marker, red on non-zero exit', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;1');
+    const bar = f.decorations[0];
+    expect(bar).toBeDefined();
+    bar.render();
+    expect(bar.el.style.backgroundColor).toBe('rgb(248, 113, 113)'); // #F87171
+  });
+
+  it('uses neutral color on zero exit', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;0');
+    const bar = f.decorations[0];
+    bar.render();
+    expect(bar.el.style.backgroundColor).toBe('rgb(51, 65, 85)'); // #334155
+  });
+
+  it('ignores a D with no preceding A', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('D;1');
+    expect(f.decorations).toHaveLength(0);
+  });
+
+  it('does not decorate a prompt with no command (no C)', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('D;0');
+    expect(f.decorations).toHaveLength(0);
+  });
+
+  it('disposes the stale undecorated marker on repeated empty enters', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('A'); // marker 0
+    f.fire('A'); // marker 1 — marker 0 was never executed/decorated
+    expect(f.markers[0].disposed).toBe(true);
+    expect(f.markers[1].disposed).toBe(false);
+  });
+
+  it('decorates each executed marker only once', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;1');
+    f.fire('D;1'); // duplicate D for same marker
+    // one gutter + (no separator on first decorated command) = 1 decoration
+    expect(f.decorations).toHaveLength(1);
+  });
+
+  it('draws a separator on the second and later executed commands', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    // first command
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;0');
+    // second command
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;0');
+    // 1 (first: gutter only) + 2 (second: gutter + separator) = 3
+    expect(f.decorations).toHaveLength(3);
+    const sep = f.decorations[2];
+    sep.render();
+    expect(sep.el.style.borderTop).toContain('1px solid');
+  });
+
+  it('dispose() tears down handler, markers and decorations', () => {
+    const f = makeFakeTerm();
+    const integ = createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;1');
+    integ.dispose();
+    expect(f.markers[0].disposed).toBe(true);
+    expect(f.decorations[0].disposed).toBe(true);
+  });
+});
