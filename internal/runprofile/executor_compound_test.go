@@ -3,10 +3,10 @@
 package runprofile
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -26,13 +26,15 @@ func compoundSnapshots(s *emitSpy) []compoundStatus {
 	return out
 }
 
-// outputByProfileID returns concatenated output data recorded for a profileID.
-func outputByProfileID(o *outputSpy, profileID string) string {
+// outputByIdentity returns concatenated output data recorded for a leaf step
+// identified by its parent (aggregate) run instance id and step index. Output is
+// now routed by explicit RunIdentity fields rather than a parsed synthetic key.
+func outputByIdentity(o *outputSpy, parentRunInstanceID string, stepIdx int) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	var combined string
 	for _, e := range o.entries {
-		if e.identity.RunInstanceID == profileID {
+		if e.identity.ParentRunInstanceID == parentRunInstanceID && e.identity.StepIdx == stepIdx {
 			combined += e.data
 		}
 	}
@@ -102,24 +104,57 @@ func waitForCompoundState(exec *Executor, id string, want RunState, timeout time
 	}
 }
 
-// waitForLeafProcess polls the executor's internal process map until the
-// compound step leaf for the given key is registered. This makes stop tests
-// deterministic: we only stop once the leaf process is guaranteed to exist.
-func waitForLeafProcess(exec *Executor, key string, timeout time.Duration) bool {
-	deadline := time.After(timeout)
-	for {
-		exec.mu.Lock()
-		_, ok := exec.processes[key]
-		exec.mu.Unlock()
-		if ok {
-			return true
-		}
-		select {
-		case <-deadline:
-			return false
-		case <-time.After(5 * time.Millisecond):
-		}
+func noopStatus(string, ...any) {}
+
+func compoundProfile(id string, steps ...string) RunProfile {
+	return RunProfile{
+		ID:    id,
+		Name:  id,
+		Type:  ProfileTypeCompound,
+		Steps: steps,
 	}
+}
+
+func waitForTerminalStatus(t *testing.T, e *Executor, profileID string) RunStatus {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st := e.GetStatus(profileID)
+		if st.State == RunStateSuccess || st.State == RunStateFailed || st.State == RunStateStopped {
+			return st
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("profile %q did not reach terminal state", profileID)
+	return RunStatus{}
+}
+
+// waitForStepRunning polls until the compound's step at stepIdx is marked running
+// AND its leaf process is registered in the executor's process map. Waiting for
+// the leaf process (not just the step state) keeps the stop tests deterministic:
+// the step transitions to running just before startProcess registers the leaf, so
+// a Stop issued purely on step state could race the registration. White-box: it
+// reads e.activeByProfile / e.compounds / e.processes under e.mu (same package).
+func waitForStepRunning(t *testing.T, e *Executor, compoundProfileID string, stepIdx int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		e.mu.Lock()
+		rid := e.activeByProfile[compoundProfileID]
+		cr := e.compounds[rid]
+		running := false
+		if cr != nil && stepIdx >= 0 && stepIdx < len(cr.steps) && cr.steps[stepIdx].State == CompoundStepRunning {
+			leafRID := cr.steps[stepIdx].RunInstanceID
+			_, leafRunning := e.processes[leafRID]
+			running = leafRunning
+		}
+		e.mu.Unlock()
+		if running {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("compound %q step %d did not reach running state", compoundProfileID, stepIdx)
 }
 
 func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {
@@ -131,7 +166,7 @@ func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {
 	ok1 := newTestProfile("ok1", "printf a >> "+orderFile)
 	boom := newTestProfile("boom", "exit 3")
 	ok2 := newTestProfile("ok2", "printf c >> "+orderFile)
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"ok1", "boom", "ok2"}}
+	compound := compoundProfile("ci", "ok1", "boom", "ok2")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{ok1, boom, ok2}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -193,7 +228,7 @@ func TestExecutor_StartCompoundRunningStepPopulatesWorkingDir(t *testing.T) {
 
 	step := newTestProfile("worker", "printf done")
 	step.WorkingDir = "sub"
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"worker"}}
+	compound := compoundProfile("ci", "worker")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{step}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -229,7 +264,7 @@ func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 	bad := newTestProfile("bad", "echo nope")
 	bad.WorkingDir = "does-not-exist"
 	third := newTestProfile("third", "echo never")
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"first", "bad", "third"}}
+	compound := compoundProfile("ci", "first", "bad", "third")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{first, bad, third}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -262,10 +297,10 @@ func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 		t.Errorf("third step state = %q, want %q", thirdStep.State, CompoundStepSkipped)
 	}
 
-	stepKey := compoundStepKey("ci", 1)
-	stderr := outputByProfileID(out, stepKey)
+	// Setup-error stderr is routed to the failing step's own lane (parent + idx 1).
+	stderr := outputByIdentity(out, badStep.ParentRunInstanceID, 1)
 	if stderr == "" {
-		t.Errorf("expected stderr output for step key %q describing the setup error", stepKey)
+		t.Errorf("expected stderr output for step (parent %q idx 1) describing the setup error", badStep.ParentRunInstanceID)
 	}
 	if !strings.Contains(stderr, "working directory does not exist") {
 		t.Errorf("step stderr = %q, want it to contain the cwd error text", stderr)
@@ -286,25 +321,18 @@ func TestExecutor_StopCompoundMidStep(t *testing.T) {
 	// successful mid-step stop guarantees order.txt never gets "a".
 	slow := newTestProfile("slow", "sleep 5; printf a >> "+orderFile)
 	after := newTestProfile("after", "printf b >> "+orderFile)
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow", "after"}}
+	compound := compoundProfile("ci", "slow", "after")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{slow, after}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
 	}
 
+	// Determinism: wait until step 0's leaf process is registered, then stop. This
+	// closes the start/stop race window for the test.
+	waitForStepRunning(t, exec, "ci", 0)
+
 	stopErr := make(chan error, 1)
 	go func() {
-		// Determinism: wait until the aggregate is running AND the leaf process for
-		// step 0 is registered in the executor's process map, then stop. This
-		// closes the start/stop race window for the test.
-		if !waitForCompoundState(exec, "ci", RunStateRunning, 5*time.Second) {
-			stopErr <- fmt.Errorf("timed out waiting for running")
-			return
-		}
-		if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
-			stopErr <- fmt.Errorf("timed out waiting for leaf process")
-			return
-		}
 		stopErr <- exec.Stop("ci")
 	}()
 
@@ -344,22 +372,24 @@ func TestExecutor_StopCompoundMidStep(t *testing.T) {
 }
 
 func TestExecutor_StartSingleRejectedWhileCompoundStepRunning(t *testing.T) {
-	spy := &emitSpy{}
-	exec := NewExecutor(spy.emit, nil)
+	exec := NewExecutor(noopStatus, nil)
 	dir := t.TempDir()
 	defer exec.StopAll(2 * time.Second) //nolint:errcheck
 
 	slow := newTestProfile("slow", "sleep 5")
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow"}}
+	compound := compoundProfile("ci", "slow")
+	steps, err := ResolveSteps(compound, []RunProfile{slow})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if err := exec.StartCompound(dir, compound, []RunProfile{slow}); err != nil {
+	if err := exec.StartCompound(dir, compound, steps); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
 	}
-	if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
-		t.Fatal("timed out waiting for compound leaf process")
-	}
+	waitForStepRunning(t, exec, "ci", 0)
 
-	err := exec.Start(dir, slow)
+	// "slow" is active as a compound leaf → starting it standalone is rejected.
+	err = exec.Start(dir, slow)
 	if err == nil {
 		t.Fatal("Start returned nil; want already-running error for leaf profile")
 	}
@@ -375,14 +405,12 @@ func TestExecutor_StopSingleIDStopsCompoundStep(t *testing.T) {
 
 	slow := newTestProfile("slow", "sleep 5")
 	after := newTestProfile("after", "printf never")
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow", "after"}}
+	compound := compoundProfile("ci", "slow", "after")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{slow, after}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
 	}
-	if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
-		t.Fatal("timed out waiting for compound leaf process")
-	}
+	waitForStepRunning(t, exec, "ci", 0)
 
 	if err := exec.Stop("slow"); err != nil {
 		t.Fatalf("Stop by step profile ID returned error: %v", err)
@@ -417,22 +445,16 @@ func TestExecutor_StopCompoundBetweenSteps(t *testing.T) {
 
 	step0 := newTestProfile("s0", "sleep 0.4")
 	step1 := newTestProfile("s1", "printf b >> "+orderFile)
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"s0", "s1"}}
+	compound := compoundProfile("ci", "s0", "s1")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{step0, step1}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
 	}
 
+	waitForStepRunning(t, exec, "ci", 0)
+
 	stopErr := make(chan error, 1)
 	go func() {
-		if !waitForCompoundState(exec, "ci", RunStateRunning, 5*time.Second) {
-			stopErr <- fmt.Errorf("timed out waiting for running")
-			return
-		}
-		if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
-			stopErr <- fmt.Errorf("timed out waiting for leaf process")
-			return
-		}
 		stopErr <- exec.Stop("ci")
 	}()
 
@@ -470,18 +492,13 @@ func TestExecutor_StopAllCancelsCompoundBetweenSteps(t *testing.T) {
 
 	slow := newTestProfile("slow", "sleep 5")
 	after := newTestProfile("after", "echo never")
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow", "after"}}
+	compound := compoundProfile("ci", "slow", "after")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{slow, after}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
 	}
 
-	if !waitForCompoundState(exec, "ci", RunStateRunning, 5*time.Second) {
-		t.Fatal("timed out waiting for running")
-	}
-	if !waitForLeafProcess(exec, compoundStepKey("ci", 0), 5*time.Second) {
-		t.Fatal("timed out waiting for leaf process")
-	}
+	waitForStepRunning(t, exec, "ci", 0)
 
 	if !exec.StopAll(2 * time.Second) {
 		t.Fatal("StopAll returned false — compound not cleaned up in time")
@@ -503,7 +520,7 @@ func TestExecutor_ClearTerminalStatusesClearsCompoundAggregate(t *testing.T) {
 
 	step1 := newTestProfile("first", "echo a")
 	step2 := newTestProfile("second", "echo b")
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"first", "second"}}
+	compound := compoundProfile("ci", "first", "second")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{step1, step2}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -531,7 +548,7 @@ func TestExecutor_StartCompoundAllSuccess(t *testing.T) {
 
 	step1 := newTestProfile("first", "printf first >> "+orderFile)
 	step2 := newTestProfile("second", "printf second >> "+orderFile)
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"first", "second"}}
+	compound := compoundProfile("ci", "first", "second")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{step1, step2}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -568,34 +585,6 @@ func TestExecutor_StartCompoundAllSuccess(t *testing.T) {
 	}
 }
 
-func TestExecutor_StartCompoundRejectsReservedCompoundProfileID(t *testing.T) {
-	spy := &emitSpy{}
-	exec := NewExecutor(spy.emit, nil)
-	dir := t.TempDir()
-
-	step := newTestProfile("build", "echo should-not-run")
-	compound := RunProfile{
-		ID:    "compound:Y2k:0",
-		Name:  "CI",
-		Type:  ProfileTypeCompound,
-		Steps: []string{"build"},
-	}
-
-	err := exec.StartCompound(dir, compound, []RunProfile{step})
-	if err == nil {
-		t.Fatal("StartCompound returned nil; want reserved profile id error")
-	}
-	if !strings.Contains(err.Error(), `profile id uses reserved namespace "compound:"`) {
-		t.Fatalf("StartCompound error = %q, want reserved namespace error", err.Error())
-	}
-	if statuses := spy.statuses(); len(statuses) != 0 {
-		t.Fatalf("expected no status events for rejected compound, got %d", len(statuses))
-	}
-	if snaps := compoundSnapshots(spy); len(snaps) != 0 {
-		t.Fatalf("expected no compound snapshots for rejected compound, got %d", len(snaps))
-	}
-}
-
 func TestExecutor_StartCompoundSequentialOrder(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
@@ -606,7 +595,7 @@ func TestExecutor_StartCompoundSequentialOrder(t *testing.T) {
 	step2 := newTestProfile("b", "printf B >> "+orderFile)
 	step3 := newTestProfile("c", "printf C >> "+orderFile)
 	step4 := newTestProfile("d", "printf D >> "+orderFile)
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"a", "b", "c", "d"}}
+	compound := compoundProfile("ci", "a", "b", "c", "d")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{step1, step2, step3, step4}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -632,7 +621,7 @@ func TestExecutor_GetStatusCompoundRunning(t *testing.T) {
 	orderFile := filepath.Join(dir, "order.txt")
 
 	step1 := newTestProfile("slow", "sleep 0.3; printf done >> "+orderFile)
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"slow"}}
+	compound := compoundProfile("ci", "slow")
 
 	if err := exec.StartCompound(dir, compound, []RunProfile{step1}); err != nil {
 		t.Fatalf("StartCompound returned error: %v", err)
@@ -656,32 +645,131 @@ func TestExecutor_GetStatusCompoundRunning(t *testing.T) {
 }
 
 func TestExecutor_CompoundDuplicateStepOutputIsolation(t *testing.T) {
-	spy := &emitSpy{}
-	out := &outputSpy{}
-	exec := NewExecutor(spy.emit, out.receive)
-	dir := t.TempDir()
+	type key struct {
+		parent string
+		idx    int
+	}
+	got := map[key][]string{}
+	var mu sync.Mutex
+	e := NewExecutor(noopStatus, func(id RunIdentity, stream, data string, _ int64) {
+		mu.Lock()
+		got[key{id.ParentRunInstanceID, id.StepIdx}] = append(got[key{id.ParentRunInstanceID, id.StepIdx}], data)
+		mu.Unlock()
+	})
 
-	echoer := newTestProfile("echoer", "printf hi")
-	compound := RunProfile{ID: "ci", Name: "CI", Type: ProfileTypeCompound, Steps: []string{"echoer", "echoer"}}
+	// Compound "ci" runs the SAME profile "build" twice (duplicate step ids).
+	build := newTestProfile("build", "echo step")
+	compound := compoundProfile("ci", "build", "build")
+	steps, err := ResolveSteps(compound, []RunProfile{build})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.StartCompound(t.TempDir(), compound, steps); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminalStatus(t, e, "ci")
 
-	if err := exec.StartCompound(dir, compound, []RunProfile{echoer, echoer}); err != nil {
-		t.Fatalf("StartCompound returned error: %v", err)
+	mu.Lock()
+	defer mu.Unlock()
+	// Two distinct step records (idx 0 and idx 1) under the same parent.
+	parents := map[string]map[int]bool{}
+	for k := range got {
+		if parents[k.parent] == nil {
+			parents[k.parent] = map[int]bool{}
+		}
+		parents[k.parent][k.idx] = true
+	}
+	if len(parents) != 1 {
+		t.Fatalf("expected one parent run, got %d", len(parents))
+	}
+	for _, idxs := range parents {
+		if !idxs[0] || !idxs[1] {
+			t.Fatalf("expected output for step idx 0 and 1, got %v", idxs)
+		}
+	}
+}
+
+func TestExecutor_StopByStepProfileWhileCompoundRuns(t *testing.T) {
+	e := NewExecutor(noopStatus, nil)
+	slow := newTestProfile("slow", "sleep 5")
+	after := newTestProfile("after", "echo after")
+	compound := compoundProfile("ci", "slow", "after")
+	steps, _ := ResolveSteps(compound, []RunProfile{slow, after})
+	if err := e.StartCompound(t.TempDir(), compound, steps); err != nil {
+		t.Fatal(err)
+	}
+	waitForStepRunning(t, e, "ci", 0)
+
+	// Stopping the leaf by its own profile id halts the chain.
+	if err := e.Stop("slow"); err != nil {
+		t.Fatalf("Stop(slow): %v", err)
+	}
+	if !waitForCompoundState(e, "ci", RunStateStopped, 5*time.Second) {
+		t.Fatalf("compound did not reach stopped state")
+	}
+	st := e.GetStatus("ci")
+	if st.State != RunStateStopped {
+		t.Fatalf("compound state = %q, want stopped", st.State)
+	}
+}
+
+func TestExecutor_StopByCompoundProfile(t *testing.T) {
+	e := NewExecutor(noopStatus, nil)
+	slow := newTestProfile("slow", "sleep 5")
+	compound := compoundProfile("ci", "slow")
+	steps, _ := ResolveSteps(compound, []RunProfile{slow})
+	if err := e.StartCompound(t.TempDir(), compound, steps); err != nil {
+		t.Fatal(err)
+	}
+	waitForStepRunning(t, e, "ci", 0)
+	if err := e.Stop("ci"); err != nil {
+		t.Fatalf("Stop(ci): %v", err)
+	}
+	if e.GetStatus("ci").State != RunStateStopped {
+		t.Fatalf("compound not stopped")
+	}
+}
+
+func TestExecutor_CompoundLeafTerminalStatusNotRetained(t *testing.T) {
+	e := NewExecutor(noopStatus, nil)
+	build := newTestProfile("build", "true")
+	compound := compoundProfile("ci", "build")
+	steps, _ := ResolveSteps(compound, []RunProfile{build})
+	if err := e.StartCompound(t.TempDir(), compound, steps); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminalStatus(t, e, "ci")
+	// Aggregate retained; leaf profile not.
+	if e.GetStatus("ci").State == RunStateIdle {
+		t.Fatalf("expected aggregate terminal status retained")
+	}
+	if e.GetStatus("build").State != RunStateIdle {
+		t.Fatalf("compound leaf status leaked into lastStatus")
+	}
+}
+
+func TestExecutor_CompoundLeafDoesNotClearPriorTopLevelStatus(t *testing.T) {
+	e := NewExecutor(noopStatus, nil)
+	build := newTestProfile("build", "true")
+	root := t.TempDir()
+
+	if err := e.Start(root, build); err != nil {
+		t.Fatal(err)
+	}
+	prior := waitForTerminalStatus(t, e, "build")
+	if prior.State != RunStateSuccess {
+		t.Fatalf("prior standalone state = %q, want success", prior.State)
 	}
 
-	if _, ok := spy.waitForState(RunStateSuccess, 5*time.Second); !ok {
-		t.Fatal("timed out waiting for aggregate success state")
+	compound := compoundProfile("ci", "build")
+	steps, _ := ResolveSteps(compound, []RunProfile{build})
+	if err := e.StartCompound(root, compound, steps); err != nil {
+		t.Fatal(err)
 	}
+	waitForTerminalStatus(t, e, "ci")
 
-	key0 := compoundStepKey("ci", 0)
-	key1 := compoundStepKey("ci", 1)
-
-	if got := outputByProfileID(out, key0); got != "hi" {
-		t.Errorf("output for key %q = %q, want %q", key0, got, "hi")
-	}
-	if got := outputByProfileID(out, key1); got != "hi" {
-		t.Errorf("output for key %q = %q, want %q", key1, got, "hi")
-	}
-	if got := outputByProfileID(out, "echoer"); got != "" {
-		t.Errorf("output should not be tagged with source profile ID %q, got %q", "echoer", got)
+	st := e.GetStatus("build")
+	if st.RunInstanceID != prior.RunInstanceID || st.State != prior.State {
+		t.Fatalf("compound leaf cleared prior top-level status: got %#v want prior %#v", st, prior)
 	}
 }
