@@ -43,19 +43,49 @@ func ensureWrapperFiles(root string) (string, error) {
 		}
 		dst := filepath.Join(dir, name)
 		if got, err := os.ReadFile(dst); err == nil && bytes.Equal(got, want) {
+			// Content current; re-assert perms in case they drifted.
 			if err := os.Chmod(dst, 0o600); err != nil {
 				return "", err
 			}
 			continue
 		}
-		if err := os.WriteFile(dst, want, 0o600); err != nil {
-			return "", err
-		}
-		if err := os.Chmod(dst, 0o600); err != nil {
+		// Write atomically (temp + rename) so a shell sourcing the file never
+		// observes a partial write when terminals are created concurrently.
+		if err := writeFileAtomic(dir, dst, want, 0o600); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
+}
+
+// writeFileAtomic writes data to a temp file in dir, then renames it over dst.
+// Rename is atomic within a filesystem, so a concurrent reader (a shell sourcing
+// the script) sees either the complete old file or the complete new one.
+func writeFileAtomic(dir, dst string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(dir, ".firn-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // integratedCommand builds the shell command with OSC 133 integration when the

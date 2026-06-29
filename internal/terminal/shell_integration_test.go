@@ -98,6 +98,41 @@ func TestEnsureWrapperFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureWrapperFilesConcurrent(t *testing.T) {
+	root := t.TempDir()
+
+	// Concurrent terminal creation calls ensureWrapperFiles in parallel. With
+	// atomic writes none should error and every file must end up complete.
+	const n = 16
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			_, err := ensureWrapperFiles(root)
+			errs <- err
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent ensureWrapperFiles error: %v", err)
+		}
+	}
+
+	dir := filepath.Join(root, "firn-ide", "shell-integration", integrationVersion)
+	for name, src := range wrapperFiles {
+		want, err := integrationFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s content not complete after concurrent writes", name)
+		}
+	}
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
@@ -186,6 +221,17 @@ func TestIntegratedShellEmitsOSC133(t *testing.T) {
 			}
 
 			cmd := integratedCommand(path, t.TempDir())
+
+			// Make the spawned shell hermetic: point HOME / USER_ZDOTDIR at an
+			// empty dir so it does not source the developer's real rc files
+			// (p10k, nvm, input-blocking prompts) which would make this flaky.
+			hermetic := t.TempDir()
+			base := cmd.Env
+			if base == nil {
+				base = os.Environ()
+			}
+			cmd.Env = append(base, "HOME="+hermetic, "USER_ZDOTDIR="+hermetic)
+
 			ptmx, err := pty.Start(cmd)
 			if err != nil {
 				t.Fatalf("pty.Start(%s) error: %v", shell, err)
