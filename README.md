@@ -155,19 +155,22 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] xterm.js frontend — themed terminal with Firn Glacier colors
 - [x] Multiple terminal sessions — create, switch, close, rename, drag-to-reorder
 - [x] Graceful process termination — SIGHUP via PTY close with SIGKILL fallback
+- [x] Shell integration — OSC 133 command separators and exit-status error markers (zsh/bash)
 
 **Run Output Panel**
 - [x] Per-profile output display with tab selection
 - [x] Multiple view modes (merged, lanes, diff, timeline)
+- [x] Independent per-stream lane scrolling (stdout/stderr) with a resizable split
 - [x] Auto-scroll with toggle
 - [x] Output folding for repeated patterns
+- [x] Compound run profiles — sequential multi-step execution with per-step output and aggregate status
+- [x] First-class run execution identity — output, lifecycle, and status routed by execution-instance id
 
 ### Planned
 
-- [ ] Terminal shell integration — command separators and error markers
 - [ ] Managed LSP server provisioning — download pinned servers into an app cache with offline/retry UI
 - [ ] File-tree lazy loading — load directory children on expand
-- [ ] Git integration
+- [ ] Git integration — status display and basic operations
 - [ ] AI Chat Panel
 
 ## Project Structure
@@ -252,10 +255,10 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-1. Finish TypeScript project-root detection for the remaining LSP integration work.
-2. Add clickable run-output error links.
-3. Complete Run Profile environment variants and compound execution.
-4. Build workspace identity, active workspace accenting, and Project/Workspace tree views.
+1. Git integration — status display and basic operations (the next milestone).
+2. Managed LSP server provisioning — download pinned servers with offline/retry UI.
+3. File-tree lazy loading — load directory children on expand.
+4. Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted run history.
 
 ## Contributing
 
