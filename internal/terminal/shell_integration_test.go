@@ -206,6 +206,50 @@ func TestIntegratedCommandFailsOpen(t *testing.T) {
 	}
 }
 
+func TestBashPromptCommandSeesOriginalStatus(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not installed")
+	}
+
+	root := t.TempDir()
+	dir, err := ensureWrapperFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(home, ".bashrc"),
+		[]byte(`PROMPT_COMMAND='printf "%s\n" "$?" > "$HOME/status"'`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(
+		bash,
+		"--noprofile",
+		"--norc",
+		"-c",
+		`source "$1"; false; __firn_precmd >/dev/null || true`,
+		"bash",
+		filepath.Join(dir, "firn.bashrc"),
+	)
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash prompt command probe failed: %v\n%s", err, out)
+	}
+	gotBytes, err := os.ReadFile(filepath.Join(home, "status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(gotBytes)); got != "1" {
+		t.Fatalf("PROMPT_COMMAND saw status %q, want 1", got)
+	}
+}
+
 // TestIntegratedShellEmitsOSC133 spawns the integrated shell in a real PTY and
 // asserts the embedded scripts emit the OSC 133 "command finished" marker with a
 // non-zero exit code. PTY-gated (skipped on headless CI) and shell-gated via

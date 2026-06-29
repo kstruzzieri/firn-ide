@@ -7,6 +7,7 @@ if [[ -z "$FIRN_SHELL_INTEGRATION" ]]; then
   if [[ -z "$(trap -p DEBUG)" && "$__firn_prompt_decl" != declare\ -a* && "$__firn_prompt_decl" != declare\ -A* ]]; then
     FIRN_SHELL_INTEGRATION=1
     __firn_osc() { printf '\033]133;%s\007' "$1"; }
+    __firn_restore_status() { return "$1"; }
     __firn_user_prompt_command="$PROMPT_COMMAND"
     __firn_preexec_done=1
     __firn_in_prompt_command=0
@@ -23,7 +24,10 @@ if [[ -z "$FIRN_SHELL_INTEGRATION" ]]; then
       __firn_in_prompt_command=1
       __firn_osc "D;$s"
       __firn_osc A
-      [[ -n "$__firn_user_prompt_command" ]] && eval "$__firn_user_prompt_command"
+      if [[ -n "$__firn_user_prompt_command" ]]; then
+        __firn_restore_status "$s"
+        eval "$__firn_user_prompt_command"
+      fi
       __firn_preexec_done=0
       __firn_in_prompt_command=0
       return $s
