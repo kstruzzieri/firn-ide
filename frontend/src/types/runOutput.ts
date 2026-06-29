@@ -6,7 +6,10 @@ export const MAX_OUTPUT_ENTRIES = 10_000;
 
 /** Raw event payload from backend (chunk-oriented, may split/merge lines) */
 export interface OutputChunk {
+  runInstanceId: string;
   profileId: string;
+  parentRunInstanceId?: string;
+  stepIdx: number;
   stream: 'stdout' | 'stderr';
   data: string;
   timestamp: number;
@@ -31,8 +34,20 @@ export type VisualState = RunState | 'stopping';
 
 export type RunOutputViewMode = 'merged' | 'lanes' | 'diff' | 'timeline';
 
+/** Payload of the run:status event (top-level runs and compound aggregates). */
+export interface RunStatusEvent {
+  runInstanceId: string;
+  profileId: string;
+  parentRunInstanceId?: string;
+  stepIdx: number;
+  state: RunState;
+  exitCode: number;
+  timestamp?: number;
+}
+
 export interface RunOutput {
   profileId: string;
+  runInstanceId: string;
   workingDir?: string;
   previousWorkingDir?: string;
   state: RunState;
@@ -66,6 +81,7 @@ export type CompoundStepState =
 
 export interface CompoundStep {
   idx: number;
+  runInstanceId: string;
   profileId: string;
   name: string;
   state: CompoundStepState;
@@ -79,6 +95,7 @@ export interface CompoundStep {
 
 export interface CompoundRun {
   compoundId: string;
+  runInstanceId: string;
   name: string;
   state: RunState;
   currentStep: number;
@@ -90,6 +107,7 @@ export interface CompoundRun {
 }
 
 export interface CompoundRunEvent {
+  runInstanceId: string;
   compoundId: string;
   name: string;
   state: RunState;

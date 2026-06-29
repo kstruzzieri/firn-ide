@@ -526,7 +526,10 @@ export namespace runprofile {
 		}
 	}
 	export class RunStatus {
+	    runInstanceId: string;
 	    profileId: string;
+	    parentRunInstanceId?: string;
+	    stepIdx: number;
 	    state: string;
 	    exitCode: number;
 	    pid?: number;
@@ -538,7 +541,10 @@ export namespace runprofile {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runInstanceId = source["runInstanceId"];
 	        this.profileId = source["profileId"];
+	        this.parentRunInstanceId = source["parentRunInstanceId"];
+	        this.stepIdx = source["stepIdx"];
 	        this.state = source["state"];
 	        this.exitCode = source["exitCode"];
 	        this.pid = source["pid"];
