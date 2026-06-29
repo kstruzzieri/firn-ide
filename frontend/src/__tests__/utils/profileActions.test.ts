@@ -31,3 +31,15 @@ test('restartProfile flags restarting then calls the binding', () => {
   expect(useIDEStore.getState().restartingProfileIds).toContain('p1');
   expect(mockRestart).toHaveBeenCalledWith('p1');
 });
+
+test('stopProfile clears the stopping flag once the binding resolves (idle no-op safe)', async () => {
+  // Stop is an idempotent no-op for an already-idle profile (returns nil), so no
+  // terminal run:status would arrive to clear the optimistic flag — resolution
+  // must clear it, or the spinner sticks. (criticize-review bug #2)
+  mockStop.mockResolvedValueOnce(undefined);
+  stopProfile('p1', 'Dev');
+  expect(useIDEStore.getState().stoppingProfileIds).toContain('p1');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(useIDEStore.getState().stoppingProfileIds).not.toContain('p1');
+});

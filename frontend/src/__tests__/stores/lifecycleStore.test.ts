@@ -417,6 +417,65 @@ describe('lifecycleStore - run output working directory snapshots', () => {
     expect(output.previousWorkingDir).toBe('frontend');
     expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
   });
+
+  it('preserves previousWorkingDir when rerun output arrives before its running status', () => {
+    const store = useIDEStore.getState();
+
+    // First run r1 (default profile workingDir 'frontend').
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 1000,
+    });
+    store.appendRunOutput({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stderr',
+      data: 'src/old.ts:1:1\n',
+      timestamp: 1001,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'failed',
+      exitCode: 1,
+      timestamp: 2000,
+    });
+
+    // Rerun r2: output arrives BEFORE the running status, so appendRunOutput
+    // provisions/rotates the buffer (setting previousWorkingDir from r1).
+    useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
+    store.appendRunOutput({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      stream: 'stdout',
+      data: 'new line\n',
+      timestamp: 2500,
+    });
+    store.handleRunStatus({
+      runInstanceId: 'r2',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 3000,
+    });
+
+    const output = useIDEStore.getState().runOutputs['profile-1'];
+    expect(output.runInstanceId).toBe('r2');
+    expect(output.workingDir).toBe('packages/web');
+    // Regression (criticize-review bug #1): the running status must NOT clobber
+    // the previousWorkingDir the provision path set from the prior run.
+    expect(output.previousWorkingDir).toBe('frontend');
+    expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
+    expect(output.entries[0].text).toBe('new line');
+  });
 });
 
 describe('lifecycleStore - resetWorkspaceRunState', () => {

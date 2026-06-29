@@ -926,7 +926,6 @@ export const useIDEStore = create<IDEStore>()(
             if (newState === 'running') {
               const previousWorkingDir = existing.workingDir;
               updated.workingDir = runWorkingDir;
-              updated.previousWorkingDir = undefined;
               updated.runCount = existing.runCount + 1;
               // Rotate when this running event is a different instance than what
               // the buffer currently holds (covers reruns; '' = never-run buffer).
@@ -942,6 +941,11 @@ export const useIDEStore = create<IDEStore>()(
                 lineAssemblers.delete(profileId);
                 assemblerCallbacks.delete(profileId);
               }
+              // No unconditional previousWorkingDir clear: a fresh first run
+              // already has it undefined, and when appendRunOutput provisioned
+              // this rerun's buffer (output arrived before this running status,
+              // so isRotation is false) it already set previousWorkingDir from
+              // the prior run — clearing here would clobber that.
             }
 
             // --- Lifecycle flags ---
