@@ -138,6 +138,21 @@ describe('createShellIntegration', () => {
     expect(sep.el.style.borderTop).toContain('1px solid');
   });
 
+  it('fails open when the terminal exposes no OSC parser (headless/jsdom)', () => {
+    // Under jsdom (and any env where xterm.open() cannot fully init), term.parser
+    // is undefined. Integration must degrade to a no-op, not crash the mount.
+    const noParser = {
+      cols: 80,
+      registerMarker: () => undefined,
+      registerDecoration: () => undefined,
+    } as unknown as IntegrationTerminal;
+    let integ: ReturnType<typeof createShellIntegration> | undefined;
+    expect(() => {
+      integ = createShellIntegration(noParser, COLORS);
+    }).not.toThrow();
+    expect(() => integ?.dispose()).not.toThrow();
+  });
+
   it('dispose() tears down handler, markers and decorations', () => {
     const f = makeFakeTerm();
     const integ = createShellIntegration(f.term, COLORS);

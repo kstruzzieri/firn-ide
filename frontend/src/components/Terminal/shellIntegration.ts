@@ -50,7 +50,15 @@ export function createShellIntegration(
   const tracked: Disposable[] = [];
   const markers: Marker[] = [];
 
-  const handler = term.parser.registerOscHandler(133, (data: string): boolean => {
+  // Fail open: xterm.open() may not initialize the parser in headless/jsdom
+  // environments (term.parser is undefined). Without the OSC parser there is
+  // nothing to integrate, so degrade to a no-op rather than crash the mount.
+  const parser = term.parser as IntegrationTerminal['parser'] | undefined;
+  if (!parser || typeof parser.registerOscHandler !== 'function') {
+    return { dispose() {} };
+  }
+
+  const handler = parser.registerOscHandler(133, (data: string): boolean => {
     const parts = data.split(';');
     switch (parts[0]) {
       case 'A': {

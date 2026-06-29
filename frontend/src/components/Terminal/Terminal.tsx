@@ -23,6 +23,7 @@ import { ALL_PROFILES_ID } from '../../types/runOutput';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { createShellIntegration } from './shellIntegration';
 import {
   CreateTerminal,
   WriteTerminal,
@@ -65,6 +66,13 @@ const XTERM_THEME = {
   brightMagenta: '#E9D5FF', // purple-200
   brightCyan: '#A5F3FC', // cyan-200
   brightWhite: '#F8FAFC', // slate-50
+};
+
+// Gutter marker / separator colors for shell-integration decorations.
+const SHELL_INTEGRATION_COLORS = {
+  fail: '#F87171', // red-400 — failed command
+  ok: '#334155', // slate-700 — succeeded command (neutral)
+  separator: 'rgba(148, 163, 184, 0.18)', // slate-400 @ low alpha
 };
 
 // Buffers terminal output per session until TerminalContent mounts and attaches.
@@ -575,6 +583,10 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // Register the OSC 133 handler before replaying buffered output, so early
+    // shell-integration sequences (prompt/exit markers) are parsed, not printed.
+    const shellIntegration = createShellIntegration(term, SHELL_INTEGRATION_COLORS);
+
     // Attach to the buffered output system - replays any early output automatically
     attachSessionListener(sessionId, (data: string) => {
       term.write(data);
@@ -600,6 +612,7 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
       // Backend sessions are only closed via explicit close button/context menu actions.
       detachSessionListener(sessionId);
       resizeObserver.disconnect();
+      shellIntegration.dispose();
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
