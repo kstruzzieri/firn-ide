@@ -16,6 +16,7 @@ import {
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
+import { useEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
 import { TreeRow, ROW_HEIGHT, rowDomId } from './TreeRow';
 import { TreeViewToggle } from './TreeViewToggle';
 import { WorkspaceTabs } from './WorkspaceTabs';
@@ -38,6 +39,7 @@ export function FileExplorer() {
   const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
     presentation;
 
+  const ensurePathLoaded = useEnsurePathLoaded();
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
   const toggleRootExpanded = useIDEStore((state) => state.toggleRootExpanded);
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
@@ -95,9 +97,17 @@ export function FileExplorer() {
 
   // Primitive handlers — single source of truth; used by both TreeRow and actions.
   const handleToggle = useCallback(
-    (kind: 'root' | 'entry', path?: string) =>
-      kind === 'root' ? toggleRootExpanded() : path && toggleExpanded(path),
-    [toggleRootExpanded, toggleExpanded]
+    (kind: 'root' | 'entry', path?: string) => {
+      if (kind === 'root') {
+        toggleRootExpanded();
+        return;
+      }
+      if (!path) return;
+      const willExpand = !useIDEStore.getState().expandedPaths.has(path);
+      toggleExpanded(path);
+      if (willExpand) void ensurePathLoaded(path);
+    },
+    [toggleRootExpanded, toggleExpanded, ensurePathLoaded]
   );
   const handleSelect = useCallback((path: string) => setSelectedPath(path), [setSelectedPath]);
   const handleOpen = useCallback((path: string) => void ensureEditorFileOpen(path), []);
