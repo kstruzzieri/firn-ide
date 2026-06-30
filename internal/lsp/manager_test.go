@@ -1958,6 +1958,13 @@ func TestManager_provisionsOnMiss(t *testing.T) {
 	if err := mgr.DidOpen(context.Background(), pyFile, "python", 1, "x = 1"); err != nil {
 		t.Fatalf("DidOpen must be non-blocking on a provisionable miss, got: %v", err)
 	}
+	if err := mgr.DidChange(pyFile, 2, []TextDocumentContentChangeEvent{{Text: "x = 2"}}); err != nil {
+		t.Fatalf("DidChange during provisioning must be a no-op, got: %v", err)
+	}
+	uri, err := FileToURI(pyFile)
+	if err != nil {
+		t.Fatalf("FileToURI: %v", err)
+	}
 
 	// A provisioning status must be emitted promptly.
 	waitFor(t, 2*time.Second, "provisioning status", func() bool {
@@ -1978,6 +1985,27 @@ func TestManager_provisionsOnMiss(t *testing.T) {
 		defer mgr.mu.Unlock()
 		entry, ok := mgr.servers[serverKey{family: "python", workspace: workspace}]
 		return ok && entry.client.State() == ClientStateReady
+	})
+	waitFor(t, 2*time.Second, "provision reconnect event", func() bool {
+		for _, e := range collector.eventsByName("lsp:reconnect") {
+			if len(e.data) == 0 {
+				continue
+			}
+			payload, ok := e.data[0].(map[string]any)
+			if !ok || payload["family"] != "python" || payload["workspace"] != workspace {
+				continue
+			}
+			documents, ok := payload["documents"].([]string)
+			if !ok {
+				continue
+			}
+			for _, got := range documents {
+				if got == uri {
+					return true
+				}
+			}
+		}
+		return false
 	})
 
 	if got := prov.installCalls(); got != 1 {

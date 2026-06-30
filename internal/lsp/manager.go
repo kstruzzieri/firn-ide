@@ -95,6 +95,11 @@ type Manager struct {
 	// provisioning tracks families with an install in flight (single-flight).
 	provisioning map[string]bool
 
+	// pendingProvisionDocs tracks documents opened while a managed server is
+	// installing. Once the server starts, these URIs are sent via lsp:reconnect
+	// so the frontend replays didOpen with current buffer content.
+	pendingProvisionDocs map[serverKey]map[string]bool
+
 	// ctx is the manager's lifetime context, cancelled by ShutdownAll so
 	// background installs stop when the workspace is torn down.
 	ctx    context.Context
@@ -139,6 +144,7 @@ func NewManager(emitter EventEmitter) *Manager {
 		servers:              make(map[serverKey]*serverEntry),
 		docKeys:              make(map[string]serverKey),
 		provisioning:         make(map[string]bool),
+		pendingProvisionDocs: make(map[serverKey]map[string]bool),
 		ctx:                  ctx,
 		cancel:               cancel,
 		interpreterOverrides: make(map[string]string),
@@ -222,16 +228,23 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 		return nil
 	}
 
+	key := serverKey{family: family, workspace: workspace}
+	if !m.serverRunning(key) {
+		m.trackPendingProvisionDoc(key, uri)
+	}
+
 	entry, err := m.ensureServer(ctx, family, workspace)
 	if err != nil {
+		m.untrackPendingProvisionDoc(uri)
 		return err
 	}
 	if entry == nil {
 		// A managed install is in flight (provisionable miss). DidOpen is
-		// non-blocking: the document re-opens via restartFamily once the cache
-		// is populated. The frontend re-sends content on the ready status.
+		// non-blocking: restartFamily emits lsp:reconnect once the cache is
+		// populated, and the frontend re-sends current content.
 		return nil
 	}
+	m.untrackPendingProvisionDoc(uri)
 
 	m.mu.Lock()
 	ds, exists := entry.openDocs[uri]
@@ -305,6 +318,9 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 	uri, err := FileToURI(path)
 	if err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	if m.untrackPendingProvisionDoc(uri) {
+		return nil
 	}
 
 	m.mu.Lock()
@@ -455,6 +471,7 @@ func (m *Manager) ShutdownAll(timeout time.Duration) {
 	m.mu.Lock()
 	m.stopped = true
 	cancel := m.cancel
+	m.pendingProvisionDocs = nil
 	keys := make([]serverKey, 0, len(m.servers))
 	for key := range m.servers {
 		keys = append(keys, key)
@@ -591,8 +608,13 @@ func (m *Manager) RetryProvision(family string) error {
 // status emitted exactly as a first open would. Errors are logged; the start
 // path already emits an error status on failure.
 func (m *Manager) restartFamily(family, projectRoot string) {
-	if _, err := m.ensureServer(m.provisionCtx(), family, projectRoot); err != nil {
+	entry, err := m.ensureServer(m.provisionCtx(), family, projectRoot)
+	if err != nil {
 		log.Printf("lsp: post-provision start failed family=%s root=%q: %v", family, projectRoot, err)
+		return
+	}
+	if entry != nil {
+		m.emitPendingProvisionReconnect(serverKey{family: family, workspace: projectRoot})
 	}
 }
 
@@ -740,6 +762,65 @@ func (m *Manager) emitProvisionStatus(family, projectRoot, setupState, action, d
 		DetailCode:   detailCode,
 		ProvisionPct: pct,
 	})
+}
+
+func (m *Manager) serverRunning(key serverKey) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.servers[key]
+	return ok
+}
+
+func (m *Manager) trackPendingProvisionDoc(key serverKey, uri string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingProvisionDocs == nil {
+		m.pendingProvisionDocs = make(map[serverKey]map[string]bool)
+	}
+	docs := m.pendingProvisionDocs[key]
+	if docs == nil {
+		docs = make(map[string]bool)
+		m.pendingProvisionDocs[key] = docs
+	}
+	docs[uri] = true
+}
+
+func (m *Manager) untrackPendingProvisionDoc(uri string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, docs := range m.pendingProvisionDocs {
+		if docs[uri] {
+			delete(docs, uri)
+			if len(docs) == 0 {
+				delete(m.pendingProvisionDocs, key)
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) emitPendingProvisionReconnect(key serverKey) {
+	m.mu.Lock()
+	docsByURI := m.pendingProvisionDocs[key]
+	if len(docsByURI) == 0 {
+		m.mu.Unlock()
+		return
+	}
+	documents := make([]string, 0, len(docsByURI))
+	for uri := range docsByURI {
+		documents = append(documents, uri)
+	}
+	delete(m.pendingProvisionDocs, key)
+	m.mu.Unlock()
+
+	if m.emitter != nil {
+		m.emitter("lsp:reconnect", map[string]any{
+			"family":    key.family,
+			"workspace": key.workspace,
+			"documents": documents,
+		})
+	}
 }
 
 // startServer launches a new language server process and initializes it.
