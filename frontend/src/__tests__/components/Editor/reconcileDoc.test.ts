@@ -1,12 +1,12 @@
-import { EditorState, type TransactionSpec } from '@codemirror/state';
+import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { history, undo } from '@codemirror/commands';
 
 import { reconcileDoc } from '../../../components/Editor/codemirror/reconcileDoc';
 
-function makeView(doc: string): EditorView {
+function makeView(doc: string, extensions: Extension[] = []): EditorView {
   return new EditorView({
-    state: EditorState.create({ doc, extensions: [history()] }),
+    state: EditorState.create({ doc, extensions: [history(), ...extensions] }),
   });
 }
 
@@ -24,17 +24,18 @@ describe('reconcileDoc', () => {
   });
 
   it('applies a minimal splice (preserves the common prefix/suffix region)', () => {
-    const view = makeView('abcXYZdef');
     // Only the middle differs; from/to should bound just the changed region.
     let changedFrom = -1;
     let changedTo = -1;
-    view.dispatch = (...specs: (TransactionSpec | TransactionSpec[])[]) => {
-      const first = specs[0];
-      const spec = Array.isArray(first) ? first[0] : first;
-      const changes = spec?.changes as { from: number; to?: number } | undefined;
-      changedFrom = changes?.from ?? -1;
-      changedTo = changes?.to ?? -1;
-    };
+    const view = makeView('abcXYZdef', [
+      EditorState.transactionFilter.of((tr) => {
+        tr.changes.iterChanges((fromA, toA) => {
+          changedFrom = fromA;
+          changedTo = toA;
+        });
+        return tr;
+      }),
+    ]);
     reconcileDoc(view, 'abc123def');
     expect(changedFrom).toBe(3);
     expect(changedTo).toBe(6);
