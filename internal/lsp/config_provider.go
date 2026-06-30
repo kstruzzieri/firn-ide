@@ -1,8 +1,11 @@
 package lsp
 
 import (
+	"context"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"firn/internal/lsp/pythonenv"
 )
@@ -21,17 +24,59 @@ type WorkspaceConfigProvider interface {
 type envConfigProvider struct {
 	detectPython func(projectRoot string, deps pythonenv.Deps) pythonenv.Env
 	pythonDeps   pythonenv.Deps
+	overrideFor  func(projectRoot string) string                                      // per-workspace manual interpreter; "" if none
+	discover     func(ctx context.Context, projectRoot string) (string, string, bool) // uv/poetry overlay
 }
 
 func newEnvConfigProvider() *envConfigProvider {
 	return &envConfigProvider{
 		detectPython: pythonenv.Detect,
 		pythonDeps:   pythonenv.OSDeps(),
+		overrideFor:  func(string) string { return "" },
+		discover: func(ctx context.Context, root string) (string, string, bool) {
+			return pythonenv.DiscoverInterpreter(ctx, root, osRunner)
+		},
 	}
 }
 
+// SetInterpreterOverrideFunc lets the manager supply the per-workspace override
+// lookup (reads workspace.State.LSP.InterpreterOverride). Manual override is the
+// highest-precedence interpreter source.
+func (p *envConfigProvider) SetInterpreterOverrideFunc(fn func(projectRoot string) string) {
+	if fn != nil {
+		p.overrideFor = fn
+	}
+}
+
+// osRunner runs a command and returns trimmed stdout. Used by the default discover.
+func osRunner(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// PythonEnv resolves the workspace interpreter with three precedence layers:
+// (1) a manual per-workspace override always wins; (2) pure Detect; (3) when
+// Detect is low-confidence, a uv/poetry discovery overlay (gated on markers by
+// DiscoverInterpreter, so marker-free workspaces never shell out).
 func (p *envConfigProvider) PythonEnv(projectRoot string) pythonenv.Env {
-	return p.detectPython(projectRoot, p.pythonDeps)
+	if p.overrideFor != nil {
+		if ov := p.overrideFor(projectRoot); ov != "" {
+			return pythonenv.Env{InterpreterPath: ov, Source: "override", Confidence: "high"}
+		}
+	}
+	env := p.detectPython(projectRoot, p.pythonDeps)
+	if env.InterpreterPath == "" || env.Confidence == "low" || env.Source == "system" || env.Source == "none" {
+		if p.discover != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if interp, source, ok := p.discover(ctx, projectRoot); ok {
+				env.InterpreterPath = interp
+				env.Source = source
+				env.Confidence = "high"
+			}
+		}
+	}
+	return env
 }
 
 // pythonEnvReader is satisfied by envConfigProvider and any other provider that
