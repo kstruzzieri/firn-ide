@@ -82,7 +82,8 @@ type Manager struct {
 
 	// provisioners maps a language family to its managed provisioner. Populated
 	// by SetProvisioners and shared with the registry so a resolver miss can be
-	// classified as provisionable.
+	// classified as provisionable. Set once via SetProvisioners before the first
+	// DidOpen and not mutated after; reads are unsynchronized on that basis.
 	provisioners map[string]provision.Provisioner
 
 	// provisionMu guards provisioning. It is intentionally separate from mu so
@@ -497,7 +498,13 @@ func (m *Manager) ensureServer(ctx context.Context, family, workspace string) (*
 // background context when the manager was built via a struct literal (some
 // tests) rather than NewManager. The install goroutine derives cancellation
 // from this so workspace teardown (ShutdownAll) stops in-flight installs.
+//
+// m.ctx is rewritten under m.mu by SetWorkspaceRoot, so the read is locked.
+// Both call sites evaluate this as a plain argument before any further lock is
+// taken, so there is no nested-lock path.
 func (m *Manager) provisionCtx() context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ctx != nil {
 		return m.ctx
 	}
@@ -543,6 +550,9 @@ func (m *Manager) beginProvision(family, projectRoot string) {
 			m.emitProvisionStatus(family, projectRoot, "offline", "retry", "download_offline", 0)
 		case provision.StateChecksumFailed:
 			m.emitProvisionStatus(family, projectRoot, "provision_failed", "retry", "checksum_mismatch", 0)
+		case provision.StateUnsupported:
+			// No retry: an unsupported platform fails identically every time.
+			m.emitProvisionStatus(family, projectRoot, "provision_failed", "", "unsupported_platform", 0)
 		default:
 			m.emitProvisionStatus(family, projectRoot, "provision_failed", "retry", "provision_error", 0)
 		}
