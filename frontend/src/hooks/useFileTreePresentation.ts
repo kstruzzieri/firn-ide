@@ -101,12 +101,13 @@ export function useFileTreePresentation(): FileTreePresentation {
     }
 
     const scoped = findScopedNode(tree, repoRoot, relDir);
+    const scopedUnloaded = scoped !== null && scoped.children === undefined;
     return {
       ...base,
       rootLabel: workspaceLabel,
       rootPath: scoped?.path ?? `${repoRoot}/${relDir}`,
       roots: scoped?.children ?? [],
-      scopedError: scoped === null,
+      scopedError: scoped === null || scopedUnloaded,
       getRegionAccent: workspaceResolver,
       treeAccent,
     };
