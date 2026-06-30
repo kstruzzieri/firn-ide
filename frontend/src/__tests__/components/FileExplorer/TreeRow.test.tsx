@@ -7,6 +7,7 @@ const noop = () => {};
 const baseProps = {
   rowId: rowDomId('/repo/a.ts'),
   isActive: false,
+  canExpand: false,
   onToggle: noop,
   onSelect: noop,
   onOpen: noop,
@@ -55,6 +56,7 @@ describe('TreeRow', () => {
         regionAccent={null}
         setSize={1}
         posInSet={1}
+        canExpand={true}
       />
     );
     fireEvent.click(screen.getByRole('button', { name: /toggle/i }));
@@ -219,6 +221,7 @@ describe('TreeRow', () => {
         regionAccent={null}
         setSize={1}
         posInSet={1}
+        canExpand={true}
       />
     );
     expect(screen.getByText('repo')).toBeInTheDocument();

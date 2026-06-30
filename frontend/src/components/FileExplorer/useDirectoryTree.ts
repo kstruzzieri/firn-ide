@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { ReadDirectory } from '../../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../../../wailsjs/go/main/App';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
 import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 
@@ -8,12 +8,13 @@ import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
  * Automatically fetches the tree when the workspace changes.
  *
  * Uses a request generation counter so that when the workspace changes
- * mid-flight, stale ReadDirectory results are silently discarded instead
+ * mid-flight, stale ReadDirectoryShallow results are silently discarded instead
  * of overwriting the tree for the newly-selected workspace.
  */
 export function useDirectoryTree() {
   const workspace = useWorkspace();
   const setDirectoryTree = useIDEStore((state) => state.setDirectoryTree);
+  const mergeChildren = useIDEStore((state) => state.mergeChildren);
   const setTreeLoading = useIDEStore((state) => state.setTreeLoading);
   const setTreeError = useIDEStore((state) => state.setTreeError);
   const requestIdRef = useRef(0);
@@ -34,9 +35,9 @@ export function useDirectoryTree() {
     setTreeError(null);
 
     try {
-      const entries = await ReadDirectory(workspace.path);
+      const entries = await ReadDirectoryShallow(workspace.path, workspace.path);
       if (requestIdRef.current !== requestId) return;
-      setDirectoryTree(entries);
+      mergeChildren(workspace.path, entries);
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       if (hasCachedTree) {
@@ -49,7 +50,7 @@ export function useDirectoryTree() {
         setTreeLoading(false);
       }
     }
-  }, [workspace?.path, setDirectoryTree, setTreeLoading, setTreeError]);
+  }, [workspace?.path, setDirectoryTree, mergeChildren, setTreeLoading, setTreeError]);
 
   // Fetch tree when workspace changes
   useEffect(() => {

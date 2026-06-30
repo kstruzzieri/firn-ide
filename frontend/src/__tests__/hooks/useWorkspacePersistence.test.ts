@@ -30,10 +30,19 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
   }),
 }));
 
+const mockEnsurePathLoaded = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+
+jest.mock('../../hooks/useEnsurePathLoaded', () => ({
+  ensurePathLoaded: (...args: [string]) => mockEnsurePathLoaded(...args),
+  __resetEnsurePathLoaded: jest.fn(),
+  useEnsurePathLoaded: jest.fn(() => mockEnsurePathLoaded),
+}));
+
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockEnsurePathLoaded.mockResolvedValue(undefined);
   beforeCloseHandler = null;
   lastSavedWorkspaceState = null;
   clearWorkspaceTreeCache();
@@ -161,6 +170,101 @@ describe('useWorkspacePersistence', () => {
     );
 
     expect(useIDEStore.getState().isLoadingTree).toBe(false);
+  });
+
+  it('hydrates expanded paths in ancestor-first order on restore', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/r',
+      workspaceName: 'r',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        // deliberately deep-first to verify sorting
+        expandedPaths: ['/r/a/b', '/r/a'],
+        rootExpanded: true,
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'r', path: '/r' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/r'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    const calls = mockEnsurePathLoaded.mock.calls.map((c) => c[0]);
+    expect(calls).toContain('/r/a');
+    expect(calls).toContain('/r/a/b');
+    // /r/a (depth 2) must be called before /r/a/b (depth 3)
+    expect(calls.indexOf('/r/a')).toBeLessThan(calls.indexOf('/r/a/b'));
+  });
+
+  it('does not hydrate expanded paths outside the current workspace root', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/r',
+      workspaceName: 'r',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: ['/r/a', '/other/x'],
+        rootExpanded: true,
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'r', path: '/r' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/r'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    const calls = mockEnsurePathLoaded.mock.calls.map((c) => c[0]);
+    expect(calls).toContain('/r/a');
+    expect(calls).not.toContain('/other/x');
+  });
+
+  it('hydrates Windows expanded paths under the current workspace root', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: 'C:\\repo',
+      workspaceName: 'repo',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: ['C:\\repo\\a\\b', 'C:\\repo\\a', 'D:\\other\\x'],
+        rootExpanded: true,
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: 'C:\\repo' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('C:\\repo'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    const calls = mockEnsurePathLoaded.mock.calls.map((c) => c[0]);
+    expect(calls).toContain('C:\\repo\\a');
+    expect(calls).toContain('C:\\repo\\a\\b');
+    expect(calls).not.toContain('D:\\other\\x');
+    expect(calls.indexOf('C:\\repo\\a')).toBeLessThan(calls.indexOf('C:\\repo\\a\\b'));
   });
 
   it('persists tree snapshots when the directory tree changes', async () => {

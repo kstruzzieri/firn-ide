@@ -1,13 +1,17 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { FileExplorer } from '../../components/FileExplorer/FileExplorer';
 import { useIDEStore } from '../../stores/ideStore';
 import type { workspace } from '../../../wailsjs/go/models';
 import type { FileEntry } from '../../stores/ideStore';
+import { ReadDirectoryShallow } from '../../../wailsjs/go/main/App';
+import { __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import { installVirtualLayout } from '../helpers/virtualTree';
 
 // Mock Wails bindings (pulled in transitively via layout/IDEShell and useDirectoryTree)
 jest.mock('../../../wailsjs/go/main/App', () => ({
   ToggleMaximize: jest.fn(),
   ReadDirectory: jest.fn(),
+  ReadDirectoryShallow: jest.fn().mockResolvedValue([]),
   OpenFolderDialog: jest.fn(),
 }));
 
@@ -54,6 +58,13 @@ function seed(
   });
 }
 
+beforeEach(() => {
+  __resetEnsurePathLoaded();
+  jest.clearAllMocks();
+  // Default: shallow reads return nothing
+  (ReadDirectoryShallow as jest.Mock).mockResolvedValue([]);
+});
+
 describe('FileExplorer views', () => {
   it('renders the segmented toggle and no tabs in Project View', () => {
     seed('project');
@@ -69,7 +80,7 @@ describe('FileExplorer views', () => {
     expect(screen.getByRole('tab', { name: 'Frontend' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('renders the scoped-error state when the workspace folder is missing', () => {
+  it('renders the scoped-error state when the workspace folder is missing', async () => {
     seed('frontend', {
       workspaces: [
         defs[0],
@@ -77,6 +88,56 @@ describe('FileExplorer views', () => {
       ] as workspace.WorkspaceDef[],
     });
     render(<FileExplorer />);
-    expect(screen.getByText(/workspace folder not found/i)).toBeInTheDocument();
+    // Scoped hydration runs briefly (loading the relDir chain) then surfaces the
+    // error once it determines the path does not exist in the loaded tree.
+    await waitFor(() => {
+      expect(screen.getByText(/workspace folder not found/i)).toBeInTheDocument();
+    });
+  });
+
+  it('hydrates a present-but-unloaded scoped node instead of showing empty', async () => {
+    // The scoped dir node EXISTS in the tree but has children === undefined (unloaded).
+    // This happens after a reconcile (Fix 1 preserves it, but it might not be loaded yet)
+    // or on a partial restore. scopedError must be true so the hydration effect fires.
+    const restoreVirtualLayout = installVirtualLayout(400);
+
+    const scopedChild = {
+      name: 'App.tsx',
+      path: `${root}/frontend/App.tsx`,
+      isDir: false,
+      size: 0,
+      modTime: '',
+    } as FileEntry;
+
+    // The unloaded scoped node: frontend dir exists but children === undefined
+    const unloadedTree: FileEntry[] = [
+      { name: 'README.md', path: `${root}/README.md`, isDir: false } as FileEntry,
+      {
+        name: 'frontend',
+        path: `${root}/frontend`,
+        isDir: true,
+        // children intentionally undefined — unloaded
+      } as FileEntry,
+    ];
+
+    seed('frontend', { directoryTree: unloadedTree });
+
+    // Mock ReadDirectoryShallow to resolve the scoped dir's children when asked
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) => {
+      if (path === `${root}/frontend`) {
+        return Promise.resolve([scopedChild]);
+      }
+      return Promise.resolve([]);
+    });
+
+    render(<FileExplorer />);
+
+    // After hydration completes, App.tsx must be visible — not "No files in workspace"
+    await waitFor(() => {
+      expect(screen.queryByText(/no files in workspace/i)).not.toBeInTheDocument();
+      expect(screen.getByText('App.tsx')).toBeInTheDocument();
+    });
+
+    restoreVirtualLayout();
   });
 });

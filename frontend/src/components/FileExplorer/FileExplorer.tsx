@@ -1,5 +1,5 @@
 // src/components/FileExplorer/FileExplorer.tsx
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Panel, PanelAction } from '../layout';
 import { MinusIcon } from '../icons';
@@ -16,6 +16,7 @@ import {
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
+import { useEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
 import { TreeRow, ROW_HEIGHT, rowDomId } from './TreeRow';
 import { TreeViewToggle } from './TreeViewToggle';
 import { WorkspaceTabs } from './WorkspaceTabs';
@@ -23,6 +24,7 @@ import { flattenVisibleTree } from '../../utils/flattenTree';
 import type { FlatRow } from '../../utils/flattenTree';
 import { useTreeKeyboardNav } from './useTreeKeyboardNav';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
+import { relativePathFromRoot } from '../../utils/workspaceRegions';
 import styles from './FileExplorer.module.css';
 
 export function FileExplorer() {
@@ -38,35 +40,108 @@ export function FileExplorer() {
   const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
     presentation;
 
+  const ensurePathLoaded = useEnsurePathLoaded();
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
   const toggleRootExpanded = useIDEStore((state) => state.toggleRootExpanded);
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
   const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
 
-  // Sync active editor file into the tree selection + auto-expand its ancestors.
-  // Reads expandedPaths from the store snapshot to avoid a dependency cycle.
+  // Generation guard: each new activeFileId gets a unique generation number.
+  // If the workspace or activeFileId changes mid-flight, the old async chain sees
+  // a stale gen and aborts before writing to the store.
+  const revealGenRef = useRef(0);
+
+  // Sync active editor file into the tree selection + sequentially load any
+  // unloaded ancestor dirs before expanding them (lazy-load reveal).
   useEffect(() => {
-    if (activeFileId && activeFileId !== useIDEStore.getState().selectedPath) {
+    // Always bump generation so any in-flight reveal from a previous activeFileId
+    // or workspace sees a stale gen and aborts.
+    const gen = ++revealGenRef.current;
+
+    if (!activeFileId) return;
+
+    // Always sync selection immediately so the tree highlights the file even
+    // when it's already visible (matching old synchronous behavior).
+    if (activeFileId !== useIDEStore.getState().selectedPath) {
       setSelectedPath(activeFileId);
-
-      const ws = useIDEStore.getState().workspace;
-      if (ws) {
-        const currentExpanded = useIDEStore.getState().expandedPaths;
-        const relativePath = activeFileId.replace(ws.path + '/', '');
-        const parts = relativePath.split('/');
-        let currentPath = ws.path;
-
-        const newExpanded = new Set(currentExpanded);
-        for (let i = 0; i < parts.length - 1; i++) {
-          currentPath += '/' + parts[i];
-          newExpanded.add(currentPath);
-        }
-        if (newExpanded.size !== currentExpanded.size) {
-          useIDEStore.setState({ expandedPaths: newExpanded });
-        }
-      }
     }
-  }, [activeFileId, setSelectedPath]);
+
+    const ws = useIDEStore.getState().workspace;
+    const relPath = ws ? relativePathFromRoot(activeFileId, ws.path) : null;
+    if (!ws || !relPath) return;
+
+    const rel = relPath.split('/');
+    const sep = ws.path.includes('\\') ? '\\' : '/';
+
+    void (async () => {
+      let cursor = ws.path;
+      const toExpand: string[] = [];
+      for (let i = 0; i < rel.length - 1; i++) {
+        cursor += sep + rel[i];
+        await ensurePathLoaded(cursor);
+        if (revealGenRef.current !== gen) return; // workspace/file changed — abort
+        toExpand.push(cursor);
+      }
+      const cur = useIDEStore.getState();
+      const next = new Set(cur.expandedPaths);
+      toExpand.forEach((p) => next.add(p));
+      useIDEStore.setState({ expandedPaths: next, selectedPath: activeFileId });
+    })();
+  }, [activeFileId, ensurePathLoaded, setSelectedPath]);
+
+  // Workspace-View scoped hydration: when findScopedNode returns null (scopedError),
+  // load the relDir chain in the background. If the path exists but was unloaded,
+  // mergeChildren will update the tree and scopedError will clear on next render.
+  // We track scopeHydrating to show a skeleton while the load is in-flight rather
+  // than flashing the error briefly before the node appears.
+  const [scopeHydrating, setScopeHydrating] = useState(false);
+  // Track which relDir we're hydrating so we don't restart on unrelated re-renders.
+  const hydratingForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (mode !== 'workspace') {
+      setScopeHydrating(false);
+      hydratingForRef.current = null;
+      return;
+    }
+    if (!scopedError) {
+      // Scope found — reset so next error triggers a fresh hydration.
+      setScopeHydrating(false);
+      hydratingForRef.current = null;
+      return;
+    }
+    const ws = useIDEStore.getState().workspace;
+    const active = useIDEStore
+      .getState()
+      .workspaces.find((w) => w.id === useIDEStore.getState().activeWorkspaceId);
+    const relDir = active?.relDir ?? '';
+    if (!ws || !relDir) {
+      setScopeHydrating(false);
+      hydratingForRef.current = null;
+      return;
+    }
+    // Already hydrating this exact relDir — don't restart (avoids loops if the path
+    // genuinely doesn't exist and each render re-triggers the effect).
+    if (hydratingForRef.current === relDir) return;
+    hydratingForRef.current = relDir;
+    let cancelled = false;
+    setScopeHydrating(true);
+    const sep = ws.path.includes('\\') ? '\\' : '/';
+    void (async () => {
+      let cursor = ws.path;
+      for (const seg of relDir.split('/')) {
+        await ensurePathLoaded(cursor);
+        if (cancelled) return;
+        cursor += sep + seg;
+      }
+      await ensurePathLoaded(cursor);
+      if (!cancelled) setScopeHydrating(false);
+    })();
+    return () => {
+      cancelled = true;
+      hydratingForRef.current = null;
+    };
+    // scopedError triggers hydration when scope node is missing; rootPath detects workspace switch
+  }, [mode, scopedError, rootPath, ensurePathLoaded]);
 
   const { openFolder } = useOpenFolder();
   const { refetch } = useFetchDirectoryTree();
@@ -95,9 +170,19 @@ export function FileExplorer() {
 
   // Primitive handlers — single source of truth; used by both TreeRow and actions.
   const handleToggle = useCallback(
-    (kind: 'root' | 'entry', path?: string) =>
-      kind === 'root' ? toggleRootExpanded() : path && toggleExpanded(path),
-    [toggleRootExpanded, toggleExpanded]
+    (kind: 'root' | 'entry', path?: string) => {
+      if (kind === 'root') {
+        const willExpand = !useIDEStore.getState().isRootExpanded;
+        toggleRootExpanded();
+        if (willExpand) void ensurePathLoaded(rootPath);
+        return;
+      }
+      if (!path) return;
+      const willExpand = !useIDEStore.getState().expandedPaths.has(path);
+      toggleExpanded(path);
+      if (willExpand) void ensurePathLoaded(path);
+    },
+    [toggleRootExpanded, toggleExpanded, ensurePathLoaded, rootPath]
   );
   const handleSelect = useCallback((path: string) => setSelectedPath(path), [setSelectedPath]);
   const handleOpen = useCallback((path: string) => void ensureEditorFileOpen(path), []);
@@ -150,6 +235,7 @@ export function FileExplorer() {
     if (!workspace) {
       return <FileExplorerEmpty message="Open a folder to get started" onOpenFolder={openFolder} />;
     }
+    if (scopeHydrating) return <FileExplorerSkeleton />;
     if (scopedError) {
       return (
         <div className={styles.scopedError} role="status">
@@ -213,6 +299,7 @@ export function FileExplorer() {
                   rootPath={row.rootPath}
                   rowId={rowDomId(row.key)}
                   isActive={row.key === activeKey}
+                  canExpand={row.canExpand}
                   onToggle={handleToggle}
                   onSelect={handleSelect}
                   onOpen={handleOpen}

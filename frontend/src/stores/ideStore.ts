@@ -18,6 +18,10 @@ import type {
 import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
 import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
 import { parseFileReferences } from '../utils/parseFileReferences';
+import { pathsReferToSameFile } from '../utils/lspUri';
+import { replaceChildrenAt } from '../utils/replaceChildrenAt';
+import { preserveLoadedChildren } from '../utils/preserveLoadedChildren';
+import { findEntryByPath } from '../utils/findEntryByPath';
 import {
   type SyntaxThemeId,
   DEFAULT_SYNTAX_THEME_ID,
@@ -108,6 +112,8 @@ function createDefaultWorkspaceSessionState() {
     scrollPositions: {} as Record<string, number>,
     cursorPositions: {} as Record<string, CursorPosition>,
     expandedPaths: new Set<string>(),
+    loadingPaths: new Set<string>(),
+    dirtyPaths: new Set<string>(),
     selectedPath: null as string | null,
     isRootExpanded: true,
     pendingEditorNavigation: null as EditorNavigationRequest | null,
@@ -129,6 +135,8 @@ interface IDEState {
   // File Explorer
   directoryTree: filesystem.FileEntry[];
   expandedPaths: Set<string>;
+  loadingPaths: Set<string>;
+  dirtyPaths: Set<string>;
   selectedPath: string | null;
   isRootExpanded: boolean;
   isLoadingTree: boolean;
@@ -219,7 +227,12 @@ interface IDEActions {
 
   // File Explorer actions
   setDirectoryTree: (tree: filesystem.FileEntry[]) => void;
+  mergeChildren: (path: string, children: FileEntry[]) => void;
   toggleExpanded: (path: string) => void;
+  addLoadingPath: (path: string) => void;
+  removeLoadingPath: (path: string) => void;
+  markDirty: (path: string) => void;
+  clearDirty: (path: string) => void;
   setSelectedPath: (path: string | null) => void;
   toggleRootExpanded: () => void;
   setTreeLoading: (loading: boolean) => void;
@@ -513,6 +526,63 @@ export const useIDEStore = create<IDEStore>()(
       // File Explorer actions
       setDirectoryTree: (directoryTree) =>
         set({ directoryTree, treeError: null, isLoadingTree: false }, false, 'setDirectoryTree'),
+
+      mergeChildren: (path, children) =>
+        set(
+          (state) => {
+            const normalized = children ?? [];
+            const root = state.workspace?.path;
+            if (root && pathsReferToSameFile(path, root)) {
+              return { directoryTree: preserveLoadedChildren(state.directoryTree, normalized) };
+            }
+            const existing = findEntryByPath(state.directoryTree, path);
+            const merged = preserveLoadedChildren(existing?.children, normalized);
+            return { directoryTree: replaceChildrenAt(state.directoryTree, path, merged) };
+          },
+          false,
+          'mergeChildren'
+        ),
+
+      addLoadingPath: (path) =>
+        set(
+          (s) => {
+            const n = new Set(s.loadingPaths);
+            n.add(path);
+            return { loadingPaths: n };
+          },
+          false,
+          'addLoadingPath'
+        ),
+      removeLoadingPath: (path) =>
+        set(
+          (s) => {
+            const n = new Set(s.loadingPaths);
+            n.delete(path);
+            return { loadingPaths: n };
+          },
+          false,
+          'removeLoadingPath'
+        ),
+      markDirty: (path) =>
+        set(
+          (s) => {
+            const n = new Set(s.dirtyPaths);
+            n.add(path);
+            return { dirtyPaths: n };
+          },
+          false,
+          'markDirty'
+        ),
+      clearDirty: (path) =>
+        set(
+          (s) => {
+            const n = new Set(s.dirtyPaths);
+            n.delete(path);
+            return { dirtyPaths: n };
+          },
+          false,
+          'clearDirty'
+        ),
 
       toggleExpanded: (path) =>
         set(
@@ -1700,6 +1770,7 @@ export const useEditorSyntaxTheme = (): SyntaxThemeId =>
   useIDEStore((state) => state.editorSyntaxTheme);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);
 export const useExpandedPaths = () => useIDEStore((state) => state.expandedPaths);
+export const useLoadingPaths = () => useIDEStore((s) => s.loadingPaths);
 export const useSelectedPath = () => useIDEStore((state) => state.selectedPath);
 export const useIsRootExpanded = () => useIDEStore((state) => state.isRootExpanded);
 export const useIsLoadingTree = () => useIDEStore((state) => state.isLoadingTree);

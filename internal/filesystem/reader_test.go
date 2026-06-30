@@ -380,3 +380,132 @@ func TestReadDirectory_EmptyDirectory(t *testing.T) {
 		t.Errorf("Expected 0 entries, got %d", len(entries))
 	}
 }
+
+func TestReadDirectoryShallow_ImmediateChildrenOnly(t *testing.T) {
+	modTime := time.Now()
+	calledPaths := map[string]bool{}
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			calledPaths[path] = true
+			switch path {
+			case "/test":
+				return []fs.DirEntry{
+					&mockDirEntry{name: "subdir", isDir: true},
+					&mockDirEntry{name: "top.txt", isDir: false},
+				}, nil
+			case "/test/subdir":
+				return []fs.DirEntry{
+					&mockDirEntry{name: "deep.txt", isDir: false},
+				}, nil
+			}
+			return nil, nil
+		},
+		StatFunc: func(path string) (fs.FileInfo, error) {
+			return &mockFileInfo{size: 100, modTime: modTime}, nil
+		},
+	}
+
+	reader := NewDirectoryReader(mockFS)
+	entries, err := reader.ReadDirectoryShallow("/test", "/test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(entries))
+	}
+	if !entries[0].IsDir || entries[0].Name != "subdir" {
+		t.Fatalf("want dir 'subdir' first, got %+v", entries[0])
+	}
+	if entries[0].Children != nil {
+		t.Fatalf("want nil children for shallow dir, got %v", entries[0].Children)
+	}
+	if calledPaths["/test/subdir"] {
+		t.Fatalf("shallow read must NOT descend into /test/subdir")
+	}
+}
+
+func TestReadDirectoryShallow_EmptyDir(t *testing.T) {
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) { return []fs.DirEntry{}, nil },
+		StatFunc:    func(path string) (fs.FileInfo, error) { return &mockFileInfo{}, nil },
+	}
+	entries, err := NewDirectoryReader(mockFS).ReadDirectoryShallow("/empty", "/empty")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("want 0 entries, got %d", len(entries))
+	}
+}
+
+func TestReadDirectoryShallow_RespectsGitignoreAndDotDirs(t *testing.T) {
+	modTime := time.Now()
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			if path == "/test" {
+				return []fs.DirEntry{
+					&mockDirEntry{name: ".gitignore", isDir: false},
+					&mockDirEntry{name: "keep.txt", isDir: false},
+					&mockDirEntry{name: "node_modules", isDir: true},
+					&mockDirEntry{name: ".git", isDir: true},
+				}, nil
+			}
+			return nil, nil
+		},
+		ReadFileFunc: func(path string) ([]byte, error) {
+			if path == "/test/.gitignore" {
+				return []byte("node_modules/\n"), nil
+			}
+			return nil, nil
+		},
+		StatFunc: func(path string) (fs.FileInfo, error) {
+			return &mockFileInfo{size: 100, modTime: modTime}, nil
+		},
+	}
+	entries, err := NewDirectoryReader(mockFS).ReadDirectoryShallow("/test", "/test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name] = true
+	}
+	if names["node_modules"] || names[".git"] {
+		t.Fatalf("gitignore/dot-dir not respected: %v", names)
+	}
+	if !names[".gitignore"] || !names["keep.txt"] {
+		t.Fatalf("expected .gitignore + keep.txt visible: %v", names)
+	}
+}
+
+func TestReadDirectoryShallow_UsesParentGitignore(t *testing.T) {
+	modTime := time.Now()
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			if path == "/test/src" {
+				return []fs.DirEntry{
+					&mockDirEntry{name: "keep.txt", isDir: false},
+					&mockDirEntry{name: "debug.log", isDir: false},
+					&mockDirEntry{name: "node_modules", isDir: true},
+				}, nil
+			}
+			return nil, nil
+		},
+		ReadFileFunc: func(path string) ([]byte, error) {
+			if path == "/test/.gitignore" {
+				return []byte("node_modules/\n*.log\n"), nil
+			}
+			return nil, fs.ErrNotExist
+		},
+		StatFunc: func(path string) (fs.FileInfo, error) {
+			return &mockFileInfo{size: 100, modTime: modTime}, nil
+		},
+	}
+	entries, err := NewDirectoryReader(mockFS).ReadDirectoryShallow("/test/src", "/test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "keep.txt" {
+		t.Fatalf("expected only keep.txt after parent .gitignore, got %+v", entries)
+	}
+}

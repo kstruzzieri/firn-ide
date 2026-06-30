@@ -34,6 +34,8 @@ export interface TreeRowProps {
   rowId: string;
   /** True when this row is the keyboard-active descendant. */
   isActive: boolean;
+  /** Show the expand chevron: true for unloaded dirs or dirs with children; false for loaded-empty dirs and files. */
+  canExpand: boolean;
   onToggle: (kind: 'root' | 'entry', path?: string) => void;
   onSelect: (path: string) => void;
   onOpen: (path: string) => void;
@@ -59,6 +61,7 @@ function TreeRowImpl({
   rootPath,
   rowId,
   isActive,
+  canExpand,
   onToggle,
   onSelect,
   onOpen,
@@ -117,7 +120,7 @@ function TreeRowImpl({
       aria-selected={isSelected || undefined}
       tabIndex={-1}
     >
-      {isDir ? (
+      {canExpand ? (
         <button
           type="button"
           className={styles.toggle}

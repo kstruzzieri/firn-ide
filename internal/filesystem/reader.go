@@ -79,65 +79,63 @@ func (d *DirectoryReader) shouldIgnore(name string, isDir bool, patterns []strin
 	return false
 }
 
-// readDirRecursive reads a directory recursively and returns FileEntry slice.
-func (d *DirectoryReader) readDirRecursive(path string, ignorePatterns []string) ([]FileEntry, error) {
+// buildEntries reads ONE directory level: filter (dot-dirs, gitignore), stat,
+// sort folders-first. Child directories are returned WITHOUT Children populated.
+func (d *DirectoryReader) buildEntries(path string, ignorePatterns []string) ([]FileEntry, error) {
 	dirEntries, err := d.fs.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
 
 	entries := make([]FileEntry, 0, len(dirEntries))
-
 	for _, de := range dirEntries {
 		name := de.Name()
-
-		// Hide dot-directories (.git, .github, .husky, .firn, .worktrees, …) —
-		// they are not relevant to workspaces. Dot-FILES (.env, .dockerignore,
-		// .gitignore) remain visible.
 		if de.IsDir() && strings.HasPrefix(name, ".") {
 			continue
 		}
-
-		// Check if should be ignored (but always include .gitignore itself)
 		if name != ".gitignore" && d.shouldIgnore(name, de.IsDir(), ignorePatterns) {
 			continue
 		}
-
 		fullPath := filepath.Join(path, name)
-
-		// Get file info for metadata
 		info, err := d.fs.Stat(fullPath)
 		if err != nil {
-			// Skip files we can't stat
 			continue
 		}
-
-		entry := FileEntry{
+		entries = append(entries, FileEntry{
 			Name:    name,
 			Path:    fullPath,
 			IsDir:   de.IsDir(),
 			Size:    info.Size(),
 			ModTime: info.ModTime(),
-		}
+		})
+	}
+	sortEntries(entries)
+	return entries, nil
+}
 
-		// Recursively read subdirectories
-		if de.IsDir() {
-			children, err := d.readDirRecursive(fullPath, ignorePatterns)
+// ReadDirectoryShallow reads a single directory level (immediate children only).
+// Child directories are returned without their own children populated.
+func (d *DirectoryReader) ReadDirectoryShallow(path string, rootPath string) ([]FileEntry, error) {
+	ignorePatterns := d.loadGitignore(rootPath)
+	return d.buildEntries(path, ignorePatterns)
+}
+
+// readDirRecursive reads a directory recursively and returns FileEntry slice.
+func (d *DirectoryReader) readDirRecursive(path string, ignorePatterns []string) ([]FileEntry, error) {
+	entries, err := d.buildEntries(path, ignorePatterns)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].IsDir {
+			children, err := d.readDirRecursive(entries[i].Path, ignorePatterns)
 			if err != nil {
-				// Permission denied or other error on subdirectory
-				// Continue with empty children rather than failing
-				entry.Children = []FileEntry{}
+				entries[i].Children = []FileEntry{}
 			} else {
-				entry.Children = children
+				entries[i].Children = children
 			}
 		}
-
-		entries = append(entries, entry)
 	}
-
-	// Sort entries: folders first, then alphabetically within each group
-	sortEntries(entries)
-
 	return entries, nil
 }
 

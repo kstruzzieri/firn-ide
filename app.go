@@ -31,15 +31,15 @@ type App struct {
 	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
 	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
-	emitFn func(event string, data ...any)
-	executor             *runprofile.Executor
-	osFS                 filesystem.FileSystem
-	workspaceStore       *workspace.Store
-	lspManager           *lsp.Manager
-	searchManager        *search.Manager
-	closeMu              sync.Mutex
-	isClosing            bool
-	closeReady           chan struct{}
+	emitFn         func(event string, data ...any)
+	executor       *runprofile.Executor
+	osFS           filesystem.FileSystem
+	workspaceStore *workspace.Store
+	lspManager     *lsp.Manager
+	searchManager  *search.Manager
+	closeMu        sync.Mutex
+	isClosing      bool
+	closeReady     chan struct{}
 }
 
 // NewApp creates and returns a new App instance.
@@ -179,6 +179,13 @@ type WorkspaceInfo struct {
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ReadDirectory(path string) ([]filesystem.FileEntry, error) {
 	return a.dirReader.ReadDirectory(path)
+}
+
+// ReadDirectoryShallow reads a single directory level (immediate children only).
+// Used for lazy tree loading — child directories are returned without their
+// own children populated.
+func (a *App) ReadDirectoryShallow(path string, rootPath string) ([]filesystem.FileEntry, error) {
+	return a.dirReader.ReadDirectoryShallow(path, rootPath)
 }
 
 // ReadFile reads a file and returns its contents with metadata.
