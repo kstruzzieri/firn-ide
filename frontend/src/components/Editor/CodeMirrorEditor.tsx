@@ -309,24 +309,14 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     applyInitialScroll();
   }, [applyInitialScroll]);
 
-  // Update content when it changes externally (e.g., file reload)
+  // Update content when it changes externally (e.g., file reload). Uses a
+  // minimal, non-undoable splice so a disk change never lands on the undo stack.
   useEffect(() => {
     const view = editorRef.current;
     if (!view) return;
-
-    const currentContent = view.state.doc.toString();
-    if (currentContent !== content) {
-      // Set flag to prevent onChange from firing during sync
-      isSyncingRef.current = true;
-      view.dispatch({
-        changes: {
-          from: 0,
-          to: currentContent.length,
-          insert: content,
-        },
-      });
-      isSyncingRef.current = false;
-    }
+    isSyncingRef.current = true;
+    reconcileDoc(view, content);
+    isSyncingRef.current = false;
   }, [content]);
 
   // Subscribe to diagnostics for this file's URI

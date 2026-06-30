@@ -134,6 +134,25 @@ describe('per-file undo across tab switch (#153)', () => {
     });
     expect(view.state.doc.toString()).toBe('alpha');
   });
+
+  it('an external reload of the active file is not undoable', () => {
+    const { container } = render(<Editor />);
+
+    // Simulate an external reload of the active file A (e.g. file watcher).
+    act(() => {
+      useIDEStore.getState().updateFileContent('/w/a.ts', 'alpha reloaded from disk');
+    });
+
+    const view = getView(container);
+    expect(view.state.doc.toString()).toBe('alpha reloaded from disk');
+
+    // The disk change must NOT be on the undo stack.
+    act(() => {
+      const didUndo = undo(view);
+      expect(didUndo).toBe(false);
+    });
+    expect(view.state.doc.toString()).toBe('alpha reloaded from disk');
+  });
 });
 
 describe('theme reapplied on switch-in (#153)', () => {
