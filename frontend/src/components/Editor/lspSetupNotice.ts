@@ -9,8 +9,8 @@ export interface LSPSetupNotice {
 /**
  * Maps a server's typed setup status onto a user-facing message + next-step
  * hint. Returns null when there is nothing actionable to show (server ready,
- * or no setup state reported). Phase 1 surfaces guidance text only; the
- * interactive interpreter picker is a follow-up.
+ * or no setup state reported). The interactive affordances (interpreter
+ * picker, retry) live in LSPSetupCard.
  */
 export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNotice | null {
   if (!status?.setupState || status.setupState === 'ready') return null;
