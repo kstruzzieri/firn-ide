@@ -87,6 +87,8 @@ interface CodeMirrorEditorProps {
   initialCursorColumn?: number;
   /** Initial scroll top to set on mount (for workspace restore) */
   initialScrollTop?: number;
+  /** Ids of all currently-open files; drives cached-state eviction on close. */
+  openFileIds: string[];
 }
 
 /**
@@ -107,6 +109,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   initialCursorLine,
   initialCursorColumn,
   initialScrollTop,
+  openFileIds,
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<EditorView | null>(null);
@@ -278,6 +281,20 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     prevFileIdRef.current = fileId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  // Evict cached state for files that are no longer open (closed tabs).
+  // Runs after the switch effect so the outgoing file's save is never lost.
+  const openFileIdsKey = openFileIds.join(' ');
+  useEffect(() => {
+    const open = new Set(openFileIds);
+    for (const id of stateCacheRef.current.keys()) {
+      if (!open.has(id)) {
+        stateCacheRef.current.delete(id);
+      }
+    }
+    // openFileIdsKey is the stable dep; openFileIds identity changes each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openFileIdsKey]);
 
   useEffect(() => {
     if (hasAppliedInitialCursorRef.current) return;

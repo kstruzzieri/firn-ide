@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
-import { undo } from '@codemirror/commands';
+import { undo, redo } from '@codemirror/commands';
 import { Editor } from '../../../components/Editor';
 import { useIDEStore, type EditorFile } from '../../../stores/ideStore';
 
@@ -92,5 +92,40 @@ describe('per-file undo across tab switch (#153)', () => {
       const more = undo(view);
       expect(more).toBe(false);
     });
+  });
+
+  it('evicts cached state when a tab is closed, giving a fresh history on reopen', () => {
+    const { container } = render(<Editor />);
+
+    // Edit A and undo it, leaving the edit on A's REDO stack.
+    let view = getView(container);
+    act(() => {
+      view.dispatch({
+        changes: { from: view.state.doc.length, insert: ' EDITED' },
+        userEvent: 'input.type',
+      });
+    });
+    act(() => {
+      undo(view);
+    });
+    expect(view.state.doc.toString()).toBe('alpha');
+
+    // Close A (switches active to B), then reopen A from the tree.
+    act(() => {
+      useIDEStore.getState().closeFile('/w/a.ts');
+    });
+    act(() => {
+      useIDEStore.getState().openFile(file('/w/a.ts', 'alpha'));
+      useIDEStore.getState().setActiveFile('/w/a.ts');
+    });
+
+    // Fresh history: redo finds nothing. Without eviction, the closed tab's
+    // cached state would be restored and redo would resurrect 'alpha EDITED'.
+    view = getView(container);
+    act(() => {
+      const didRedo = redo(view);
+      expect(didRedo).toBe(false);
+    });
+    expect(view.state.doc.toString()).toBe('alpha');
   });
 });
