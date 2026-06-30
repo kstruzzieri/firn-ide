@@ -11,6 +11,7 @@ import type { workspace } from '../../wailsjs/go/models';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
+import { ensurePathLoaded } from './useEnsurePathLoaded';
 
 const SAVE_DEBOUNCE_MS = 2000;
 
@@ -145,6 +146,19 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
       if (state.explorer.treeSnapshot) {
         setCachedWorkspaceTree(workspacePath, state.explorer.treeSnapshot);
         store.setDirectoryTree(state.explorer.treeSnapshot);
+      }
+
+      // Hydrate each persisted expanded path so restored subtrees are fresh,
+      // not reliant on the (optional) treeSnapshot for correctness.
+      // ponytail: ancestor-first ensures parent nodes exist before children are merged.
+      const expanded = state.explorer.expandedPaths ?? [];
+      const underRoot = expanded.filter(
+        (p) => p === workspacePath || p.startsWith(workspacePath + '/')
+      );
+      underRoot.sort((a, b) => a.split('/').length - b.split('/').length);
+      for (const p of underRoot) {
+        if (signal.aborted) return;
+        await ensurePathLoaded(p);
       }
     }
 
