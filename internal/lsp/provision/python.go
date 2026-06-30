@@ -96,11 +96,59 @@ func (p *PythonProvisioner) lookUV() (string, error) {
 	return p.deps.LookPath("uv")
 }
 
-// installViaUV is implemented in Task 6. Stub returns non-available so Install
-// falls through to the manual path.
+// installViaUV installs basedpyright with uv directly into the version dir.
+// uv shims carry absolute internal paths, so we cannot stage+rename; instead we
+// clear the version dir, install, and write launch.json (absolute) as the last,
+// commit step. Any error returns a non-available Resolution so Install can fall
+// back to the manual path. Env overrides are process-scoped — the user's
+// environment and PATH are never modified.
 func (p *PythonProvisioner) installViaUV(ctx context.Context, uv string, progress func(Progress)) Resolution {
-	// Task 6 implements this.
-	return Resolution{State: StateOffline, Err: errors.New("uv path not yet implemented")}
+	progress(Progress{Phase: "download", Pct: 0})
+	vdir := p.versionDir()
+	if err := os.RemoveAll(vdir); err != nil {
+		return Resolution{State: StateOffline, Err: err}
+	}
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		return Resolution{State: StateOffline, Err: err}
+	}
+	toolDir := filepath.Join(vdir, "tool")
+	binDir := filepath.Join(vdir, "bin")
+	cacheDir := filepath.Join(vdir, "cache")
+	env := append(os.Environ(),
+		"UV_TOOL_DIR="+toolDir,
+		"UV_TOOL_BIN_DIR="+binDir,
+		"UV_CACHE_DIR="+cacheDir,
+		"UV_NO_MODIFY_PATH=1",
+	)
+	args := []string{"tool", "install", "--bin-dir", binDir, "basedpyright==" + pythonCatalogEntry.Version}
+	if err := p.deps.RunUV(ctx, uv, args, env); err != nil {
+		return Resolution{State: StateOffline, Err: err}
+	}
+
+	shim := filepath.Join(binDir, "basedpyright-langserver")
+	if p.goos == "windows" {
+		shim += ".exe"
+	}
+	if _, err := os.Stat(shim); err != nil {
+		return Resolution{State: StateOffline, Err: errors.New("uv install produced no basedpyright-langserver shim")}
+	}
+	spec := launchSpec{Path: shim, Args: []string{"--stdio"}, Version: pythonCatalogEntry.Version, Abs: true}
+	if err := writeLaunchSpec(vdir, spec); err != nil {
+		return Resolution{State: StateOffline, Err: err}
+	}
+	progress(Progress{Phase: "done", Pct: 100})
+	return p.Resolve()
+}
+
+// uvBinDir extracts the --bin-dir value from uv args (shared by impl + test so
+// they agree on the flag name).
+func uvBinDir(args []string) string {
+	for i, a := range args {
+		if a == "--bin-dir" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 // installManual downloads+verifies+unzips wheels into a staging dir, writes
