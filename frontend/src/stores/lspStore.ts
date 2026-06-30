@@ -50,7 +50,10 @@ export type LSPSetupState =
   | 'missing_interpreter'
   | 'misconfigured_env'
   | 'config_degraded'
-  | 'retryable';
+  | 'retryable'
+  | 'provisioning'
+  | 'offline'
+  | 'provision_failed';
 
 export type LSPSetupAction = 'create_venv' | 'select_interpreter' | 'retry';
 
@@ -62,6 +65,7 @@ export interface LSPServerStatus {
   error?: string;
   completionTriggerCharacters?: string[];
   setupState?: LSPSetupState;
+  provisionPct?: number;
   interpreterPath?: string;
   projectRoot?: string;
   configSource?: string;

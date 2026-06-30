@@ -3,7 +3,7 @@ import type { LSPServerStatus } from '../../stores/lspStore';
 export interface LSPSetupNotice {
   message: string;
   hint: string;
-  tone: 'error' | 'warning';
+  tone: 'error' | 'warning' | 'info';
 }
 
 /**
@@ -44,6 +44,26 @@ export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNoti
       return {
         message: 'The language server failed to start.',
         hint: 'Reopen the file to retry.',
+        tone: 'error',
+      };
+    case 'provisioning':
+      return {
+        message: 'Setting up language server…',
+        hint: status.provisionPct
+          ? `Downloading (${status.provisionPct}%).`
+          : 'Downloading the language server.',
+        tone: 'info',
+      };
+    case 'offline':
+      return {
+        message: 'Could not download the language server (offline).',
+        hint: 'Check your connection, then Retry.',
+        tone: 'error',
+      };
+    case 'provision_failed':
+      return {
+        message: 'Language server setup failed.',
+        hint: 'Retry, or install basedpyright/pyright manually.',
         tone: 'error',
       };
     default:
