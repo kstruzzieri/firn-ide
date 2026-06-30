@@ -100,6 +100,24 @@ describe('per-file undo across tab switch (#153)', () => {
     });
   });
 
+  it('preserves the per-file cursor/selection across a tab switch', () => {
+    const { container } = render(<Editor />);
+
+    // Place A's cursor mid-document (selection lives in EditorState).
+    let view = getView(container);
+    act(() => {
+      view.dispatch({ selection: { anchor: 2 } });
+    });
+    expect(view.state.selection.main.anchor).toBe(2);
+
+    // Switch A -> B -> A; the cached state must restore the selection.
+    act(() => switchToTab(/b\.ts/));
+    act(() => switchToTab(/a\.ts/));
+
+    view = getView(container);
+    expect(view.state.selection.main.anchor).toBe(2);
+  });
+
   it('evicts cached state when a tab is closed, giving a fresh history on reopen', () => {
     const { container } = render(<Editor />);
 

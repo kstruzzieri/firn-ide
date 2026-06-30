@@ -218,7 +218,9 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     if (cached) {
       view.setState(cached.state);
       // External reload while this tab was inactive: bring doc up to date
-      // without touching undo history.
+      // without touching undo history. CM maps the restored selection through
+      // the splice, so the cursor is best-effort here — a large off-screen edit
+      // can drift it. Acceptable for the rare reload-while-backgrounded case.
       isSyncingRef.current = true;
       reconcileDoc(view, content);
       isSyncingRef.current = false;
