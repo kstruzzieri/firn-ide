@@ -20,6 +20,8 @@ import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion
 import { parseFileReferences } from '../utils/parseFileReferences';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { replaceChildrenAt } from '../utils/replaceChildrenAt';
+import { preserveLoadedChildren } from '../utils/preserveLoadedChildren';
+import { findEntryByPath } from '../utils/findEntryByPath';
 import {
   type SyntaxThemeId,
   DEFAULT_SYNTAX_THEME_ID,
@@ -531,9 +533,11 @@ export const useIDEStore = create<IDEStore>()(
             const normalized = children ?? [];
             const root = state.workspace?.path;
             if (root && pathsReferToSameFile(path, root)) {
-              return { directoryTree: normalized };
+              return { directoryTree: preserveLoadedChildren(state.directoryTree, normalized) };
             }
-            return { directoryTree: replaceChildrenAt(state.directoryTree, path, normalized) };
+            const existing = findEntryByPath(state.directoryTree, path);
+            const merged = preserveLoadedChildren(existing?.children, normalized);
+            return { directoryTree: replaceChildrenAt(state.directoryTree, path, merged) };
           },
           false,
           'mergeChildren'

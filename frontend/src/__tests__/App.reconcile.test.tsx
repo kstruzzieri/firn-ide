@@ -285,4 +285,78 @@ describe('App — surgical watcher reconcile', () => {
     expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a');
     expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/c');
   });
+
+  // ── (e) reconcile preserves loaded children of surviving subdirs ───────────
+  it('(e) reconcile at root preserves loaded children of a surviving subdir', async () => {
+    // /r/a is already loaded+expanded with children; a root-level event arrives.
+    // ReadDirectoryShallow('/r') returns a fresh shallow level where /r/a is
+    // unloaded. preserveLoadedChildren must restore /r/a's children so the tree
+    // does not visually collapse to empty.
+    const existingChild = {
+      name: 'x.ts',
+      path: '/r/a/x.ts',
+      isDir: false,
+      size: 0,
+      modTime: '',
+    } as FileEntry;
+
+    // Mock ReadDirectoryShallow('/r') to return [unloaded /r/a, new file /r/new.ts]
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) => {
+      if (path === '/r') {
+        return Promise.resolve([
+          { name: 'a', path: '/r/a', isDir: true, size: 0, modTime: '', children: undefined },
+          { name: 'new.ts', path: '/r/new.ts', isDir: false, size: 0, modTime: '' },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    // Seed: root expanded, /r/a loaded+expanded with a child file.
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [
+          {
+            name: 'a',
+            path: '/r/a',
+            isDir: true,
+            size: 0,
+            modTime: '',
+            children: [existingChild],
+          } as FileEntry,
+        ],
+        expandedPaths: new Set(['/r/a']),
+        isRootExpanded: true,
+      });
+    });
+
+    const fire = getWatcherCallback();
+
+    // Fire a root-level created event (new file at /r).
+    act(() => {
+      fire({
+        type: 'created',
+        path: '/r/new.ts',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      jest.advanceTimersByTime(100);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const state = useIDEStore.getState();
+    const aNode = state.directoryTree.find((e) => e.path === '/r/a');
+    const newNode = state.directoryTree.find((e) => e.path === '/r/new.ts');
+
+    // /r/new.ts must appear after reconcile
+    expect(newNode).toBeTruthy();
+    // /r/a must retain its previously-loaded children (not revert to undefined)
+    expect(aNode?.children).toEqual([existingChild]);
+  });
 });
