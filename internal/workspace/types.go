@@ -22,6 +22,15 @@ type State struct {
 	ActiveSidebar     string      `json:"activeSidebar"`
 	HiddenProfileIDs  []string    `json:"hiddenProfileIds,omitempty"`
 	ActiveWorkspaceID string      `json:"activeWorkspaceId,omitempty"`
+	LSP               LSPState    `json:"lsp,omitempty"`
+}
+
+// LSPState holds machine-local LSP overrides for a workspace. Persisted under
+// ~/.firn/workspaces (never in the repo) because interpreter/server paths are
+// machine-specific.
+type LSPState struct {
+	InterpreterOverride string            `json:"interpreterOverride,omitempty"`
+	ServerPathOverride  map[string]string `json:"serverPathOverride,omitempty"` // family -> path (reserved)
 }
 
 // Layout captures panel sizes and collapsed states.
