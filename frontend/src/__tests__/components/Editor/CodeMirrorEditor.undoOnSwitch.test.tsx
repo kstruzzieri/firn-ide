@@ -10,6 +10,12 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
 }));
 jest.mock('../../../../wailsjs/runtime/runtime', () => ({ WindowSetTitle: jest.fn() }));
 
+const applyEditorThemeSpy = jest.fn();
+jest.mock('../../../components/Editor/codemirror', () => {
+  const actual = jest.requireActual('../../../components/Editor/codemirror');
+  return { ...actual, applyEditorTheme: (...args: unknown[]) => applyEditorThemeSpy(...args) };
+});
+
 function file(id: string, content: string): EditorFile {
   return {
     id,
@@ -127,5 +133,27 @@ describe('per-file undo across tab switch (#153)', () => {
       expect(didRedo).toBe(false);
     });
     expect(view.state.doc.toString()).toBe('alpha');
+  });
+});
+
+describe('theme reapplied on switch-in (#153)', () => {
+  it('reapplies the current syntax theme when restoring a cached tab', () => {
+    render(<Editor />);
+    applyEditorThemeSpy.mockClear();
+
+    // Switch A -> B so A becomes cached.
+    act(() => switchToTab(/b\.ts/));
+    // Change the global syntax theme while A is inactive.
+    act(() => {
+      useIDEStore.setState({ editorSyntaxTheme: 'solar' });
+    });
+    applyEditorThemeSpy.mockClear();
+
+    // Switch back to A: its cached state must be re-themed to the current theme.
+    act(() => switchToTab(/a\.ts/));
+
+    expect(applyEditorThemeSpy).toHaveBeenCalled();
+    const lastCall = applyEditorThemeSpy.mock.calls.at(-1);
+    expect(lastCall?.[1]).toBe('solar');
   });
 });

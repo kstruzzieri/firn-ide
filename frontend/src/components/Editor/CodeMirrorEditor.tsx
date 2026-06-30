@@ -249,6 +249,9 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       isSyncingRef.current = true;
       reconcileDoc(view, content);
       isSyncingRef.current = false;
+      // The cached state baked in whatever theme was live when cached; the
+      // live-theme subscription only updates the active view, so re-theme now.
+      applyEditorTheme(view, useIDEStore.getState().editorSyntaxTheme);
       view.scrollDOM.scrollTop = cached.scrollTop;
       // Restored state already carries selection/scroll; suppress initial apply.
       hasAppliedInitialCursorRef.current = true;
