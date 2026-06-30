@@ -31,7 +31,7 @@ const loadedDir = (path: string): FileEntry =>
     size: 0,
     modTime: '',
     children: [],
-  }) as FileEntry;
+  }) as unknown as FileEntry;
 // An unloaded dir has children undefined.
 const unloadedDir = (path: string): FileEntry =>
   ({
@@ -41,7 +41,7 @@ const unloadedDir = (path: string): FileEntry =>
     size: 0,
     modTime: '',
     children: undefined,
-  }) as FileEntry;
+  }) as unknown as FileEntry;
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 const mockUseFileWatcher = jest.fn();

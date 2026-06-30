@@ -17,6 +17,7 @@ const mkRow = (over: Partial<FlatRow> & { key: string }): FlatRow => ({
   posInSet: 1,
   name: over.key,
   ...over,
+  canExpand: over.canExpand ?? false,
 });
 
 const rows: FlatRow[] = [
