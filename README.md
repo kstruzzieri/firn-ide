@@ -128,7 +128,8 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Syntax highlighting (JS, TS, Python, Go, CSS, HTML, JSON, Markdown)
 - [x] Tab-based editing with modified indicators
 - [x] JetBrains-style autosave (debounced idle + focus loss)
-- [x] File explorer with tree navigation
+- [x] Per-file undo/redo history preserved across tab switches
+- [x] File explorer with tree navigation — virtualized rows with lazy per-directory loading on expand
 - [x] Workspace accent color system (7 theme variants)
 - [x] Panel layout system with drag-to-resize and collapse/expand
 - [x] Icon system with currentColor SVGs
@@ -142,6 +143,7 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Completion source with trigger characters, detail/docs, and snippet support
 - [x] Hover tooltips and go-to-definition (`F12`, Cmd/Ctrl-click)
 - [x] Shared registry entries for Go (`gopls`) and Python (`pyright-langserver`)
+- [x] Managed server provisioning — pinned `basedpyright` downloaded into `~/.firn` with interpreter wiring and an offline/retry setup card (active workspace only; never mutates global env/PATH)
 
 **Search**
 - [x] Workspace-wide ripgrep search with regex, case, and whole-word options
@@ -168,9 +170,9 @@ The roadmap includes a built-in AI assistant panel with:
 
 ### Planned
 
-- [ ] Managed LSP server provisioning — download pinned servers into an app cache with offline/retry UI
-- [ ] File-tree lazy loading — load directory children on expand
-- [ ] Git integration — status display and basic operations
+- [ ] Git integration — status display and basic operations (next milestone)
+- [ ] Managed provisioning Phase 3 — `gopls`, `tsserver`, `rust-analyzer` (Python shipped)
+- [ ] Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted history
 - [ ] AI Chat Panel
 
 ## Project Structure
@@ -255,10 +257,10 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-1. Git integration — status display and basic operations (the next milestone).
-2. Managed LSP server provisioning — download pinned servers with offline/retry UI.
-3. File-tree lazy loading — load directory children on expand.
-4. Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted run history.
+1. Git integration (Milestone 7: #26 status display, #27 basic operations) — the only unstarted milestone and the highest-value remaining gap.
+2. LSP follow-ups — managed provisioning Phase 3 (#151: gopls/tsserver/rust-analyzer) and Phase 2 polish (#152).
+3. File-tree follow-ups — lazy watcher reconcile (#148) and nested `.gitignore` handling (#149).
+4. Run execution identity Phase 2 (#146) — per-run retained tabs, same-profile parallelism, persisted run history.
 
 ## Contributing
 
