@@ -1,12 +1,12 @@
 # Mirror the GitHub Actions checks locally so a push doesn't turn the PR red.
-# Mirrors: Lint (eslint + golangci-lint) and Tests (jest + go test). The Wails
-# build job is intentionally NOT mirrored — it installs wails + system GTK deps
-# and is too heavy for a hook; CI keeps that one. Bypass all of this with
-# `git push --no-verify`.
+# Mirrors: Lint (eslint + golangci-lint), Tests (jest + go test), and the
+# frontend build required by Wails/go:embed. The full Wails build job is
+# intentionally NOT mirrored — it installs wails + system GTK deps and is too
+# heavy for a hook; CI keeps that one. Bypass all of this with `git push --no-verify`.
 
 set -e
 
-# --- Frontend: ESLint + Jest (test.yml + lint.yml, frontend jobs) -----------
+# --- Frontend: ESLint + build + Jest (build.yml/test.yml/lint.yml) ----------
 # Guard on the tool first: git hooks run with a minimal PATH (no login shell),
 # so npm may be absent under GUI git clients / nvm even when deps are installed.
 # Skip cleanly rather than fail the push for a tooling reason, not a code one.
@@ -19,6 +19,9 @@ elif [ ! -d frontend/node_modules ]; then
 else
   echo "pre-push: eslint ."
   (cd frontend && npm run lint)
+
+  echo "pre-push: frontend build"
+  (cd frontend && npm run build)
 
   echo "pre-push: jest"
   (cd frontend && npm test)

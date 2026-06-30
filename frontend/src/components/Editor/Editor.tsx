@@ -195,6 +195,7 @@ export function Editor() {
               fileId={activeFile.id}
               filename={activeFile.name}
               content={activeFile.content || ''}
+              openFileIds={openFiles.map((f) => f.id)}
               onContentChange={handleContentChange}
               onCursorChange={handleCursorChange}
               onScrollChange={handleScrollChange}

@@ -3,8 +3,18 @@ name: Lint
 on:
   push:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.Codex/**'
+      - '.claude/**'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.Codex/**'
+      - '.claude/**'
 
 jobs:
   eslint:
