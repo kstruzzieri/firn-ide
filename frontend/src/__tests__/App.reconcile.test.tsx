@@ -168,7 +168,7 @@ describe('App — surgical watcher reconcile', () => {
     });
 
     expect(ReadDirectoryShallow).toHaveBeenCalledTimes(1);
-    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a');
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
   });
 
   // ── (b) loaded but collapsed dir → markDirty, no fetch ────────────────────
@@ -282,8 +282,8 @@ describe('App — surgical watcher reconcile', () => {
     });
 
     expect(ReadDirectoryShallow).toHaveBeenCalledTimes(2);
-    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a');
-    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/c');
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/c', '/r');
   });
 
   // ── (e) reconcile preserves loaded children of surviving subdirs ───────────

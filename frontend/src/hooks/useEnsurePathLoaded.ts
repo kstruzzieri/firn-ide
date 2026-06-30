@@ -27,7 +27,8 @@ interface EnsureOpts {
 export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<void> {
   const store = useIDEStore.getState();
   const root = store.workspace?.path;
-  const isRoot = root ? pathsReferToSameFile(path, root) : false;
+  if (!root) return Promise.resolve();
+  const isRoot = pathsReferToSameFile(path, root);
 
   if (!opts.force) {
     const node = isRoot
@@ -46,7 +47,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
   const promise = (async () => {
     useIDEStore.getState().addLoadingPath(path);
     try {
-      const children = await ReadDirectoryShallow(path);
+      const children = await ReadDirectoryShallow(path, root);
       const after = useIDEStore.getState();
       if (after.workspace?.path !== generation) return; // stale workspace — drop
       after.mergeChildren(path, children);

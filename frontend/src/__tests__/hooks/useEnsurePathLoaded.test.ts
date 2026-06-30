@@ -31,6 +31,7 @@ it('loads an unloaded dir once and merges children', async () => {
   mockRead.mockResolvedValue([dir('/r/a/x')]);
   await ensurePathLoaded('/r/a');
   expect(mockRead).toHaveBeenCalledTimes(1);
+  expect(mockRead).toHaveBeenCalledWith('/r/a', '/r');
   expect(useIDEStore.getState().directoryTree[0].children).toHaveLength(1);
   expect(useIDEStore.getState().loadingPaths.has('/r/a')).toBe(false);
 });

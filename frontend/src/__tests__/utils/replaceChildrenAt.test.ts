@@ -41,4 +41,12 @@ describe('replaceChildrenAt', () => {
     const tree = [dir('/r/a')];
     expect(replaceChildrenAt(tree, '/nope', [])).toBe(tree);
   });
+
+  it('descends through Windows paths', () => {
+    const tree = [dir('C:\\repo\\src', [dir('C:\\repo\\src\\pkg')])];
+    const next = replaceChildrenAt(tree, 'C:\\repo\\src\\pkg', [
+      file('C:\\repo\\src\\pkg\\main.go'),
+    ]);
+    expect(next[0].children![0].children).toEqual([file('C:\\repo\\src\\pkg\\main.go')]);
+  });
 });

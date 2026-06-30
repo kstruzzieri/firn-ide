@@ -1,4 +1,5 @@
 import type { FileEntry } from '../stores/ideStore';
+import { normalizePathForComparison } from './lspUri';
 
 /**
  * Returns a new tree where the node at `targetPath` has `children` set, with
@@ -14,7 +15,7 @@ export function replaceChildrenAt(
 ): FileEntry[] {
   let changed = false;
   const next = nodes.map((node) => {
-    if (node.path === targetPath) {
+    if (samePath(node.path, targetPath)) {
       changed = true;
       return { ...node, children } as FileEntry;
     }
@@ -32,5 +33,14 @@ export function replaceChildrenAt(
 
 /** True if `ancestor` is a path-prefix segment-boundary parent of `descendant`. */
 function isAncestorPath(ancestor: string, descendant: string): boolean {
-  return descendant === ancestor || descendant.startsWith(ancestor + '/');
+  const normalizedAncestor = normalizePathForComparison(ancestor);
+  const normalizedDescendant = normalizePathForComparison(descendant);
+  return (
+    normalizedDescendant === normalizedAncestor ||
+    normalizedDescendant.startsWith(`${normalizedAncestor}/`)
+  );
+}
+
+function samePath(a: string, b: string): boolean {
+  return normalizePathForComparison(a) === normalizePathForComparison(b);
 }

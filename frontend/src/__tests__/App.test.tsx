@@ -187,7 +187,7 @@ describe('App Component', () => {
 
       // Surgical reconcile: calls ReadDirectoryShallow on the parent dir, NOT ReadDirectory
       expect(mockReadDirectory).not.toHaveBeenCalled();
-      expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/test/workspace');
+      expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/test/workspace', '/test/workspace');
       expect(useIDEStore.getState().directoryTree).toEqual([
         { name: 'new.ts', path: '/test/workspace/new.ts', isDir: false },
       ]);

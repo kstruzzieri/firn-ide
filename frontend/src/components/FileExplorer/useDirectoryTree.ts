@@ -14,6 +14,7 @@ import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 export function useDirectoryTree() {
   const workspace = useWorkspace();
   const setDirectoryTree = useIDEStore((state) => state.setDirectoryTree);
+  const mergeChildren = useIDEStore((state) => state.mergeChildren);
   const setTreeLoading = useIDEStore((state) => state.setTreeLoading);
   const setTreeError = useIDEStore((state) => state.setTreeError);
   const requestIdRef = useRef(0);
@@ -34,9 +35,9 @@ export function useDirectoryTree() {
     setTreeError(null);
 
     try {
-      const entries = await ReadDirectoryShallow(workspace.path);
+      const entries = await ReadDirectoryShallow(workspace.path, workspace.path);
       if (requestIdRef.current !== requestId) return;
-      setDirectoryTree(entries);
+      mergeChildren(workspace.path, entries);
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       if (hasCachedTree) {
@@ -49,7 +50,7 @@ export function useDirectoryTree() {
         setTreeLoading(false);
       }
     }
-  }, [workspace?.path, setDirectoryTree, setTreeLoading, setTreeError]);
+  }, [workspace?.path, setDirectoryTree, mergeChildren, setTreeLoading, setTreeError]);
 
   // Fetch tree when workspace changes
   useEffect(() => {

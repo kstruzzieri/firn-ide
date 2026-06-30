@@ -68,7 +68,7 @@ describe('FileExplorer lazy-load on expand', () => {
 
     await waitFor(() => {
       expect(ReadDirectoryShallow).toHaveBeenCalledTimes(1);
-      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a');
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
     });
   });
 

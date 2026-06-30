@@ -118,8 +118,8 @@ export function ReadDirectory(arg1) {
   return window['go']['main']['App']['ReadDirectory'](arg1);
 }
 
-export function ReadDirectoryShallow(arg1) {
-  return window['go']['main']['App']['ReadDirectoryShallow'](arg1);
+export function ReadDirectoryShallow(arg1, arg2) {
+  return window['go']['main']['App']['ReadDirectoryShallow'](arg1, arg2);
 }
 
 export function ReadFile(arg1) {

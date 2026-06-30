@@ -91,7 +91,7 @@ describe('FileExplorer active-file reveal with lazy loading', () => {
       await waitFor(() => {
         // /r/a was already loaded (children array present), so ReadDirectoryShallow
         // should only be called for /r/a/b (the unloaded ancestor)
-        expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a/b');
+        expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a/b', '/r');
       });
 
       await waitFor(() => {

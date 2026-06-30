@@ -10,6 +10,7 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { workspace } from '../../wailsjs/go/models';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
+import { relativePathFromRoot } from '../utils/workspaceRegions';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
 import { ensurePathLoaded } from './useEnsurePathLoaded';
 
@@ -152,13 +153,13 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
       // not reliant on the (optional) treeSnapshot for correctness.
       // ponytail: ancestor-first ensures parent nodes exist before children are merged.
       const expanded = state.explorer.expandedPaths ?? [];
-      const underRoot = expanded.filter(
-        (p) => p === workspacePath || p.startsWith(workspacePath + '/')
-      );
-      underRoot.sort((a, b) => a.split('/').length - b.split('/').length);
-      for (const p of underRoot) {
+      const underRoot = expanded
+        .map((path) => ({ path, rel: relativePathFromRoot(path, workspacePath) }))
+        .filter((item): item is { path: string; rel: string } => item.rel !== null)
+        .sort((a, b) => a.rel.split('/').length - b.rel.split('/').length);
+      for (const { path } of underRoot) {
         if (signal.aborted) return;
-        await ensurePathLoaded(p);
+        await ensurePathLoaded(path);
       }
     }
 

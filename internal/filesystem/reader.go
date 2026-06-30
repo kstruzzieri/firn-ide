@@ -115,8 +115,8 @@ func (d *DirectoryReader) buildEntries(path string, ignorePatterns []string) ([]
 
 // ReadDirectoryShallow reads a single directory level (immediate children only).
 // Child directories are returned without their own children populated.
-func (d *DirectoryReader) ReadDirectoryShallow(path string) ([]FileEntry, error) {
-	ignorePatterns := d.loadGitignore(path)
+func (d *DirectoryReader) ReadDirectoryShallow(path string, rootPath string) ([]FileEntry, error) {
+	ignorePatterns := d.loadGitignore(rootPath)
 	return d.buildEntries(path, ignorePatterns)
 }
 

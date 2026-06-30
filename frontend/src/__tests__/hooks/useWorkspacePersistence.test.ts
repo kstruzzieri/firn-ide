@@ -235,6 +235,38 @@ describe('useWorkspacePersistence', () => {
     expect(calls).not.toContain('/other/x');
   });
 
+  it('hydrates Windows expanded paths under the current workspace root', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: 'C:\\repo',
+      workspaceName: 'repo',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: ['C:\\repo\\a\\b', 'C:\\repo\\a', 'D:\\other\\x'],
+        rootExpanded: true,
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: 'C:\\repo' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('C:\\repo'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    const calls = mockEnsurePathLoaded.mock.calls.map((c) => c[0]);
+    expect(calls).toContain('C:\\repo\\a');
+    expect(calls).toContain('C:\\repo\\a\\b');
+    expect(calls).not.toContain('D:\\other\\x');
+    expect(calls.indexOf('C:\\repo\\a')).toBeLessThan(calls.indexOf('C:\\repo\\a\\b'));
+  });
+
   it('persists tree snapshots when the directory tree changes', async () => {
     jest.useFakeTimers();
 

@@ -24,6 +24,7 @@ import { flattenVisibleTree } from '../../utils/flattenTree';
 import type { FlatRow } from '../../utils/flattenTree';
 import { useTreeKeyboardNav } from './useTreeKeyboardNav';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
+import { relativePathFromRoot } from '../../utils/workspaceRegions';
 import styles from './FileExplorer.module.css';
 
 export function FileExplorer() {
@@ -66,15 +67,17 @@ export function FileExplorer() {
     }
 
     const ws = useIDEStore.getState().workspace;
-    if (!ws || !activeFileId.startsWith(ws.path + '/')) return;
+    const relPath = ws ? relativePathFromRoot(activeFileId, ws.path) : null;
+    if (!ws || !relPath) return;
 
-    const rel = activeFileId.slice(ws.path.length + 1).split('/');
+    const rel = relPath.split('/');
+    const sep = ws.path.includes('\\') ? '\\' : '/';
 
     void (async () => {
       let cursor = ws.path;
       const toExpand: string[] = [];
       for (let i = 0; i < rel.length - 1; i++) {
-        cursor += '/' + rel[i];
+        cursor += sep + rel[i];
         await ensurePathLoaded(cursor);
         if (revealGenRef.current !== gen) return; // workspace/file changed — abort
         toExpand.push(cursor);
@@ -122,12 +125,13 @@ export function FileExplorer() {
     hydratingForRef.current = relDir;
     let cancelled = false;
     setScopeHydrating(true);
+    const sep = ws.path.includes('\\') ? '\\' : '/';
     void (async () => {
       let cursor = ws.path;
       for (const seg of relDir.split('/')) {
         await ensurePathLoaded(cursor);
         if (cancelled) return;
-        cursor += '/' + seg;
+        cursor += sep + seg;
       }
       await ensurePathLoaded(cursor);
       if (!cancelled) setScopeHydrating(false);
