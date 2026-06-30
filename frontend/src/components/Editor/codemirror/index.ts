@@ -59,6 +59,9 @@ export { hoverCompartment, reconfigureHover } from './hover';
 // Definition
 export { definitionExtensions } from './definition';
 
+// Document reconciliation (non-undoable external content sync)
+export { reconcileDoc } from './reconcileDoc';
+
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';
-export { EditorState, Transaction, type Extension } from '@codemirror/state';
+export { EditorState, type Extension } from '@codemirror/state';

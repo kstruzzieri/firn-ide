@@ -81,6 +81,10 @@ jest.mock('../../../components/Editor/codemirror', () => {
       // eslint-disable-next-line @typescript-eslint/no-this-alias
       lastEditorView = this;
     }
+
+    setState(newState: { doc: FakeDoc }) {
+      this.state = newState;
+    }
   }
 
   return {
@@ -90,6 +94,7 @@ jest.mock('../../../components/Editor/codemirror', () => {
         doc: new FakeDoc(doc),
       }),
     },
+    reconcileDoc: jest.fn(),
     completionCompartment: {
       reconfigure: mockCompletionCompartmentReconfigure,
     },
@@ -130,7 +135,14 @@ beforeEach(() => {
 
 describe('CodeMirrorEditor', () => {
   it('reconfigures the editor theme when the global syntax theme changes', () => {
-    render(<CodeMirrorEditor fileId="file-1" filename="main.ts" content={'x = 1'} />);
+    render(
+      <CodeMirrorEditor
+        fileId="file-1"
+        filename="main.ts"
+        content={'x = 1'}
+        openFileIds={['file-1']}
+      />
+    );
     (applyEditorTheme as jest.Mock).mockClear();
 
     act(() => {
@@ -143,7 +155,12 @@ describe('CodeMirrorEditor', () => {
 
   it('applies restored cursor and scroll when they arrive after mount', async () => {
     const { rerender } = render(
-      <CodeMirrorEditor fileId="file-1" filename="main.ts" content={'one\ntwo\nthree'} />
+      <CodeMirrorEditor
+        fileId="file-1"
+        filename="main.ts"
+        content={'one\ntwo\nthree'}
+        openFileIds={['file-1']}
+      />
     );
 
     expect(lastEditorView).not.toBeNull();
@@ -154,6 +171,7 @@ describe('CodeMirrorEditor', () => {
         fileId="file-1"
         filename="main.ts"
         content={'one\ntwo\nthree'}
+        openFileIds={['file-1']}
         initialCursorLine={2}
         initialCursorColumn={3}
         initialScrollTop={55}
@@ -171,7 +189,12 @@ describe('CodeMirrorEditor', () => {
 
   it('passes the absolute file path into editor extensions', () => {
     render(
-      <CodeMirrorEditor fileId="/project/main.ts" filename="main.ts" content="const value = 1;" />
+      <CodeMirrorEditor
+        fileId="/project/main.ts"
+        filename="main.ts"
+        content="const value = 1;"
+        openFileIds={['/project/main.ts']}
+      />
     );
 
     expect(mockCreateEditorExtensions).toHaveBeenCalledWith(
@@ -184,7 +207,12 @@ describe('CodeMirrorEditor', () => {
 
   it('reconfigures completion and hover from matching LSP server status', async () => {
     render(
-      <CodeMirrorEditor fileId="/project/main.ts" filename="main.ts" content="const value = 1;" />
+      <CodeMirrorEditor
+        fileId="/project/main.ts"
+        filename="main.ts"
+        content="const value = 1;"
+        openFileIds={['/project/main.ts']}
+      />
     );
 
     expect(lastEditorView).not.toBeNull();
@@ -264,7 +292,14 @@ describe('CodeMirrorEditor', () => {
   });
 
   it('renders the LSP setup card when a python file reports a missing interpreter', async () => {
-    render(<CodeMirrorEditor fileId="/project/app.py" filename="app.py" content="x = 1" />);
+    render(
+      <CodeMirrorEditor
+        fileId="/project/app.py"
+        filename="app.py"
+        content="x = 1"
+        openFileIds={['/project/app.py']}
+      />
+    );
 
     act(() => {
       useIDEStore.getState().setWorkspace({ name: 'project', path: '/project' });
@@ -282,7 +317,12 @@ describe('CodeMirrorEditor', () => {
 
   it('clears the LSP setup card when reused for a file without an LSP family', async () => {
     const { rerender } = render(
-      <CodeMirrorEditor fileId="/project/app.py" filename="app.py" content="x = 1" />
+      <CodeMirrorEditor
+        fileId="/project/app.py"
+        filename="app.py"
+        content="x = 1"
+        openFileIds={['/project/app.py']}
+      />
     );
 
     act(() => {
@@ -299,7 +339,12 @@ describe('CodeMirrorEditor', () => {
     await waitFor(() => expect(screen.getByText(/no python interpreter/i)).toBeInTheDocument());
 
     rerender(
-      <CodeMirrorEditor fileId="/project/README.md" filename="README.md" content="# Docs" />
+      <CodeMirrorEditor
+        fileId="/project/README.md"
+        filename="README.md"
+        content="# Docs"
+        openFileIds={['/project/README.md']}
+      />
     );
 
     await waitFor(() =>

@@ -2,12 +2,7 @@ import { EditorState, type TransactionSpec } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { history, undo } from '@codemirror/commands';
 
-// CodeMirrorEditor transitively imports the Wails-generated App module (ESM,
-// untransformed by ts-jest); mock it so the module graph loads under jsdom.
-jest.mock('../../../../wailsjs/go/main/App', () => ({}));
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({ WindowSetTitle: jest.fn() }));
-
-import { reconcileDoc } from '../../../components/Editor/CodeMirrorEditor';
+import { reconcileDoc } from '../../../components/Editor/codemirror/reconcileDoc';
 
 function makeView(doc: string): EditorView {
   return new EditorView({
