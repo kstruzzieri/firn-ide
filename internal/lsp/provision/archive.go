@@ -30,6 +30,10 @@ func UnzipWheel(src, destDir string) error {
 			}
 			continue
 		}
+		if f.Mode()&os.ModeSymlink != 0 {
+			// ponytail: trusted vendor wheels carry no symlinks; skip rather than materialize them.
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}

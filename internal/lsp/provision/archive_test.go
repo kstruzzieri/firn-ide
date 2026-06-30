@@ -50,3 +50,35 @@ func TestUnzipWheel_zipSlipRejected(t *testing.T) {
 		t.Fatal("expected zip-slip rejection")
 	}
 }
+
+func TestUnzipWheel_preservesExecBit(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "exe.whl")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	hdr := &zip.FileHeader{Name: "nodejs_wheel/node"}
+	hdr.SetMode(0o755)
+	w, err := zw.CreateHeader(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte("#!node"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	dest := t.TempDir()
+	if err := UnzipWheel(p, dest); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dest, "nodejs_wheel", "node"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("exec bit not preserved: mode = %v", info.Mode())
+	}
+}
