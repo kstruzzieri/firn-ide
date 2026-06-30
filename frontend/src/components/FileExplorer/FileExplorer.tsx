@@ -213,6 +213,7 @@ export function FileExplorer() {
                   rootPath={row.rootPath}
                   rowId={rowDomId(row.key)}
                   isActive={row.key === activeKey}
+                  canExpand={row.canExpand}
                   onToggle={handleToggle}
                   onSelect={handleSelect}
                   onOpen={handleOpen}

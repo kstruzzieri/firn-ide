@@ -28,6 +28,11 @@ export interface FlatRow {
   entry?: FileEntry;
   /** Present for the root row only (for the dimmed path label). */
   rootPath?: string;
+  /**
+   * True when the chevron should be rendered. Shows when children are unloaded
+   * (undefined — might have kids) or non-empty; hides only when loaded-and-empty ([]).
+   */
+  canExpand: boolean;
 }
 
 export interface FlattenOptions {
@@ -71,6 +76,7 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
       posInSet: 1,
       name: rootLabel,
       rootPath,
+      canExpand: true,
     },
   ];
 
@@ -81,6 +87,7 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
     entries.forEach((entry, index) => {
       const isDir = entry.isDir;
       const isExpanded = isDir && expandedPaths.has(entry.path);
+      const canExpand = isDir && (entry.children === undefined || entry.children.length > 0);
       rows.push({
         kind: 'entry',
         key: entry.path,
@@ -94,6 +101,7 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
         posInSet: index + 1,
         name: entry.name,
         entry,
+        canExpand,
       });
       if (isExpanded && entry.children) {
         walk(entry.children, depth + 1);
