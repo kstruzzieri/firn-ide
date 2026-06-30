@@ -61,4 +61,4 @@ export { definitionExtensions } from './definition';
 
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';
-export { EditorState, type Extension } from '@codemirror/state';
+export { EditorState, Transaction, type Extension } from '@codemirror/state';
