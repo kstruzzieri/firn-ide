@@ -10,9 +10,11 @@ import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
+import { __resetEnsurePathLoaded } from '../hooks/useEnsurePathLoaded';
 import type { FileEvent } from '../types/watcher';
 
 const mockReadDirectory = jest.fn();
+const mockReadDirectoryShallow = jest.fn();
 const mockReadFile = jest.fn();
 const mockUseFileWatcher = jest.fn();
 const mockDidOpen = jest.fn().mockResolvedValue(undefined);
@@ -25,6 +27,7 @@ const mockCancelSearch = jest.fn().mockResolvedValue(undefined);
 // Mock Wails bindings
 jest.mock('../../wailsjs/go/main/App', () => ({
   ReadDirectory: (...args: unknown[]) => mockReadDirectory(...args),
+  ReadDirectoryShallow: (...args: unknown[]) => mockReadDirectoryShallow(...args),
   ReadFile: (...args: unknown[]) => mockReadFile(...args),
   WriteFile: jest.fn(),
   OpenFolderDialog: jest.fn(),
@@ -72,8 +75,11 @@ describe('App Component', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockReadDirectory.mockReset();
+    mockReadDirectoryShallow.mockReset();
+    mockReadDirectoryShallow.mockResolvedValue([]);
     mockReadFile.mockReset();
     mockUseFileWatcher.mockReset();
+    __resetEnsurePathLoaded();
     mockDidOpen.mockClear();
     mockDidChange.mockClear();
     mockDidSave.mockClear();
@@ -89,6 +95,10 @@ describe('App Component', () => {
       treeError: null,
       activeSidebarView: 'explorer',
       isLeftPanelCollapsed: false,
+      expandedPaths: new Set<string>(),
+      loadingPaths: new Set<string>(),
+      dirtyPaths: new Set<string>(),
+      isRootExpanded: true,
     });
     useSearchStore.setState({
       query: '',
@@ -138,13 +148,17 @@ describe('App Component', () => {
   });
 
   it.each(['created', 'deleted', 'renamed'] as const)(
-    'should refresh the directory tree on %s file watcher events',
+    'should surgically reconcile the parent dir on %s file watcher events',
     async (type) => {
+      // Seed workspace with root loaded (directoryTree = []) and expanded
       useIDEStore.setState({
         workspace: { name: 'workspace', path: '/test/workspace' },
+        directoryTree: [],
+        isRootExpanded: true,
       });
 
-      mockReadDirectory.mockResolvedValueOnce([
+      // ReadDirectoryShallow returns the new on-disk state for the root dir
+      mockReadDirectoryShallow.mockResolvedValueOnce([
         { name: 'new.ts', path: '/test/workspace/new.ts', isDir: false },
       ]);
 
@@ -171,7 +185,9 @@ describe('App Component', () => {
         await Promise.resolve();
       });
 
-      expect(mockReadDirectory).toHaveBeenCalledWith('/test/workspace');
+      // Surgical reconcile: calls ReadDirectoryShallow on the parent dir, NOT ReadDirectory
+      expect(mockReadDirectory).not.toHaveBeenCalled();
+      expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/test/workspace');
       expect(useIDEStore.getState().directoryTree).toEqual([
         { name: 'new.ts', path: '/test/workspace/new.ts', isDir: false },
       ]);

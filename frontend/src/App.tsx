@@ -22,12 +22,17 @@ import { useFileWatcher } from './hooks/useFileWatcher';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
-import { ReadDirectory, ReadFile } from '../wailsjs/go/main/App';
+import { ReadFile } from '../wailsjs/go/main/App';
 import type { FileEvent } from './types/watcher';
+import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
+import { isDirVisible } from './utils/treeVisibility';
+import { findEntryByPath } from './utils/findEntryByPath';
+import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
 
 function App() {
-  const treeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const treeRefreshRequestIdRef = useRef(0);
+  // Per-directory debounce timers so concurrent changes in different dirs don't
+  // collapse into one mis-scoped refetch.
+  const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useAutosave();
   useWorkspacePersistence();
@@ -43,46 +48,41 @@ function App() {
   const activeAccent = useActiveAccent();
   useRunProfilesLoader(workspace?.path);
 
-  const refreshDirectoryTree = useCallback(() => {
-    const workspacePath = useIDEStore.getState().workspace?.path;
-    if (!workspacePath) return;
+  const reconcileDir = useCallback((dir: string) => {
+    const s = useIDEStore.getState();
+    const root = s.workspace?.path;
+    if (!root) return;
+    const isRoot = pathsReferToSameFile(dir, root);
+    const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
+    if (!node || node.children === undefined) return; // not loaded → ignore
 
-    const requestId = ++treeRefreshRequestIdRef.current;
-
-    ReadDirectory(workspacePath)
-      .then((entries) => {
-        const state = useIDEStore.getState();
-        if (
-          treeRefreshRequestIdRef.current !== requestId ||
-          state.workspace?.path !== workspacePath
-        ) {
-          return;
-        }
-        state.setDirectoryTree(entries);
-      })
-      .catch((err) => {
-        const state = useIDEStore.getState();
-        if (
-          treeRefreshRequestIdRef.current !== requestId ||
-          state.workspace?.path !== workspacePath
-        ) {
-          return;
-        }
-        const message = err instanceof Error ? err.message : 'Failed to read directory';
-        state.setTreeError(message);
-      });
-  }, []);
-
-  const scheduleDirectoryTreeRefresh = useCallback(() => {
-    if (treeRefreshTimerRef.current) {
-      clearTimeout(treeRefreshTimerRef.current);
+    // A dir's children are visible when: it's root (always expanded via isRootExpanded)
+    // or it's in expandedPaths AND its ancestor chain is visible (isDirVisible).
+    // ponytail: isDirVisible alone is insufficient — it checks row visibility not content visibility
+    const visible = isRoot
+      ? s.isRootExpanded
+      : s.expandedPaths.has(dir) &&
+        isDirVisible(dir, {
+          rootPath: root,
+          isRootExpanded: s.isRootExpanded,
+          expandedPaths: s.expandedPaths,
+        });
+    if (!visible) {
+      s.markDirty(dir);
+      return;
     }
 
-    treeRefreshTimerRef.current = setTimeout(() => {
-      treeRefreshTimerRef.current = null;
-      refreshDirectoryTree();
-    }, 75);
-  }, [refreshDirectoryTree]);
+    const timers = reconcileTimersRef.current;
+    const existing = timers.get(dir);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      dir,
+      setTimeout(() => {
+        timers.delete(dir);
+        void ensurePathLoaded(dir, { force: true });
+      }, 75)
+    );
+  }, []);
 
   const handleFileChange = useCallback(
     (event: FileEvent) => {
@@ -113,19 +113,20 @@ function App() {
         event.type === 'renamed' ||
         event.isDir
       ) {
-        scheduleDirectoryTreeRefresh();
+        const dir = getDirectoryPath(event.path) || event.path;
+        reconcileDir(dir);
       }
     },
-    [scheduleDirectoryTreeRefresh]
+    [reconcileDir]
   );
 
   useFileWatcher(workspace?.path ?? null, handleFileChange);
 
   useEffect(() => {
     return () => {
-      if (treeRefreshTimerRef.current) {
-        clearTimeout(treeRefreshTimerRef.current);
-      }
+      const timers = reconcileTimersRef.current;
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
     };
   }, []);
 
