@@ -9,10 +9,10 @@ import (
 
 func TestDiscoverInterpreter_uv(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "uv.lock"), []byte(""), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "uv.lock"), []byte(""), 0o644)
 	interp := filepath.Join(root, ".venv", "bin", "python")
-	os.MkdirAll(filepath.Dir(interp), 0o755)
-	os.WriteFile(interp, []byte("#!py"), 0o755)
+	_ = os.MkdirAll(filepath.Dir(interp), 0o755)
+	_ = os.WriteFile(interp, []byte("#!py"), 0o755)
 
 	run := func(_ context.Context, name string, args ...string) (string, error) {
 		if name == "uv" {
@@ -39,11 +39,11 @@ func TestDiscoverInterpreter_noMarkers(t *testing.T) {
 
 func TestDiscoverInterpreter_poetry(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "poetry.lock"), []byte(""), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "poetry.lock"), []byte(""), 0o644)
 	envRoot := t.TempDir()
 	interp := filepath.Join(envRoot, "bin", "python")
-	os.MkdirAll(filepath.Dir(interp), 0o755)
-	os.WriteFile(interp, []byte("#!py"), 0o755)
+	_ = os.MkdirAll(filepath.Dir(interp), 0o755)
+	_ = os.WriteFile(interp, []byte("#!py"), 0o755)
 	run := func(_ context.Context, name string, args ...string) (string, error) {
 		if name == "poetry" {
 			return envRoot, nil // `poetry env info -p` prints the env root
@@ -58,7 +58,7 @@ func TestDiscoverInterpreter_poetry(t *testing.T) {
 
 func TestDiscoverInterpreter_resultNotExecutableRejected(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "uv.lock"), []byte(""), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "uv.lock"), []byte(""), 0o644)
 	run := func(context.Context, string, ...string) (string, error) {
 		return filepath.Join(root, "does-not-exist"), nil
 	}

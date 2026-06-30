@@ -16,6 +16,6 @@ func defaultFetch(ctx context.Context, a Artifact, destDir string) error {
 	if err := DownloadAndVerify(ctx, client, a.URL, a.SHA256, tmp); err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	return UnzipWheel(tmp, destDir)
 }

@@ -16,7 +16,7 @@ func UnzipWheel(src, destDir string) error {
 	if err != nil {
 		return err
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	cleanDest := filepath.Clean(destDir)
 	for _, f := range zr.File {
@@ -49,7 +49,7 @@ func extractZipFile(f *zip.File, target string) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	mode := f.Mode()
 	if mode == 0 {
 		mode = 0o644
@@ -58,7 +58,10 @@ func extractZipFile(f *zip.File, target string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, rc)
-	return err
+	if _, err := io.Copy(out, rc); err != nil {
+		_ = out.Close()
+		return err
+	}
+	// Check Close: a flush error here means a corrupt extracted binary.
+	return out.Close()
 }

@@ -16,7 +16,7 @@ func sha256Hex(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToStri
 
 func TestDownloadAndVerify_ok(t *testing.T) {
 	body := []byte("fake-wheel-bytes")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(body) }))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
 	defer srv.Close()
 	dest := filepath.Join(t.TempDir(), "out.whl")
 	if err := DownloadAndVerify(context.Background(), http.DefaultClient, srv.URL, sha256Hex(body), dest); err != nil {
@@ -29,7 +29,7 @@ func TestDownloadAndVerify_ok(t *testing.T) {
 }
 
 func TestDownloadAndVerify_checksumMismatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("tampered")) }))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("tampered")) }))
 	defer srv.Close()
 	dest := filepath.Join(t.TempDir(), "out.whl")
 	err := DownloadAndVerify(context.Background(), http.DefaultClient, srv.URL, sha256Hex([]byte("expected")), dest)

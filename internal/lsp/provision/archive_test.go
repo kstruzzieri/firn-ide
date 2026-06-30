@@ -14,14 +14,14 @@ func makeZip(t *testing.T, files map[string]string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	for name, body := range files {
 		w, err := zw.Create(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.Write([]byte(body))
+		_, _ = w.Write([]byte(body))
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
@@ -64,11 +64,11 @@ func TestUnzipWheel_preservesExecBit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Write([]byte("#!node"))
+	_, _ = w.Write([]byte("#!node"))
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	dest := t.TempDir()
 	if err := UnzipWheel(p, dest); err != nil {

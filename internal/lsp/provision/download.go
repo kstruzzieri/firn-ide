@@ -37,7 +37,7 @@ func DownloadAndVerify(ctx context.Context, client *http.Client, url, wantHex, d
 	if err != nil {
 		return fmt.Errorf("download %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download %s: status %d", url, resp.StatusCode)
 	}
@@ -47,11 +47,11 @@ func DownloadAndVerify(ctx context.Context, client *http.Client, url, wantHex, d
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op after successful rename
+	defer func() { _ = os.Remove(tmpName) }() // no-op after successful rename
 
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

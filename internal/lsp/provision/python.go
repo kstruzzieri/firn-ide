@@ -163,7 +163,7 @@ func (p *PythonProvisioner) installManual(ctx context.Context, artifacts []Artif
 	if err != nil {
 		return Resolution{State: StateOffline, Err: err}
 	}
-	defer os.RemoveAll(staging) // no-op after successful rename
+	defer func() { _ = os.RemoveAll(staging) }() // no-op after successful rename
 
 	for i, a := range artifacts {
 		if err := p.fetch(ctx, a, staging); err != nil {
