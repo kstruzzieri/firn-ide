@@ -38,6 +38,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
   }
 
   const existing = inFlight.get(path);
+  // ponytail: a {force:true} call arriving while a non-force load is in flight piggybacks on it — harmless, since the in-flight load fetches the same fresh data.
   if (existing) return existing;
 
   const generation = root; // workspace identity captured at start

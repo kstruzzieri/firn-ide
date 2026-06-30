@@ -168,7 +168,9 @@ export function FileExplorer() {
   const handleToggle = useCallback(
     (kind: 'root' | 'entry', path?: string) => {
       if (kind === 'root') {
+        const willExpand = !useIDEStore.getState().isRootExpanded;
         toggleRootExpanded();
+        if (willExpand) void ensurePathLoaded(rootPath);
         return;
       }
       if (!path) return;
@@ -176,7 +178,7 @@ export function FileExplorer() {
       toggleExpanded(path);
       if (willExpand) void ensurePathLoaded(path);
     },
-    [toggleRootExpanded, toggleExpanded, ensurePathLoaded]
+    [toggleRootExpanded, toggleExpanded, ensurePathLoaded, rootPath]
   );
   const handleSelect = useCallback((path: string) => setSelectedPath(path), [setSelectedPath]);
   const handleOpen = useCallback((path: string) => void ensureEditorFileOpen(path), []);
