@@ -181,6 +181,13 @@ func (a *App) ReadDirectory(path string) ([]filesystem.FileEntry, error) {
 	return a.dirReader.ReadDirectory(path)
 }
 
+// ReadDirectoryShallow reads a single directory level (immediate children only).
+// Used for lazy tree loading — child directories are returned without their
+// own children populated.
+func (a *App) ReadDirectoryShallow(path string) ([]filesystem.FileEntry, error) {
+	return a.dirReader.ReadDirectoryShallow(path)
+}
+
 // ReadFile reads a file and returns its contents with metadata.
 // Detects encoding (UTF-8, UTF-16, Latin-1) and line endings.
 // This is exposed to the frontend via Wails bindings.

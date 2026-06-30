@@ -65,6 +65,8 @@ export function PinRunProfile(arg1:string):Promise<void>;
 
 export function ReadDirectory(arg1:string):Promise<Array<filesystem.FileEntry>>;
 
+export function ReadDirectoryShallow(arg1:string):Promise<Array<filesystem.FileEntry>>;
+
 export function ReadFile(arg1:string):Promise<filesystem.FileContent>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
