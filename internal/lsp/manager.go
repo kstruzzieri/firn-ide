@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"firn/internal/lsp/provision"
 )
 
 // errNoWorkspaceRoot signals that an LSP method was called before
@@ -36,7 +38,7 @@ type ServerStatus struct {
 	State                       string   `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
 	Error                       string   `json:"error,omitempty"`
 	CompletionTriggerCharacters []string `json:"completionTriggerCharacters,omitempty"`
-	SetupState                  string   `json:"setupState,omitempty"` // ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable
+	SetupState                  string   `json:"setupState,omitempty"` // ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable|provisioning|offline|provision_failed
 	InterpreterPath             string   `json:"interpreterPath,omitempty"`
 	ProjectRoot                 string   `json:"projectRoot,omitempty"`
 	ConfigSource                string   `json:"configSource,omitempty"`
@@ -44,6 +46,7 @@ type ServerStatus struct {
 	PythonVersion               string   `json:"pythonVersion,omitempty"`
 	Action                      string   `json:"action,omitempty"` // create_venv|select_interpreter|retry|""
 	DetailCode                  string   `json:"detailCode,omitempty"`
+	ProvisionPct                int      `json:"provisionPct,omitempty"` // 0-100 during managed install
 }
 
 // EventEmitter is the callback signature for emitting events to the frontend.
@@ -76,6 +79,22 @@ type Manager struct {
 	// stopped is set by ShutdownAll to prevent crash-recovery restarts
 	// from resurrecting servers after intentional teardown.
 	stopped bool
+
+	// provisioners maps a language family to its managed provisioner. Populated
+	// by SetProvisioners and shared with the registry so a resolver miss can be
+	// classified as provisionable.
+	provisioners map[string]provision.Provisioner
+
+	// provisionMu guards provisioning. It is intentionally separate from mu so
+	// an in-flight install never blocks document routing on the hot path.
+	provisionMu sync.Mutex
+	// provisioning tracks families with an install in flight (single-flight).
+	provisioning map[string]bool
+
+	// ctx is the manager's lifetime context, cancelled by ShutdownAll so
+	// background installs stop when the workspace is torn down.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // serverKey identifies a unique server instance by language family and workspace.
@@ -102,13 +121,24 @@ type serverEntry struct {
 
 // NewManager creates a new LSP manager with the given event emitter.
 func NewManager(emitter EventEmitter) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		registry:       NewRegistry(),
 		emitter:        emitter,
 		configProvider: newEnvConfigProvider(),
 		servers:        make(map[serverKey]*serverEntry),
 		docKeys:        make(map[string]serverKey),
+		provisioning:   make(map[string]bool),
+		ctx:            ctx,
+		cancel:         cancel,
 	}
+}
+
+// SetProvisioners injects managed provisioners and forwards them to the registry
+// so a resolver miss can be classified as provisionable.
+func (m *Manager) SetProvisioners(p map[string]provision.Provisioner) {
+	m.provisioners = p
+	m.registry.SetProvisioners(p)
 }
 
 // SetWorkspaceRoot updates the active workspace root path.
@@ -129,6 +159,13 @@ func (m *Manager) SetWorkspaceRoot(root string) {
 	defer m.mu.Unlock()
 	m.workspaceRoot = cleaned
 	m.stopped = false
+	// Refresh the lifetime context: a workspace switch cancels installs scoped
+	// to the previous root and gives the new root a live context to provision
+	// under (also revives the manager after a ShutdownAll teardown).
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 }
 
 // WorkspaceRoot returns the current workspace root path.
@@ -170,6 +207,12 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 	entry, err := m.ensureServer(ctx, family, workspace)
 	if err != nil {
 		return err
+	}
+	if entry == nil {
+		// A managed install is in flight (provisionable miss). DidOpen is
+		// non-blocking: the document re-opens via restartFamily once the cache
+		// is populated. The frontend re-sends content on the ready status.
+		return nil
 	}
 
 	m.mu.Lock()
@@ -393,11 +436,17 @@ func (m *Manager) GetStatus() []ServerStatus {
 func (m *Manager) ShutdownAll(timeout time.Duration) {
 	m.mu.Lock()
 	m.stopped = true
+	cancel := m.cancel
 	keys := make([]serverKey, 0, len(m.servers))
 	for key := range m.servers {
 		keys = append(keys, key)
 	}
 	m.mu.Unlock()
+
+	// Cancel the lifetime context so any in-flight managed install stops.
+	if cancel != nil {
+		cancel()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -429,11 +478,120 @@ func (m *Manager) ensureServer(ctx context.Context, family, workspace string) (*
 	// Resolve server config
 	config, err := m.registry.ServerConfigFor(family, workspace)
 	if err != nil {
+		// A managed provisioner can serve this family: kick off an async install
+		// rather than hard-failing the file open. The server starts once the
+		// cache is populated (see restartFamily).
+		var miss *ServerMissError
+		if errors.As(err, &miss) && miss.Provisionable && m.provisioners[family] != nil {
+			m.beginProvision(family, workspace)
+			return nil, nil
+		}
 		m.emitStatus(family, workspace, "error", err.Error(), defaultServerCommand(family))
 		return nil, err
 	}
 
 	return m.startServer(ctx, key, config)
+}
+
+// provisionCtx returns the manager's lifetime context, falling back to a
+// background context when the manager was built via a struct literal (some
+// tests) rather than NewManager. The install goroutine derives cancellation
+// from this so workspace teardown (ShutdownAll) stops in-flight installs.
+func (m *Manager) provisionCtx() context.Context {
+	if m.ctx != nil {
+		return m.ctx
+	}
+	return context.Background()
+}
+
+// beginProvision installs a family's managed server in the background, emitting
+// status transitions. Single-flight per family: a second open of the same
+// family while an install is in flight is a no-op.
+func (m *Manager) beginProvision(family, projectRoot string) {
+	prov := m.provisioners[family]
+	if prov == nil {
+		return
+	}
+
+	m.provisionMu.Lock()
+	if m.provisioning == nil {
+		m.provisioning = map[string]bool{}
+	}
+	if m.provisioning[family] {
+		m.provisionMu.Unlock()
+		return
+	}
+	m.provisioning[family] = true
+	m.provisionMu.Unlock()
+
+	m.emitProvisionStatus(family, projectRoot, "provisioning", "", "", 0)
+
+	go func() {
+		res := prov.Install(m.provisionCtx(), func(p provision.Progress) {
+			m.emitProvisionStatus(family, projectRoot, "provisioning", "", "", p.Pct)
+		})
+
+		m.provisionMu.Lock()
+		m.provisioning[family] = false
+		m.provisionMu.Unlock()
+
+		switch res.State {
+		case provision.StateAvailable:
+			// Cache is populated — re-run the normal start path.
+			m.restartFamily(family, projectRoot)
+		case provision.StateOffline:
+			m.emitProvisionStatus(family, projectRoot, "offline", "retry", "download_offline", 0)
+		case provision.StateChecksumFailed:
+			m.emitProvisionStatus(family, projectRoot, "provision_failed", "retry", "checksum_mismatch", 0)
+		default:
+			m.emitProvisionStatus(family, projectRoot, "provision_failed", "retry", "provision_error", 0)
+		}
+	}()
+}
+
+// RetryProvision re-attempts a managed install (frontend Retry action). It uses
+// the manager's current workspace root as the project root.
+func (m *Manager) RetryProvision(family string) error {
+	if _, ok := m.provisioners[family]; !ok {
+		return fmt.Errorf("no managed provisioner for %q", family)
+	}
+	m.beginProvision(family, m.WorkspaceRoot())
+	return nil
+}
+
+// restartFamily re-runs the normal start path for a family after a successful
+// provision. It reuses ensureServer so the server is launched and a ready
+// status emitted exactly as a first open would. Errors are logged; the start
+// path already emits an error status on failure.
+func (m *Manager) restartFamily(family, projectRoot string) {
+	if _, err := m.ensureServer(m.provisionCtx(), family, projectRoot); err != nil {
+		log.Printf("lsp: post-provision start failed family=%s root=%q: %v", family, projectRoot, err)
+	}
+}
+
+// emitProvisionStatus emits an lsp:status event describing a managed-install
+// transition. It mirrors emitStatus's contract (called without m.mu held) but
+// carries the typed setup fields the provisioning cards need. The LSP State is
+// "starting" while provisioning and "error" once an install fails so existing
+// frontend state machines treat it sensibly.
+func (m *Manager) emitProvisionStatus(family, projectRoot, setupState, action, detailCode string, pct int) {
+	if m.emitter == nil {
+		return
+	}
+	state := "starting"
+	if setupState == "offline" || setupState == "provision_failed" {
+		state = "error"
+	}
+	m.emitter("lsp:status", ServerStatus{
+		Family:       family,
+		Workspace:    projectRoot,
+		State:        state,
+		ProjectRoot:  projectRoot,
+		SetupState:   setupState,
+		Action:       action,
+		DetailCode:   detailCode,
+		ProvisionPct: pct,
+	})
 }
 
 // startServer launches a new language server process and initializes it.

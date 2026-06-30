@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"firn/internal/lsp/provision"
 	"firn/internal/lsp/pythonenv"
 )
 
@@ -1851,5 +1852,185 @@ func TestGetStatus_PythonReadyEnriched(t *testing.T) {
 	}
 	if got.ConfigSource != "detected" {
 		t.Errorf("ConfigSource = %q, want detected", got.ConfigSource)
+	}
+}
+
+// --- Managed provisioning orchestration (#112) ---
+
+// scriptedProv is a test Provisioner whose Resolve flips to StateAvailable only
+// after Install runs, and whose Install returns a scripted Resolution. When the
+// install resolves to StateAvailable, Path/Args point at the mock LSP server so
+// restartFamily can actually launch it.
+type scriptedProv struct {
+	family     string
+	installRes provision.Resolution
+	mu         sync.Mutex
+	installed  bool
+	calls      int
+}
+
+func (p *scriptedProv) Family() string { return p.family }
+
+func (p *scriptedProv) Resolve() provision.Resolution {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.installed && p.installRes.State == provision.StateAvailable {
+		return p.installRes
+	}
+	return provision.Resolution{State: provision.StateMissing}
+}
+
+func (p *scriptedProv) Install(ctx context.Context, progress func(provision.Progress)) provision.Resolution {
+	if progress != nil {
+		progress(provision.Progress{Phase: "download", Pct: 50})
+	}
+	p.mu.Lock()
+	p.calls++
+	p.installed = true
+	res := p.installRes
+	p.mu.Unlock()
+	return res
+}
+
+func (p *scriptedProv) installCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// mockServerResolution returns a StateAvailable Resolution whose launch command
+// is the current test binary re-invoked as the mock LSP server.
+func mockServerResolution() provision.Resolution {
+	return provision.Resolution{
+		State: provision.StateAvailable,
+		Path:  os.Args[0],
+		Args:  []string{"-test.run=^TestMockServerProcess$"},
+	}
+}
+
+// newProvisionManager builds a Manager whose registry resolves the python family
+// only via the supplied managed provisioner (no host binary), with the workspace
+// root set to a temp dir.
+func newProvisionManager(t *testing.T, prov provision.Provisioner) (*Manager, *eventCollector, string) {
+	t.Helper()
+	// Defeat any host pyright/basedpyright so the python resolver falls through
+	// to managedOrMiss deterministically.
+	t.Setenv("PATH", "")
+	t.Setenv("VIRTUAL_ENV", "")
+
+	workspace := t.TempDir()
+	collector := &eventCollector{}
+	mgr := NewManager(collector.emit)
+	mgr.SetProvisioners(map[string]provision.Provisioner{"python": prov})
+	mgr.SetWorkspaceRoot(workspace)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+	return mgr, collector, workspace
+}
+
+// latestPythonStatus returns the most recent lsp:status ServerStatus for the
+// python family, or false if none was emitted.
+func latestPythonStatus(ec *eventCollector) (ServerStatus, bool) {
+	var found ServerStatus
+	var ok bool
+	for _, e := range ec.eventsByName("lsp:status") {
+		if len(e.data) == 0 {
+			continue
+		}
+		s, isStatus := e.data[0].(ServerStatus)
+		if isStatus && s.Family == "python" {
+			found = s
+			ok = true
+		}
+	}
+	return found, ok
+}
+
+func TestManager_provisionsOnMiss(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+	t.Setenv("FIRN_MOCK_LSP", "1")
+
+	prov := &scriptedProv{family: "python", installRes: mockServerResolution()}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	pyFile := filepath.Join(workspace, "main.py")
+	if err := mgr.DidOpen(context.Background(), pyFile, "python", 1, "x = 1"); err != nil {
+		t.Fatalf("DidOpen must be non-blocking on a provisionable miss, got: %v", err)
+	}
+
+	// A provisioning status must be emitted promptly.
+	waitFor(t, 2*time.Second, "provisioning status", func() bool {
+		for _, e := range collector.eventsByName("lsp:status") {
+			if len(e.data) == 0 {
+				continue
+			}
+			if s, ok := e.data[0].(ServerStatus); ok && s.Family == "python" && s.SetupState == "provisioning" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// After install completes, restartFamily starts the mock server -> ready.
+	waitFor(t, 5*time.Second, "python server ready", func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		entry, ok := mgr.servers[serverKey{family: "python", workspace: workspace}]
+		return ok && entry.client.State() == ClientStateReady
+	})
+
+	if got := prov.installCalls(); got != 1 {
+		t.Errorf("Install called %d times, want 1 (single-flight)", got)
+	}
+}
+
+func TestManager_provisionOfflineSurfacesCard(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.DidOpen(context.Background(), filepath.Join(workspace, "main.py"), "python", 1, "x = 1"); err != nil {
+		t.Fatalf("DidOpen non-blocking, got: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+
+	s, _ := latestPythonStatus(collector)
+	if s.Action != "retry" {
+		t.Errorf("Action = %q, want retry", s.Action)
+	}
+	if s.DetailCode != "download_offline" {
+		t.Errorf("DetailCode = %q, want download_offline", s.DetailCode)
+	}
+}
+
+func TestManager_provisionChecksumFailed(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateChecksumFailed, Err: errors.New("hash mismatch")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.DidOpen(context.Background(), filepath.Join(workspace, "main.py"), "python", 1, "x = 1"); err != nil {
+		t.Fatalf("DidOpen non-blocking, got: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "provision_failed status", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "provision_failed"
+	})
+
+	s, _ := latestPythonStatus(collector)
+	if s.Action != "retry" {
+		t.Errorf("Action = %q, want retry", s.Action)
+	}
+	if s.DetailCode != "checksum_mismatch" {
+		t.Errorf("DetailCode = %q, want checksum_mismatch", s.DetailCode)
 	}
 }
