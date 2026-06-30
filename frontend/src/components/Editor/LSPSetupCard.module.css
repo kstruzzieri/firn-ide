@@ -17,6 +17,17 @@
   border-left: 3px solid var(--status-warning);
 }
 
+.info {
+  border-left: 3px solid var(--accent-blue);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .message {
   color: var(--text-primary, #e6e6e6);
   font-weight: 500;

@@ -48,10 +48,11 @@ export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNoti
       };
     case 'provisioning':
       return {
-        message: 'Setting up language server…',
-        hint: status.provisionPct
-          ? `Downloading (${status.provisionPct}%).`
-          : 'Downloading the language server.',
+        message: 'Setting up language server...',
+        hint:
+          status.provisionPct != null
+            ? `Downloading (${status.provisionPct}%).`
+            : 'Downloading the language server.',
         tone: 'info',
       };
     case 'offline':

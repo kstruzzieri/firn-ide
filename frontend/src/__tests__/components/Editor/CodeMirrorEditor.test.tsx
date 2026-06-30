@@ -105,6 +105,13 @@ jest.mock('../../../components/Editor/codemirror', () => {
   };
 });
 
+jest.mock('../../../../wailsjs/go/main/App', () => ({
+  LSPRetryProvision: jest.fn().mockResolvedValue(undefined),
+  LSPSetInterpreter: jest.fn().mockResolvedValue(undefined),
+  LSPClearInterpreter: jest.fn().mockResolvedValue(undefined),
+  LSPDoctor: jest.fn().mockResolvedValue({ family: 'python', candidates: [] }),
+}));
+
 import { CodeMirrorEditor } from '../../../components/Editor/CodeMirrorEditor';
 import { applyEditorTheme } from '../../../components/Editor/codemirror';
 import { useIDEStore } from '../../../stores/ideStore';

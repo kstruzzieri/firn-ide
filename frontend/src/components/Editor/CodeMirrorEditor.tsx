@@ -350,7 +350,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 
   return (
     <div className={styles.editorRoot}>
-      <LSPSetupCard status={setupStatus} />
+      <LSPSetupCard status={setupStatus} workspacePath={setupStatus?.workspace ?? ''} />
       <div ref={containerRef} className={styles.container} data-testid="codemirror-editor" />
     </div>
   );
