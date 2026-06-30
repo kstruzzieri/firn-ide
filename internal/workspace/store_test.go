@@ -519,3 +519,36 @@ func TestSaveLoad_ActiveWorkspaceID(t *testing.T) {
 		t.Errorf("ActiveWorkspaceID = %q, want %q", loaded.ActiveWorkspaceID, "frontend")
 	}
 }
+
+func TestState_LSPOverride_roundTrip(t *testing.T) {
+	store := NewStore(newMockFS(), "/home/.firn/workspaces")
+	state := State{
+		WorkspacePath: "/ws",
+		WorkspaceName: "ws",
+		LSP: LSPState{
+			InterpreterOverride: "/ws/.venv/bin/python",
+			ServerPathOverride:  map[string]string{"python": "/usr/local/bin/pyright"},
+		},
+	}
+
+	if err := store.Save(state); err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+	loaded, err := store.Load("/ws")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if loaded.LSP.InterpreterOverride != "/ws/.venv/bin/python" {
+		t.Errorf("InterpreterOverride = %q, want %q", loaded.LSP.InterpreterOverride, "/ws/.venv/bin/python")
+	}
+	if loaded.LSP.ServerPathOverride["python"] != "/usr/local/bin/pyright" {
+		t.Errorf("ServerPathOverride[python] = %q, want %q", loaded.LSP.ServerPathOverride["python"], "/usr/local/bin/pyright")
+	}
+}
+
+func TestState_absentLSP_isZeroValue(t *testing.T) {
+	var st State
+	if st.LSP.InterpreterOverride != "" || st.LSP.ServerPathOverride != nil {
+		t.Error("zero State should have empty LSPState")
+	}
+}

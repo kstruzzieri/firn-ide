@@ -62,6 +62,10 @@ export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
 }
 
+export function LSPClearInterpreter(arg1) {
+  return window['go']['main']['App']['LSPClearInterpreter'](arg1);
+}
+
 export function LSPComplete(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LSPComplete'](arg1, arg2, arg3, arg4);
 }
@@ -86,12 +90,24 @@ export function LSPDidSave(arg1) {
   return window['go']['main']['App']['LSPDidSave'](arg1);
 }
 
+export function LSPDoctor(arg1) {
+  return window['go']['main']['App']['LSPDoctor'](arg1);
+}
+
 export function LSPHover(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPHover'](arg1, arg2, arg3);
 }
 
 export function LSPResolveCompletionItem(arg1, arg2) {
   return window['go']['main']['App']['LSPResolveCompletionItem'](arg1, arg2);
+}
+
+export function LSPRetryProvision(arg1) {
+  return window['go']['main']['App']['LSPRetryProvision'](arg1);
+}
+
+export function LSPSetInterpreter(arg1, arg2) {
+  return window['go']['main']['App']['LSPSetInterpreter'](arg1, arg2);
 }
 
 export function ListRecentWorkspaces() {

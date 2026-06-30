@@ -7,7 +7,25 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"firn/internal/lsp/provision"
 )
+
+// ServerMissError is returned when no server binary could be resolved. When
+// Provisionable is true a managed provisioner exists for the family, so the
+// manager can trigger an async install instead of surfacing a raw error.
+type ServerMissError struct {
+	Family        string
+	Provisionable bool
+	Hint          string // human guidance for the unprovisionable case
+}
+
+func (e *ServerMissError) Error() string {
+	if e.Hint != "" {
+		return e.Hint
+	}
+	return fmt.Sprintf("no language server found for %q", e.Family)
+}
 
 // ServerConfig describes how to launch a language server for a given language family.
 type ServerConfig struct {
@@ -25,11 +43,34 @@ type ServerConfig struct {
 }
 
 // Registry maps file extensions and language contexts to server configurations.
-type Registry struct{}
+type Registry struct {
+	provisioners map[string]provision.Provisioner
+}
 
 // NewRegistry creates a new language server registry.
 func NewRegistry() *Registry {
-	return &Registry{}
+	return &Registry{provisioners: map[string]provision.Provisioner{}}
+}
+
+// SetProvisioners wires managed provisioners (called once by the manager).
+func (r *Registry) SetProvisioners(p map[string]provision.Provisioner) { r.provisioners = p }
+
+// managedOrMiss consults the family provisioner's cache (Resolve, never network).
+// When a managed binary is present it returns a ServerConfig; otherwise a typed
+// ServerMissError whose Provisionable reflects whether a provisioner exists.
+func (r *Registry) managedOrMiss(family, projectRoot, hint string) (*ServerConfig, error) {
+	prov, ok := r.provisioners[family]
+	if ok {
+		if res := prov.Resolve(); res.State == provision.StateAvailable {
+			return &ServerConfig{
+				LanguageFamily: family,
+				Command:        res.Path,
+				Args:           res.Args,
+				Dir:            projectRoot,
+			}, nil
+		}
+	}
+	return nil, &ServerMissError{Family: family, Provisionable: ok, Hint: hint}
 }
 
 // langInfo pairs an LSP languageId with its server family.
@@ -127,11 +168,9 @@ func (r *Registry) resolveTypeScriptServer(projectRoot string) (*ServerConfig, e
 	// 2. Fall back to system PATH
 	path, err := exec.LookPath(binary)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"typescript-language-server not found: install it with " +
-				"\"npm install -g typescript-language-server typescript\" " +
-				"or add it as a project dependency",
-		)
+		return nil, &ServerMissError{Family: "typescript", Provisionable: false, Hint: "typescript-language-server not found: install it with " +
+			"\"npm install -g typescript-language-server typescript\" " +
+			"or add it as a project dependency"}
 	}
 
 	args := []string{"--stdio"}
@@ -170,11 +209,9 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 	if err != nil {
 		path = findGoBinary("gopls")
 		if path == "" {
-			return nil, fmt.Errorf(
-				"gopls not found: install it with " +
-					"\"go install golang.org/x/tools/gopls@latest\" " +
-					"or add it to PATH",
-			)
+			return nil, &ServerMissError{Family: "go", Provisionable: false, Hint: "gopls not found: install it with " +
+				"\"go install golang.org/x/tools/gopls@latest\" " +
+				"or add it to PATH"}
 		}
 	}
 
@@ -273,21 +310,18 @@ func (r *Registry) resolvePythonServer(projectRoot string) (*ServerConfig, error
 		}, nil
 	}
 
-	path, err := exec.LookPath(binary)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"pyright-langserver not found: install it with " +
-				"\"npm install -g pyright\", add pyright as a project dependency, " +
-				"or activate a virtual environment that provides pyright-langserver",
-		)
+	if path, err := exec.LookPath(binary); err == nil {
+		return &ServerConfig{
+			LanguageFamily: "python",
+			Command:        path,
+			Args:           []string{"--stdio"},
+			Dir:            projectRoot,
+		}, nil
 	}
 
-	return &ServerConfig{
-		LanguageFamily: "python",
-		Command:        path,
-		Args:           []string{"--stdio"},
-		Dir:            projectRoot,
-	}, nil
+	return r.managedOrMiss("python", projectRoot,
+		"Python language server not found. Firn can install it automatically, "+
+			"or add basedpyright/pyright as a project dependency.")
 }
 
 func resolvePythonVirtualEnvBinary(projectRoot, binary string) (string, bool) {

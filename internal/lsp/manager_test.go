@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"firn/internal/lsp/provision"
 	"firn/internal/lsp/pythonenv"
 )
 
@@ -181,8 +182,17 @@ func TestRegistry_GoServerConfigReportsMissingGopls(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when gopls is not found")
 	}
-	if !contains(err.Error(), "go install golang.org/x/tools/gopls@latest") {
-		t.Errorf("error should include install instructions, got: %s", err.Error())
+	// Typed miss: go has no managed provisioner, so it is unprovisionable and
+	// the gopls install guidance must be preserved as the hint.
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if miss.Provisionable {
+		t.Error("go has no managed provisioner; expected Provisionable=false")
+	}
+	if !contains(miss.Hint, "go install golang.org/x/tools/gopls@latest") {
+		t.Errorf("hint should include install instructions, got: %s", miss.Hint)
 	}
 }
 
@@ -305,8 +315,17 @@ func TestRegistry_PythonServerConfigReportsMissingPyright(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when pyright-langserver is not found")
 	}
-	if !contains(err.Error(), "npm install -g pyright") {
-		t.Errorf("error should include install instructions, got: %s", err.Error())
+	// Typed miss with actionable hint. No managed provisioner is wired on a bare
+	// registry, so this resolves as unprovisionable.
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if miss.Provisionable {
+		t.Error("no provisioner wired; expected Provisionable=false")
+	}
+	if !contains(miss.Hint, "basedpyright/pyright") {
+		t.Errorf("hint should include install guidance, got: %s", miss.Hint)
 	}
 }
 
@@ -1833,5 +1852,298 @@ func TestGetStatus_PythonReadyEnriched(t *testing.T) {
 	}
 	if got.ConfigSource != "detected" {
 		t.Errorf("ConfigSource = %q, want detected", got.ConfigSource)
+	}
+}
+
+// --- Managed provisioning orchestration (#112) ---
+
+// scriptedProv is a test Provisioner whose Resolve flips to StateAvailable only
+// after Install runs, and whose Install returns a scripted Resolution. When the
+// install resolves to StateAvailable, Path/Args point at the mock LSP server so
+// restartFamily can actually launch it.
+type scriptedProv struct {
+	family     string
+	installRes provision.Resolution
+	mu         sync.Mutex
+	installed  bool
+	calls      int
+}
+
+func (p *scriptedProv) Family() string { return p.family }
+
+func (p *scriptedProv) Resolve() provision.Resolution {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.installed && p.installRes.State == provision.StateAvailable {
+		return p.installRes
+	}
+	return provision.Resolution{State: provision.StateMissing}
+}
+
+func (p *scriptedProv) Install(ctx context.Context, progress func(provision.Progress)) provision.Resolution {
+	if progress != nil {
+		progress(provision.Progress{Phase: "download", Pct: 50})
+	}
+	p.mu.Lock()
+	p.calls++
+	p.installed = true
+	res := p.installRes
+	p.mu.Unlock()
+	return res
+}
+
+func (p *scriptedProv) installCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// mockServerResolution returns a StateAvailable Resolution whose launch command
+// is the current test binary re-invoked as the mock LSP server.
+func mockServerResolution() provision.Resolution {
+	return provision.Resolution{
+		State: provision.StateAvailable,
+		Path:  os.Args[0],
+		Args:  []string{"-test.run=^TestMockServerProcess$"},
+	}
+}
+
+// newProvisionManager builds a Manager whose registry resolves the python family
+// only via the supplied managed provisioner (no host binary), with the workspace
+// root set to a temp dir.
+func newProvisionManager(t *testing.T, prov provision.Provisioner) (*Manager, *eventCollector, string) {
+	t.Helper()
+	// Defeat any host pyright/basedpyright so the python resolver falls through
+	// to managedOrMiss deterministically.
+	t.Setenv("PATH", "")
+	t.Setenv("VIRTUAL_ENV", "")
+
+	workspace := t.TempDir()
+	collector := &eventCollector{}
+	mgr := NewManager(collector.emit)
+	mgr.SetProvisioners(map[string]provision.Provisioner{"python": prov})
+	mgr.SetWorkspaceRoot(workspace)
+	t.Cleanup(func() { mgr.ShutdownAll(5 * time.Second) })
+	return mgr, collector, workspace
+}
+
+// latestPythonStatus returns the most recent lsp:status ServerStatus for the
+// python family, or false if none was emitted.
+func latestPythonStatus(ec *eventCollector) (ServerStatus, bool) {
+	var found ServerStatus
+	var ok bool
+	for _, e := range ec.eventsByName("lsp:status") {
+		if len(e.data) == 0 {
+			continue
+		}
+		s, isStatus := e.data[0].(ServerStatus)
+		if isStatus && s.Family == "python" {
+			found = s
+			ok = true
+		}
+	}
+	return found, ok
+}
+
+func TestManager_provisionsOnMiss(t *testing.T) {
+	if os.Getenv("FIRN_MOCK_LSP") == "1" {
+		t.Skip("running as mock server")
+	}
+	t.Setenv("FIRN_MOCK_LSP", "1")
+
+	prov := &scriptedProv{family: "python", installRes: mockServerResolution()}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	pyFile := filepath.Join(workspace, "main.py")
+	if err := mgr.DidOpen(context.Background(), pyFile, "python", 1, "x = 1"); err != nil {
+		t.Fatalf("DidOpen must be non-blocking on a provisionable miss, got: %v", err)
+	}
+	if err := mgr.DidChange(pyFile, 2, []TextDocumentContentChangeEvent{{Text: "x = 2"}}); err != nil {
+		t.Fatalf("DidChange during provisioning must be a no-op, got: %v", err)
+	}
+	uri, err := FileToURI(pyFile)
+	if err != nil {
+		t.Fatalf("FileToURI: %v", err)
+	}
+
+	// A provisioning status must be emitted promptly.
+	waitFor(t, 2*time.Second, "provisioning status", func() bool {
+		for _, e := range collector.eventsByName("lsp:status") {
+			if len(e.data) == 0 {
+				continue
+			}
+			if s, ok := e.data[0].(ServerStatus); ok && s.Family == "python" && s.SetupState == "provisioning" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// After install completes, restartFamily starts the mock server -> ready.
+	waitFor(t, 5*time.Second, "python server ready", func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		entry, ok := mgr.servers[serverKey{family: "python", workspace: workspace}]
+		return ok && entry.client.State() == ClientStateReady
+	})
+	waitFor(t, 2*time.Second, "provision reconnect event", func() bool {
+		for _, e := range collector.eventsByName("lsp:reconnect") {
+			if len(e.data) == 0 {
+				continue
+			}
+			payload, ok := e.data[0].(map[string]any)
+			if !ok || payload["family"] != "python" || payload["workspace"] != workspace {
+				continue
+			}
+			documents, ok := payload["documents"].([]string)
+			if !ok {
+				continue
+			}
+			for _, got := range documents {
+				if got == uri {
+					return true
+				}
+			}
+		}
+		return false
+	})
+
+	if got := prov.installCalls(); got != 1 {
+		t.Errorf("Install called %d times, want 1 (single-flight)", got)
+	}
+}
+
+func TestManager_provisionOfflineSurfacesCard(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.DidOpen(context.Background(), filepath.Join(workspace, "main.py"), "python", 1, "x = 1"); err != nil {
+		t.Fatalf("DidOpen non-blocking, got: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+
+	s, _ := latestPythonStatus(collector)
+	if s.Action != "retry" {
+		t.Errorf("Action = %q, want retry", s.Action)
+	}
+	if s.DetailCode != "download_offline" {
+		t.Errorf("DetailCode = %q, want download_offline", s.DetailCode)
+	}
+}
+
+func TestManager_provisionChecksumFailed(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateChecksumFailed, Err: errors.New("hash mismatch")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.DidOpen(context.Background(), filepath.Join(workspace, "main.py"), "python", 1, "x = 1"); err != nil {
+		t.Fatalf("DidOpen non-blocking, got: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "provision_failed status", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "provision_failed"
+	})
+
+	s, _ := latestPythonStatus(collector)
+	if s.Action != "retry" {
+		t.Errorf("Action = %q, want retry", s.Action)
+	}
+	if s.DetailCode != "checksum_mismatch" {
+		t.Errorf("DetailCode = %q, want checksum_mismatch", s.DetailCode)
+	}
+}
+
+func TestSetInterpreterOverride_rejectsMissingPath(t *testing.T) {
+	m := NewManager(nil)
+	err := m.SetInterpreterOverride(t.TempDir(), filepath.Join(t.TempDir(), "nope", "python"))
+	if err == nil {
+		t.Fatal("expected error for non-existent interpreter")
+	}
+}
+
+func TestSetInterpreterOverride_rejectsDirectory(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	if err := m.SetInterpreterOverride(root, root); err == nil {
+		t.Fatal("expected error when interpreter path is a directory")
+	}
+}
+
+func TestSetAndClearInterpreterOverride_roundTrip(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetInterpreterOverride(root, interp); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := m.overrideForRoot(root); got != interp {
+		t.Errorf("override = %q, want %q", got, interp)
+	}
+	if err := m.ClearInterpreterOverride(root); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := m.overrideForRoot(root); got != "" {
+		t.Errorf("override after clear = %q, want empty", got)
+	}
+}
+
+func TestSeedInterpreterOverride_setsWithoutRestart(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	m.SeedInterpreterOverride(root, "/some/interp")
+	if got := m.overrideForRoot(root); got != "/some/interp" {
+		t.Errorf("seeded override = %q, want /some/interp", got)
+	}
+}
+
+func TestOverrideFeedsConfigProvider(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetInterpreterOverride(root, interp); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	env := pythonEnvFromProvider(m.configProvider, root)
+	if env.InterpreterPath != interp || env.Source != "override" {
+		t.Errorf("provider env = %+v, want interpreter %q source override", env, interp)
+	}
+}
+
+func TestDoctor_reportsOverrideAndCandidates(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = m.SetInterpreterOverride(root, interp)
+	rep := m.Doctor(root)
+	if rep.Family != "python" || rep.Override != interp {
+		t.Fatalf("report = %+v", rep)
+	}
+	found := false
+	for _, c := range rep.Candidates {
+		if c == interp {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("candidates %v missing override %q", rep.Candidates, interp)
 	}
 }

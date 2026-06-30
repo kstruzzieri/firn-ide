@@ -1,11 +1,29 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { LSPSetupCard } from '../../../components/Editor/LSPSetupCard';
 import { describeSetup } from '../../../components/Editor/lspSetupNotice';
 import type { LSPServerStatus } from '../../../stores/lspStore';
 
+const mockRetry = jest.fn().mockResolvedValue(undefined);
+const mockSetInterpreter = jest.fn().mockResolvedValue(undefined);
+const mockClearInterpreter = jest.fn().mockResolvedValue(undefined);
+const mockDoctor = jest.fn().mockResolvedValue({ family: 'python', candidates: ['/cand'] });
+
+jest.mock('../../../../wailsjs/go/main/App', () => ({
+  LSPRetryProvision: (...args: unknown[]) => mockRetry(...args),
+  LSPSetInterpreter: (...args: unknown[]) => mockSetInterpreter(...args),
+  LSPClearInterpreter: (...args: unknown[]) => mockClearInterpreter(...args),
+  LSPDoctor: (...args: unknown[]) => mockDoctor(...args),
+}));
+
 function status(overrides: Partial<LSPServerStatus>): LSPServerStatus {
   return { family: 'python', workspace: '/proj', state: 'ready', ...overrides };
 }
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockDoctor.mockResolvedValue({ family: 'python', candidates: ['/cand'] });
+});
 
 describe('describeSetup', () => {
   it('returns null when ready', () => {
@@ -27,17 +45,84 @@ describe('describeSetup', () => {
     const notice = describeSetup(status({ setupState: 'missing_server' }));
     expect(notice!.tone).toBe('error');
   });
+
+  it('shows a 0% download hint when provisionPct is zero', () => {
+    const notice = describeSetup(status({ setupState: 'provisioning', provisionPct: 0 }));
+    expect(notice!.hint).toContain('(0%)');
+  });
+
+  it('uses ASCII ellipsis in the provisioning message', () => {
+    const notice = describeSetup(status({ setupState: 'provisioning' }));
+    expect(notice!.message).toContain('...');
+    expect(notice!.message).not.toContain('…');
+  });
 });
 
 describe('LSPSetupCard', () => {
   it('renders nothing when ready', () => {
-    const { container } = render(<LSPSetupCard status={status({ setupState: 'ready' })} />);
+    const { container } = render(
+      <LSPSetupCard status={status({ setupState: 'ready' })} workspacePath="/proj" />
+    );
     expect(container).toBeEmptyDOMElement();
   });
 
   it('renders the message and hint for missing_interpreter', () => {
-    render(<LSPSetupCard status={status({ setupState: 'missing_interpreter' })} />);
+    render(
+      <LSPSetupCard status={status({ setupState: 'missing_interpreter' })} workspacePath="/proj" />
+    );
     expect(screen.getByRole('status')).toBeInTheDocument();
     expect(screen.getByText(/no python interpreter/i)).toBeInTheDocument();
+  });
+
+  it('offline status renders Retry wired to LSPRetryProvision', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'offline', action: 'retry' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    expect(mockRetry).toHaveBeenCalledWith('python');
+  });
+
+  it('provisioning shows progress and no Retry button', () => {
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'provisioning', provisionPct: 25 })}
+        workspacePath="/proj"
+      />
+    );
+    expect(screen.getByText(/25%/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
+
+  it('select_interpreter populates candidates from LSPDoctor and sets on choose', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'missing_interpreter', action: 'select_interpreter' })}
+        workspacePath="/proj"
+      />
+    );
+    const option = await screen.findByRole('option', { name: '/cand' });
+    expect(option).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /select interpreter/i }),
+      '/cand'
+    );
+    expect(mockSetInterpreter).toHaveBeenCalledWith('/proj', '/cand');
+  });
+
+  it('renders Reset to auto when an interpreter override is active', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'config_degraded', configSource: 'override' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /reset to auto/i }));
+    expect(mockClearInterpreter).toHaveBeenCalledWith('/proj');
   });
 });

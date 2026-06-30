@@ -4,6 +4,7 @@ import (
 	"context"
 	"firn/internal/filesystem"
 	"firn/internal/lsp"
+	"firn/internal/lsp/provision"
 	"firn/internal/runprofile"
 	"firn/internal/search"
 	"firn/internal/terminal"
@@ -11,7 +12,9 @@ import (
 	"firn/internal/workspace"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	stdruntime "runtime"
 	"sync"
 	"time"
 
@@ -87,6 +90,33 @@ func (a *App) startup(ctx context.Context) {
 	a.lspManager = lsp.NewManager(func(event string, data ...any) {
 		runtime.EventsEmit(a.ctx, event, data...)
 	})
+	a.wireLSPProvisioners()
+}
+
+// wireLSPProvisioners builds and registers the managed-server provisioners on
+// the LSP manager. Currently only the Python (basedpyright) provisioner is
+// managed. When the home directory is unavailable the provisioner is skipped
+// gracefully — managed installs simply won't be offered, while interpreter/env
+// wiring still works.
+func (a *App) wireLSPProvisioners() {
+	if a.lspManager == nil {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return
+	}
+	cacheRoot := filepath.Join(home, ".firn", "servers")
+	pyProv := provision.NewPythonProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.PythonDeps{
+		LookPath: exec.LookPath,
+		RunUV: func(ctx context.Context, uv string, args, env []string) error {
+			cmd := exec.CommandContext(ctx, uv, args...)
+			cmd.Env = env
+			return cmd.Run()
+		},
+		// Fetch nil -> defaultFetch (real download+verify+unzip).
+	})
+	a.lspManager.SetProvisioners(map[string]provision.Provisioner{"python": pyProv})
 }
 
 // beforeClose is called by Wails before the application window closes.
@@ -739,6 +769,74 @@ func (a *App) SetLSPWorkspaceRoot(workspacePath string) {
 	}
 	a.lspManager.ShutdownAll(lspWorkspaceSwitchTimeout)
 	a.lspManager.SetWorkspaceRoot(workspacePath)
+
+	// Seed any persisted interpreter override so it applies before the first
+	// file opens. Best-effort: a load error or absent state just means no
+	// override to seed.
+	if st, err := a.workspaceStore.Load(workspacePath); err == nil && st != nil && st.LSP.InterpreterOverride != "" {
+		a.lspManager.SeedInterpreterOverride(workspacePath, st.LSP.InterpreterOverride)
+	}
+}
+
+// --- LSP Phase 2 bindings (managed provisioning + interpreter override) ---
+
+// LSPDoctor returns interpreter candidates + current override for a workspace.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDoctor(workspacePath string) (lsp.DoctorReport, error) {
+	if a.lspManager == nil {
+		return lsp.DoctorReport{}, fmt.Errorf("LSP not initialized")
+	}
+	return a.lspManager.Doctor(workspacePath), nil
+}
+
+// LSPSetInterpreter validates + persists a manual interpreter override for the
+// workspace and re-wires/restarts the affected server.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPSetInterpreter(workspacePath, interpreterPath string) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	// Validate + apply in the manager first (it stat-checks the path and restarts).
+	if err := a.lspManager.SetInterpreterOverride(workspacePath, interpreterPath); err != nil {
+		return err
+	}
+	// Persist only after a successful apply.
+	return a.persistLSPInterpreter(workspacePath, interpreterPath)
+}
+
+// LSPClearInterpreter removes the override and re-detects.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPClearInterpreter(workspacePath string) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	if err := a.lspManager.ClearInterpreterOverride(workspacePath); err != nil {
+		return err
+	}
+	return a.persistLSPInterpreter(workspacePath, "") // empty clears it
+}
+
+// LSPRetryProvision re-attempts a managed server install for a family.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPRetryProvision(family string) error {
+	if a.lspManager == nil {
+		return fmt.Errorf("LSP not initialized")
+	}
+	return a.lspManager.RetryProvision(family)
+}
+
+// persistLSPInterpreter writes the interpreter override into the workspace's
+// persisted state (~/.firn/workspaces). interpreterPath=="" clears it.
+func (a *App) persistLSPInterpreter(workspacePath, interpreterPath string) error {
+	st, err := a.workspaceStore.Load(workspacePath)
+	if err != nil {
+		return err
+	}
+	if st == nil {
+		st = &workspace.State{WorkspacePath: workspacePath}
+	}
+	st.LSP.InterpreterOverride = interpreterPath
+	return a.workspaceStore.Save(*st)
 }
 
 // --- Search bindings ---

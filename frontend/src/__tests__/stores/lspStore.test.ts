@@ -293,6 +293,43 @@ describe('lspStore', () => {
       clearAllStatuses();
       expect(useLSPStore.getState().serverStatuses.size).toBe(0);
     });
+
+    it('stores a provisioning status with provisionPct', () => {
+      useLSPStore.getState().setServerStatus({
+        family: 'python',
+        workspace: '/project',
+        state: 'starting',
+        setupState: 'provisioning',
+        provisionPct: 60,
+      });
+
+      const status = useLSPStore.getState().serverStatuses.get('/project::python');
+      expect(status?.setupState).toBe('provisioning');
+      expect(status?.provisionPct).toBe(60);
+    });
+
+    it('stores offline + provision_failed setup states', () => {
+      const { setServerStatus } = useLSPStore.getState();
+      setServerStatus({
+        family: 'python',
+        workspace: '/offline',
+        state: 'error',
+        setupState: 'offline',
+        action: 'retry',
+      });
+      setServerStatus({
+        family: 'python',
+        workspace: '/failed',
+        state: 'error',
+        setupState: 'provision_failed',
+        action: 'retry',
+      });
+
+      const statuses = useLSPStore.getState().serverStatuses;
+      expect(statuses.get('/offline::python')?.setupState).toBe('offline');
+      expect(statuses.get('/offline::python')?.action).toBe('retry');
+      expect(statuses.get('/failed::python')?.setupState).toBe('provision_failed');
+    });
   });
 
   describe('workspace cleanup', () => {

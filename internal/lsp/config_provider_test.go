@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
 	"firn/internal/lsp/pythonenv"
@@ -109,6 +111,52 @@ func TestEnvConfigProvider_EmptyPythonEnvReturnsNil(t *testing.T) {
 	}
 	if results[0] != nil || results[1] != nil {
 		t.Fatalf("results = %v, want [nil nil] for empty env", results)
+	}
+}
+
+func TestPythonEnv_overrideWins(t *testing.T) {
+	p := newEnvConfigProvider()
+	p.overrideFor = func(string) string { return "/manual/python" }
+	// detectPython/discover must NOT override the manual choice; stub them to prove it.
+	p.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
+		return pythonenv.Env{InterpreterPath: "/auto", Source: "system"}
+	}
+	p.discover = func(context.Context, string) (string, string, bool) { return "/discovered", "uv", true }
+	env := p.PythonEnv("/whatever")
+	if env.InterpreterPath != "/manual/python" || env.Source != "override" {
+		t.Fatalf("env = %+v, want override interpreter", env)
+	}
+}
+
+func TestPythonEnv_discoveryUpgradesLowConfidence(t *testing.T) {
+	root := t.TempDir()
+	interp := filepath.Join(root, ".venv", "bin", "python")
+	p := newEnvConfigProvider()
+	p.overrideFor = func(string) string { return "" }
+	p.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
+		return pythonenv.Env{Source: "system", Confidence: "low", InterpreterPath: "/usr/bin/python3"}
+	}
+	p.discover = func(_ context.Context, r string) (string, string, bool) { return interp, "uv", true }
+	env := p.PythonEnv(root)
+	if env.InterpreterPath != interp || env.Source != "uv" || env.Confidence != "high" {
+		t.Fatalf("env = %+v, want uv-discovered high-confidence", env)
+	}
+}
+
+func TestPythonEnv_highConfidenceSkipsDiscovery(t *testing.T) {
+	called := false
+	p := newEnvConfigProvider()
+	p.overrideFor = func(string) string { return "" }
+	p.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
+		return pythonenv.Env{Source: ".venv", Confidence: "high", InterpreterPath: "/proj/.venv/bin/python"}
+	}
+	p.discover = func(context.Context, string) (string, string, bool) { called = true; return "", "", false }
+	env := p.PythonEnv("/proj")
+	if called {
+		t.Error("discovery must not run when Detect is high-confidence")
+	}
+	if env.InterpreterPath != "/proj/.venv/bin/python" {
+		t.Errorf("env = %+v", env)
 	}
 }
 

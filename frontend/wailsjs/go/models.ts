@@ -243,6 +243,26 @@ export namespace lsp {
 		    return a;
 		}
 	}
+	export class DoctorReport {
+	    family: string;
+	    interpreterPath?: string;
+	    interpreterSource?: string;
+	    override?: string;
+	    candidates: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new DoctorReport(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.family = source["family"];
+	        this.interpreterPath = source["interpreterPath"];
+	        this.interpreterSource = source["interpreterSource"];
+	        this.override = source["override"];
+	        this.candidates = source["candidates"];
+	    }
+	}
 	export class Hover {
 	    contents: number[];
 	    range?: Range;
@@ -324,6 +344,7 @@ export namespace lsp {
 	    pythonVersion?: string;
 	    action?: string;
 	    detailCode?: string;
+	    provisionPct?: number;
 
 	    static createFrom(source: any = {}) {
 	        return new ServerStatus(source);
@@ -345,6 +366,7 @@ export namespace lsp {
 	        this.pythonVersion = source["pythonVersion"];
 	        this.action = source["action"];
 	        this.detailCode = source["detailCode"];
+	        this.provisionPct = source["provisionPct"];
 	    }
 	}
 	export class TextDocumentContentChangeEvent {
@@ -876,6 +898,20 @@ export namespace workspace {
 		}
 	}
 
+	export class LSPState {
+	    interpreterOverride?: string;
+	    serverPathOverride?: Record<string, string>;
+
+	    static createFrom(source: any = {}) {
+	        return new LSPState(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.interpreterOverride = source["interpreterOverride"];
+	        this.serverPathOverride = source["serverPathOverride"];
+	    }
+	}
 	export class PanelSizes {
 	    left: number;
 	    right: number;
@@ -939,6 +975,7 @@ export namespace workspace {
 	    activeSidebar: string;
 	    hiddenProfileIds?: string[];
 	    activeWorkspaceId?: string;
+	    lsp?: LSPState;
 
 	    static createFrom(source: any = {}) {
 	        return new State(source);
@@ -955,6 +992,7 @@ export namespace workspace {
 	        this.activeSidebar = source["activeSidebar"];
 	        this.hiddenProfileIds = source["hiddenProfileIds"];
 	        this.activeWorkspaceId = source["activeWorkspaceId"];
+	        this.lsp = this.convertValues(source["lsp"], LSPState);
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

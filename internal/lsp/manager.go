@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"firn/internal/lsp/provision"
+	"firn/internal/lsp/pythonenv"
 )
 
 // errNoWorkspaceRoot signals that an LSP method was called before
@@ -36,7 +41,7 @@ type ServerStatus struct {
 	State                       string   `json:"state"` // "starting", "ready", "stopping", "stopped", "error"
 	Error                       string   `json:"error,omitempty"`
 	CompletionTriggerCharacters []string `json:"completionTriggerCharacters,omitempty"`
-	SetupState                  string   `json:"setupState,omitempty"` // ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable
+	SetupState                  string   `json:"setupState,omitempty"` // ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable|provisioning|offline|provision_failed
 	InterpreterPath             string   `json:"interpreterPath,omitempty"`
 	ProjectRoot                 string   `json:"projectRoot,omitempty"`
 	ConfigSource                string   `json:"configSource,omitempty"`
@@ -44,6 +49,7 @@ type ServerStatus struct {
 	PythonVersion               string   `json:"pythonVersion,omitempty"`
 	Action                      string   `json:"action,omitempty"` // create_venv|select_interpreter|retry|""
 	DetailCode                  string   `json:"detailCode,omitempty"`
+	ProvisionPct                int      `json:"provisionPct,omitempty"` // 0-100 during managed install
 }
 
 // EventEmitter is the callback signature for emitting events to the frontend.
@@ -76,6 +82,34 @@ type Manager struct {
 	// stopped is set by ShutdownAll to prevent crash-recovery restarts
 	// from resurrecting servers after intentional teardown.
 	stopped bool
+
+	// provisioners maps a language family to its managed provisioner. Populated
+	// by SetProvisioners and shared with the registry so a resolver miss can be
+	// classified as provisionable. Set once via SetProvisioners before the first
+	// DidOpen and not mutated after; reads are unsynchronized on that basis.
+	provisioners map[string]provision.Provisioner
+
+	// provisionMu guards provisioning. It is intentionally separate from mu so
+	// an in-flight install never blocks document routing on the hot path.
+	provisionMu sync.Mutex
+	// provisioning tracks families with an install in flight (single-flight).
+	provisioning map[string]bool
+
+	// pendingProvisionDocs tracks documents opened while a managed server is
+	// installing. Once the server starts, these URIs are sent via lsp:reconnect
+	// so the frontend replays didOpen with current buffer content.
+	pendingProvisionDocs map[serverKey]map[string]bool
+
+	// ctx is the manager's lifetime context, cancelled by ShutdownAll so
+	// background installs stop when the workspace is torn down.
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// interpreterOverrides maps a workspace/project root -> manual interpreter
+	// path. In-memory only; Task 12b persists/seeds it from workspace state.
+	// Wired into the envConfigProvider override hook via overrideForRoot.
+	overrideMu           sync.RWMutex
+	interpreterOverrides map[string]string
 }
 
 // serverKey identifies a unique server instance by language family and workspace.
@@ -102,13 +136,33 @@ type serverEntry struct {
 
 // NewManager creates a new LSP manager with the given event emitter.
 func NewManager(emitter EventEmitter) *Manager {
-	return &Manager{
-		registry:       NewRegistry(),
-		emitter:        emitter,
-		configProvider: newEnvConfigProvider(),
-		servers:        make(map[serverKey]*serverEntry),
-		docKeys:        make(map[string]serverKey),
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &Manager{
+		registry:             NewRegistry(),
+		emitter:              emitter,
+		configProvider:       newEnvConfigProvider(),
+		servers:              make(map[serverKey]*serverEntry),
+		docKeys:              make(map[string]serverKey),
+		provisioning:         make(map[string]bool),
+		pendingProvisionDocs: make(map[serverKey]map[string]bool),
+		ctx:                  ctx,
+		cancel:               cancel,
+		interpreterOverrides: make(map[string]string),
 	}
+	// Wire the manual interpreter override into env resolution. The
+	// configProvider field is the interface type; the override hook lives only
+	// on the concrete provider, so assert before wiring.
+	if ep, ok := m.configProvider.(*envConfigProvider); ok {
+		ep.SetInterpreterOverrideFunc(m.overrideForRoot)
+	}
+	return m
+}
+
+// SetProvisioners injects managed provisioners and forwards them to the registry
+// so a resolver miss can be classified as provisionable.
+func (m *Manager) SetProvisioners(p map[string]provision.Provisioner) {
+	m.provisioners = p
+	m.registry.SetProvisioners(p)
 }
 
 // SetWorkspaceRoot updates the active workspace root path.
@@ -129,6 +183,13 @@ func (m *Manager) SetWorkspaceRoot(root string) {
 	defer m.mu.Unlock()
 	m.workspaceRoot = cleaned
 	m.stopped = false
+	// Refresh the lifetime context: a workspace switch cancels installs scoped
+	// to the previous root and gives the new root a live context to provision
+	// under (also revives the manager after a ShutdownAll teardown).
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 }
 
 // WorkspaceRoot returns the current workspace root path.
@@ -167,10 +228,23 @@ func (m *Manager) DidOpen(ctx context.Context, path, languageID string, version 
 		return nil
 	}
 
+	key := serverKey{family: family, workspace: workspace}
+	if !m.serverRunning(key) {
+		m.trackPendingProvisionDoc(key, uri)
+	}
+
 	entry, err := m.ensureServer(ctx, family, workspace)
 	if err != nil {
+		m.untrackPendingProvisionDoc(uri)
 		return err
 	}
+	if entry == nil {
+		// A managed install is in flight (provisionable miss). DidOpen is
+		// non-blocking: restartFamily emits lsp:reconnect once the cache is
+		// populated, and the frontend re-sends current content.
+		return nil
+	}
+	m.untrackPendingProvisionDoc(uri)
 
 	m.mu.Lock()
 	ds, exists := entry.openDocs[uri]
@@ -244,6 +318,9 @@ func (m *Manager) DidClose(ctx context.Context, path string) error {
 	uri, err := FileToURI(path)
 	if err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	if m.untrackPendingProvisionDoc(uri) {
+		return nil
 	}
 
 	m.mu.Lock()
@@ -393,11 +470,18 @@ func (m *Manager) GetStatus() []ServerStatus {
 func (m *Manager) ShutdownAll(timeout time.Duration) {
 	m.mu.Lock()
 	m.stopped = true
+	cancel := m.cancel
+	m.pendingProvisionDocs = nil
 	keys := make([]serverKey, 0, len(m.servers))
 	for key := range m.servers {
 		keys = append(keys, key)
 	}
 	m.mu.Unlock()
+
+	// Cancel the lifetime context so any in-flight managed install stops.
+	if cancel != nil {
+		cancel()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -429,11 +513,314 @@ func (m *Manager) ensureServer(ctx context.Context, family, workspace string) (*
 	// Resolve server config
 	config, err := m.registry.ServerConfigFor(family, workspace)
 	if err != nil {
+		// A managed provisioner can serve this family: kick off an async install
+		// rather than hard-failing the file open. The server starts once the
+		// cache is populated (see restartFamily).
+		var miss *ServerMissError
+		if errors.As(err, &miss) && miss.Provisionable && m.provisioners[family] != nil {
+			m.beginProvision(family, workspace)
+			return nil, nil
+		}
 		m.emitStatus(family, workspace, "error", err.Error(), defaultServerCommand(family))
 		return nil, err
 	}
 
 	return m.startServer(ctx, key, config)
+}
+
+// provisionCtx returns the manager's lifetime context, falling back to a
+// background context when the manager was built via a struct literal (some
+// tests) rather than NewManager. The install goroutine derives cancellation
+// from this so workspace teardown (ShutdownAll) stops in-flight installs.
+//
+// m.ctx is rewritten under m.mu by SetWorkspaceRoot, so the read is locked.
+// Both call sites evaluate this as a plain argument before any further lock is
+// taken, so there is no nested-lock path.
+func (m *Manager) provisionCtx() context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ctx != nil {
+		return m.ctx
+	}
+	return context.Background()
+}
+
+// beginProvision installs a family's managed server in the background, emitting
+// status transitions. Single-flight per family: a second open of the same
+// family while an install is in flight is a no-op.
+func (m *Manager) beginProvision(family, projectRoot string) {
+	prov := m.provisioners[family]
+	if prov == nil {
+		return
+	}
+
+	m.provisionMu.Lock()
+	if m.provisioning == nil {
+		m.provisioning = map[string]bool{}
+	}
+	if m.provisioning[family] {
+		m.provisionMu.Unlock()
+		return
+	}
+	m.provisioning[family] = true
+	m.provisionMu.Unlock()
+
+	m.emitProvisionStatus(family, projectRoot, "provisioning", "", "", 0)
+
+	go func() {
+		res := prov.Install(m.provisionCtx(), func(p provision.Progress) {
+			m.emitProvisionStatus(family, projectRoot, "provisioning", "", "", p.Pct)
+		})
+
+		m.provisionMu.Lock()
+		m.provisioning[family] = false
+		m.provisionMu.Unlock()
+
+		switch res.State {
+		case provision.StateAvailable:
+			// Cache is populated — re-run the normal start path.
+			m.restartFamily(family, projectRoot)
+		case provision.StateOffline:
+			m.emitProvisionStatus(family, projectRoot, "offline", "retry", "download_offline", 0)
+		case provision.StateChecksumFailed:
+			m.emitProvisionStatus(family, projectRoot, "provision_failed", "retry", "checksum_mismatch", 0)
+		case provision.StateUnsupported:
+			// No retry: an unsupported platform fails identically every time.
+			m.emitProvisionStatus(family, projectRoot, "provision_failed", "", "unsupported_platform", 0)
+		default:
+			m.emitProvisionStatus(family, projectRoot, "provision_failed", "retry", "provision_error", 0)
+		}
+	}()
+}
+
+// RetryProvision re-attempts a managed install (frontend Retry action). It uses
+// the manager's current workspace root as the project root.
+func (m *Manager) RetryProvision(family string) error {
+	if _, ok := m.provisioners[family]; !ok {
+		return fmt.Errorf("no managed provisioner for %q", family)
+	}
+	m.beginProvision(family, m.WorkspaceRoot())
+	return nil
+}
+
+// restartFamily re-runs the normal start path for a family after a successful
+// provision. It reuses ensureServer so the server is launched and a ready
+// status emitted exactly as a first open would. Errors are logged; the start
+// path already emits an error status on failure.
+func (m *Manager) restartFamily(family, projectRoot string) {
+	entry, err := m.ensureServer(m.provisionCtx(), family, projectRoot)
+	if err != nil {
+		log.Printf("lsp: post-provision start failed family=%s root=%q: %v", family, projectRoot, err)
+		return
+	}
+	if entry != nil {
+		m.emitPendingProvisionReconnect(serverKey{family: family, workspace: projectRoot})
+	}
+}
+
+// restartRunningFamily restarts a server only if one is currently running for
+// the given family/root. Used after an interpreter-override change so the new
+// interpreter takes effect. When no server is running it is a safe no-op — a
+// future DidOpen starts the server with the override already applied.
+func (m *Manager) restartRunningFamily(family, projectRoot string) {
+	key := serverKey{family: family, workspace: projectRoot}
+	m.mu.Lock()
+	_, running := m.servers[key]
+	m.mu.Unlock()
+	if !running {
+		return
+	}
+	shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	m.shutdownServer(shutCtx, key)
+	cancel()
+	m.restartFamily(family, projectRoot)
+}
+
+// overrideForRoot is the lookup wired into envConfigProvider.SetInterpreterOverrideFunc.
+func (m *Manager) overrideForRoot(projectRoot string) string {
+	m.overrideMu.RLock()
+	defer m.overrideMu.RUnlock()
+	return m.interpreterOverrides[projectRoot]
+}
+
+// SeedInterpreterOverride sets an override WITHOUT restarting servers (used at
+// workspace load to apply a persisted choice before the first DidOpen).
+func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
+	m.overrideMu.Lock()
+	if interpreterPath == "" {
+		delete(m.interpreterOverrides, projectRoot)
+	} else {
+		m.interpreterOverrides[projectRoot] = interpreterPath
+	}
+	m.overrideMu.Unlock()
+}
+
+// SetInterpreterOverride validates the path, stores the override, and restarts
+// the python server for that root so the new interpreter takes effect.
+// Returns an error if interpreterPath does not exist / is a directory.
+func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) error {
+	// Override paths bypass the discovery layer's stat validation, so validate
+	// here: the env layer trusts whatever this map returns.
+	if interpreterPath == "" {
+		return fmt.Errorf("interpreter not found: %q", interpreterPath)
+	}
+	if info, err := os.Stat(interpreterPath); err != nil || info.IsDir() {
+		return fmt.Errorf("interpreter not found: %q", interpreterPath)
+	}
+
+	m.overrideMu.Lock()
+	m.interpreterOverrides[projectRoot] = interpreterPath
+	m.overrideMu.Unlock()
+
+	m.restartRunningFamily("python", projectRoot)
+	return nil
+}
+
+// ClearInterpreterOverride removes the override and restarts python for that root.
+func (m *Manager) ClearInterpreterOverride(projectRoot string) error {
+	m.overrideMu.Lock()
+	delete(m.interpreterOverrides, projectRoot)
+	m.overrideMu.Unlock()
+
+	m.restartRunningFamily("python", projectRoot)
+	return nil
+}
+
+// DoctorReport summarizes python LSP setup for a workspace so the UI can render
+// actionable choices from one call.
+type DoctorReport struct {
+	Family            string   `json:"family"`
+	InterpreterPath   string   `json:"interpreterPath,omitempty"`
+	InterpreterSource string   `json:"interpreterSource,omitempty"`
+	Override          string   `json:"override,omitempty"`
+	Candidates        []string `json:"candidates"`
+}
+
+// Doctor returns the resolved interpreter + override + candidate interpreters
+// for the given workspace root (python family).
+func (m *Manager) Doctor(projectRoot string) DoctorReport {
+	env := pythonEnvFromProvider(m.configProvider, projectRoot)
+	override := m.overrideForRoot(projectRoot)
+
+	rep := DoctorReport{
+		Family:            "python",
+		InterpreterPath:   env.InterpreterPath,
+		InterpreterSource: env.Source,
+		Override:          override,
+	}
+
+	// Build a deduped candidate list, dropping empties. Best-effort: discovery
+	// and LookPath errors are ignored.
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		rep.Candidates = append(rep.Candidates, p)
+	}
+
+	add(env.InterpreterPath)
+	add(override)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if interp, _, ok := pythonenv.DiscoverInterpreter(ctx, projectRoot, osRunner); ok {
+		add(interp)
+	}
+	cancel()
+
+	if p, err := exec.LookPath("python3"); err == nil {
+		add(p)
+	}
+	if p, err := exec.LookPath("python"); err == nil {
+		add(p)
+	}
+
+	return rep
+}
+
+// emitProvisionStatus emits an lsp:status event describing a managed-install
+// transition. It mirrors emitStatus's contract (called without m.mu held) but
+// carries the typed setup fields the provisioning cards need. The LSP State is
+// "starting" while provisioning and "error" once an install fails so existing
+// frontend state machines treat it sensibly.
+func (m *Manager) emitProvisionStatus(family, projectRoot, setupState, action, detailCode string, pct int) {
+	if m.emitter == nil {
+		return
+	}
+	state := "starting"
+	if setupState == "offline" || setupState == "provision_failed" {
+		state = "error"
+	}
+	m.emitter("lsp:status", ServerStatus{
+		Family:       family,
+		Workspace:    projectRoot,
+		State:        state,
+		ProjectRoot:  projectRoot,
+		SetupState:   setupState,
+		Action:       action,
+		DetailCode:   detailCode,
+		ProvisionPct: pct,
+	})
+}
+
+func (m *Manager) serverRunning(key serverKey) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.servers[key]
+	return ok
+}
+
+func (m *Manager) trackPendingProvisionDoc(key serverKey, uri string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingProvisionDocs == nil {
+		m.pendingProvisionDocs = make(map[serverKey]map[string]bool)
+	}
+	docs := m.pendingProvisionDocs[key]
+	if docs == nil {
+		docs = make(map[string]bool)
+		m.pendingProvisionDocs[key] = docs
+	}
+	docs[uri] = true
+}
+
+func (m *Manager) untrackPendingProvisionDoc(uri string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, docs := range m.pendingProvisionDocs {
+		if docs[uri] {
+			delete(docs, uri)
+			if len(docs) == 0 {
+				delete(m.pendingProvisionDocs, key)
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) emitPendingProvisionReconnect(key serverKey) {
+	m.mu.Lock()
+	docsByURI := m.pendingProvisionDocs[key]
+	if len(docsByURI) == 0 {
+		m.mu.Unlock()
+		return
+	}
+	documents := make([]string, 0, len(docsByURI))
+	for uri := range docsByURI {
+		documents = append(documents, uri)
+	}
+	delete(m.pendingProvisionDocs, key)
+	m.mu.Unlock()
+
+	if m.emitter != nil {
+		m.emitter("lsp:reconnect", map[string]any{
+			"family":    key.family,
+			"workspace": key.workspace,
+			"documents": documents,
+		})
+	}
 }
 
 // startServer launches a new language server process and initializes it.

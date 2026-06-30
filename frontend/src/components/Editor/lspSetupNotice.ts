@@ -3,14 +3,14 @@ import type { LSPServerStatus } from '../../stores/lspStore';
 export interface LSPSetupNotice {
   message: string;
   hint: string;
-  tone: 'error' | 'warning';
+  tone: 'error' | 'warning' | 'info';
 }
 
 /**
  * Maps a server's typed setup status onto a user-facing message + next-step
  * hint. Returns null when there is nothing actionable to show (server ready,
- * or no setup state reported). Phase 1 surfaces guidance text only; the
- * interactive interpreter picker is a follow-up.
+ * or no setup state reported). The interactive affordances (interpreter
+ * picker, retry) live in LSPSetupCard.
  */
 export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNotice | null {
   if (!status?.setupState || status.setupState === 'ready') return null;
@@ -44,6 +44,27 @@ export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNoti
       return {
         message: 'The language server failed to start.',
         hint: 'Reopen the file to retry.',
+        tone: 'error',
+      };
+    case 'provisioning':
+      return {
+        message: 'Setting up language server...',
+        hint:
+          status.provisionPct != null
+            ? `Downloading (${status.provisionPct}%).`
+            : 'Downloading the language server.',
+        tone: 'info',
+      };
+    case 'offline':
+      return {
+        message: 'Could not download the language server (offline).',
+        hint: 'Check your connection, then Retry.',
+        tone: 'error',
+      };
+    case 'provision_failed':
+      return {
+        message: 'Language server setup failed.',
+        hint: 'Retry, or install basedpyright/pyright manually.',
         tone: 'error',
       };
     default:
