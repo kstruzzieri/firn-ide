@@ -116,6 +116,17 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   // Flag to skip onChange during external content sync
   const isSyncingRef = useRef(false);
 
+  // Per-file EditorState cache (history/selection/cursor live in state; scroll is DOM-only).
+  const stateCacheRef = useRef<Map<string, { state: EditorState; scrollTop: number }>>(new Map());
+  const prevFileIdRef = useRef<string | undefined>(undefined);
+  // Latest-callback refs so the mount-time DOM listeners never call a stale callback.
+  const onScrollChangeRef = useRef(onScrollChange);
+  const onFocusRef = useRef(onFocus);
+  const onBlurRef = useRef(onBlur);
+  onScrollChangeRef.current = onScrollChange;
+  onFocusRef.current = onFocus;
+  onBlurRef.current = onBlur;
+
   const [setupStatus, setSetupStatus] = useState<LSPServerStatus | undefined>(undefined);
 
   // Keep refs in sync
@@ -158,62 +169,47 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     });
   }, [initialScrollTop]);
 
-  useEffect(() => {
-    hasAppliedInitialCursorRef.current = false;
-    hasAppliedInitialScrollRef.current = false;
-  }, [fileId]);
-
-  // Initialize editor
+  // Create the single editor view once. It persists across tab switches; the
+  // switch effect below swaps EditorState in place so undo history survives.
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Create extensions with callbacks
-    const extensions = createEditorExtensions({
-      filename,
-      filePath: fileId,
-      readOnly,
-      tabSize,
-      syntaxThemeId: useIDEStore.getState().editorSyntaxTheme,
-      onChange: handleContentChange,
-      onCursorChange,
-    });
-
-    // Create initial state
-    const state = EditorState.create({
-      doc: content,
-      extensions,
-    });
-
-    // Create editor view
     const view = new EditorView({
-      state,
+      state: EditorState.create({
+        doc: content,
+        extensions: createEditorExtensions({
+          filename,
+          filePath: fileId,
+          readOnly,
+          tabSize,
+          syntaxThemeId: useIDEStore.getState().editorSyntaxTheme,
+          onChange: handleContentChange,
+          onCursorChange,
+        }),
+      }),
       parent: containerRef.current,
     });
 
     editorRef.current = view;
+    prevFileIdRef.current = fileId;
 
     applyInitialCursor();
     applyInitialScroll();
 
-    // Apply any existing diagnostics for this file
     const uri = filePathToURI(fileId);
     const existingDiags = useLSPStore.getState().diagnostics.get(uri);
     if (existingDiags && existingDiags.length > 0) {
       updateEditorDiagnostics(view, existingDiags);
     }
 
-    // Focus/blur event handlers
-    const handleFocusEvent = () => onFocus?.();
-    const handleBlurEvent = () => onBlur?.();
-    const handleScroll = () => {
-      onScrollChange?.(view.scrollDOM.scrollTop);
-    };
+    const handleFocusEvent = () => onFocusRef.current?.();
+    const handleBlurEvent = () => onBlurRef.current?.();
+    const handleScroll = () => onScrollChangeRef.current?.(view.scrollDOM.scrollTop);
 
     view.contentDOM.addEventListener('focus', handleFocusEvent);
     view.contentDOM.addEventListener('blur', handleBlurEvent);
     view.scrollDOM.addEventListener('scroll', handleScroll);
 
-    // Cleanup on unmount
     return () => {
       view.contentDOM.removeEventListener('focus', handleFocusEvent);
       view.contentDOM.removeEventListener('blur', handleBlurEvent);
@@ -221,7 +217,65 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       view.destroy();
       editorRef.current = null;
     };
-    // Only re-create editor when fileId changes (new file opened)
+    // Mount once; the switch effect handles per-file state. content/filename/etc.
+    // are intentionally captured for the initial file only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Swap EditorState when the active file changes: save the outgoing file's
+  // state, restore the incoming file's cached state (or build a fresh one).
+  useEffect(() => {
+    const view = editorRef.current;
+    if (!view) return;
+
+    const prevFileId = prevFileIdRef.current;
+    if (prevFileId === fileId) return; // mount already shows this file
+
+    if (prevFileId !== undefined) {
+      stateCacheRef.current.set(prevFileId, {
+        state: view.state,
+        scrollTop: view.scrollDOM.scrollTop,
+      });
+    }
+
+    const cached = stateCacheRef.current.get(fileId);
+    if (cached) {
+      view.setState(cached.state);
+      // External reload while this tab was inactive: bring doc up to date
+      // without touching undo history.
+      isSyncingRef.current = true;
+      reconcileDoc(view, content);
+      isSyncingRef.current = false;
+      view.scrollDOM.scrollTop = cached.scrollTop;
+      // Restored state already carries selection/scroll; suppress initial apply.
+      hasAppliedInitialCursorRef.current = true;
+      hasAppliedInitialScrollRef.current = true;
+    } else {
+      view.setState(
+        EditorState.create({
+          doc: content,
+          extensions: createEditorExtensions({
+            filename,
+            filePath: fileId,
+            readOnly,
+            tabSize,
+            syntaxThemeId: useIDEStore.getState().editorSyntaxTheme,
+            onChange: handleContentChange,
+            onCursorChange,
+          }),
+        })
+      );
+      hasAppliedInitialCursorRef.current = false;
+      hasAppliedInitialScrollRef.current = false;
+      applyInitialCursor();
+      applyInitialScroll();
+    }
+
+    // Diagnostics may have arrived while this tab was inactive.
+    const diags = useLSPStore.getState().diagnostics.get(filePathToURI(fileId));
+    updateEditorDiagnostics(view, diags ?? []);
+
+    prevFileIdRef.current = fileId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
 
