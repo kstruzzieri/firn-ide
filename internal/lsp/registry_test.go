@@ -1,10 +1,14 @@
 package lsp
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"firn/internal/lsp/provision"
 )
 
 // fakeTSLSBin creates a fake typescript-language-server executable in a temp
@@ -138,9 +142,17 @@ func TestResolveTypeScriptServer_NotFound(t *testing.T) {
 		t.Fatal("expected error when typescript-language-server is not found")
 	}
 
-	// Error message should contain install instructions
-	if !contains(err.Error(), "npm install") {
-		t.Errorf("error message should contain install instructions, got: %s", err.Error())
+	// Typed miss: no managed provisioner for typescript yet, so unprovisionable,
+	// and the actionable install hint must be preserved.
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if miss.Provisionable {
+		t.Error("typescript has no managed provisioner; expected Provisionable=false")
+	}
+	if !contains(miss.Hint, "npm install") {
+		t.Errorf("hint should contain install instructions, got: %s", miss.Hint)
 	}
 }
 
@@ -299,6 +311,52 @@ func TestFindGoBinary_SkipsNonExecutableAndUsesLaterCandidate(t *testing.T) {
 	found := findGoBinary("gopls")
 	if found != wantPath {
 		t.Errorf("findGoBinary(gopls) = %q, want %q (non-executable candidate should be skipped)", found, wantPath)
+	}
+}
+
+type fakeProv struct{ res provision.Resolution }
+
+func (f fakeProv) Family() string                { return "python" }
+func (f fakeProv) Resolve() provision.Resolution { return f.res }
+func (f fakeProv) Install(context.Context, func(provision.Progress)) provision.Resolution {
+	return f.res
+}
+
+func TestManagedOrMiss_available(t *testing.T) {
+	r := NewRegistry()
+	r.SetProvisioners(map[string]provision.Provisioner{
+		"python": fakeProv{res: provision.Resolution{State: provision.StateAvailable, Path: "/cache/node", Args: []string{"/cache/ls.js", "--stdio"}}},
+	})
+	cfg, err := r.managedOrMiss("python", "/proj", "hint")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cfg.Command != "/cache/node" || len(cfg.Args) != 2 || cfg.Dir != "/proj" {
+		t.Errorf("cfg = %+v", cfg)
+	}
+}
+
+func TestManagedOrMiss_typedMissProvisionable(t *testing.T) {
+	r := NewRegistry()
+	r.SetProvisioners(map[string]provision.Provisioner{
+		"python": fakeProv{res: provision.Resolution{State: provision.StateMissing}},
+	})
+	_, err := r.managedOrMiss("python", "/proj", "hint")
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if !miss.Provisionable {
+		t.Error("expected Provisionable=true when a provisioner exists")
+	}
+}
+
+func TestManagedOrMiss_noProvisioner(t *testing.T) {
+	r := NewRegistry()
+	_, err := r.managedOrMiss("go", "/proj", "hint")
+	var miss *ServerMissError
+	if !errors.As(err, &miss) || miss.Provisionable {
+		t.Fatalf("want unprovisionable ServerMissError, got %v", err)
 	}
 }
 

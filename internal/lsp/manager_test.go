@@ -181,8 +181,17 @@ func TestRegistry_GoServerConfigReportsMissingGopls(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when gopls is not found")
 	}
-	if !contains(err.Error(), "go install golang.org/x/tools/gopls@latest") {
-		t.Errorf("error should include install instructions, got: %s", err.Error())
+	// Typed miss: go has no managed provisioner, so it is unprovisionable and
+	// the gopls install guidance must be preserved as the hint.
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if miss.Provisionable {
+		t.Error("go has no managed provisioner; expected Provisionable=false")
+	}
+	if !contains(miss.Hint, "go install golang.org/x/tools/gopls@latest") {
+		t.Errorf("hint should include install instructions, got: %s", miss.Hint)
 	}
 }
 
@@ -305,8 +314,17 @@ func TestRegistry_PythonServerConfigReportsMissingPyright(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when pyright-langserver is not found")
 	}
-	if !contains(err.Error(), "npm install -g pyright") {
-		t.Errorf("error should include install instructions, got: %s", err.Error())
+	// Typed miss with actionable hint. No managed provisioner is wired on a bare
+	// registry, so this resolves as unprovisionable.
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if miss.Provisionable {
+		t.Error("no provisioner wired; expected Provisionable=false")
+	}
+	if !contains(miss.Hint, "basedpyright/pyright") {
+		t.Errorf("hint should include install guidance, got: %s", miss.Hint)
 	}
 }
 
