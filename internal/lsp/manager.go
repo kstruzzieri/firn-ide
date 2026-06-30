@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"firn/internal/lsp/provision"
+	"firn/internal/lsp/pythonenv"
 )
 
 // errNoWorkspaceRoot signals that an LSP method was called before
@@ -96,6 +99,12 @@ type Manager struct {
 	// background installs stop when the workspace is torn down.
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// interpreterOverrides maps a workspace/project root -> manual interpreter
+	// path. In-memory only; Task 12b persists/seeds it from workspace state.
+	// Wired into the envConfigProvider override hook via overrideForRoot.
+	overrideMu           sync.RWMutex
+	interpreterOverrides map[string]string
 }
 
 // serverKey identifies a unique server instance by language family and workspace.
@@ -123,16 +132,24 @@ type serverEntry struct {
 // NewManager creates a new LSP manager with the given event emitter.
 func NewManager(emitter EventEmitter) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{
-		registry:       NewRegistry(),
-		emitter:        emitter,
-		configProvider: newEnvConfigProvider(),
-		servers:        make(map[serverKey]*serverEntry),
-		docKeys:        make(map[string]serverKey),
-		provisioning:   make(map[string]bool),
-		ctx:            ctx,
-		cancel:         cancel,
+	m := &Manager{
+		registry:             NewRegistry(),
+		emitter:              emitter,
+		configProvider:       newEnvConfigProvider(),
+		servers:              make(map[serverKey]*serverEntry),
+		docKeys:              make(map[string]serverKey),
+		provisioning:         make(map[string]bool),
+		ctx:                  ctx,
+		cancel:               cancel,
+		interpreterOverrides: make(map[string]string),
 	}
+	// Wire the manual interpreter override into env resolution. The
+	// configProvider field is the interface type; the override hook lives only
+	// on the concrete provider, so assert before wiring.
+	if ep, ok := m.configProvider.(*envConfigProvider); ok {
+		ep.SetInterpreterOverrideFunc(m.overrideForRoot)
+	}
+	return m
 }
 
 // SetProvisioners injects managed provisioners and forwards them to the registry
@@ -577,6 +594,127 @@ func (m *Manager) restartFamily(family, projectRoot string) {
 	if _, err := m.ensureServer(m.provisionCtx(), family, projectRoot); err != nil {
 		log.Printf("lsp: post-provision start failed family=%s root=%q: %v", family, projectRoot, err)
 	}
+}
+
+// restartRunningFamily restarts a server only if one is currently running for
+// the given family/root. Used after an interpreter-override change so the new
+// interpreter takes effect. When no server is running it is a safe no-op — a
+// future DidOpen starts the server with the override already applied.
+func (m *Manager) restartRunningFamily(family, projectRoot string) {
+	key := serverKey{family: family, workspace: projectRoot}
+	m.mu.Lock()
+	_, running := m.servers[key]
+	m.mu.Unlock()
+	if !running {
+		return
+	}
+	shutCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	m.shutdownServer(shutCtx, key)
+	cancel()
+	m.restartFamily(family, projectRoot)
+}
+
+// overrideForRoot is the lookup wired into envConfigProvider.SetInterpreterOverrideFunc.
+func (m *Manager) overrideForRoot(projectRoot string) string {
+	m.overrideMu.RLock()
+	defer m.overrideMu.RUnlock()
+	return m.interpreterOverrides[projectRoot]
+}
+
+// SeedInterpreterOverride sets an override WITHOUT restarting servers (used at
+// workspace load to apply a persisted choice before the first DidOpen).
+func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
+	m.overrideMu.Lock()
+	if interpreterPath == "" {
+		delete(m.interpreterOverrides, projectRoot)
+	} else {
+		m.interpreterOverrides[projectRoot] = interpreterPath
+	}
+	m.overrideMu.Unlock()
+}
+
+// SetInterpreterOverride validates the path, stores the override, and restarts
+// the python server for that root so the new interpreter takes effect.
+// Returns an error if interpreterPath does not exist / is a directory.
+func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) error {
+	// Override paths bypass the discovery layer's stat validation, so validate
+	// here: the env layer trusts whatever this map returns.
+	if interpreterPath == "" {
+		return fmt.Errorf("interpreter not found: %q", interpreterPath)
+	}
+	if info, err := os.Stat(interpreterPath); err != nil || info.IsDir() {
+		return fmt.Errorf("interpreter not found: %q", interpreterPath)
+	}
+
+	m.overrideMu.Lock()
+	m.interpreterOverrides[projectRoot] = interpreterPath
+	m.overrideMu.Unlock()
+
+	m.restartRunningFamily("python", projectRoot)
+	return nil
+}
+
+// ClearInterpreterOverride removes the override and restarts python for that root.
+func (m *Manager) ClearInterpreterOverride(projectRoot string) error {
+	m.overrideMu.Lock()
+	delete(m.interpreterOverrides, projectRoot)
+	m.overrideMu.Unlock()
+
+	m.restartRunningFamily("python", projectRoot)
+	return nil
+}
+
+// DoctorReport summarizes python LSP setup for a workspace so the UI can render
+// actionable choices from one call.
+type DoctorReport struct {
+	Family            string   `json:"family"`
+	InterpreterPath   string   `json:"interpreterPath,omitempty"`
+	InterpreterSource string   `json:"interpreterSource,omitempty"`
+	Override          string   `json:"override,omitempty"`
+	Candidates        []string `json:"candidates"`
+}
+
+// Doctor returns the resolved interpreter + override + candidate interpreters
+// for the given workspace root (python family).
+func (m *Manager) Doctor(projectRoot string) DoctorReport {
+	env := pythonEnvFromProvider(m.configProvider, projectRoot)
+	override := m.overrideForRoot(projectRoot)
+
+	rep := DoctorReport{
+		Family:            "python",
+		InterpreterPath:   env.InterpreterPath,
+		InterpreterSource: env.Source,
+		Override:          override,
+	}
+
+	// Build a deduped candidate list, dropping empties. Best-effort: discovery
+	// and LookPath errors are ignored.
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		rep.Candidates = append(rep.Candidates, p)
+	}
+
+	add(env.InterpreterPath)
+	add(override)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if interp, _, ok := pythonenv.DiscoverInterpreter(ctx, projectRoot, osRunner); ok {
+		add(interp)
+	}
+	cancel()
+
+	if p, err := exec.LookPath("python3"); err == nil {
+		add(p)
+	}
+	if p, err := exec.LookPath("python"); err == nil {
+		add(p)
+	}
+
+	return rep
 }
 
 // emitProvisionStatus emits an lsp:status event describing a managed-install

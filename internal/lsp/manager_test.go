@@ -2034,3 +2034,88 @@ func TestManager_provisionChecksumFailed(t *testing.T) {
 		t.Errorf("DetailCode = %q, want checksum_mismatch", s.DetailCode)
 	}
 }
+
+func TestSetInterpreterOverride_rejectsMissingPath(t *testing.T) {
+	m := NewManager(nil)
+	err := m.SetInterpreterOverride(t.TempDir(), filepath.Join(t.TempDir(), "nope", "python"))
+	if err == nil {
+		t.Fatal("expected error for non-existent interpreter")
+	}
+}
+
+func TestSetInterpreterOverride_rejectsDirectory(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	if err := m.SetInterpreterOverride(root, root); err == nil {
+		t.Fatal("expected error when interpreter path is a directory")
+	}
+}
+
+func TestSetAndClearInterpreterOverride_roundTrip(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetInterpreterOverride(root, interp); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := m.overrideForRoot(root); got != interp {
+		t.Errorf("override = %q, want %q", got, interp)
+	}
+	if err := m.ClearInterpreterOverride(root); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := m.overrideForRoot(root); got != "" {
+		t.Errorf("override after clear = %q, want empty", got)
+	}
+}
+
+func TestSeedInterpreterOverride_setsWithoutRestart(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	m.SeedInterpreterOverride(root, "/some/interp")
+	if got := m.overrideForRoot(root); got != "/some/interp" {
+		t.Errorf("seeded override = %q, want /some/interp", got)
+	}
+}
+
+func TestOverrideFeedsConfigProvider(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetInterpreterOverride(root, interp); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	env := pythonEnvFromProvider(m.configProvider, root)
+	if env.InterpreterPath != interp || env.Source != "override" {
+		t.Errorf("provider env = %+v, want interpreter %q source override", env, interp)
+	}
+}
+
+func TestDoctor_reportsOverrideAndCandidates(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = m.SetInterpreterOverride(root, interp)
+	rep := m.Doctor(root)
+	if rep.Family != "python" || rep.Override != interp {
+		t.Fatalf("report = %+v", rep)
+	}
+	found := false
+	for _, c := range rep.Candidates {
+		if c == interp {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("candidates %v missing override %q", rep.Candidates, interp)
+	}
+}
