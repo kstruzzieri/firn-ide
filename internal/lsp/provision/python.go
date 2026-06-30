@@ -137,6 +137,10 @@ func (p *PythonProvisioner) installManual(ctx context.Context, artifacts []Artif
 		return Resolution{State: StateOffline, Err: err}
 	}
 
+	// ponytail: RemoveAll-then-Rename has a tiny non-atomic gap — a crash between
+	// the two leaves no versionDir (recoverable by re-install). versionDir is
+	// version-pinned so this normally only clears a prior partial/corrupt dir.
+	// Upgrade path: rename old aside, rename staging in, then RemoveAll the aside.
 	_ = os.RemoveAll(p.versionDir()) // clear any partial prior dir
 	if err := os.Rename(staging, p.versionDir()); err != nil {
 		return Resolution{State: StateOffline, Err: err}
