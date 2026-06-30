@@ -1,5 +1,5 @@
 // src/components/FileExplorer/FileExplorer.tsx
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Panel, PanelAction } from '../layout';
 import { MinusIcon } from '../icons';
@@ -45,30 +45,99 @@ export function FileExplorer() {
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
   const toggleLeftPanel = useIDEStore((state) => state.toggleLeftPanel);
 
-  // Sync active editor file into the tree selection + auto-expand its ancestors.
-  // Reads expandedPaths from the store snapshot to avoid a dependency cycle.
+  // Generation guard: each new activeFileId gets a unique generation number.
+  // If the workspace or activeFileId changes mid-flight, the old async chain sees
+  // a stale gen and aborts before writing to the store.
+  const revealGenRef = useRef(0);
+
+  // Sync active editor file into the tree selection + sequentially load any
+  // unloaded ancestor dirs before expanding them (lazy-load reveal).
   useEffect(() => {
-    if (activeFileId && activeFileId !== useIDEStore.getState().selectedPath) {
+    // Always bump generation so any in-flight reveal from a previous activeFileId
+    // or workspace sees a stale gen and aborts.
+    const gen = ++revealGenRef.current;
+
+    if (!activeFileId) return;
+
+    // Always sync selection immediately so the tree highlights the file even
+    // when it's already visible (matching old synchronous behavior).
+    if (activeFileId !== useIDEStore.getState().selectedPath) {
       setSelectedPath(activeFileId);
-
-      const ws = useIDEStore.getState().workspace;
-      if (ws) {
-        const currentExpanded = useIDEStore.getState().expandedPaths;
-        const relativePath = activeFileId.replace(ws.path + '/', '');
-        const parts = relativePath.split('/');
-        let currentPath = ws.path;
-
-        const newExpanded = new Set(currentExpanded);
-        for (let i = 0; i < parts.length - 1; i++) {
-          currentPath += '/' + parts[i];
-          newExpanded.add(currentPath);
-        }
-        if (newExpanded.size !== currentExpanded.size) {
-          useIDEStore.setState({ expandedPaths: newExpanded });
-        }
-      }
     }
-  }, [activeFileId, setSelectedPath]);
+
+    const ws = useIDEStore.getState().workspace;
+    if (!ws || !activeFileId.startsWith(ws.path + '/')) return;
+
+    const rel = activeFileId.slice(ws.path.length + 1).split('/');
+
+    void (async () => {
+      let cursor = ws.path;
+      const toExpand: string[] = [];
+      for (let i = 0; i < rel.length - 1; i++) {
+        cursor += '/' + rel[i];
+        await ensurePathLoaded(cursor);
+        if (revealGenRef.current !== gen) return; // workspace/file changed — abort
+        toExpand.push(cursor);
+      }
+      const cur = useIDEStore.getState();
+      const next = new Set(cur.expandedPaths);
+      toExpand.forEach((p) => next.add(p));
+      useIDEStore.setState({ expandedPaths: next, selectedPath: activeFileId });
+    })();
+  }, [activeFileId, ensurePathLoaded, setSelectedPath]);
+
+  // Workspace-View scoped hydration: when findScopedNode returns null (scopedError),
+  // load the relDir chain in the background. If the path exists but was unloaded,
+  // mergeChildren will update the tree and scopedError will clear on next render.
+  // We track scopeHydrating to show a skeleton while the load is in-flight rather
+  // than flashing the error briefly before the node appears.
+  const [scopeHydrating, setScopeHydrating] = useState(false);
+  // Track which relDir we're hydrating so we don't restart on unrelated re-renders.
+  const hydratingForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (mode !== 'workspace') {
+      setScopeHydrating(false);
+      hydratingForRef.current = null;
+      return;
+    }
+    if (!scopedError) {
+      // Scope found — reset so next error triggers a fresh hydration.
+      setScopeHydrating(false);
+      hydratingForRef.current = null;
+      return;
+    }
+    const ws = useIDEStore.getState().workspace;
+    const active = useIDEStore
+      .getState()
+      .workspaces.find((w) => w.id === useIDEStore.getState().activeWorkspaceId);
+    const relDir = active?.relDir ?? '';
+    if (!ws || !relDir) {
+      setScopeHydrating(false);
+      hydratingForRef.current = null;
+      return;
+    }
+    // Already hydrating this exact relDir — don't restart (avoids loops if the path
+    // genuinely doesn't exist and each render re-triggers the effect).
+    if (hydratingForRef.current === relDir) return;
+    hydratingForRef.current = relDir;
+    let cancelled = false;
+    setScopeHydrating(true);
+    void (async () => {
+      let cursor = ws.path;
+      for (const seg of relDir.split('/')) {
+        await ensurePathLoaded(cursor);
+        if (cancelled) return;
+        cursor += '/' + seg;
+      }
+      await ensurePathLoaded(cursor);
+      if (!cancelled) setScopeHydrating(false);
+    })();
+    return () => {
+      cancelled = true;
+      hydratingForRef.current = null;
+    };
+    // scopedError triggers hydration when scope node is missing; rootPath detects workspace switch
+  }, [mode, scopedError, rootPath, ensurePathLoaded]);
 
   const { openFolder } = useOpenFolder();
   const { refetch } = useFetchDirectoryTree();
@@ -160,6 +229,7 @@ export function FileExplorer() {
     if (!workspace) {
       return <FileExplorerEmpty message="Open a folder to get started" onOpenFolder={openFolder} />;
     }
+    if (scopeHydrating) return <FileExplorerSkeleton />;
     if (scopedError) {
       return (
         <div className={styles.scopedError} role="status">

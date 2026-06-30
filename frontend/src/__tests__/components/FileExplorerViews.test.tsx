@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { FileExplorer } from '../../components/FileExplorer/FileExplorer';
 import { useIDEStore } from '../../stores/ideStore';
 import type { workspace } from '../../../wailsjs/go/models';
@@ -8,6 +8,7 @@ import type { FileEntry } from '../../stores/ideStore';
 jest.mock('../../../wailsjs/go/main/App', () => ({
   ToggleMaximize: jest.fn(),
   ReadDirectory: jest.fn(),
+  ReadDirectoryShallow: jest.fn().mockResolvedValue([]),
   OpenFolderDialog: jest.fn(),
 }));
 
@@ -69,7 +70,7 @@ describe('FileExplorer views', () => {
     expect(screen.getByRole('tab', { name: 'Frontend' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('renders the scoped-error state when the workspace folder is missing', () => {
+  it('renders the scoped-error state when the workspace folder is missing', async () => {
     seed('frontend', {
       workspaces: [
         defs[0],
@@ -77,6 +78,10 @@ describe('FileExplorer views', () => {
       ] as workspace.WorkspaceDef[],
     });
     render(<FileExplorer />);
-    expect(screen.getByText(/workspace folder not found/i)).toBeInTheDocument();
+    // Scoped hydration runs briefly (loading the relDir chain) then surfaces the
+    // error once it determines the path does not exist in the loaded tree.
+    await waitFor(() => {
+      expect(screen.getByText(/workspace folder not found/i)).toBeInTheDocument();
+    });
   });
 });
