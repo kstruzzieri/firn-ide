@@ -129,9 +129,10 @@
   color: #cbd5e1;
   margin-top: 3px;
   margin-left: 34px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Wrap long commands instead of truncating so the full command is visible.
+     overflow-wrap:anywhere also breaks unbroken tokens (long paths/URLs). */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .cmdSource {

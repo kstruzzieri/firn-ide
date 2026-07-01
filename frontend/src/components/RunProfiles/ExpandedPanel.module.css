@@ -38,16 +38,14 @@
 
 .outputLine {
   color: #555;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .outputStderr {
   color: rgba(239, 68, 68, 0.6);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ── Stats Row ──────────────────────────────────────────────── */
@@ -210,9 +208,12 @@
   font-size: 11px;
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
   color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Wrap the full command/source instead of truncating in the detail view.
+     flex:1 + min-width:0 makes it wrap at the row width, not the longest token. */
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ── Actions Row ────────────────────────────────────────────── */
