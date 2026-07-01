@@ -128,6 +128,20 @@ describe('RunProfileCard adopt control', () => {
     expect(screen.queryByRole('button', { name: /adopt lint/i })).not.toBeInTheDocument();
   });
 
+  it('expands a dormant (never-run) card on click so Edit/actions are reachable', () => {
+    const { container } = render(
+      <RunProfileCard profile={detectedProfile} {...baseProps} isDormant={true} />
+    );
+
+    // Collapsed initially.
+    expect(container.querySelector('[class*="expanded"]')).toBeNull();
+
+    // Card root carries role="button"; click toggles the detail panel.
+    fireEvent.click(container.querySelector('[role="button"]')!);
+
+    expect(container.querySelector('[class*="expanded"]')).not.toBeNull();
+  });
+
   it('applies just-ran class when isFreshestRun is true', () => {
     const { container } = render(
       <RunProfileCard profile={detectedProfile} {...baseProps} isFreshestRun={true} />

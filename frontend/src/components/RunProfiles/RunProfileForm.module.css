@@ -104,6 +104,12 @@
   background-position: right 9px center;
   cursor: pointer;
 }
+/* Keep the accent focus ring for keyboard users (:focus-visible), but don't
+   leave a persistent ring hugging the select after a mouse click/selection. */
+.select:focus:not(:focus-visible) {
+  border-color: var(--surface-border);
+  box-shadow: none;
+}
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }

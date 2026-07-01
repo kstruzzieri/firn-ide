@@ -241,7 +241,9 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
               onChange={(e) => onPickStartFrom(e.target.value)}
               aria-label="Start from detected command"
             >
-              <option value="">Choose a detected command…</option>
+              <option value="" disabled>
+                Choose a detected command…
+              </option>
               {detectedOptions.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} — {p.command}

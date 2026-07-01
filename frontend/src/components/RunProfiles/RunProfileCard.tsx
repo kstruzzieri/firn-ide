@@ -206,8 +206,11 @@ export function RunProfileCard({
   const handleCardClick = () => {
     // Clicking anywhere on the card selects it as the Cmd+R target...
     useIDEStore.getState().setSelectedProfile(profile.id);
-    // ...and still toggles the expanded detail for non-dormant, non-active cards.
-    if (!isDormant && !isActiveState) {
+    // ...and toggles the expanded detail. Active states force-expand via CSS, so
+    // manual toggling only applies to non-active cards — including dormant
+    // (never-run) ones, so their Edit/Pin/Hide actions are reachable without
+    // having to run the profile first.
+    if (!isActiveState) {
       setManualExpanded((prev) => !prev);
     }
   };
