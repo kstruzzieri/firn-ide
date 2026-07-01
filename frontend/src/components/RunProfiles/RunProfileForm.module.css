@@ -196,6 +196,16 @@
   padding: 6px 8px;
   margin-bottom: 11px;
 }
+/* Non-blocking amber advisory (e.g. command/workspace toolchain mismatch). */
+.warning {
+  font-size: 10px;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 5px;
+  padding: 6px 8px;
+  margin: -4px 0 13px;
+}
 .deleteRow {
   display: flex;
   justify-content: space-between;

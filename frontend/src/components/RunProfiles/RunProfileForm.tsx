@@ -18,6 +18,7 @@ import {
   type EnvRow,
   type RunProfileFormValues,
 } from '../../utils/runProfileForm';
+import { commandWorkspaceMismatch, pickWorkspaceForCommand } from '../../utils/commandWorkspace';
 import styles from './RunProfileForm.module.css';
 
 const ALL_TAGS: ProfileTag[] = ['build', 'test', 'dev', 'lint', 'deploy'];
@@ -71,6 +72,9 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const [dirError, setDirError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // While creating, the workspace auto-follows the command's toolchain until the
+  // user picks a workspace themselves.
+  const [workspaceTouched, setWorkspaceTouched] = useState(false);
 
   // For the "clear seeded tags when customizing and command changes" rule.
   const customizing = state.mode === 'edit' && state.profile.source === 'detected';
@@ -125,6 +129,15 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
     if (customizing && seededTags.current && command !== seededCommand.current) {
       seededTags.current = false;
       patch({ command, tags: [] });
+      return;
+    }
+    // Smart default: while creating, steer the workspace to the one whose
+    // toolchain matches the command (go test -> Go), until the user overrides it.
+    if (state.mode === 'create' && !workspaceTouched) {
+      patch({
+        command,
+        workspaceId: pickWorkspaceForCommand(command, workspaces, activeWorkspaceId),
+      });
       return;
     }
     patch({ command });
@@ -243,6 +256,10 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
 
   const multiWorkspace = workspaces.length > 1;
   const variantCount = state.mode === 'edit' ? (state.profile.envVariants?.length ?? 0) : 0;
+  const mismatchWarning = commandWorkspaceMismatch(
+    values.command,
+    workspaces.find((w) => w.id === values.workspaceId)
+  );
 
   return (
     <div className={styles.form}>
@@ -295,7 +312,10 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
             <select
               className={`${styles.input} ${styles.select}`}
               value={values.workspaceId}
-              onChange={(e) => patch({ workspaceId: e.target.value })}
+              onChange={(e) => {
+                setWorkspaceTouched(true);
+                patch({ workspaceId: e.target.value });
+              }}
               aria-label="Workspace"
             >
               {workspaces.map((w) => (
@@ -305,6 +325,12 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
               ))}
             </select>
           </label>
+        )}
+
+        {mismatchWarning && (
+          <div className={styles.warning} role="status">
+            {mismatchWarning}
+          </div>
         )}
 
         <label className={styles.group}>

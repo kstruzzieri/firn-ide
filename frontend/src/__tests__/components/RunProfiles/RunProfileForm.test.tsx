@@ -187,6 +187,42 @@ it('deletes a user profile after confirm and closes', async () => {
   await waitFor(() => expect(useIDEStore.getState().runProfileForm).toBeNull());
 });
 
+const defsWithGo = [
+  { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
+] as workspace.WorkspaceDef[];
+
+it('defaults the workspace to the matching toolchain as the command is typed (create)', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  const wsSelect = screen.getByLabelText('Workspace') as HTMLSelectElement;
+  expect(wsSelect.value).toBe('frontend');
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+  expect(wsSelect.value).toBe('go');
+});
+
+it('stops auto-selecting the workspace once the user picks one', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  const wsSelect = screen.getByLabelText('Workspace') as HTMLSelectElement;
+  fireEvent.change(wsSelect, { target: { value: 'project' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+  expect(wsSelect.value).toBe('project');
+});
+
+it('warns (non-blocking) when the command does not match the selected workspace', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  // Pick Frontend explicitly, then type a Go command.
+  fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'frontend' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+  expect(screen.getByText(/looks like a Go command/i)).toBeInTheDocument();
+  // Warning is advisory only — Save stays enabled.
+  fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'gt' } });
+  expect(screen.getByRole('button', { name: /save/i })).toBeEnabled();
+});
+
 it('shows the Workspace dropdown when editing a user profile', () => {
   const user: RunProfile = { ...detected, id: 'u1', source: 'user' };
   render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
