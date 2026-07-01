@@ -157,34 +157,69 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const removeEnvRow = (i: number) =>
     patch({ envRows: values.envRows.filter((_, idx) => idx !== i) });
 
+  // The Wails-generated runprofile.RunProfile carries a convertValues helper the
+  // plain app type lacks; the binding only serializes the data, so cast.
+  const toBinding = (p: RunProfile) => p as unknown as runprofile.RunProfile;
+
+  // name/command render inline; surface every other backend error in the
+  // form-level banner so no validation failure is silently swallowed.
+  const applyBackendErrors = (result: runprofile.ValidationResult) => {
+    const errs: Record<string, string> = {};
+    const other: string[] = [];
+    for (const e of result.errors ?? []) {
+      if (e.field === 'name' || e.field === 'command') errs[e.field] = e.message;
+      else other.push(e.message);
+    }
+    setFieldErrors(errs);
+    if (other.length > 0) {
+      setFormError(other.join('; '));
+    } else if (Object.keys(errs).length === 0) {
+      setFormError('Could not save profile.');
+    }
+  };
+
   const onSave = async () => {
     if (!canSave) return;
     setSaving(true);
     setFormError(null);
     setFieldErrors({});
+
+    // Changing a user profile's workspace is a move: the backend rejects a
+    // same-id Save into a different workspace, so remove the old copy first.
+    const reassigning =
+      state.mode === 'edit' &&
+      state.profile.source === 'user' &&
+      (state.profile.workspaceId ?? '') !== (values.workspaceId ?? '');
+
     try {
       const profile = buildProfileFromForm(values, state);
-      // The Wails-generated runprofile.RunProfile carries a convertValues helper
-      // the plain app type lacks; the binding only serializes the data, so cast.
-      const result = await SaveRunProfile(profile as unknown as runprofile.RunProfile);
+
+      if (reassigning) {
+        const original = (state as { mode: 'edit'; profile: RunProfile }).profile;
+        await DeleteRunProfile(original.id);
+        let result: runprofile.ValidationResult;
+        try {
+          result = await SaveRunProfile(toBinding(profile));
+        } catch (err) {
+          // Save threw after the delete — restore the original so it isn't lost.
+          await SaveRunProfile(toBinding(original)).catch(() => {});
+          throw err;
+        }
+        if (!result.valid) {
+          await SaveRunProfile(toBinding(original)).catch(() => {});
+          applyBackendErrors(result);
+          return;
+        }
+        close(); // backend emits runprofiles:changed → list refreshes
+        return;
+      }
+
+      const result = await SaveRunProfile(toBinding(profile));
       if (result.valid) {
         close(); // backend emits runprofiles:changed → list refreshes
         return;
       }
-      // name/command render inline; surface every other backend error in the
-      // form-level banner so no validation failure is silently swallowed.
-      const errs: Record<string, string> = {};
-      const other: string[] = [];
-      for (const e of result.errors ?? []) {
-        if (e.field === 'name' || e.field === 'command') errs[e.field] = e.message;
-        else other.push(e.message);
-      }
-      setFieldErrors(errs);
-      if (other.length > 0) {
-        setFormError(other.join('; '));
-      } else if (Object.keys(errs).length === 0) {
-        setFormError('Could not save profile.');
-      }
+      applyBackendErrors(result);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -254,7 +289,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           </label>
         )}
 
-        {!isEdit && multiWorkspace && (
+        {(!isEdit || isUserProfile) && multiWorkspace && (
           <label className={styles.group}>
             <span className={styles.label}>Workspace</span>
             <select
