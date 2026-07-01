@@ -220,7 +220,11 @@
 
 .actions {
   display: flex;
+  /* wrap so action buttons reflow to a new line instead of overflowing/clipping
+     when the right panel is narrow. */
+  flex-wrap: wrap;
   gap: 5px;
+  row-gap: 6px;
   align-items: center;
   margin-top: 10px;
 }
