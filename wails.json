@@ -7,7 +7,7 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "keithstruzzieri",
-    "email": "kstruzzieri@quantumspatial"
+    "name": "Keith Struzzieri",
+    "email": "krstruzz@gmail.com"
   }
 }
