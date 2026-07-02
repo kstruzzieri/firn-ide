@@ -13,8 +13,13 @@ import styles from './GitDiffView.module.css';
  * (not the editing unified view): both sides are revision snapshots, so
  * nothing here writes back to disk.
  */
+/** Split-ratio bounds: neither pane may shrink past this. */
+const MIN_SPLIT = 15;
+const MAX_SPLIT = 85;
+
 export function GitDiffView({ session }: { session: DiffSession }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const mergeRef = useRef<MergeView | null>(null);
   const themeId = useEditorSyntaxTheme();
 
@@ -67,6 +72,41 @@ export function GitDiffView({ session }: { session: DiffSession }) {
     side.focus();
   };
 
+  // Column split, applied as a CSS variable so the panes, the divider, and
+  // the header labels all track the same ratio.
+  const setSplit = (percent: number) => {
+    const clamped = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, Math.round(percent)));
+    rootRef.current?.style.setProperty('--diff-left', `${clamped}%`);
+    return clamped;
+  };
+
+  const currentSplit = (): number => {
+    const raw = rootRef.current?.style.getPropertyValue('--diff-left');
+    const parsed = raw ? Number.parseFloat(raw) : NaN;
+    return Number.isFinite(parsed) ? parsed : 50;
+  };
+
+  const handleDividerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect || rect.width === 0) return;
+      setSplit(((ev.clientX - rect.left) / rect.width) * 100);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const handleDividerKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    setSplit(currentSplit() + (e.key === 'ArrowLeft' ? -2 : 2));
+  };
+
   if (session.binary) {
     return (
       <div className={styles.stateMessage} data-testid="diff-binary">
@@ -83,7 +123,7 @@ export function GitDiffView({ session }: { session: DiffSession }) {
   }
 
   return (
-    <div className={styles.diffRoot}>
+    <div className={styles.diffRoot} ref={rootRef} data-testid="diff-root">
       <div className={styles.toolbar}>
         <div className={styles.labels} aria-hidden="true">
           <span>{session.left.label}</span>
@@ -113,7 +153,18 @@ export function GitDiffView({ session }: { session: DiffSession }) {
           </button>
         </div>
       </div>
-      <div ref={hostRef} className={styles.mergeHost} data-testid="merge-host" />
+      <div ref={hostRef} className={styles.mergeHost} data-testid="merge-host">
+        <button
+          type="button"
+          className={styles.divider}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize diff columns"
+          title="Drag to resize columns"
+          onMouseDown={handleDividerMouseDown}
+          onKeyDown={handleDividerKeyDown}
+        />
+      </div>
     </div>
   );
 }

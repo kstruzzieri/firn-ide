@@ -93,6 +93,45 @@ describe('GitDiffView', () => {
     expect(goToPreviousChunkMock).toHaveBeenCalled();
   });
 
+  it('renders a draggable column divider that updates the split ratio', () => {
+    render(<GitDiffView session={base} />);
+    const divider = screen.getByRole('separator', { name: /resize diff columns/i });
+    const root = screen.getByTestId('diff-root');
+    jest
+      .spyOn(root, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, width: 1000, top: 0, height: 500 } as DOMRect);
+
+    fireEvent.mouseDown(divider, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 300 });
+    fireEvent.mouseUp(window);
+
+    expect(root.style.getPropertyValue('--diff-left')).toBe('30%');
+  });
+
+  it('clamps the divider so neither pane collapses', () => {
+    render(<GitDiffView session={base} />);
+    const divider = screen.getByRole('separator', { name: /resize diff columns/i });
+    const root = screen.getByTestId('diff-root');
+    jest
+      .spyOn(root, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, width: 1000, top: 0, height: 500 } as DOMRect);
+
+    fireEvent.mouseDown(divider, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 5 });
+    fireEvent.mouseUp(window);
+
+    expect(root.style.getPropertyValue('--diff-left')).toBe('15%');
+  });
+
+  it('supports keyboard resizing on the divider', () => {
+    render(<GitDiffView session={base} />);
+    const divider = screen.getByRole('separator', { name: /resize diff columns/i });
+
+    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+
+    expect(screen.getByTestId('diff-root').style.getPropertyValue('--diff-left')).toBe('48%');
+  });
+
   it('renders a binary state instead of a merge view', () => {
     render(<GitDiffView session={{ ...base, binary: true }} />);
 

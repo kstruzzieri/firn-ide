@@ -16,14 +16,28 @@
   min-width: 0;
 }
 
+/* Header labels track the pane split so INDEX / WORKING TREE stay aligned
+ * with their columns after a resize. */
 .labels span {
-  flex: 1;
   padding: 3px 10px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.labels span:first-child {
+  flex: 0 0 var(--diff-left, 50%);
+  box-sizing: border-box;
+}
+
+.labels span:last-child {
+  flex: 1;
+  min-width: 0;
 }
 
 .nav {
@@ -59,29 +73,60 @@
   background: var(--surface-hover);
 }
 
-/* One scroller per pane (the merge package keeps them in sync); the host
- * itself never scrolls, so no phantom outer scrollbar/gutter can appear. */
+/*
+ * Scroll contract (from @codemirror/merge's own base theme): .cm-mergeView is
+ * THE scroll container (overflowY: auto), and the inner editors are forced to
+ * height auto / overflowY visible — they grow, they never scroll themselves.
+ * So the only sizing we may impose is bounding .cm-mergeView to the host;
+ * pinning .cm-mergeViewEditors or .cm-editor to 100% height makes the scroll
+ * container's child exactly viewport-sized and freezes scrolling entirely.
+ */
 .mergeHost {
   flex: 1;
   min-height: 0;
+  position: relative;
   overflow: hidden;
 }
 
-.mergeHost :global(.cm-mergeView),
-.mergeHost :global(.cm-mergeViewEditors) {
+.mergeHost :global(.cm-mergeView) {
   height: 100%;
 }
 
-/* Equal halves regardless of content: min-width 0 stops a long unwrapped
- * line from growing its pane (the "sudden indent + blank right gutter"). */
-.mergeHost :global(.cm-mergeViewEditor) {
-  flex: 1 1 50%;
-  min-width: 0;
-  overflow: hidden;
+/* Resizable split: the package defaults both panes to flex 1/0; driving the
+ * left pane from --diff-left keeps the right pane absorbing the remainder. */
+.mergeHost :global(.cm-mergeViewEditor:first-child) {
+  flex: 0 0 var(--diff-left, 50%);
 }
 
-.mergeHost :global(.cm-editor) {
-  height: 100%;
+.divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--diff-left, 50%);
+  width: 7px;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+
+.divider:hover::after,
+.divider:focus-visible::after {
+  width: 3px;
+  left: 2px;
+  background: var(--accent);
 }
 
 .stateMessage {
