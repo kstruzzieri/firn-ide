@@ -14,8 +14,26 @@ import {
   GitGenerateCommitMessage,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
-import { buildStatusByPath, type GitRowStatus } from '../types/git';
+import { buildStatusByPath, classifyChange, type GitRowStatus } from '../types/git';
 import { useIDEStore } from './ideStore';
+
+/** Friendly post-commit summary shown in the panel instead of raw git output. */
+export interface CommitReceipt {
+  branch: string;
+  hash: string;
+  subject: string;
+  /** Repo-relative paths that were staged when the commit ran. */
+  files: string[];
+  /** Raw git output (stats, hook messages) for the collapsible detail. */
+  output: string;
+}
+
+/** Parses git's "[branch hash] subject" commit summary line. */
+function parseCommitSummary(output: string): Pick<CommitReceipt, 'branch' | 'hash' | 'subject'> {
+  const match = /^\[(.+?) (?:\(root-commit\) )?([0-9a-f]+)\] (.*)$/m.exec(output);
+  if (!match) return { branch: '', hash: '', subject: '' };
+  return { branch: match[1], hash: match[2], subject: match[3] };
+}
 
 /** Trailing debounce for watcher-driven refreshes; batches event bursts
  * (branch switches, installs) into one `git status` run. */
@@ -37,6 +55,8 @@ interface GitState {
   lastOpOutput: string | null;
   /** Last operation error, shown inline in the panel (conflicts etc.). */
   lastError: string | null;
+  /** Set on successful commit; cleared by the next mutating op or reset. */
+  lastCommitReceipt: CommitReceipt | null;
   aiAvailable: boolean;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
@@ -83,6 +103,7 @@ export const useGitStore = create<GitStore>()(
       opInFlight: null,
       lastOpOutput: null,
       lastError: null,
+      lastCommitReceipt: null,
       aiAvailable: false,
       epoch: 0,
       focusBranchRevision: 0,
@@ -103,6 +124,7 @@ export const useGitStore = create<GitStore>()(
             opInFlight: null,
             lastOpOutput: null,
             lastError: null,
+            lastCommitReceipt: null,
             epoch: state.epoch + 1,
           }),
           false,
@@ -154,8 +176,22 @@ export const useGitStore = create<GitStore>()(
 
       commit: async (amend) => {
         const message = get().commitMessage;
+        // Snapshot the staged set before the commit consumes it.
+        const stagedFiles = (get().status?.files ?? [])
+          .filter((f) => classifyChange(f).staged)
+          .map((f) => f.path);
         const ok = await runOp('commit', get, set, (root) => GitCommit(root, message, amend));
-        if (ok) set({ commitMessage: '' }, false, 'git/commitClearMessage');
+        if (ok) {
+          const output = get().lastOpOutput ?? '';
+          set(
+            {
+              commitMessage: '',
+              lastCommitReceipt: { ...parseCommitSummary(output), files: stagedFiles, output },
+            },
+            false,
+            'git/commitReceipt'
+          );
+        }
       },
 
       pull: async () => {
@@ -227,7 +263,11 @@ async function runOp(
 ): Promise<boolean> {
   const { root, opInFlight } = get();
   if (!root || opInFlight) return false;
-  set({ opInFlight: op, lastError: null, lastOpOutput: null }, false, `git/${op}Start`);
+  set(
+    { opInFlight: op, lastError: null, lastOpOutput: null, lastCommitReceipt: null },
+    false,
+    `git/${op}Start`
+  );
   try {
     const output = await fn(root);
     set({ opInFlight: null, lastOpOutput: output }, false, `git/${op}Done`);

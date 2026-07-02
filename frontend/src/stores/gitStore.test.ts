@@ -148,6 +148,40 @@ describe('gitStore operations', () => {
     expect(useGitStore.getState().commitMessage).toBe('');
   });
 
+  it('commit success records a receipt with hash, subject, and staged files', async () => {
+    mockGitStatus.mockResolvedValue(
+      repoStatus({
+        files: [
+          { path: 'a.ts', index: 'M', worktree: '.' },
+          { path: 'b.ts', index: '.', worktree: 'M' },
+        ],
+      })
+    );
+    await useGitStore.getState().refresh();
+    mockGitCommit.mockResolvedValue(
+      '[main 1a2b3c4] feat: add thing\n 1 file changed, 2 insertions(+)'
+    );
+    useGitStore.getState().setCommitMessage('feat: add thing');
+
+    await useGitStore.getState().commit(false);
+
+    const receipt = useGitStore.getState().lastCommitReceipt;
+    expect(receipt?.hash).toBe('1a2b3c4');
+    expect(receipt?.branch).toBe('main');
+    expect(receipt?.subject).toBe('feat: add thing');
+    expect(receipt?.files).toEqual(['a.ts']); // only staged files, not b.ts
+    expect(receipt?.output).toContain('1 file changed');
+  });
+
+  it('commit failure leaves no receipt', async () => {
+    mockGitCommit.mockRejectedValue(new Error('hook rejected'));
+    useGitStore.getState().setCommitMessage('x');
+
+    await useGitStore.getState().commit(false);
+
+    expect(useGitStore.getState().lastCommitReceipt).toBeNull();
+  });
+
   it('commit failure keeps the message and toasts the git error', async () => {
     mockGitCommit.mockRejectedValue(new Error('git commit: nothing staged'));
     useGitStore.getState().setCommitMessage('feat: thing');

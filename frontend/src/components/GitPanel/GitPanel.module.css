@@ -1,0 +1,496 @@
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.empty {
+  padding: 16px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ── sync row ──────────────────────────────────────────────────────────── */
+
+.syncRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.syncButtons {
+  display: flex;
+  gap: 4px;
+}
+
+.syncBtn {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.syncBtn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.syncBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── branch popup ──────────────────────────────────────────────────────── */
+
+.branchWrap {
+  position: relative;
+  min-width: 0;
+}
+
+.branchBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.branchBtn:hover {
+  background: var(--surface-hover);
+}
+
+.branchBtn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.branchName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branchPopup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-base);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.branchSearch {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.branchList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.branchOption {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.branchOption:hover {
+  background: var(--surface-hover);
+}
+
+.branchCreate {
+  color: var(--accent);
+}
+
+/* ── scope toggle ──────────────────────────────────────────────────────── */
+
+.scopeToggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 5px;
+  background: var(--surface-hover);
+  width: fit-content;
+}
+
+.scopeBtn {
+  padding: 2px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.scopeActive {
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+
+/* ── commit area ───────────────────────────────────────────────────────── */
+
+.commitArea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.commitInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.commitControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.amendLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.commitBtn {
+  margin-left: auto;
+  padding: 4px 14px;
+  border: none;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.commitBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.smallBtn {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.smallBtn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+/* ── AI suggestion / scope guard ───────────────────────────────────────── */
+
+.aiSuggestion {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.aiSuggestionText {
+  white-space: pre-wrap;
+  margin-bottom: 6px;
+}
+
+.aiSuggestionActions {
+  display: flex;
+  gap: 6px;
+}
+
+.scopeGuard {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  color: var(--status-warning);
+  font-size: 11px;
+}
+
+.scopeProfiles {
+  color: var(--text-muted);
+}
+
+/* ── receipt / errors / conflicts ──────────────────────────────────────── */
+
+.receipt {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-success);
+  border-radius: 5px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.receiptHead code {
+  font-family: var(--font-mono);
+  color: var(--status-success);
+}
+
+.receiptSubject {
+  font-weight: 600;
+}
+
+.receiptFiles,
+.receiptPush {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.errorStrip {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+  color: var(--status-error);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conflictBanner {
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--status-error) 50%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--status-error) 8%, transparent);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.conflictTitle {
+  font-weight: 600;
+  color: var(--status-error);
+}
+
+.conflictList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.conflictOpen {
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 1px 0;
+}
+
+.rawOutput {
+  margin: 4px 0 0;
+  padding: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+/* ── sections / rows ───────────────────────────────────────────────────── */
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.sectionCount {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.row:hover {
+  background: var(--surface-hover);
+}
+
+.rowMain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rowIcon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.rowName {
+  white-space: nowrap;
+}
+
+.rowDir {
+  color: var(--text-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Hover-revealed actions; still in the DOM (and focusable) for a11y/tests. */
+.rowActionBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.row:hover .rowActionBtn,
+.rowActionBtn:focus-visible {
+  opacity: 1;
+}
+
+.rowActionBtn:hover {
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.rowActionBtn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.rowBadge {
+  width: 14px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.row[data-git='modified'] .rowBadge,
+.row[data-git='renamed'] .rowBadge {
+  color: var(--git-modified, var(--status-warning));
+}
+
+.row[data-git='added'] .rowBadge,
+.row[data-git='untracked'] .rowBadge {
+  color: var(--git-added, var(--status-success));
+}
+
+.row[data-git='deleted'] .rowBadge {
+  color: var(--git-deleted, var(--status-error));
+}
+
+.row[data-git='conflicted'] .rowBadge {
+  color: var(--git-conflicted, var(--status-error));
+}
