@@ -28,6 +28,43 @@ Modern monorepos contain frontend (React/TypeScript), backend services (Python, 
 
 Each workspace has independent layout state, scoped language servers (only the active workspace runs LSP), and workspace-specific Run Profiles. Switching workspaces is instant—like changing perspectives, not opening a new app.
 
+## Install
+
+Download the latest build for your platform from the [Releases page](https://github.com/kstruzzieri/firn-ide/releases/latest).
+
+> **Preview builds are unsigned**, so macOS and Windows warn on first launch. The per-platform steps below get you past it.
+
+### macOS (11 Big Sur or later)
+
+1. Download `Firn-macos-arm64.zip` (Apple Silicon) or `Firn-macos-amd64.zip` (Intel).
+2. Unzip and move `Firn.app` to `/Applications`.
+3. First launch is blocked by Gatekeeper. Either right-click `Firn.app` → **Open** → **Open**, or clear the quarantine flag:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Firn.app
+   ```
+
+### Linux (x86_64)
+
+1. Download `Firn-linux-amd64.tar.gz`.
+2. Extract and run:
+
+   ```bash
+   tar -xzf Firn-linux-amd64.tar.gz
+   chmod +x firn
+   ./firn
+   ```
+
+3. Requires WebKit2GTK 4.1 — e.g. on Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0`.
+
+### Windows 10/11 (x64)
+
+1. Download `Firn-windows-amd64.zip` and extract `firn.exe`.
+2. First launch may show a SmartScreen warning → **More info** → **Run anyway**.
+3. Requires the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (preinstalled on Windows 11; auto-installed or downloadable on Windows 10).
+
+Prefer to build from source? See [Development](#development).
+
 ## Key Design Decisions
 
 ### Wails over Electron
