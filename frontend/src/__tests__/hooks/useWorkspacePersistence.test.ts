@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
 import { filesystem } from '../../../wailsjs/go/models';
-import { clearWorkspaceTreeCache, getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
+import {
+  clearWorkspaceTreeCache,
+  getCachedWorkspaceTree,
+  setCachedWorkspaceTree,
+} from '../../utils/workspaceTreeCache';
 
 const mockConfirmBeforeCloseReady = jest.fn(() => Promise.resolve());
 let lastSavedWorkspaceState: unknown = null;
@@ -310,5 +314,148 @@ describe('useWorkspacePersistence', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('saves the previous workspace tree, not the live one, when switching workspaces', async () => {
+    const treeA = filesystem.FileEntry.createFrom({
+      name: 'main.go',
+      path: '/workspace/A/main.go',
+      isDir: false,
+      size: 1,
+      modTime: new Date().toISOString(),
+    });
+    const treeB = filesystem.FileEntry.createFrom({
+      name: '_deployment',
+      path: '/workspace/B/_deployment',
+      isDir: true,
+      size: 0,
+      modTime: new Date().toISOString(),
+    });
+
+    // Workspace A is open with its tree cached (as the save subscription would
+    // have done while A was active).
+    setCachedWorkspaceTree('/workspace/A', [treeA]);
+    useIDEStore.setState({
+      workspace: { name: 'A', path: '/workspace/A' },
+      directoryTree: [treeA],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    mockSaveWorkspaceState.mockClear();
+
+    // Simulate openWorkspaceByPath: swap workspace AND live directoryTree to B
+    // in a single store update. This is the moment the switch-flush of A runs.
+    act(() => {
+      useIDEStore.setState({
+        workspace: { name: 'B', path: '/workspace/B' },
+        directoryTree: [treeB],
+        isLoadingTree: false,
+      });
+    });
+
+    await waitFor(() =>
+      expect(
+        mockSaveWorkspaceState.mock.calls.some(
+          (c) => (c[0] as { workspacePath: string }).workspacePath === '/workspace/A'
+        )
+      ).toBe(true)
+    );
+
+    const savedForA = mockSaveWorkspaceState.mock.calls
+      .map(
+        (c) =>
+          c[0] as {
+            workspacePath: string;
+            explorer: { treeSnapshot?: filesystem.FileEntry[] };
+          }
+      )
+      .find((s) => s.workspacePath === '/workspace/A');
+
+    // A's persisted snapshot must be A's tree, never B's live tree.
+    expect(savedForA?.explorer.treeSnapshot).toEqual([treeA]);
+  });
+
+  it('ignores a treeSnapshot whose entries are not under the workspace root', async () => {
+    // Simulates disk state already polluted by a prior cross-workspace switch:
+    // firn's saved snapshot actually holds quantum-trader's tree.
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/workspace/firn',
+      workspaceName: 'firn',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: [],
+        rootExpanded: true,
+        treeSnapshot: [
+          filesystem.FileEntry.createFrom({
+            name: '_deployment',
+            path: '/workspace/quantum/_deployment',
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+          }),
+        ],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'firn', path: '/workspace/firn' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/firn'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    // The foreign (quantum) snapshot must be ignored, not painted under firn,
+    // and must not poison the in-memory cache for firn.
+    expect(useIDEStore.getState().directoryTree).toEqual([]);
+    expect(getCachedWorkspaceTree('/workspace/firn')).toBeUndefined();
+  });
+
+  it('ignores a treeSnapshot whose top-level entries are nested descendants', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/repo',
+      workspaceName: 'repo',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: [],
+        rootExpanded: true,
+        treeSnapshot: [
+          filesystem.FileEntry.createFrom({
+            name: 'src',
+            path: '/repo/frontend/src',
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+          }),
+        ],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: '/repo' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/repo'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    expect(useIDEStore.getState().directoryTree).toEqual([]);
+    expect(getCachedWorkspaceTree('/repo')).toBeUndefined();
   });
 });

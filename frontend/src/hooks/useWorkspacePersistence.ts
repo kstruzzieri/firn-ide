@@ -7,7 +7,7 @@ import {
   ReadFile,
 } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import type { workspace } from '../../wailsjs/go/models';
+import type { workspace, filesystem } from '../../wailsjs/go/models';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { relativePathFromRoot } from '../utils/workspaceRegions';
@@ -23,6 +23,41 @@ interface WorkspaceIdentity {
 
 interface CollectWorkspaceOptions {
   includeTreeSnapshot?: boolean;
+}
+
+/**
+ * True when every top-level entry of `snapshot` is an immediate child of `workspacePath`.
+ * A snapshot whose entries point elsewhere is cross-workspace pollution
+ * (a wrong-project tree saved under this path by a buggy prior switch) and
+ * must not be applied. Empty snapshots are never "belonging" — there is
+ * nothing to paint and applying `[]` would clobber a correct fresh fetch.
+ */
+function treeSnapshotBelongsTo(snapshot: filesystem.FileEntry[], workspacePath: string): boolean {
+  if (!snapshot.length) return false;
+  return snapshot.every((entry) => {
+    const rel = relativePathFromRoot(entry.path, workspacePath);
+    return rel !== null && rel !== '' && !rel.includes('/');
+  });
+}
+
+/**
+ * Resolves which directory tree to serialize as the explorer snapshot.
+ *
+ * With an identity override we're flushing a *different* workspace than the
+ * live one (a switch flush). At that moment `state.directoryTree` has already
+ * been swapped to the NEW workspace by openWorkspaceByPath, so serializing it
+ * would persist the wrong project's tree under the old path. Pull the old
+ * workspace's tree from the in-memory cache instead, and return undefined on a
+ * cache miss rather than the wrong live tree.
+ */
+function resolveTreeSnapshot(
+  directoryTree: filesystem.FileEntry[],
+  overrideIdentity?: WorkspaceIdentity
+): filesystem.FileEntry[] | undefined {
+  if (overrideIdentity) {
+    return getCachedWorkspaceTree(overrideIdentity.path);
+  }
+  return directoryTree;
 }
 
 /**
@@ -66,7 +101,9 @@ function collectWorkspaceState(
     explorer: {
       expandedPaths: Array.from(state.expandedPaths),
       rootExpanded: state.isRootExpanded,
-      treeSnapshot: includeTreeSnapshot ? state.directoryTree : undefined,
+      treeSnapshot: includeTreeSnapshot
+        ? resolveTreeSnapshot(state.directoryTree, overrideIdentity)
+        : undefined,
     },
     activeSidebar: state.activeSidebarView,
     hiddenProfileIds: state.hiddenProfileIds,
@@ -144,7 +181,13 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
       if (state.explorer.rootExpanded !== undefined) {
         useIDEStore.setState({ isRootExpanded: state.explorer.rootExpanded });
       }
-      if (state.explorer.treeSnapshot) {
+      // Only apply a snapshot that actually belongs to this workspace. A
+      // foreign snapshot is disk pollution from a prior buggy switch; ignoring
+      // it here self-heals that state — fetchTree then repopulates correctly.
+      if (
+        state.explorer.treeSnapshot &&
+        treeSnapshotBelongsTo(state.explorer.treeSnapshot, workspacePath)
+      ) {
         setCachedWorkspaceTree(workspacePath, state.explorer.treeSnapshot);
         store.setDirectoryTree(state.explorer.treeSnapshot);
       }
