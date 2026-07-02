@@ -505,7 +505,7 @@ function ActionsRow({
           onClick={onUnadopt}
           aria-label={`Remove ${profile.name} from working set`}
         >
-          Remove from working set
+          Remove
         </button>
       )}
       {profile.source === 'detected' ? (

@@ -187,6 +187,109 @@ it('deletes a user profile after confirm and closes', async () => {
   await waitFor(() => expect(useIDEStore.getState().runProfileForm).toBeNull());
 });
 
+const defsWithGo = [
+  { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
+] as workspace.WorkspaceDef[];
+
+it('defaults the workspace to the matching toolchain as the command is typed (create)', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  const wsSelect = screen.getByLabelText('Workspace') as HTMLSelectElement;
+  expect(wsSelect.value).toBe('frontend');
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+  expect(wsSelect.value).toBe('go');
+});
+
+it('stops auto-selecting the workspace once the user picks one', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  const wsSelect = screen.getByLabelText('Workspace') as HTMLSelectElement;
+  fireEvent.change(wsSelect, { target: { value: 'project' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+  expect(wsSelect.value).toBe('project');
+});
+
+it('warns (non-blocking) when the command does not match the selected workspace', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  // Pick Frontend explicitly, then type a Go command.
+  fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'frontend' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+  expect(screen.getByText(/looks like a Go command/i)).toBeInTheDocument();
+  // Warning is advisory only — Save stays enabled.
+  fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'gt' } });
+  expect(screen.getByRole('button', { name: /save/i })).toBeEnabled();
+});
+
+it('shows the Workspace dropdown when editing a user profile', () => {
+  const user: RunProfile = { ...detected, id: 'u1', source: 'user' };
+  render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
+  expect(screen.getByLabelText('Workspace')).toBeInTheDocument();
+});
+
+it('hides the Workspace dropdown when customizing a detected profile', () => {
+  render(<RunProfileForm state={{ mode: 'edit', profile: detected }} />);
+  expect(screen.queryByLabelText('Workspace')).not.toBeInTheDocument();
+});
+
+it('reassigns a user profile to another workspace by moving it (delete old, then save new)', async () => {
+  (DeleteRunProfile as jest.Mock).mockResolvedValue(undefined);
+  (SaveRunProfile as jest.Mock).mockResolvedValue({ valid: true, errors: [] });
+  const user: RunProfile = {
+    ...detected,
+    id: 'u1',
+    source: 'user',
+    workspaceId: 'frontend',
+    workspaceName: 'Frontend',
+    workspaceRelDir: 'frontend',
+  };
+  useIDEStore.getState().openRunProfileForm({ mode: 'edit', profile: user });
+  render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
+
+  fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'project' } });
+  fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  await waitFor(() => expect(SaveRunProfile).toHaveBeenCalledTimes(1));
+  expect(DeleteRunProfile).toHaveBeenCalledWith('u1');
+  const saved = (SaveRunProfile as jest.Mock).mock.calls[0][0] as RunProfile;
+  expect(saved.workspaceId).toBe('project');
+  // Move ordering: the old copy must be removed before the new one is saved.
+  const delOrder = (DeleteRunProfile as jest.Mock).mock.invocationCallOrder[0];
+  const saveOrder = (SaveRunProfile as jest.Mock).mock.invocationCallOrder[0];
+  expect(delOrder).toBeLessThan(saveOrder);
+  await waitFor(() => expect(useIDEStore.getState().runProfileForm).toBeNull());
+});
+
+it('restores the original profile if the save fails after delete during reassignment', async () => {
+  (DeleteRunProfile as jest.Mock).mockResolvedValue(undefined);
+  (SaveRunProfile as jest.Mock)
+    .mockResolvedValueOnce({ valid: false, errors: [{ field: 'name', message: 'bad' }] })
+    .mockResolvedValueOnce({ valid: true, errors: [] });
+  const user: RunProfile = {
+    ...detected,
+    id: 'u1',
+    source: 'user',
+    workspaceId: 'frontend',
+    workspaceName: 'Frontend',
+    workspaceRelDir: 'frontend',
+  };
+  useIDEStore.getState().openRunProfileForm({ mode: 'edit', profile: user });
+  render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
+
+  fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'project' } });
+  fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  // Second SaveRunProfile call restores the original (frontend) profile.
+  await waitFor(() => expect(SaveRunProfile).toHaveBeenCalledTimes(2));
+  const restored = (SaveRunProfile as jest.Mock).mock.calls[1][0] as RunProfile;
+  expect(restored.workspaceId).toBe('frontend');
+  expect(restored.id).toBe('u1');
+  // Form stays open with the error surfaced.
+  expect(useIDEStore.getState().runProfileForm).not.toBeNull();
+});
+
 it('clears copied tags when customizing detected and command changes before save', () => {
   render(<RunProfileForm state={{ mode: 'edit', profile: detected }} />);
   expect(screen.getByText('dev')).toBeInTheDocument();

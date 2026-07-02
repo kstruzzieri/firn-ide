@@ -18,6 +18,7 @@ import {
   type EnvRow,
   type RunProfileFormValues,
 } from '../../utils/runProfileForm';
+import { commandWorkspaceMismatch, pickWorkspaceForCommand } from '../../utils/commandWorkspace';
 import styles from './RunProfileForm.module.css';
 
 const ALL_TAGS: ProfileTag[] = ['build', 'test', 'dev', 'lint', 'deploy'];
@@ -71,6 +72,9 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const [dirError, setDirError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // While creating, the workspace auto-follows the command's toolchain until the
+  // user picks a workspace themselves.
+  const [workspaceTouched, setWorkspaceTouched] = useState(false);
 
   // For the "clear seeded tags when customizing and command changes" rule.
   const customizing = state.mode === 'edit' && state.profile.source === 'detected';
@@ -127,6 +131,15 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
       patch({ command, tags: [] });
       return;
     }
+    // Smart default: while creating, steer the workspace to the one whose
+    // toolchain matches the command (go test -> Go), until the user overrides it.
+    if (state.mode === 'create' && !workspaceTouched) {
+      patch({
+        command,
+        workspaceId: pickWorkspaceForCommand(command, workspaces, activeWorkspaceId),
+      });
+      return;
+    }
     patch({ command });
   };
 
@@ -157,34 +170,69 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const removeEnvRow = (i: number) =>
     patch({ envRows: values.envRows.filter((_, idx) => idx !== i) });
 
+  // The Wails-generated runprofile.RunProfile carries a convertValues helper the
+  // plain app type lacks; the binding only serializes the data, so cast.
+  const toBinding = (p: RunProfile) => p as unknown as runprofile.RunProfile;
+
+  // name/command render inline; surface every other backend error in the
+  // form-level banner so no validation failure is silently swallowed.
+  const applyBackendErrors = (result: runprofile.ValidationResult) => {
+    const errs: Record<string, string> = {};
+    const other: string[] = [];
+    for (const e of result.errors ?? []) {
+      if (e.field === 'name' || e.field === 'command') errs[e.field] = e.message;
+      else other.push(e.message);
+    }
+    setFieldErrors(errs);
+    if (other.length > 0) {
+      setFormError(other.join('; '));
+    } else if (Object.keys(errs).length === 0) {
+      setFormError('Could not save profile.');
+    }
+  };
+
   const onSave = async () => {
     if (!canSave) return;
     setSaving(true);
     setFormError(null);
     setFieldErrors({});
+
+    // Changing a user profile's workspace is a move: the backend rejects a
+    // same-id Save into a different workspace, so remove the old copy first.
+    const reassigning =
+      state.mode === 'edit' &&
+      state.profile.source === 'user' &&
+      (state.profile.workspaceId ?? '') !== (values.workspaceId ?? '');
+
     try {
       const profile = buildProfileFromForm(values, state);
-      // The Wails-generated runprofile.RunProfile carries a convertValues helper
-      // the plain app type lacks; the binding only serializes the data, so cast.
-      const result = await SaveRunProfile(profile as unknown as runprofile.RunProfile);
+
+      if (reassigning) {
+        const original = (state as { mode: 'edit'; profile: RunProfile }).profile;
+        await DeleteRunProfile(original.id);
+        let result: runprofile.ValidationResult;
+        try {
+          result = await SaveRunProfile(toBinding(profile));
+        } catch (err) {
+          // Save threw after the delete — restore the original so it isn't lost.
+          await SaveRunProfile(toBinding(original)).catch(() => {});
+          throw err;
+        }
+        if (!result.valid) {
+          await SaveRunProfile(toBinding(original)).catch(() => {});
+          applyBackendErrors(result);
+          return;
+        }
+        close(); // backend emits runprofiles:changed → list refreshes
+        return;
+      }
+
+      const result = await SaveRunProfile(toBinding(profile));
       if (result.valid) {
         close(); // backend emits runprofiles:changed → list refreshes
         return;
       }
-      // name/command render inline; surface every other backend error in the
-      // form-level banner so no validation failure is silently swallowed.
-      const errs: Record<string, string> = {};
-      const other: string[] = [];
-      for (const e of result.errors ?? []) {
-        if (e.field === 'name' || e.field === 'command') errs[e.field] = e.message;
-        else other.push(e.message);
-      }
-      setFieldErrors(errs);
-      if (other.length > 0) {
-        setFormError(other.join('; '));
-      } else if (Object.keys(errs).length === 0) {
-        setFormError('Could not save profile.');
-      }
+      applyBackendErrors(result);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -208,6 +256,10 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
 
   const multiWorkspace = workspaces.length > 1;
   const variantCount = state.mode === 'edit' ? (state.profile.envVariants?.length ?? 0) : 0;
+  const mismatchWarning = commandWorkspaceMismatch(
+    values.command,
+    workspaces.find((w) => w.id === values.workspaceId)
+  );
 
   return (
     <div className={styles.form}>
@@ -241,7 +293,9 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
               onChange={(e) => onPickStartFrom(e.target.value)}
               aria-label="Start from detected command"
             >
-              <option value="">Choose a detected command…</option>
+              <option value="" disabled>
+                Choose a detected command…
+              </option>
               {detectedOptions.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} — {p.command}
@@ -252,13 +306,16 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           </label>
         )}
 
-        {!isEdit && multiWorkspace && (
+        {(!isEdit || isUserProfile) && multiWorkspace && (
           <label className={styles.group}>
             <span className={styles.label}>Workspace</span>
             <select
               className={`${styles.input} ${styles.select}`}
               value={values.workspaceId}
-              onChange={(e) => patch({ workspaceId: e.target.value })}
+              onChange={(e) => {
+                setWorkspaceTouched(true);
+                patch({ workspaceId: e.target.value });
+              }}
               aria-label="Workspace"
             >
               {workspaces.map((w) => (
@@ -268,6 +325,12 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
               ))}
             </select>
           </label>
+        )}
+
+        {mismatchWarning && (
+          <div className={styles.warning} role="status">
+            {mismatchWarning}
+          </div>
         )}
 
         <label className={styles.group}>
