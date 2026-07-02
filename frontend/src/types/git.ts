@@ -1,6 +1,8 @@
 // Frontend view of internal/git types plus classification logic. The backend
 // ships raw porcelain XY letters; everything presentational lives here.
 
+import { joinRepoPath } from '../utils/paths';
+
 /** Mirrors git.FileChange from the Go backend (wailsjs model shape). */
 export interface GitFileChange {
   path: string;
@@ -73,7 +75,9 @@ export function classifyChange(change: GitFileChange): ChangeClassification {
 /**
  * Absolute-path lookup for tree-row decoration. Porcelain paths are
  * repo-root-relative, so join against repoRoot — NOT the workspace path,
- * which may be a subdirectory of the repository.
+ * which may be a subdirectory of the repository. Keys are normalized
+ * (forward slashes) so OS-flavored tree paths match after the same
+ * normalization.
  */
 export function buildStatusByPath(
   repoRoot: string,
@@ -81,7 +85,7 @@ export function buildStatusByPath(
 ): Record<string, GitRowStatus> {
   const map: Record<string, GitRowStatus> = {};
   for (const f of files) {
-    map[`${repoRoot}/${f.path}`] = classifyChange(f).rowStatus;
+    map[joinRepoPath(repoRoot, f.path)] = classifyChange(f).rowStatus;
   }
   return map;
 }

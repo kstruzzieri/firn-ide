@@ -63,6 +63,9 @@ func (s *Service) Status(ctx context.Context, dir string) (RepoStatus, error) {
 
 // Stage adds the given repo-root-relative paths to the index.
 func (s *Service) Stage(ctx context.Context, dir string, paths []string) error {
+	if err := validateRepoRelPaths(paths); err != nil {
+		return err
+	}
 	_, err := s.runAtRoot(ctx, dir, append([]string{"add", "--"}, paths...)...)
 	return err
 }
@@ -70,6 +73,9 @@ func (s *Service) Stage(ctx context.Context, dir string, paths []string) error {
 // Unstage removes paths from the index. On an unborn HEAD (no commits yet)
 // `restore --staged` cannot resolve HEAD, so fall back to rm --cached.
 func (s *Service) Unstage(ctx context.Context, dir string, paths []string) error {
+	if err := validateRepoRelPaths(paths); err != nil {
+		return err
+	}
 	if _, err := s.run(ctx, dir, "rev-parse", "--verify", "HEAD"); err != nil {
 		_, err := s.runAtRoot(ctx, dir, append([]string{"rm", "--cached", "-r", "--"}, paths...)...)
 		return err
@@ -134,6 +140,12 @@ func (s *Service) Checkout(ctx context.Context, dir, branch string, create bool)
 // ":0" for the index, ...). A path that does not exist at rev returns "" so
 // new files diff against empty content.
 func (s *Service) FileAtRev(ctx context.Context, dir, rev, path string) (string, error) {
+	if err := validateRev(rev); err != nil {
+		return "", err
+	}
+	if err := validateRepoRelPaths([]string{path}); err != nil {
+		return "", err
+	}
 	out, err := s.runAtRoot(ctx, dir, "show", rev+":"+path)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") ||
