@@ -388,16 +388,19 @@ func TestService_FileAtRev(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileAtRev(HEAD) error = %v", err)
 	}
-	if head != "hello\n" {
-		t.Errorf("HEAD content = %q, want %q", head, "hello\n")
+	if head.Content != "hello\n" {
+		t.Errorf("HEAD content = %q, want %q", head.Content, "hello\n")
+	}
+	if head.Binary || head.Truncated {
+		t.Errorf("flags = %+v, want plain text", head)
 	}
 
 	index, err := svc.FileAtRev(ctx(), dir, ":0", "README.md")
 	if err != nil {
 		t.Fatalf("FileAtRev(:0) error = %v", err)
 	}
-	if index != "staged version\n" {
-		t.Errorf("index content = %q, want %q", index, "staged version\n")
+	if index.Content != "staged version\n" {
+		t.Errorf("index content = %q, want %q", index.Content, "staged version\n")
 	}
 }
 
@@ -413,8 +416,54 @@ func TestService_FileAtRev_MissingAtRev_ReturnsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileAtRev() for path missing at rev: error = %v, want nil", err)
 	}
-	if got != "" {
-		t.Errorf("content = %q, want empty string", got)
+	if got.Content != "" {
+		t.Errorf("content = %q, want empty string", got.Content)
+	}
+}
+
+func TestService_FileAtRev_BinaryDetected(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	bin := append([]byte("PNG"), 0x00, 0x01, 0x02)
+	if err := os.WriteFile(filepath.Join(dir, "img.png"), bin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "img.png")
+	gitCmd(t, dir, "commit", "-m", "binary")
+	svc := NewService()
+
+	got, err := svc.FileAtRev(ctx(), dir, "HEAD", "img.png")
+
+	if err != nil {
+		t.Fatalf("FileAtRev(binary) error = %v", err)
+	}
+	if !got.Binary {
+		t.Error("Binary = false, want true for NUL-containing content")
+	}
+	if got.Content != "" {
+		t.Error("binary content should not be shipped to the frontend")
+	}
+}
+
+func TestService_FileAtRev_LargeFileTruncated(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	big := strings.Repeat("line of generated output\n", 60_000) // ~1.5MB
+	writeFile(t, dir, "big.txt", big)
+	gitCmd(t, dir, "add", "big.txt")
+	gitCmd(t, dir, "commit", "-m", "big")
+	svc := NewService()
+
+	got, err := svc.FileAtRev(ctx(), dir, "HEAD", "big.txt")
+
+	if err != nil {
+		t.Fatalf("FileAtRev(large) error = %v", err)
+	}
+	if !got.Truncated {
+		t.Error("Truncated = false, want true past the size cap")
+	}
+	if got.Content != "" {
+		t.Error("truncated content should not be shipped; the UI shows a too-large state")
 	}
 }
 

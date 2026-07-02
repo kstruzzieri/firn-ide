@@ -86,6 +86,22 @@ export namespace git {
 	        this.unmerged = source["unmerged"];
 	    }
 	}
+	export class FileContent {
+	    content: string;
+	    binary: boolean;
+	    truncated: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FileContent(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.content = source["content"];
+	        this.binary = source["binary"];
+	        this.truncated = source["truncated"];
+	    }
+	}
 	export class RepoStatus {
 	    isRepo: boolean;
 	    repoRoot: string;

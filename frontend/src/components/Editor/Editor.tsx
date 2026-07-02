@@ -15,10 +15,12 @@ import {
   useWorkspace,
 } from '../../stores/ideStore';
 import { FileIcon } from '../FileExplorer/FileIcon';
-import { FolderOutlineIcon } from '../icons';
+import { FolderOutlineIcon, GitBranchIcon } from '../icons';
 import { formatShortcut, isMac } from '../../utils/platform';
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
+import { GitDiffView } from './GitDiffView';
+import { useGitStore } from '../../stores/gitStore';
 import { getLanguageName } from './codemirror';
 import firnLogo from '../../assets/branding/banner-transparent.svg';
 
@@ -27,6 +29,8 @@ export function Editor() {
   const activeFile = useActiveFile();
   const workspace = useWorkspace();
   const recentWorkspaces = useRecentWorkspaces();
+  const diffSession = useGitStore((state) => state.diffSession);
+  const diffFocused = useGitStore((state) => state.diffFocused);
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
   const updateFileContent = useIDEStore((state) => state.updateFileContent);
@@ -93,8 +97,8 @@ export function Editor() {
     return () => window.removeEventListener('keydown', handleNoFileFind);
   }, [hasOpenFiles]);
 
-  // Welcome screen when no files are open
-  if (openFiles.length === 0) {
+  // Welcome screen when no files are open (and no diff preview tab)
+  if (openFiles.length === 0 && !diffSession) {
     // Filter out the currently open workspace from recent list
     const recentProjects = recentWorkspaces.filter((w) => w.path !== workspace?.path);
 
@@ -160,7 +164,10 @@ export function Editor() {
               aria-selected={isActive}
               aria-controls={`panel-${file.id}`}
               title={`${file.path}\n${languageName}`}
-              onClick={() => setActiveFile(file.id)}
+              onClick={() => {
+                useGitStore.getState().setDiffFocused(false);
+                setActiveFile(file.id);
+              }}
             >
               <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
               <span className={styles.tabName}>{file.name}</span>
@@ -179,17 +186,55 @@ export function Editor() {
             </button>
           );
         })}
+        {diffSession && (
+          <button
+            id="tab-git-diff"
+            className={`${styles.tab} ${diffFocused ? styles.active : ''}`}
+            role="tab"
+            aria-selected={diffFocused}
+            aria-controls="panel-git-diff"
+            title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
+            onClick={() => useGitStore.getState().setDiffFocused(true)}
+          >
+            <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
+            <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
+            <button
+              className={styles.tabClose}
+              onClick={(e) => {
+                e.stopPropagation();
+                useGitStore.getState().closeDiff();
+              }}
+              aria-label="Close diff"
+              type="button"
+            >
+              <CloseIcon />
+            </button>
+          </button>
+        )}
       </div>
 
       {/* Editor content */}
       <div
-        id={activeFile ? `panel-${activeFile.id}` : undefined}
+        id={
+          diffFocused && diffSession
+            ? 'panel-git-diff'
+            : activeFile
+              ? `panel-${activeFile.id}`
+              : undefined
+        }
         className={styles.content}
         role="tabpanel"
         tabIndex={0}
-        aria-labelledby={activeFile ? `tab-${activeFile.id}` : undefined}
+        aria-labelledby={
+          diffFocused && diffSession
+            ? 'tab-git-diff'
+            : activeFile
+              ? `tab-${activeFile.id}`
+              : undefined
+        }
       >
-        {activeFile && (
+        {diffFocused && diffSession && <GitDiffView session={diffSession} />}
+        {!(diffFocused && diffSession) && activeFile && (
           <div className={styles.editorContent}>
             <CodeMirrorEditor
               fileId={activeFile.id}
@@ -208,6 +253,12 @@ export function Editor() {
       </div>
     </div>
   );
+}
+
+/** Tab label for the diff preview: filename only, path lives in the tooltip. */
+function diffTabName(path: string): string {
+  const idx = path.lastIndexOf('/');
+  return idx === -1 ? path : path.slice(idx + 1);
 }
 
 /**

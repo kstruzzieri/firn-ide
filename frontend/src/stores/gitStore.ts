@@ -12,10 +12,40 @@ import {
   GitCheckout,
   GitCommitMessageAvailable,
   GitGenerateCommitMessage,
+  GitFileAtRev,
+  ReadFile,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
-import { buildStatusByPath, classifyChange, type GitRowStatus } from '../types/git';
+import {
+  buildStatusByPath,
+  classifyChange,
+  type GitFileChange,
+  type GitRowStatus,
+} from '../types/git';
+import { joinRepoPath } from '../utils/paths';
 import { useIDEStore } from './ideStore';
+
+/** Which pair of revisions a diff shows. Staged rows compare HEAD to the
+ * index; unstaged (and untracked) rows compare the index to the worktree. */
+export type DiffContext = 'staged' | 'unstaged';
+
+export interface DiffSide {
+  label: string;
+  content: string;
+}
+
+/** One open diff, rendered as a reused preview tab in the editor area. */
+export interface DiffSession {
+  /** Repo-relative path, used as the tab title. */
+  path: string;
+  context: DiffContext;
+  left: DiffSide;
+  right: DiffSide;
+  /** Either side is binary → no merge view, show a binary state instead. */
+  binary: boolean;
+  /** Either side exceeded the diffable size cap. */
+  truncated: boolean;
+}
 
 /** Friendly post-commit summary shown in the panel instead of raw git output. */
 export interface CommitReceipt {
@@ -64,6 +94,10 @@ interface GitState {
   /** Bumped when a consumer (status bar) wants the branch popup focused;
    * the git panel watches this like SearchPanel watches focusInputRevision. */
   focusBranchRevision: number;
+  /** The open diff preview tab; a new openDiff reuses it in place. */
+  diffSession: DiffSession | null;
+  /** True when the diff tab is the visible editor surface. */
+  diffFocused: boolean;
 }
 
 interface GitActions {
@@ -81,6 +115,9 @@ interface GitActions {
   generateMessage: () => Promise<void>;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
+  openDiff: (change: GitFileChange, context: DiffContext) => Promise<void>;
+  closeDiff: () => void;
+  setDiffFocused: (focused: boolean) => void;
 }
 
 type GitStore = GitState & GitActions;
@@ -107,6 +144,8 @@ export const useGitStore = create<GitStore>()(
       aiAvailable: false,
       epoch: 0,
       focusBranchRevision: 0,
+      diffSession: null,
+      diffFocused: false,
 
       resetForWorkspace: (root) => {
         if (refreshTimer) {
@@ -125,6 +164,8 @@ export const useGitStore = create<GitStore>()(
             lastOpOutput: null,
             lastError: null,
             lastCommitReceipt: null,
+            diffSession: null,
+            diffFocused: false,
             epoch: state.epoch + 1,
           }),
           false,
@@ -244,6 +285,59 @@ export const useGitStore = create<GitStore>()(
           false,
           'git/requestBranchPopupFocus'
         ),
+
+      openDiff: async (change, context) => {
+        const { root, status, epoch } = get();
+        const repoRoot = status?.isRepo ? status.repoRoot : root;
+        if (!repoRoot) return;
+        const untracked = classifyChange(change).untracked;
+
+        try {
+          let left: DiffSide;
+          let right: DiffSide;
+          let binary = false;
+          let truncated = false;
+
+          const fetchRev = async (rev: 'HEAD' | ':0', label: string): Promise<DiffSide> => {
+            const fc = await GitFileAtRev(repoRoot, rev, change.path);
+            binary = binary || fc.binary;
+            truncated = truncated || fc.truncated;
+            return { label, content: fc.content };
+          };
+
+          if (context === 'staged') {
+            left = await fetchRev('HEAD', 'HEAD');
+            right = await fetchRev(':0', 'Index');
+          } else {
+            // Untracked files have no index version; diff against empty.
+            left = untracked ? { label: 'Index', content: '' } : await fetchRev(':0', 'Index');
+            let worktree = '';
+            try {
+              const result = await ReadFile(joinRepoPath(repoRoot, change.path));
+              worktree = result.content ?? '';
+            } catch {
+              // Deleted from the worktree → empty right side is the truth.
+            }
+            right = { label: 'Working Tree', content: worktree };
+          }
+
+          if (get().epoch !== epoch) return; // workspace switched mid-fetch
+          set(
+            {
+              diffSession: { path: change.path, context, left, right, binary, truncated },
+              diffFocused: true,
+            },
+            false,
+            'git/openDiff'
+          );
+        } catch (err) {
+          useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
+        }
+      },
+
+      closeDiff: () => set({ diffSession: null, diffFocused: false }, false, 'git/closeDiff'),
+
+      setDiffFocused: (diffFocused) => set({ diffFocused }, false, 'git/setDiffFocused'),
     }),
     { name: 'git-store' }
   )

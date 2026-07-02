@@ -44,7 +44,7 @@ export function GitCommit(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function GitCommitMessageAvailable():Promise<boolean>;
 
-export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<string>;
+export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<git.FileContent>;
 
 export function GitGenerateCommitMessage(arg1:string):Promise<string>;
 

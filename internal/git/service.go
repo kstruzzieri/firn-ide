@@ -136,25 +136,53 @@ func (s *Service) Checkout(ctx context.Context, dir, branch string, create bool)
 	return err
 }
 
+// maxDiffableBytes caps content shipped over the bindings bridge for diffs.
+// Beyond this the UI renders a "diff too large" state instead of a merge view.
+const maxDiffableBytes = 1 << 20 // 1MB
+
+// FileContent is file content at a revision, with the states the diff UI must
+// special-case: binary files and files past the diffable size cap ship no
+// content at all — the flags alone drive the UI.
+type FileContent struct {
+	Content   string `json:"content"`
+	Binary    bool   `json:"binary"`
+	Truncated bool   `json:"truncated"`
+}
+
 // FileAtRev returns the content of a repo-root-relative path at rev ("HEAD",
-// ":0" for the index, ...). A path that does not exist at rev returns "" so
-// new files diff against empty content.
-func (s *Service) FileAtRev(ctx context.Context, dir, rev, path string) (string, error) {
+// ":0" for the index). A path that does not exist at rev returns empty content
+// so new files diff against empty.
+func (s *Service) FileAtRev(ctx context.Context, dir, rev, path string) (FileContent, error) {
 	if err := validateRev(rev); err != nil {
-		return "", err
+		return FileContent{}, err
 	}
 	if err := validateRepoRelPaths([]string{path}); err != nil {
-		return "", err
+		return FileContent{}, err
 	}
 	out, err := s.runAtRoot(ctx, dir, "show", rev+":"+path)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") ||
 			strings.Contains(err.Error(), "exists on disk, but not in") {
-			return "", nil
+			return FileContent{}, nil
 		}
-		return "", err
+		return FileContent{}, err
 	}
-	return out, nil
+	if isBinary(out) {
+		return FileContent{Binary: true}, nil
+	}
+	if len(out) > maxDiffableBytes {
+		return FileContent{Truncated: true}, nil
+	}
+	return FileContent{Content: out}, nil
+}
+
+// isBinary mirrors git's own heuristic: a NUL byte in the first 8000 bytes.
+func isBinary(content string) bool {
+	probe := content
+	if len(probe) > 8000 {
+		probe = probe[:8000]
+	}
+	return strings.ContainsRune(probe, 0)
 }
 
 // StagedDiff returns the unified diff of the index against HEAD, used as

@@ -9,6 +9,8 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   GitCheckout: jest.fn(),
   GitCommitMessageAvailable: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
+  GitFileAtRev: jest.fn(),
+  ReadFile: jest.fn(),
 }));
 
 import {
@@ -20,6 +22,8 @@ import {
   GitCheckout,
   GitCommitMessageAvailable,
   GitGenerateCommitMessage,
+  GitFileAtRev,
+  ReadFile,
 } from '../../wailsjs/go/main/App';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from './gitStore';
 import { useIDEStore } from './ideStore';
@@ -242,5 +246,104 @@ describe('gitStore operations', () => {
     await useGitStore.getState().probeAiAvailable();
 
     expect(useGitStore.getState().aiAvailable).toBe(true);
+  });
+});
+
+describe('gitStore diff sessions', () => {
+  const mockFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
+  const mockReadFile = ReadFile as jest.MockedFunction<typeof ReadFile>;
+  const rev = (content: string, flags: Partial<{ binary: boolean; truncated: boolean }> = {}) =>
+    ({ content, binary: false, truncated: false, ...flags }) as Awaited<
+      ReturnType<typeof GitFileAtRev>
+    >;
+
+  beforeEach(() => {
+    mockGitStatus.mockResolvedValue(repoStatus());
+    mockFileAtRev.mockResolvedValue(rev(''));
+    mockReadFile.mockResolvedValue({
+      content: 'worktree text',
+    } as Awaited<ReturnType<typeof ReadFile>>);
+  });
+
+  it('staged context diffs HEAD against the index', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('head text')).mockResolvedValueOnce(rev('index text'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: '.' }, 'staged');
+
+    expect(mockFileAtRev).toHaveBeenNthCalledWith(1, '/repo', 'HEAD', 'src/a.ts');
+    expect(mockFileAtRev).toHaveBeenNthCalledWith(2, '/repo', ':0', 'src/a.ts');
+    const session = useGitStore.getState().diffSession;
+    expect(session?.left).toEqual({ label: 'HEAD', content: 'head text' });
+    expect(session?.right).toEqual({ label: 'Index', content: 'index text' });
+    expect(session?.path).toBe('src/a.ts');
+    expect(useGitStore.getState().diffFocused).toBe(true);
+  });
+
+  it('unstaged context diffs the index against the working tree', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(mockFileAtRev).toHaveBeenCalledWith('/repo', ':0', 'src/a.ts');
+    expect(mockReadFile).toHaveBeenCalledWith('/repo/src/a.ts');
+    const session = useGitStore.getState().diffSession;
+    expect(session?.right).toEqual({ label: 'Working Tree', content: 'worktree text' });
+  });
+
+  it('untracked files diff against empty content without a rev fetch', async () => {
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'new.md', index: '?', worktree: '?' }, 'unstaged');
+
+    expect(mockFileAtRev).not.toHaveBeenCalled();
+    const session = useGitStore.getState().diffSession;
+    expect(session?.left).toEqual({ label: 'Index', content: '' });
+  });
+
+  it('flags binary sessions instead of shipping content', async () => {
+    mockFileAtRev.mockResolvedValue(rev('', { binary: true }));
+
+    await useGitStore.getState().openDiff({ path: 'img.png', index: 'M', worktree: '.' }, 'staged');
+
+    expect(useGitStore.getState().diffSession?.binary).toBe(true);
+  });
+
+  it('a worktree read failure means a deleted file and diffs against empty', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+    mockReadFile.mockRejectedValue(new Error('no such file'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'gone.ts', index: '.', worktree: 'D' }, 'unstaged');
+
+    expect(useGitStore.getState().diffSession?.right).toEqual({
+      label: 'Working Tree',
+      content: '',
+    });
+  });
+
+  it('closeDiff clears the session and focus', async () => {
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: '.' }, 'staged');
+
+    useGitStore.getState().closeDiff();
+
+    expect(useGitStore.getState().diffSession).toBeNull();
+    expect(useGitStore.getState().diffFocused).toBe(false);
+  });
+
+  it('resetForWorkspace drops any open diff session', async () => {
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: '.' }, 'staged');
+
+    useGitStore.getState().resetForWorkspace('/other');
+
+    expect(useGitStore.getState().diffSession).toBeNull();
   });
 });

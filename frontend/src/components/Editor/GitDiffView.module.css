@@ -1,0 +1,42 @@
+.diffRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.labels {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.labels span {
+  flex: 1;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mergeHost {
+  flex: 1;
+  overflow: auto;
+}
+
+.mergeHost :global(.cm-mergeView) {
+  height: 100%;
+}
+
+.mergeHost :global(.cm-editor) {
+  height: 100%;
+}
+
+.stateMessage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+}

@@ -9,6 +9,7 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   GitCheckout: jest.fn(),
   GitCommitMessageAvailable: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
+  GitFileAtRev: jest.fn(),
   ReadFile: jest.fn(),
 }));
 
@@ -25,6 +26,8 @@ import {
   GitPush,
   GitCheckout,
   GitGenerateCommitMessage,
+  GitFileAtRev,
+  ReadFile,
 } from '../../../../wailsjs/go/main/App';
 import type { git, workspace } from '../../../../wailsjs/go/models';
 
@@ -141,6 +144,55 @@ describe('GitPanel sections', () => {
     await act(async () => {});
 
     expect(GitStage).toHaveBeenCalledWith('/repo', ['a.ts']);
+  });
+});
+
+describe('GitPanel diff open', () => {
+  beforeEach(() => {
+    (GitFileAtRev as jest.Mock).mockResolvedValue({
+      content: 'x',
+      binary: false,
+      truncated: false,
+    });
+    (ReadFile as jest.Mock).mockResolvedValue({ content: 'y' });
+  });
+
+  it('clicking a staged row opens a HEAD-vs-index diff', async () => {
+    seed([file('staged.ts', 'M', '.')]);
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /^staged\.ts/i }));
+    await act(async () => {});
+
+    expect(GitFileAtRev).toHaveBeenCalledWith('/repo', 'HEAD', 'staged.ts');
+    expect(GitFileAtRev).toHaveBeenCalledWith('/repo', ':0', 'staged.ts');
+    expect(useGitStore.getState().diffSession?.context).toBe('staged');
+  });
+
+  it('clicking an unstaged row opens an index-vs-worktree diff', async () => {
+    seed([file('changed.ts', '.', 'M')]);
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /^changed\.ts/i }));
+    await act(async () => {});
+
+    expect(GitFileAtRev).toHaveBeenCalledWith('/repo', ':0', 'changed.ts');
+    expect(ReadFile).toHaveBeenCalledWith('/repo/changed.ts');
+    expect(useGitStore.getState().diffSession?.context).toBe('unstaged');
+  });
+
+  it('clicking a conflict row opens the file itself, not a diff', async () => {
+    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
+    seed([file('clash.go', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+    fireEvent.click(
+      within(screen.getByTestId('section-conflicts')).getByRole('button', { name: /^clash\.go/i })
+    );
+    await act(async () => {});
+
+    expect(useGitStore.getState().diffSession).toBeNull();
+    expect(GitFileAtRev).not.toHaveBeenCalled();
   });
 });
 

@@ -95,9 +95,10 @@ func (a *App) GitCheckout(root, branch string, create bool) error {
 }
 
 // GitFileAtRev returns file content at a revision ("HEAD", ":0" for the
-// index). Paths new at that revision return empty content for diffing.
+// index) with binary/too-large flags the diff UI special-cases. Paths new at
+// that revision return empty content for diffing.
 // This is exposed to the frontend via Wails bindings.
-func (a *App) GitFileAtRev(root, rev, path string) (string, error) {
+func (a *App) GitFileAtRev(root, rev, path string) (git.FileContent, error) {
 	ctx, cancel := a.gitCtx(gitLocalTimeout)
 	defer cancel()
 	return a.gitService.FileAtRev(ctx, root, rev, path)

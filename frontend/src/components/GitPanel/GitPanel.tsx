@@ -539,12 +539,22 @@ function ChangeRow({
   const dir = file.change.path.slice(0, file.change.path.length - name.length).replace(/\/$/, '');
   const git = useGitStore.getState();
 
+  // Staged rows diff HEAD↔index, unstaged/untracked rows diff index↔worktree;
+  // conflict rows open the file itself — resolving happens in the editor.
+  const handleOpen = () => {
+    if (rowAction === null) {
+      void ensureEditorFileOpen(file.absPath);
+    } else {
+      void git.openDiff(file.change, rowAction === 'unstage' ? 'staged' : 'unstaged');
+    }
+  };
+
   return (
     <li className={styles.row} data-git={file.rowStatus}>
       <button
         type="button"
         className={styles.rowMain}
-        onClick={() => void ensureEditorFileOpen(file.absPath)}
+        onClick={handleOpen}
         title={file.change.path}
       >
         <FileIcon name={name} isDir={false} isExpanded={false} className={styles.rowIcon} />
