@@ -19,13 +19,25 @@
   letter-spacing: 0.04em;
 }
 
+/* One scroller per pane (the merge package keeps them in sync); the host
+ * itself never scrolls, so no phantom outer scrollbar/gutter can appear. */
 .mergeHost {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.mergeHost :global(.cm-mergeView) {
+.mergeHost :global(.cm-mergeView),
+.mergeHost :global(.cm-mergeViewEditors) {
   height: 100%;
+}
+
+/* Equal halves regardless of content: min-width 0 stops a long unwrapped
+ * line from growing its pane (the "sudden indent + blank right gutter"). */
+.mergeHost :global(.cm-mergeViewEditor) {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .mergeHost :global(.cm-editor) {

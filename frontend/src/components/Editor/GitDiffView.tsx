@@ -20,11 +20,14 @@ export function GitDiffView({ session }: { session: DiffSession }) {
     if (!hostRef.current || session.binary || session.truncated) return undefined;
 
     const filename = session.path.split('/').pop() ?? session.path;
+    // No lineWrapping here: the merge view aligns the two panes with spacer
+    // widgets sized from measured line heights, and wrapped lines re-measure
+    // as pane widths settle — producing sudden mid-scroll jumps and blank
+    // regions. Long lines scroll horizontally inside their pane instead.
     const shared: Extension[] = [
       lineNumbers(),
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),
-      EditorView.lineWrapping,
       buildTheme(themeId),
       getLanguageExtension(filename) ?? [],
     ];
