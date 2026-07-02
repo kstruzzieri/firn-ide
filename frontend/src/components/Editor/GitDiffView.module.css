@@ -4,9 +4,16 @@
   height: 100%;
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
 .labels {
   display: flex;
-  border-bottom: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
 }
 
 .labels span {
@@ -17,6 +24,39 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.diffCount {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.navBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.navBtn:hover {
+  background: var(--surface-hover);
 }
 
 /* One scroller per pane (the merge package keeps them in sync); the host

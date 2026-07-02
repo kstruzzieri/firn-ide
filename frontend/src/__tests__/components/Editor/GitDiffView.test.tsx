@@ -2,14 +2,24 @@
 // same reason CodeMirrorEditor has no direct render test). Mock the merge
 // module and verify the component's construction/teardown contract instead.
 const destroyMock = jest.fn();
-const mergeViewMock = jest.fn().mockImplementation(() => ({ destroy: destroyMock }));
+const fakeSideB = { state: {}, focus: jest.fn() };
+const mergeViewMock = jest
+  .fn()
+  .mockImplementation(() => ({ destroy: destroyMock, a: { state: {} }, b: fakeSideB }));
+const goToNextChunkMock = jest.fn((_arg?: unknown) => true);
+const goToPreviousChunkMock = jest.fn((_arg?: unknown) => true);
+const getChunksMock = jest.fn((_arg?: unknown) => ({ chunks: [{}, {}], side: null }));
 
 jest.mock('@codemirror/merge', () => ({
   MergeView: mergeViewMock,
+  goToNextChunk: (arg: unknown) => goToNextChunkMock(arg),
+  goToPreviousChunk: (arg: unknown) => goToPreviousChunkMock(arg),
+  getChunks: (arg: unknown) => getChunksMock(arg),
 }));
 jest.mock('@codemirror/view', () => ({
   EditorView: { editable: { of: jest.fn() }, lineWrapping: {} },
   lineNumbers: jest.fn(),
+  keymap: { of: jest.fn() },
 }));
 jest.mock('@codemirror/state', () => ({
   EditorState: { readOnly: { of: jest.fn() } },
@@ -19,7 +29,7 @@ jest.mock('../../../components/Editor/codemirror', () => ({
   getLanguageExtension: jest.fn(() => null),
 }));
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { GitDiffView } from '../../../components/Editor/GitDiffView';
 import type { DiffSession } from '../../../stores/gitStore';
 
@@ -68,6 +78,19 @@ describe('GitDiffView', () => {
 
     expect(destroyMock).toHaveBeenCalledTimes(1);
     expect(mergeViewMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the difference count and next/previous navigation', () => {
+    render(<GitDiffView session={base} />);
+
+    // base session: one changed line → one hunk.
+    expect(screen.getByText('1 difference')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /next difference/i }));
+    expect(goToNextChunkMock).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /previous difference/i }));
+    expect(goToPreviousChunkMock).toHaveBeenCalled();
   });
 
   it('renders a binary state instead of a merge view', () => {
