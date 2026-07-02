@@ -45,3 +45,28 @@
 .container :global(.cm-scroller) {
   scroll-behavior: smooth;
 }
+
+/* Git change gutter markers (gitGutter.ts) */
+:global(.cm-gitGutter) {
+  width: 4px;
+}
+
+:global(.cm-gitGutterMarker) {
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+}
+
+:global(.cm-gitGutter-added) {
+  background: var(--git-added, var(--status-success));
+}
+
+:global(.cm-gitGutter-modified) {
+  background: var(--git-modified, var(--status-warning));
+}
+
+:global(.cm-gitGutter-deleted) {
+  background: var(--git-deleted, var(--status-error));
+  height: 3px;
+  align-self: end;
+}

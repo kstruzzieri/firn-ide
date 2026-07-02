@@ -21,6 +21,7 @@ import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { GitDiffView } from './GitDiffView';
 import { useGitStore } from '../../stores/gitStore';
+import { useGitBaseline } from '../../hooks/useGitBaseline';
 import { getLanguageName } from './codemirror';
 import firnLogo from '../../assets/branding/banner-transparent.svg';
 
@@ -31,6 +32,7 @@ export function Editor() {
   const recentWorkspaces = useRecentWorkspaces();
   const diffSession = useGitStore((state) => state.diffSession);
   const diffFocused = useGitStore((state) => state.diffFocused);
+  const gitBaseline = useGitBaseline(activeFile?.path);
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
   const updateFileContent = useIDEStore((state) => state.updateFileContent);
@@ -241,6 +243,7 @@ export function Editor() {
               filename={activeFile.name}
               content={activeFile.content || ''}
               openFileIds={openFiles.map((f) => f.id)}
+              gitBaseline={gitBaseline}
               onContentChange={handleContentChange}
               onCursorChange={handleCursorChange}
               onScrollChange={handleScrollChange}
