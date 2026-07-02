@@ -1,0 +1,23 @@
+# Refuse direct commits to protected long-lived branches.
+# All work must go through a feature branch (e.g., codex/milestone-N-<name>)
+# and reach develop via a PR. See .claude/tasks/lessons.md #12 for context.
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+case "$branch" in
+  develop|main|master)
+    echo "fatal: direct commits to '$branch' are not allowed."
+    echo ""
+    echo "  Create a feature branch first:"
+    echo "    git checkout -b codex/milestone-N-<short-name> origin/develop"
+    echo ""
+    echo "  Recovery if commits already exist on '$branch' locally:"
+    echo "    git branch -m $branch codex/<descriptive-name>"
+    echo "    git checkout -b $branch origin/$branch"
+    echo "    git push -u origin codex/<descriptive-name>"
+    echo "    gh pr create"
+    echo ""
+    echo "  To bypass for an emergency hotfix, re-run with --no-verify."
+    exit 1
+    ;;
+esac
+
+npx lint-staged

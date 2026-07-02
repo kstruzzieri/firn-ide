@@ -1,0 +1,297 @@
+/* ═══════════════════════════════════════════════════════════════
+   ExpandedPanel — Purpose-built sub-panels per visual state
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Output Preview (mini terminal) ─────────────────────────── */
+
+.outputPreview {
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 8px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+/* Clickable preview opens the full virtualized output tab */
+.outputPreviewClickable {
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.outputPreviewClickable:hover {
+  border-color: rgba(56, 189, 248, 0.25);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.outputPreviewClickable:focus-visible {
+  outline: none;
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3);
+}
+
+.outputLine {
+  color: #555;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.outputStderr {
+  color: rgba(239, 68, 68, 0.6);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── Stats Row ──────────────────────────────────────────────── */
+
+.statRow {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.statLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.statValue {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: var(--text-secondary);
+}
+
+.statValueHl {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: #22c55e;
+}
+
+/* ── Stop Progress Bar ──────────────────────────────────────── */
+
+@keyframes stopPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.stopProgress {
+  margin-bottom: 8px;
+}
+
+.stopLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: #f59e0b;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stopHint {
+  font-size: 10px;
+  color: #666;
+  font-weight: 400;
+  animation: stopPulse 1.5s ease-in-out infinite;
+}
+
+.stopBar {
+  height: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.stopFill {
+  height: 100%;
+  background: #f59e0b;
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+/* ── Error Detail ───────────────────────────────────────────── */
+
+.errorDetail {
+  padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.12);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+/* Error output wraps instead of truncating so users can read the full message */
+.errorDetail + .outputPreview {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.errorDetail + .outputPreview .outputLine,
+.errorDetail + .outputPreview .outputStderr {
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-overflow: unset;
+  overflow: visible;
+}
+
+.errorHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.errorCode {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: #ef4444;
+}
+
+.errorLabel {
+  font-size: 11px;
+  color: #888;
+}
+
+/* ── Dormant Info ───────────────────────────────────────────── */
+
+.dormantInfo {
+  padding: 10px 12px;
+  background: rgba(56, 189, 248, 0.04);
+  border: 1px solid rgba(56, 189, 248, 0.1);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.dormantRow {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.dormantRow:last-child {
+  margin-bottom: 0;
+}
+
+.dormantLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 60px;
+}
+
+.dormantValue {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: var(--text-secondary);
+  /* Wrap the full command/source instead of truncating in the detail view.
+     flex:1 + min-width:0 makes it wrap at the row width, not the longest token. */
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── Actions Row ────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  /* wrap so action buttons reflow to a new line instead of overflowing/clipping
+     when the right panel is narrow. */
+  flex-wrap: wrap;
+  gap: 5px;
+  row-gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.actions button {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.actions button svg {
+  width: 11px;
+  height: 11px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.actionPrimary {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+
+.actionPrimary:hover {
+  background: rgba(56, 189, 248, 0.22);
+}
+
+.actionDanger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.actionDanger:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.actionPurple {
+  background: rgba(168, 85, 247, 0.1);
+  color: #a855f7;
+}
+
+.actionPurple:hover {
+  background: rgba(168, 85, 247, 0.2);
+}
+
+.actionGhost {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-secondary);
+  /* inset ring reads as a border without adding height (siblings use border: none) */
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.22);
+}
+
+.actionGhost:hover {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+
+.spacer {
+  flex: 1;
+}

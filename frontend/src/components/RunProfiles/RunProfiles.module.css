@@ -1,0 +1,163 @@
+.list {
+  padding: 8px;
+  height: 100%;
+  overflow-y: auto;
+  /* Darker than the --surface-panel section so the panel reads recessed and the
+     flat (transparent) cards sit on a uniform dark field like the file tree. */
+  background: var(--surface-frame);
+}
+
+.group {
+  margin-bottom: 12px;
+}
+
+.groupLabel {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  margin-bottom: 2px;
+}
+
+.errorText {
+  color: var(--status-error);
+}
+
+/* Empty state */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+  gap: 6px;
+}
+
+.emptyText {
+  font-size: 11px;
+  color: #555;
+  font-weight: 500;
+}
+
+.emptyHint {
+  font-size: 10px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.emptyHint strong {
+  color: #555;
+}
+
+/* Header counters */
+.totalCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(56, 189, 248, 0.95);
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
+}
+
+.hiddenCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(168, 85, 247, 0.85);
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
+}
+
+.sectionCount {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.runningCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: 6px;
+  letter-spacing: 0.03em;
+}
+
+.workspaceGroup {
+  margin-bottom: 14px;
+}
+
+.workspaceHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.workspaceName {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Per-workspace total in Project-View group headers (the "· M" in "● N running · M") */
+.groupTotal {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
+}
+
+.workspaceDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+details.group > summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+.createButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 15px;
+}
+.createButton:hover {
+  color: #cfcfcf;
+}
+.hiddenRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+}
+.hiddenName {
+  font-size: 11px;
+  color: #ccc;
+}
+.hiddenShow {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #38bdf8;
+  border: none;
+  cursor: pointer;
+}

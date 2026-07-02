@@ -1,0 +1,564 @@
+/* ═══════════════════════════════════════════════════════════════
+   RunProfileCard — Unified Card CSS Module
+   All state variants, animations, hover reveal, and output preview.
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Keyframe Animations ────────────────────────────────────── */
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hdotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 3px rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    opacity: 0.4;
+    box-shadow: none;
+  }
+}
+
+@keyframes failedPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px rgba(239, 68, 68, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+/* ── Card Base ──────────────────────────────────────────────── */
+
+.card {
+  position: relative;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  /* Per-card accent: the card's own workspace color in Project View (set on the
+     group), the active workspace accent elsewhere. Drives hover/play/target. */
+  --card-accent: var(--region-accent, var(--accent));
+  /* Deep navy card surface (matches the bottom output panel), recessed below the
+     --list field. Status/selection states tint this base rather than replacing it. */
+  background: var(--surface-base);
+  border: 1px solid var(--surface-border);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  cursor: default;
+}
+
+/* Sweep animation overlay */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+  will-change: transform, opacity;
+}
+
+/* Default hover — dark base tinted toward the workspace accent + accent border */
+.card:hover {
+  border-color: color-mix(in srgb, var(--card-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--card-accent) 16%, var(--surface-base));
+}
+
+/* ── Layout Rows ────────────────────────────────────────────── */
+
+.row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.rowBottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  margin-left: 34px;
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+
+.name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.duration {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.cmd {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+  /* slate-300 — one step brighter than --text-secondary so the command (the
+     line users scan most) stays legible on the flattened surface. */
+  color: #cbd5e1;
+  margin-top: 3px;
+  margin-left: 34px;
+  /* Wrap long commands instead of truncating so the full command is visible.
+     overflow-wrap:anywhere also breaks unbroken tokens (long paths/URLs). */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cmdSource {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+/* ── Action Button ──────────────────────────────────────────── */
+
+.actionBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  background: transparent;
+}
+
+.actionBtn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Play — workspace accent */
+.actionBtnPlay {
+  background: color-mix(in srgb, var(--card-accent) 12%, transparent);
+  color: var(--card-accent);
+}
+
+.actionBtnPlay:hover {
+  background: color-mix(in srgb, var(--card-accent) 24%, transparent);
+  transform: scale(1.08);
+}
+
+/* Stop — red */
+.actionBtnStop {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.actionBtnStop:hover {
+  background: rgba(239, 68, 68, 0.22);
+  transform: scale(1.08);
+}
+
+/* Restart — purple */
+.actionBtnRestart {
+  background: rgba(168, 85, 247, 0.1);
+  color: #a855f7;
+}
+
+.actionBtnRestart:hover {
+  background: rgba(168, 85, 247, 0.22);
+  transform: scale(1.08);
+}
+
+/* Loading / stopping — amber, non-interactive */
+.actionBtnLoading {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  opacity: 0.7;
+  cursor: default;
+}
+
+.actionBtnLoading svg {
+  animation: spin 1.2s linear infinite;
+}
+
+/* ── Tags ───────────────────────────────────────────────────── */
+
+.tags {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #3a3a3a;
+  letter-spacing: 0.03em;
+}
+
+.variantSelector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-left: auto;
+  color: #686868;
+  font-size: 10px;
+}
+
+.variantLabel {
+  flex-shrink: 0;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+}
+
+.variantSelect {
+  max-width: 96px;
+  height: 22px;
+  border: 1px solid #292929;
+  border-radius: 6px;
+  background: #101010;
+  color: #b7b7b7;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 20px 0 7px;
+}
+
+.variantSelect:focus {
+  outline: 1px solid var(--card-accent);
+  outline-offset: 1px;
+}
+
+/* ── State: Running ─────────────────────────────────────────── */
+
+.running {
+  background: color-mix(in srgb, var(--status-success) 12%, var(--surface-base));
+  border-color: color-mix(in srgb, var(--status-success) 45%, transparent);
+  box-shadow:
+    0 2px 12px rgba(34, 197, 94, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.running::before {
+  opacity: 1;
+  background: linear-gradient(90deg, transparent 0%, rgba(34, 197, 94, 0.04) 50%, transparent 100%);
+  animation: sweep 4s ease-in-out infinite;
+}
+
+.running .name {
+  color: #f0f0f0;
+}
+
+.running .duration {
+  color: #22c55e;
+}
+
+.running:hover {
+  border-color: rgba(34, 197, 94, 0.35);
+  box-shadow:
+    0 4px 20px rgba(34, 197, 94, 0.1),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* ── State: Stopping ────────────────────────────────────────── */
+
+.stopping {
+  border-color: rgba(245, 158, 11, 0.2);
+  box-shadow: 0 1px 8px rgba(245, 158, 11, 0.04);
+}
+
+.stopping::before {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(245, 158, 11, 0.03) 50%,
+    transparent 100%
+  );
+  animation: sweep 2s ease-in-out infinite;
+}
+
+.stopping .duration {
+  color: #f59e0b;
+}
+
+/* ── State: Failed ──────────────────────────────────────────── */
+
+.failed {
+  border-color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 14%, var(--surface-base));
+  animation: failedPulse 1s ease-out 1;
+}
+
+.failed .duration {
+  color: var(--status-error);
+}
+
+.failed:hover {
+  border-color: var(--status-error);
+}
+
+/* ── State: Success ─────────────────────────────────────────── */
+
+.success .duration {
+  color: rgba(34, 197, 94, 0.5);
+}
+
+/* ── State: Dormant (never run) ────────────────────────────── */
+
+.dormant {
+  border-color: var(--surface-border-subtle);
+  border-style: dashed;
+}
+
+.dormant:hover {
+  border-color: color-mix(in srgb, var(--card-accent) 45%, transparent);
+  border-style: solid;
+  background: color-mix(in srgb, var(--card-accent) 16%, var(--surface-base));
+}
+
+.dormant .cmd {
+  color: var(--text-secondary);
+}
+
+.dormant .name {
+  color: var(--text-primary);
+}
+
+/* ── Hover Reveal ───────────────────────────────────────────── */
+
+.hoverReveal {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.25s ease,
+    margin-top 0.35s ease;
+  margin-top: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* Hide header duration when expanded — the stats row shows it in detail */
+.forceExpand .duration,
+.expanded .duration {
+  display: none;
+}
+
+/* Grace period: forceExpand delays 0.4s so sub-second runs don't flash.
+   Collapse has no delay (reverts to base .hoverReveal transition-delay: 0s). */
+.forceExpand .hoverReveal {
+  max-height: 400px;
+  opacity: 1;
+  margin-top: 10px;
+  transition-delay: 0.4s;
+}
+
+/* Click-toggled expand has no delay — user explicitly asked for it */
+.expanded .hoverReveal {
+  max-height: 400px;
+  opacity: 1;
+  margin-top: 10px;
+}
+
+/* ── Inline Waveform (row-bottom compact) ───────────────────── */
+
+.waveform {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 12px;
+  flex-shrink: 0;
+  width: 48px;
+}
+
+.waveformBar {
+  flex: 1;
+  border-radius: 1px 1px 0 0;
+  transition: height 0.15s ease;
+  min-width: 2px;
+}
+
+.waveformActive .waveformBar {
+  background: #22c55e;
+}
+.waveformFailed .waveformBar {
+  background: #ef4444;
+}
+.waveformIdle .waveformBar {
+  background: #222;
+}
+.waveformStopping .waveformBar {
+  background: #f59e0b;
+}
+.waveformSuccess .waveformBar {
+  background: rgba(34, 197, 94, 0.3);
+}
+
+/* ── Run History Dots (row-bottom) ──────────────────────────── */
+
+.history {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.historyDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.historyDotOk {
+  background: rgba(34, 197, 94, 0.4);
+}
+.historyDotErr {
+  background: rgba(239, 68, 68, 0.4);
+}
+.historyDotStopped {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.historyDotActive {
+  background: #22c55e;
+  animation: hdotPulse 1.5s ease-in-out infinite;
+}
+
+.historyDuration {
+  font-size: 10px;
+  color: #444;
+  font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
+}
+
+.historyOverflow {
+  font-size: 10px;
+  color: #444;
+  margin-left: 4px;
+}
+
+/* ── Adopt Button (inline in row 1, recent/detected only) ───── */
+
+.adoptBtn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 0.5px solid var(--border-subtle, rgba(255, 255, 255, 0.15));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.adoptBtn:hover {
+  border-color: var(--card-accent);
+  color: var(--card-accent);
+}
+
+/* ── Just-ran highlight: workspace-accent tint + accent left rail ── */
+
+.justRan {
+  background: color-mix(in srgb, var(--card-accent) 12%, transparent);
+  border-left: 2px solid var(--card-accent);
+  /* Compensate left padding so inner content stays aligned */
+  padding-left: 14px;
+}
+
+/* Small accent "just ran" chip in row 1, alongside the status badge. */
+.justRanChip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card-accent) 14%, transparent);
+  color: var(--card-accent);
+  white-space: nowrap;
+}
+
+/* ── Selected-target toggle ─────────────────────────────────── */
+
+.targetToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary, #888);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+/* Hollow ring by default; fills solid with the workspace accent when this is the
+   Cmd+R target, so the selected profile reads at a glance. */
+.targetDot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 1.5px solid var(--text-muted);
+  background: transparent;
+  transition: all 0.15s ease;
+}
+.targetToggle:hover .targetDot {
+  border-color: var(--card-accent);
+}
+.targetToggleOn .targetDot {
+  background: var(--card-accent);
+  border-color: var(--card-accent);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--card-accent) 65%, transparent);
+}
+/* Selected Cmd+R target: highlight the whole card (accent border + ring + wash).
+   border-style:solid overrides the dormant dashed outline when active. */
+.selectedTarget {
+  border-color: var(--card-accent);
+  border-style: solid;
+  background: color-mix(in srgb, var(--card-accent) 14%, var(--surface-base));
+  box-shadow: 0 0 0 1px var(--card-accent);
+}
+.selectedTarget:hover {
+  border-color: var(--card-accent);
+}

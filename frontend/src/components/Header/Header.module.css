@@ -1,0 +1,219 @@
+/* Traffic Lights Spacer (macOS) */
+.trafficLights {
+  width: 68px;
+}
+
+/* Logo */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logoIcon {
+  width: 24px;
+  height: 24px;
+}
+
+.logoText {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+/* Header Buttons */
+.headerBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+
+.headerBtn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.headerBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.headerBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Search Button - Full width style */
+.searchBtn {
+  min-width: 400px;
+  justify-content: flex-start;
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  color: var(--text-muted);
+}
+
+.searchBtn:hover {
+  border-color: var(--accent);
+  background: var(--surface-panel);
+}
+
+.searchShortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-disabled);
+  letter-spacing: 0.5px;
+}
+
+/* Workspace Selector */
+.workspaceWrapper {
+  position: relative;
+}
+
+.workspaceBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-glow);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+
+.workspaceBtn:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+
+.workspaceBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.workspaceDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.workspaceName {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.chevron {
+  width: 10px;
+  height: 10px;
+  color: var(--text-muted);
+}
+
+/* Keyboard shortcut */
+.kbd {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 3px 6px;
+  background: var(--surface-hover);
+  border-radius: 4px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+/* Workspace Dropdown Menu */
+.workspaceMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 100;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.menuItem:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.menuItem:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.menuItemName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menuIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.menuShortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-disabled);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.menuDivider {
+  height: 1px;
+  background: var(--surface-border-subtle);
+  margin: 4px 6px;
+}
+
+.menuLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 6px 10px 4px;
+}
+
+/* Spacer */
+.spacer {
+  flex: 1;
+}

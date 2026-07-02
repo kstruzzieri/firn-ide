@@ -1,0 +1,8 @@
+# golangci-lint v2 configuration.
+# Pinned so local (pre-push hook) and CI run identical checks. Uses the v2
+# default linter set (errcheck, govet, ineffassign, staticcheck, unused) with
+# no leniency exclusions — unchecked errors and staticcheck findings are real.
+version: "2"
+
+linters:
+  default: standard

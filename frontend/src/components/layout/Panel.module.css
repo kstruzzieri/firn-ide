@@ -1,0 +1,74 @@
+/* ═══════════════════════════════════════════════════════════════
+   Panel Component
+═══════════════════════════════════════════════════════════════ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  gap: 8px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  background: var(--surface-elevated);
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.action:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+}

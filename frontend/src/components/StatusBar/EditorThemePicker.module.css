@@ -1,0 +1,91 @@
+.picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.trigger:hover {
+  color: var(--text-primary);
+}
+
+.trigger:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.triggerLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+/* Opens upward — the status bar sits at the bottom of the window. No max-height,
+   so all themes are always visible (no OS-clipped scrollbar). */
+.menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  min-width: 168px;
+  list-style: none;
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.option:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.option:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.optionSelected {
+  color: var(--text-primary);
+}
+
+.check {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 11px;
+}

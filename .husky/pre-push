@@ -1,0 +1,55 @@
+# Mirror the GitHub Actions checks locally so a push doesn't turn the PR red.
+# Mirrors: Lint (eslint + golangci-lint), Tests (jest + go test), and the
+# frontend build required by Wails/go:embed. The full Wails build job is
+# intentionally NOT mirrored — it installs wails + system GTK deps and is too
+# heavy for a hook; CI keeps that one. Bypass all of this with `git push --no-verify`.
+
+set -e
+
+# --- Frontend: ESLint + build + Jest (build.yml/test.yml/lint.yml) ----------
+# Guard on the tool first: git hooks run with a minimal PATH (no login shell),
+# so npm may be absent under GUI git clients / nvm even when deps are installed.
+# Skip cleanly rather than fail the push for a tooling reason, not a code one.
+if ! command -v npm >/dev/null 2>&1; then
+  echo "pre-push: npm not on PATH — skipping eslint + jest."
+  echo "  GUI git clients may lack your shell PATH; fix via ~/.config/husky/init.sh"
+elif [ ! -d frontend/node_modules ]; then
+  echo "pre-push: frontend/node_modules missing — skipping eslint + jest."
+  echo "  Install deps to enable them on push: (cd frontend && npm ci)"
+else
+  echo "pre-push: eslint ."
+  (cd frontend && npm run lint)
+
+  echo "pre-push: frontend build"
+  (cd frontend && npm run build)
+
+  echo "pre-push: jest"
+  (cd frontend && npm test)
+fi
+
+# --- Backend: golangci-lint + go test (lint.yml + test.yml, Go jobs) --------
+if ! command -v go >/dev/null 2>&1; then
+  echo "pre-push: go not on PATH — skipping go test + golangci-lint."
+  exit 0
+fi
+
+# main.go does `//go:embed all:frontend/dist`, so Go cannot typecheck or test
+# the main package until the frontend has been built. Skip cleanly if absent.
+if [ ! -d frontend/dist ]; then
+  echo "pre-push: frontend/dist missing — skipping go test + golangci-lint."
+  echo "  Build it to enable them on push: (cd frontend && npm run build)"
+  exit 0
+fi
+
+echo "pre-push: go test ./..."
+go test ./...
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-push: golangci-lint not installed — skipping Go lint."
+  echo "  Install it (CI uses it; pushing unlinted Go risks a red PR):"
+  echo "    brew install golangci-lint"
+  exit 0
+fi
+
+echo "pre-push: golangci-lint run ./..."
+golangci-lint run ./...

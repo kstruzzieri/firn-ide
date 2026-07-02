@@ -1,0 +1,84 @@
+.tabBar {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle, #1a1a1a);
+  background: var(--surface-base, #111);
+  overflow-x: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted, #555);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.tabActive {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary, #e5e5e5);
+}
+
+.tabAll {
+  margin-left: auto;
+  font-size: 10px;
+  color: #444;
+}
+
+.tabDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #333;
+}
+
+/* State dot colors */
+.dotRunning {
+  background: #22c55e;
+  animation: tabDotPulse 1.5s ease-in-out infinite;
+}
+.dotStopping {
+  background: #f59e0b;
+  animation: tabDotPulse 1.2s ease-in-out infinite;
+}
+.dotFailed {
+  background: #ef4444;
+}
+.dotSuccess {
+  background: #22c55e;
+  opacity: 0.5;
+}
+.dotStopped,
+.dotIdle {
+  background: #333;
+}
+
+/* Active tab name colors */
+.nameRunning {
+  color: #22c55e;
+}
+.nameFailed {
+  color: #ef4444;
+}
+
+@keyframes tabDotPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}

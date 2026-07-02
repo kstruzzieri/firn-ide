@@ -1,0 +1,16 @@
+module.exports = {
+  EventsOn: jest.fn(() => jest.fn()),
+  EventsOnce: jest.fn(() => jest.fn()),
+  EventsOnMultiple: jest.fn(() => jest.fn()),
+  EventsOff: jest.fn(),
+  EventsOffAll: jest.fn(),
+  EventsEmit: jest.fn(),
+  WindowSetTitle: jest.fn(),
+  LogPrint: jest.fn(),
+  LogTrace: jest.fn(),
+  LogDebug: jest.fn(),
+  LogInfo: jest.fn(),
+  LogWarning: jest.fn(),
+  LogError: jest.fn(),
+  LogFatal: jest.fn(),
+};

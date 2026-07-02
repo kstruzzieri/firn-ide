@@ -1,0 +1,38 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--surface-border);
+  background: var(--surface-elevated);
+}
+
+.error {
+  border-left: 3px solid var(--status-error);
+}
+
+.warning {
+  border-left: 3px solid var(--status-warning);
+}
+
+.info {
+  border-left: 3px solid var(--accent-blue);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.message {
+  color: var(--text-primary, #e6e6e6);
+  font-weight: 500;
+}
+
+.hint {
+  color: var(--text-secondary, #9a9a9a);
+}

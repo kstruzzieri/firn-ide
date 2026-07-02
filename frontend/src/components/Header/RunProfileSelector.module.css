@@ -1,0 +1,187 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.action,
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  color: var(--text-primary, #e6e6e6);
+  cursor: pointer;
+  font-size: 12px;
+}
+.action {
+  border-radius: 6px 0 0 6px;
+  border-right: none;
+  padding: 0 8px;
+  /* Center the play/stop glyph; the status dot is a corner pip (absolute below). */
+  justify-content: center;
+  position: relative;
+}
+.trigger {
+  border-radius: 0 6px 6px 0;
+  padding: 0 8px;
+  font-weight: 600;
+  max-width: 180px;
+}
+.action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.action svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chevron {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.dot {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+.dot[data-state='running'] {
+  background: var(--status-running, #5fd08a);
+}
+.dot[data-state='failed'] {
+  background: var(--status-failed, #e06c6c);
+}
+.dot[data-state='stopping'] {
+  background: var(--status-warn, #e0a458);
+}
+.popover {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 50;
+  width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 0;
+  background: var(--bg-popover, #1b1d22);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  border-radius: 9px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+.group {
+  padding: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.group:first-child {
+  border-top: none;
+}
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.wsDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.section {
+  padding: 2px 0;
+}
+.sectionLabel {
+  padding: 3px 10px 1px 16px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.45;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+}
+.row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.rowSel {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.rowSelect {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 6px 2px;
+  font-size: 12px;
+  text-align: left;
+}
+.mk {
+  width: 11px;
+  color: var(--accent);
+  text-align: center;
+}
+.rowName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.env {
+  font-size: 10px;
+  background: transparent;
+  color: var(--status-warn, #e0a458);
+  border: 1px solid rgba(224, 164, 88, 0.4);
+  border-radius: 9px;
+}
+.rowRun {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: none;
+  color: var(--status-running, #5fd08a);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.rowRun:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.footer {
+  padding: 7px 10px;
+  font-size: 11px;
+  opacity: 0.6;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

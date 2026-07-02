@@ -1,0 +1,489 @@
+.terminal {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Unified tab bar ─────────────────────────────────────────── */
+.tabBar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 6%, transparent) 0%,
+    transparent 100%
+  );
+  flex-shrink: 0;
+  height: 36px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 30%, transparent) transparent;
+}
+
+.tabBar::-webkit-scrollbar {
+  height: 3px;
+}
+
+.tabBar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tabBar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 3px;
+}
+
+.tabBar::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* ── Panel tabs (Output / Problems / Terminal) ───────────────── */
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition);
+  margin-right: 1px;
+  flex-shrink: 0;
+}
+
+.tab:hover {
+  color: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tab.active {
+  color: var(--accent);
+  border-radius: 0;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tab svg {
+  width: 12px;
+  height: 12px;
+}
+
+.badge {
+  padding: 1px 5px;
+  background: var(--status-error);
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 600;
+  color: white;
+}
+
+/* ── Content area ────────────────────────────────────────────── */
+.content {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  background: var(--surface-panel);
+}
+
+.content > * {
+  height: 100%;
+  overflow: hidden;
+}
+
+.tabContent {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessionsContainer {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Divider between panel tabs and session tabs ─────────────── */
+.divider {
+  width: 1px;
+  height: 16px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* ── Session tabs (Terminal 1, Terminal 2, …) ────────────────── */
+.sessionTab {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 4px 3px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', var(--font-mono, monospace);
+  letter-spacing: -0.5px;
+  color: color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+  user-select: none;
+  max-width: 160px;
+  flex-shrink: 0;
+}
+
+.sessionTab svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.45;
+  transition: opacity var(--transition);
+}
+
+.sessionTab:hover svg {
+  opacity: 0.75;
+}
+
+.sessionTab.active svg {
+  opacity: 1;
+}
+
+.sessionTab:hover {
+  color: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.sessionTab.active {
+  color: var(--accent);
+  border-radius: 0;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.sessionTabLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.sessionTabClose {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.sessionTab:hover .sessionTabClose,
+.sessionTab.active .sessionTabClose {
+  display: flex;
+}
+
+.sessionTabClose:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.newSessionButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition);
+}
+
+.newSessionButton svg {
+  width: 12px;
+  height: 12px;
+}
+
+.newSessionButton:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.sessionTabInput {
+  background: var(--surface-panel);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  color: var(--accent);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 1px 3px;
+  width: 90px;
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* ── Terminal content ────────────────────────────────────────── */
+.terminalContent {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #040406; /* Glacier glow — near-black void */
+}
+
+.terminalContent :global(.xterm-viewport),
+.terminalContent :global(.xterm-screen) {
+  padding-left: 8px !important;
+  padding-top: 4px !important;
+}
+
+/* ── Empty states ────────────────────────────────────────────── */
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: color-mix(in srgb, var(--accent) 35%, transparent);
+  font-size: 12px;
+}
+
+.problemsList {
+  padding: 4px 0;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.problemsGroup {
+  margin-bottom: 2px;
+}
+
+.problemsGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.problemsFileName {
+  color: var(--text-primary);
+}
+
+.problemsFilePath {
+  color: var(--text-muted);
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.problemsGroupCount {
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.problemsRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 12px 3px 24px;
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', var(--font-mono, monospace);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+
+.problemsRow:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.problemsRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.problemsSeverity {
+  font-size: 10px;
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.problemsError {
+  color: var(--status-error);
+}
+
+.problemsWarning {
+  color: var(--status-warning);
+}
+
+.problemsInfo {
+  color: var(--accent);
+}
+
+.problemsMessage {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.problemsLocation {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.problemsSource {
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ── Drag and drop ───────────────────────────────────────────── */
+.sessionTab.dragging {
+  opacity: 0.4;
+}
+
+.sessionTab.dragOver {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ── Context menu ────────────────────────────────────────────── */
+.contextMenuOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+.contextMenu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px 0;
+  background: var(--surface-elevated, #152035);
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+  border-radius: 6px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.5),
+    0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.contextMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.contextMenuItem:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.contextMenuItem svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.contextMenuDivider {
+  height: 1px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  margin: 4px 0;
+}
+
+.contextMenuItemDanger:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--status-error);
+}
+
+/* ── Run output state dots ──────────────────────────────────────── */
+.stateDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stateRunning {
+  background: var(--status-success);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  animation: statePulse 2s ease-in-out infinite;
+}
+
+.stateSuccess {
+  background: var(--status-success);
+  opacity: 0.7;
+}
+
+.stateFailed {
+  background: var(--status-error);
+}
+
+.stateStopped {
+  background: var(--text-muted);
+}
+
+@keyframes statePulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
