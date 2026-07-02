@@ -13,7 +13,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   ReadFile: jest.fn(),
 }));
 
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { GitFileAtRev } from '../../wailsjs/go/main/App';
 import { useGitBaseline } from './useGitBaseline';
 import { useGitStore } from '../stores/gitStore';
@@ -21,7 +21,9 @@ import type { git } from '../../wailsjs/go/models';
 
 const mockFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 
-function seedStatus(files: Array<{ path: string; index: string; worktree: string }>) {
+function seedStatus(
+  files: Array<{ path: string; index: string; worktree: string; origPath?: string }>
+) {
   useGitStore.getState().resetForWorkspace('/repo');
   useGitStore.setState({
     status: {
@@ -56,6 +58,40 @@ describe('useGitBaseline', () => {
 
     await waitFor(() => expect(result.current).toBe('head content'));
     expect(mockFileAtRev).toHaveBeenCalledWith('/repo', 'HEAD', 'src/a.ts');
+  });
+
+  it('refetches when git status refreshes even if row status stays modified', async () => {
+    mockFileAtRev
+      .mockResolvedValueOnce({
+        content: 'old head',
+        binary: false,
+        truncated: false,
+      } as Awaited<ReturnType<typeof GitFileAtRev>>)
+      .mockResolvedValueOnce({
+        content: 'new head',
+        binary: false,
+        truncated: false,
+      } as Awaited<ReturnType<typeof GitFileAtRev>>);
+    seedStatus([{ path: 'src/a.ts', index: '.', worktree: 'M' }]);
+
+    const { result } = renderHook(() => useGitBaseline('/repo/src/a.ts'));
+    await waitFor(() => expect(result.current).toBe('old head'));
+
+    act(() => {
+      useGitStore.setState((state) => ({ statusRevision: state.statusRevision + 1 }));
+    });
+
+    await waitFor(() => expect(result.current).toBe('new head'));
+    expect(mockFileAtRev).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the original HEAD path for a renamed file', async () => {
+    seedStatus([{ path: 'src/new.ts', origPath: 'src/old.ts', index: 'R', worktree: '.' }]);
+
+    const { result } = renderHook(() => useGitBaseline('/repo/src/new.ts'));
+
+    await waitFor(() => expect(result.current).toBe('head content'));
+    expect(mockFileAtRev).toHaveBeenCalledWith('/repo', 'HEAD', 'src/old.ts');
   });
 
   it('returns an empty baseline for an untracked file without fetching', async () => {

@@ -281,6 +281,24 @@ describe('gitStore diff sessions', () => {
     expect(useGitStore.getState().diffFocused).toBe(true);
   });
 
+  it('staged rename diffs HEAD from the original path against the new index path', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('old text')).mockResolvedValueOnce(rev('new text'));
+
+    await useGitStore
+      .getState()
+      .openDiff(
+        { path: 'src/new.ts', origPath: 'src/old.ts', index: 'R', worktree: '.' },
+        'staged'
+      );
+
+    expect(mockFileAtRev).toHaveBeenNthCalledWith(1, '/repo', 'HEAD', 'src/old.ts');
+    expect(mockFileAtRev).toHaveBeenNthCalledWith(2, '/repo', ':0', 'src/new.ts');
+    expect(useGitStore.getState().diffSession?.left).toEqual({
+      label: 'HEAD',
+      content: 'old text',
+    });
+  });
+
   it('unstaged context diffs the index against the working tree', async () => {
     mockFileAtRev.mockResolvedValueOnce(rev('index text'));
 

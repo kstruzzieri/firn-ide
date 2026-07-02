@@ -421,6 +421,24 @@ func TestService_FileAtRev_MissingAtRev_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestService_FileAtRev_UnbornHead_ReturnsEmpty(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	writeFile(t, dir, "first.txt", "first\n")
+	gitCmd(t, dir, "add", "first.txt")
+	svc := NewService()
+
+	got, err := svc.FileAtRev(ctx(), dir, "HEAD", "first.txt")
+
+	if err != nil {
+		t.Fatalf("FileAtRev() on unborn HEAD: error = %v, want nil", err)
+	}
+	if got.Content != "" {
+		t.Errorf("content = %q, want empty string", got.Content)
+	}
+}
+
 func TestService_FileAtRev_BinaryDetected(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)

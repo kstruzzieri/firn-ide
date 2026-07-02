@@ -5,7 +5,7 @@
  * Manages open files, tab switching, and editor state.
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import styles from './Editor.module.css';
 import {
   useOpenFiles,
@@ -157,19 +157,23 @@ export function Editor() {
           const isActive = file.id === activeFile?.id;
           const languageName = getLanguageName(file.name);
 
+          const activateFileTab = () => {
+            useGitStore.getState().setDiffFocused(false);
+            setActiveFile(file.id);
+          };
+
           return (
-            <button
+            <div
               key={file.id}
               id={`tab-${file.id}`}
               className={`${styles.tab} ${isActive ? styles.active : ''}`}
               role="tab"
+              tabIndex={0}
               aria-selected={isActive}
               aria-controls={`panel-${file.id}`}
               title={`${file.path}\n${languageName}`}
-              onClick={() => {
-                useGitStore.getState().setDiffFocused(false);
-                setActiveFile(file.id);
-              }}
+              onClick={activateFileTab}
+              onKeyDown={(event) => activateTab(event, activateFileTab)}
             >
               <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
               <span className={styles.tabName}>{file.name}</span>
@@ -185,18 +189,22 @@ export function Editor() {
               >
                 <CloseIcon />
               </button>
-            </button>
+            </div>
           );
         })}
         {diffSession && (
-          <button
+          <div
             id="tab-git-diff"
             className={`${styles.tab} ${diffFocused ? styles.active : ''}`}
             role="tab"
+            tabIndex={0}
             aria-selected={diffFocused}
             aria-controls="panel-git-diff"
             title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
             onClick={() => useGitStore.getState().setDiffFocused(true)}
+            onKeyDown={(event) =>
+              activateTab(event, () => useGitStore.getState().setDiffFocused(true))
+            }
           >
             <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
             <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
@@ -211,7 +219,7 @@ export function Editor() {
             >
               <CloseIcon />
             </button>
-          </button>
+          </div>
         )}
       </div>
 
@@ -262,6 +270,12 @@ export function Editor() {
 function diffTabName(path: string): string {
   const idx = path.lastIndexOf('/');
   return idx === -1 ? path : path.slice(idx + 1);
+}
+
+function activateTab(event: ReactKeyboardEvent<HTMLDivElement>, action: () => void) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  action();
 }
 
 /**

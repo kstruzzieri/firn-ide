@@ -91,6 +91,8 @@ interface GitState {
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
+  /** Bumped on each accepted status snapshot so HEAD-backed consumers refetch. */
+  statusRevision: number;
   /** Bumped when a consumer (status bar) wants the branch popup focused;
    * the git panel watches this like SearchPanel watches focusInputRevision. */
   focusBranchRevision: number;
@@ -143,6 +145,7 @@ export const useGitStore = create<GitStore>()(
       lastCommitReceipt: null,
       aiAvailable: false,
       epoch: 0,
+      statusRevision: 0,
       focusBranchRevision: 0,
       diffSession: null,
       diffFocused: false,
@@ -167,6 +170,7 @@ export const useGitStore = create<GitStore>()(
             diffSession: null,
             diffFocused: false,
             epoch: state.epoch + 1,
+            statusRevision: 0,
           }),
           false,
           'git/resetForWorkspace'
@@ -183,7 +187,16 @@ export const useGitStore = create<GitStore>()(
           const statusByPath = status.isRepo
             ? buildStatusByPath(status.repoRoot, status.files ?? [])
             : {};
-          set({ status, statusByPath, isRefreshing: false }, false, 'git/refreshDone');
+          set(
+            (state) => ({
+              status,
+              statusByPath,
+              isRefreshing: false,
+              statusRevision: state.statusRevision + 1,
+            }),
+            false,
+            'git/refreshDone'
+          );
         } catch (err) {
           if (get().epoch !== epoch) return;
           set({ isRefreshing: false }, false, 'git/refreshFailed');
@@ -298,15 +311,19 @@ export const useGitStore = create<GitStore>()(
           let binary = false;
           let truncated = false;
 
-          const fetchRev = async (rev: 'HEAD' | ':0', label: string): Promise<DiffSide> => {
-            const fc = await GitFileAtRev(repoRoot, rev, change.path);
+          const fetchRev = async (
+            rev: 'HEAD' | ':0',
+            label: string,
+            path = change.path
+          ): Promise<DiffSide> => {
+            const fc = await GitFileAtRev(repoRoot, rev, path);
             binary = binary || fc.binary;
             truncated = truncated || fc.truncated;
             return { label, content: fc.content };
           };
 
           if (context === 'staged') {
-            left = await fetchRev('HEAD', 'HEAD');
+            left = await fetchRev('HEAD', 'HEAD', change.origPath ?? change.path);
             right = await fetchRev(':0', 'Index');
           } else {
             // Untracked files have no index version; diff against empty.
