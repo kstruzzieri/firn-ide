@@ -5,7 +5,6 @@ package git
 
 import (
 	"bytes"
-	"fmt"
 	"strings"
 )
 
@@ -99,10 +98,26 @@ func parseBranchHeader(rec string, status *RepoStatus) {
 		status.Upstream = fields[2]
 	case "branch.ab":
 		if len(fields) == 4 {
-			fmt.Sscanf(fields[2], "+%d", &status.Ahead)
-			fmt.Sscanf(fields[3], "-%d", &status.Behind)
+			status.Ahead = parseSignedCount(fields[2], '+')
+			status.Behind = parseSignedCount(fields[3], '-')
 		}
 	}
+}
+
+// parseSignedCount parses "+N"/"-N" ahead-behind fields; malformed input
+// (future format drift) degrades to 0 rather than failing the whole status.
+func parseSignedCount(field string, sign byte) int {
+	if len(field) < 2 || field[0] != sign {
+		return 0
+	}
+	n := 0
+	for _, c := range field[1:] {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // parseChanged parses "1" and "2" records. Both share the first 8 fields;
