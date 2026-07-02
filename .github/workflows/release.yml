@@ -105,9 +105,49 @@ jobs:
           name: Firn-linux-amd64
           path: build/bin/Firn-linux-amd64.tar.gz
 
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: go.sum
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build application
+        run: wails build -platform windows/amd64
+
+      - name: Package application
+        run: Compress-Archive -Path build/bin/firn.exe -DestinationPath build/bin/Firn-windows-amd64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Firn-windows-amd64
+          path: build/bin/Firn-windows-amd64.zip
+
   release:
     name: Create Release
-    needs: [build-macos, build-linux]
+    needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -147,4 +187,6 @@ jobs:
             artifacts/**/*.zip
             artifacts/**/*.tar.gz
           draft: false
-          prerelease: false
+          # Tags with a pre-release suffix (e.g. v0.9.0-rc.1) publish as a
+          # prerelease so the build matrix can be dry-run before the real tag.
+          prerelease: ${{ contains(github.ref_name, '-') }}
