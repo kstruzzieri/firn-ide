@@ -420,4 +420,42 @@ describe('useWorkspacePersistence', () => {
     expect(useIDEStore.getState().directoryTree).toEqual([]);
     expect(getCachedWorkspaceTree('/workspace/firn')).toBeUndefined();
   });
+
+  it('ignores a treeSnapshot whose top-level entries are nested descendants', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/repo',
+      workspaceName: 'repo',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: [],
+        rootExpanded: true,
+        treeSnapshot: [
+          filesystem.FileEntry.createFrom({
+            name: 'src',
+            path: '/repo/frontend/src',
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+          }),
+        ],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: '/repo' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/repo'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    expect(useIDEStore.getState().directoryTree).toEqual([]);
+    expect(getCachedWorkspaceTree('/repo')).toBeUndefined();
+  });
 });

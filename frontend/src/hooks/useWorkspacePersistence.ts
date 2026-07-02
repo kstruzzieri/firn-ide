@@ -26,7 +26,7 @@ interface CollectWorkspaceOptions {
 }
 
 /**
- * True when every top-level entry of `snapshot` lives under `workspacePath`.
+ * True when every top-level entry of `snapshot` is an immediate child of `workspacePath`.
  * A snapshot whose entries point elsewhere is cross-workspace pollution
  * (a wrong-project tree saved under this path by a buggy prior switch) and
  * must not be applied. Empty snapshots are never "belonging" — there is
@@ -34,7 +34,10 @@ interface CollectWorkspaceOptions {
  */
 function treeSnapshotBelongsTo(snapshot: filesystem.FileEntry[], workspacePath: string): boolean {
   if (!snapshot.length) return false;
-  return snapshot.every((entry) => relativePathFromRoot(entry.path, workspacePath) !== null);
+  return snapshot.every((entry) => {
+    const rel = relativePathFromRoot(entry.path, workspacePath);
+    return rel !== null && rel !== '' && !rel.includes('/');
+  });
 }
 
 /**
