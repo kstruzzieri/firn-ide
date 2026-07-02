@@ -14,6 +14,9 @@ Linux, and Windows built with Wails (Go + React/Vite), using the system webview
 for a small (~15MB) binary. This release consolidates the editor, workspace,
 run-profile, terminal, language-server, and search work completed to date.
 
+Requires macOS 11 (Big Sur) or later, a Linux distribution with WebKit2GTK 4.1,
+or Windows 10/11 (WebView2).
+
 ### Editor
 - CodeMirror 6 editor with multi-tab editing and per-tab state.
 - Per-file undo history and view state (cursor, scroll) preserved across tab
