@@ -50,8 +50,8 @@ func (r *FileReader) ReadFileWithMetadata(path string) (*FileContent, error) {
 	result.Encoding = encoding
 	result.Content = content
 
-	// Check for binary content (null bytes in first 8KB)
-	result.IsBinary = r.isBinary(data)
+	// Check decoded content so UTF-16 text is not rejected for its raw NUL bytes.
+	result.IsBinary = r.isBinary([]byte(content))
 
 	// Detect line endings (only for text files)
 	if !result.IsBinary {

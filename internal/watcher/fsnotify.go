@@ -52,29 +52,41 @@ func (w *FSNotifyWatcher) Watch(ctx context.Context, path string, callback func(
 	// Stop existing watch if any
 	if w.stopCh != nil {
 		close(w.stopCh)
+		w.stopCh = nil
 	}
 
 	// Clean up old debouncer
 	if w.debouncer != nil {
 		w.debouncer.Stop()
+		w.debouncer = nil
+	}
+
+	if w.watcher == nil {
+		fw, err := fsnotify.NewWatcher()
+		if err != nil {
+			return err
+		}
+		w.watcher = fw
 	}
 
 	w.watchedPath = path
 	w.stopCh = make(chan struct{})
 	w.debouncer = NewDebouncer(time.Duration(w.config.DebounceMs) * time.Millisecond)
+	fw := w.watcher
+	stopCh := w.stopCh
 
 	// Add all directories recursively
-	if err := w.addRecursive(path); err != nil {
+	if err := w.addRecursive(fw, path); err != nil {
 		return err
 	}
 
 	// Start event processing goroutine
-	go w.processEvents(ctx, callback)
+	go w.processEvents(ctx, fw, stopCh, callback)
 
 	return nil
 }
 
-func (w *FSNotifyWatcher) addRecursive(root string) error {
+func (w *FSNotifyWatcher) addRecursive(fw *fsnotify.Watcher, root string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// Skip inaccessible paths
@@ -85,7 +97,7 @@ func (w *FSNotifyWatcher) addRecursive(root string) error {
 			if w.shouldExclude(d.Name()) {
 				return filepath.SkipDir
 			}
-			return w.watcher.Add(path)
+			return fw.Add(path)
 		}
 		return nil
 	})
@@ -106,19 +118,19 @@ func (w *FSNotifyWatcher) shouldExclude(name string) bool {
 	return false
 }
 
-func (w *FSNotifyWatcher) processEvents(ctx context.Context, callback func(FileEvent)) {
+func (w *FSNotifyWatcher) processEvents(ctx context.Context, fw *fsnotify.Watcher, stopCh <-chan struct{}, callback func(FileEvent)) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-w.stopCh:
+		case <-stopCh:
 			return
-		case event, ok := <-w.watcher.Events:
+		case event, ok := <-fw.Events:
 			if !ok {
 				return
 			}
-			w.handleEvent(event, callback)
-		case _, ok := <-w.watcher.Errors:
+			w.handleEvent(fw, event, callback)
+		case _, ok := <-fw.Errors:
 			if !ok {
 				return
 			}
@@ -127,7 +139,7 @@ func (w *FSNotifyWatcher) processEvents(ctx context.Context, callback func(FileE
 	}
 }
 
-func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event, callback func(FileEvent)) {
+func (w *FSNotifyWatcher) handleEvent(fw *fsnotify.Watcher, event fsnotify.Event, callback func(FileEvent)) {
 	// Skip excluded files
 	baseName := filepath.Base(event.Name)
 	if w.shouldExclude(baseName) {
@@ -149,7 +161,7 @@ func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event, callback func(FileEv
 	if event.Has(fsnotify.Create) {
 		info, err := os.Stat(event.Name)
 		if err == nil && info.IsDir() && !w.shouldExclude(info.Name()) {
-			_ = w.watcher.Add(event.Name)
+			_ = fw.Add(event.Name)
 		}
 	}
 }
@@ -202,7 +214,12 @@ func (w *FSNotifyWatcher) Stop() error {
 	}
 
 	w.watchedPath = ""
-	return w.watcher.Close()
+	if w.watcher != nil {
+		err := w.watcher.Close()
+		w.watcher = nil
+		return err
+	}
+	return nil
 }
 
 func (w *FSNotifyWatcher) IsWatching() bool {

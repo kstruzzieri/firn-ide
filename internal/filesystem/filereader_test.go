@@ -72,6 +72,9 @@ func TestReadFileWithMetadata_UTF16LE(t *testing.T) {
 	if result.Encoding != "utf-16le" {
 		t.Errorf("Expected encoding 'utf-16le', got %q", result.Encoding)
 	}
+	if result.IsBinary {
+		t.Error("Expected UTF-16 LE text to not be marked binary")
+	}
 }
 
 func TestReadFileWithMetadata_UTF16BE(t *testing.T) {
@@ -94,6 +97,9 @@ func TestReadFileWithMetadata_UTF16BE(t *testing.T) {
 	}
 	if result.Encoding != "utf-16be" {
 		t.Errorf("Expected encoding 'utf-16be', got %q", result.Encoding)
+	}
+	if result.IsBinary {
+		t.Error("Expected UTF-16 BE text to not be marked binary")
 	}
 }
 
