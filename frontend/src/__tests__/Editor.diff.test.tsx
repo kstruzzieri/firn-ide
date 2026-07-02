@@ -76,6 +76,44 @@ describe('Editor git diff tab', () => {
     expect(screen.getByTestId('git-diff-view')).toHaveTextContent('src/a.ts');
   });
 
+  it('marks only the diff tab active while the diff is focused', () => {
+    useIDEStore.setState({
+      openFiles: [openFile('f1', 'other.ts')],
+      activeFileId: 'f1',
+    });
+    useGitStore.setState({ diffSession: session, diffFocused: true });
+
+    render(<Editor />);
+
+    expect(screen.getByRole('tab', { name: /a\.ts.*diff/i })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(screen.getByRole('tab', { name: /other\.ts/i })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
+  });
+
+  it('marks only the file tab active once the diff is unfocused', () => {
+    useIDEStore.setState({
+      openFiles: [openFile('f1', 'other.ts')],
+      activeFileId: 'f1',
+    });
+    useGitStore.setState({ diffSession: session, diffFocused: false });
+
+    render(<Editor />);
+
+    expect(screen.getByRole('tab', { name: /other\.ts/i })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(screen.getByRole('tab', { name: /a\.ts.*diff/i })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
+  });
+
   it('shows the diff instead of the welcome screen even with no open files', () => {
     useGitStore.setState({ diffSession: session, diffFocused: true });
 

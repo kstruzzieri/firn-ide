@@ -154,7 +154,9 @@ export function Editor() {
       {/* Tab bar */}
       <div className={styles.tabBar} role="tablist" aria-label="Open files">
         {openFiles.map((file) => {
-          const isActive = file.id === activeFile?.id;
+          // A focused diff tab owns the active state, so the file tab it was
+          // opened from doesn't also read as active.
+          const isActive = file.id === activeFile?.id && !(diffFocused && diffSession);
           const languageName = getLanguageName(file.name);
 
           const activateFileTab = () => {

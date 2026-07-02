@@ -1,7 +1,17 @@
+/*
+ * flex + min-width:0 bind the diff to its flex-row parent (.content) width.
+ * Without it the root sizes to content, so long code lines push the whole
+ * surface wider than the panel: the toolbar's right-side nav scrolls out of
+ * reach and the panes appear to march right as you scroll ("progressive
+ * indent"). overflow:hidden keeps that width authoritative for the children.
+ */
 .diffRoot {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .toolbar {
