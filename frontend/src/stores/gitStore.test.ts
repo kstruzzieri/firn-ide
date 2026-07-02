@@ -54,7 +54,6 @@ const repoStatus = (over: Record<string, unknown> = {}) =>
 
 function resetStores() {
   useGitStore.getState().resetForWorkspace('/repo');
-  useIDEStore.getState().setGitBranch('');
 }
 
 beforeEach(() => {
@@ -63,7 +62,7 @@ beforeEach(() => {
 });
 
 describe('gitStore refresh', () => {
-  it('populates status, absolute statusByPath, and syncs branch to ideStore', async () => {
+  it('populates status and the absolute statusByPath map', async () => {
     mockGitStatus.mockResolvedValue(repoStatus());
 
     await useGitStore.getState().refresh();
@@ -72,7 +71,6 @@ describe('gitStore refresh', () => {
     expect(s.status?.branch).toBe('main');
     expect(s.statusByPath['/repo/a.ts']).toBe('modified');
     expect(s.isRefreshing).toBe(false);
-    expect(useIDEStore.getState().gitBranch).toBe('main');
   });
 
   it('clears state for a non-repo workspace', async () => {
@@ -83,7 +81,6 @@ describe('gitStore refresh', () => {
     const s = useGitStore.getState();
     expect(s.status?.isRepo).toBe(false);
     expect(s.statusByPath).toEqual({});
-    expect(useIDEStore.getState().gitBranch).toBe('');
   });
 
   it('drops a stale refresh that resolves after a workspace switch', async () => {

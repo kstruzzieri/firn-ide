@@ -41,6 +41,9 @@ interface GitState {
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
+  /** Bumped when a consumer (status bar) wants the branch popup focused;
+   * the git panel watches this like SearchPanel watches focusInputRevision. */
+  focusBranchRevision: number;
 }
 
 interface GitActions {
@@ -57,6 +60,7 @@ interface GitActions {
   checkout: (branch: string, create: boolean) => Promise<void>;
   generateMessage: () => Promise<void>;
   probeAiAvailable: () => Promise<void>;
+  requestBranchPopupFocus: () => void;
 }
 
 type GitStore = GitState & GitActions;
@@ -81,6 +85,7 @@ export const useGitStore = create<GitStore>()(
       lastError: null,
       aiAvailable: false,
       epoch: 0,
+      focusBranchRevision: 0,
 
       resetForWorkspace: (root) => {
         if (refreshTimer) {
@@ -103,7 +108,6 @@ export const useGitStore = create<GitStore>()(
           false,
           'git/resetForWorkspace'
         );
-        useIDEStore.getState().setGitBranch('');
       },
 
       refresh: async () => {
@@ -117,7 +121,6 @@ export const useGitStore = create<GitStore>()(
             ? buildStatusByPath(status.repoRoot, status.files ?? [])
             : {};
           set({ status, statusByPath, isRefreshing: false }, false, 'git/refreshDone');
-          useIDEStore.getState().setGitBranch(status.isRepo ? status.branch : '');
         } catch (err) {
           if (get().epoch !== epoch) return;
           set({ isRefreshing: false }, false, 'git/refreshFailed');
@@ -198,6 +201,13 @@ export const useGitStore = create<GitStore>()(
           set({ aiAvailable: false }, false, 'git/probeAiAvailable');
         }
       },
+
+      requestBranchPopupFocus: () =>
+        set(
+          (state) => ({ focusBranchRevision: state.focusBranchRevision + 1 }),
+          false,
+          'git/requestBranchPopupFocus'
+        ),
     }),
     { name: 'git-store' }
   )
