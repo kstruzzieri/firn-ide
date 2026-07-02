@@ -1,10 +1,36 @@
 .tabs {
   display: flex;
+  /* align-items:center keeps tab buttons at their intrinsic height. Without it,
+     the flex default (stretch) lets a first-paint layout — e.g. when a classic
+     "always shown" horizontal scrollbar claims space in an overflowing strip —
+     squash the buttons, dragging the active tab's inset box-shadow underline up
+     into the text (strike-through). Mirrors the immune Terminal .tabBar. */
+  align-items: center;
   gap: 4px;
   padding: 4px 6px;
+  /* flex-shrink:0 stops the sibling tree from compressing the strip;
+     overflow-y:hidden stops a lone overflow-x:auto from computing overflow-y to
+     auto and reserving vertical scrollbar space. */
+  flex-shrink: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--surface-border-subtle);
   scrollbar-width: thin;
+}
+
+/* Thin, non-space-consuming horizontal scrollbar even under macOS
+   "Always show scroll bars" (matches Terminal .tabBar). */
+.tabs::-webkit-scrollbar {
+  height: 3px;
+}
+
+.tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tabs::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 3px;
 }
 
 .tab {
