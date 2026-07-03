@@ -14,12 +14,22 @@
   font-size: 12px;
 }
 
-/* ── sync row ──────────────────────────────────────────────────────────── */
+/* ── header row: scope toggle + branch switcher ────────────────────────── */
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ── sync row (pull/push) ──────────────────────────────────────────────── */
 
 .syncRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -86,12 +96,15 @@
   white-space: nowrap;
 }
 
+/* Anchored to the trigger's right edge: it sits on the right of the header
+ * row, so a left-anchored popup would overflow the panel. */
 .branchPopup {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   z-index: 20;
   min-width: 220px;
+  max-width: min(280px, calc(100vw - 24px));
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -178,13 +191,26 @@
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
-  border: 1px solid var(--border);
+  /* Stronger boundary than the faint --border so the field reads as an
+   * editable box, plus a filled surface and an accent focus ring. */
+  border: 1px solid var(--border-strong, var(--text-muted));
   border-radius: 5px;
-  background: transparent;
+  background: var(--surface-base);
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: 12px;
   resize: vertical;
+  transition: border-color var(--transition);
+}
+
+.commitInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow, rgba(120, 170, 255, 0.35));
+}
+
+.commitInput::placeholder {
+  color: var(--text-muted);
 }
 
 .commitControls {
@@ -421,9 +447,14 @@
 
 .rowName {
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
+/* JetBrains-style location: dimmed repo-relative directory pushed to the
+ * right of the filename. Full path is in the row's title tooltip. */
 .rowDir {
+  margin-left: auto;
+  padding-left: 8px;
   color: var(--text-muted);
   font-size: 10px;
   overflow: hidden;

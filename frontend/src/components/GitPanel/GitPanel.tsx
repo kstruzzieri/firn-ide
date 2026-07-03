@@ -81,8 +81,11 @@ export function GitPanel() {
       }
     >
       <div className={styles.panelBody}>
+        <div className={styles.headerRow}>
+          <ScopeToggle scope={scope} onChange={setScope} />
+          <BranchPopupTrigger />
+        </div>
         <SyncControls />
-        <ScopeToggle scope={scope} onChange={setScope} />
         {buckets.conflicts.length > 0 && (
           <ConflictBanner branch={status.branch} conflicts={buckets.conflicts} raw={lastError} />
         )}
@@ -159,7 +162,6 @@ function SyncControls() {
 
   return (
     <div className={styles.syncRow}>
-      <BranchPopupTrigger />
       <div className={styles.syncButtons}>
         <button
           type="button"
@@ -559,7 +561,11 @@ function ChangeRow({
       >
         <FileIcon name={name} isDir={false} isExpanded={false} className={styles.rowIcon} />
         <span className={styles.rowName}>{name}</span>
-        {dir && <span className={styles.rowDir}>{dir}</span>}
+        {dir && (
+          <span className={styles.rowDir} data-testid="row-dir">
+            {dir}
+          </span>
+        )}
       </button>
       <span className={styles.rowActions}>
         {rowAction === 'stage' && (

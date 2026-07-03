@@ -113,6 +113,25 @@ describe('GitPanel sections', () => {
     expect(within(screen.getByTestId('section-changes')).getByText('both.ts')).toBeVisible();
   });
 
+  it('shows the repo-relative directory path beside a nested filename', () => {
+    seed([file('internal/git/service.go', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    const row = screen.getByText('service.go').closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText('internal/git')).toBeInTheDocument();
+  });
+
+  it('omits the path element for a repo-root file', () => {
+    seed([file('app.go', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    const row = screen.getByText('app.go').closest('li');
+    expect(within(row!).queryByTestId('row-dir')).not.toBeInTheDocument();
+  });
+
   it('stages a file from its row action', async () => {
     (GitStage as jest.Mock).mockResolvedValue(undefined);
     seed([file('changed.ts', '.', 'M')]);
