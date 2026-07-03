@@ -377,6 +377,9 @@
   gap: 6px;
   flex: 1;
   min-width: 0;
+  /* Clip so a long filename truncates instead of spilling past the panel
+   * edge and shoving the status badge out of view. */
+  overflow: hidden;
   padding: 3px 2px;
   border: none;
   background: transparent;
@@ -392,9 +395,15 @@
   flex-shrink: 0;
 }
 
+/* Filename truncates with an ellipsis when the panel is narrow; the location
+ * (rowDir) gives up space first via a larger flex-shrink so the name stays
+ * readable as long as possible. */
 .rowName {
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 3ch;
+  flex-shrink: 1;
 }
 
 /* JetBrains-style location: dimmed repo-relative directory pushed to the
@@ -409,12 +418,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  /* Shrink the location before the filename does. */
+  flex-shrink: 3;
 }
 
 .rowActions {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 /* Always-visible include checkbox (JetBrains-style): checked = staged for the
