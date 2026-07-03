@@ -29,33 +29,73 @@
 .syncRow {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: stretch;
   gap: 8px;
 }
 
 .syncButtons {
   display: flex;
-  gap: 4px;
+  gap: 6px;
+  flex: 1;
 }
 
 .syncBtn {
-  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
+  border-radius: 5px;
+  background: var(--surface-hover);
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    opacity var(--transition);
 }
 
 .syncBtn:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: var(--surface-active);
+}
+
+/* Something to pull/push: accent border + tint so the button reads as
+ * actionable, not decorative. */
+.syncActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim, color-mix(in srgb, var(--accent) 14%, transparent));
+}
+
+.syncActive:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .syncBtn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: default;
+}
+
+.syncArrow {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* Count of incoming/outgoing commits, as a pill on the active button. */
+.syncCount {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
 }
 
 /* Branch switcher styles now live with the shared BranchSwitcher component. */
@@ -358,12 +398,13 @@
 }
 
 /* JetBrains-style location: dimmed repo-relative directory pushed to the
- * right of the filename. Full path is in the row's title tooltip. */
+ * right of the filename, at the same size (dimmed color is the distinction).
+ * Full path is in the row's title tooltip. */
 .rowDir {
   margin-left: auto;
   padding-left: 8px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

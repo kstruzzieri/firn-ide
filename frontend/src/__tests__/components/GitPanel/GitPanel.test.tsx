@@ -427,6 +427,34 @@ describe('GitPanel branch and sync controls', () => {
     expect(GitPull).toHaveBeenCalledTimes(1);
   });
 
+  it('disables pull when nothing is behind and push when nothing is ahead', () => {
+    seed([], { ahead: 0, behind: 0, upstream: 'origin/main' });
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: /pull/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /push/i })).toBeDisabled();
+  });
+
+  it('enables pull and push when there are incoming and outgoing commits', () => {
+    seed([], { ahead: 2, behind: 3, upstream: 'origin/main' });
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: /pull 3/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /push 2/i })).toBeEnabled();
+  });
+
+  it('enables push to publish a branch that has no upstream yet', () => {
+    seed([], { ahead: 0, behind: 0, upstream: '' });
+
+    render(<GitPanel />);
+
+    // No upstream: push publishes the branch even with a zero ahead count.
+    expect(screen.getByRole('button', { name: /publish|push/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /pull/i })).toBeDisabled();
+  });
+
   it('opens the branch popup, filters, and checks out a branch', async () => {
     (GitCheckout as jest.Mock).mockResolvedValue(undefined);
     seed([]);

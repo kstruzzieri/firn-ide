@@ -170,26 +170,46 @@ function SyncControls() {
   const git = useGitStore.getState();
   if (!status?.isRepo) return null;
 
+  const busy = opInFlight !== null;
+  const hasUpstream = status.upstream !== '';
+  // Nothing behind → nothing to pull. A branch with no upstream can still be
+  // published, so push stays enabled there even with a zero ahead count.
+  const canPull = status.behind > 0 && !busy;
+  const canPush = (status.ahead > 0 || !hasUpstream) && !busy;
+  const pushLabel = !hasUpstream ? 'Publish' : 'Push';
+
   return (
     <div className={styles.syncRow}>
       <div className={styles.syncButtons}>
         <button
           type="button"
-          className={styles.syncBtn}
+          className={`${styles.syncBtn} ${status.behind > 0 ? styles.syncActive : ''}`}
           onClick={() => void git.pull()}
-          disabled={opInFlight !== null}
-          aria-label={status.behind > 0 ? `Pull ${status.behind} incoming` : 'Pull'}
+          disabled={!canPull}
+          aria-label={
+            status.behind > 0 ? `Pull ${status.behind} incoming` : 'Pull (nothing to pull)'
+          }
         >
-          ↓{status.behind > 0 ? status.behind : ''} Pull
+          <span className={styles.syncArrow} aria-hidden="true">
+            ↓
+          </span>
+          Pull
+          {status.behind > 0 && <span className={styles.syncCount}>{status.behind}</span>}
         </button>
         <button
           type="button"
-          className={styles.syncBtn}
+          className={`${styles.syncBtn} ${status.ahead > 0 || !hasUpstream ? styles.syncActive : ''}`}
           onClick={() => void git.push()}
-          disabled={opInFlight !== null}
-          aria-label={status.ahead > 0 ? `Push ${status.ahead} outgoing` : 'Push'}
+          disabled={!canPush}
+          aria-label={
+            status.ahead > 0 ? `Push ${status.ahead} outgoing` : `${pushLabel} (nothing to push)`
+          }
         >
-          ↑{status.ahead > 0 ? status.ahead : ''} Push
+          <span className={styles.syncArrow} aria-hidden="true">
+            ↑
+          </span>
+          {pushLabel}
+          {status.ahead > 0 && <span className={styles.syncCount}>{status.ahead}</span>}
         </button>
       </div>
     </div>
