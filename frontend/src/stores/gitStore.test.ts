@@ -342,6 +342,56 @@ describe('gitStore diff sessions', () => {
     });
   });
 
+  it('re-fetches an open diff when git status refreshes (live edits)', async () => {
+    const added = { path: 'fresh.ts', index: 'A', worktree: 'M' };
+    mockFileAtRev.mockResolvedValue(rev('staged content\n'));
+    mockReadFile.mockResolvedValueOnce({
+      content: 'staged content\n',
+    } as Awaited<ReturnType<typeof ReadFile>>);
+
+    await useGitStore.getState().openDiff(added, 'unstaged');
+    expect(useGitStore.getState().diffSession?.right.content).toBe('staged content\n');
+
+    // The user keeps editing: the worktree grows, and a status refresh fires.
+    mockGitStatus.mockResolvedValue(repoStatus({ files: [added] }));
+    mockReadFile.mockResolvedValueOnce({
+      content: 'staged content\nplus a later edit\n',
+    } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore.getState().refresh();
+
+    expect(useGitStore.getState().diffSession?.right.content).toBe(
+      'staged content\nplus a later edit\n'
+    );
+  });
+
+  it('keeps the same diff session object when a refresh finds no change (no rebuild)', async () => {
+    const added = { path: 'fresh.ts', index: 'A', worktree: 'M' };
+    mockFileAtRev.mockResolvedValue(rev('x'));
+    mockReadFile.mockResolvedValue({ content: 'x' } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore.getState().openDiff(added, 'unstaged');
+    const first = useGitStore.getState().diffSession;
+
+    mockGitStatus.mockResolvedValue(repoStatus({ files: [added] }));
+    await useGitStore.getState().refresh();
+
+    // Same content → same object reference, so the merge view is not rebuilt.
+    expect(useGitStore.getState().diffSession).toBe(first);
+  });
+
+  it('keeps the diff unfocused across a refresh when the user is on a file tab', async () => {
+    const added = { path: 'fresh.ts', index: 'A', worktree: 'M' };
+    mockFileAtRev.mockResolvedValue(rev('x'));
+    mockReadFile.mockResolvedValue({ content: 'x' } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore.getState().openDiff(added, 'unstaged');
+    useGitStore.getState().setDiffFocused(false);
+
+    mockGitStatus.mockResolvedValue(repoStatus({ files: [added] }));
+    await useGitStore.getState().refresh();
+
+    expect(useGitStore.getState().diffFocused).toBe(false);
+    expect(useGitStore.getState().diffSession).not.toBeNull();
+  });
+
   it('untracked files diff against empty content without a rev fetch', async () => {
     await useGitStore
       .getState()

@@ -58,6 +58,22 @@ export interface CommitReceipt {
   output: string;
 }
 
+/** Deep-equality for a diff session, so an unchanged live refresh can keep the
+ * same object reference and avoid rebuilding the merge view. */
+function sameSession(a: DiffSession | null, b: DiffSession): boolean {
+  return (
+    a !== null &&
+    a.path === b.path &&
+    a.context === b.context &&
+    a.binary === b.binary &&
+    a.truncated === b.truncated &&
+    a.left.label === b.left.label &&
+    a.left.content === b.left.content &&
+    a.right.label === b.right.label &&
+    a.right.content === b.right.content
+  );
+}
+
 /** Parses git's "[branch hash] subject" commit summary line. */
 function parseCommitSummary(output: string): Pick<CommitReceipt, 'branch' | 'hash' | 'subject'> {
   const match = /^\[(.+?) (?:\(root-commit\) )?([0-9a-f]+)\] (.*)$/m.exec(output);
@@ -117,7 +133,12 @@ interface GitActions {
   generateMessage: () => Promise<void>;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
-  openDiff: (change: GitFileChange, context: DiffContext) => Promise<void>;
+  openDiff: (
+    change: GitFileChange,
+    context: DiffContext,
+    opts?: { focus?: boolean }
+  ) => Promise<void>;
+  refreshOpenDiff: () => Promise<void>;
   closeDiff: () => void;
   setDiffFocused: (focused: boolean) => void;
 }
@@ -197,6 +218,10 @@ export const useGitStore = create<GitStore>()(
             false,
             'git/refreshDone'
           );
+          // Keep an open diff in sync with the just-loaded status (live edits).
+          // Awaited so callers see a consistent snapshot; it early-returns when
+          // no diff is open, so the common path stays cheap.
+          await get().refreshOpenDiff();
         } catch (err) {
           if (get().epoch !== epoch) return;
           set({ isRefreshing: false }, false, 'git/refreshFailed');
@@ -299,11 +324,12 @@ export const useGitStore = create<GitStore>()(
           'git/requestBranchPopupFocus'
         ),
 
-      openDiff: async (change, context) => {
+      openDiff: async (change, context, opts) => {
         const { root, status, epoch } = get();
         const repoRoot = status?.isRepo ? status.repoRoot : root;
         if (!repoRoot) return;
         const untracked = classifyChange(change).untracked;
+        const focus = opts?.focus ?? true;
 
         try {
           let left: DiffSide;
@@ -339,17 +365,32 @@ export const useGitStore = create<GitStore>()(
           }
 
           if (get().epoch !== epoch) return; // workspace switched mid-fetch
+          const next: DiffSession = { path: change.path, context, left, right, binary, truncated };
           set(
-            {
-              diffSession: { path: change.path, context, left, right, binary, truncated },
-              diffFocused: true,
-            },
+            (state) => ({
+              // Reuse the existing object when nothing changed so a live refresh
+              // doesn't rebuild the merge view (and reset scroll) on every save.
+              diffSession: sameSession(state.diffSession, next) ? state.diffSession! : next,
+              // A refresh (focus:false) keeps whatever the user was looking at.
+              diffFocused: focus ? true : state.diffFocused,
+            }),
             false,
             'git/openDiff'
           );
         } catch (err) {
           useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
         }
+      },
+
+      // Re-run the open diff against the latest status so ongoing edits show up
+      // live. Keeps the same file+context and preserves focus; if the file no
+      // longer has changes, the diff simply re-fetches to matching content.
+      refreshOpenDiff: async () => {
+        const { diffSession, status } = get();
+        if (!diffSession || !status?.isRepo) return;
+        const change = (status.files ?? []).find((f) => f.path === diffSession.path);
+        if (!change) return; // committed or reverted; leave the last view in place
+        await get().openDiff(change, diffSession.context, { focus: false });
       },
 
       closeDiff: () => set({ diffSession: null, diffFocused: false }, false, 'git/closeDiff'),
