@@ -8,6 +8,7 @@ import { formatShortcut, isMac } from '../../utils/platform';
 import firnIcon from '../../assets/branding/icon.svg';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { RunProfileSelector } from './RunProfileSelector';
+import { BranchSwitcher } from '../git/BranchSwitcher';
 
 const MENU_ID = 'workspace-menu';
 
@@ -202,6 +203,9 @@ export function Header() {
 
       {/* Spacer */}
       <div className={styles.spacer} />
+
+      {/* Always-visible branch switcher (hidden when the workspace isn't a repo) */}
+      <BranchSwitcher compact />
 
       {/* Run-profile selector (right-aligned) */}
       <RunProfileSelector />

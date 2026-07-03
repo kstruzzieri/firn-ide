@@ -6,7 +6,6 @@
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { act } from 'react';
-import { useIDEStore } from '../stores/ideStore';
 import { GitPull, GitPush } from '../../wailsjs/go/main/App';
 import { StatusBar } from '../components/StatusBar';
 import { useLSPStore } from '../stores/lspStore';
@@ -86,17 +85,15 @@ describe('StatusBar git segment', () => {
     expect(screen.queryByText('main')).not.toBeInTheDocument();
   });
 
-  it('branch click reveals the git panel and requests branch popup focus', () => {
+  it('branch click requests the branch popup (opens the header switcher)', () => {
     render(<StatusBar />);
     act(() => {
       useGitStore.setState({ status: gitStatus() });
-      useIDEStore.setState({ activeSidebarView: 'explorer' });
     });
     const before = useGitStore.getState().focusBranchRevision;
 
     fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
 
-    expect(useIDEStore.getState().activeSidebarView).toBe('git');
     expect(useGitStore.getState().focusBranchRevision).toBe(before + 1);
   });
 

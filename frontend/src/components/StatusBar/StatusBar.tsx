@@ -1,6 +1,6 @@
 import styles from './StatusBar.module.css';
 import { StatusBranchIcon, CheckIcon, AlertCircleIcon } from '../icons';
-import { useActiveFile, useCursorPosition, useIDEStore } from '../../stores/ideStore';
+import { useActiveFile, useCursorPosition } from '../../stores/ideStore';
 import { useGitBranchInfo, useGitStore } from '../../stores/gitStore';
 import { useLSPErrorCount, useLSPInfoCount, useLSPWarningCount } from '../../stores/lspStore';
 import { EditorThemePicker } from './EditorThemePicker';
@@ -13,12 +13,9 @@ export function StatusBar() {
   const activeFile = useActiveFile();
   const cursorPosition = useCursorPosition();
 
-  // The git segment is a control, not a label: branch opens the panel's
-  // branch popup, the arrows push/pull directly.
+  // The git segment is a control, not a label: clicking the branch opens the
+  // always-visible header branch switcher; the arrows push/pull directly.
   const handleBranchClick = () => {
-    const ide = useIDEStore.getState();
-    if (ide.isLeftPanelCollapsed) ide.toggleLeftPanel();
-    ide.setSidebarView('git');
     useGitStore.getState().requestBranchPopupFocus();
   };
 

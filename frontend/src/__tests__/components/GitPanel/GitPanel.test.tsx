@@ -123,13 +123,14 @@ describe('GitPanel sections', () => {
     expect(within(row!).getByText('internal/git')).toBeInTheDocument();
   });
 
-  it('omits the path element for a repo-root file', () => {
+  it('shows the repo folder name as the location for a repo-root file', () => {
+    // seed() uses repoRoot '/repo', so root files locate to 'repo'.
     seed([file('app.go', '.', 'M')]);
 
     render(<GitPanel />);
 
     const row = screen.getByText('app.go').closest('li');
-    expect(within(row!).queryByTestId('row-dir')).not.toBeInTheDocument();
+    expect(within(row!).getByTestId('row-dir')).toHaveTextContent('repo');
   });
 
   it('stages a file from its row action', async () => {
@@ -457,7 +458,9 @@ describe('GitPanel branch and sync controls', () => {
     expect(GitCheckout).toHaveBeenCalledWith('/repo', 'feature/brand-new', true);
   });
 
-  it('opens the popup when focusBranchRevision bumps (status bar handoff)', () => {
+  it('does not auto-open the panel branch popup on a focus request', () => {
+    // The always-visible header switcher owns the status-bar handoff, so the
+    // panel copy stays closed to avoid two popups opening at once.
     seed([]);
 
     render(<GitPanel />);
@@ -465,6 +468,6 @@ describe('GitPanel branch and sync controls', () => {
       useGitStore.getState().requestBranchPopupFocus();
     });
 
-    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 });

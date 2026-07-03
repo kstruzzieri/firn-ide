@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
-import { RestartIcon, MinusIcon, PlusIcon, GitBranchIcon, ChevronDownIcon } from '../icons';
+import { RestartIcon, MinusIcon, PlusIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
 import { classifyChange, type GitFileChange, type GitRowStatus } from '../../types/git';
 import { joinRepoPath, normalizeFsPath } from '../../utils/paths';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { FileIcon } from '../FileExplorer/FileIcon';
+import { BranchSwitcher } from '../git/BranchSwitcher';
 import styles from './GitPanel.module.css';
 
 type ViewScope = 'workspace' | 'project';
@@ -15,6 +16,9 @@ interface BucketedChange {
   change: GitFileChange;
   absPath: string;
   rowStatus: GitRowStatus;
+  /** Location shown after the filename: repo-relative directory, or the repo
+   * folder name for files that sit at the repository root. */
+  location: string;
 }
 
 const statusLetter: Record<GitRowStatus, string> = {
@@ -36,11 +40,17 @@ export function GitPanel() {
 
   // Bucket once per status; scope filter narrows to the active workspace.
   const buckets = useMemo(() => {
-    const all: BucketedChange[] = (status?.files ?? []).map((change) => ({
-      change,
-      absPath: joinRepoPath(repoRoot ?? '', change.path),
-      rowStatus: classifyChange(change).rowStatus,
-    }));
+    const repoName = repoRoot ? (normalizeFsPath(repoRoot).split('/').pop() ?? '') : '';
+    const all: BucketedChange[] = (status?.files ?? []).map((change) => {
+      const slash = change.path.lastIndexOf('/');
+      const dir = slash === -1 ? '' : change.path.slice(0, slash);
+      return {
+        change,
+        absPath: joinRepoPath(repoRoot ?? '', change.path),
+        rowStatus: classifyChange(change).rowStatus,
+        location: dir || repoName,
+      };
+    });
     const wsPath = workspace?.path ? normalizeFsPath(workspace.path) : null;
     const scoped =
       scope === 'workspace' && wsPath && repoRoot && wsPath !== normalizeFsPath(repoRoot)
@@ -83,7 +93,7 @@ export function GitPanel() {
       <div className={styles.panelBody}>
         <div className={styles.headerRow}>
           <ScopeToggle scope={scope} onChange={setScope} />
-          <BranchPopupTrigger />
+          <BranchSwitcher respondToFocusRequest={false} />
         </div>
         <SyncControls />
         {buckets.conflicts.length > 0 && (
@@ -182,93 +192,6 @@ function SyncControls() {
           ↑{status.ahead > 0 ? status.ahead : ''} Push
         </button>
       </div>
-    </div>
-  );
-}
-
-function BranchPopupTrigger() {
-  const branch = useGitStore((s) => (s.status?.isRepo ? s.status.branch : ''));
-  const branches = useGitStore((s) => s.branches);
-  const focusRevision = useGitStore((s) => s.focusBranchRevision);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Status-bar handoff: a bumped revision opens the popup. Render-phase state
-  // adjustment (the React "derive state from props" pattern) — no effect.
-  const [seenRevision, setSeenRevision] = useState(focusRevision);
-  if (focusRevision !== seenRevision) {
-    setSeenRevision(focusRevision);
-    setOpen(true);
-  }
-
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  const filtered = branches.filter((b) => b.includes(query));
-  const exactExists = branches.includes(query);
-
-  const checkout = (name: string, create: boolean) => {
-    setOpen(false);
-    setQuery('');
-    void useGitStore.getState().checkout(name, create);
-  };
-
-  return (
-    <div className={styles.branchWrap}>
-      <button
-        type="button"
-        className={styles.branchBtn}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`Branch: ${branch}. Open branch switcher`}
-      >
-        <GitBranchIcon aria-hidden="true" />
-        <span className={styles.branchName}>{branch}</span>
-        <ChevronDownIcon aria-hidden="true" />
-      </button>
-      {open && (
-        <div className={styles.branchPopup}>
-          <input
-            ref={inputRef}
-            className={styles.branchSearch}
-            placeholder="Find or create branch"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Find or create branch"
-          />
-          <ul role="listbox" aria-label="Branches" className={styles.branchList}>
-            {filtered.map((b) => (
-              <li key={b}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={b === branch}
-                  className={styles.branchOption}
-                  onClick={() => checkout(b, false)}
-                >
-                  {b}
-                </button>
-              </li>
-            ))}
-            {query && !exactExists && (
-              <li>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={false}
-                  className={`${styles.branchOption} ${styles.branchCreate}`}
-                  onClick={() => checkout(query, true)}
-                >
-                  Create branch {query}
-                </button>
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
@@ -538,7 +461,6 @@ function ChangeRow({
   rowAction: 'stage' | 'unstage' | null;
 }) {
   const name = fileName(file.change.path);
-  const dir = file.change.path.slice(0, file.change.path.length - name.length).replace(/\/$/, '');
   const git = useGitStore.getState();
 
   // Staged rows diff HEAD↔index, unstaged/untracked rows diff index↔worktree;
@@ -561,9 +483,9 @@ function ChangeRow({
       >
         <FileIcon name={name} isDir={false} isExpanded={false} className={styles.rowIcon} />
         <span className={styles.rowName}>{name}</span>
-        {dir && (
+        {file.location && (
           <span className={styles.rowDir} data-testid="row-dir">
-            {dir}
+            {file.location}
           </span>
         )}
       </button>
