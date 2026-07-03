@@ -417,35 +417,15 @@
   gap: 2px;
 }
 
-/* Hover-revealed actions; still in the DOM (and focusable) for a11y/tests. */
-.rowActionBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text-muted);
+/* Always-visible include checkbox (JetBrains-style): checked = staged for the
+ * next commit. Accent-tinted so its checked state is obvious. */
+.rowCheck {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
   cursor: pointer;
-  opacity: 0;
-}
-
-.row:hover .rowActionBtn,
-.rowActionBtn:focus-visible {
-  opacity: 1;
-}
-
-.rowActionBtn:hover {
-  background: var(--surface-base);
-  color: var(--text-primary);
-}
-
-.rowActionBtn svg {
-  width: 12px;
-  height: 12px;
+  accent-color: var(--accent);
 }
 
 .rowBadge {

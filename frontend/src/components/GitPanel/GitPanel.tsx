@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
-import { RestartIcon, MinusIcon, PlusIcon } from '../icons';
+import { RestartIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
 import { classifyChange, type GitFileChange, type GitRowStatus } from '../../types/git';
@@ -493,8 +493,27 @@ function ChangeRow({
     }
   };
 
+  // Checkbox = "include in the next commit" (JetBrains model): checked means
+  // the file is staged. Conflict rows (rowAction null) have no checkbox — they
+  // must be resolved before they can be committed.
+  const staged = rowAction === 'unstage';
+  const toggleInclude = () => {
+    if (staged) void git.unstage([file.change.path]);
+    else void git.stage([file.change.path]);
+  };
+
   return (
     <li className={styles.row} data-git={file.rowStatus}>
+      {rowAction !== null && (
+        <input
+          type="checkbox"
+          className={styles.rowCheck}
+          checked={staged}
+          onChange={toggleInclude}
+          aria-label={`Include ${name} in commit`}
+          title={staged ? 'Staged — click to unstage' : 'Click to stage'}
+        />
+      )}
       <button
         type="button"
         className={styles.rowMain}
@@ -510,28 +529,6 @@ function ChangeRow({
         )}
       </button>
       <span className={styles.rowActions}>
-        {rowAction === 'stage' && (
-          <button
-            type="button"
-            className={styles.rowActionBtn}
-            onClick={() => void git.stage([file.change.path])}
-            aria-label={`Stage ${name}`}
-            title="Stage"
-          >
-            <PlusIcon aria-hidden="true" />
-          </button>
-        )}
-        {rowAction === 'unstage' && (
-          <button
-            type="button"
-            className={styles.rowActionBtn}
-            onClick={() => void git.unstage([file.change.path])}
-            aria-label={`Unstage ${name}`}
-            title="Unstage"
-          >
-            <MinusIcon aria-hidden="true" />
-          </button>
-        )}
         <span className={styles.rowBadge} aria-hidden="true">
           {statusLetter[file.rowStatus]}
         </span>

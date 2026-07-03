@@ -133,26 +133,42 @@ describe('GitPanel sections', () => {
     expect(within(row!).getByTestId('row-dir')).toHaveTextContent('repo');
   });
 
-  it('stages a file from its row action', async () => {
+  it('checking an unstaged row includes it (stages) for commit', async () => {
     (GitStage as jest.Mock).mockResolvedValue(undefined);
     seed([file('changed.ts', '.', 'M')]);
 
     render(<GitPanel />);
-    fireEvent.click(screen.getByRole('button', { name: /stage changed\.ts/i }));
+    const checkbox = within(screen.getByTestId('section-changes')).getByRole('checkbox', {
+      name: /changed\.ts/i,
+    });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
     await act(async () => {});
 
     expect(GitStage).toHaveBeenCalledWith('/repo', ['changed.ts']);
   });
 
-  it('unstages a file from its row action', async () => {
+  it('a staged row shows a checked box and unchecking unstages it', async () => {
     (GitUnstage as jest.Mock).mockResolvedValue(undefined);
     seed([file('staged.ts', 'M', '.')]);
 
     render(<GitPanel />);
-    fireEvent.click(screen.getByRole('button', { name: /unstage staged\.ts/i }));
+    const checkbox = within(screen.getByTestId('section-staged')).getByRole('checkbox', {
+      name: /staged\.ts/i,
+    });
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
     await act(async () => {});
 
     expect(GitUnstage).toHaveBeenCalledWith('/repo', ['staged.ts']);
+  });
+
+  it('conflict rows have no include checkbox until resolved', () => {
+    seed([file('clash.go', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+    const row = within(screen.getByTestId('section-conflicts')).getByText('clash.go').closest('li');
+    expect(within(row!).queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
   it('stages all unstaged and untracked files from the section bulk action', async () => {
