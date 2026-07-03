@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
-import { RestartIcon } from '../icons';
+import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
 import { classifyChange, type GitFileChange, type GitRowStatus } from '../../types/git';
@@ -120,14 +120,12 @@ export function GitPanel() {
             title="Staged Changes"
             files={buckets.staged}
             rowAction="unstage"
-            bulk={{ label: 'Unstage All', paths: buckets.staged.map((f) => f.change.path) }}
           />
           <Section
             testId="section-changes"
             title="Changes"
             files={buckets.changes}
             rowAction="stage"
-            bulk={{ label: 'Stage All', paths: buckets.changes.map((f) => f.change.path) }}
           />
           <Section
             testId="section-untracked"
@@ -436,39 +434,63 @@ function Section({
   title,
   files,
   rowAction,
-  bulk,
 }: {
   testId: string;
   title: string;
   files: BucketedChange[];
   rowAction: 'stage' | 'unstage' | null;
-  bulk?: { label: string; paths: string[] };
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   if (files.length === 0) return null;
   const git = useGitStore.getState();
+  const paths = files.map((f) => f.change.path);
 
-  const runBulk = () => {
-    if (!bulk || bulk.paths.length === 0) return;
-    void (rowAction === 'unstage' ? git.unstage(bulk.paths) : git.stage(bulk.paths));
+  // Staged section files are all included (checked); stage/untracked section
+  // files are all excluded. A section is homogeneous, so the header box is a
+  // plain two-state select-all, not tristate.
+  const allStaged = rowAction === 'unstage';
+  const toggleAll = () => {
+    if (rowAction === null) return; // conflicts can't be bulk-staged
+    void (allStaged ? git.unstage(paths) : git.stage(paths));
   };
 
   return (
     <div className={styles.section} data-testid={testId}>
       <div className={styles.sectionHeader}>
+        <button
+          type="button"
+          className={styles.sectionChevron}
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
+        >
+          {collapsed ? (
+            <ChevronRightIcon aria-hidden="true" />
+          ) : (
+            <ChevronDownIcon aria-hidden="true" />
+          )}
+        </button>
+        {rowAction !== null && (
+          <input
+            type="checkbox"
+            className={styles.sectionCheck}
+            checked={allStaged}
+            onChange={toggleAll}
+            aria-label={`Select all in ${title}`}
+            title={allStaged ? 'Unstage all' : 'Stage all'}
+          />
+        )}
         <span className={styles.sectionTitle}>
           {title} <span className={styles.sectionCount}>{files.length}</span>
         </span>
-        {bulk && bulk.paths.length > 0 && (
-          <button type="button" className={styles.smallBtn} onClick={runBulk}>
-            {bulk.label}
-          </button>
-        )}
       </div>
-      <ul className={styles.rows}>
-        {files.map((f) => (
-          <ChangeRow key={`${testId}-${f.change.path}`} file={f} rowAction={rowAction} />
-        ))}
-      </ul>
+      {!collapsed && (
+        <ul className={styles.rows}>
+          {files.map((f) => (
+            <ChangeRow key={`${testId}-${f.change.path}`} file={f} rowAction={rowAction} />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -171,15 +171,46 @@ describe('GitPanel sections', () => {
     expect(within(row!).queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
-  it('stages all unstaged and untracked files from the section bulk action', async () => {
+  it('stages every file in a section via its header select-all checkbox', async () => {
     (GitStage as jest.Mock).mockResolvedValue(undefined);
-    seed([file('a.ts', '.', 'M'), file('b.md', '?', '?')]);
+    seed([file('a.ts', '.', 'M'), file('b.ts', '.', 'M')]);
 
     render(<GitPanel />);
-    fireEvent.click(screen.getByRole('button', { name: /stage all/i }));
+    const header = within(screen.getByTestId('section-changes'));
+    const selectAll = header.getByRole('checkbox', { name: /select all in changes/i });
+    expect(selectAll).not.toBeChecked();
+    fireEvent.click(selectAll);
     await act(async () => {});
 
-    expect(GitStage).toHaveBeenCalledWith('/repo', ['a.ts']);
+    expect(GitStage).toHaveBeenCalledWith('/repo', ['a.ts', 'b.ts']);
+  });
+
+  it('unstages every file in the staged section via a checked header checkbox', async () => {
+    (GitUnstage as jest.Mock).mockResolvedValue(undefined);
+    seed([file('a.ts', 'M', '.'), file('b.ts', 'M', '.')]);
+
+    render(<GitPanel />);
+    const header = within(screen.getByTestId('section-staged'));
+    const selectAll = header.getByRole('checkbox', { name: /select all in staged/i });
+    expect(selectAll).toBeChecked();
+    fireEvent.click(selectAll);
+    await act(async () => {});
+
+    expect(GitUnstage).toHaveBeenCalledWith('/repo', ['a.ts', 'b.ts']);
+  });
+
+  it('collapses and expands a section from its chevron', () => {
+    seed([file('a.ts', '.', 'M')]);
+
+    render(<GitPanel />);
+    const section = screen.getByTestId('section-changes');
+    expect(within(section).getByText('a.ts')).toBeInTheDocument();
+
+    fireEvent.click(within(section).getByRole('button', { name: /collapse changes/i }));
+    expect(within(section).queryByText('a.ts')).not.toBeInTheDocument();
+
+    fireEvent.click(within(section).getByRole('button', { name: /expand changes/i }));
+    expect(within(section).getByText('a.ts')).toBeInTheDocument();
   });
 });
 

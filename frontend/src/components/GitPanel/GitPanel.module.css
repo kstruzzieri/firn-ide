@@ -341,8 +341,43 @@
 .sectionHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   margin-bottom: 2px;
+}
+
+/* Collapse/expand toggle for a section (JetBrains-style). */
+.sectionChevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sectionChevron:hover {
+  color: var(--text-primary);
+}
+
+.sectionChevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Select/deselect every file in the section. */
+.sectionCheck {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
 .sectionTitle {
