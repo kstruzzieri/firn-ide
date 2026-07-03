@@ -52,6 +52,12 @@
   z-index: 40;
   min-width: 220px;
   max-width: min(280px, calc(100vw - 24px));
+}
+
+/* Header widget sits mid-bar, so anchor its popup to the trigger's left. */
+.compact .popup {
+  right: auto;
+  left: 0;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
