@@ -152,10 +152,13 @@
 }
 
 .row[data-git='added'] .name,
-.row[data-git='added'] .gitBadge,
+.row[data-git='added'] .gitBadge {
+  color: var(--git-added, var(--status-success));
+}
+
 .row[data-git='untracked'] .name,
 .row[data-git='untracked'] .gitBadge {
-  color: var(--git-added, var(--status-success));
+  color: var(--git-untracked, var(--text-muted));
 }
 
 .row[data-git='deleted'] .name,

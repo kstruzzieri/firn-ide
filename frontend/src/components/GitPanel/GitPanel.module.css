@@ -396,9 +396,10 @@
 .rows {
   list-style: none;
   margin: 0;
-  /* Indent files under the section header (past the chevron) so it's clear
-   * they belong to that section, JetBrains-style. */
-  padding: 0 0 0 22px;
+  /* Align file checkboxes under the first letter of the section title:
+   * chevron (16) + gap (6) + section checkbox (14) + gap (6) = 42px, less the
+   * row's own 4px left padding. */
+  padding: 0 0 0 38px;
 }
 
 .row {
@@ -490,20 +491,36 @@
   font-weight: 700;
 }
 
+/* Both the filename and its status badge take the state color, so a file's
+ * git state is readable from the name alone: modified (amber), added (green),
+ * untracked (slate), deleted (red, struck through), conflict (bright red). */
+.row[data-git='modified'] .rowName,
 .row[data-git='modified'] .rowBadge,
+.row[data-git='renamed'] .rowName,
 .row[data-git='renamed'] .rowBadge {
   color: var(--git-modified, var(--status-warning));
 }
 
-.row[data-git='added'] .rowBadge,
-.row[data-git='untracked'] .rowBadge {
+.row[data-git='added'] .rowName,
+.row[data-git='added'] .rowBadge {
   color: var(--git-added, var(--status-success));
 }
 
+.row[data-git='untracked'] .rowName,
+.row[data-git='untracked'] .rowBadge {
+  color: var(--git-untracked, var(--text-muted));
+}
+
+.row[data-git='deleted'] .rowName,
 .row[data-git='deleted'] .rowBadge {
   color: var(--git-deleted, var(--status-error));
 }
 
+.row[data-git='deleted'] .rowName {
+  text-decoration: line-through;
+}
+
+.row[data-git='conflicted'] .rowName,
 .row[data-git='conflicted'] .rowBadge {
   color: var(--git-conflicted, var(--status-error));
 }
