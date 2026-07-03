@@ -45,19 +45,12 @@
   max-width: 180px;
 }
 
+/* Portaled to document.body; position:fixed + top/left|right are set inline
+ * from the trigger's rect, so it escapes panel stacking/overflow entirely. */
 .popup {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 40;
+  z-index: 1000;
   min-width: 220px;
   max-width: min(280px, calc(100vw - 24px));
-}
-
-/* Header widget sits mid-bar, so anchor its popup to the trigger's left. */
-.compact .popup {
-  right: auto;
-  left: 0;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 6px;

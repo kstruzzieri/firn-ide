@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { GitBranchIcon, ChevronDownIcon } from '../icons';
 import { useGitStore } from '../../stores/gitStore';
 import styles from './BranchSwitcher.module.css';
+
+/** Fixed-position coordinates for the portaled popup. */
+interface PopupPos {
+  top: number;
+  left?: number;
+  right?: number;
+}
 
 /**
  * Branch name + searchable checkout/create popup. Shared by the git panel
@@ -25,8 +33,10 @@ export function BranchSwitcher({
   const focusRevision = useGitStore((s) => s.focusBranchRevision);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [pos, setPos] = useState<PopupPos | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
 
   // Status-bar / shortcut handoff: a bumped revision opens the popup. Render-
   // phase state adjustment (the React "derive state from props" pattern).
@@ -36,6 +46,30 @@ export function BranchSwitcher({
     if (respondToFocusRequest) setOpen(true);
   }
 
+  // Anchor the fixed-position popup under the trigger. Compact (header) aligns
+  // to the trigger's left edge; the panel variant right-aligns so a wide popup
+  // never spills off the narrow panel. Recomputed on open and on scroll/resize.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const trigger = wrapRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      setPos(
+        compact
+          ? { top: rect.bottom + 4, left: rect.left }
+          : { top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) }
+      );
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, compact]);
+
   useEffect(() => {
     if (!open) return;
     inputRef.current?.focus();
@@ -44,11 +78,15 @@ export function BranchSwitcher({
     void useGitStore.getState().loadBranches();
   }, [open]);
 
-  // Close on outside click / Escape.
+  // Close on outside click / Escape. The popup is portaled out of wrapRef, so
+  // check both the trigger wrap and the popup before treating a click as
+  // "outside".
   useEffect(() => {
     if (!open) return undefined;
     const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (wrapRef.current?.contains(target) || popupRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -87,47 +125,55 @@ export function BranchSwitcher({
         <span className={styles.name}>{branch}</span>
         <ChevronDownIcon aria-hidden="true" />
       </button>
-      {open && (
-        <div className={styles.popup}>
-          <input
-            ref={inputRef}
-            className={styles.search}
-            placeholder="Find or create branch"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Find or create branch"
-          />
-          <ul role="listbox" aria-label="Branches" className={styles.list}>
-            {filtered.map((b) => (
-              <li key={b}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={b === branch}
-                  className={`${styles.option} ${b === branch ? styles.current : ''}`}
-                  onClick={() => checkout(b, false)}
-                >
-                  {b}
-                </button>
-              </li>
-            ))}
-            {query && !exactExists && (
-              <li>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={false}
-                  className={`${styles.option} ${styles.create}`}
-                  onClick={() => checkout(query, true)}
-                >
-                  Create branch {query}
-                </button>
-              </li>
-            )}
-            {filtered.length === 0 && !query && <li className={styles.empty}>No branches</li>}
-          </ul>
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={popupRef}
+            className={styles.popup}
+            data-testid="branch-popup"
+            style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right }}
+          >
+            <input
+              ref={inputRef}
+              className={styles.search}
+              placeholder="Find or create branch"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Find or create branch"
+            />
+            <ul role="listbox" aria-label="Branches" className={styles.list}>
+              {filtered.map((b) => (
+                <li key={b}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={b === branch}
+                    className={`${styles.option} ${b === branch ? styles.current : ''}`}
+                    onClick={() => checkout(b, false)}
+                  >
+                    {b}
+                  </button>
+                </li>
+              ))}
+              {query && !exactExists && (
+                <li>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    className={`${styles.option} ${styles.create}`}
+                    onClick={() => checkout(query, true)}
+                  >
+                    Create branch {query}
+                  </button>
+                </li>
+              )}
+              {filtered.length === 0 && !query && <li className={styles.empty}>No branches</li>}
+            </ul>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

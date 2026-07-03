@@ -97,4 +97,26 @@ describe('BranchSwitcher', () => {
 
     expect(screen.getByRole('listbox')).toBeInTheDocument();
   });
+
+  it('portals the popup to document.body with fixed positioning', () => {
+    seed(true);
+    render(<BranchSwitcher />);
+
+    fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
+    const popup = screen.getByTestId('branch-popup');
+
+    // Portaled out of the panel so no ancestor stacking/overflow can clip it.
+    expect(popup.parentElement).toBe(document.body);
+    expect(popup.style.position).toBe('fixed');
+  });
+
+  it('stays open when clicking inside the portaled popup', () => {
+    seed(true);
+    render(<BranchSwitcher />);
+
+    fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
+    fireEvent.mouseDown(screen.getByPlaceholderText(/find or create branch/i));
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
 });
