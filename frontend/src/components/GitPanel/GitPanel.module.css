@@ -396,7 +396,9 @@
 .rows {
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* Indent files under the section header (past the chevron) so it's clear
+   * they belong to that section, JetBrains-style. */
+  padding: 0 0 0 22px;
 }
 
 .row {
