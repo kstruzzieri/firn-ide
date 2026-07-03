@@ -312,6 +312,36 @@ describe('gitStore diff sessions', () => {
     expect(session?.right).toEqual({ label: 'Working Tree', content: 'worktree text' });
   });
 
+  // A file added then edited before commit is A/M: the staged row diffs it as
+  // a brand-new file (HEAD is empty), while a separate unstaged row shows only
+  // the edits made after staging (index -> working tree).
+  it('shows an added-then-modified file as new when staged, incremental when unstaged', async () => {
+    const added = { path: 'fresh.ts', index: 'A', worktree: 'M' };
+
+    // Staged view: HEAD has no such file (empty) vs the content at add time.
+    mockFileAtRev.mockResolvedValueOnce(rev('')).mockResolvedValueOnce(rev('added content\n'));
+    await useGitStore.getState().openDiff(added, 'staged');
+    let session = useGitStore.getState().diffSession;
+    expect(mockFileAtRev).toHaveBeenNthCalledWith(1, '/repo', 'HEAD', 'fresh.ts');
+    expect(session?.left).toEqual({ label: 'HEAD', content: '' });
+    expect(session?.right).toEqual({ label: 'Index', content: 'added content\n' });
+
+    // Unstaged view: content at add time vs current working tree (the new edits).
+    mockFileAtRev.mockReset();
+    mockFileAtRev.mockResolvedValueOnce(rev('added content\n'));
+    mockReadFile.mockResolvedValueOnce({
+      content: 'added content\nplus later edits\n',
+    } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore.getState().openDiff(added, 'unstaged');
+    session = useGitStore.getState().diffSession;
+    expect(mockFileAtRev).toHaveBeenCalledWith('/repo', ':0', 'fresh.ts');
+    expect(session?.left).toEqual({ label: 'Index', content: 'added content\n' });
+    expect(session?.right).toEqual({
+      label: 'Working Tree',
+      content: 'added content\nplus later edits\n',
+    });
+  });
+
   it('untracked files diff against empty content without a rev fetch', async () => {
     await useGitStore
       .getState()
