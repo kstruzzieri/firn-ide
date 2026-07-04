@@ -38,6 +38,18 @@ export function GitPanel() {
 
   const repoRoot = status?.isRepo ? status.repoRoot : null;
 
+  // The workspace/project scope only means something when the active workspace
+  // is a subdirectory of the repo (Firn's one-repo-many-workspaces model). When
+  // the whole repo is the workspace, both scopes are identical, so hide the
+  // toggle rather than show a control that does nothing.
+  const wsNorm = workspace?.path ? normalizeFsPath(workspace.path) : null;
+  const canScopeToWorkspace = !!(
+    wsNorm &&
+    repoRoot &&
+    wsNorm.startsWith(normalizeFsPath(repoRoot) + '/')
+  );
+  const effectiveScope = canScopeToWorkspace ? scope : 'project';
+
   // Bucket once per status; scope filter narrows to the active workspace.
   const buckets = useMemo(() => {
     const repoName = repoRoot ? (normalizeFsPath(repoRoot).split('/').pop() ?? '') : '';
@@ -51,10 +63,9 @@ export function GitPanel() {
         location: dir || repoName,
       };
     });
-    const wsPath = workspace?.path ? normalizeFsPath(workspace.path) : null;
     const scoped =
-      scope === 'workspace' && wsPath && repoRoot && wsPath !== normalizeFsPath(repoRoot)
-        ? all.filter((f) => f.absPath === wsPath || f.absPath.startsWith(wsPath + '/'))
+      effectiveScope === 'workspace' && wsNorm
+        ? all.filter((f) => f.absPath === wsNorm || f.absPath.startsWith(wsNorm + '/'))
         : all;
 
     return {
@@ -63,7 +74,7 @@ export function GitPanel() {
       changes: scoped.filter((f) => classifyChange(f.change).unstaged),
       untracked: scoped.filter((f) => classifyChange(f.change).untracked),
     };
-  }, [status, repoRoot, workspace?.path, scope]);
+  }, [status, repoRoot, wsNorm, effectiveScope]);
 
   if (!status || !status.isRepo) {
     return (
@@ -92,7 +103,9 @@ export function GitPanel() {
     >
       <div className={styles.panelBody}>
         <div className={styles.headerRow}>
-          <ScopeToggle scope={scope} onChange={setScope} />
+          {/* Scope toggle only when the workspace is a repo subdirectory;
+              otherwise an empty span keeps the branch switcher right-aligned. */}
+          {canScopeToWorkspace ? <ScopeToggle scope={scope} onChange={setScope} /> : <span />}
           <BranchSwitcher respondToFocusRequest={false} />
         </div>
         <SyncControls />

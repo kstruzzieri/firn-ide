@@ -288,6 +288,30 @@ describe('GitPanel workspace scoping', () => {
     expect(screen.getByText('app.ts')).toBeInTheDocument();
     expect(screen.getByText('main.go')).toBeInTheDocument();
   });
+
+  it('renders the scope toggle when the workspace is a subdirectory of the repo', () => {
+    seed([file('frontend/app.ts', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: /^workspace$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^project$/i })).toBeInTheDocument();
+  });
+
+  it('hides the scope toggle when the workspace is the repository root', () => {
+    // Whole repo open as the workspace: workspace and project scopes would be
+    // identical, so the toggle has nothing to do and is hidden.
+    act(() => {
+      useIDEStore.setState({ workspace: { name: 'repo', path: '/repo' } });
+    });
+    seed([file('app.go', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    expect(screen.queryByRole('button', { name: /^workspace$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^project$/i })).not.toBeInTheDocument();
+    expect(screen.getByText('app.go')).toBeInTheDocument();
+  });
 });
 
 describe('GitPanel commit area', () => {
@@ -373,8 +397,9 @@ describe('GitPanel commit area', () => {
     });
     seed([file('frontend/a.ts', 'M', '.'), file('backend/b.go', 'M', '.')]);
 
+    // Workspace is the repo root here, so all changes already show (no scope
+    // toggle); the scope guard is independent of the toggle.
     render(<GitPanel />);
-    fireEvent.click(screen.getByRole('button', { name: /project/i }));
 
     expect(screen.getByText(/spans frontend \+ go/i)).toBeInTheDocument();
   });
