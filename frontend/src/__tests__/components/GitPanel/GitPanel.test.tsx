@@ -69,10 +69,28 @@ beforeEach(() => {
     useIDEStore.setState({
       workspace: { name: 'repo', path: '/repo' },
       workspaces: [] as workspace.WorkspaceDef[],
+      activeWorkspaceId: 'project',
       runProfiles: [],
     });
   });
 });
+
+/** Seed the shared workspace focus the git panel reads for scoping. */
+function focusWorkspace(
+  activeWorkspaceId: string,
+  defs: Array<{ id: string; name: string; relDir: string }>
+) {
+  act(() => {
+    useIDEStore.setState({
+      activeWorkspaceId,
+      workspaces: defs.map((d) => ({
+        ...d,
+        type: 'node',
+        accent: 'blue',
+      })) as unknown as workspace.WorkspaceDef[],
+    });
+  });
+}
 
 describe('GitPanel empty states', () => {
   it('shows a message when the workspace is not a repository', () => {
@@ -264,13 +282,9 @@ describe('GitPanel diff open', () => {
 });
 
 describe('GitPanel workspace scoping', () => {
-  beforeEach(() => {
-    act(() => {
-      useIDEStore.setState({ workspace: { name: 'frontend', path: '/repo/frontend' } });
-    });
-  });
-
-  it('defaults to workspace view, hiding files outside the workspace', () => {
+  it('scopes to the active sub-workspace, hiding files outside it', () => {
+    // Frontend workspace focused: only its files show, backend hidden.
+    focusWorkspace('fe', [{ id: 'fe', name: 'Frontend', relDir: 'frontend' }]);
     seed([file('frontend/app.ts', '.', 'M'), file('backend/main.go', '.', 'M')]);
 
     render(<GitPanel />);
@@ -279,17 +293,37 @@ describe('GitPanel workspace scoping', () => {
     expect(screen.queryByText('main.go')).not.toBeInTheDocument();
   });
 
-  it('project view shows all repository changes', () => {
+  it('project view shows all repository changes and mirrors the shared mode', () => {
+    focusWorkspace('fe', [{ id: 'fe', name: 'Frontend', relDir: 'frontend' }]);
     seed([file('frontend/app.ts', '.', 'M'), file('backend/main.go', '.', 'M')]);
 
     render(<GitPanel />);
-    fireEvent.click(screen.getByRole('button', { name: /project/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^project$/i }));
 
+    expect(screen.getByText('app.ts')).toBeInTheDocument();
+    expect(screen.getByText('main.go')).toBeInTheDocument();
+    // Toggling the panel drives the shared workspace focus (links to the tree).
+    expect(useIDEStore.getState().activeWorkspaceId).toBe('project');
+  });
+
+  it('honors project focus set outside the panel (e.g. the file tree)', () => {
+    // Project focus chosen elsewhere: the panel opens in project scope, not
+    // defaulting back to a workspace.
+    focusWorkspace('project', [{ id: 'fe', name: 'Frontend', relDir: 'frontend' }]);
+    seed([file('frontend/app.ts', '.', 'M'), file('backend/main.go', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: /^project$/i })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
     expect(screen.getByText('app.ts')).toBeInTheDocument();
     expect(screen.getByText('main.go')).toBeInTheDocument();
   });
 
-  it('renders the scope toggle when the workspace is a subdirectory of the repo', () => {
+  it('renders the scope toggle when there are workspaces to focus', () => {
+    focusWorkspace('fe', [{ id: 'fe', name: 'Frontend', relDir: 'frontend' }]);
     seed([file('frontend/app.ts', '.', 'M')]);
 
     render(<GitPanel />);
@@ -298,11 +332,9 @@ describe('GitPanel workspace scoping', () => {
     expect(screen.getByRole('button', { name: /^project$/i })).toBeInTheDocument();
   });
 
-  it('hides the scope toggle for a single root workspace with no sub-workspaces', () => {
-    // Whole repo open as the only workspace: workspace and project scopes are
-    // identical, so the toggle has nothing to do and is hidden.
+  it('hides the scope toggle when there are no workspaces to focus', () => {
     act(() => {
-      useIDEStore.setState({ workspace: { name: 'repo', path: '/repo' }, workspaces: [] });
+      useIDEStore.setState({ workspaces: [], activeWorkspaceId: 'project' });
     });
     seed([file('app.go', '.', 'M')]);
 
@@ -315,22 +347,15 @@ describe('GitPanel workspace scoping', () => {
   it('a root workspace owns everything except nested sub-workspaces', () => {
     // flux-ml shape: Go code at the repo root, a frontend/ sub-workspace. The
     // root (Go) workspace scope should exclude the frontend files.
-    act(() => {
-      useIDEStore.setState({
-        workspace: { name: 'go', path: '/repo' },
-        workspaces: [
-          { id: 'go', name: 'Go', relDir: '.', type: 'go', accent: 'green' },
-          { id: 'fe', name: 'Frontend', relDir: 'frontend', type: 'node', accent: 'blue' },
-        ] as unknown as workspace.WorkspaceDef[],
-      });
-    });
+    focusWorkspace('go', [
+      { id: 'go', name: 'Go', relDir: '.' },
+      { id: 'fe', name: 'Frontend', relDir: 'frontend' },
+    ]);
     seed([file('app.go', '.', 'M'), file('frontend/main.ts', '.', 'M')]);
 
     render(<GitPanel />);
 
-    // Toggle is shown because scoping is meaningful (a sub-workspace exists).
     expect(screen.getByRole('button', { name: /^workspace$/i })).toBeInTheDocument();
-    // Workspace (Go root) scope excludes the frontend sub-workspace's file.
     expect(screen.getByText('app.go')).toBeInTheDocument();
     expect(screen.queryByText('main.ts')).not.toBeInTheDocument();
 

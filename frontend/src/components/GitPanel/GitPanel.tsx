@@ -2,7 +2,12 @@ import { useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
 import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
-import { useIDEStore, useWorkspace } from '../../stores/ideStore';
+import {
+  useIDEStore,
+  useActiveWorkspace,
+  useTreeViewMode,
+  useCanFocusWorkspace,
+} from '../../stores/ideStore';
 import { classifyChange, type GitFileChange, type GitRowStatus } from '../../types/git';
 import { joinRepoPath, normalizeFsPath } from '../../utils/paths';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
@@ -33,37 +38,30 @@ const statusLetter: Record<GitRowStatus, string> = {
 export function GitPanel() {
   const { status, isRefreshing, opInFlight, lastError } = useGitStatusSnapshot();
   const receipt = useGitStore((s) => s.lastCommitReceipt);
-  const workspace = useWorkspace();
-  const [scope, setScope] = useState<ViewScope>('workspace');
+  const workspaces = useIDEStore((s) => s.workspaces);
+  // Scope follows the shared workspace focus, so the panel matches whatever the
+  // file tree / workspace selector is showing (selecting the Frontend workspace
+  // scopes the panel to Frontend; Project view shows all repo changes).
+  const activeWorkspace = useActiveWorkspace();
+  const treeViewMode = useTreeViewMode();
+  const canFocusWorkspace = useCanFocusWorkspace();
+  const setTreeViewMode = useIDEStore((s) => s.setTreeViewMode);
 
   const repoRoot = status?.isRepo ? status.repoRoot : null;
-  const workspaces = useIDEStore((s) => s.workspaces);
 
   // Workspace scope uses ownership (Firn's one-repo-many-workspaces model): a
   // workspace owns the files under its directory, minus any nested
-  // sub-workspace's files. So the root (e.g. Go) workspace owns everything
-  // except a nested frontend/ workspace. Scoping is meaningful — and the toggle
-  // shown — when the active workspace is a subdirectory, or a sub-workspace
-  // carves files out of the active (root) scope.
+  // sub-workspace's files. So a root (e.g. Go) workspace owns everything except
+  // a nested frontend/ workspace, while the Frontend workspace owns frontend/.
   const scopeCtx = useMemo(() => {
-    const repoRootNorm = repoRoot ? normalizeFsPath(repoRoot) : null;
-    const wsNorm = workspace?.path ? normalizeFsPath(workspace.path) : null;
+    const rel = activeWorkspace ? normalizeFsPath(activeWorkspace.relDir) : null;
     const activeRel =
-      wsNorm && repoRootNorm
-        ? wsNorm === repoRootNorm
-          ? ''
-          : wsNorm.startsWith(repoRootNorm + '/')
-            ? wsNorm.slice(repoRootNorm.length + 1)
-            : null // workspace not inside the repo
-        : null;
+      treeViewMode === 'workspace' && rel !== null ? (rel === '.' ? '' : rel) : null; // null = project scope (show all)
     const subDirs = workspaces
       .map((w) => normalizeFsPath(w.relDir))
       .filter((d) => d && d !== '.' && d !== activeRel);
-    const canScope = activeRel !== null && (activeRel !== '' || subDirs.length > 0);
-    return { activeRel, subDirs, canScope };
-  }, [repoRoot, workspace?.path, workspaces]);
-
-  const effectiveScope = scopeCtx.canScope ? scope : 'project';
+    return { activeRel, subDirs };
+  }, [treeViewMode, activeWorkspace, workspaces]);
 
   // Bucket once per status; scope filter narrows to the active workspace.
   const buckets = useMemo(() => {
@@ -84,7 +82,7 @@ export function GitPanel() {
       activeRel === '' || p === activeRel || p.startsWith(activeRel + '/');
     const ownedByOther = (p: string) => subDirs.some((d) => p === d || p.startsWith(d + '/'));
     const scoped =
-      effectiveScope === 'workspace' && activeRel !== null
+      activeRel !== null
         ? all.filter((f) => inActive(f.change.path) && !ownedByOther(f.change.path))
         : all;
 
@@ -94,7 +92,7 @@ export function GitPanel() {
       changes: scoped.filter((f) => classifyChange(f.change).unstaged),
       untracked: scoped.filter((f) => classifyChange(f.change).untracked),
     };
-  }, [status, repoRoot, scopeCtx, effectiveScope]);
+  }, [status, repoRoot, scopeCtx]);
 
   if (!status || !status.isRepo) {
     const message = !status
@@ -126,9 +124,14 @@ export function GitPanel() {
     >
       <div className={styles.panelBody}>
         <div className={styles.headerRow}>
-          {/* Scope toggle only when workspace scoping is meaningful; otherwise
-              an empty span keeps the branch switcher right-aligned. */}
-          {scopeCtx.canScope ? <ScopeToggle scope={scope} onChange={setScope} /> : <span />}
+          {/* Scope toggle mirrors the shared workspace focus; shown only when
+              there are workspaces to focus. An empty span otherwise keeps the
+              branch switcher right-aligned. */}
+          {canFocusWorkspace ? (
+            <ScopeToggle scope={treeViewMode} onChange={setTreeViewMode} />
+          ) : (
+            <span />
+          )}
           <BranchSwitcher respondToFocusRequest={false} />
         </div>
         <SyncControls />
