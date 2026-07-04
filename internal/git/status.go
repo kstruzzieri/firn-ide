@@ -30,6 +30,11 @@ type RepoStatus struct {
 	Ahead    int          `json:"ahead"`
 	Behind   int          `json:"behind"`
 	Files    []FileChange `json:"files"`
+	// Detail explains why a directory that IS a git repo can't be shown
+	// (e.g. core.bare=true, no working tree). Empty for a normal repo or a
+	// plain non-repo directory. The UI surfaces it instead of a generic
+	// "not a git repository" message.
+	Detail string `json:"detail,omitempty"`
 }
 
 // parsePorcelainV2 parses `git status --porcelain=v2 --branch -z` output.

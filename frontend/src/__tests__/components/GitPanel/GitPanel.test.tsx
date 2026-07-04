@@ -298,19 +298,44 @@ describe('GitPanel workspace scoping', () => {
     expect(screen.getByRole('button', { name: /^project$/i })).toBeInTheDocument();
   });
 
-  it('hides the scope toggle when the workspace is the repository root', () => {
-    // Whole repo open as the workspace: workspace and project scopes would be
+  it('hides the scope toggle for a single root workspace with no sub-workspaces', () => {
+    // Whole repo open as the only workspace: workspace and project scopes are
     // identical, so the toggle has nothing to do and is hidden.
     act(() => {
-      useIDEStore.setState({ workspace: { name: 'repo', path: '/repo' } });
+      useIDEStore.setState({ workspace: { name: 'repo', path: '/repo' }, workspaces: [] });
     });
     seed([file('app.go', '.', 'M')]);
 
     render(<GitPanel />);
 
     expect(screen.queryByRole('button', { name: /^workspace$/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^project$/i })).not.toBeInTheDocument();
     expect(screen.getByText('app.go')).toBeInTheDocument();
+  });
+
+  it('a root workspace owns everything except nested sub-workspaces', () => {
+    // flux-ml shape: Go code at the repo root, a frontend/ sub-workspace. The
+    // root (Go) workspace scope should exclude the frontend files.
+    act(() => {
+      useIDEStore.setState({
+        workspace: { name: 'go', path: '/repo' },
+        workspaces: [
+          { id: 'go', name: 'Go', relDir: '.', type: 'go', accent: 'green' },
+          { id: 'fe', name: 'Frontend', relDir: 'frontend', type: 'node', accent: 'blue' },
+        ] as unknown as workspace.WorkspaceDef[],
+      });
+    });
+    seed([file('app.go', '.', 'M'), file('frontend/main.ts', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    // Toggle is shown because scoping is meaningful (a sub-workspace exists).
+    expect(screen.getByRole('button', { name: /^workspace$/i })).toBeInTheDocument();
+    // Workspace (Go root) scope excludes the frontend sub-workspace's file.
+    expect(screen.getByText('app.go')).toBeInTheDocument();
+    expect(screen.queryByText('main.ts')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^project$/i }));
+    expect(screen.getByText('main.ts')).toBeInTheDocument();
   });
 });
 

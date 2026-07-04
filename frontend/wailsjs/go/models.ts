@@ -110,6 +110,7 @@ export namespace git {
 	    ahead: number;
 	    behind: number;
 	    files: FileChange[];
+	    detail?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new RepoStatus(source);
@@ -124,6 +125,7 @@ export namespace git {
 	        this.ahead = source["ahead"];
 	        this.behind = source["behind"];
 	        this.files = this.convertValues(source["files"], FileChange);
+	        this.detail = source["detail"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

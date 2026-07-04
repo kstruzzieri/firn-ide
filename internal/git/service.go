@@ -47,6 +47,15 @@ func (s *Service) run(ctx context.Context, dir string, args ...string) (string, 
 func (s *Service) Status(ctx context.Context, dir string) (RepoStatus, error) {
 	root, err := s.run(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
+		// --show-toplevel needs a working tree. If the directory is still a
+		// git dir (e.g. a normal repo wrongly marked core.bare=true), say so
+		// with a fix rather than reporting "not a git repository".
+		if _, gitErr := s.run(ctx, dir, "rev-parse", "--git-dir"); gitErr == nil {
+			return RepoStatus{
+				Files:  []FileChange{},
+				Detail: "This git repository has no working tree (core.bare=true). Fix it with: git config core.bare false",
+			}, nil
+		}
 		return RepoStatus{Files: []FileChange{}}, nil
 	}
 

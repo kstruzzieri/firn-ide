@@ -88,6 +88,29 @@ func TestService_Status_NotARepo(t *testing.T) {
 	if got.IsRepo {
 		t.Error("IsRepo = true, want false")
 	}
+	if got.Detail != "" {
+		t.Errorf("Detail = %q, want empty for a plain non-repo", got.Detail)
+	}
+}
+
+func TestService_Status_BareMisconfigured(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	// A normal project repo wrongly marked bare: git refuses worktree ops.
+	gitCmd(t, dir, "config", "core.bare", "true")
+	svc := NewService()
+
+	got, err := svc.Status(ctx(), dir)
+
+	if err != nil {
+		t.Fatalf("Status() error = %v, want nil", err)
+	}
+	if got.IsRepo {
+		t.Error("IsRepo = true, want false (no usable working tree)")
+	}
+	if !strings.Contains(got.Detail, "core.bare") {
+		t.Errorf("Detail = %q, want a hint mentioning core.bare", got.Detail)
+	}
 }
 
 func TestService_Status_CleanRepo(t *testing.T) {
