@@ -312,6 +312,55 @@ describe('gitStore diff sessions', () => {
     expect(session?.right).toEqual({ label: 'Working Tree', content: 'worktree text' });
   });
 
+  it('uses the live editor buffer for the working-tree side when the file is open', async () => {
+    // An open, possibly-unsaved file: the diff reflects the editor content,
+    // not stale disk content, and doesn't read disk.
+    useIDEStore.setState({
+      openFiles: [
+        {
+          id: 'f',
+          path: '/repo/src/a.ts',
+          name: 'a.ts',
+          content: 'live editor edits\n',
+          isModified: true,
+        },
+      ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
+    });
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(useGitStore.getState().diffSession?.right.content).toBe('live editor edits\n');
+    expect(mockReadFile).not.toHaveBeenCalled();
+    useIDEStore.setState({ openFiles: [] });
+  });
+
+  it('re-fetches the open diff on refresh even when git status no longer lists the file', async () => {
+    // Unsaved edit: disk is unchanged so the file drops out of git status, but
+    // the open diff must still update from the live buffer.
+    const change = { path: 'src/a.ts', index: '.', worktree: 'M' };
+    const openFile = (content: string) =>
+      useIDEStore.setState({
+        openFiles: [
+          { id: 'f', path: '/repo/src/a.ts', name: 'a.ts', content, isModified: true },
+        ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
+      });
+    mockFileAtRev.mockResolvedValue(rev('index text'));
+
+    openFile('v1\n');
+    await useGitStore.getState().openDiff(change, 'unstaged');
+    expect(useGitStore.getState().diffSession?.right.content).toBe('v1\n');
+
+    openFile('v2 edited\n');
+    mockGitStatus.mockResolvedValue(repoStatus({ files: [] }));
+    await useGitStore.getState().refresh();
+
+    expect(useGitStore.getState().diffSession?.right.content).toBe('v2 edited\n');
+    useIDEStore.setState({ openFiles: [] });
+  });
+
   // A file added then edited before commit is A/M: the staged row diffs it as
   // a brand-new file (HEAD is empty), while a separate unstaged row shows only
   // the edits made after staging (index -> working tree).

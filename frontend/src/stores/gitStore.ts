@@ -22,7 +22,7 @@ import {
   type GitFileChange,
   type GitRowStatus,
 } from '../types/git';
-import { joinRepoPath } from '../utils/paths';
+import { joinRepoPath, normalizeFsPath } from '../utils/paths';
 import { useIDEStore } from './ideStore';
 
 /** Which pair of revisions a diff shows. Staged rows compare HEAD to the
@@ -116,6 +116,9 @@ interface GitState {
   focusBranchRevision: number;
   /** The open diff preview tab; a new openDiff reuses it in place. */
   diffSession: DiffSession | null;
+  /** The change the open diff was built from, so a refresh can re-run it even
+   * after an unsaved edit drops the file out of git status. */
+  diffSource: GitFileChange | null;
   /** True when the diff tab is the visible editor surface. */
   diffFocused: boolean;
 }
@@ -171,6 +174,7 @@ export const useGitStore = create<GitStore>()(
       statusRevision: 0,
       focusBranchRevision: 0,
       diffSession: null,
+      diffSource: null,
       diffFocused: false,
 
       resetForWorkspace: (root) => {
@@ -191,6 +195,7 @@ export const useGitStore = create<GitStore>()(
             lastError: null,
             lastCommitReceipt: null,
             diffSession: null,
+            diffSource: null,
             diffFocused: false,
             epoch: state.epoch + 1,
             statusRevision: 0,
@@ -350,18 +355,28 @@ export const useGitStore = create<GitStore>()(
             return { label, content: fc.content };
           };
 
+          const abs = joinRepoPath(repoRoot, change.path);
           if (context === 'staged') {
             left = await fetchRev('HEAD', 'HEAD', change.origPath ?? change.path);
             right = await fetchRev(':0', 'Index');
           } else {
             // Untracked files have no index version; diff against empty.
             left = untracked ? { label: 'Index', content: '' } : await fetchRev(':0', 'Index');
+            // Prefer the live editor buffer if the file is open, so the diff
+            // reflects unsaved edits; otherwise read from disk.
+            const openFile = useIDEStore
+              .getState()
+              .openFiles.find((f) => normalizeFsPath(f.path) === normalizeFsPath(abs));
             let worktree = '';
-            try {
-              const result = await ReadFile(joinRepoPath(repoRoot, change.path));
-              worktree = result.content ?? '';
-            } catch {
-              // Deleted from the worktree → empty right side is the truth.
+            if (openFile) {
+              worktree = openFile.content ?? '';
+            } else {
+              try {
+                const result = await ReadFile(abs);
+                worktree = result.content ?? '';
+              } catch {
+                // Deleted from the worktree → empty right side is the truth.
+              }
             }
             right = { label: 'Working Tree', content: worktree };
           }
@@ -369,7 +384,7 @@ export const useGitStore = create<GitStore>()(
           if (get().epoch !== epoch) return; // workspace switched mid-fetch
           const next: DiffSession = {
             path: change.path,
-            absPath: joinRepoPath(repoRoot, change.path),
+            absPath: abs,
             context,
             left,
             right,
@@ -381,6 +396,9 @@ export const useGitStore = create<GitStore>()(
               // Reuse the existing object when nothing changed so a live refresh
               // doesn't rebuild the merge view (and reset scroll) on every save.
               diffSession: sameSession(state.diffSession, next) ? state.diffSession! : next,
+              // Remember the originating change so a refresh can re-run even
+              // after an unsaved edit drops the file out of git status.
+              diffSource: change,
               // A refresh (focus:false) keeps whatever the user was looking at.
               diffFocused: focus ? true : state.diffFocused,
             }),
@@ -396,14 +414,18 @@ export const useGitStore = create<GitStore>()(
       // live. Keeps the same file+context and preserves focus; if the file no
       // longer has changes, the diff simply re-fetches to matching content.
       refreshOpenDiff: async () => {
-        const { diffSession, status } = get();
+        const { diffSession, diffSource, status } = get();
         if (!diffSession || !status?.isRepo) return;
-        const change = (status.files ?? []).find((f) => f.path === diffSession.path);
-        if (!change) return; // committed or reverted; leave the last view in place
+        // Prefer the current status entry (updated XY letters). Fall back to the
+        // originating change so an unsaved edit — which leaves disk unchanged
+        // and drops the file from git status — still re-reads the live buffer.
+        const change = (status.files ?? []).find((f) => f.path === diffSession.path) ?? diffSource;
+        if (!change) return;
         await get().openDiff(change, diffSession.context, { focus: false });
       },
 
-      closeDiff: () => set({ diffSession: null, diffFocused: false }, false, 'git/closeDiff'),
+      closeDiff: () =>
+        set({ diffSession: null, diffSource: null, diffFocused: false }, false, 'git/closeDiff'),
 
       setDiffFocused: (diffFocused) => set({ diffFocused }, false, 'git/setDiffFocused'),
     }),

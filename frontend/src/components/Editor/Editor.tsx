@@ -113,6 +113,22 @@ export function Editor() {
     if (activeFileId) useGitStore.getState().setDiffFocused(false);
   }, [activeFileId]);
 
+  // Show the diff when it's focused, or when there's simply no file to show
+  // instead (e.g. the file opened from a diff was closed, leaving only the
+  // diff tab) — otherwise the panel would render blank.
+  const showDiff = !!diffSession && (diffFocused || !activeFile);
+
+  // Re-fetch the diff each time it becomes visible so it reflects edits made in
+  // the editor while it was in the background (the working-tree side re-reads
+  // the live buffer).
+  const prevShowDiffRef = useRef(showDiff);
+  useEffect(() => {
+    if (showDiff && !prevShowDiffRef.current) {
+      void useGitStore.getState().refreshOpenDiff();
+    }
+    prevShowDiffRef.current = showDiff;
+  }, [showDiff]);
+
   // Welcome screen when no files are open (and no diff preview tab)
   if (openFiles.length === 0 && !diffSession) {
     // Filter out the currently open workspace from recent list
@@ -162,11 +178,6 @@ export function Editor() {
       </div>
     );
   }
-
-  // Show the diff when it's focused, or when there's simply no file to show
-  // instead (e.g. the file opened from a diff was closed, leaving only the
-  // diff tab) — otherwise the panel would render blank.
-  const showDiff = !!diffSession && (diffFocused || !activeFile);
 
   return (
     <div className={styles.editor}>
