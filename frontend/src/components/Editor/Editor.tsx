@@ -163,6 +163,11 @@ export function Editor() {
     );
   }
 
+  // Show the diff when it's focused, or when there's simply no file to show
+  // instead (e.g. the file opened from a diff was closed, leaving only the
+  // diff tab) — otherwise the panel would render blank.
+  const showDiff = !!diffSession && (diffFocused || !activeFile);
+
   return (
     <div className={styles.editor}>
       {/* Tab bar */}
@@ -170,7 +175,7 @@ export function Editor() {
         {openFiles.map((file) => {
           // A focused diff tab owns the active state, so the file tab it was
           // opened from doesn't also read as active.
-          const isActive = file.id === activeFile?.id && !(diffFocused && diffSession);
+          const isActive = file.id === activeFile?.id && !showDiff;
           const languageName = getLanguageName(file.name);
 
           const activateFileTab = () => {
@@ -211,10 +216,10 @@ export function Editor() {
         {diffSession && (
           <div
             id="tab-git-diff"
-            className={`${styles.tab} ${diffFocused ? styles.active : ''}`}
+            className={`${styles.tab} ${showDiff ? styles.active : ''}`}
             role="tab"
             tabIndex={0}
-            aria-selected={diffFocused}
+            aria-selected={showDiff}
             aria-controls="panel-git-diff"
             title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
             onClick={() => useGitStore.getState().setDiffFocused(true)}
@@ -241,26 +246,16 @@ export function Editor() {
 
       {/* Editor content */}
       <div
-        id={
-          diffFocused && diffSession
-            ? 'panel-git-diff'
-            : activeFile
-              ? `panel-${activeFile.id}`
-              : undefined
-        }
+        id={showDiff ? 'panel-git-diff' : activeFile ? `panel-${activeFile.id}` : undefined}
         className={styles.content}
         role="tabpanel"
         tabIndex={0}
         aria-labelledby={
-          diffFocused && diffSession
-            ? 'tab-git-diff'
-            : activeFile
-              ? `tab-${activeFile.id}`
-              : undefined
+          showDiff ? 'tab-git-diff' : activeFile ? `tab-${activeFile.id}` : undefined
         }
       >
-        {diffFocused && diffSession && <GitDiffView session={diffSession} />}
-        {!(diffFocused && diffSession) && activeFile && (
+        {showDiff && diffSession && <GitDiffView session={diffSession} />}
+        {!showDiff && activeFile && (
           <div className={styles.editorContent}>
             <CodeMirrorEditor
               fileId={activeFile.id}

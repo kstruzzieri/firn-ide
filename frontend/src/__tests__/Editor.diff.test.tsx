@@ -123,6 +123,17 @@ describe('Editor git diff tab', () => {
     expect(screen.queryByText('Command Palette')).not.toBeInTheDocument();
   });
 
+  it('shows the diff when there is no active file, even if unfocused', () => {
+    // After closing the file opened from a diff, the diff tab remains and
+    // there is nothing else to show, so the diff must render (not blank).
+    useIDEStore.setState({ openFiles: [], activeFileId: null });
+    useGitStore.setState({ diffSession: session, diffFocused: false });
+
+    render(<Editor />);
+
+    expect(screen.getByTestId('git-diff-view')).toBeInTheDocument();
+  });
+
   it('yields the diff when a file is opened (activeFileId changes)', () => {
     useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
     useGitStore.setState({ diffSession: session, diffFocused: true });
