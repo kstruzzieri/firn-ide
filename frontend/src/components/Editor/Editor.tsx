@@ -5,7 +5,7 @@
  * Manages open files, tab switching, and editor state.
  */
 
-import { useCallback, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import styles from './Editor.module.css';
 import {
   useOpenFiles,
@@ -98,6 +98,20 @@ export function Editor() {
     window.addEventListener('keydown', handleNoFileFind);
     return () => window.removeEventListener('keydown', handleNoFileFind);
   }, [hasOpenFiles]);
+
+  // Opening or switching to a real file supersedes the diff preview: the diff
+  // is a transient tab, so yield focus to the file the user just opened
+  // (e.g. a double-click in the file tree). Only react to an actual change of
+  // the active file, not the initial mount, so a diff opened while a file
+  // happens to be active isn't immediately dismissed. Opening a diff never
+  // changes the active file id, so this doesn't fight the diff on open.
+  const activeFileId = activeFile?.id;
+  const prevActiveFileIdRef = useRef(activeFileId);
+  useEffect(() => {
+    if (prevActiveFileIdRef.current === activeFileId) return;
+    prevActiveFileIdRef.current = activeFileId;
+    if (activeFileId) useGitStore.getState().setDiffFocused(false);
+  }, [activeFileId]);
 
   // Welcome screen when no files are open (and no diff preview tab)
   if (openFiles.length === 0 && !diffSession) {

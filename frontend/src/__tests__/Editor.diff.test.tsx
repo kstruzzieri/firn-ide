@@ -35,6 +35,7 @@ import { Editor } from '../components/Editor';
 
 const session: DiffSession = {
   path: 'src/a.ts',
+  absPath: '/repo/src/a.ts',
   context: 'unstaged',
   left: { label: 'Index', content: 'old' },
   right: { label: 'Working Tree', content: 'new' },
@@ -120,6 +121,24 @@ describe('Editor git diff tab', () => {
     render(<Editor />);
 
     expect(screen.queryByText('Command Palette')).not.toBeInTheDocument();
+  });
+
+  it('yields the diff when a file is opened (activeFileId changes)', () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ diffSession: session, diffFocused: true });
+
+    const { rerender } = render(<Editor />);
+
+    // Open a different file, as a tree double-click would.
+    act(() => {
+      useIDEStore.setState({
+        openFiles: [openFile('f1', 'other.ts'), openFile('f2', 'new.ts')],
+        activeFileId: 'f2',
+      });
+    });
+    rerender(<Editor />);
+
+    expect(useGitStore.getState().diffFocused).toBe(false);
   });
 
   it('closing the diff tab clears the session', () => {

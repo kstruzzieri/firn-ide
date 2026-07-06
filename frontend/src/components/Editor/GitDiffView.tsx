@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef } from 'react';
 import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { EditorState, type Extension } from '@codemirror/state';
-import type { DiffSession } from '../../stores/gitStore';
+import { useGitStore, type DiffSession } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
+import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { buildTheme, getLanguageExtension } from './codemirror';
 import styles from './GitDiffView.module.css';
 
@@ -107,6 +108,13 @@ export function GitDiffView({ session }: { session: DiffSession }) {
     setSplit(currentSplit() + (e.key === 'ArrowLeft' ? -2 : 2));
   };
 
+  // The diff is read-only; Open File brings up the real working-tree file to
+  // edit and yields the diff tab to it.
+  const openFile = () => {
+    void ensureEditorFileOpen(session.absPath);
+    useGitStore.getState().setDiffFocused(false);
+  };
+
   if (session.binary) {
     return (
       <div className={styles.stateMessage} data-testid="diff-binary">
@@ -150,6 +158,14 @@ export function GitDiffView({ session }: { session: DiffSession }) {
             title="Next difference (F7)"
           >
             ↓
+          </button>
+          <button
+            type="button"
+            className={styles.openBtn}
+            onClick={openFile}
+            title="Open the file to edit"
+          >
+            Open File
           </button>
         </div>
       </div>

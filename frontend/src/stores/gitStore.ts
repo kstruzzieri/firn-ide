@@ -38,6 +38,8 @@ export interface DiffSide {
 export interface DiffSession {
   /** Repo-relative path, used as the tab title. */
   path: string;
+  /** Absolute worktree path, for opening the real file from the diff. */
+  absPath: string;
   context: DiffContext;
   left: DiffSide;
   right: DiffSide;
@@ -365,7 +367,15 @@ export const useGitStore = create<GitStore>()(
           }
 
           if (get().epoch !== epoch) return; // workspace switched mid-fetch
-          const next: DiffSession = { path: change.path, context, left, right, binary, truncated };
+          const next: DiffSession = {
+            path: change.path,
+            absPath: joinRepoPath(repoRoot, change.path),
+            context,
+            left,
+            right,
+            binary,
+            truncated,
+          };
           set(
             (state) => ({
               // Reuse the existing object when nothing changed so a live refresh

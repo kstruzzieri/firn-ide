@@ -83,6 +83,21 @@
   background: var(--surface-hover);
 }
 
+.openBtn {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.openBtn:hover {
+  background: var(--surface-hover);
+}
+
 /*
  * Scroll contract (from @codemirror/merge's own base theme): .cm-mergeView is
  * THE scroll container (overflowY: auto), and the inner editors are forced to

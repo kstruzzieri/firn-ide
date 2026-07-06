@@ -28,13 +28,34 @@ jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
   getLanguageExtension: jest.fn(() => null),
 }));
+const mockEnsureOpen = jest.fn();
+jest.mock('../../../utils/editorNavigation', () => ({
+  ensureEditorFileOpen: (...args: unknown[]) => mockEnsureOpen(...args),
+}));
+// gitStore (imported for its store) transitively loads the ESM wailsjs App
+// bindings; mock them so the module graph stays jest-parseable.
+jest.mock('../../../../wailsjs/go/main/App', () => ({
+  GitStatus: jest.fn(),
+  GitStage: jest.fn(),
+  GitUnstage: jest.fn(),
+  GitCommit: jest.fn(),
+  GitPull: jest.fn(),
+  GitPush: jest.fn(),
+  GitBranches: jest.fn(),
+  GitCheckout: jest.fn(),
+  GitCommitMessageAvailable: jest.fn(),
+  GitGenerateCommitMessage: jest.fn(),
+  GitFileAtRev: jest.fn(),
+  ReadFile: jest.fn(),
+}));
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GitDiffView } from '../../../components/Editor/GitDiffView';
-import type { DiffSession } from '../../../stores/gitStore';
+import { useGitStore, type DiffSession } from '../../../stores/gitStore';
 
 const base: DiffSession = {
   path: 'src/a.ts',
+  absPath: '/repo/src/a.ts',
   context: 'unstaged',
   left: { label: 'Index', content: 'const a = 1;\n' },
   right: { label: 'Working Tree', content: 'const a = 2;\n' },
@@ -57,6 +78,16 @@ describe('GitDiffView', () => {
     expect(config.a.doc).toBe('const a = 1;\n');
     expect(config.b.doc).toBe('const a = 2;\n');
     expect(config.parent).toBe(screen.getByTestId('merge-host'));
+  });
+
+  it('opens the working-tree file and yields the diff via Open File', () => {
+    useGitStore.setState({ diffFocused: true });
+    render(<GitDiffView session={base} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /open file/i }));
+
+    expect(mockEnsureOpen).toHaveBeenCalledWith('/repo/src/a.ts');
+    expect(useGitStore.getState().diffFocused).toBe(false);
   });
 
   it('destroys the merge view on unmount', () => {
