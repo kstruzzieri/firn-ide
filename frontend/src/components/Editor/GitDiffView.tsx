@@ -18,11 +18,27 @@ import styles from './GitDiffView.module.css';
 const MIN_SPLIT = 15;
 const MAX_SPLIT = 85;
 
-export function GitDiffView({ session }: { session: DiffSession }) {
+export function GitDiffView({
+  session,
+  visible = true,
+}: {
+  session: DiffSession;
+  /** The diff stays mounted but CSS-hidden when not shown; on re-show its
+   * CodeMirror panes need a remeasure or they keep a stale, too-tall scroll
+   * geometry (a phantom scrollbar). */
+  visible?: boolean;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const mergeRef = useRef<MergeView | null>(null);
   const themeId = useEditorSyntaxTheme();
+
+  useEffect(() => {
+    if (!visible) return;
+    const view = mergeRef.current;
+    view?.a.requestMeasure();
+    view?.b.requestMeasure();
+  }, [visible, session]);
 
   // Hunk count from the same line diff the gutter uses — render-derived, so
   // no post-mount state write. May differ from the merge view's char-level

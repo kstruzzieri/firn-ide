@@ -2,10 +2,12 @@
 // same reason CodeMirrorEditor has no direct render test). Mock the merge
 // module and verify the component's construction/teardown contract instead.
 const destroyMock = jest.fn();
-const fakeSideB = { state: {}, focus: jest.fn() };
-const mergeViewMock = jest
-  .fn()
-  .mockImplementation(() => ({ destroy: destroyMock, a: { state: {} }, b: fakeSideB }));
+const fakeSideB = { state: {}, focus: jest.fn(), requestMeasure: jest.fn() };
+const mergeViewMock = jest.fn().mockImplementation(() => ({
+  destroy: destroyMock,
+  a: { state: {}, requestMeasure: jest.fn() },
+  b: fakeSideB,
+}));
 const goToNextChunkMock = jest.fn((_arg?: unknown) => true);
 const goToPreviousChunkMock = jest.fn((_arg?: unknown) => true);
 const getChunksMock = jest.fn((_arg?: unknown) => ({ chunks: [{}, {}], side: null }));

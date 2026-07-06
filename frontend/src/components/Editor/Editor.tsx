@@ -271,7 +271,7 @@ export function Editor() {
             back to the top and re-restore its scroll on every return. */}
         {diffSession && (
           <div className={styles.pane} style={{ display: showDiff ? undefined : 'none' }}>
-            <GitDiffView session={diffSession} />
+            <GitDiffView session={diffSession} visible={showDiff} />
           </div>
         )}
         {activeFile && (
