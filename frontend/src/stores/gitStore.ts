@@ -22,7 +22,8 @@ import {
   type GitFileChange,
   type GitRowStatus,
 } from '../types/git';
-import { joinRepoPath, normalizeFsPath } from '../utils/paths';
+import { joinRepoPath } from '../utils/paths';
+import { pathsReferToSameFile } from '../utils/lspUri';
 import { useIDEStore } from './ideStore';
 
 /** Which pair of revisions a diff shows. Staged rows compare HEAD to the
@@ -363,10 +364,12 @@ export const useGitStore = create<GitStore>()(
             // Untracked files have no index version; diff against empty.
             left = untracked ? { label: 'Index', content: '' } : await fetchRev(':0', 'Index');
             // Prefer the live editor buffer if the file is open, so the diff
-            // reflects unsaved edits; otherwise read from disk.
+            // reflects unsaved edits; otherwise read from disk. Match with the
+            // app's canonical path comparison — the open file's path (native,
+            // possibly URI-decoded) may differ in representation from abs.
             const openFile = useIDEStore
               .getState()
-              .openFiles.find((f) => normalizeFsPath(f.path) === normalizeFsPath(abs));
+              .openFiles.find((f) => pathsReferToSameFile(f.path, abs));
             let worktree = '';
             if (openFile) {
               worktree = openFile.content ?? '';

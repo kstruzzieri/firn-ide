@@ -265,9 +265,17 @@ export function Editor() {
           showDiff ? 'tab-git-diff' : activeFile ? `tab-${activeFile.id}` : undefined
         }
       >
-        {showDiff && diffSession && <GitDiffView session={diffSession} />}
-        {!showDiff && activeFile && (
-          <div className={styles.editorContent}>
+        {/* Both surfaces stay mounted and are toggled with CSS so switching
+            between a file and its diff preserves scroll position (no rebuild):
+            the diff keeps its merge-view scroll, and the editor doesn't jump
+            back to the top and re-restore its scroll on every return. */}
+        {diffSession && (
+          <div className={styles.pane} style={{ display: showDiff ? undefined : 'none' }}>
+            <GitDiffView session={diffSession} />
+          </div>
+        )}
+        {activeFile && (
+          <div className={styles.editorContent} style={{ display: showDiff ? 'none' : undefined }}>
             <CodeMirrorEditor
               fileId={activeFile.id}
               filename={activeFile.name}

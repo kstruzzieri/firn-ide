@@ -30,6 +30,11 @@ jest.mock('../components/Editor/GitDiffView', () => ({
     <div data-testid="git-diff-view">{session.path}</div>
   ),
 }));
+// Both surfaces stay mounted now, so the editor renders even under a focused
+// diff; stub CodeMirror to keep it out of these tab-behavior tests.
+jest.mock('../components/Editor/CodeMirrorEditor', () => ({
+  CodeMirrorEditor: () => <div data-testid="cm-editor" />,
+}));
 
 import { Editor } from '../components/Editor';
 
