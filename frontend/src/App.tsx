@@ -6,6 +6,7 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
 import { SearchPanel } from './components/Search';
+import { GitPanel } from './components/GitPanel';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
 import { RunProfiles } from './components/RunProfiles';
@@ -19,9 +20,11 @@ import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
+import { useGitSync } from './hooks/useGitSync';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
+import { useGitStore } from './stores/gitStore';
 import { ReadFile } from '../wailsjs/go/main/App';
 import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
@@ -43,6 +46,7 @@ function App() {
   // Mount workspace-search wiring once at the App level so the in-flight
   // request guards (workspace switch, unmount) survive panel toggling.
   useWorkspaceSearch();
+  useGitSync();
   const workspace = useWorkspace();
   const sidebarView = useSidebarView();
   const activeAccent = useActiveAccent();
@@ -86,6 +90,9 @@ function App() {
 
   const handleFileChange = useCallback(
     (event: FileEvent) => {
+      // Any working-tree event can change git status; the store debounces.
+      useGitStore.getState().scheduleRefresh();
+
       const { openFiles } = useIDEStore.getState();
       const openFile = openFiles.find((f) => f.path === event.path);
 
@@ -136,7 +143,15 @@ function App() {
         accent={activeAccent}
         header={<Header />}
         sidebar={<Sidebar />}
-        leftPanel={sidebarView === 'search' ? <SearchPanel /> : <FileExplorer />}
+        leftPanel={
+          sidebarView === 'search' ? (
+            <SearchPanel />
+          ) : sidebarView === 'git' ? (
+            <GitPanel />
+          ) : (
+            <FileExplorer />
+          )
+        }
         centerPanel={<Editor />}
         bottomPanel={<Terminal />}
         rightPanel={<RunProfiles />}

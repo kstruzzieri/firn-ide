@@ -1,7 +1,9 @@
 import { Compartment } from '@codemirror/state';
 import { hoverTooltip, type EditorView, type Tooltip } from '@codemirror/view';
+import { highlightTree, tagHighlighter, tags as t } from '@lezer/highlight';
 import { LSPHover, LSPDefinition } from '../../../../wailsjs/go/main/App';
-import { ClipboardSetText } from '../../../../wailsjs/runtime/runtime';
+import { BrowserOpenURL, ClipboardSetText } from '../../../../wailsjs/runtime/runtime';
+import { getLanguageExtension } from './extensions';
 import { decodeLSPContent } from '../../../utils/lspContent';
 import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
@@ -90,7 +92,7 @@ function createHoverTooltipDOM(
   if (signature) {
     const sigDiv = document.createElement('div');
     sigDiv.className = 'firn-hover-signature';
-    renderHighlightedSignature(sigDiv, signature);
+    renderHighlightedSignature(sigDiv, signature, filePath);
     container.appendChild(sigDiv);
   }
 
@@ -207,9 +209,57 @@ const HIGHLIGHT_RULES: Array<{ pattern: RegExp; className: string }> = [
   { pattern: /[{}()\[\]<>:;,=&|?!.]/g, className: 'firn-hover-punctuation' },
 ];
 
-export function highlightSignatureParts(text: string): SignatureHighlightPart[] {
-  const charStyles: string[] = new Array(text.length).fill('');
+/**
+ * Maps Lezer highlight tags to the hover's `firn-hover-*` color classes (which
+ * carry palette colors via CSS). Using the real language parser instead of the
+ * TypeScript-only regex rules highlights every supported language — most
+ * visibly Go, whose `func`/space-separated types the regex never matched.
+ */
+const hoverHighlighter = tagHighlighter([
+  { tag: t.keyword, class: 'firn-hover-keyword' },
+  { tag: t.controlKeyword, class: 'firn-hover-keyword' },
+  { tag: t.definitionKeyword, class: 'firn-hover-keyword' },
+  { tag: t.moduleKeyword, class: 'firn-hover-keyword' },
+  { tag: t.modifier, class: 'firn-hover-keyword' },
+  { tag: t.typeName, class: 'firn-hover-type' },
+  { tag: t.className, class: 'firn-hover-type' },
+  { tag: t.namespace, class: 'firn-hover-type' },
+  { tag: t.standard(t.typeName), class: 'firn-hover-type' },
+  { tag: t.function(t.variableName), class: 'firn-hover-function' },
+  { tag: t.function(t.definition(t.variableName)), class: 'firn-hover-function' },
+  { tag: t.function(t.propertyName), class: 'firn-hover-function' },
+  { tag: t.propertyName, class: 'firn-hover-variable' },
+  { tag: t.variableName, class: 'firn-hover-variable' },
+  { tag: t.string, class: 'firn-hover-string' },
+  { tag: t.special(t.string), class: 'firn-hover-string' },
+  { tag: t.number, class: 'firn-hover-constant' },
+  { tag: t.bool, class: 'firn-hover-constant' },
+  { tag: t.atom, class: 'firn-hover-constant' },
+  { tag: t.comment, class: 'firn-hover-punctuation' },
+  { tag: t.operator, class: 'firn-hover-punctuation' },
+  { tag: t.punctuation, class: 'firn-hover-punctuation' },
+  { tag: t.paren, class: 'firn-hover-punctuation' },
+  { tag: t.brace, class: 'firn-hover-punctuation' },
+  { tag: t.bracket, class: 'firn-hover-punctuation' },
+  { tag: t.separator, class: 'firn-hover-punctuation' },
+]);
 
+/** Per-character class array via the real Lezer parser for `filename`'s
+ * language, or null when the extension has no registered language. */
+function parserCharStyles(text: string, filename: string): string[] | null {
+  const language = getLanguageExtension(filename);
+  if (!language) return null;
+  const tree = language.language.parser.parse(text);
+  const charStyles: string[] = new Array(text.length).fill('');
+  highlightTree(tree, hoverHighlighter, (from, to, classes) => {
+    for (let i = from; i < to; i++) charStyles[i] = classes;
+  });
+  return charStyles;
+}
+
+/** Per-character class array from the TypeScript-oriented regex rules. */
+function regexCharStyles(text: string): string[] {
+  const charStyles: string[] = new Array(text.length).fill('');
   for (const rule of HIGHLIGHT_RULES) {
     rule.pattern.lastIndex = 0;
     let match;
@@ -221,6 +271,11 @@ export function highlightSignatureParts(text: string): SignatureHighlightPart[] 
       }
     }
   }
+  return charStyles;
+}
+
+export function highlightSignatureParts(text: string, filename?: string): SignatureHighlightPart[] {
+  const charStyles = (filename && parserCharStyles(text, filename)) || regexCharStyles(text);
 
   const parts: SignatureHighlightPart[] = [];
   let currentClass = charStyles[0] || '';
@@ -243,11 +298,11 @@ export function highlightSignatureParts(text: string): SignatureHighlightPart[] 
   return parts;
 }
 
-function renderHighlightedSignature(container: HTMLElement, text: string): void {
+function renderHighlightedSignature(container: HTMLElement, text: string, filename: string): void {
   const pre = document.createElement('pre');
   pre.className = 'firn-hover-code';
 
-  for (const part of highlightSignatureParts(text)) {
+  for (const part of highlightSignatureParts(text, filename)) {
     appendSpan(pre, part.text, part.className);
   }
 
@@ -284,8 +339,57 @@ function renderDocumentation(container: HTMLElement, text: string): void {
   }
 }
 
+export interface DocSegment {
+  text: string;
+  /** Present when the segment is a link (markdown `[text](url)` or a bare URL). */
+  url?: string;
+}
+
+const DOC_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s)]+)/g;
+
+/** Splits documentation text into plain and link segments so gopls-style
+ * `[name](https://pkg.go.dev/...)` references render as clickable links. */
+export function splitDocLinks(text: string): DocSegment[] {
+  const segments: DocSegment[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  DOC_LINK_RE.lastIndex = 0;
+  while ((match = DOC_LINK_RE.exec(text)) !== null) {
+    if (match.index > last) segments.push({ text: text.slice(last, match.index) });
+    const url = match[2] ?? match[3];
+    const label = match[1] ?? match[3];
+    segments.push({ text: label, url });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) segments.push({ text: text.slice(last) });
+  return segments;
+}
+
+/** Appends `text` to `container`, rendering embedded links as anchors that open
+ * externally via the Wails runtime. */
+function appendTextWithLinks(container: HTMLElement, text: string): void {
+  for (const segment of splitDocLinks(text)) {
+    if (segment.url) {
+      const link = document.createElement('a');
+      link.className = 'firn-hover-link';
+      link.textContent = segment.text;
+      link.href = segment.url;
+      const url = segment.url;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        BrowserOpenURL(url);
+      });
+      container.appendChild(link);
+    } else {
+      container.appendChild(document.createTextNode(segment.text));
+    }
+  }
+}
+
 function renderDocText(container: HTMLElement, text: string): void {
-  const lines = text.split('\n');
+  // Collapse runs of blank lines to one — gopls docs are padded with them,
+  // which otherwise leave large empty gaps in the tooltip.
+  const lines = collapseBlankRuns(text.split('\n'));
   for (const line of lines) {
     const tagMatch = line.match(/^(\s*@\w+)/);
     if (tagMatch) {
@@ -293,9 +397,23 @@ function renderDocText(container: HTMLElement, text: string): void {
       span.className = 'firn-hover-doc-tag';
       span.textContent = tagMatch[1];
       container.appendChild(span);
-      container.appendChild(document.createTextNode(line.slice(tagMatch[1].length) + '\n'));
+      appendTextWithLinks(container, line.slice(tagMatch[1].length));
     } else {
-      container.appendChild(document.createTextNode(line + '\n'));
+      appendTextWithLinks(container, line);
     }
+    container.appendChild(document.createTextNode('\n'));
   }
+}
+
+/** Collapses consecutive blank lines to a single one and trims leading/trailing
+ * blanks, so documentation renders compactly. */
+export function collapseBlankRuns(lines: string[]): string[] {
+  const out: string[] = [];
+  for (const line of lines) {
+    const blank = line.trim() === '';
+    if (blank && (out.length === 0 || out[out.length - 1].trim() === '')) continue;
+    out.push(line);
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
+  return out;
 }

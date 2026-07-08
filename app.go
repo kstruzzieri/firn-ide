@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"firn/internal/filesystem"
+	"firn/internal/git"
 	"firn/internal/lsp"
 	"firn/internal/lsp/provision"
 	"firn/internal/runprofile"
@@ -40,6 +41,8 @@ type App struct {
 	workspaceStore *workspace.Store
 	lspManager     *lsp.Manager
 	searchManager  *search.Manager
+	gitService     *git.Service
+	gitMsgGen      *git.MessageGenerator
 	closeMu        sync.Mutex
 	isClosing      bool
 	closeReady     chan struct{}
@@ -67,6 +70,8 @@ func NewApp() *App {
 		osFS:           osFS,
 		workspaceStore: workspace.NewStore(osFS, workspaceBaseDir),
 		searchManager:  search.NewManager(),
+		gitService:     git.NewService(),
+		gitMsgGen:      git.NewMessageGenerator(),
 	}
 }
 

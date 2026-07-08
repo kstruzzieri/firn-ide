@@ -24,6 +24,7 @@ import {
   resetCompletion,
   reconcileDoc,
   updateEditorDiagnostics,
+  setGitBaseline,
 } from './codemirror';
 import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
 import { useLSPStore, findServerStatusForFile } from '../../stores/lspStore';
@@ -62,6 +63,8 @@ interface CodeMirrorEditorProps {
   initialScrollTop?: number;
   /** Ids of all currently-open files; drives cached-state eviction on close. */
   openFileIds: string[];
+  /** HEAD content for the git change gutter; null renders no markers. */
+  gitBaseline?: string | null;
 }
 
 /**
@@ -83,6 +86,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   initialCursorColumn,
   initialScrollTop,
   openFileIds,
+  gitBaseline = null,
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<EditorView | null>(null);
@@ -259,6 +263,21 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     prevFileIdRef.current = fileId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  // Push the git gutter baseline into the (possibly just-swapped) state.
+  // Depends on fileId so a file switch re-applies it after view.setState,
+  // which replaces the whole EditorState including the gutter field. The
+  // null-on-null skip avoids a no-op dispatch on mount: the field's default
+  // is already null, and a fresh state after a switch also starts null.
+  const lastBaselineRef = useRef<string | null>(null);
+  useEffect(() => {
+    const view = editorRef.current;
+    if (!view) return;
+    const stateIsFresh = lastBaselineRef.current === null;
+    if (gitBaseline === null && stateIsFresh) return;
+    lastBaselineRef.current = gitBaseline;
+    view.dispatch({ effects: setGitBaseline.of(gitBaseline) });
+  }, [gitBaseline, fileId]);
 
   // Evict cached state for files that are no longer open (closed tabs).
   // Runs after the switch effect so the outgoing file's save is never lost.

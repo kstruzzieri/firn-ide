@@ -64,6 +64,91 @@ export namespace filesystem {
 
 }
 
+export namespace git {
+
+	export class FileChange {
+	    path: string;
+	    origPath?: string;
+	    index: string;
+	    worktree: string;
+	    unmerged?: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FileChange(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.origPath = source["origPath"];
+	        this.index = source["index"];
+	        this.worktree = source["worktree"];
+	        this.unmerged = source["unmerged"];
+	    }
+	}
+	export class FileContent {
+	    content: string;
+	    binary: boolean;
+	    truncated: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FileContent(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.content = source["content"];
+	        this.binary = source["binary"];
+	        this.truncated = source["truncated"];
+	    }
+	}
+	export class RepoStatus {
+	    isRepo: boolean;
+	    repoRoot: string;
+	    branch: string;
+	    upstream: string;
+	    ahead: number;
+	    behind: number;
+	    files: FileChange[];
+	    detail?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RepoStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isRepo = source["isRepo"];
+	        this.repoRoot = source["repoRoot"];
+	        this.branch = source["branch"];
+	        this.upstream = source["upstream"];
+	        this.ahead = source["ahead"];
+	        this.behind = source["behind"];
+	        this.files = this.convertValues(source["files"], FileChange);
+	        this.detail = source["detail"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace lsp {
 
 	export class Position {

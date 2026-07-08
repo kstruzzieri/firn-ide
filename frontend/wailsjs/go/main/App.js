@@ -58,6 +58,50 @@ export function GetWorkspaceInfo() {
   return window['go']['main']['App']['GetWorkspaceInfo']();
 }
 
+export function GitBranches(arg1) {
+  return window['go']['main']['App']['GitBranches'](arg1);
+}
+
+export function GitCheckout(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitCheckout'](arg1, arg2, arg3);
+}
+
+export function GitCommit(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitCommit'](arg1, arg2, arg3);
+}
+
+export function GitCommitMessageAvailable() {
+  return window['go']['main']['App']['GitCommitMessageAvailable']();
+}
+
+export function GitFileAtRev(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitFileAtRev'](arg1, arg2, arg3);
+}
+
+export function GitGenerateCommitMessage(arg1) {
+  return window['go']['main']['App']['GitGenerateCommitMessage'](arg1);
+}
+
+export function GitPull(arg1) {
+  return window['go']['main']['App']['GitPull'](arg1);
+}
+
+export function GitPush(arg1) {
+  return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function GitStage(arg1, arg2) {
+  return window['go']['main']['App']['GitStage'](arg1, arg2);
+}
+
+export function GitStatus(arg1) {
+  return window['go']['main']['App']['GitStatus'](arg1);
+}
+
+export function GitUnstage(arg1, arg2) {
+  return window['go']['main']['App']['GitUnstage'](arg1, arg2);
+}
+
 export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
 }

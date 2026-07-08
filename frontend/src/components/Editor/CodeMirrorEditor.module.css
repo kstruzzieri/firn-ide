@@ -45,3 +45,42 @@
 .container :global(.cm-scroller) {
   scroll-behavior: smooth;
 }
+
+/* Git change gutter markers (gitGutter.ts) */
+:global(.cm-gitGutter) {
+  /* Wider than the visible bar so the whole column is a comfortable click
+     target for the peek/revert popup. */
+  width: 8px;
+  cursor: pointer;
+}
+
+:global(.cm-gitGutterMarker) {
+  width: 3px;
+  height: 100%;
+  margin: 0 auto;
+  border-radius: 1px;
+  transition:
+    width 0.1s ease-out,
+    filter 0.1s ease-out;
+}
+
+/* Hovering the change bar fattens and brightens it — a JetBrains-style cue
+   that it is clickable, without auto-opening the peek. */
+:global(.cm-gitGutter .cm-gutterElement:hover .cm-gitGutterMarker) {
+  width: 6px;
+  filter: brightness(1.3);
+}
+
+:global(.cm-gitGutter-added) {
+  background: var(--git-added, var(--status-success));
+}
+
+:global(.cm-gitGutter-modified) {
+  background: var(--git-modified, var(--status-warning));
+}
+
+:global(.cm-gitGutter-deleted) {
+  background: var(--git-deleted, var(--status-error));
+  height: 3px;
+  align-self: end;
+}

@@ -58,6 +58,14 @@
   --status-warning: #f59e0b;
   --status-error: #ef4444;
 
+  /* Git state accents — distinct hues so untracked, added, and modified are
+   * each recognizable at a glance in the tree and source-control panel. */
+  --git-added: #22c55e; /* new file, staged (green) */
+  --git-modified: #e0a83b; /* edited, not committed (amber) */
+  --git-deleted: #ef4444; /* removed (red) */
+  --git-conflicted: #f87171; /* merge conflict (bright red) */
+  --git-untracked: #7c93b0; /* unversioned, not in git yet (slate) */
+
   /* Layout */
   --header-height: 44px;
   --statusbar-height: 26px;

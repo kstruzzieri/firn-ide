@@ -13,6 +13,50 @@ const baseProps = {
   onOpen: noop,
 };
 
+describe('TreeRow git decoration', () => {
+  const entryProps = {
+    ...baseProps,
+    kind: 'entry' as const,
+    path: '/repo/a.ts',
+    name: 'a.ts',
+    depth: 1,
+    level: 2,
+    isDir: false,
+    isExpanded: false,
+    isSelected: false,
+    regionAccent: null,
+    setSize: 1,
+    posInSet: 1,
+  };
+
+  it('renders a status badge and data attribute for a modified file', () => {
+    render(<TreeRow {...entryProps} gitStatus="modified" />);
+
+    const row = screen.getByRole('treeitem');
+    expect(row).toHaveAttribute('data-git', 'modified');
+    expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
+  });
+
+  it.each([
+    ['added', 'A'],
+    ['deleted', 'D'],
+    ['renamed', 'R'],
+    ['untracked', 'U'],
+    ['conflicted', '!'],
+  ] as const)('maps %s to badge letter %s', (status, letter) => {
+    render(<TreeRow {...entryProps} gitStatus={status} />);
+
+    expect(screen.getByTestId('git-badge')).toHaveTextContent(letter);
+  });
+
+  it('renders no badge or attribute without git status', () => {
+    render(<TreeRow {...entryProps} />);
+
+    expect(screen.getByRole('treeitem')).not.toHaveAttribute('data-git');
+    expect(screen.queryByTestId('git-badge')).not.toBeInTheDocument();
+  });
+});
+
 describe('TreeRow', () => {
   it('renders a file with its name and no chevron', () => {
     render(

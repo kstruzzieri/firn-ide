@@ -4,8 +4,19 @@ import { ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { FileIcon } from './FileIcon';
 import { getFolderType } from './fileIconUtils';
 import type { WorkspaceAccent } from '../../stores/ideStore';
+import type { GitRowStatus } from '../../types/git';
 import { shortenPath } from '../../utils/workspace';
 import styles from './TreeRow.module.css';
+
+/** VS Code-style status letters shown after the filename. */
+const gitBadgeLetters: Record<GitRowStatus, string> = {
+  modified: 'M',
+  added: 'A',
+  deleted: 'D',
+  renamed: 'R',
+  untracked: 'U',
+  conflicted: '!',
+};
 
 /** Fixed row height; MUST match `.row { height }` in TreeRow.module.css. */
 export const ROW_HEIGHT = 28;
@@ -36,6 +47,8 @@ export interface TreeRowProps {
   isActive: boolean;
   /** Show the expand chevron: true for unloaded dirs or dirs with children; false for loaded-empty dirs and files. */
   canExpand: boolean;
+  /** Git working-tree decoration; undefined renders an undecorated row. */
+  gitStatus?: GitRowStatus;
   onToggle: (kind: 'root' | 'entry', path?: string) => void;
   onSelect: (path: string) => void;
   onOpen: (path: string) => void;
@@ -62,6 +75,7 @@ function TreeRowImpl({
   rowId,
   isActive,
   canExpand,
+  gitStatus,
   onToggle,
   onSelect,
   onOpen,
@@ -102,6 +116,7 @@ function TreeRowImpl({
       id={rowId}
       className={className}
       data-hidden={isHidden || undefined}
+      data-git={gitStatus}
       style={{
         paddingLeft: `${indentPx}px`,
         ...(regionAccent
@@ -142,6 +157,11 @@ function TreeRowImpl({
       <FileIcon name={name} isDir={isDir} isExpanded={isExpanded} className={styles.icon} />
       <span className={styles.name}>{name}</span>
       {kind === 'root' && rootPath && <span className={styles.path}>{shortenPath(rootPath)}</span>}
+      {gitStatus && (
+        <span className={styles.gitBadge} data-testid="git-badge" aria-hidden="true">
+          {gitBadgeLetters[gitStatus]}
+        </span>
+      )}
     </div>
   );
 }

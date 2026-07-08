@@ -4,6 +4,7 @@ import {runprofile} from '../models';
 import {workspace} from '../models';
 import {lsp} from '../models';
 import {main} from '../models';
+import {git} from '../models';
 import {filesystem} from '../models';
 import {search} from '../models';
 
@@ -34,6 +35,28 @@ export function GetRunStatus(arg1:string):Promise<runprofile.RunStatus>;
 export function GetWatchedPath():Promise<string>;
 
 export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
+
+export function GitBranches(arg1:string):Promise<Array<string>>;
+
+export function GitCheckout(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function GitCommit(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
+export function GitCommitMessageAvailable():Promise<boolean>;
+
+export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<git.FileContent>;
+
+export function GitGenerateCommitMessage(arg1:string):Promise<string>;
+
+export function GitPull(arg1:string):Promise<string>;
+
+export function GitPush(arg1:string):Promise<string>;
+
+export function GitStage(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function GitStatus(arg1:string):Promise<git.RepoStatus>;
+
+export function GitUnstage(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function IsWatching():Promise<boolean>;
 

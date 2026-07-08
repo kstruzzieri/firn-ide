@@ -886,7 +886,10 @@ export function buildChromeRules(palette: SyntaxPalette) {
       border: `1px solid ${colors.border}`,
       borderRadius: '7px',
       padding: '0',
-      minWidth: '320px',
+      // Shrink-wrap to the widest line instead of a fixed 320px, so short
+      // hovers don't carry a slab of empty space; still cap + scroll when long.
+      width: 'max-content',
+      minWidth: '0',
       maxWidth: '520px',
       maxHeight: '360px',
       overflow: 'auto',
@@ -932,6 +935,16 @@ export function buildChromeRules(palette: SyntaxPalette) {
       color: colors.keyword,
       fontWeight: '600',
     },
+    '.firn-hover-link': {
+      color: colors.accent,
+      textDecoration: 'underline',
+      textDecorationColor: 'rgba(56, 189, 248, 0.5)',
+      textUnderlineOffset: '2px',
+      cursor: 'pointer',
+    },
+    '.firn-hover-link:hover': {
+      textDecorationColor: colors.accent,
+    },
     '.firn-hover-actions': {
       display: 'flex',
       justifyContent: 'flex-end',
@@ -949,6 +962,61 @@ export function buildChromeRules(palette: SyntaxPalette) {
       transition: 'color 120ms ease-out',
     },
     '.firn-hover-action:hover': {
+      color: colors.accent,
+    },
+
+    // --- Git hunk peek/revert popup (gitGutter.ts) ---
+    '.firn-git-hunk': {
+      minWidth: '160px',
+      maxWidth: '520px',
+      overflow: 'hidden',
+    },
+    '.firn-git-hunk-body': {
+      maxHeight: '220px',
+      overflow: 'auto',
+    },
+    '.firn-git-hunk-diff': {
+      margin: '0',
+      padding: '8px 12px',
+      backgroundColor: colors.activeLine,
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: '12px',
+      lineHeight: '1.5',
+      color: '#BCCBDC',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    '.firn-git-diff-del': {
+      borderRadius: '2px',
+      backgroundColor: 'rgba(244, 63, 94, 0.25)',
+      color: '#FECDD3',
+      textDecoration: 'line-through',
+      textDecorationColor: 'rgba(244, 63, 94, 0.7)',
+    },
+    '.firn-git-diff-ins': {
+      borderRadius: '2px',
+      backgroundColor: 'rgba(63, 185, 80, 0.25)',
+      color: '#BBF7D0',
+    },
+    '.firn-git-hunk-actions': {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: '16px',
+      padding: '8px 12px',
+      borderTop: `1px solid ${colors.border}`,
+      backgroundColor: '#0F172A',
+    },
+    '.firn-git-hunk-action': {
+      background: 'none',
+      border: 'none',
+      padding: '0',
+      color: '#9FB5CF',
+      fontSize: '11px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      transition: 'color 120ms ease-out',
+    },
+    '.firn-git-hunk-action:hover': {
       color: colors.accent,
     },
 

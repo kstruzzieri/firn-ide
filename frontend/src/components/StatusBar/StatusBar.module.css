@@ -25,3 +25,31 @@
 .item.error {
   color: var(--status-error);
 }
+
+.aheadBehind {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.segmentBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.segmentBtn:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.segmentBtn svg {
+  width: 12px;
+  height: 12px;
+}

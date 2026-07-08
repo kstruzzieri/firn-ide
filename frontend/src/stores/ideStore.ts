@@ -206,7 +206,6 @@ interface IDEState {
   recentWorkspacesVersion: number;
 
   // Status
-  gitBranch: string;
   editorSyntaxTheme: SyntaxThemeId;
 
   // Editor navigation
@@ -320,7 +319,6 @@ interface IDEActions {
   setRecentWorkspaces: (workspaces: workspace.Summary[]) => void;
 
   // Status actions
-  setGitBranch: (branch: string) => void;
   setEditorSyntaxTheme: (id: SyntaxThemeId) => void;
 
   // Editor navigation actions
@@ -449,7 +447,6 @@ export const useIDEStore = create<IDEStore>()(
       isRestoringWorkspace: false,
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
-      gitBranch: '',
       editorSyntaxTheme: loadInitialSyntaxTheme(),
       pendingEditorNavigation: null,
 
@@ -1634,8 +1631,6 @@ export const useIDEStore = create<IDEStore>()(
         set({ recentWorkspaces }, false, 'setRecentWorkspaces'),
 
       // Status actions
-      setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
-
       setEditorSyntaxTheme: (id) => {
         if (!isSyntaxThemeId(id)) return;
         set({ editorSyntaxTheme: id }, false, 'setEditorSyntaxTheme');
@@ -1765,7 +1760,6 @@ export const useActiveTerminalSession = () =>
     const id = state.activeTerminalSessionId;
     return id ? (state.terminalSessions.find((s) => s.id === id) ?? null) : null;
   });
-export const useGitBranch = () => useIDEStore((state) => state.gitBranch);
 export const useEditorSyntaxTheme = (): SyntaxThemeId =>
   useIDEStore((state) => state.editorSyntaxTheme);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);

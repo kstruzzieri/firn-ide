@@ -158,6 +158,15 @@
   overflow: hidden;
 }
 
+/* Wrapper for the diff surface so it can be CSS-hidden while staying mounted
+ * (preserves the merge view + its scroll across file/diff switches). */
+.pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Welcome Screen
 ═══════════════════════════════════════════════════════════════ */
