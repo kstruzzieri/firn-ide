@@ -3,9 +3,24 @@
  * baseline pushed in via setGitBaseline, plus next/previous change commands
  * (Mod-Alt-Shift-ArrowDown/Up, the JetBrains-style bindings).
  */
-import { gutter, GutterMarker, keymap, type EditorView } from '@codemirror/view';
+import {
+  EditorView,
+  gutter,
+  GutterMarker,
+  keymap,
+  showTooltip,
+  type Tooltip,
+} from '@codemirror/view';
 import { StateEffect, StateField, RangeSet, type Extension } from '@codemirror/state';
-import { gitLineMarkers, type GitLineMarker } from '../../../utils/lineDiff';
+import {
+  diffLines,
+  gitLineMarkers,
+  inlineWordDiff,
+  revertHunkChange,
+  splitLines,
+  type GitLineMarker,
+  type LineHunk,
+} from '../../../utils/lineDiff';
 
 /** Above this doc size the gutter goes dormant; diffing every keystroke on
  * huge files is not worth a decoration. Matches the backend diffable cap. */
@@ -92,13 +107,140 @@ function gotoChange(view: EditorView, direction: 1 | -1): boolean {
 export const gotoNextGitChange = (view: EditorView) => gotoChange(view, 1);
 export const gotoPrevGitChange = (view: EditorView) => gotoChange(view, -1);
 
+// --- Hunk peek/revert popup (JetBrains-style change marker click) ---
+
+/** Finds the hunk whose gutter marker sits on the given 1-based current line. */
+function hunkForLine(baseline: string, current: string, line: number): LineHunk | null {
+  const lineCount = splitLines(current).length;
+  for (const h of diffLines(baseline, current)) {
+    if (h.fromB === h.toB) {
+      // Deletion: marker anchors to the line following the removal point.
+      if (line === Math.max(1, Math.min(h.fromB + 1, lineCount))) return h;
+    } else if (line >= h.fromB + 1 && line <= h.toB) {
+      return h;
+    }
+  }
+  return null;
+}
+
+const setHunkTooltip = StateEffect.define<Tooltip | null>();
+
+const hunkTooltipField = StateField.define<Tooltip | null>({
+  create: () => null,
+  update(value, tr) {
+    // Any edit (including the revert itself) invalidates the hunk, so drop it.
+    if (tr.docChanged) value = null;
+    for (const effect of tr.effects) {
+      if (effect.is(setHunkTooltip)) value = effect.value;
+    }
+    return value;
+  },
+  provide: (f) => showTooltip.from(f),
+});
+
+/** The current working-tree text for a hunk's B-range, or '' for a pure deletion. */
+function currentHunkText(view: EditorView, hunk: LineHunk): string {
+  if (hunk.toB <= hunk.fromB) return '';
+  const doc = view.state.doc;
+  return doc.sliceString(doc.line(hunk.fromB + 1).from, doc.line(hunk.toB).to);
+}
+
+/** Renders a unified inline word-diff of baseline vs working tree into `pre`:
+ * unchanged text plain, removed words struck red, added words green — so both
+ * sides are visible and distinct (JetBrains-style inline diff). */
+function renderInlineDiff(pre: HTMLElement, oldText: string, newText: string): void {
+  for (const segment of inlineWordDiff(oldText, newText)) {
+    if (segment.type === 'same') {
+      pre.appendChild(document.createTextNode(segment.text));
+      continue;
+    }
+    const span = document.createElement('span');
+    span.className = segment.type === 'del' ? 'firn-git-diff-del' : 'firn-git-diff-ins';
+    span.textContent = segment.text;
+    pre.appendChild(span);
+  }
+}
+
+/** Builds the peek/revert popup anchored at the hunk's first current line. */
+function makeHunkTooltip(baseline: string, hunk: LineHunk, pos: number): Tooltip {
+  return {
+    pos,
+    above: false,
+    arrow: false,
+    create(view) {
+      const dom = document.createElement('div');
+      dom.className = 'firn-git-hunk';
+
+      const oldText = splitLines(baseline).slice(hunk.fromA, hunk.toA).join('\n');
+      const body = document.createElement('div');
+      body.className = 'firn-git-hunk-body';
+      const pre = document.createElement('pre');
+      pre.className = 'firn-git-hunk-diff';
+      renderInlineDiff(pre, oldText, currentHunkText(view, hunk));
+      body.appendChild(pre);
+      dom.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'firn-git-hunk-actions';
+
+      const revert = document.createElement('button');
+      revert.className = 'firn-git-hunk-action';
+      revert.type = 'button';
+      revert.textContent = 'Revert';
+      revert.title = 'Revert this change to HEAD';
+      revert.addEventListener('click', (e) => {
+        e.preventDefault();
+        view.dispatch({
+          changes: revertHunkChange(view.state.doc.toString(), baseline, hunk),
+        });
+        view.focus();
+      });
+      actions.appendChild(revert);
+
+      dom.appendChild(actions);
+      return { dom };
+    },
+  };
+}
+
+/** Opens the peek/revert popup for the change gutter cell that was clicked. */
+function openHunkTooltip(view: EditorView, lineFrom: number): boolean {
+  const { baseline } = view.state.field(gitGutterField);
+  if (baseline === null) return false;
+  const current = view.state.doc.toString();
+  const line = view.state.doc.lineAt(lineFrom).number;
+  const hunk = hunkForLine(baseline, current, line);
+  if (hunk === null) return false;
+  view.dispatch({ effects: setHunkTooltip.of(makeHunkTooltip(baseline, hunk, lineFrom)) });
+  return true;
+}
+
+/** Dismisses an open peek popup when the click lands outside it (and outside
+ * the change gutter, whose own handler opens/replaces the popup). */
+const dismissHunkTooltipOnClick = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    if (view.state.field(hunkTooltipField) === null) return false;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('.firn-git-hunk') || target?.closest('.cm-gitGutter')) return false;
+    view.dispatch({ effects: setHunkTooltip.of(null) });
+    return false;
+  },
+});
+
 export function gitGutterExtension(): Extension {
   return [
     gitGutterField,
+    hunkTooltipField,
     gutter({
       class: 'cm-gitGutter',
       markers: buildMarkerSet,
+      domEventHandlers: {
+        mousedown(view, block) {
+          return openHunkTooltip(view, block.from);
+        },
+      },
     }),
+    dismissHunkTooltipOnClick,
     keymap.of([
       { key: 'Mod-Alt-Shift-ArrowDown', run: gotoNextGitChange },
       { key: 'Mod-Alt-Shift-ArrowUp', run: gotoPrevGitChange },
