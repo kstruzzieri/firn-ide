@@ -8,6 +8,7 @@ jest.mock('../../../../../wailsjs/go/main/App', () => ({
 
 jest.mock('../../../../../wailsjs/runtime/runtime', () => ({
   ClipboardSetText: jest.fn(),
+  BrowserOpenURL: jest.fn(),
 }));
 
 jest.mock('../../../../utils/lspDocumentSync', () => ({
@@ -18,10 +19,12 @@ import { LSPHover } from '../../../../../wailsjs/go/main/App';
 import { lsp } from '../../../../../wailsjs/go/models';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
 import {
+  collapseBlankRuns,
   createLSPHoverSource,
   highlightSignatureParts,
   hoverRequestPos,
   hoverTargetRange,
+  splitDocLinks,
 } from '../../../../components/Editor/codemirror/hover';
 
 beforeEach(() => {
@@ -89,7 +92,7 @@ describe('hoverTargetRange', () => {
 });
 
 describe('highlightSignatureParts', () => {
-  it('classifies TypeScript hover signatures into syntax color parts', () => {
+  it('classifies TypeScript hover signatures into syntax color parts (regex fallback)', () => {
     expect(
       highlightSignatureParts('const ANNOTATION_COLORS: Record<AnnotationType, string>')
     ).toEqual([
@@ -106,6 +109,59 @@ describe('highlightSignatureParts', () => {
       { text: 'string', className: 'firn-hover-type' },
       { text: '>', className: 'firn-hover-punctuation' },
     ]);
+  });
+
+  it('highlights a Go signature with the real Go parser when given a .go path', () => {
+    const parts = highlightSignatureParts(
+      'func LogWarning(ctx context.Context, message string)',
+      '/proj/app.go'
+    );
+    // The TS regex never knew `func`; the parser does.
+    expect(parts).toContainEqual({ text: 'func', className: 'firn-hover-keyword' });
+    expect(parts).toContainEqual({ text: 'LogWarning', className: 'firn-hover-function' });
+    expect(parts).toContainEqual({ text: 'Context', className: 'firn-hover-type' });
+    expect(parts).toContainEqual({ text: 'string', className: 'firn-hover-type' });
+    // Round-trips the exact source text.
+    expect(parts.map((p) => p.text).join('')).toBe(
+      'func LogWarning(ctx context.Context, message string)'
+    );
+  });
+
+  it('falls back to the regex highlighter for an unknown extension', () => {
+    const parts = highlightSignatureParts('const x = 1', '/proj/file.unknownext');
+    expect(parts).toContainEqual({ text: 'const', className: 'firn-hover-keyword' });
+  });
+});
+
+describe('splitDocLinks', () => {
+  it('extracts a markdown link', () => {
+    expect(splitDocLinks('see [LogWarning](https://pkg.go.dev/x#L) now')).toEqual([
+      { text: 'see ' },
+      { text: 'LogWarning', url: 'https://pkg.go.dev/x#L' },
+      { text: ' now' },
+    ]);
+  });
+
+  it('linkifies a bare URL', () => {
+    expect(splitDocLinks('bare https://example.com end')).toEqual([
+      { text: 'bare ' },
+      { text: 'https://example.com', url: 'https://example.com' },
+      { text: ' end' },
+    ]);
+  });
+
+  it('returns a single plain segment when there are no links', () => {
+    expect(splitDocLinks('no links here')).toEqual([{ text: 'no links here' }]);
+  });
+});
+
+describe('collapseBlankRuns', () => {
+  it('collapses consecutive blank lines to one and trims the edges', () => {
+    expect(collapseBlankRuns(['', 'a', '', '', 'b', '', ''])).toEqual(['a', '', 'b']);
+  });
+
+  it('leaves already-compact text untouched', () => {
+    expect(collapseBlankRuns(['a', '', 'b'])).toEqual(['a', '', 'b']);
   });
 });
 
