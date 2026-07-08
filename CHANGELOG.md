@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-08
+
+Milestone 7: Git integration. Firn now surfaces working-tree status, diffs,
+staging, commit, and branch operations directly in the workspace, and the LSP
+hover was reworked to highlight and link like a full editor.
+
+### Git
+- Working-tree status in the file tree (modified / added / deleted / untracked
+  colors via `--git-*` tokens) and the current branch in the status bar (#26).
+- Branch switcher shared between an always-visible header pill and the status
+  bar, portaled to `document.body` so it is never clipped by panel stacking.
+- Diff viewer: read-only side-by-side view with next/previous change navigation
+  (`F7` / `Shift+F7`), resizable columns, Open File, and a live diff against the
+  open editor buffer that refreshes as you type.
+- Commit panel: per-file and section include checkboxes, collapse chevrons,
+  filename colors by git state, stage/commit, pull/push with Publish when there
+  is no upstream, a commit receipt, and workspace-scoped ownership.
+- Gutter change bars with a peek popup showing a unified word-level inline diff
+  (unchanged text plain, removals struck red, additions green) and one-click
+  revert-to-HEAD; the popup dismisses on an editor click, an edit, or a revert.
+- A `core.bare=true` repository now shows an actionable message instead of
+  "not a git repository" (#27).
+
+### Editor
+- LSP hover signatures are highlighted with the file's real language parser, so
+  Go and every other supported language colorize instead of falling back to a
+  flat single color; documentation references render as clickable links that
+  open externally.
+- The hover tooltip shrink-wraps to its content and collapses padded blank
+  lines, removing the empty space around short hovers.
+
 ## [0.9.0] - 2026-07-01
 
 First public preview. Firn is a lightweight, workspace-focused IDE for macOS,
@@ -82,5 +113,6 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kstruzzieri/firn-ide/releases/tag/v0.9.0
