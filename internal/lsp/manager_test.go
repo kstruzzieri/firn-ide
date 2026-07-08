@@ -354,6 +354,21 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	}
 }
 
+func TestManager_DocumentSymbolNoServer(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	mgr.SetWorkspaceRoot("/tmp/test")
+
+	// No language server covers .rs in the test registry, so DocumentSymbol
+	// must return (nil, nil) rather than erroring.
+	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/main.rs")
+	if err != nil {
+		t.Errorf("DocumentSymbol on unsupported file should not error, got: %v", err)
+	}
+	if symbols != nil {
+		t.Errorf("expected nil symbols for unsupported file, got %+v", symbols)
+	}
+}
+
 func TestManager_SetWorkspaceRootClearsStoppedFlag(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	mgr.SetWorkspaceRoot("/tmp/old")

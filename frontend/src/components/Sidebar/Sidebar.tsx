@@ -1,6 +1,13 @@
 import { useCallback } from 'react';
 import styles from './Sidebar.module.css';
-import { FilesIcon, SearchIcon, GitBranchIcon, PlayIcon, SettingsIcon } from '../icons';
+import {
+  FilesIcon,
+  SearchIcon,
+  GitBranchIcon,
+  PlayIcon,
+  StructureIcon,
+  SettingsIcon,
+} from '../icons';
 import { useIDEStore, SidebarView, useIsLeftPanelCollapsed } from '../../stores/ideStore';
 import { formatShortcut } from '../../utils/platform';
 
@@ -14,6 +21,7 @@ const SIDEBAR_ITEMS: Array<{
   { view: 'search', icon: SearchIcon, label: 'Search', shortcut: '⌘⇧F' },
   { view: 'git', icon: GitBranchIcon, label: 'Source Control', shortcut: '⌘⇧G' },
   { view: 'run', icon: PlayIcon, label: 'Run Profiles', shortcut: '⌘⇧P' },
+  { view: 'structure', icon: StructureIcon, label: 'Structure', shortcut: '⌘⇧Y' },
 ];
 
 export function Sidebar() {

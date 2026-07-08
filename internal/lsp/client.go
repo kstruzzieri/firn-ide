@@ -34,6 +34,7 @@ var clientCapabilities = json.RawMessage(`{
 		},
 		"hover": {"contentFormat": ["markdown", "plaintext"]},
 		"definition": {},
+		"documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
 		"publishDiagnostics": {"versionSupport": true}
 	}
 }`)
@@ -278,6 +279,72 @@ func (c *Client) Definition(ctx context.Context, uri string, line, character int
 		locations = []Location{single}
 	}
 	return locations, nil
+}
+
+// DocumentSymbol sends a textDocument/documentSymbol request and returns the
+// file's symbols normalized to the hierarchical DocumentSymbol shape.
+func (c *Client) DocumentSymbol(ctx context.Context, uri string) ([]DocumentSymbol, error) {
+	params := DocumentSymbolParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+	}
+
+	var raw json.RawMessage
+	if err := c.call(ctx, "textDocument/documentSymbol", params, &raw); err != nil {
+		return nil, err
+	}
+	return normalizeDocumentSymbols(raw)
+}
+
+// normalizeDocumentSymbols converts a raw textDocument/documentSymbol result
+// into a slice of hierarchical DocumentSymbols.
+//
+// The LSP result is either DocumentSymbol[] (hierarchical, has selectionRange)
+// or the legacy SymbolInformation[] (flat, has location). We disambiguate by
+// inspecting the first element's keys: presence of "location" means the flat
+// shape, which we convert element-by-element into flat DocumentSymbols. An
+// empty array or JSON null yields an empty slice (not an error) — those are
+// valid "no symbols" responses.
+func normalizeDocumentSymbols(raw json.RawMessage) ([]DocumentSymbol, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
+	var elements []json.RawMessage
+	if err := json.Unmarshal(raw, &elements); err != nil {
+		return nil, fmt.Errorf("unmarshal documentSymbol result: %w", err)
+	}
+	if len(elements) == 0 {
+		return nil, nil
+	}
+
+	// Peek at the first element to decide which shape the server returned.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(elements[0], &probe); err != nil {
+		return nil, fmt.Errorf("unmarshal documentSymbol element: %w", err)
+	}
+
+	if _, isFlat := probe["location"]; isFlat {
+		symbols := make([]DocumentSymbol, 0, len(elements))
+		for _, el := range elements {
+			var info symbolInformation
+			if err := json.Unmarshal(el, &info); err != nil {
+				return nil, fmt.Errorf("unmarshal SymbolInformation: %w", err)
+			}
+			symbols = append(symbols, DocumentSymbol{
+				Name:           info.Name,
+				Kind:           info.Kind,
+				Range:          info.Location.Range,
+				SelectionRange: info.Location.Range,
+			})
+		}
+		return symbols, nil
+	}
+
+	var symbols []DocumentSymbol
+	if err := json.Unmarshal(raw, &symbols); err != nil {
+		return nil, fmt.Errorf("unmarshal DocumentSymbol[]: %w", err)
+	}
+	return symbols, nil
 }
 
 // Complete sends a textDocument/completion request.

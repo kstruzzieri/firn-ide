@@ -118,6 +118,10 @@ export function LSPDefinition(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPDefinition'](arg1, arg2, arg3);
 }
 
+export function LSPDocumentSymbol(arg1) {
+  return window['go']['main']['App']['LSPDocumentSymbol'](arg1);
+}
+
 export function LSPDidChange(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPDidChange'](arg1, arg2, arg3);
 }
