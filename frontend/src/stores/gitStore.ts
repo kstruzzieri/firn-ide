@@ -309,11 +309,13 @@ export const useGitStore = create<GitStore>()(
       },
 
       generateMessage: async () => {
-        await runOp('generate', get, set, async (root) => {
-          const message = await GitGenerateCommitMessage(root);
-          set({ commitMessage: message }, false, 'git/generatedMessage');
-          return null;
-        });
+        await runOp(
+          'generate',
+          get,
+          set,
+          (root) => GitGenerateCommitMessage(root),
+          (message) => ({ commitMessage: message ?? '', lastOpOutput: null })
+        );
       },
 
       probeAiAvailable: async () => {
@@ -446,10 +448,12 @@ async function runOp(
   op: GitOp,
   get: () => GitStore,
   set: (partial: Partial<GitState>, replace: false, name: string) => void,
-  fn: (root: string) => Promise<string | null>
+  fn: (root: string) => Promise<string | null>,
+  onSuccess?: (output: string | null) => Partial<GitState>
 ): Promise<boolean> {
-  const { root, opInFlight } = get();
+  const { root, opInFlight, epoch } = get();
   if (!root || opInFlight) return false;
+  const isCurrent = () => get().root === root && get().epoch === epoch;
   set(
     { opInFlight: op, lastError: null, lastOpOutput: null, lastCommitReceipt: null },
     false,
@@ -457,15 +461,21 @@ async function runOp(
   );
   try {
     const output = await fn(root);
-    set({ opInFlight: null, lastOpOutput: output }, false, `git/${op}Done`);
+    if (!isCurrent()) return false;
+    set(
+      { opInFlight: null, lastOpOutput: output, ...(onSuccess?.(output) ?? {}) },
+      false,
+      `git/${op}Done`
+    );
     return true;
   } catch (err) {
+    if (!isCurrent()) return false;
     const message = toErrorMessage(err);
     set({ opInFlight: null, lastError: message }, false, `git/${op}Failed`);
     useIDEStore.getState().showToast(`Git ${op} failed: ${message}`, 'error');
     return false;
   } finally {
-    void get().refresh();
+    if (isCurrent()) void get().refresh();
   }
 }
 

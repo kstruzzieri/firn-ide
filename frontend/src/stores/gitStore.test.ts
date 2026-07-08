@@ -213,6 +213,27 @@ describe('gitStore operations', () => {
     expect(useGitStore.getState().lastOpOutput).toContain('up to date');
   });
 
+  it('drops a mutating op result that resolves after a workspace switch', async () => {
+    let resolvePull!: (v: string) => void;
+    mockGitPull.mockReturnValue(
+      new Promise((res) => {
+        resolvePull = res;
+      })
+    );
+
+    const p = useGitStore.getState().pull();
+    expect(useGitStore.getState().opInFlight).toBe('pull');
+
+    useGitStore.getState().resetForWorkspace('/other');
+    mockGitStatus.mockClear();
+    resolvePull('Already up to date.');
+    await p;
+
+    expect(useGitStore.getState().lastOpOutput).toBeNull();
+    expect(useGitStore.getState().lastError).toBeNull();
+    expect(mockGitStatus).not.toHaveBeenCalled();
+  });
+
   it('pull conflict error lands in lastError for the panel', async () => {
     mockGitPull.mockRejectedValue(new Error('git pull: CONFLICT (content): a.ts'));
 

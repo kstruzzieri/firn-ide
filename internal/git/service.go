@@ -59,7 +59,7 @@ func (s *Service) Status(ctx context.Context, dir string) (RepoStatus, error) {
 		return RepoStatus{Files: []FileChange{}}, nil
 	}
 
-	out, err := s.run(ctx, dir, "status", "--porcelain=v2", "--branch", "-z")
+	out, err := s.run(ctx, dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z")
 	if err != nil {
 		return RepoStatus{}, err
 	}

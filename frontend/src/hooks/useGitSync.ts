@@ -18,9 +18,13 @@ export function useGitSync() {
     const git = useGitStore.getState();
     git.resetForWorkspace(workspacePath);
     if (workspacePath) {
-      void git.refresh();
-      void git.loadBranches();
-      void git.probeAiAvailable();
+      void (async () => {
+        await git.refresh();
+        const next = useGitStore.getState();
+        if (next.root !== workspacePath || !next.status?.isRepo) return;
+        void next.loadBranches();
+        void next.probeAiAvailable();
+      })();
     }
   }, [workspacePath]);
 

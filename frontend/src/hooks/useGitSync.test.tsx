@@ -56,6 +56,25 @@ describe('useGitSync', () => {
     expect(mockAvailable).toHaveBeenCalled();
   });
 
+  it('does not load branches when the active workspace is not a git repo', async () => {
+    mockGitStatus.mockResolvedValue({
+      ...repoStatus,
+      isRepo: false,
+      repoRoot: '',
+      branch: '',
+      files: [],
+    } as unknown as Awaited<ReturnType<typeof GitStatus>>);
+    act(() => {
+      useIDEStore.setState({ workspace: { name: 'plain', path: '/plain' } });
+    });
+
+    renderHook(() => useGitSync());
+    await act(async () => {});
+
+    expect(mockGitStatus).toHaveBeenCalledWith('/plain');
+    expect(mockGitBranches).not.toHaveBeenCalled();
+  });
+
   it('clears git state when there is no workspace', async () => {
     act(() => {
       useIDEStore.setState({ workspace: null });

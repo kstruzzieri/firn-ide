@@ -161,6 +161,22 @@ func TestService_Status_FromSubdirectory(t *testing.T) {
 	}
 }
 
+func TestService_Status_UntrackedDirectoryReportsFiles(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "nested/a.txt", "x\n")
+	svc := NewService()
+
+	got, err := svc.Status(ctx(), dir)
+
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if len(got.Files) != 1 || got.Files[0].Path != "nested/a.txt" {
+		t.Errorf("Files = %+v, want [nested/a.txt]", got.Files)
+	}
+}
+
 func TestService_StageAndUnstage(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
