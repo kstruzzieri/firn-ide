@@ -208,7 +208,7 @@ The roadmap includes a built-in AI assistant panel with:
 **Version Control (Git)**
 - [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
 - [x] Branch switcher shared between an always-visible header pill and the status bar
-- [x] Diff viewer — side-by-side and inline, next/prev change navigation, resizable columns, and a live diff against the open editor buffer
+- [x] Diff viewer — read-only side-by-side, next/prev change navigation, resizable columns, and a live diff against the open editor buffer
 - [x] Commit panel — per-file and section include checkboxes, stage/commit, pull/push (Publish when there is no upstream), workspace-scoped
 - [x] Gutter change bars with a peek popup — unified word-level inline diff and one-click revert-to-HEAD
 

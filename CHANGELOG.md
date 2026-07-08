@@ -18,7 +18,7 @@ hover was reworked to highlight and link like a full editor.
   colors via `--git-*` tokens) and the current branch in the status bar (#26).
 - Branch switcher shared between an always-visible header pill and the status
   bar, portaled to `document.body` so it is never clipped by panel stacking.
-- Diff viewer: side-by-side and inline views, next/previous change navigation
+- Diff viewer: read-only side-by-side view with next/previous change navigation
   (`F7` / `Shift+F7`), resizable columns, Open File, and a live diff against the
   open editor buffer that refreshes as you type.
 - Commit panel: per-file and section include checkboxes, collapse chevrons,
