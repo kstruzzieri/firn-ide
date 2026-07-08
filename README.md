@@ -205,9 +205,16 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Compound run profiles — sequential multi-step execution with per-step output and aggregate status
 - [x] First-class run execution identity — output, lifecycle, and status routed by execution-instance id
 
+**Version Control (Git)**
+- [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
+- [x] Branch switcher shared between an always-visible header pill and the status bar
+- [x] Diff viewer — side-by-side and inline, next/prev change navigation, resizable columns, and a live diff against the open editor buffer
+- [x] Commit panel — per-file and section include checkboxes, stage/commit, pull/push (Publish when there is no upstream), workspace-scoped
+- [x] Gutter change bars with a peek popup — unified word-level inline diff and one-click revert-to-HEAD
+
 ### Planned
 
-- [ ] Git integration — status display and basic operations (next milestone)
+- [ ] Git — hunk-level staging, intent-to-add for new files, richer branch menu, 3-way merge UI (#163-#169)
 - [ ] Managed provisioning Phase 3 — `gopls`, `tsserver`, `rust-analyzer` (Python shipped)
 - [ ] Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted history
 - [ ] AI Chat Panel

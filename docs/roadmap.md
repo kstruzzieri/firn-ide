@@ -28,7 +28,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 4: Run Profiles | **COMPLETE** | #16-17, #59-64 complete; #18/#71 Phase 1 (#123) + #71 P2 panel (#125) + P2 follow-ups/recency sidecar (#127) + #18 P3 header selector (#129) + lifecycle-script detection fix (#130) + #18 P4 create/edit form (#132) + UI polish (#133) + store persist rollback (#134) shipped → **#18/#71 closed**; LANES output #107 (#138) + #137 (#139) shipped; #103 run execution identity (#144) merged → epic complete |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
-| Milestone 7: Git Integration | Not started | #26-27 |
+| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); follow-ups #163-#169 |
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147) shipped; follow-ups #148/#149; #39 open |
 | Editor & LSP DX | **IN PROGRESS** | #113/#114 theme + #119 picker a11y; #112 Phase 1 env-wiring (#121) + Phase 2 managed provisioning (#150) shipped; per-file undo on tab switch #153 (#154) shipped; follow-ups #151/#152 |
 | Dependency Upgrades | **COMPLETE** | #40 |
@@ -41,7 +41,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Next Priorities
 
-Current status: **Three features merged to `develop` since Milestone 4 closed.** #112 Phase 2 — managed LSP server provisioning (PR #150, develop `b37d153`): pinned `basedpyright` provisioned into `~/.firn` with uv/poetry interpreter discovery, an interactive picker/Doctor, and offline/retry states; never mutates global env/PATH. #37 Phase 2 — file-tree lazy directory loading (PR #147, develop `ea52af7`): per-directory shallow reads on expand with surgical watcher reconcile, decoupling I/O cost from tree size. #153 — per-file undo history on tab switch (PR #154, develop `4b8357b`): one persistent `EditorView` with a per-file `EditorState` cache and `view.setState` on switch, so undo/redo/selection survive tab switches (JetBrains-style). **Git integration (Milestone 7) is now the only unstarted milestone and the next major target.** Open follow-ups: #151/#152 (LSP provisioning Phase 3 + polish), #148/#149 (lazy-load watcher + nested gitignore), #146 (run-identity Phase 2), #142 (workspace-colored tabs).
+Current status: **Milestone 7 (Git Integration) is complete and merged (PR #162, develop `eb43370`) — every planned milestone is now shipped.** Working-tree status in the file tree and status bar; a side-by-side and inline diff viewer with next/prev navigation, resizable columns, and a live editor-buffer diff; JetBrains-style commit panel with per-file include checkboxes, stage/commit/pull/push (Publish when there is no upstream), and workspace scoping via the ownership model; a portaled branch switcher shared between the header pill and the status bar; and gutter change bars with a peek popup showing a unified word-level inline diff and one-click revert-to-HEAD. The LSP hover was also reworked to highlight signatures with the file's real language parser (Go and all languages) and render doc links as clickable. Open Git follow-ups: **#163** hunk-level staging, **#164** 3-way merge UI, **#165** go-llm library integration (replace the golem shell-out), **#166** richer branch/VCS menu, **#167** intent-to-add for new files, **#169** editable diff. Other open follow-ups: #151/#152 (LSP provisioning Phase 3 + polish), #148/#149 (lazy-load watcher + nested gitignore), #146 (run-identity Phase 2), #142 (workspace-colored tabs), #168 (Structure view from document symbols).
 
 Earlier: **Milestone 4 (Run Profiles) closed — #103 run execution identity merged via PR #144.** The overloaded `profileId` string (which carried saved-config, compound-aggregate, compound-step, process-key, and event-routing meanings) is replaced by a first-class `RunIdentity{runInstanceId, profileId, parentRunInstanceId?, stepIdx}` embedded in every run event. The executor keys processes/compounds by a per-`Executor` monotonic `runInstanceId` and tracks `activeByProfile` (retiring the old `processAliases`); the synthetic `compound:<base64>:<idx>` step keys and their reserved-namespace validation are deleted; the frontend stores route output by explicit fields with a `runInstanceId`-based stale-drop/rotate rule (no namespace parsing). Documented Stop/Restart/Status semantics: an idle/unknown id is an idempotent no-op, terminal status is retained only for top-level runs. Phase 1 only — **Phase 2** (single-profile output/tabs/history re-keyed to `runInstanceId`, per-run retained tabs, same-profile parallelism, persisted run history) is a separate follow-up ticket. With the #18/#71 UI epic and LANES (#107/#137) already shipped, **Milestone 4 is complete**.
 
@@ -53,7 +53,7 @@ The **P2 panel (PR #125)** is a four-section working set (Working Set / Pinned /
 
 Earlier: **#112 Phase 1 (Python LSP environment auto-wiring) shipped via PR #121** — pyright now resolves imports/types in a standard `src`-layout uv/venv project with zero per-project config. New pure `internal/lsp/pythonenv` interpreter/venv detector; the client answers pyright's `workspace/configuration` pull (was replying `-32601` to all server requests — the root cause) and advertises the capability + `didChangeConfiguration`; a Manager-owned, dialect-agnostic `WorkspaceConfigProvider` forwards `pythonPath`/`venvPath`/`analysis.extraPaths`; raw server errors are replaced by a typed setup status + non-blocking `LSPSetupCard`. Earlier shipped: **editor theme system + diagnostic tooltip (#113/#114, PR #117)** with #119 picker focus polish, **terminal PTY-exhaustion actionable error (#116)**, **file-tree / tab-bar scrollbar fixes (#118)**. Milestone 3 (Workspace Management) complete; file-tree virtualization shipped (#37/#38, PR #111). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) deferred to its own spec.
 
-1. **Git integration (Milestone 7: #26 status display, #27 basic operations)** — the only unstarted milestone and the highest-value remaining gap for an IDE: working-tree status in the file tree + status bar, diffs, stage/unstage, commit, and branch display/switch. Greenfield; start with a brainstorming/spec pass.
+1. **Git integration follow-ups (Milestone 7 shipped via PR #162)** — deepen the just-shipped feature. Highest value: **#163** hunk-level staging in the diff viewer (backend patch + `git apply --cached`); then **#167** intent-to-add (`git add -N`) so new files diff, **#166** richer branch/VCS menu, **#169** editable diff, **#164** 3-way merge UI, and **#165** replacing the golem CLI shell-out with the go-llm library for the AI commit message (go-llm PR #262 is merged).
 2. **LSP managed provisioning follow-ups** (#112 Phase 2 shipped via PR #150) — **#151:** Phase 3 provisioning for `gopls`, `tsserver`, and `rust-analyzer` (the Python path is done). **#152:** polish — `configSource "override"` is never emitted so Reset-to-auto is dead UI; `RetryProvision` re-keys to the workspace root rather than the project root for nested monorepos; musllinux node wheels.
 3. **File-tree lazy-loading follow-ups** (#37 Phase 2 shipped via PR #147) — **#148:** lazy watcher reconcile; **#149:** nested `.gitignore` handling.
 4. **Run execution identity Phase 2** (#146; follow-up to #103) — re-key single-profile output/tabs/history by `runInstanceId`: per-run retained tabs, same-profile parallelism, persisted run history, and an internal execution-plan abstraction (`executionNode`) enabling retry/resume/parallel-group later. All five #103 acceptance criteria are already met by Phase 1; this is a capability upgrade, not a fix.
@@ -325,17 +325,22 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 
 ---
 
-## Milestone 7: Git Integration
+## Milestone 7: Git Integration (COMPLETE — PR #162)
 
-### #26: Git - Status Display
-- [ ] Show current branch in status bar
-- [ ] Color-code modified/added/deleted files in explorer
-- [ ] Refresh on file system changes
+### #26: Git - Status Display ✅
+- [x] Show current branch in status bar (and an always-visible header pill)
+- [x] Color-code modified/added/deleted/untracked files in explorer (`--git-*` tokens)
+- [x] Refresh on file system changes
 
-### #27: Git - Basic Operations
-- [ ] Stage/unstage files, commit with message
-- [ ] Pull/push, branch switching
-- [ ] Error handling for conflicts
+### #27: Git - Basic Operations ✅
+- [x] Stage/unstage files (per-file and section select-all), commit with message
+- [x] Pull/push, Publish for no-upstream, branch switching (portaled switcher)
+- [x] Diff viewer (side-by-side + inline, next/prev nav, live editor-buffer diff)
+- [x] Gutter change bars with peek popup: word-level inline diff + revert-to-HEAD
+- [x] Actionable messaging for a `core.bare=true` repo (not "not a git repository")
+
+Follow-ups: #163 hunk staging, #164 3-way merge, #165 go-llm library, #166 branch
+menu, #167 intent-to-add, #169 editable diff.
 
 ---
 
