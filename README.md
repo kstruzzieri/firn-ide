@@ -30,7 +30,25 @@ Each workspace has independent layout state, scoped language servers (only the a
 
 ## Install
 
-Download the latest build for your platform from the [Releases page](https://github.com/kstruzzieri/firn-ide/releases/latest).
+**Quick install** (macOS and Linux) — downloads the latest release and installs it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | sh
+```
+
+Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
+
+```bash
+# preview the resolved download URL and target dir without installing
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | FIRN_DRY_RUN=1 sh
+
+# pin a specific release instead of the latest
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | FIRN_VERSION=v0.10.0 sh
+```
+
+Windows users: use the manual zip below.
+
+Prefer to do it by hand? Download the latest build for your platform from the [Releases page](https://github.com/kstruzzieri/firn-ide/releases/latest).
 
 > **Preview builds are unsigned**, so macOS and Windows warn on first launch. The per-platform steps below get you past it.
 
