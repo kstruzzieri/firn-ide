@@ -59,12 +59,19 @@ class HunkMarker extends GutterMarker {
  * new-side start line. Returns nothing when there are no hunks (untracked,
  * binary, too-large, or clean diffs) so the pane stays plain.
  */
-export function hunkStagingGutter(hunks: git.Hunk[], context: DiffContext): Extension {
+export function hunkStagingGutter(
+  hunks: git.Hunk[],
+  context: DiffContext,
+  cleanContent?: string
+): Extension {
   if (hunks.length === 0) return [];
   return gutter({
     class: 'cm-hunkGutter',
     markers: (view: EditorView) => {
       const doc = view.state.doc;
+      // An editable pane can diverge from the git snapshot before its debounced
+      // save/refresh. Hide the old patch controls immediately in that window.
+      if (cleanContent !== undefined && doc.toString() !== cleanContent) return RangeSet.empty;
       const ranges = hunks
         .filter((h) => h.newStart >= 1 && h.newStart <= doc.lines)
         .map((h) => new HunkMarker(h, context).range(doc.line(h.newStart).from));

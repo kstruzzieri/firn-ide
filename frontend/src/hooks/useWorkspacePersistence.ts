@@ -290,7 +290,7 @@ function restoreActiveWorkspaceId(activeWorkspaceId: string): void {
  * - Restore on workspace switch (with correct flush of old workspace)
  * - Immediate flush on visibility change, blur, and app close
  */
-export function useWorkspacePersistence() {
+export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
   const workspace = useIDEStore((state) => state.workspace);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -457,13 +457,18 @@ export function useWorkspacePersistence() {
   useEffect(() => {
     const handleBeforeClose = async () => {
       try {
-        await flushSave(undefined, { includeTreeSnapshot: true });
-      } finally {
-        try {
-          await ConfirmBeforeCloseReady();
-        } catch (err) {
-          console.error('Failed to acknowledge app close:', err);
-        }
+        await Promise.all([
+          flushSave(undefined, { includeTreeSnapshot: true }),
+          beforeClose?.() ?? Promise.resolve(),
+        ]);
+      } catch (err) {
+        console.error('Failed to flush editor state before close:', err);
+        return; // let the backend deadline expire rather than approve data loss
+      }
+      try {
+        await ConfirmBeforeCloseReady();
+      } catch (err) {
+        console.error('Failed to acknowledge app close:', err);
       }
     };
 
@@ -471,7 +476,7 @@ export function useWorkspacePersistence() {
       void handleBeforeClose();
     });
     return cancel;
-  }, [flushSave]);
+  }, [beforeClose, flushSave]);
 
   // Cleanup timer on unmount
   useEffect(() => {

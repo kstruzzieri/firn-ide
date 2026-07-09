@@ -2,20 +2,28 @@
 // same reason CodeMirrorEditor has no direct render test). Mock the merge
 // module and verify the component's construction/teardown contract instead.
 const destroyMock = jest.fn();
-// The right pane exposes just enough of an EditorView for the reconcile/navigate
-// paths: a live doc string, a selection head, and a dispatch spy.
+let fakeSideBDoc = '';
+const fakeDispatch = jest.fn(
+  (transaction: { changes?: { from: number; to: number; insert: string } }) => {
+    if (!transaction.changes) return;
+    const { from, to, insert } = transaction.changes;
+    fakeSideBDoc = `${fakeSideBDoc.slice(0, from)}${insert}${fakeSideBDoc.slice(to)}`;
+  }
+);
 const fakeSideB = {
-  state: { doc: { toString: () => 'const a = 2;\n' }, selection: { main: { head: 0 } } },
-  hasFocus: false,
-  dispatch: jest.fn(),
+  state: { doc: { toString: () => fakeSideBDoc }, selection: { main: { head: 0 } } },
+  dispatch: (transaction: unknown) => fakeDispatch(transaction as never),
   focus: jest.fn(),
   requestMeasure: jest.fn(),
 };
-const mergeViewMock = jest.fn().mockImplementation(() => ({
-  destroy: destroyMock,
-  a: { state: {}, requestMeasure: jest.fn() },
-  b: fakeSideB,
-}));
+const mergeViewMock = jest.fn().mockImplementation((config: { b: { doc: string } }) => {
+  fakeSideBDoc = config.b.doc;
+  return {
+    destroy: destroyMock,
+    a: { state: {}, requestMeasure: jest.fn() },
+    b: fakeSideB,
+  };
+});
 const goToNextChunkMock = jest.fn((_arg?: unknown) => true);
 const goToPreviousChunkMock = jest.fn((_arg?: unknown) => true);
 const getChunksMock = jest.fn((_arg?: unknown) => ({ chunks: [{}, {}], side: null }));
@@ -27,13 +35,18 @@ jest.mock('@codemirror/merge', () => ({
   getChunks: (arg: unknown) => getChunksMock(arg),
 }));
 const gutterMock = jest.fn((_config?: unknown) => ({ __gutter: true }));
+let mockEditListener: ((update: unknown) => void) | null = null;
+const mockUpdateListenerOf = jest.fn((callback: (update: unknown) => void) => {
+  mockEditListener = callback;
+  return 'EDIT_LISTENER';
+});
 // Distinct tokens so a pane's extension array reveals its wiring: read-only
 // panes carry EDITABLE_FALSE + READONLY, the editable working-tree pane carries
 // EDIT_LISTENER instead.
 jest.mock('@codemirror/view', () => ({
   EditorView: {
     editable: { of: jest.fn(() => 'EDITABLE_FALSE') },
-    updateListener: { of: jest.fn(() => 'EDIT_LISTENER') },
+    updateListener: { of: (callback: (update: unknown) => void) => mockUpdateListenerOf(callback) },
     scrollIntoView: jest.fn(() => 'SCROLL_EFFECT'),
     lineWrapping: {},
   },
@@ -43,17 +56,16 @@ jest.mock('@codemirror/view', () => ({
   GutterMarker: class {},
 }));
 jest.mock('@codemirror/state', () => ({
+  Annotation: { define: jest.fn(() => ({ of: jest.fn(() => 'EXTERNAL_DOC_UPDATE') })) },
   EditorState: { readOnly: { of: jest.fn(() => 'READONLY') } },
   RangeSet: { of: jest.fn() },
-  // The gutter compartment: .of passes the extension straight through (so the
-  // gutter still appears in the pane's extension array), .reconfigure yields a
-  // sentinel effect the reconcile test can look for.
+  Transaction: { addToHistory: { of: jest.fn(() => 'NO_HISTORY') } },
   Compartment: class {
-    of(ext: unknown) {
-      return ext;
+    of(extension: unknown) {
+      return extension;
     }
-    reconfigure(ext: unknown) {
-      return { __reconfigure: ext };
+    reconfigure(extension: unknown) {
+      return { __reconfigure: extension };
     }
   },
 }));
@@ -61,7 +73,7 @@ jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
   getLanguageExtension: jest.fn(() => null),
 }));
-const mockEnsureOpen = jest.fn();
+const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureOpen(...args),
 }));
@@ -85,9 +97,14 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   WriteFile: jest.fn(),
 }));
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GitDiffView } from '../../../components/Editor/GitDiffView';
 import { useGitStore, type DiffSession } from '../../../stores/gitStore';
+import { useIDEStore } from '../../../stores/ideStore';
+import { WriteFile } from '../../../../wailsjs/go/main/App';
+import { flushWorkingTreeEdit } from '../../../utils/fileWrites';
+
+const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
 
 const base: DiffSession = {
   path: 'src/a.ts',
@@ -98,10 +115,15 @@ const base: DiffSession = {
   binary: false,
   truncated: false,
   hunks: [],
+  worktreeEncoding: 'utf-8',
+  worktreeLineEndings: 'lf',
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockEditListener = null;
+  mockWriteFile.mockResolvedValue(undefined);
+  useIDEStore.setState({ openFiles: [] });
 });
 
 describe('GitDiffView', () => {
@@ -117,13 +139,13 @@ describe('GitDiffView', () => {
     expect(config.parent).toBe(screen.getByTestId('merge-host'));
   });
 
-  it('opens the working-tree file and yields the diff via Open File', () => {
+  it('opens the working-tree file and yields the diff via Open File', async () => {
     useGitStore.setState({ diffFocused: true });
     render(<GitDiffView session={base} />);
 
     fireEvent.click(screen.getByRole('button', { name: /open file/i }));
 
-    expect(mockEnsureOpen).toHaveBeenCalledWith('/repo/src/a.ts');
+    await waitFor(() => expect(mockEnsureOpen).toHaveBeenCalledWith('/repo/src/a.ts'));
     expect(useGitStore.getState().diffFocused).toBe(false);
   });
 
@@ -135,45 +157,27 @@ describe('GitDiffView', () => {
     expect(destroyMock).toHaveBeenCalledTimes(1);
   });
 
-  it('reconciles working-tree content in place instead of rebuilding (keeps cursor)', () => {
+  it('reconciles working-tree content in place so cursor and scroll survive', () => {
     const { rerender } = render(<GitDiffView session={base} />);
 
-    // A save-driven refresh brings new working-tree content for the same file.
     rerender(
       <GitDiffView
         session={{ ...base, right: { label: 'Working Tree', content: 'const a = 3;\n' } }}
       />
     );
 
-    // No teardown: the editable pane's cursor/scroll survive.
-    expect(mergeViewMock).toHaveBeenCalledTimes(1);
     expect(destroyMock).not.toHaveBeenCalled();
-    // Content is reconciled into the live pane via a dispatch.
-    expect(fakeSideB.dispatch).toHaveBeenCalledWith({
-      changes: { from: 0, to: 'const a = 2;\n'.length, insert: 'const a = 3;\n' },
-    });
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(fakeSideBDoc).toBe('const a = 3;\n');
+    expect(fakeDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.anything(),
+        annotations: ['NO_HISTORY', 'EXTERNAL_DOC_UPDATE'],
+      })
+    );
   });
 
-  it('does not overwrite the pane while the user is typing in it (focused)', () => {
-    fakeSideB.hasFocus = true;
-    try {
-      const { rerender } = render(<GitDiffView session={base} />);
-
-      rerender(
-        <GitDiffView
-          session={{ ...base, right: { label: 'Working Tree', content: 'external\n' } }}
-        />
-      );
-
-      expect(fakeSideB.dispatch).not.toHaveBeenCalledWith(
-        expect.objectContaining({ changes: expect.anything() })
-      );
-    } finally {
-      fakeSideB.hasFocus = false;
-    }
-  });
-
-  it('rebuilds when a structural field changes (index/HEAD content)', () => {
+  it('rebuilds when a structural field changes', () => {
     const { rerender } = render(<GitDiffView session={base} />);
 
     rerender(<GitDiffView session={{ ...base, left: { label: 'Index', content: 'changed\n' } }} />);
@@ -182,27 +186,138 @@ describe('GitDiffView', () => {
     expect(mergeViewMock).toHaveBeenCalledTimes(2);
   });
 
-  it('reconfigures the hunk gutter in place when the hunk set changes', () => {
+  it('preserves newer in-view text when a stale refresh session arrives', async () => {
     const { rerender } = render(<GitDiffView session={base} />);
+    fakeSideBDoc = 'const a = 20;\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
 
     rerender(
-      <GitDiffView session={{ ...base, hunks: [{ patch: 'P', newStart: 1, newLines: 1 }] }} />
+      <GitDiffView
+        session={{ ...base, right: { label: 'Working Tree', content: 'const a = 3;\n' } }}
+      />
     );
 
-    // Same session file/content → no rebuild; the gutter is swapped via dispatch.
     expect(mergeViewMock).toHaveBeenCalledTimes(1);
-    expect(fakeSideB.dispatch).toHaveBeenCalledWith({
-      effects: { __reconfigure: { __gutter: true } },
-    });
+    expect(fakeSideBDoc).toBe('const a = 20;\n');
+    await flushWorkingTreeEdit(base.absPath);
   });
 
-  it('centers the landed chunk when cycling differences', () => {
-    render(<GitDiffView session={base} />);
+  it('preserves an explicit undo when a stale refresh contains the intermediate edit', async () => {
+    const { rerender } = render(<GitDiffView session={base} />);
+    fakeSideBDoc = 'const a = 20;\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
+    fakeSideBDoc = base.right.content;
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
 
-    fireEvent.click(screen.getByRole('button', { name: /next difference/i }));
+    rerender(
+      <GitDiffView
+        session={{ ...base, right: { label: 'Working Tree', content: 'const a = 20;\n' } }}
+      />
+    );
 
-    expect(goToNextChunkMock).toHaveBeenCalled();
-    expect(fakeSideB.dispatch).toHaveBeenCalledWith({ effects: 'SCROLL_EFFECT' });
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(fakeSideBDoc).toBe(base.right.content);
+    await flushWorkingTreeEdit(base.absPath);
+  });
+
+  it('accepts a newer external session after the local disk write is acknowledged', async () => {
+    const { rerender } = render(<GitDiffView session={base} />);
+    fakeSideBDoc = 'const a = 20;\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
+    await flushWorkingTreeEdit(base.absPath);
+
+    rerender(
+      <GitDiffView
+        session={{ ...base, right: { label: 'Working Tree', content: 'external change\n' } }}
+      />
+    );
+
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(fakeSideBDoc).toBe('external change\n');
+  });
+
+  it('accepts a newer external session after routing an edit through an open buffer', () => {
+    useIDEStore.setState({
+      openFiles: [
+        {
+          id: base.absPath,
+          path: base.absPath,
+          name: 'a.ts',
+          language: 'TypeScript',
+          encoding: 'utf-8',
+          lineEndings: 'lf',
+          content: base.right.content,
+          isModified: false,
+        },
+      ],
+    });
+    const { rerender } = render(<GitDiffView session={base} />);
+    fakeSideBDoc = 'const a = 20;\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
+
+    rerender(
+      <GitDiffView
+        session={{ ...base, right: { label: 'Working Tree', content: 'external change\n' } }}
+      />
+    );
+
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(fakeSideBDoc).toBe('external change\n');
+  });
+
+  it('ignores a slow save acknowledgement from a previously viewed diff', async () => {
+    const { rerender } = render(<GitDiffView session={base} />);
+    fakeSideBDoc = 'A edit\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
+
+    const second = {
+      ...base,
+      path: 'src/b.ts',
+      absPath: '/repo/src/b.ts',
+      right: { label: 'Working Tree', content: 'B baseline\n' },
+    };
+    rerender(<GitDiffView session={second} />);
+    fakeSideBDoc = 'B edit\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
+
+    await flushWorkingTreeEdit(base.absPath);
+    rerender(
+      <GitDiffView
+        session={{ ...second, right: { label: 'Working Tree', content: 'B stale\n' } }}
+      />
+    );
+
+    expect(mergeViewMock).toHaveBeenCalledTimes(2);
+    expect(fakeSideBDoc).toBe('B edit\n');
+    await flushWorkingTreeEdit(second.absPath);
   });
 
   it('shows the difference count and next/previous navigation', () => {
@@ -213,6 +328,7 @@ describe('GitDiffView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /next difference/i }));
     expect(goToNextChunkMock).toHaveBeenCalled();
+    expect(fakeDispatch).toHaveBeenCalledWith({ effects: 'SCROLL_EFFECT' });
 
     fireEvent.click(screen.getByRole('button', { name: /previous difference/i }));
     expect(goToPreviousChunkMock).toHaveBeenCalled();
@@ -267,6 +383,19 @@ describe('GitDiffView', () => {
     const config = mergeViewMock.mock.calls[0][0];
     expect(config.b.extensions).toContainEqual({ __gutter: true });
     expect(config.a.extensions).not.toContainEqual({ __gutter: true });
+  });
+
+  it('reconfigures the hunk gutter in place when the hunk set changes', () => {
+    const { rerender } = render(<GitDiffView session={base} />);
+
+    rerender(
+      <GitDiffView session={{ ...base, hunks: [{ patch: 'P', newStart: 1, newLines: 1 }] }} />
+    );
+
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(fakeDispatch).toHaveBeenCalledWith({
+      effects: { __reconfigure: { __gutter: true } },
+    });
   });
 
   it('makes only the working-tree (right) pane editable in an unstaged diff', () => {

@@ -32,6 +32,7 @@ import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
 import { isDirVisible } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
 import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
+import { flushAllFileEdits } from './utils/fileWrites';
 
 function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
@@ -39,7 +40,7 @@ function App() {
   const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useAutosave();
-  useWorkspacePersistence();
+  useWorkspacePersistence(flushAllFileEdits);
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
@@ -131,8 +132,8 @@ function App() {
   useFileWatcher(workspace?.path ?? null, handleFileChange);
 
   useEffect(() => {
+    const timers = reconcileTimersRef.current;
     return () => {
-      const timers = reconcileTimersRef.current;
       timers.forEach((t) => clearTimeout(t));
       timers.clear();
     };

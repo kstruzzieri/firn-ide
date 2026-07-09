@@ -9,6 +9,7 @@
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
 import { ReadFile } from '../../wailsjs/go/main/App';
 import { createEditorFile } from './editorFile';
+import { flushWorkingTreeEdit } from './fileWrites';
 import { getFileNameFromPath, pathsReferToSameFile, toNativeLocalPath } from './lspUri';
 
 interface EditorNavigationOptions {
@@ -28,6 +29,12 @@ export async function ensureEditorFileOpen(
   options?: EditorNavigationOptions
 ): Promise<EditorFile | null> {
   const localPath = toNativeLocalPath(path);
+
+  try {
+    await flushWorkingTreeEdit(localPath);
+  } catch {
+    return null; // the pending write already surfaced its save error
+  }
 
   // Already open — just activate and return
   const existing = useIDEStore

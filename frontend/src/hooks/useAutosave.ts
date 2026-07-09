@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
-import { WriteFile } from '../../wailsjs/go/main/App';
 import { isMac } from '../utils/platform';
+import { writeFileSerialized } from '../utils/fileWrites';
 
 const AUTOSAVE_DELAY = 1500;
 
@@ -13,17 +13,25 @@ export function useAutosave() {
   const saveFile = useCallback(async (fileId: string) => {
     if (savingFiles.current.has(fileId)) return;
 
-    const file = useIDEStore.getState().openFiles.find((f) => f.id === fileId);
-    if (!file || !file.isModified) return;
+    let file = useIDEStore.getState().openFiles.find((f) => f.id === fileId);
+    if (!file?.isModified) return;
+    const fileName = file.name;
 
     savingFiles.current.add(fileId);
 
     try {
-      await WriteFile(file.path, file.content, file.encoding, file.lineEndings, false);
-      useIDEStore.getState().setFileModified(fileId, false);
+      while (file?.isModified) {
+        const savedContent = file.content;
+        await writeFileSerialized(file.path, savedContent, file.encoding, file.lineEndings, false);
+        file = useIDEStore.getState().openFiles.find((f) => f.id === fileId);
+        if (!file || file.content === savedContent) {
+          if (file) useIDEStore.getState().setFileModified(fileId, false);
+          return;
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      useIDEStore.getState().showToast(`Failed to save ${file.name}: ${message}`, 'error');
+      useIDEStore.getState().showToast(`Failed to save ${fileName}: ${message}`, 'error');
     } finally {
       savingFiles.current.delete(fileId);
     }
@@ -59,7 +67,7 @@ export function useAutosave() {
   const saveFileData = useCallback(async (file: EditorFile) => {
     if (!file.isModified) return;
     try {
-      await WriteFile(file.path, file.content, file.encoding, file.lineEndings, false);
+      await writeFileSerialized(file.path, file.content, file.encoding, file.lineEndings, false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       useIDEStore.getState().showToast(`Failed to save ${file.name}: ${message}`, 'error');

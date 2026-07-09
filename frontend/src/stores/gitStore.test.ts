@@ -137,6 +137,7 @@ describe('gitStore refresh', () => {
 
 describe('gitStore operations', () => {
   beforeEach(() => {
+    useIDEStore.setState({ openFiles: [], toast: null });
     mockGitStatus.mockResolvedValue(repoStatus());
   });
 
@@ -314,6 +315,9 @@ describe('gitStore diff sessions', () => {
     mockApplyHunk.mockResolvedValue(undefined);
     mockReadFile.mockResolvedValue({
       content: 'worktree text',
+      encoding: 'utf-8',
+      lineEndings: 'lf',
+      isBinary: false,
     } as Awaited<ReturnType<typeof ReadFile>>);
   });
 
@@ -347,7 +351,15 @@ describe('gitStore diff sessions', () => {
     // neither line up with nor stage what's on screen, so no per-hunk buttons.
     useIDEStore.setState({
       openFiles: [
-        { id: 'f', path: '/repo/src/a.ts', name: 'a.ts', content: 'unsaved\n', isModified: true },
+        {
+          id: 'f',
+          path: '/repo/src/a.ts',
+          name: 'a.ts',
+          content: 'unsaved\n',
+          encoding: 'utf-8',
+          lineEndings: 'lf',
+          isModified: true,
+        },
       ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
     });
     mockFileAtRev.mockResolvedValueOnce(rev('index text'));
@@ -364,7 +376,15 @@ describe('gitStore diff sessions', () => {
   it('still fetches hunks when the open file is saved (buffer matches disk)', async () => {
     useIDEStore.setState({
       openFiles: [
-        { id: 'f', path: '/repo/src/a.ts', name: 'a.ts', content: 'saved\n', isModified: false },
+        {
+          id: 'f',
+          path: '/repo/src/a.ts',
+          name: 'a.ts',
+          content: 'saved\n',
+          encoding: 'utf-8',
+          lineEndings: 'lf',
+          isModified: false,
+        },
       ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
     });
     mockFileAtRev.mockResolvedValueOnce(rev('index text'));
@@ -485,6 +505,33 @@ describe('gitStore diff sessions', () => {
     expect(session?.worktreeLineEndings).toBe('crlf');
   });
 
+  it('does not reuse a session when only persistence metadata changed', async () => {
+    mockFileAtRev.mockResolvedValue(rev('index text'));
+    mockReadFile.mockResolvedValueOnce({
+      content: 'same text',
+      encoding: 'utf-8',
+      lineEndings: 'lf',
+      isBinary: false,
+    } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+    const first = useGitStore.getState().diffSession;
+
+    mockReadFile.mockResolvedValueOnce({
+      content: 'same text',
+      encoding: 'utf-16le',
+      lineEndings: 'crlf',
+      isBinary: false,
+    } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(useGitStore.getState().diffSession).not.toBe(first);
+    expect(useGitStore.getState().diffSession?.worktreeEncoding).toBe('utf-16le');
+  });
+
   it('leaves working-tree encoding unset for a staged diff (its right side is read-only)', async () => {
     mockFileAtRev.mockResolvedValueOnce(rev('head')).mockResolvedValueOnce(rev('index'));
 
@@ -507,6 +554,8 @@ describe('gitStore diff sessions', () => {
           path: '/repo/src/a.ts',
           name: 'a.ts',
           content: 'live editor edits\n',
+          encoding: 'utf-16le',
+          lineEndings: 'crlf',
           isModified: true,
         },
       ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
@@ -518,6 +567,8 @@ describe('gitStore diff sessions', () => {
       .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
 
     expect(useGitStore.getState().diffSession?.right.content).toBe('live editor edits\n');
+    expect(useGitStore.getState().diffSession?.worktreeEncoding).toBe('utf-16le');
+    expect(useGitStore.getState().diffSession?.worktreeLineEndings).toBe('crlf');
     expect(mockReadFile).not.toHaveBeenCalled();
     useIDEStore.setState({ openFiles: [] });
   });
@@ -529,7 +580,15 @@ describe('gitStore diff sessions', () => {
     const openFile = (content: string) =>
       useIDEStore.setState({
         openFiles: [
-          { id: 'f', path: '/repo/src/a.ts', name: 'a.ts', content, isModified: true },
+          {
+            id: 'f',
+            path: '/repo/src/a.ts',
+            name: 'a.ts',
+            content,
+            encoding: 'utf-8',
+            lineEndings: 'lf',
+            isModified: true,
+          },
         ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
       });
     mockFileAtRev.mockResolvedValue(rev('index text'));
@@ -661,18 +720,56 @@ describe('gitStore diff sessions', () => {
     expect(useGitStore.getState().diffSession?.binary).toBe(true);
   });
 
-  it('a worktree read failure means a deleted file and diffs against empty', async () => {
+  it('a deleted worktree file stays an empty read-only snapshot', async () => {
     mockFileAtRev.mockResolvedValueOnce(rev('index text'));
-    mockReadFile.mockRejectedValue(new Error('no such file'));
 
     await useGitStore
       .getState()
       .openDiff({ path: 'gone.ts', index: '.', worktree: 'D' }, 'unstaged');
 
+    expect(mockReadFile).not.toHaveBeenCalled();
     expect(useGitStore.getState().diffSession?.right).toEqual({
       label: 'Working Tree',
       content: '',
     });
+    expect(useGitStore.getState().diffSession?.worktreeEncoding).toBeUndefined();
+    expect(useGitStore.getState().diffSession?.worktreeLineEndings).toBeUndefined();
+  });
+
+  it('does not expose an editable empty pane when a non-deleted file cannot be read', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+    mockReadFile.mockRejectedValue(new Error('permission denied'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'private.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(useGitStore.getState().diffSession).toBeNull();
+    expect(useIDEStore.getState().toast?.message).toContain('permission denied');
+  });
+
+  it('drops an older diff request that resolves after a newer one', async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof GitFileAtRev>>) => void;
+    mockFileAtRev
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        })
+      )
+      .mockResolvedValueOnce(rev('new index'));
+
+    const oldRequest = useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+    const newRequest = useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+    await newRequest;
+
+    resolveOld(rev('old index'));
+    await oldRequest;
+
+    expect(useGitStore.getState().diffSession?.left.content).toBe('new index');
   });
 
   it('closeDiff clears the session and focus', async () => {

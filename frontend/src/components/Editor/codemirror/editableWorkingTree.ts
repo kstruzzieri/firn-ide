@@ -11,18 +11,12 @@
  */
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
-import { WriteFile } from '../../../../wailsjs/go/main/App';
-import { useIDEStore } from '../../../stores/ideStore';
 import type { DiffSession } from '../../../stores/gitStore';
-import { pathsReferToSameFile } from '../../../utils/lspUri';
+import { queueWorkingTreeEdit } from '../../../utils/fileWrites';
+import { externalDocUpdate } from './reconcileDoc';
 
-/** Debounce for the disk-write path so typing doesn't hammer the filesystem
- * (and the watcher-driven git refresh) on every keystroke. The open-buffer path
- * is already debounced by autosave. Keyed by path (not a single timer): the
- * debounce outlives the view, so switching diffs before a pending write fires
- * must not drop the previous file's edit. */
-const DISK_WRITE_DEBOUNCE_MS = 400;
-const diskWriteTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const WRITABLE_ENCODINGS = new Set(['utf-8', 'utf-8-bom', 'utf-16le', 'utf-16be']);
+const WRITABLE_LINE_ENDINGS = new Set(['lf', 'crlf', 'none']);
 
 /**
  * Whether the working-tree (right) pane of this diff is editable: only an
@@ -30,7 +24,13 @@ const diskWriteTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * too-large diffs stay read-only on both sides.
  */
 export function isWorkingTreeEditable(session: DiffSession): boolean {
-  return session.context === 'unstaged' && !session.binary && !session.truncated;
+  return (
+    session.context === 'unstaged' &&
+    !session.binary &&
+    !session.truncated &&
+    WRITABLE_ENCODINGS.has(session.worktreeEncoding ?? '') &&
+    WRITABLE_LINE_ENDINGS.has(session.worktreeLineEndings ?? '')
+  );
 }
 
 /**
@@ -39,41 +39,24 @@ export function isWorkingTreeEditable(session: DiffSession): boolean {
  * single source of truth — autosave then debounces the write to disk and the
  * FS-watcher-driven git refresh repaints the diff.
  */
-export function persistWorkingTreeEdit(session: DiffSession, content: string): void {
-  const openFile = useIDEStore
-    .getState()
-    .openFiles.find((f) => pathsReferToSameFile(f.path, session.absPath));
-  if (openFile) {
-    // A rebuilt merge view re-emits its initial doc as a change; ignore edits
-    // that match the buffer so a saved file is not needlessly marked dirty.
-    if (openFile.content === content) return;
-    useIDEStore.getState().updateFileContent(openFile.id, content);
-    return;
-  }
-
-  // File not open in the editor: write straight to disk, preserving the
-  // working-tree file's detected encoding/line endings. Debounced so a burst of
-  // keystrokes yields one write; the FS-watcher-driven git refresh then re-reads
-  // disk and repaints the diff, so no explicit refresh is needed here.
-  const { absPath, path, worktreeEncoding, worktreeLineEndings } = session;
-  const existing = diskWriteTimers.get(absPath);
-  if (existing) clearTimeout(existing);
-  diskWriteTimers.set(
-    absPath,
-    setTimeout(() => {
-      diskWriteTimers.delete(absPath);
-      void WriteFile(
-        absPath,
-        content,
-        worktreeEncoding ?? 'utf-8',
-        worktreeLineEndings ?? '',
-        false
-      ).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        useIDEStore.getState().showToast(`Failed to save ${path}: ${message}`, 'error');
-      });
-    }, DISK_WRITE_DEBOUNCE_MS)
-  );
+export function persistWorkingTreeEdit(
+  session: DiffSession,
+  content: string,
+  onSaved?: () => void
+): void {
+  // The shared queue routes to an open buffer when present, otherwise to a
+  // debounced, per-path serialized disk write.
+  const encoding = session.worktreeEncoding;
+  const lineEndings = session.worktreeLineEndings;
+  if (encoding === undefined || lineEndings === undefined) return;
+  queueWorkingTreeEdit({
+    absPath: session.absPath,
+    displayPath: session.path,
+    content,
+    encoding,
+    lineEndings,
+    onSaved,
+  });
 }
 
 /**
@@ -82,10 +65,18 @@ export function persistWorkingTreeEdit(session: DiffSession, content: string): v
  * (see isWorkingTreeEditable). Non-doc updates (scroll, selection, folding) are
  * ignored so only real edits write back.
  */
-export function workingTreeEditListener(session: DiffSession): Extension {
+export function workingTreeEditListener(
+  session: DiffSession,
+  onEdit?: () => void,
+  onSaved?: () => void
+): Extension {
   return EditorView.updateListener.of((update: ViewUpdate) => {
-    if (update.docChanged) {
-      persistWorkingTreeEdit(session, update.state.doc.toString());
+    const externallyReconciled = update.transactions.some(
+      (transaction) => transaction.annotation(externalDocUpdate) === true
+    );
+    if (update.docChanged && !externallyReconciled) {
+      onEdit?.();
+      persistWorkingTreeEdit(session, update.state.doc.toString(), onSaved);
     }
   });
 }

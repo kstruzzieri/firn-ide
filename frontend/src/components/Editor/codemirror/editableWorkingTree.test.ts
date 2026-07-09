@@ -5,6 +5,11 @@
 jest.mock('@codemirror/view', () => ({
   EditorView: { updateListener: { of: (cb: unknown) => ({ __listener: cb }) } },
 }));
+const mockExternalDocUpdate = { of: jest.fn(() => 'EXTERNAL_DOC_UPDATE') };
+jest.mock('@codemirror/state', () => ({
+  Annotation: { define: () => mockExternalDocUpdate },
+  Transaction: { addToHistory: { of: jest.fn(() => 'NO_HISTORY') } },
+}));
 jest.mock('../../../../wailsjs/go/main/App', () => ({ WriteFile: jest.fn() }));
 
 import {
@@ -12,6 +17,7 @@ import {
   persistWorkingTreeEdit,
   workingTreeEditListener,
 } from './editableWorkingTree';
+import { flushWorkingTreeEdit, writeFileSerialized } from '../../../utils/fileWrites';
 import type { DiffSession } from '../../../stores/gitStore';
 import { useIDEStore, type EditorFile } from '../../../stores/ideStore';
 import { WriteFile } from '../../../../wailsjs/go/main/App';
@@ -44,6 +50,8 @@ const session = (over: Partial<DiffSession> = {}): DiffSession => ({
   binary: false,
   truncated: false,
   hunks: [],
+  worktreeEncoding: 'utf-8',
+  worktreeLineEndings: 'lf',
   ...over,
 });
 
@@ -62,6 +70,19 @@ describe('isWorkingTreeEditable', () => {
 
   it('a too-large diff is read-only', () => {
     expect(isWorkingTreeEditable(session({ truncated: true }))).toBe(false);
+  });
+
+  it('stays read-only when persistence metadata is unavailable', () => {
+    expect(
+      isWorkingTreeEditable(
+        session({ worktreeEncoding: undefined, worktreeLineEndings: undefined })
+      )
+    ).toBe(false);
+  });
+
+  it('stays read-only for formats the writer cannot round-trip', () => {
+    expect(isWorkingTreeEditable(session({ worktreeEncoding: 'latin-1' }))).toBe(false);
+    expect(isWorkingTreeEditable(session({ worktreeLineEndings: 'mixed' }))).toBe(false);
   });
 });
 
@@ -113,7 +134,7 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     );
   });
 
-  it('collapses rapid edits into a single trailing write and defaults encoding to utf-8', () => {
+  it('collapses rapid edits into a single trailing write', () => {
     mockWriteFile.mockResolvedValue(undefined);
     const s = session();
 
@@ -123,7 +144,7 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     jest.runOnlyPendingTimers();
 
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
-    expect(mockWriteFile).toHaveBeenCalledWith('/repo/src/a.ts', 'abc', 'utf-8', '', false);
+    expect(mockWriteFile).toHaveBeenCalledWith('/repo/src/a.ts', 'abc', 'utf-8', 'lf', false);
   });
 
   it('debounces per file so switching diffs before a write fires never drops an edit', () => {
@@ -135,11 +156,110 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     jest.runOnlyPendingTimers();
 
     expect(mockWriteFile).toHaveBeenCalledTimes(2);
-    expect(mockWriteFile).toHaveBeenCalledWith('/repo/a.ts', 'A edit', 'utf-8', '', false);
-    expect(mockWriteFile).toHaveBeenCalledWith('/repo/b.ts', 'B edit', 'utf-8', '', false);
+    expect(mockWriteFile).toHaveBeenCalledWith('/repo/a.ts', 'A edit', 'utf-8', 'lf', false);
+    expect(mockWriteFile).toHaveBeenCalledWith('/repo/b.ts', 'B edit', 'utf-8', 'lf', false);
   });
 
-  it('surfaces a toast when the disk write fails so the edit is not silently lost', async () => {
+  it('flushes immediately before the full editor reads the file', async () => {
+    mockWriteFile.mockResolvedValue(undefined);
+
+    persistWorkingTreeEdit(session(), 'latest');
+    await flushWorkingTreeEdit('/repo/src/a.ts');
+
+    expect(mockWriteFile).toHaveBeenCalledWith('/repo/src/a.ts', 'latest', 'utf-8', 'lf', false);
+  });
+
+  it('serializes writes so an older slow write cannot finish after a newer edit', async () => {
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    mockWriteFile
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSecond = resolve;
+          })
+      );
+
+    persistWorkingTreeEdit(session(), 'first');
+    jest.runOnlyPendingTimers();
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+
+    persistWorkingTreeEdit(session(), 'second');
+    jest.runOnlyPendingTimers();
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+
+    resolveFirst();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockWriteFile.mock.calls[1][1]).toBe('second');
+
+    resolveSecond();
+    await Promise.resolve();
+  });
+
+  it('serializes a full-editor save behind an in-flight diff write', async () => {
+    let resolveDiff!: () => void;
+    let resolveEditor!: () => void;
+    mockWriteFile
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDiff = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveEditor = resolve;
+          })
+      );
+
+    const windowsSession = session({
+      absPath: 'C:/repo/src/a.ts',
+      path: 'src/a.ts',
+    });
+    persistWorkingTreeEdit(windowsSession, 'diff content');
+    jest.runOnlyPendingTimers();
+    const diffWrite = flushWorkingTreeEdit('C:\\repo\\src\\a.ts');
+    const editorWrite = writeFileSerialized(
+      'C:\\repo\\src\\a.ts',
+      'newer editor content',
+      'utf-8',
+      'lf',
+      false
+    );
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+
+    resolveDiff();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockWriteFile.mock.calls[1][1]).toBe('newer editor content');
+
+    resolveEditor();
+    await Promise.all([diffWrite, editorWrite]);
+  });
+
+  it('reroutes a pending disk edit into a buffer opened during the debounce', async () => {
+    persistWorkingTreeEdit(session(), 'diff edit');
+    useIDEStore.setState({ openFiles: [openFile({ content: 'stale disk content' })] });
+
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().openFiles[0].content).toBe('diff edit');
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(true);
+  });
+
+  it('surfaces a toast and retains the latest edit for retry when a write fails', async () => {
     const showToast = jest.fn();
     const original = useIDEStore.getState().showToast;
     useIDEStore.setState({ showToast });
@@ -152,6 +272,18 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
       await Promise.resolve();
 
       expect(showToast).toHaveBeenCalledWith(expect.stringContaining('disk full'), 'error');
+
+      mockWriteFile.mockResolvedValue(undefined);
+      persistWorkingTreeEdit(session(), 'retry');
+      jest.runOnlyPendingTimers();
+      await Promise.resolve();
+      expect(mockWriteFile).toHaveBeenLastCalledWith(
+        '/repo/src/a.ts',
+        'retry',
+        'utf-8',
+        'lf',
+        false
+      );
     } finally {
       useIDEStore.setState({ showToast: original });
     }
@@ -170,10 +302,29 @@ describe('workingTreeEditListener', () => {
 
     listenerCb(session())({
       docChanged: true,
+      transactions: [],
       state: { doc: { toString: () => 'typed\n' } },
     });
 
     expect(useIDEStore.getState().openFiles[0].content).toBe('typed\n');
+  });
+
+  it('acknowledges an edit routed into an open buffer', () => {
+    const onSaved = jest.fn();
+    useIDEStore.setState({ openFiles: [openFile()] });
+    const callback = (
+      workingTreeEditListener(session(), undefined, onSaved) as unknown as {
+        __listener: (u: unknown) => void;
+      }
+    ).__listener;
+
+    callback({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => 'typed\n' } },
+    });
+
+    expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
   it('ignores updates that did not change the doc (scroll, selection, folding)', () => {
@@ -181,9 +332,35 @@ describe('workingTreeEditListener', () => {
 
     listenerCb(session())({
       docChanged: false,
+      transactions: [],
       state: { doc: { toString: () => 'should not persist\n' } },
     });
 
+    expect(useIDEStore.getState().openFiles[0].content).toBe('old\n');
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(false);
+  });
+
+  it('ignores authoritative external reconciliation updates', () => {
+    useIDEStore.setState({ openFiles: [openFile()] });
+    const onEdit = jest.fn();
+    const callback = (
+      workingTreeEditListener(session(), onEdit) as unknown as {
+        __listener: (u: unknown) => void;
+      }
+    ).__listener;
+
+    callback({
+      docChanged: true,
+      transactions: [
+        {
+          annotation: (annotation: unknown) =>
+            annotation === mockExternalDocUpdate ? true : undefined,
+        },
+      ],
+      state: { doc: { toString: () => 'externally refreshed\n' } },
+    });
+
+    expect(onEdit).not.toHaveBeenCalled();
     expect(useIDEStore.getState().openFiles[0].content).toBe('old\n');
     expect(useIDEStore.getState().openFiles[0].isModified).toBe(false);
   });

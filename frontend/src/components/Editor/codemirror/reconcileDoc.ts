@@ -5,7 +5,10 @@
  * so a disk change never lands on the user's undo stack. No-op if unchanged.
  */
 import { EditorView } from '@codemirror/view';
-import { Transaction } from '@codemirror/state';
+import { Annotation, Transaction } from '@codemirror/state';
+
+/** Identifies authoritative external content updates so they are not persisted as user edits. */
+export const externalDocUpdate = Annotation.define<boolean>();
 
 export function reconcileDoc(view: EditorView, nextContent: string): void {
   const cur = view.state.doc.toString();
@@ -24,6 +27,6 @@ export function reconcileDoc(view: EditorView, nextContent: string): void {
 
   view.dispatch({
     changes: { from: start, to: endCur, insert: nextContent.slice(start, endNext) },
-    annotations: Transaction.addToHistory.of(false),
+    annotations: [Transaction.addToHistory.of(false), externalDocUpdate.of(true)],
   });
 }

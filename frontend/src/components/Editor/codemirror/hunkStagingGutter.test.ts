@@ -2,19 +2,21 @@
 // needs `gutter`/`GutterMarker` to exist at import time here (the marker
 // callback is driven by a live view, never in these unit tests). The store is
 // mocked so the click→applyHunk wiring is asserted directly.
+const gutterMock = jest.fn((_config?: unknown) => ({}));
+const mockEmptyRangeSet = {};
 jest.mock('@codemirror/view', () => ({
-  gutter: jest.fn(() => ({})),
+  gutter: (config: unknown) => gutterMock(config),
   GutterMarker: class {},
   EditorView: {},
 }));
-jest.mock('@codemirror/state', () => ({ RangeSet: { of: jest.fn() } }));
+jest.mock('@codemirror/state', () => ({ RangeSet: { empty: mockEmptyRangeSet, of: jest.fn() } }));
 
 const applyHunk = jest.fn();
 jest.mock('../../../stores/gitStore', () => ({
   useGitStore: { getState: () => ({ applyHunk }) },
 }));
 
-import { hunkStagingAction, createHunkButton } from './hunkStagingGutter';
+import { hunkStagingAction, createHunkButton, hunkStagingGutter } from './hunkStagingGutter';
 
 const hunk = { patch: 'THE PATCH', newStart: 4, newLines: 2 };
 
@@ -47,5 +49,20 @@ describe('createHunkButton', () => {
     btn.click();
 
     expect(applyHunk).toHaveBeenCalledWith('THE PATCH', true);
+  });
+});
+
+describe('hunkStagingGutter', () => {
+  it('hides stale patch controls as soon as the editable document changes', () => {
+    hunkStagingGutter([hunk], 'unstaged', 'clean content');
+
+    const config = gutterMock.mock.calls[0]?.[0] as {
+      markers: (view: unknown) => unknown;
+    };
+    const markers = config.markers({
+      state: { doc: { toString: () => 'edited content' } },
+    });
+
+    expect(markers).toBe(mockEmptyRangeSet);
   });
 });

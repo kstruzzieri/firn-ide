@@ -58,8 +58,8 @@ export interface DiffSession {
   /** The working-tree file's detected encoding and line endings, captured when
    * an editable (unstaged) diff is built so an edit written straight to disk
    * (file not open in the editor) round-trips them instead of silently
-   * rewriting to UTF-8/LF. Undefined for staged/binary/too-large diffs, whose
-   * right side is a read-only snapshot. */
+   * rewriting to UTF-8/LF. Undefined when there is no writable worktree file
+   * (staged, deleted, binary, or too-large sessions stay read-only). */
   worktreeEncoding?: string;
   worktreeLineEndings?: string;
 }
@@ -81,6 +81,7 @@ function sameSession(a: DiffSession | null, b: DiffSession): boolean {
   return (
     a !== null &&
     a.path === b.path &&
+    a.absPath === b.absPath &&
     a.context === b.context &&
     a.binary === b.binary &&
     a.truncated === b.truncated &&
@@ -88,6 +89,8 @@ function sameSession(a: DiffSession | null, b: DiffSession): boolean {
     a.left.content === b.left.content &&
     a.right.label === b.right.label &&
     a.right.content === b.right.content &&
+    a.worktreeEncoding === b.worktreeEncoding &&
+    a.worktreeLineEndings === b.worktreeLineEndings &&
     sameHunks(a.hunks, b.hunks)
   );
 }
@@ -192,6 +195,7 @@ interface GitActions {
 type GitStore = GitState & GitActions;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let diffRequestRevision = 0;
 
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -395,6 +399,7 @@ export const useGitStore = create<GitStore>()(
         const { root, status, epoch } = get();
         const repoRoot = status?.isRepo ? status.repoRoot : root;
         if (!repoRoot) return;
+        const requestRevision = ++diffRequestRevision;
         const untracked = classifyChange(change).untracked;
         const focus = opts?.focus ?? true;
 
@@ -404,7 +409,7 @@ export const useGitStore = create<GitStore>()(
           let binary = false;
           let truncated = false;
           // The working-tree file's encoding/line endings, for round-tripping a
-          // disk-write edit (unstaged, file not open). Only set on that path.
+          // disk-write edit. Only unstaged sessions have a live worktree side.
           let worktreeEncoding: string | undefined;
           let worktreeLineEndings: string | undefined;
           // The working-tree side is showing an unsaved editor buffer, which
@@ -440,18 +445,18 @@ export const useGitStore = create<GitStore>()(
             let worktree = '';
             if (openFile) {
               worktree = openFile.content ?? '';
+              worktreeEncoding = openFile.encoding;
+              worktreeLineEndings = openFile.lineEndings;
               dirtyBufferWorktree = openFile.isModified === true;
+            } else if (change.worktree === 'D') {
+              // A deleted file has no metadata to preserve, so its empty
+              // worktree snapshot remains read-only.
             } else {
-              try {
-                const result = await ReadFile(abs);
-                worktree = result.content ?? '';
-                // Captured only here (the disk-write persist path); an open
-                // file writes through its buffer, which carries its own.
-                worktreeEncoding = result.encoding;
-                worktreeLineEndings = result.lineEndings;
-              } catch {
-                // Deleted from the worktree → empty right side is the truth.
-              }
+              const result = await ReadFile(abs);
+              worktree = result.content ?? '';
+              binary = binary || result.isBinary === true;
+              worktreeEncoding = result.encoding;
+              worktreeLineEndings = result.lineEndings;
             }
             right = { label: 'Working Tree', content: worktree };
           }
@@ -466,7 +471,7 @@ export const useGitStore = create<GitStore>()(
             hunks = fh.hunks ?? [];
           }
 
-          if (get().epoch !== epoch) return; // workspace switched mid-fetch
+          if (get().epoch !== epoch || requestRevision !== diffRequestRevision) return;
           const next: DiffSession = {
             path: change.path,
             absPath: abs,
@@ -494,7 +499,9 @@ export const useGitStore = create<GitStore>()(
             'git/openDiff'
           );
         } catch (err) {
-          useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
+          if (get().epoch === epoch && requestRevision === diffRequestRevision) {
+            useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
+          }
         }
       },
 

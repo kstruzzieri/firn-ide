@@ -82,6 +82,36 @@ describe('useAutosave', () => {
     expect(file.isModified).toBe(false);
   });
 
+  it('writes a newer buffer revision that arrives while a save is in flight', async () => {
+    let resolveFirst!: () => void;
+    mockWriteFile
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          })
+      )
+      .mockResolvedValueOnce(undefined);
+    openTestFile();
+    renderHook(() => useAutosave());
+
+    act(() => useIDEStore.getState().updateFileContent('/test/file.ts', 'first edit'));
+    act(() => jest.advanceTimersByTime(1600));
+    await act(async () => Promise.resolve());
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+
+    act(() => useIDEStore.getState().updateFileContent('/test/file.ts', 'second edit'));
+    await act(async () => {
+      resolveFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockWriteFile.mock.calls[1][1]).toBe('second edit');
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(false);
+  });
+
   it('should show toast on save failure', async () => {
     mockWriteFile.mockRejectedValueOnce(new Error('Permission denied'));
     openTestFile();

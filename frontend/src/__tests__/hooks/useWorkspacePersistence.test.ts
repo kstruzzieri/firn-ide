@@ -128,6 +128,45 @@ describe('useWorkspacePersistence', () => {
     expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
   });
 
+  it('flushes pending editor work before acknowledging app close', async () => {
+    let resolveFlush!: () => void;
+    const flushPendingEdits = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFlush = resolve;
+        })
+    );
+    renderHook(() => useWorkspacePersistence(flushPendingEdits));
+    await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+    act(() => {
+      beforeCloseHandler?.();
+    });
+    await waitFor(() => expect(flushPendingEdits).toHaveBeenCalledTimes(1));
+    expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+    act(() => resolveFlush());
+    await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not acknowledge app close when pending editor work fails to flush', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const flushPendingEdits = jest.fn(() => Promise.reject(new Error('disk full')));
+    try {
+      renderHook(() => useWorkspacePersistence(flushPendingEdits));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+
+      await waitFor(() => expect(flushPendingEdits).toHaveBeenCalledTimes(1));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('restores a cached explorer tree immediately from saved workspace state', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({
       workspacePath: '/workspace/cached',
