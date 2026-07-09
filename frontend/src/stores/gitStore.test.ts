@@ -581,6 +581,23 @@ describe('gitStore diff sessions', () => {
     expect(useGitStore.getState().diffSession).toBe(first);
   });
 
+  it('rebuilds an open untracked diff after intent-to-add enables hunks', async () => {
+    const untracked = { path: 'fresh.ts', index: '?', worktree: '?' };
+    const intentToAdd = { path: 'fresh.ts', index: '.', worktree: 'A' };
+    mockReadFile.mockResolvedValue({ content: 'x' } as Awaited<ReturnType<typeof ReadFile>>);
+    await useGitStore.getState().openDiff(untracked, 'unstaged');
+    const first = useGitStore.getState().diffSession;
+
+    mockGitStatus.mockResolvedValue(repoStatus({ files: [intentToAdd] }));
+    mockFileAtRev.mockResolvedValueOnce(rev(''));
+    mockFileHunks.mockResolvedValueOnce(hunks({ patch: 'PATCH', newStart: 1, newLines: 1 }));
+    await useGitStore.getState().refresh();
+
+    const session = useGitStore.getState().diffSession;
+    expect(session).not.toBe(first);
+    expect(session?.hunks).toEqual([{ patch: 'PATCH', newStart: 1, newLines: 1 }]);
+  });
+
   it('keeps the diff unfocused across a refresh when the user is on a file tab', async () => {
     const added = { path: 'fresh.ts', index: 'A', worktree: 'M' };
     mockFileAtRev.mockResolvedValue(rev('x'));

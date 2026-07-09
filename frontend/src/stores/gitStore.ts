@@ -80,7 +80,18 @@ function sameSession(a: DiffSession | null, b: DiffSession): boolean {
     a.left.label === b.left.label &&
     a.left.content === b.left.content &&
     a.right.label === b.right.label &&
-    a.right.content === b.right.content
+    a.right.content === b.right.content &&
+    sameHunks(a.hunks, b.hunks)
+  );
+}
+
+function sameHunks(a: git.Hunk[], b: git.Hunk[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (h, i) =>
+        h.patch === b[i].patch && h.newStart === b[i].newStart && h.newLines === b[i].newLines
+    )
   );
 }
 
