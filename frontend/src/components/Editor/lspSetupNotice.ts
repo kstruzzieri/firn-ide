@@ -9,11 +9,22 @@ export interface LSPSetupNotice {
 /**
  * Maps a server's typed setup status onto a user-facing message + next-step
  * hint. Returns null when there is nothing actionable to show (server ready,
- * or no setup state reported). The interactive affordances (interpreter
- * picker, retry) live in LSPSetupCard.
+ * or no setup state reported) — except ready on a manual override, which keeps
+ * a lightweight notice so Reset-to-auto stays reachable. The interactive
+ * affordances (interpreter picker, retry, reset) live in LSPSetupCard.
  */
 export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNotice | null {
-  if (!status?.setupState || status.setupState === 'ready') return null;
+  if (!status?.setupState) return null;
+  if (status.setupState === 'ready') {
+    if (status.configSource === 'override') {
+      return {
+        message: `Using a manually selected interpreter${status.interpreterPath ? ` (${status.interpreterPath})` : ''}.`,
+        hint: 'Reset to auto to re-detect the project environment.',
+        tone: 'info',
+      };
+    }
+    return null;
+  }
 
   switch (status.setupState) {
     case 'missing_server':

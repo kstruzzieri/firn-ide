@@ -1956,6 +1956,35 @@ func TestGetStatus_PythonReadyEnriched(t *testing.T) {
 	}
 }
 
+func TestEmitStatus_PythonOverrideEmitsOverrideConfigSource(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			t.Fatal("detect must not run when an override is active")
+			return pythonenv.Env{}
+		},
+		pythonDeps:  pythonenv.Deps{},
+		overrideFor: func(string) string { return "/manual/bin/python" },
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "ready" {
+		t.Fatalf("SetupState = %q, want ready", got.SetupState)
+	}
+	if got.ConfigSource != "override" {
+		t.Errorf("ConfigSource = %q, want override", got.ConfigSource)
+	}
+	if got.InterpreterPath != "/manual/bin/python" {
+		t.Errorf("InterpreterPath = %q, want /manual/bin/python", got.InterpreterPath)
+	}
+}
+
 // --- Managed provisioning orchestration (#112) ---
 
 // scriptedProv is a test Provisioner whose Resolve flips to StateAvailable only

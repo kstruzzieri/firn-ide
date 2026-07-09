@@ -1294,9 +1294,12 @@ func (m *Manager) enrichPythonSetup(status *ServerStatus) {
 		status.InterpreterPath = env.InterpreterPath
 		status.ExtraPaths = env.ExtraPaths
 		status.PythonVersion = env.PythonVersion
-		if env.InterpreterPath == "" {
+		switch {
+		case env.InterpreterPath == "":
 			status.ConfigSource = "none"
-		} else {
+		case env.Source == "override":
+			status.ConfigSource = "override"
+		default:
 			status.ConfigSource = "detected"
 		}
 		switch {

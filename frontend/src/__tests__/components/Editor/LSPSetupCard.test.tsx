@@ -51,6 +51,19 @@ describe('describeSetup', () => {
     expect(notice!.hint).toContain('(0%)');
   });
 
+  it('describes an active manual override when ready', () => {
+    const notice = describeSetup(
+      status({ setupState: 'ready', configSource: 'override', interpreterPath: '/manual/python' })
+    );
+    expect(notice).not.toBeNull();
+    expect(notice!.tone).toBe('info');
+    expect(notice!.message).toContain('/manual/python');
+  });
+
+  it('still returns null when ready without an override', () => {
+    expect(describeSetup(status({ setupState: 'ready', configSource: 'detected' }))).toBeNull();
+  });
+
   it('uses ASCII ellipsis in the provisioning message', () => {
     const notice = describeSetup(status({ setupState: 'provisioning' }));
     expect(notice!.message).toContain('...');
@@ -112,6 +125,22 @@ describe('LSPSetupCard', () => {
       '/cand'
     );
     expect(mockSetInterpreter).toHaveBeenCalledWith('/proj', '/cand');
+  });
+
+  it('ready with an active override renders Reset to auto wired to clear', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({
+          setupState: 'ready',
+          configSource: 'override',
+          interpreterPath: '/manual/python',
+        })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /reset to auto/i }));
+    expect(mockClearInterpreter).toHaveBeenCalledWith('/proj');
   });
 
   it('renders Reset to auto when an interpreter override is active', async () => {
