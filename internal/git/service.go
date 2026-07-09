@@ -79,6 +79,17 @@ func (s *Service) Stage(ctx context.Context, dir string, paths []string) error {
 	return err
 }
 
+// IntentToAdd records untracked paths in the index as empty blobs
+// (git add --intent-to-add): the files become tracked and diffable while
+// their content stays unstaged, enabling later hunk-by-hunk staging.
+func (s *Service) IntentToAdd(ctx context.Context, dir string, paths []string) error {
+	if err := validateRepoRelPaths(paths); err != nil {
+		return err
+	}
+	_, err := s.runAtRoot(ctx, dir, append([]string{"add", "--intent-to-add", "--"}, paths...)...)
+	return err
+}
+
 // Unstage removes paths from the index. On an unborn HEAD (no commits yet)
 // `restore --staged` cannot resolve HEAD, so fall back to rm --cached.
 func (s *Service) Unstage(ctx context.Context, dir string, paths []string) error {
