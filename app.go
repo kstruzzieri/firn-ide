@@ -850,13 +850,15 @@ func (a *App) LSPClearInterpreter(workspacePath string) error {
 	return a.persistLSPInterpreter(workspacePath, "") // empty clears it
 }
 
-// LSPRetryProvision re-attempts a managed server install for a family.
+// LSPRetryProvision re-attempts a managed server install for a family, keyed
+// to the project root the failing status reported (empty falls back to the
+// workspace root).
 // This is exposed to the frontend via Wails bindings.
-func (a *App) LSPRetryProvision(family string) error {
+func (a *App) LSPRetryProvision(family, projectRoot string) error {
 	if a.lspManager == nil {
 		return fmt.Errorf("LSP not initialized")
 	}
-	return a.lspManager.RetryProvision(family)
+	return a.lspManager.RetryProvision(family, projectRoot)
 }
 
 // persistLSPInterpreter writes the interpreter override into the workspace's

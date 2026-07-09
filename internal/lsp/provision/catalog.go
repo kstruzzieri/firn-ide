@@ -1,5 +1,7 @@
 package provision
 
+import "path/filepath"
+
 // ArtifactType describes how a family's server is packaged.
 type ArtifactType string
 
@@ -23,6 +25,7 @@ type Artifact struct {
 	SHA256  string // hex digest; mismatch is a hard stop
 	GOOS    string // "" = any platform (universal wheel/tarball)
 	GOARCH  string
+	Libc    string // linux only: "gnu" (manylinux) | "musl" (musllinux); "" = any libc
 }
 
 // CatalogEntry pins one family's managed install.
@@ -31,6 +34,22 @@ type CatalogEntry struct {
 	Version      string
 	ArtifactType ArtifactType
 	Artifacts    []Artifact
+}
+
+// hostLinuxLibc reports the libc flavor of the host ("gnu" or "musl") for
+// libc-tagged linux artifacts. Package var so tests can pin either flavor.
+var hostLinuxLibc = detectLinuxLibc
+
+// detectLinuxLibc detects musl by the presence of its dynamic loader
+// (/lib/ld-musl-<arch>.so.1, the stable, documented location on Alpine and
+// other musl distros); everything else is treated as glibc. On non-linux
+// hosts artifacts carry no Libc tag for the running GOOS, so the "gnu"
+// default is never consulted.
+func detectLinuxLibc() string {
+	if matches, err := filepath.Glob("/lib/ld-musl-*.so*"); err == nil && len(matches) > 0 {
+		return "musl"
+	}
+	return "gnu"
 }
 
 var catalog = map[string]CatalogEntry{
@@ -49,7 +68,7 @@ func PlatformArtifacts(family, goos, goarch string) (CatalogEntry, []Artifact, b
 	}
 	var out []Artifact
 	for _, a := range entry.Artifacts {
-		if (a.GOOS == "" && a.GOARCH == "") || (a.GOOS == goos && a.GOARCH == goarch) {
+		if (a.GOOS == "" && a.GOARCH == "") || (a.GOOS == goos && a.GOARCH == goarch && (a.Libc == "" || a.Libc == hostLinuxLibc())) {
 			out = append(out, a)
 		}
 	}

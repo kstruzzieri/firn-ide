@@ -1956,6 +1956,35 @@ func TestGetStatus_PythonReadyEnriched(t *testing.T) {
 	}
 }
 
+func TestEmitStatus_PythonOverrideEmitsOverrideConfigSource(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			t.Fatal("detect must not run when an override is active")
+			return pythonenv.Env{}
+		},
+		pythonDeps:  pythonenv.Deps{},
+		overrideFor: func(string) string { return "/manual/bin/python" },
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "ready" {
+		t.Fatalf("SetupState = %q, want ready", got.SetupState)
+	}
+	if got.ConfigSource != "override" {
+		t.Errorf("ConfigSource = %q, want override", got.ConfigSource)
+	}
+	if got.InterpreterPath != "/manual/bin/python" {
+		t.Errorf("InterpreterPath = %q, want /manual/bin/python", got.InterpreterPath)
+	}
+}
+
 // --- Managed provisioning orchestration (#112) ---
 
 // scriptedProv is a test Provisioner whose Resolve flips to StateAvailable only
@@ -2161,6 +2190,49 @@ func TestManager_provisionChecksumFailed(t *testing.T) {
 	}
 	if s.DetailCode != "checksum_mismatch" {
 		t.Errorf("DetailCode = %q, want checksum_mismatch", s.DetailCode)
+	}
+}
+
+func TestRetryProvision_usesProvidedProjectRoot(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+	nested := filepath.Join(workspace, "services", "api")
+
+	if err := mgr.RetryProvision("python", nested); err != nil {
+		t.Fatalf("RetryProvision: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status for nested root", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+	s, _ := latestPythonStatus(collector)
+	if s.ProjectRoot != nested {
+		t.Errorf("ProjectRoot = %q, want nested root %q", s.ProjectRoot, nested)
+	}
+}
+
+func TestRetryProvision_emptyRootFallsBackToWorkspaceRoot(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.RetryProvision("python", ""); err != nil {
+		t.Fatalf("RetryProvision: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status for workspace root", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+	s, _ := latestPythonStatus(collector)
+	if s.ProjectRoot != workspace {
+		t.Errorf("ProjectRoot = %q, want workspace root %q", s.ProjectRoot, workspace)
 	}
 }
 

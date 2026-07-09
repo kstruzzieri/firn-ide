@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LSPSetupCard } from '../../../components/Editor/LSPSetupCard';
 import { describeSetup } from '../../../components/Editor/lspSetupNotice';
+import { useIDEStore } from '../../../stores/ideStore';
 import type { LSPServerStatus } from '../../../stores/lspStore';
 
 const mockRetry = jest.fn().mockResolvedValue(undefined);
@@ -22,6 +23,7 @@ function status(overrides: Partial<LSPServerStatus>): LSPServerStatus {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  useIDEStore.setState(useIDEStore.getInitialState());
   mockDoctor.mockResolvedValue({ family: 'python', candidates: ['/cand'] });
 });
 
@@ -51,6 +53,19 @@ describe('describeSetup', () => {
     expect(notice!.hint).toContain('(0%)');
   });
 
+  it('describes an active manual override when ready', () => {
+    const notice = describeSetup(
+      status({ setupState: 'ready', configSource: 'override', interpreterPath: '/manual/python' })
+    );
+    expect(notice).not.toBeNull();
+    expect(notice!.tone).toBe('info');
+    expect(notice!.message).toContain('/manual/python');
+  });
+
+  it('still returns null when ready without an override', () => {
+    expect(describeSetup(status({ setupState: 'ready', configSource: 'detected' }))).toBeNull();
+  });
+
   it('uses ASCII ellipsis in the provisioning message', () => {
     const notice = describeSetup(status({ setupState: 'provisioning' }));
     expect(notice!.message).toContain('...');
@@ -74,7 +89,23 @@ describe('LSPSetupCard', () => {
     expect(screen.getByText(/no python interpreter/i)).toBeInTheDocument();
   });
 
-  it('offline status renders Retry wired to LSPRetryProvision', async () => {
+  it('offline status renders Retry wired to LSPRetryProvision with the status project root', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({
+          setupState: 'offline',
+          action: 'retry',
+          projectRoot: '/proj/services/api',
+        })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    expect(mockRetry).toHaveBeenCalledWith('python', '/proj/services/api');
+  });
+
+  it('Retry falls back to the workspace path when the status has no project root', async () => {
     const user = userEvent.setup();
     render(
       <LSPSetupCard
@@ -83,7 +114,25 @@ describe('LSPSetupCard', () => {
       />
     );
     await user.click(screen.getByRole('button', { name: /retry/i }));
-    expect(mockRetry).toHaveBeenCalledWith('python');
+    expect(mockRetry).toHaveBeenCalledWith('python', '/proj');
+  });
+
+  it('reports Retry failures', async () => {
+    mockRetry.mockRejectedValueOnce(new Error('network unavailable'));
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'offline', action: 'retry' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to retry LSP provisioning: network unavailable',
+        type: 'error',
+      })
+    );
   });
 
   it('provisioning shows progress and no Retry button', () => {
@@ -112,6 +161,40 @@ describe('LSPSetupCard', () => {
       '/cand'
     );
     expect(mockSetInterpreter).toHaveBeenCalledWith('/proj', '/cand');
+  });
+
+  it('ready with an active override renders Reset to auto wired to clear', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({
+          setupState: 'ready',
+          configSource: 'override',
+          interpreterPath: '/manual/python',
+        })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /reset to auto/i }));
+    expect(mockClearInterpreter).toHaveBeenCalledWith('/proj');
+  });
+
+  it('reports Reset-to-auto failures', async () => {
+    mockClearInterpreter.mockRejectedValueOnce(new Error('workspace write failed'));
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'ready', configSource: 'override' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /reset to auto/i }));
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to reset the Python interpreter: workspace write failed',
+        type: 'error',
+      })
+    );
   });
 
   it('renders Reset to auto when an interpreter override is active', async () => {

@@ -88,7 +88,7 @@ export function LSPHover(arg1:string,arg2:number,arg3:number):Promise<lsp.Hover>
 
 export function LSPResolveCompletionItem(arg1:string,arg2:lsp.CompletionItem):Promise<lsp.CompletionItem>;
 
-export function LSPRetryProvision(arg1:string):Promise<void>;
+export function LSPRetryProvision(arg1:string,arg2:string):Promise<void>;
 
 export function LSPSetInterpreter(arg1:string,arg2:string):Promise<void>;
 

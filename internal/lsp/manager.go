@@ -614,13 +614,18 @@ func (m *Manager) beginProvision(family, projectRoot string) {
 	}()
 }
 
-// RetryProvision re-attempts a managed install (frontend Retry action). It uses
-// the manager's current workspace root as the project root.
-func (m *Manager) RetryProvision(family string) error {
+// RetryProvision re-attempts a managed install (frontend Retry action) keyed
+// to the same project root the failed auto-provision used, so a nested
+// monorepo sub-project retries the right scope. An empty projectRoot falls
+// back to the workspace root (older callers and root-level workspaces).
+func (m *Manager) RetryProvision(family, projectRoot string) error {
 	if _, ok := m.provisioners[family]; !ok {
 		return fmt.Errorf("no managed provisioner for %q", family)
 	}
-	m.beginProvision(family, m.WorkspaceRoot())
+	if projectRoot == "" {
+		projectRoot = m.WorkspaceRoot()
+	}
+	m.beginProvision(family, projectRoot)
 	return nil
 }
 
@@ -1294,9 +1299,12 @@ func (m *Manager) enrichPythonSetup(status *ServerStatus) {
 		status.InterpreterPath = env.InterpreterPath
 		status.ExtraPaths = env.ExtraPaths
 		status.PythonVersion = env.PythonVersion
-		if env.InterpreterPath == "" {
+		switch {
+		case env.InterpreterPath == "":
 			status.ConfigSource = "none"
-		} else {
+		case env.Source == "override":
+			status.ConfigSource = "override"
+		default:
 			status.ConfigSource = "detected"
 		}
 		switch {

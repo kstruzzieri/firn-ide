@@ -162,8 +162,8 @@ export function LSPResolveCompletionItem(arg1, arg2) {
   return window['go']['main']['App']['LSPResolveCompletionItem'](arg1, arg2);
 }
 
-export function LSPRetryProvision(arg1) {
-  return window['go']['main']['App']['LSPRetryProvision'](arg1);
+export function LSPRetryProvision(arg1, arg2) {
+  return window['go']['main']['App']['LSPRetryProvision'](arg1, arg2);
 }
 
 export function LSPSetInterpreter(arg1, arg2) {
