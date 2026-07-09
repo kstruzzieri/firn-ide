@@ -21,10 +21,16 @@ type PythonDeps struct {
 
 // launchSpec is persisted as launch.json and is the install's commit marker.
 type launchSpec struct {
-	Path    string   `json:"path"`
-	Args    []string `json:"args"`
-	Version string   `json:"version"`
-	Abs     bool     `json:"abs"` // true: Path absolute; false: Path relative to the version dir
+	Path string `json:"path"`
+	// ScriptRel is an optional entry script (e.g. a node server's cli.mjs) that,
+	// like Path, is stored relative to the version dir and resolved to an absolute
+	// path at launch, then prepended to Args. It exists because the server runs
+	// with cwd=projectRoot, not the version dir, so a relative script arg would
+	// not be found. Empty for single-binary launches (gopls, rust-analyzer, uv shim).
+	ScriptRel string   `json:"scriptRel,omitempty"`
+	Args      []string `json:"args"`
+	Version   string   `json:"version"`
+	Abs       bool     `json:"abs"` // true: Path/ScriptRel absolute; false: relative to the version dir
 }
 
 // PythonProvisioner provisions basedpyright into <cacheRoot>/python/<version>/.
@@ -48,18 +54,7 @@ func (p *PythonProvisioner) versionDir() string {
 
 // Resolve reads the committed launch.json (cache-only, no network).
 func (p *PythonProvisioner) Resolve() Resolution {
-	spec, err := readLaunchSpec(p.versionDir())
-	if err != nil {
-		return Resolution{State: StateMissing}
-	}
-	launchPath := spec.Path
-	if !spec.Abs {
-		launchPath = filepath.Join(p.versionDir(), spec.Path)
-	}
-	if _, err := os.Stat(launchPath); err != nil {
-		return Resolution{State: StateMissing}
-	}
-	return Resolution{State: StateAvailable, Path: launchPath, Args: spec.Args, Version: spec.Version}
+	return resolveCached(p.versionDir())
 }
 
 func (p *PythonProvisioner) Install(ctx context.Context, progress func(Progress)) Resolution {
@@ -180,7 +175,7 @@ func (p *PythonProvisioner) installManual(ctx context.Context, artifacts []Artif
 	if err != nil {
 		return Resolution{State: StateOffline, Err: err}
 	}
-	spec := launchSpec{Path: nodeRel, Args: []string{jsRel, "--stdio"}, Version: pythonCatalogEntry.Version, Abs: false}
+	spec := launchSpec{Path: nodeRel, ScriptRel: jsRel, Args: []string{"--stdio"}, Version: pythonCatalogEntry.Version, Abs: false}
 	if err := writeLaunchSpec(staging, spec); err != nil {
 		return Resolution{State: StateOffline, Err: err}
 	}

@@ -26,4 +26,13 @@ describe('describeSetup phase 2 states', () => {
     const n = describeSetup(status({ setupState: 'provision_failed', action: 'retry' }));
     expect(n?.tone).toBe('error');
   });
+  it('provision_failed for python keeps the basedpyright/pyright suggestion', () => {
+    const n = describeSetup(status({ family: 'python', setupState: 'provision_failed' }));
+    expect(n?.hint.toLowerCase()).toContain('basedpyright');
+  });
+  it('provision_failed for a non-python family is family-aware, not python copy', () => {
+    const n = describeSetup(status({ family: 'rust', setupState: 'provision_failed' }));
+    expect(n?.hint.toLowerCase()).not.toContain('basedpyright');
+    expect(n?.hint.toLowerCase()).toContain('rust');
+  });
 });

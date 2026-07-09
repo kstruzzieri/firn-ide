@@ -44,6 +44,14 @@ func TestPython_Resolve_missingThenAvailable(t *testing.T) {
 	if len(got.Args) == 0 || got.Args[len(got.Args)-1] != "--stdio" {
 		t.Errorf("args = %v, want trailing --stdio", got.Args)
 	}
+	// The manual (non-uv) path launches `node <langserver.index.js> --stdio` with
+	// cwd=projectRoot, so the script arg must be absolute and on disk.
+	if !filepath.IsAbs(got.Args[0]) {
+		t.Errorf("langserver script arg must be absolute, got %q", got.Args[0])
+	}
+	if _, err := os.Stat(got.Args[0]); err != nil {
+		t.Errorf("langserver script arg %q not resolvable on disk: %v", got.Args[0], err)
+	}
 	if _, err := os.Stat(filepath.Join(cache, "python", "1.39.9", "launch.json")); err != nil {
 		t.Errorf("launch.json missing: %v", err)
 	}

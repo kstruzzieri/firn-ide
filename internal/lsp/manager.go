@@ -1139,6 +1139,8 @@ func projectRootMarkers(family string) []string {
 		return []string{"go.mod"}
 	case "python":
 		return []string{"pyproject.toml", "requirements.txt", "setup.py"}
+	case "rust":
+		return []string{"Cargo.toml"}
 	}
 	return nil
 }
@@ -1171,6 +1173,8 @@ func defaultServerCommand(family string) string {
 		return "gopls"
 	case "python":
 		return "pyright-langserver"
+	case "rust":
+		return "rust-analyzer"
 	default:
 		return ""
 	}

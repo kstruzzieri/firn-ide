@@ -110,7 +110,8 @@ func TestRegistry_LanguageIDMapping(t *testing.T) {
 		{".py", "python", "python"},
 		{".pyw", "python", "python"},
 		{".pyi", "python", "python"},
-		{".rs", "", ""},
+		{".rs", "rust", "rust"},
+		{".txt", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -348,7 +349,7 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	mgr.SetWorkspaceRoot("/tmp/test")
 
 	ctx := context.Background()
-	err := mgr.DidOpen(ctx, "/tmp/test/main.rs", "", 1, "fn main() {}")
+	err := mgr.DidOpen(ctx, "/tmp/test/notes.txt", "", 1, "just some notes")
 	if err != nil {
 		t.Errorf("DidOpen unsupported file should be no-op, got: %v", err)
 	}
@@ -358,9 +359,9 @@ func TestManager_DocumentSymbolNoServer(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	mgr.SetWorkspaceRoot("/tmp/test")
 
-	// No language server covers .rs in the test registry, so DocumentSymbol
+	// No language server covers .txt in the test registry, so DocumentSymbol
 	// must return (nil, nil) rather than erroring.
-	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/main.rs")
+	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/notes.txt")
 	if err != nil {
 		t.Errorf("DocumentSymbol on unsupported file should not error, got: %v", err)
 	}
@@ -1321,6 +1322,25 @@ func TestManager_ProjectRootForPath_GoUsesNearestGoMod(t *testing.T) {
 	want := filepath.Join(ws, "cmd", "tool")
 	if root != want {
 		t.Errorf("Go project root = %q, want nearest go.mod root %q", root, want)
+	}
+}
+
+func TestManager_ProjectRootForPath_RustUsesNearestCargoToml(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "Cargo.toml"))
+	touch(t, filepath.Join(ws, "crates", "tool", "Cargo.toml"))
+	file := filepath.Join(ws, "crates", "tool", "src", "main.rs")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	root, err := mgr.projectRootForPath("rust", file)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(ws, "crates", "tool")
+	if root != want {
+		t.Errorf("Rust project root = %q, want nearest Cargo.toml root %q", root, want)
 	}
 }
 
