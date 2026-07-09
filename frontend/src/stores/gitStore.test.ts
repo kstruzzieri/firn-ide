@@ -2,6 +2,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
+  GitIntentToAdd: jest.fn(),
   GitCommit: jest.fn(),
   GitPull: jest.fn(),
   GitPush: jest.fn(),
@@ -18,6 +19,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
 import {
   GitStatus,
   GitStage,
+  GitIntentToAdd,
   GitCommit,
   GitPull,
   GitBranches,
@@ -34,6 +36,7 @@ import { useIDEStore } from './ideStore';
 
 const mockGitStatus = GitStatus as jest.MockedFunction<typeof GitStatus>;
 const mockGitStage = GitStage as jest.MockedFunction<typeof GitStage>;
+const mockGitIntentToAdd = GitIntentToAdd as jest.MockedFunction<typeof GitIntentToAdd>;
 const mockGitCommit = GitCommit as jest.MockedFunction<typeof GitCommit>;
 const mockGitPull = GitPull as jest.MockedFunction<typeof GitPull>;
 const mockGitBranches = GitBranches as jest.MockedFunction<typeof GitBranches>;
@@ -144,6 +147,24 @@ describe('gitStore operations', () => {
 
     expect(mockGitStage).toHaveBeenCalledWith('/repo', ['a.ts']);
     expect(mockGitStatus).toHaveBeenCalled();
+  });
+
+  it('intentToAdd calls the binding with the workspace root and refreshes', async () => {
+    mockGitIntentToAdd.mockResolvedValue(undefined);
+
+    await useGitStore.getState().intentToAdd(['new.md']);
+
+    expect(mockGitIntentToAdd).toHaveBeenCalledWith('/repo', ['new.md']);
+    expect(mockGitStatus).toHaveBeenCalled();
+  });
+
+  it('intentToAdd failure lands in lastError and toasts', async () => {
+    mockGitIntentToAdd.mockRejectedValue(new Error('pathspec did not match'));
+
+    await useGitStore.getState().intentToAdd(['gone.md']);
+
+    expect(useGitStore.getState().lastError).toContain('pathspec');
+    expect(useIDEStore.getState().toast?.type).toBe('error');
   });
 
   it('commit clears the message on success', async () => {

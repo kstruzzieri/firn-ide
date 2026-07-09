@@ -5,6 +5,7 @@ import {
   GitStatus,
   GitStage,
   GitUnstage,
+  GitIntentToAdd,
   GitCommit,
   GitPull,
   GitPush,
@@ -94,7 +95,15 @@ function parseCommitSummary(output: string): Pick<CommitReceipt, 'branch' | 'has
  * (branch switches, installs) into one `git status` run. */
 export const GIT_REFRESH_DEBOUNCE_MS = 300;
 
-export type GitOp = 'stage' | 'unstage' | 'commit' | 'pull' | 'push' | 'checkout' | 'generate';
+export type GitOp =
+  | 'stage'
+  | 'unstage'
+  | 'intent-to-add'
+  | 'commit'
+  | 'pull'
+  | 'push'
+  | 'checkout'
+  | 'generate';
 
 interface GitState {
   /** Workspace root git commands run from; null = no workspace. */
@@ -136,6 +145,10 @@ interface GitActions {
   scheduleRefresh: () => void;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
+  /** Track untracked paths without staging content (git add -N): the files
+   * gain an empty index blob so they diff normally and can be staged
+   * hunk-by-hunk. */
+  intentToAdd: (paths: string[]) => Promise<void>;
   /** Stage (reverse=false) or unstage (reverse=true) a single diff hunk by
    * applying its patch to the index. Refreshes status + the open diff after. */
   applyHunk: (patch: string, reverse: boolean) => Promise<void>;
@@ -264,6 +277,13 @@ export const useGitStore = create<GitStore>()(
       unstage: async (paths) => {
         await runOp('unstage', get, set, async (root) => {
           await GitUnstage(root, paths);
+          return null;
+        });
+      },
+
+      intentToAdd: async (paths) => {
+        await runOp('intent-to-add', get, set, async (root) => {
+          await GitIntentToAdd(root, paths);
           return null;
         });
       },
