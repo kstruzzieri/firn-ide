@@ -491,8 +491,10 @@
   font-weight: 700;
 }
 
-/* Untracked-only "Track" (git add -N) affordance: revealed on row hover like
- * a secondary action, but kept focusable at all times for keyboard users. */
+/* Track (git add -N) / Untrack affordance: revealed on row hover like a
+ * secondary action. Hidden via opacity + pointer-events rather than
+ * visibility so the button stays keyboard-focusable (tab reveals it via
+ * :focus-visible); pointer-events blocks stray clicks while invisible. */
 .rowTrackBtn {
   padding: 0 6px;
   border: 1px solid var(--border);
@@ -503,16 +505,27 @@
   line-height: 16px;
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
 }
 
 .row:hover .rowTrackBtn,
 .rowTrackBtn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
-.rowTrackBtn:hover {
+.rowTrackBtn:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.rowTrackBtn:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.row:hover .rowTrackBtn:disabled {
+  opacity: 0.45;
 }
 
 /* Both the filename and its status badge take the state color, so a file's
