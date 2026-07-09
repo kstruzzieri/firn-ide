@@ -415,6 +415,23 @@ describe('gitStore diff sessions', () => {
     expect(useGitStore.getState().diffSession?.hunks).toEqual([]);
   });
 
+  it('fetches hunks for unstaged edits on a staged rename', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+    mockFileHunks.mockResolvedValueOnce(hunks({ patch: 'PATCH', newStart: 1, newLines: 1 }));
+
+    await useGitStore
+      .getState()
+      .openDiff(
+        { path: 'src/new.ts', origPath: 'src/old.ts', index: 'R', worktree: 'M' },
+        'unstaged'
+      );
+
+    expect(mockFileHunks).toHaveBeenCalledWith('/repo', 'src/new.ts', false);
+    expect(useGitStore.getState().diffSession?.hunks).toEqual([
+      { patch: 'PATCH', newStart: 1, newLines: 1 },
+    ]);
+  });
+
   it('unstaged context diffs the index against the working tree', async () => {
     mockFileAtRev.mockResolvedValueOnce(rev('index text'));
 
