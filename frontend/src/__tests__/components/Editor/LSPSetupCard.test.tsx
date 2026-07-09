@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LSPSetupCard } from '../../../components/Editor/LSPSetupCard';
 import { describeSetup } from '../../../components/Editor/lspSetupNotice';
+import { useIDEStore } from '../../../stores/ideStore';
 import type { LSPServerStatus } from '../../../stores/lspStore';
 
 const mockRetry = jest.fn().mockResolvedValue(undefined);
@@ -22,6 +23,7 @@ function status(overrides: Partial<LSPServerStatus>): LSPServerStatus {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  useIDEStore.setState(useIDEStore.getInitialState());
   mockDoctor.mockResolvedValue({ family: 'python', candidates: ['/cand'] });
 });
 
@@ -115,6 +117,24 @@ describe('LSPSetupCard', () => {
     expect(mockRetry).toHaveBeenCalledWith('python', '/proj');
   });
 
+  it('reports Retry failures', async () => {
+    mockRetry.mockRejectedValueOnce(new Error('network unavailable'));
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'offline', action: 'retry' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to retry LSP provisioning: network unavailable',
+        type: 'error',
+      })
+    );
+  });
+
   it('provisioning shows progress and no Retry button', () => {
     render(
       <LSPSetupCard
@@ -157,6 +177,24 @@ describe('LSPSetupCard', () => {
     );
     await user.click(screen.getByRole('button', { name: /reset to auto/i }));
     expect(mockClearInterpreter).toHaveBeenCalledWith('/proj');
+  });
+
+  it('reports Reset-to-auto failures', async () => {
+    mockClearInterpreter.mockRejectedValueOnce(new Error('workspace write failed'));
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'ready', configSource: 'override' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /reset to auto/i }));
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to reset the Python interpreter: workspace write failed',
+        type: 'error',
+      })
+    );
   });
 
   it('renders Reset to auto when an interpreter override is active', async () => {
