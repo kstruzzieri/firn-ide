@@ -2193,6 +2193,49 @@ func TestManager_provisionChecksumFailed(t *testing.T) {
 	}
 }
 
+func TestRetryProvision_usesProvidedProjectRoot(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+	nested := filepath.Join(workspace, "services", "api")
+
+	if err := mgr.RetryProvision("python", nested); err != nil {
+		t.Fatalf("RetryProvision: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status for nested root", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+	s, _ := latestPythonStatus(collector)
+	if s.ProjectRoot != nested {
+		t.Errorf("ProjectRoot = %q, want nested root %q", s.ProjectRoot, nested)
+	}
+}
+
+func TestRetryProvision_emptyRootFallsBackToWorkspaceRoot(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.RetryProvision("python", ""); err != nil {
+		t.Fatalf("RetryProvision: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status for workspace root", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+	s, _ := latestPythonStatus(collector)
+	if s.ProjectRoot != workspace {
+		t.Errorf("ProjectRoot = %q, want workspace root %q", s.ProjectRoot, workspace)
+	}
+}
+
 func TestSetInterpreterOverride_rejectsMissingPath(t *testing.T) {
 	m := NewManager(nil)
 	err := m.SetInterpreterOverride(t.TempDir(), filepath.Join(t.TempDir(), "nope", "python"))

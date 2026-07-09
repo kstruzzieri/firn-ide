@@ -87,7 +87,19 @@ describe('LSPSetupCard', () => {
     expect(screen.getByText(/no python interpreter/i)).toBeInTheDocument();
   });
 
-  it('offline status renders Retry wired to LSPRetryProvision', async () => {
+  it('offline status renders Retry wired to LSPRetryProvision with the status project root', async () => {
+    const user = userEvent.setup();
+    render(
+      <LSPSetupCard
+        status={status({ setupState: 'offline', action: 'retry', projectRoot: '/proj/services/api' })}
+        workspacePath="/proj"
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    expect(mockRetry).toHaveBeenCalledWith('python', '/proj/services/api');
+  });
+
+  it('Retry falls back to the workspace path when the status has no project root', async () => {
     const user = userEvent.setup();
     render(
       <LSPSetupCard
@@ -96,7 +108,7 @@ describe('LSPSetupCard', () => {
       />
     );
     await user.click(screen.getByRole('button', { name: /retry/i }));
-    expect(mockRetry).toHaveBeenCalledWith('python');
+    expect(mockRetry).toHaveBeenCalledWith('python', '/proj');
   });
 
   it('provisioning shows progress and no Retry button', () => {

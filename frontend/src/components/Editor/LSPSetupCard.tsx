@@ -48,7 +48,10 @@ export function LSPSetupCard({
       {showActions && (
         <div className={styles.actions}>
           {action === 'retry' && status && (
-            <button type="button" onClick={() => LSPRetryProvision(status.family)}>
+            <button
+              type="button"
+              onClick={() => LSPRetryProvision(status.family, status.projectRoot ?? workspacePath)}
+            >
               Retry
             </button>
           )}
