@@ -19,15 +19,22 @@ jest.mock('@codemirror/merge', () => ({
   getChunks: (arg: unknown) => getChunksMock(arg),
 }));
 const gutterMock = jest.fn((_config?: unknown) => ({ __gutter: true }));
+// Distinct tokens so a pane's extension array reveals its wiring: read-only
+// panes carry EDITABLE_FALSE + READONLY, the editable working-tree pane carries
+// EDIT_LISTENER instead.
 jest.mock('@codemirror/view', () => ({
-  EditorView: { editable: { of: jest.fn() }, lineWrapping: {} },
+  EditorView: {
+    editable: { of: jest.fn(() => 'EDITABLE_FALSE') },
+    updateListener: { of: jest.fn(() => 'EDIT_LISTENER') },
+    lineWrapping: {},
+  },
   lineNumbers: jest.fn(),
   keymap: { of: jest.fn() },
   gutter: (config: unknown) => gutterMock(config),
   GutterMarker: class {},
 }));
 jest.mock('@codemirror/state', () => ({
-  EditorState: { readOnly: { of: jest.fn() } },
+  EditorState: { readOnly: { of: jest.fn(() => 'READONLY') } },
   RangeSet: { of: jest.fn() },
 }));
 jest.mock('../../../components/Editor/codemirror', () => ({
@@ -55,6 +62,7 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   GitFileHunks: jest.fn(),
   GitApplyHunk: jest.fn(),
   ReadFile: jest.fn(),
+  WriteFile: jest.fn(),
 }));
 
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -180,7 +188,40 @@ describe('GitDiffView', () => {
     // The right pane (b) gets the extra gutter; the left pane (a) does not.
     expect(gutterMock).toHaveBeenCalledWith(expect.objectContaining({ class: 'cm-hunkGutter' }));
     const config = mergeViewMock.mock.calls[0][0];
-    expect(config.b.extensions.length).toBeGreaterThan(config.a.extensions.length);
+    expect(config.b.extensions).toContainEqual({ __gutter: true });
+    expect(config.a.extensions).not.toContainEqual({ __gutter: true });
+  });
+
+  it('makes only the working-tree (right) pane editable in an unstaged diff', () => {
+    render(<GitDiffView session={base} />);
+
+    const config = mergeViewMock.mock.calls[0][0];
+    // Left pane is the index snapshot: read-only.
+    expect(config.a.extensions).toContain('EDITABLE_FALSE');
+    expect(config.a.extensions).toContain('READONLY');
+    expect(config.a.extensions).not.toContain('EDIT_LISTENER');
+    // Right pane is the live working tree: editable, wired to persist edits.
+    expect(config.b.extensions).toContain('EDIT_LISTENER');
+    expect(config.b.extensions).not.toContain('EDITABLE_FALSE');
+    expect(config.b.extensions).not.toContain('READONLY');
+  });
+
+  it('keeps both panes read-only in a staged diff (right side is the index)', () => {
+    render(
+      <GitDiffView
+        session={{
+          ...base,
+          context: 'staged',
+          left: { label: 'HEAD', content: 'const a = 1;\n' },
+          right: { label: 'Index', content: 'const a = 2;\n' },
+        }}
+      />
+    );
+
+    const config = mergeViewMock.mock.calls[0][0];
+    expect(config.b.extensions).toContain('EDITABLE_FALSE');
+    expect(config.b.extensions).toContain('READONLY');
+    expect(config.b.extensions).not.toContain('EDIT_LISTENER');
   });
 
   it('adds no hunk gutter when there are no hunks', () => {

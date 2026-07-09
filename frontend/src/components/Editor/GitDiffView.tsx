@@ -8,12 +8,15 @@ import { diffLines } from '../../utils/lineDiff';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { buildTheme, getLanguageExtension } from './codemirror';
 import { hunkStagingGutter } from './codemirror/hunkStagingGutter';
+import { isWorkingTreeEditable, workingTreeEditListener } from './codemirror/editableWorkingTree';
 import styles from './GitDiffView.module.css';
 
 /**
- * Read-only side-by-side diff for the git preview tab. A plain MergeView
- * (not the editing unified view): both sides are revision snapshots, so
- * nothing here writes back to disk.
+ * Side-by-side diff for the git preview tab, a plain MergeView (not the editing
+ * unified view). The left pane and every staged/binary/too-large side is a
+ * revision snapshot and stays read-only; the right pane of an unstaged diff is
+ * the live working tree, so it alone is editable and writes back through the
+ * open editor buffer or straight to disk (#169).
  */
 /** Split-ratio bounds: neither pane may shrink past this. */
 const MIN_SPLIT = 15;
@@ -57,26 +60,35 @@ export function GitDiffView({
     // widgets sized from measured line heights, and wrapped lines re-measure
     // as pane widths settle — producing sudden mid-scroll jumps and blank
     // regions. Long lines scroll horizontally inside their pane instead.
-    const shared: Extension[] = [
+    const base: Extension[] = [
       lineNumbers(),
-      EditorView.editable.of(false),
-      EditorState.readOnly.of(true),
       // JetBrains diff-navigation keys.
       keymap.of([{ key: 'F7', run: goToNextChunk, shift: goToPreviousChunk }]),
       buildTheme(themeId),
       getLanguageExtension(filename) ?? [],
     ];
+    // Revision snapshots are read-only. Only the working-tree (right) side of an
+    // unstaged diff is a live file, so it alone drops these and instead persists
+    // edits back through the open buffer or disk (#169).
+    const readOnly: Extension[] = [EditorView.editable.of(false), EditorState.readOnly.of(true)];
+    const editableRight = isWorkingTreeEditable(session);
 
     // Only the right pane (the new side: working tree for unstaged, index for
     // staged) carries the per-hunk stage/unstage buttons — git hunks are keyed
     // by their new-side start line, which always matches this pane's content
     // (the store suppresses hunks when the pane shows an unsaved editor buffer
-    // git hasn't diffed, so anchors never drift).
+    // git hasn't diffed, so anchors never drift). An in-place edit dirties that
+    // buffer the same way, so the gutter is likewise suppressed until the next
+    // post-save refresh recomputes the hunks against the new working tree.
     const view = new MergeView({
-      a: { doc: session.left.content, extensions: shared },
+      a: { doc: session.left.content, extensions: [...base, ...readOnly] },
       b: {
         doc: session.right.content,
-        extensions: [...shared, hunkStagingGutter(session.hunks, session.context)],
+        extensions: [
+          ...base,
+          ...(editableRight ? [workingTreeEditListener(session)] : readOnly),
+          hunkStagingGutter(session.hunks, session.context),
+        ],
       },
       parent: hostRef.current,
       gutter: true,
@@ -89,8 +101,8 @@ export function GitDiffView({
     };
   }, [session, themeId]);
 
-  // Both sides are revision snapshots; navigating from the working-tree side
-  // keeps focus where the user reads.
+  // Navigate from the right (working-tree) side and leave focus there — where
+  // the user reads and, in an unstaged diff, edits.
   const navigate = (direction: 'next' | 'prev') => {
     const side = mergeRef.current?.b;
     if (!side) return;
@@ -133,8 +145,8 @@ export function GitDiffView({
     setSplit(currentSplit() + (e.key === 'ArrowLeft' ? -2 : 2));
   };
 
-  // The diff is read-only; Open File brings up the real working-tree file to
-  // edit and yields the diff tab to it.
+  // The working-tree side edits in place, but Open File still brings up the
+  // full editor (LSP, search, its own tab) and yields the diff tab to it.
   const openFile = () => {
     void ensureEditorFileOpen(session.absPath);
     useGitStore.getState().setDiffFocused(false);

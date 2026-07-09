@@ -55,6 +55,13 @@ export interface DiffSession {
    * untracked/binary/too-large diffs (whole-file staging only). In an
    * 'unstaged' diff these stage; in a 'staged' diff they unstage. */
   hunks: git.Hunk[];
+  /** The working-tree file's detected encoding and line endings, captured when
+   * an editable (unstaged) diff is built so an edit written straight to disk
+   * (file not open in the editor) round-trips them instead of silently
+   * rewriting to UTF-8/LF. Undefined for staged/binary/too-large diffs, whose
+   * right side is a read-only snapshot. */
+  worktreeEncoding?: string;
+  worktreeLineEndings?: string;
 }
 
 /** Friendly post-commit summary shown in the panel instead of raw git output. */
@@ -396,6 +403,10 @@ export const useGitStore = create<GitStore>()(
           let right: DiffSide;
           let binary = false;
           let truncated = false;
+          // The working-tree file's encoding/line endings, for round-tripping a
+          // disk-write edit (unstaged, file not open). Only set on that path.
+          let worktreeEncoding: string | undefined;
+          let worktreeLineEndings: string | undefined;
           // The working-tree side is showing an unsaved editor buffer, which
           // git hasn't diffed — its disk-based hunks wouldn't line up with (or
           // stage) what's on screen, so per-hunk staging is suppressed until save.
@@ -434,6 +445,10 @@ export const useGitStore = create<GitStore>()(
               try {
                 const result = await ReadFile(abs);
                 worktree = result.content ?? '';
+                // Captured only here (the disk-write persist path); an open
+                // file writes through its buffer, which carries its own.
+                worktreeEncoding = result.encoding;
+                worktreeLineEndings = result.lineEndings;
               } catch {
                 // Deleted from the worktree → empty right side is the truth.
               }
@@ -461,6 +476,8 @@ export const useGitStore = create<GitStore>()(
             binary,
             truncated,
             hunks,
+            worktreeEncoding,
+            worktreeLineEndings,
           };
           set(
             (state) => ({

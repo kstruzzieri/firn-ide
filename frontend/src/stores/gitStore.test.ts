@@ -466,6 +466,37 @@ describe('gitStore diff sessions', () => {
     expect(session?.right).toEqual({ label: 'Working Tree', content: 'worktree text' });
   });
 
+  it('captures the working-tree encoding and line endings for a disk-read unstaged diff', async () => {
+    // These let an edit written straight to disk (file not open in the editor)
+    // round-trip the original encoding/line endings instead of forcing UTF-8/LF.
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+    mockReadFile.mockResolvedValueOnce({
+      content: 'worktree text',
+      encoding: 'utf-16le',
+      lineEndings: 'crlf',
+    } as Awaited<ReturnType<typeof ReadFile>>);
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    const session = useGitStore.getState().diffSession;
+    expect(session?.worktreeEncoding).toBe('utf-16le');
+    expect(session?.worktreeLineEndings).toBe('crlf');
+  });
+
+  it('leaves working-tree encoding unset for a staged diff (its right side is read-only)', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('head')).mockResolvedValueOnce(rev('index'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: '.' }, 'staged');
+
+    const session = useGitStore.getState().diffSession;
+    expect(session?.worktreeEncoding).toBeUndefined();
+    expect(session?.worktreeLineEndings).toBeUndefined();
+  });
+
   it('uses the live editor buffer for the working-tree side when the file is open', async () => {
     // An open, possibly-unsaved file: the diff reflects the editor content,
     // not stale disk content, and doesn't read disk.
