@@ -411,7 +411,7 @@ func (m *Manager) DocumentSymbol(ctx context.Context, path string) ([]DocumentSy
 	// view fetches on every file switch and (debounced) edit, so blindly
 	// sending the request to a server that will reject it would spam
 	// request-failure logs and surface a misleading error state to the user.
-	if entry.client.ServerCapabilities().DocumentSymbolProvider == nil {
+	if !documentSymbolSupported(entry.client.ServerCapabilities().DocumentSymbolProvider) {
 		return nil, nil
 	}
 	result, err := entry.client.DocumentSymbol(ctx, uri)
@@ -1337,4 +1337,15 @@ func completionTriggerChars(entry *serverEntry) []string {
 		return nil
 	}
 	return opts.TriggerCharacters
+}
+
+func documentSymbolSupported(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var enabled bool
+	if err := json.Unmarshal(raw, &enabled); err == nil {
+		return enabled
+	}
+	return true
 }

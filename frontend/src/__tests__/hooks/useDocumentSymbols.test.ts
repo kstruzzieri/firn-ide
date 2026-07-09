@@ -33,7 +33,9 @@ function setActiveFile(path: string | null, content = 'x') {
         },
       ]
     : [];
-  useIDEStore.setState({ openFiles: file as never, activeFileId: path });
+  act(() => {
+    useIDEStore.setState({ openFiles: file as never, activeFileId: path });
+  });
 }
 
 function setServer(
@@ -43,7 +45,9 @@ function setServer(
     state: LSPServerStatus['state'];
   }
 ) {
-  useLSPStore.getState().setServerStatus(status as LSPServerStatus);
+  act(() => {
+    useLSPStore.getState().setServerStatus(status as LSPServerStatus);
+  });
 }
 
 beforeEach(() => {
