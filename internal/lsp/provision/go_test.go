@@ -48,6 +48,12 @@ func TestGo_Resolve_missingThenAvailable(t *testing.T) {
 	}
 }
 
+func TestGoBinDirUsesLastDuplicate(t *testing.T) {
+	if got := goBinDir([]string{"GOBIN=/old", "PATH=/bin", "GOBIN=/staging"}); got != "/staging" {
+		t.Fatalf("goBinDir = %q, want last GOBIN", got)
+	}
+}
+
 func TestGo_Install_noToolchain(t *testing.T) {
 	p := NewGoProvisioner(t.TempDir(), "darwin", "arm64", GoDeps{
 		LookPath: func(string) (string, error) { return "", os.ErrNotExist },
@@ -60,7 +66,9 @@ func TestGo_Install_noToolchain(t *testing.T) {
 func TestGo_Install_goInstallFails(t *testing.T) {
 	p := NewGoProvisioner(t.TempDir(), "darwin", "arm64", GoDeps{
 		LookPath: func(string) (string, error) { return "/usr/local/go/bin/go", nil },
-		RunGo:    func(context.Context, string, []string, []string) error { return errors.New("go install: network unreachable") },
+		RunGo: func(context.Context, string, []string, []string) error {
+			return errors.New("go install: network unreachable")
+		},
 	})
 	if r := p.Install(context.Background(), func(Progress) {}); r.State != StateOffline {
 		t.Fatalf("Install with failing go install = %v, want offline", r.State)

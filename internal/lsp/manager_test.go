@@ -1325,6 +1325,25 @@ func TestManager_ProjectRootForPath_GoUsesNearestGoMod(t *testing.T) {
 	}
 }
 
+func TestManager_ProjectRootForPath_RustUsesNearestCargoToml(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "Cargo.toml"))
+	touch(t, filepath.Join(ws, "crates", "tool", "Cargo.toml"))
+	file := filepath.Join(ws, "crates", "tool", "src", "main.rs")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	root, err := mgr.projectRootForPath("rust", file)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(ws, "crates", "tool")
+	if root != want {
+		t.Errorf("Rust project root = %q, want nearest Cargo.toml root %q", root, want)
+	}
+}
+
 func TestManager_ProjectRootForPath_PythonUsesNearestProjectMarker(t *testing.T) {
 	for _, marker := range []string{"pyproject.toml", "requirements.txt", "setup.py"} {
 		t.Run(marker, func(t *testing.T) {

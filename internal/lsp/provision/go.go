@@ -123,7 +123,8 @@ func (p *GoProvisioner) lookGo() (string, error) {
 // goBinDir extracts the GOBIN value from a go-install env slice (shared by impl
 // + test so they agree on the variable name).
 func goBinDir(env []string) string {
-	for _, kv := range env {
+	for i := len(env) - 1; i >= 0; i-- {
+		kv := env[i]
 		if v, ok := strings.CutPrefix(kv, "GOBIN="); ok {
 			return v
 		}

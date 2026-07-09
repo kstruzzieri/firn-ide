@@ -99,8 +99,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // wireLSPProvisioners builds and registers the managed-server provisioners on
-// the LSP manager. Currently only the Python (basedpyright) provisioner is
-// managed. When the home directory is unavailable the provisioner is skipped
+// the LSP manager. When the home directory is unavailable, provisioners are skipped
 // gracefully — managed installs simply won't be offered, while interpreter/env
 // wiring still works.
 func (a *App) wireLSPProvisioners() {
