@@ -91,7 +91,11 @@ describe('LSPSetupCard', () => {
     const user = userEvent.setup();
     render(
       <LSPSetupCard
-        status={status({ setupState: 'offline', action: 'retry', projectRoot: '/proj/services/api' })}
+        status={status({
+          setupState: 'offline',
+          action: 'retry',
+          projectRoot: '/proj/services/api',
+        })}
         workspacePath="/proj"
       />
     );
