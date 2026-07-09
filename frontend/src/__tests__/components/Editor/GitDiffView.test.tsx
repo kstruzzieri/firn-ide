@@ -2,7 +2,15 @@
 // same reason CodeMirrorEditor has no direct render test). Mock the merge
 // module and verify the component's construction/teardown contract instead.
 const destroyMock = jest.fn();
-const fakeSideB = { state: {}, focus: jest.fn(), requestMeasure: jest.fn() };
+// The right pane exposes just enough of an EditorView for the reconcile/navigate
+// paths: a live doc string, a selection head, and a dispatch spy.
+const fakeSideB = {
+  state: { doc: { toString: () => 'const a = 2;\n' }, selection: { main: { head: 0 } } },
+  hasFocus: false,
+  dispatch: jest.fn(),
+  focus: jest.fn(),
+  requestMeasure: jest.fn(),
+};
 const mergeViewMock = jest.fn().mockImplementation(() => ({
   destroy: destroyMock,
   a: { state: {}, requestMeasure: jest.fn() },
@@ -26,6 +34,7 @@ jest.mock('@codemirror/view', () => ({
   EditorView: {
     editable: { of: jest.fn(() => 'EDITABLE_FALSE') },
     updateListener: { of: jest.fn(() => 'EDIT_LISTENER') },
+    scrollIntoView: jest.fn(() => 'SCROLL_EFFECT'),
     lineWrapping: {},
   },
   lineNumbers: jest.fn(),
@@ -36,6 +45,17 @@ jest.mock('@codemirror/view', () => ({
 jest.mock('@codemirror/state', () => ({
   EditorState: { readOnly: { of: jest.fn(() => 'READONLY') } },
   RangeSet: { of: jest.fn() },
+  // The gutter compartment: .of passes the extension straight through (so the
+  // gutter still appears in the pane's extension array), .reconfigure yields a
+  // sentinel effect the reconcile test can look for.
+  Compartment: class {
+    of(ext: unknown) {
+      return ext;
+    }
+    reconfigure(ext: unknown) {
+      return { __reconfigure: ext };
+    }
+  },
 }));
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
@@ -115,17 +135,74 @@ describe('GitDiffView', () => {
     expect(destroyMock).toHaveBeenCalledTimes(1);
   });
 
-  it('rebuilds the merge view when the session changes', () => {
+  it('reconciles working-tree content in place instead of rebuilding (keeps cursor)', () => {
     const { rerender } = render(<GitDiffView session={base} />);
 
+    // A save-driven refresh brings new working-tree content for the same file.
     rerender(
       <GitDiffView
         session={{ ...base, right: { label: 'Working Tree', content: 'const a = 3;\n' } }}
       />
     );
 
+    // No teardown: the editable pane's cursor/scroll survive.
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(destroyMock).not.toHaveBeenCalled();
+    // Content is reconciled into the live pane via a dispatch.
+    expect(fakeSideB.dispatch).toHaveBeenCalledWith({
+      changes: { from: 0, to: 'const a = 2;\n'.length, insert: 'const a = 3;\n' },
+    });
+  });
+
+  it('does not overwrite the pane while the user is typing in it (focused)', () => {
+    fakeSideB.hasFocus = true;
+    try {
+      const { rerender } = render(<GitDiffView session={base} />);
+
+      rerender(
+        <GitDiffView
+          session={{ ...base, right: { label: 'Working Tree', content: 'external\n' } }}
+        />
+      );
+
+      expect(fakeSideB.dispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ changes: expect.anything() })
+      );
+    } finally {
+      fakeSideB.hasFocus = false;
+    }
+  });
+
+  it('rebuilds when a structural field changes (index/HEAD content)', () => {
+    const { rerender } = render(<GitDiffView session={base} />);
+
+    rerender(<GitDiffView session={{ ...base, left: { label: 'Index', content: 'changed\n' } }} />);
+
     expect(destroyMock).toHaveBeenCalledTimes(1);
     expect(mergeViewMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reconfigures the hunk gutter in place when the hunk set changes', () => {
+    const { rerender } = render(<GitDiffView session={base} />);
+
+    rerender(
+      <GitDiffView session={{ ...base, hunks: [{ patch: 'P', newStart: 1, newLines: 1 }] }} />
+    );
+
+    // Same session file/content → no rebuild; the gutter is swapped via dispatch.
+    expect(mergeViewMock).toHaveBeenCalledTimes(1);
+    expect(fakeSideB.dispatch).toHaveBeenCalledWith({
+      effects: { __reconfigure: { __gutter: true } },
+    });
+  });
+
+  it('centers the landed chunk when cycling differences', () => {
+    render(<GitDiffView session={base} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /next difference/i }));
+
+    expect(goToNextChunkMock).toHaveBeenCalled();
+    expect(fakeSideB.dispatch).toHaveBeenCalledWith({ effects: 'SCROLL_EFFECT' });
   });
 
   it('shows the difference count and next/previous navigation', () => {
