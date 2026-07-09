@@ -49,6 +49,20 @@ describe('classifyChange', () => {
     expect(classifyChange(fc('R', '.', { origPath: 'src/old.ts' })).rowStatus).toBe('renamed');
   });
 
+  it('flags an intent-to-add entry (.A) so the UI can offer untrack', () => {
+    const c = classifyChange(fc('.', 'A'));
+    expect(c.intentToAdd).toBe(true);
+    expect(c.unstaged).toBe(true);
+    expect(c.staged).toBe(false);
+    expect(c.rowStatus).toBe('added');
+  });
+
+  it('does not flag plain untracked or staged additions as intent-to-add', () => {
+    expect(classifyChange(fc('?', '?')).intentToAdd).toBe(false);
+    expect(classifyChange(fc('A', '.')).intentToAdd).toBe(false);
+    expect(classifyChange(fc('A', 'M')).intentToAdd).toBe(false);
+  });
+
   it('conflict wins over everything', () => {
     const c = classifyChange(fc('U', 'U', { unmerged: true }));
     expect(c.conflicted).toBe(true);

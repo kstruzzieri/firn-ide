@@ -201,6 +201,36 @@ func TestService_StageAndUnstage(t *testing.T) {
 	}
 }
 
+func TestService_IntentToAdd(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "new.txt", "content\n")
+	svc := NewService()
+
+	if err := svc.IntentToAdd(ctx(), dir, []string{"new.txt"}); err != nil {
+		t.Fatalf("IntentToAdd() error = %v", err)
+	}
+
+	// Intent-to-add records the path in the index as an empty blob: the file
+	// is tracked (no longer "?") but its content stays unstaged (".A").
+	st, _ := svc.Status(ctx(), dir)
+	if len(st.Files) != 1 {
+		t.Fatalf("Files = %+v, want single entry", st.Files)
+	}
+	if st.Files[0].Index != "." || st.Files[0].Worktree != "A" {
+		t.Errorf("XY = %s%s, want .A (intent-to-add)", st.Files[0].Index, st.Files[0].Worktree)
+	}
+}
+
+func TestService_IntentToAdd_RejectsTraversal(t *testing.T) {
+	requireGit(t)
+	svc := NewService()
+
+	if err := svc.IntentToAdd(ctx(), t.TempDir(), []string{"../evil.txt"}); err == nil {
+		t.Error("IntentToAdd() with traversal path = nil error, want error")
+	}
+}
+
 func TestService_Unstage_BeforeFirstCommit(t *testing.T) {
 	requireGit(t)
 	dir := t.TempDir()

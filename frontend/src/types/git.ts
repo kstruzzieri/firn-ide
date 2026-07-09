@@ -28,6 +28,9 @@ export interface ChangeClassification {
   unstaged: boolean;
   untracked: boolean;
   conflicted: boolean;
+  /** Intent-to-add entry (porcelain ".A", from git add -N): tracked as an
+   * empty index blob, content unstaged. The UI offers untrack on these. */
+  intentToAdd: boolean;
   rowStatus: GitRowStatus;
 }
 
@@ -52,6 +55,7 @@ export function classifyChange(change: GitFileChange): ChangeClassification {
       unstaged: false,
       untracked: false,
       conflicted: true,
+      intentToAdd: false,
       rowStatus: 'conflicted',
     };
   }
@@ -61,15 +65,18 @@ export function classifyChange(change: GitFileChange): ChangeClassification {
       unstaged: false,
       untracked: true,
       conflicted: false,
+      intentToAdd: false,
       rowStatus: 'untracked',
     };
   }
   const staged = change.index !== '.';
   const unstaged = change.worktree !== '.';
+  // ".A" only arises from git add -N: an unstaged addition of a tracked path.
+  const intentToAdd = change.index === '.' && change.worktree === 'A';
   // Worktree letter wins for the row look: it is what the user sees on disk.
   const rowStatus =
     (unstaged ? letterStatus[change.worktree] : letterStatus[change.index]) ?? 'modified';
-  return { staged, unstaged, untracked: false, conflicted: false, rowStatus };
+  return { staged, unstaged, untracked: false, conflicted: false, intentToAdd, rowStatus };
 }
 
 /**

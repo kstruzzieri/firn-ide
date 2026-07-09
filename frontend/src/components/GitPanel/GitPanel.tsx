@@ -542,6 +542,7 @@ function ChangeRow({
   rowAction: 'stage' | 'unstage' | null;
 }) {
   const name = fileName(file.change.path);
+  const busy = useGitStore((s) => s.opInFlight !== null);
   const git = useGitStore.getState();
 
   // Staged rows diff HEAD↔index, unstaged/untracked rows diff index↔worktree;
@@ -590,6 +591,30 @@ function ChangeRow({
         )}
       </button>
       <span className={styles.rowActions}>
+        {file.rowStatus === 'untracked' && (
+          <button
+            type="button"
+            className={styles.rowTrackBtn}
+            onClick={() => void git.intentToAdd([file.change.path])}
+            disabled={busy}
+            aria-label={`Track ${file.change.path} without staging`}
+            title="Track without staging (git add -N): the file shows in diffs and can be staged hunk-by-hunk"
+          >
+            Track
+          </button>
+        )}
+        {classifyChange(file.change).intentToAdd && (
+          <button
+            type="button"
+            className={styles.rowTrackBtn}
+            onClick={() => void git.unstage([file.change.path])}
+            disabled={busy}
+            aria-label={`Untrack ${file.change.path}`}
+            title="Stop tracking (git restore --staged): back to untracked, file kept on disk"
+          >
+            Untrack
+          </button>
+        )}
         <span className={styles.rowBadge} aria-hidden="true">
           {statusLetter[file.rowStatus]}
         </span>
