@@ -121,7 +121,26 @@ func (a *App) wireLSPProvisioners() {
 		},
 		// Fetch nil -> defaultFetch (real download+verify+unzip).
 	})
-	a.lspManager.SetProvisioners(map[string]provision.Provisioner{"python": pyProv})
+	goProv := provision.NewGoProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.GoDeps{
+		LookPath: exec.LookPath,
+		RunGo: func(ctx context.Context, goBin string, args, env []string) error {
+			cmd := exec.CommandContext(ctx, goBin, args...)
+			cmd.Env = env
+			return cmd.Run()
+		},
+	})
+	rustProv := provision.NewRustProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.RustDeps{
+		// Fetch nil -> defaultRustFetch (real download+verify+gunzip/unzip).
+	})
+	tsProv := provision.NewTypeScriptProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.TypeScriptDeps{
+		// Fetch nil -> defaultTypeScriptFetch (real download+verify+untar/unzip).
+	})
+	a.lspManager.SetProvisioners(map[string]provision.Provisioner{
+		"python":     pyProv,
+		"go":         goProv,
+		"rust":       rustProv,
+		"typescript": tsProv,
+	})
 }
 
 // beforeClose is called by Wails before the application window closes.

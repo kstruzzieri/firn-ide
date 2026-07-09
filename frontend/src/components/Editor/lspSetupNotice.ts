@@ -61,12 +61,19 @@ export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNoti
         hint: 'Check your connection, then Retry.',
         tone: 'error',
       };
-    case 'provision_failed':
+    case 'provision_failed': {
+      // Python has a well-known package name worth naming; other families get a
+      // generic manual-install suggestion so the copy is never Python-specific.
+      const manual =
+        status.family === 'python'
+          ? 'install basedpyright/pyright manually'
+          : `install the ${status.family} language server manually`;
       return {
         message: 'Language server setup failed.',
-        hint: 'Retry, or install basedpyright/pyright manually.',
+        hint: `Retry, or ${manual}.`,
         tone: 'error',
       };
+    }
     default:
       return null;
   }

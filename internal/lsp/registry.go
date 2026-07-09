@@ -93,6 +93,7 @@ var extensionMap = map[string]langInfo{
 	".py":  {"python", "python"},
 	".pyw": {"python", "python"},
 	".pyi": {"python", "python"},
+	".rs":  {"rust", "rust"},
 }
 
 // LanguageIDForExtension returns the LSP languageId for the given file extension.
@@ -131,6 +132,8 @@ func (r *Registry) ServerConfigFor(family, projectRoot string) (*ServerConfig, e
 		return r.resolveGoServer(projectRoot)
 	case "python":
 		return r.resolvePythonServer(projectRoot)
+	case "rust":
+		return r.resolveRustServer(projectRoot)
 	default:
 		return nil, fmt.Errorf("no language server configured for %q", family)
 	}
@@ -168,9 +171,10 @@ func (r *Registry) resolveTypeScriptServer(projectRoot string) (*ServerConfig, e
 	// 2. Fall back to system PATH
 	path, err := exec.LookPath(binary)
 	if err != nil {
-		return nil, &ServerMissError{Family: "typescript", Provisionable: false, Hint: "typescript-language-server not found: install it with " +
-			"\"npm install -g typescript-language-server typescript\" " +
-			"or add it as a project dependency"}
+		// 3. No system server: offer a managed install when one is available,
+		// otherwise return an actionable manual-install hint.
+		return r.managedOrMiss("typescript", projectRoot, "typescript-language-server not found. Firn can install it automatically, "+
+			"or add it with \"npm install -g typescript-language-server typescript\" or as a project dependency.")
 	}
 
 	args := []string{"--stdio"}
@@ -209,9 +213,10 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 	if err != nil {
 		path = findGoBinary("gopls")
 		if path == "" {
-			return nil, &ServerMissError{Family: "go", Provisionable: false, Hint: "gopls not found: install it with " +
-				"\"go install golang.org/x/tools/gopls@latest\" " +
-				"or add it to PATH"}
+			// No system gopls: offer a managed install (via `go install`) when one
+			// is available, otherwise return an actionable manual-install hint.
+			return r.managedOrMiss("go", projectRoot, "gopls not found. Firn can install it automatically (requires the Go toolchain), "+
+				"or install it with \"go install golang.org/x/tools/gopls@latest\" and add it to PATH.")
 		}
 	}
 
@@ -220,6 +225,47 @@ func (r *Registry) resolveGoServer(projectRoot string) (*ServerConfig, error) {
 		Command:        path,
 		Dir:            projectRoot,
 	}, nil
+}
+
+// resolveRustServer finds and configures rust-analyzer. Lookup order:
+//  1. System PATH.
+//  2. ~/.cargo/bin (rustup installs land here but are absent from the PATH a
+//     Finder/Dock-launched app inherits, mirroring the gopls fallback).
+//  3. A managed install when a rust provisioner is registered, otherwise an
+//     actionable manual-install hint.
+func (r *Registry) resolveRustServer(projectRoot string) (*ServerConfig, error) {
+	path, err := exec.LookPath("rust-analyzer")
+	if err != nil {
+		path = findCargoBinary("rust-analyzer")
+		if path == "" {
+			return r.managedOrMiss("rust", projectRoot, "rust-analyzer not found. Firn can install it automatically, "+
+				"or install it with \"rustup component add rust-analyzer\" and add it to PATH.")
+		}
+	}
+
+	return &ServerConfig{
+		LanguageFamily: "rust",
+		Command:        path,
+		Dir:            projectRoot,
+	}, nil
+}
+
+// findCargoBinary looks for a Rust binary under ~/.cargo/bin, covering the
+// Finder/Dock launch case where the shell PATH (with ~/.cargo/bin) is absent.
+func findCargoBinary(name string) string {
+	binName := name
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	candidate := filepath.Join(home, ".cargo", "bin", binName)
+	if isExecutableFile(candidate) {
+		return candidate
+	}
+	return ""
 }
 
 // goBinarySearchDirs returns the directories findGoBinary scans. It is a

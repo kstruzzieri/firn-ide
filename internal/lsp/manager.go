@@ -1171,6 +1171,8 @@ func defaultServerCommand(family string) string {
 		return "gopls"
 	case "python":
 		return "pyright-langserver"
+	case "rust":
+		return "rust-analyzer"
 	default:
 		return ""
 	}

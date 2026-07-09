@@ -110,7 +110,8 @@ func TestRegistry_LanguageIDMapping(t *testing.T) {
 		{".py", "python", "python"},
 		{".pyw", "python", "python"},
 		{".pyi", "python", "python"},
-		{".rs", "", ""},
+		{".rs", "rust", "rust"},
+		{".txt", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -348,7 +349,7 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	mgr.SetWorkspaceRoot("/tmp/test")
 
 	ctx := context.Background()
-	err := mgr.DidOpen(ctx, "/tmp/test/main.rs", "", 1, "fn main() {}")
+	err := mgr.DidOpen(ctx, "/tmp/test/notes.txt", "", 1, "just some notes")
 	if err != nil {
 		t.Errorf("DidOpen unsupported file should be no-op, got: %v", err)
 	}
@@ -358,9 +359,9 @@ func TestManager_DocumentSymbolNoServer(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	mgr.SetWorkspaceRoot("/tmp/test")
 
-	// No language server covers .rs in the test registry, so DocumentSymbol
+	// No language server covers .txt in the test registry, so DocumentSymbol
 	// must return (nil, nil) rather than erroring.
-	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/main.rs")
+	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/notes.txt")
 	if err != nil {
 		t.Errorf("DocumentSymbol on unsupported file should not error, got: %v", err)
 	}
