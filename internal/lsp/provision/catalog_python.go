@@ -1,8 +1,8 @@
 package provision
 
 // pythonCatalogEntry pins basedpyright (universal py3-none-any wheel) plus the
-// shared nodejs-wheel-binaries runtime (see nodeWheelArtifacts). musl/Alpine
-// falls through to the uv fast-path or a guidance card.
+// shared nodejs-wheel-binaries runtime (see nodeWheelArtifacts), with
+// glibc and musl linux wheels selected by host libc.
 var pythonCatalogEntry = CatalogEntry{
 	Family:       "python",
 	Version:      "1.39.9",
