@@ -90,6 +90,10 @@ export function GitGenerateCommitMessage(arg1) {
   return window['go']['main']['App']['GitGenerateCommitMessage'](arg1);
 }
 
+export function GitIntentToAdd(arg1, arg2) {
+  return window['go']['main']['App']['GitIntentToAdd'](arg1, arg2);
+}
+
 export function GitPull(arg1) {
   return window['go']['main']['App']['GitPull'](arg1);
 }

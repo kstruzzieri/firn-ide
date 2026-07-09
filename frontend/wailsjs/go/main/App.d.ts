@@ -52,6 +52,8 @@ export function GitFileHunks(arg1:string,arg2:string,arg3:boolean):Promise<git.F
 
 export function GitGenerateCommitMessage(arg1:string):Promise<string>;
 
+export function GitIntentToAdd(arg1:string,arg2:Array<string>):Promise<void>;
+
 export function GitPull(arg1:string):Promise<string>;
 
 export function GitPush(arg1:string):Promise<string>;

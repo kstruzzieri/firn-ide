@@ -42,6 +42,16 @@ func (a *App) GitStage(root string, paths []string) error {
 	return a.gitService.Stage(ctx, root, paths)
 }
 
+// GitIntentToAdd marks untracked repo-root-relative paths intent-to-add
+// (git add -N): tracked as empty index blobs, content left unstaged so the
+// file diffs normally and can be staged hunk-by-hunk.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitIntentToAdd(root string, paths []string) error {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.IntentToAdd(ctx, root, paths)
+}
+
 // GitUnstage removes repo-root-relative paths from the index.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GitUnstage(root string, paths []string) error {
