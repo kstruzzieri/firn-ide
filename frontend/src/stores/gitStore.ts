@@ -411,10 +411,10 @@ export const useGitStore = create<GitStore>()(
           }
 
           // Per-hunk staging data for tracked, textual, in-size diffs.
-          // Untracked/binary/too-large diffs stage whole-file only, so skip the
-          // extra git call and leave hunks empty (the UI shows no gutter button).
+          // Untracked/rename/binary/too-large diffs stage whole-file only, so
+          // skip the extra git call and leave hunks empty (no gutter button).
           let hunks: git.Hunk[] = [];
-          if (!untracked && !binary && !truncated && !dirtyBufferWorktree) {
+          if (!untracked && !change.origPath && !binary && !truncated && !dirtyBufferWorktree) {
             const fh = await GitFileHunks(repoRoot, change.path, context === 'staged');
             hunks = fh.hunks ?? [];
           }

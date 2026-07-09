@@ -205,6 +205,37 @@ func TestService_FileHunks_NoChangesEmpty(t *testing.T) {
 	}
 }
 
+func TestService_FileHunks_PinsApplyableDiffOutput(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	svc := NewService()
+	writeFile(t, dir, "README.md", "1\n2\n3\n4\n5\n")
+	if err := svc.Stage(ctx(), dir, []string{"README.md"}); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-m", "expand readme")
+	gitCmd(t, dir, "config", "diff.context", "0")
+	gitCmd(t, dir, "config", "diff.noprefix", "true")
+	writeFile(t, dir, "README.md", "1\n2\nTHREE\n4\n5\n")
+
+	fh, err := svc.FileHunks(ctx(), dir, "README.md", false)
+	if err != nil {
+		t.Fatalf("FileHunks() error = %v", err)
+	}
+	if len(fh.Hunks) != 1 {
+		t.Fatalf("hunks = %d, want 1 (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+	if !strings.Contains(fh.Hunks[0].Patch, "diff --git a/README.md b/README.md") {
+		t.Fatalf("patch did not keep default prefixes:\n%s", fh.Hunks[0].Patch)
+	}
+	if !strings.Contains(fh.Hunks[0].Patch, "@@ -1,5 +1,5 @@") {
+		t.Fatalf("patch did not override zero-context config:\n%s", fh.Hunks[0].Patch)
+	}
+	if err := svc.ApplyPatch(ctx(), dir, fh.Hunks[0].Patch, false); err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+}
+
 // TestService_ApplyPatch_RejectsNonPatch guards the bindings boundary: junk
 // never reaches `git apply`.
 func TestService_ApplyPatch_RejectsNonPatch(t *testing.T) {

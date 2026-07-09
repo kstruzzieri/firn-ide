@@ -411,6 +411,8 @@ describe('gitStore diff sessions', () => {
       label: 'HEAD',
       content: 'old text',
     });
+    expect(mockFileHunks).not.toHaveBeenCalled();
+    expect(useGitStore.getState().diffSession?.hunks).toEqual([]);
   });
 
   it('unstaged context diffs the index against the working tree', async () => {

@@ -38,7 +38,15 @@ func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) 
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return FileHunks{}, err
 	}
-	args := []string{"diff", "--no-color", "--no-ext-diff"}
+	args := []string{
+		"diff",
+		"--no-color",
+		"--no-ext-diff",
+		"--no-textconv",
+		"--unified=3",
+		"--src-prefix=a/",
+		"--dst-prefix=b/",
+	}
 	if staged {
 		args = append(args, "--cached")
 	}
