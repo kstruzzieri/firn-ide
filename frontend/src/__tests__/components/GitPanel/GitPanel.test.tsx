@@ -2,6 +2,7 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
+  GitIntentToAdd: jest.fn(),
   GitCommit: jest.fn(),
   GitPull: jest.fn(),
   GitPush: jest.fn(),
@@ -23,6 +24,7 @@ import {
   GitStatus,
   GitStage,
   GitUnstage,
+  GitIntentToAdd,
   GitCommit,
   GitPull,
   GitPush,
@@ -182,6 +184,22 @@ describe('GitPanel sections', () => {
     await act(async () => {});
 
     expect(GitUnstage).toHaveBeenCalledWith('/repo', ['staged.ts']);
+  });
+
+  it('untracked rows offer a track-without-staging (git add -N) affordance', async () => {
+    (GitIntentToAdd as jest.Mock).mockResolvedValue(undefined);
+    seed([file('new.md', '?', '?'), file('changed.ts', '.', 'M')]);
+
+    render(<GitPanel />);
+
+    // Only untracked rows carry the affordance.
+    expect(screen.queryByRole('button', { name: /track changed\.ts/i })).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Track new.md without staging' }));
+    });
+
+    expect(GitIntentToAdd).toHaveBeenCalledWith('/repo', ['new.md']);
+    expect(GitStage).not.toHaveBeenCalled();
   });
 
   it('conflict rows have no include checkbox until resolved', () => {

@@ -590,6 +590,17 @@ function ChangeRow({
         )}
       </button>
       <span className={styles.rowActions}>
+        {file.rowStatus === 'untracked' && (
+          <button
+            type="button"
+            className={styles.rowTrackBtn}
+            onClick={() => void git.intentToAdd([file.change.path])}
+            aria-label={`Track ${name} without staging`}
+            title="Track without staging (git add -N): the file shows in diffs and can be staged hunk-by-hunk"
+          >
+            Track
+          </button>
+        )}
         <span className={styles.rowBadge} aria-hidden="true">
           {statusLetter[file.rowStatus]}
         </span>

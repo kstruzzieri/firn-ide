@@ -491,6 +491,30 @@
   font-weight: 700;
 }
 
+/* Untracked-only "Track" (git add -N) affordance: revealed on row hover like
+ * a secondary action, but kept focusable at all times for keyboard users. */
+.rowTrackBtn {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.row:hover .rowTrackBtn,
+.rowTrackBtn:focus-visible {
+  opacity: 1;
+}
+
+.rowTrackBtn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
 /* Both the filename and its status badge take the state color, so a file's
  * git state is readable from the name alone: modified (amber), added (green),
  * untracked (slate), deleted (red, struck through), conflict (bright red). */
