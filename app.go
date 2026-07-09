@@ -731,6 +731,17 @@ func (a *App) LSPDefinition(path string, line, character int) ([]lsp.Location, e
 	return a.lspManager.Definition(ctx, path, line, character)
 }
 
+// LSPDocumentSymbol requests the document symbols (structure/outline) for a file.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDocumentSymbol(path string) ([]lsp.DocumentSymbol, error) {
+	if a.lspManager == nil {
+		return nil, fmt.Errorf("LSP not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, lsp.DefaultRequestTimeout)
+	defer cancel()
+	return a.lspManager.DocumentSymbol(ctx, path)
+}
+
 // LSPComplete requests completion items for a position in a document.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) LSPComplete(path string, line, character int, triggerCharacter string) (*lsp.CompletionList, error) {

@@ -400,6 +400,27 @@ func (m *Manager) Definition(ctx context.Context, path string, line, character i
 	return result, err
 }
 
+// DocumentSymbol sends a documentSymbol request for the given file and returns
+// its normalized symbol tree. Returns nil when no server covers the file.
+func (m *Manager) DocumentSymbol(ctx context.Context, path string) ([]DocumentSymbol, error) {
+	entry, uri, key := m.serverForPath(path)
+	if entry == nil {
+		return nil, nil
+	}
+	// Skip servers that don't advertise documentSymbol support. The Structure
+	// view fetches on every file switch and (debounced) edit, so blindly
+	// sending the request to a server that will reject it would spam
+	// request-failure logs and surface a misleading error state to the user.
+	if !documentSymbolSupported(entry.client.ServerCapabilities().DocumentSymbolProvider) {
+		return nil, nil
+	}
+	result, err := entry.client.DocumentSymbol(ctx, uri)
+	if err != nil {
+		m.logRequestFailure(key, "textDocument/documentSymbol", err)
+	}
+	return result, err
+}
+
 // Complete sends a completion request for the given file position.
 func (m *Manager) Complete(ctx context.Context, path string, line, character int, triggerChar string) (*CompletionList, error) {
 	entry, uri, key := m.serverForPath(path)
@@ -1316,4 +1337,15 @@ func completionTriggerChars(entry *serverEntry) []string {
 		return nil
 	}
 	return opts.TriggerCharacters
+}
+
+func documentSymbolSupported(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var enabled bool
+	if err := json.Unmarshal(raw, &enabled); err == nil {
+		return enabled
+	}
+	return true
 }

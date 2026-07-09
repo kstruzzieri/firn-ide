@@ -41,7 +41,7 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
 }
 
 // Types
-export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
+export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
 export type WorkspaceAccent =
   | 'project'

@@ -354,6 +354,87 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	}
 }
 
+func TestManager_DocumentSymbolNoServer(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	mgr.SetWorkspaceRoot("/tmp/test")
+
+	// No language server covers .rs in the test registry, so DocumentSymbol
+	// must return (nil, nil) rather than erroring.
+	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/main.rs")
+	if err != nil {
+		t.Errorf("DocumentSymbol on unsupported file should not error, got: %v", err)
+	}
+	if symbols != nil {
+		t.Errorf("expected nil symbols for unsupported file, got %+v", symbols)
+	}
+}
+
+func TestManager_DocumentSymbolProviderFalseSkipsRequest(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	root := t.TempDir()
+	mgr.SetWorkspaceRoot(root)
+
+	path := filepath.Join(root, "main.ts")
+	uri, err := FileToURI(path)
+	if err != nil {
+		t.Fatalf("FileToURI: %v", err)
+	}
+
+	transport := newFakeTransport()
+	client := NewClient(transport, nil)
+	t.Cleanup(func() { _ = transport.Close() })
+	client.capabilities = ServerCapabilities{DocumentSymbolProvider: json.RawMessage(`false`)}
+
+	key := serverKey{family: "typescript", workspace: root}
+	mgr.mu.Lock()
+	mgr.servers[key] = &serverEntry{
+		client: client,
+		config: &ServerConfig{Command: "typescript-language-server"},
+		openDocs: map[string]*docState{
+			uri: {refCount: 1, version: 1},
+		},
+	}
+	mgr.docKeys[uri] = key
+	mgr.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	symbols, err := mgr.DocumentSymbol(ctx, path)
+	if err != nil {
+		t.Fatalf("DocumentSymbol: %v", err)
+	}
+	if symbols != nil {
+		t.Fatalf("symbols = %+v, want nil", symbols)
+	}
+	select {
+	case msg := <-transport.outgoing:
+		t.Fatalf("sent %s despite documentSymbolProvider=false", msg.Method)
+	default:
+	}
+}
+
+func TestDocumentSymbolSupported(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+		want bool
+	}{
+		{name: "missing", raw: nil, want: false},
+		{name: "null", raw: json.RawMessage(`null`), want: false},
+		{name: "false", raw: json.RawMessage(`false`), want: false},
+		{name: "true", raw: json.RawMessage(`true`), want: true},
+		{name: "options", raw: json.RawMessage(`{"workDoneProgress":true}`), want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := documentSymbolSupported(tt.raw); got != tt.want {
+				t.Fatalf("documentSymbolSupported(%s) = %v, want %v", string(tt.raw), got, tt.want)
+			}
+		})
+	}
+}
+
 func TestManager_SetWorkspaceRootClearsStoppedFlag(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	mgr.SetWorkspaceRoot("/tmp/old")

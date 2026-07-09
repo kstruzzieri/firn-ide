@@ -66,6 +66,8 @@ export function LSPComplete(arg1:string,arg2:number,arg3:number,arg4:string):Pro
 
 export function LSPDefinition(arg1:string,arg2:number,arg3:number):Promise<Array<lsp.Location>>;
 
+export function LSPDocumentSymbol(arg1:string):Promise<Array<lsp.DocumentSymbol>>;
+
 export function LSPDidChange(arg1:string,arg2:number,arg3:Array<lsp.TextDocumentContentChangeEvent>):Promise<void>;
 
 export function LSPDidClose(arg1:string):Promise<void>;

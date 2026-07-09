@@ -76,10 +76,11 @@ func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 		}
 		return respondWithResult(msg.ID, InitializeResult{
 			Capabilities: ServerCapabilities{
-				TextDocumentSync:   mustJSON(TextDocumentSyncOptions{OpenClose: true, Change: TextDocumentSyncFull}),
-				CompletionProvider: mustJSON(map[string]any{"triggerCharacters": []string{".", ":"}}),
-				HoverProvider:      mustJSON(true),
-				DefinitionProvider: mustJSON(true),
+				TextDocumentSync:       mustJSON(TextDocumentSyncOptions{OpenClose: true, Change: TextDocumentSyncFull}),
+				CompletionProvider:     mustJSON(map[string]any{"triggerCharacters": []string{".", ":"}}),
+				HoverProvider:          mustJSON(true),
+				DefinitionProvider:     mustJSON(true),
+				DocumentSymbolProvider: mustJSON(true),
 			},
 		})
 
@@ -97,6 +98,25 @@ func handleMockRequest(msg *JSONRPCMessage, initialized bool) *JSONRPCMessage {
 		return respondWithResult(msg.ID, Location{
 			URI:   params.TextDocument.URI,
 			Range: Range{Start: Position{Line: 0, Character: 0}, End: Position{Line: 0, Character: 10}},
+		})
+
+	case "textDocument/documentSymbol":
+		// Return a small hierarchical DocumentSymbol[] result.
+		return respondWithResult(msg.ID, []DocumentSymbol{
+			{
+				Name:           "Widget",
+				Kind:           5, // Class
+				Range:          Range{Start: Position{Line: 0, Character: 0}, End: Position{Line: 10, Character: 1}},
+				SelectionRange: Range{Start: Position{Line: 0, Character: 6}, End: Position{Line: 0, Character: 12}},
+				Children: []DocumentSymbol{
+					{
+						Name:           "render",
+						Kind:           6, // Method
+						Range:          Range{Start: Position{Line: 2, Character: 2}, End: Position{Line: 4, Character: 3}},
+						SelectionRange: Range{Start: Position{Line: 2, Character: 2}, End: Position{Line: 2, Character: 8}},
+					},
+				},
+			},
 		})
 
 	case "textDocument/completion":

@@ -96,6 +96,19 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // Cmd+Shift+Y / Ctrl+Shift+Y — Structure (current-file outline).
+      if (modifier && e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        const ide = useIDEStore.getState();
+        if (ide.activeSidebarView !== 'structure') {
+          ide.setSidebarView('structure');
+        }
+        if (ide.isLeftPanelCollapsed) {
+          ide.toggleLeftPanel();
+        }
+        return;
+      }
+
       // Cmd+[ / Cmd+] on macOS, Alt+Left / Alt+Right elsewhere — editor navigation history.
       // On macOS these may also arrive via Wails native menu events (navigate:back/forward)
       // because WKWebView sometimes intercepts Cmd+[/Cmd+] before JavaScript can handle them.

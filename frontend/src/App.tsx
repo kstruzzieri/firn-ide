@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
 import { SearchPanel } from './components/Search';
 import { GitPanel } from './components/GitPanel';
+import { StructureView } from './components/Structure';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
 import { RunProfiles } from './components/RunProfiles';
@@ -148,6 +149,8 @@ function App() {
             <SearchPanel />
           ) : sidebarView === 'git' ? (
             <GitPanel />
+          ) : sidebarView === 'structure' ? (
+            <StructureView />
           ) : (
             <FileExplorer />
           )
