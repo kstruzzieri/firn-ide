@@ -58,6 +58,10 @@ export function GetWorkspaceInfo() {
   return window['go']['main']['App']['GetWorkspaceInfo']();
 }
 
+export function GitApplyHunk(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitApplyHunk'](arg1, arg2, arg3);
+}
+
 export function GitBranches(arg1) {
   return window['go']['main']['App']['GitBranches'](arg1);
 }
@@ -76,6 +80,10 @@ export function GitCommitMessageAvailable() {
 
 export function GitFileAtRev(arg1, arg2, arg3) {
   return window['go']['main']['App']['GitFileAtRev'](arg1, arg2, arg3);
+}
+
+export function GitFileHunks(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitFileHunks'](arg1, arg2, arg3);
 }
 
 export function GitGenerateCommitMessage(arg1) {
@@ -118,10 +126,6 @@ export function LSPDefinition(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPDefinition'](arg1, arg2, arg3);
 }
 
-export function LSPDocumentSymbol(arg1) {
-  return window['go']['main']['App']['LSPDocumentSymbol'](arg1);
-}
-
 export function LSPDidChange(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPDidChange'](arg1, arg2, arg3);
 }
@@ -140,6 +144,10 @@ export function LSPDidSave(arg1) {
 
 export function LSPDoctor(arg1) {
   return window['go']['main']['App']['LSPDoctor'](arg1);
+}
+
+export function LSPDocumentSymbol(arg1) {
+  return window['go']['main']['App']['LSPDocumentSymbol'](arg1);
 }
 
 export function LSPHover(arg1, arg2, arg3) {

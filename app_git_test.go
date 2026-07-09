@@ -105,6 +105,35 @@ func TestGitGenerateCommitMessage_Binding(t *testing.T) {
 	}
 }
 
+func TestGitFileHunksAndApply_Binding(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	app := NewApp()
+	_ = app.GitStage(dir, []string{"f.txt"})
+	if _, err := app.GitCommit(dir, "init", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\ny\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fh, err := app.GitFileHunks(dir, "f.txt", false)
+	if err != nil {
+		t.Fatalf("GitFileHunks() error = %v", err)
+	}
+	if len(fh.Hunks) != 1 {
+		t.Fatalf("hunks = %d, want 1 (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+
+	if err := app.GitApplyHunk(dir, fh.Hunks[0].Patch, false); err != nil {
+		t.Fatalf("GitApplyHunk() error = %v", err)
+	}
+
+	st, _ := app.GitStatus(dir)
+	if len(st.Files) != 1 || st.Files[0].Index != "M" {
+		t.Errorf("Files = %+v, want f.txt staged-modified", st.Files)
+	}
+}
+
 func TestGitBranchesAndCheckout_Binding(t *testing.T) {
 	dir := initGitRepoForApp(t)
 	app := NewApp()

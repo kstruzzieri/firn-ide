@@ -13,6 +13,8 @@ import {
   GitCommitMessageAvailable,
   GitGenerateCommitMessage,
   GitFileAtRev,
+  GitFileHunks,
+  GitApplyHunk,
   ReadFile,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
@@ -48,6 +50,10 @@ export interface DiffSession {
   binary: boolean;
   /** Either side exceeded the diffable size cap. */
   truncated: boolean;
+  /** Per-hunk staging affordances, from `git diff` of this file. Empty for
+   * untracked/binary/too-large diffs (whole-file staging only). In an
+   * 'unstaged' diff these stage; in a 'staged' diff they unstage. */
+  hunks: git.Hunk[];
 }
 
 /** Friendly post-commit summary shown in the panel instead of raw git output. */
@@ -130,6 +136,9 @@ interface GitActions {
   scheduleRefresh: () => void;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
+  /** Stage (reverse=false) or unstage (reverse=true) a single diff hunk by
+   * applying its patch to the index. Refreshes status + the open diff after. */
+  applyHunk: (patch: string, reverse: boolean) => Promise<void>;
   setCommitMessage: (message: string) => void;
   commit: (amend: boolean) => Promise<void>;
   pull: () => Promise<void>;
@@ -259,6 +268,16 @@ export const useGitStore = create<GitStore>()(
         });
       },
 
+      // Applying a hunk IS a stage/unstage op, so it reuses runOp: single-flight
+      // against other git ops and an automatic status + open-diff refresh, which
+      // repaints the diff with the now-reduced hunk set.
+      applyHunk: async (patch, reverse) => {
+        await runOp(reverse ? 'unstage' : 'stage', get, set, async (root) => {
+          await GitApplyHunk(root, patch, reverse);
+          return null;
+        });
+      },
+
       setCommitMessage: (commitMessage) => set({ commitMessage }, false, 'git/setCommitMessage'),
 
       commit: async (amend) => {
@@ -346,6 +365,10 @@ export const useGitStore = create<GitStore>()(
           let right: DiffSide;
           let binary = false;
           let truncated = false;
+          // The working-tree side is showing an unsaved editor buffer, which
+          // git hasn't diffed — its disk-based hunks wouldn't line up with (or
+          // stage) what's on screen, so per-hunk staging is suppressed until save.
+          let dirtyBufferWorktree = false;
 
           const fetchRev = async (
             rev: 'HEAD' | ':0',
@@ -375,6 +398,7 @@ export const useGitStore = create<GitStore>()(
             let worktree = '';
             if (openFile) {
               worktree = openFile.content ?? '';
+              dirtyBufferWorktree = openFile.isModified === true;
             } else {
               try {
                 const result = await ReadFile(abs);
@@ -386,6 +410,15 @@ export const useGitStore = create<GitStore>()(
             right = { label: 'Working Tree', content: worktree };
           }
 
+          // Per-hunk staging data for tracked, textual, in-size diffs.
+          // Untracked/binary/too-large diffs stage whole-file only, so skip the
+          // extra git call and leave hunks empty (the UI shows no gutter button).
+          let hunks: git.Hunk[] = [];
+          if (!untracked && !binary && !truncated && !dirtyBufferWorktree) {
+            const fh = await GitFileHunks(repoRoot, change.path, context === 'staged');
+            hunks = fh.hunks ?? [];
+          }
+
           if (get().epoch !== epoch) return; // workspace switched mid-fetch
           const next: DiffSession = {
             path: change.path,
@@ -395,6 +428,7 @@ export const useGitStore = create<GitStore>()(
             right,
             binary,
             truncated,
+            hunks,
           };
           set(
             (state) => ({

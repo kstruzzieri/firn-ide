@@ -36,6 +36,8 @@ export function GetWatchedPath():Promise<string>;
 
 export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
 
+export function GitApplyHunk(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
 export function GitBranches(arg1:string):Promise<Array<string>>;
 
 export function GitCheckout(arg1:string,arg2:string,arg3:boolean):Promise<void>;
@@ -45,6 +47,8 @@ export function GitCommit(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 export function GitCommitMessageAvailable():Promise<boolean>;
 
 export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<git.FileContent>;
+
+export function GitFileHunks(arg1:string,arg2:string,arg3:boolean):Promise<git.FileHunks>;
 
 export function GitGenerateCommitMessage(arg1:string):Promise<string>;
 
@@ -66,8 +70,6 @@ export function LSPComplete(arg1:string,arg2:number,arg3:number,arg4:string):Pro
 
 export function LSPDefinition(arg1:string,arg2:number,arg3:number):Promise<Array<lsp.Location>>;
 
-export function LSPDocumentSymbol(arg1:string):Promise<Array<lsp.DocumentSymbol>>;
-
 export function LSPDidChange(arg1:string,arg2:number,arg3:Array<lsp.TextDocumentContentChangeEvent>):Promise<void>;
 
 export function LSPDidClose(arg1:string):Promise<void>;
@@ -77,6 +79,8 @@ export function LSPDidOpen(arg1:string,arg2:string,arg3:number,arg4:string):Prom
 export function LSPDidSave(arg1:string):Promise<void>;
 
 export function LSPDoctor(arg1:string):Promise<lsp.DoctorReport>;
+
+export function LSPDocumentSymbol(arg1:string):Promise<Array<lsp.DocumentSymbol>>;
 
 export function LSPHover(arg1:string,arg2:number,arg3:number):Promise<lsp.Hover>;
 

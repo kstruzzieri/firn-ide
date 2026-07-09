@@ -104,6 +104,26 @@ func (a *App) GitFileAtRev(root, rev, path string) (git.FileContent, error) {
 	return a.gitService.FileAtRev(ctx, root, rev, path)
 }
 
+// GitFileHunks returns the per-hunk breakdown of a file's diff. staged=false
+// yields working-tree-vs-index hunks (stageable); staged=true yields
+// index-vs-HEAD hunks (unstageable). Each hunk carries a standalone patch for
+// GitApplyHunk.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitFileHunks(root, path string, staged bool) (git.FileHunks, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.FileHunks(ctx, root, path, staged)
+}
+
+// GitApplyHunk stages (reverse=false) or unstages (reverse=true) a single hunk
+// by applying its patch to the index with `git apply --cached`.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitApplyHunk(root, patch string, reverse bool) error {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.ApplyPatch(ctx, root, patch, reverse)
+}
+
 // GitCommitMessageAvailable reports whether AI commit-message generation is
 // usable (golem with one-shot support on PATH). The frontend hides the
 // generate button when false.

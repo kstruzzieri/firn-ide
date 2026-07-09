@@ -46,6 +46,7 @@ const session: DiffSession = {
   right: { label: 'Working Tree', content: 'new' },
   binary: false,
   truncated: false,
+  hunks: [],
 };
 
 function openFile(id: string, name: string) {

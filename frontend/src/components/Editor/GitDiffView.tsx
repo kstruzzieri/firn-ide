@@ -7,6 +7,7 @@ import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { buildTheme, getLanguageExtension } from './codemirror';
+import { hunkStagingGutter } from './codemirror/hunkStagingGutter';
 import styles from './GitDiffView.module.css';
 
 /**
@@ -66,9 +67,17 @@ export function GitDiffView({
       getLanguageExtension(filename) ?? [],
     ];
 
+    // Only the right pane (the new side: working tree for unstaged, index for
+    // staged) carries the per-hunk stage/unstage buttons — git hunks are keyed
+    // by their new-side start line, which always matches this pane's content
+    // (the store suppresses hunks when the pane shows an unsaved editor buffer
+    // git hasn't diffed, so anchors never drift).
     const view = new MergeView({
       a: { doc: session.left.content, extensions: shared },
-      b: { doc: session.right.content, extensions: shared },
+      b: {
+        doc: session.right.content,
+        extensions: [...shared, hunkStagingGutter(session.hunks, session.context)],
+      },
       parent: hostRef.current,
       gutter: true,
       highlightChanges: true,
