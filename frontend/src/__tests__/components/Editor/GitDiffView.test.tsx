@@ -18,13 +18,17 @@ jest.mock('@codemirror/merge', () => ({
   goToPreviousChunk: (arg: unknown) => goToPreviousChunkMock(arg),
   getChunks: (arg: unknown) => getChunksMock(arg),
 }));
+const gutterMock = jest.fn((_config?: unknown) => ({ __gutter: true }));
 jest.mock('@codemirror/view', () => ({
   EditorView: { editable: { of: jest.fn() }, lineWrapping: {} },
   lineNumbers: jest.fn(),
   keymap: { of: jest.fn() },
+  gutter: (config: unknown) => gutterMock(config),
+  GutterMarker: class {},
 }));
 jest.mock('@codemirror/state', () => ({
   EditorState: { readOnly: { of: jest.fn() } },
+  RangeSet: { of: jest.fn() },
 }));
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
@@ -48,6 +52,8 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   GitCommitMessageAvailable: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
   GitFileAtRev: jest.fn(),
+  GitFileHunks: jest.fn(),
+  GitApplyHunk: jest.fn(),
   ReadFile: jest.fn(),
 }));
 
@@ -63,6 +69,7 @@ const base: DiffSession = {
   right: { label: 'Working Tree', content: 'const a = 2;\n' },
   binary: false,
   truncated: false,
+  hunks: [],
 };
 
 beforeEach(() => {
@@ -163,6 +170,23 @@ describe('GitDiffView', () => {
     fireEvent.keyDown(divider, { key: 'ArrowLeft' });
 
     expect(screen.getByTestId('diff-root').style.getPropertyValue('--diff-left')).toBe('48%');
+  });
+
+  it('builds a hunk-staging gutter on the right pane when the diff has hunks', () => {
+    render(
+      <GitDiffView session={{ ...base, hunks: [{ patch: 'P', newStart: 1, newLines: 1 }] }} />
+    );
+
+    // The right pane (b) gets the extra gutter; the left pane (a) does not.
+    expect(gutterMock).toHaveBeenCalledWith(expect.objectContaining({ class: 'cm-hunkGutter' }));
+    const config = mergeViewMock.mock.calls[0][0];
+    expect(config.b.extensions.length).toBeGreaterThan(config.a.extensions.length);
+  });
+
+  it('adds no hunk gutter when there are no hunks', () => {
+    render(<GitDiffView session={base} />);
+
+    expect(gutterMock).not.toHaveBeenCalled();
   });
 
   it('renders a binary state instead of a merge view', () => {

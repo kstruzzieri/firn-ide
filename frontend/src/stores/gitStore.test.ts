@@ -10,6 +10,8 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   GitCommitMessageAvailable: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
   GitFileAtRev: jest.fn(),
+  GitFileHunks: jest.fn(),
+  GitApplyHunk: jest.fn(),
   ReadFile: jest.fn(),
 }));
 
@@ -23,6 +25,8 @@ import {
   GitCommitMessageAvailable,
   GitGenerateCommitMessage,
   GitFileAtRev,
+  GitFileHunks,
+  GitApplyHunk,
   ReadFile,
 } from '../../wailsjs/go/main/App';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from './gitStore';
@@ -273,17 +277,106 @@ describe('gitStore operations', () => {
 describe('gitStore diff sessions', () => {
   const mockFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
   const mockReadFile = ReadFile as jest.MockedFunction<typeof ReadFile>;
+  const mockFileHunks = GitFileHunks as jest.MockedFunction<typeof GitFileHunks>;
+  const mockApplyHunk = GitApplyHunk as jest.MockedFunction<typeof GitApplyHunk>;
   const rev = (content: string, flags: Partial<{ binary: boolean; truncated: boolean }> = {}) =>
     ({ content, binary: false, truncated: false, ...flags }) as Awaited<
       ReturnType<typeof GitFileAtRev>
     >;
+  const hunks = (...list: { patch: string; newStart: number; newLines: number }[]) =>
+    ({ path: 'src/a.ts', hunks: list }) as Awaited<ReturnType<typeof GitFileHunks>>;
 
   beforeEach(() => {
     mockGitStatus.mockResolvedValue(repoStatus());
     mockFileAtRev.mockResolvedValue(rev(''));
+    mockFileHunks.mockResolvedValue(hunks());
+    mockApplyHunk.mockResolvedValue(undefined);
     mockReadFile.mockResolvedValue({
       content: 'worktree text',
     } as Awaited<ReturnType<typeof ReadFile>>);
+  });
+
+  it('fetches per-hunk staging data for a tracked unstaged diff', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+    mockFileHunks.mockResolvedValueOnce(hunks({ patch: 'PATCH', newStart: 2, newLines: 1 }));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    // staged=false for the working-tree-vs-index (stageable) hunks.
+    expect(mockFileHunks).toHaveBeenCalledWith('/repo', 'src/a.ts', false);
+    expect(useGitStore.getState().diffSession?.hunks).toEqual([
+      { patch: 'PATCH', newStart: 2, newLines: 1 },
+    ]);
+  });
+
+  it('fetches staged hunks (staged=true) for a staged diff', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('head')).mockResolvedValueOnce(rev('index'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: '.' }, 'staged');
+
+    expect(mockFileHunks).toHaveBeenCalledWith('/repo', 'src/a.ts', true);
+  });
+
+  it('suppresses hunks while the working-tree side is an unsaved editor buffer', async () => {
+    // git diffs disk, but the pane shows the dirty buffer — disk hunks would
+    // neither line up with nor stage what's on screen, so no per-hunk buttons.
+    useIDEStore.setState({
+      openFiles: [
+        { id: 'f', path: '/repo/src/a.ts', name: 'a.ts', content: 'unsaved\n', isModified: true },
+      ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
+    });
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(mockFileHunks).not.toHaveBeenCalled();
+    expect(useGitStore.getState().diffSession?.hunks).toEqual([]);
+    useIDEStore.setState({ openFiles: [] });
+  });
+
+  it('still fetches hunks when the open file is saved (buffer matches disk)', async () => {
+    useIDEStore.setState({
+      openFiles: [
+        { id: 'f', path: '/repo/src/a.ts', name: 'a.ts', content: 'saved\n', isModified: false },
+      ] as unknown as ReturnType<typeof useIDEStore.getState>['openFiles'],
+    });
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(mockFileHunks).toHaveBeenCalledWith('/repo', 'src/a.ts', false);
+    useIDEStore.setState({ openFiles: [] });
+  });
+
+  it('skips hunk fetching for untracked files (no per-hunk staging)', async () => {
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'new.ts', index: '?', worktree: '?' }, 'unstaged');
+
+    expect(mockFileHunks).not.toHaveBeenCalled();
+    expect(useGitStore.getState().diffSession?.hunks).toEqual([]);
+  });
+
+  it('applyHunk stages a hunk (reverse=false) and refreshes', async () => {
+    await useGitStore.getState().applyHunk('PATCH', false);
+
+    expect(mockApplyHunk).toHaveBeenCalledWith('/repo', 'PATCH', false);
+    // runOp refreshes afterward so the diff view reflects the new index.
+    expect(mockGitStatus).toHaveBeenCalled();
+  });
+
+  it('applyHunk unstages a hunk (reverse=true)', async () => {
+    await useGitStore.getState().applyHunk('PATCH', true);
+
+    expect(mockApplyHunk).toHaveBeenCalledWith('/repo', 'PATCH', true);
   });
 
   it('staged context diffs HEAD against the index', async () => {

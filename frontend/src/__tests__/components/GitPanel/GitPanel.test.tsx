@@ -10,6 +10,8 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   GitCommitMessageAvailable: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
   GitFileAtRev: jest.fn(),
+  GitFileHunks: jest.fn(),
+  GitApplyHunk: jest.fn(),
   ReadFile: jest.fn(),
 }));
 
@@ -27,6 +29,7 @@ import {
   GitCheckout,
   GitGenerateCommitMessage,
   GitFileAtRev,
+  GitFileHunks,
   ReadFile,
 } from '../../../../wailsjs/go/main/App';
 import type { git, workspace } from '../../../../wailsjs/go/models';
@@ -239,6 +242,7 @@ describe('GitPanel diff open', () => {
       binary: false,
       truncated: false,
     });
+    (GitFileHunks as jest.Mock).mockResolvedValue({ path: '', hunks: [] });
     (ReadFile as jest.Mock).mockResolvedValue({ content: 'y' });
   });
 

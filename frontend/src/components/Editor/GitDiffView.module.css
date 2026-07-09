@@ -162,3 +162,31 @@
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* Per-hunk staging gutter (right pane): a compact +/− button anchored at each
+ * hunk's first new-side line. Global because CodeMirror owns the class names. */
+.mergeHost :global(.cm-hunkGutter) {
+  min-width: 18px;
+}
+
+.mergeHost :global(.cm-hunkStageBtn) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mergeHost :global(.cm-hunkStageBtn:hover) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface-hover);
+}
