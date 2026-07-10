@@ -178,6 +178,19 @@ export function gitLineMarkers(baseline: string, current: string): GitLineMarker
   return markersFromHunks(diffLines(baseline, current), splitLines(current).length);
 }
 
+/** The longest whitespace prefix shared by every non-empty line of both
+ * texts; '' when there is none. */
+export function commonIndent(oldText: string, newText: string): string {
+  const lines = [...splitLines(oldText), ...splitLines(newText)].filter((l) => l.trim() !== '');
+  if (lines.length === 0) return '';
+  let indent = /^\s*/.exec(lines[0])?.[0] ?? '';
+  for (const line of lines) {
+    while (indent && !line.startsWith(indent)) indent = indent.slice(0, -1);
+    if (!indent) break;
+  }
+  return indent;
+}
+
 /**
  * Strips the longest whitespace prefix shared by every non-empty line of both
  * texts, so the peek popup shows a hunk flush-left instead of carrying the
@@ -187,13 +200,7 @@ export function stripCommonIndent(
   oldText: string,
   newText: string
 ): { oldText: string; newText: string } {
-  const lines = [...splitLines(oldText), ...splitLines(newText)].filter((l) => l.trim() !== '');
-  if (lines.length === 0) return { oldText, newText };
-  let indent = /^\s*/.exec(lines[0])?.[0] ?? '';
-  for (const line of lines) {
-    while (indent && !line.startsWith(indent)) indent = indent.slice(0, -1);
-    if (!indent) break;
-  }
+  const indent = commonIndent(oldText, newText);
   if (!indent) return { oldText, newText };
   const strip = (text: string) =>
     text
@@ -201,6 +208,43 @@ export function stripCommonIndent(
       .map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l))
       .join('\n');
   return { oldText: strip(oldText), newText: strip(newText) };
+}
+
+/**
+ * Character-range edit that reverts a single current line inside `hunk` to its
+ * baseline counterpart, or null when the clicked line has none to map to (a
+ * pure-deletion hunk, or a line outside the hunk). Lines are paired
+ * positionally — inside one contiguous changed region that is the only stable
+ * correspondence — so line fromB+1+k restores baseline line fromA+k, and a
+ * current line past the baseline range (a pure addition) is deleted.
+ */
+export function revertLineChange(
+  currentText: string,
+  baselineText: string,
+  hunk: LineHunk,
+  line: number
+): { from: number; to: number; insert: string } | null {
+  const k = line - 1 - hunk.fromB;
+  if (k < 0 || line - 1 >= hunk.toB) return null;
+
+  const curLines = splitLines(currentText);
+  if (line - 1 >= curLines.length) return null;
+  const lineStart: number[] = [0];
+  for (let i = 0; i < curLines.length; i++) {
+    lineStart.push(lineStart[i] + curLines[i].length + 1);
+  }
+  const from = lineStart[line - 1];
+  const to = from + curLines[line - 1].length;
+
+  const aIdx = hunk.fromA + k;
+  if (aIdx < hunk.toA) {
+    const restored = splitLines(baselineText)[aIdx] ?? '';
+    return { from, to, insert: restored };
+  }
+  // No baseline counterpart: the line was added — deleting it consumes its
+  // line break so no blank line is left behind.
+  if (line - 1 < curLines.length - 1) return { from, to: to + 1, insert: '' };
+  return { from: Math.max(0, from - 1), to, insert: '' };
 }
 
 export interface InlineDiffSegment {

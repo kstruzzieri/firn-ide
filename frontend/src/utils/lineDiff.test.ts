@@ -3,6 +3,7 @@ import {
   gitLineMarkers,
   inlineWordDiff,
   revertHunkChange,
+  revertLineChange,
   stripCommonIndent,
   type GitLineMarker,
 } from './lineDiff';
@@ -186,6 +187,44 @@ describe('inlineWordDiff', () => {
     expect(ofType(segs, 'del')).toBe('');
     expect(ofType(segs, 'ins')).toBe('  ');
     expectRoundTrip(oldText, newText);
+  });
+});
+
+describe('revertLineChange', () => {
+  // Baseline lines 2-3 modified: hunk fromA=1 toA=3, fromB=1 toB=3.
+  const baseline = 'a\nb\nc\nd';
+  const current = 'a\nB\nC\nd';
+  const hunk = { fromA: 1, toA: 3, fromB: 1, toB: 3 };
+
+  it('reverts only the clicked line inside a multi-line hunk', () => {
+    // Line 2 ("B") reverts to "b"; line 3 ("C") stays.
+    expect(revertLineChange(current, baseline, hunk, 2)).toEqual({
+      from: 2,
+      to: 3,
+      insert: 'b',
+    });
+    expect(revertLineChange(current, baseline, hunk, 3)).toEqual({
+      from: 4,
+      to: 5,
+      insert: 'c',
+    });
+  });
+
+  it('deletes an added line that has no baseline counterpart', () => {
+    // Baseline lost nothing; current inserted "x" as line 2.
+    const insHunk = { fromA: 1, toA: 1, fromB: 1, toB: 2 };
+    expect(revertLineChange('a\nx\nb', 'a\nb', insHunk, 2)).toEqual({
+      from: 2,
+      to: 4,
+      insert: '',
+    });
+  });
+
+  it('returns null for a line outside the hunk or a pure deletion', () => {
+    expect(revertLineChange(current, baseline, hunk, 1)).toBeNull();
+    expect(
+      revertLineChange('a\nd', 'a\nb\nc\nd', { fromA: 1, toA: 3, fromB: 1, toB: 1 }, 2)
+    ).toBeNull();
   });
 });
 
