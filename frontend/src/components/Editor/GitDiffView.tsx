@@ -7,7 +7,7 @@ import { useGitStore, type DiffSession } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
-import { buildTheme, getLanguageExtension } from './codemirror';
+import { buildTheme, getLanguageExtension, gitGutterExtension, setGitBaseline } from './codemirror';
 import { hunkStagingGutter } from './codemirror/hunkStagingGutter';
 import { isWorkingTreeEditable, workingTreeEditListener } from './codemirror/editableWorkingTree';
 import { reconcileDoc } from './codemirror/reconcileDoc';
@@ -200,6 +200,13 @@ export function GitDiffView({
                 // undo never un-applies a refresh.
                 history(),
                 keymap.of(historyKeymap),
+                // The file view's change gutter rides along: amber/green bars
+                // and deletion wedges against the index baseline (seeded after
+                // build), click -> peek/revert popup. Revert restores the index
+                // content for that hunk, persisting like any typed edit. The
+                // merge view's own non-clickable bars are hidden on this pane
+                // via the editableRight root class so gutters don't double up.
+                gitGutterExtension(),
               ]
             : readOnly),
           hunkCompartment.of(
@@ -216,6 +223,12 @@ export function GitDiffView({
       highlightChanges: true,
     });
     mergeRef.current = view;
+    // Seed the clickable change gutter's baseline with the index side. Left
+    // content is in the structural key, so a changed baseline always passes
+    // through this rebuild path.
+    if (editableRight) {
+      view.b.dispatch({ effects: setGitBaseline.of(session.left.content) });
+    }
   }, [session, themeId]);
 
   useEffect(
@@ -297,8 +310,12 @@ export function GitDiffView({
     );
   }
 
+  const rootClass = isWorkingTreeEditable(session)
+    ? `${styles.diffRoot} ${styles.editableRight}`
+    : styles.diffRoot;
+
   return (
-    <div className={styles.diffRoot} ref={rootRef} data-testid="diff-root">
+    <div className={rootClass} ref={rootRef} data-testid="diff-root">
       <div className={styles.toolbar}>
         <div className={styles.labels} aria-hidden="true">
           <span>{session.left.label}</span>

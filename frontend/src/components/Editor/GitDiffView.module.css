@@ -173,6 +173,13 @@
   font-size: 13px;
 }
 
+/* The editable working-tree pane carries the file view's clickable git gutter
+ * (peek/revert popup), so hide the merge view's own non-clickable change bars
+ * there — otherwise the same change is marked twice. */
+.editableRight .mergeHost :global(.cm-mergeViewEditor:last-child .cm-changeGutter) {
+  display: none;
+}
+
 /* Per-hunk staging gutter (right pane): a compact +/− button anchored at each
  * hunk's first new-side line. Global because CodeMirror owns the class names. */
 .mergeHost :global(.cm-hunkGutter) {

@@ -76,6 +76,8 @@ jest.mock('@codemirror/commands', () => ({
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
   getLanguageExtension: jest.fn(() => null),
+  gitGutterExtension: jest.fn(() => 'GIT_GUTTER'),
+  setGitBaseline: { of: jest.fn((v: unknown) => ({ __baseline: v })) },
 }));
 const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
@@ -417,6 +419,40 @@ describe('GitDiffView', () => {
     expect(config.b.extensions).not.toContain('EDITABLE_FALSE');
     expect(config.b.extensions).not.toContain('READONLY');
     expect(config.a.extensions).not.toContain('HISTORY');
+  });
+
+  it('gives the editable pane the clickable change gutter, seeded with the index baseline', () => {
+    render(<GitDiffView session={base} />);
+
+    const config = mergeViewMock.mock.calls[0][0];
+    // The file view's git gutter (click -> peek/revert popup) rides along on
+    // the working-tree pane; its baseline is the diff's left (index) side, so
+    // Revert restores the index content for that hunk.
+    expect(config.b.extensions).toContain('GIT_GUTTER');
+    expect(config.a.extensions).not.toContain('GIT_GUTTER');
+    expect(fakeDispatch).toHaveBeenCalledWith({
+      effects: { __baseline: 'const a = 1;\n' },
+    });
+    // The merge view's own (non-clickable) change bars are hidden on this pane
+    // via a root class, so the two gutters don't double up.
+    expect(screen.getByTestId('diff-root').className).toContain('editableRight');
+  });
+
+  it('adds no clickable change gutter to a staged (read-only) diff', () => {
+    render(
+      <GitDiffView
+        session={{
+          ...base,
+          context: 'staged',
+          left: { label: 'HEAD', content: 'const a = 1;\n' },
+          right: { label: 'Index', content: 'const a = 2;\n' },
+        }}
+      />
+    );
+
+    const config = mergeViewMock.mock.calls[0][0];
+    expect(config.b.extensions).not.toContain('GIT_GUTTER');
+    expect(screen.getByTestId('diff-root').className).not.toContain('editableRight');
   });
 
   it('keeps both panes read-only in a staged diff (right side is the index)', () => {
