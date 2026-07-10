@@ -12,6 +12,8 @@ import {
   type Tooltip,
 } from '@codemirror/view';
 import { StateEffect, StateField, RangeSet, type Extension } from '@codemirror/state';
+import { highlightTree } from '@lezer/highlight';
+import { highlightingFor, language } from '@codemirror/language';
 import {
   diffLines,
   gitLineMarkers,
@@ -22,7 +24,6 @@ import {
   type GitLineMarker,
   type LineHunk,
 } from '../../../utils/lineDiff';
-import { highlightSignatureParts } from './hover';
 
 /** Above this doc size the gutter goes dormant; diffing every keystroke on
  * huge files is not worth a decoration. Matches the backend diffable cap. */
@@ -147,14 +148,18 @@ function currentHunkText(view: EditorView, hunk: LineHunk): string {
   return doc.sliceString(doc.line(hunk.fromB + 1).from, doc.line(hunk.toB).to);
 }
 
-/** Per-character syntax classes for `text`, flattened from the hover module's
- * highlighter (real Lezer parse when the filename has a language, TypeScript
- * regex rules otherwise). */
-function charClasses(text: string, filename?: string): string[] {
-  const classes: string[] = [];
-  for (const part of highlightSignatureParts(text, filename)) {
-    for (let i = 0; i < part.text.length; i++) classes.push(part.className);
-  }
+/** Per-character syntax classes for `text`, parsed with the view's own
+ * language and mapped through its active highlight style (highlightingFor), so
+ * popup tokens get exactly the classes — and therefore colors — the main
+ * editor canvas uses. Empty when the view has no language. */
+function charClasses(view: EditorView, text: string): string[] {
+  const classes: string[] = new Array<string>(text.length).fill('');
+  const lang = view.state.facet(language);
+  if (!lang) return classes;
+  const tree = lang.parser.parse(text);
+  highlightTree(tree, { style: (tags) => highlightingFor(view.state, tags) }, (from, to, cls) => {
+    for (let i = from; i < to; i++) classes[i] = cls;
+  });
   return classes;
 }
 
@@ -198,12 +203,12 @@ function appendHighlighted(
  * token colors stay coherent across the del/ins seams. */
 function renderInlineDiff(
   pre: HTMLElement,
+  view: EditorView,
   oldText: string,
-  newText: string,
-  filename?: string
+  newText: string
 ): void {
-  const oldClasses = charClasses(oldText, filename);
-  const newClasses = charClasses(newText, filename);
+  const oldClasses = charClasses(view, oldText);
+  const newClasses = charClasses(view, newText);
   let oi = 0;
   let ni = 0;
   for (const segment of inlineWordDiff(oldText, newText)) {
@@ -227,12 +232,7 @@ function renderInlineDiff(
 }
 
 /** Builds the peek/revert popup anchored at the hunk's first current line. */
-function makeHunkTooltip(
-  baseline: string,
-  hunk: LineHunk,
-  pos: number,
-  filename?: string
-): Tooltip {
+function makeHunkTooltip(baseline: string, hunk: LineHunk, pos: number): Tooltip {
   return {
     pos,
     above: false,
@@ -248,11 +248,8 @@ function makeHunkTooltip(
       const body = document.createElement('div');
       body.className = 'firn-git-hunk-body';
       const pre = document.createElement('pre');
-      // firn-hover-code scopes the shared firn-hover-* syntax color classes;
-      // firn-git-hunk-diff is defined after it in the theme, so its layout
-      // (no-wrap, padding, background) wins where they overlap.
-      pre.className = 'firn-git-hunk-diff firn-hover-code';
-      renderInlineDiff(pre, oldText, newText, filename);
+      pre.className = 'firn-git-hunk-diff';
+      renderInlineDiff(pre, view, oldText, newText);
       body.appendChild(pre);
       dom.appendChild(body);
 
@@ -280,16 +277,14 @@ function makeHunkTooltip(
 }
 
 /** Opens the peek/revert popup for the change gutter cell that was clicked. */
-function openHunkTooltip(view: EditorView, lineFrom: number, filename?: string): boolean {
+function openHunkTooltip(view: EditorView, lineFrom: number): boolean {
   const { baseline } = view.state.field(gitGutterField);
   if (baseline === null) return false;
   const current = view.state.doc.toString();
   const line = view.state.doc.lineAt(lineFrom).number;
   const hunk = hunkForLine(baseline, current, line);
   if (hunk === null) return false;
-  view.dispatch({
-    effects: setHunkTooltip.of(makeHunkTooltip(baseline, hunk, lineFrom, filename)),
-  });
+  view.dispatch({ effects: setHunkTooltip.of(makeHunkTooltip(baseline, hunk, lineFrom)) });
   return true;
 }
 
@@ -305,7 +300,7 @@ const dismissHunkTooltipOnClick = EditorView.domEventHandlers({
   },
 });
 
-export function gitGutterExtension(filename?: string): Extension {
+export function gitGutterExtension(): Extension {
   return [
     gitGutterField,
     hunkTooltipField,
@@ -314,7 +309,7 @@ export function gitGutterExtension(filename?: string): Extension {
       markers: buildMarkerSet,
       domEventHandlers: {
         mousedown(view, block) {
-          return openHunkTooltip(view, block.from, filename);
+          return openHunkTooltip(view, block.from);
         },
       },
     }),

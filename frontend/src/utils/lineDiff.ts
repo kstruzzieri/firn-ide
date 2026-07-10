@@ -217,16 +217,8 @@ function tokenizeWords(text: string): string[] {
   return text.match(/\n|[^\S\n]+|\S+/g) ?? [];
 }
 
-/**
- * Unified word-level diff of `oldText` (baseline) against `newText` (working
- * tree) as a segment list. Word granularity keeps boundaries clean (whole-word
- * replaces, no mid-word splits). The concatenation of non-`ins` segments
- * reproduces `oldText`, and of non-`del` segments reproduces `newText`, so the
- * peek can render both sides distinctly (JetBrains-style inline diff).
- */
-export function inlineWordDiff(oldText: string, newText: string): InlineDiffSegment[] {
-  const oldTokens = tokenizeWords(oldText);
-  const newTokens = tokenizeWords(newText);
+/** Builds same/del/ins segments from a token-level diff of two sequences. */
+function segmentsFromTokens(oldTokens: string[], newTokens: string[]): InlineDiffSegment[] {
   const segments: InlineDiffSegment[] = [];
   let ai = 0;
   for (const h of diffSequences(oldTokens, newTokens)) {
@@ -241,6 +233,53 @@ export function inlineWordDiff(oldText: string, newText: string): InlineDiffSegm
   }
   if (ai < oldTokens.length) segments.push({ text: oldTokens.slice(ai).join(''), type: 'same' });
   return segments;
+}
+
+/** Char-refinement cap: Myers is O(ND); replaced regions bigger than this stay
+ * at word granularity. */
+const REFINE_MAX_CHARS = 2000;
+
+/**
+ * Char-level breakdown of a word-level del+ins replacement, or null when the
+ * two sides are too dissimilar for it to read well — unrelated words char-diff
+ * into confetti, so those stay whole. "Similar" = at least half the characters
+ * survive the edit ("*App {" -> "*A" refines; "quick" -> "slow" does not).
+ */
+function refineReplacement(oldText: string, newText: string): InlineDiffSegment[] | null {
+  if (oldText.length + newText.length > REFINE_MAX_CHARS) return null;
+  const segments = segmentsFromTokens([...oldText], [...newText]);
+  const sameChars = segments
+    .filter((s) => s.type === 'same')
+    .reduce((n, s) => n + s.text.length, 0);
+  if (2 * sameChars < 0.5 * (oldText.length + newText.length)) return null;
+  return segments;
+}
+
+/**
+ * Unified word-level diff of `oldText` (baseline) against `newText` (working
+ * tree) as a segment list, with similar del+ins replacements refined down to
+ * characters (a partial word edit shows just the changed characters, not the
+ * whole word swapped). The concatenation of non-`ins` segments reproduces
+ * `oldText`, and of non-`del` segments reproduces `newText`, so the peek can
+ * render both sides distinctly (JetBrains-style inline diff).
+ */
+export function inlineWordDiff(oldText: string, newText: string): InlineDiffSegment[] {
+  const coarse = segmentsFromTokens(tokenizeWords(oldText), tokenizeWords(newText));
+  const refined: InlineDiffSegment[] = [];
+  for (let i = 0; i < coarse.length; i++) {
+    const seg = coarse[i];
+    const next = coarse[i + 1];
+    if (seg.type === 'del' && next?.type === 'ins') {
+      const sub = refineReplacement(seg.text, next.text);
+      if (sub) {
+        refined.push(...sub);
+        i++;
+        continue;
+      }
+    }
+    refined.push(seg);
+  }
+  return refined;
 }
 
 /**

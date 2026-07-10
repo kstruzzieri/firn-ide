@@ -210,7 +210,7 @@ export function GitDiffView({
                 // content for that hunk, persisting like any typed edit. The
                 // merge view's own non-clickable bars are hidden on this pane
                 // via the editableRight root class so gutters don't double up.
-                gitGutterExtension(filename),
+                gitGutterExtension(),
               ]
             : readOnly),
           hunkCompartment.of(

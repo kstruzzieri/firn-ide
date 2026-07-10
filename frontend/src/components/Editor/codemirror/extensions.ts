@@ -336,9 +336,8 @@ export function createEditorExtensions(options: {
     // Behavior
     ...behaviorExtensions(),
 
-    // Git change markers (dormant until a baseline is dispatched); the
-    // filename picks the language for the peek popup's syntax highlighting.
-    gitGutterExtension(filename),
+    // Git change markers (dormant until a baseline is dispatched)
+    gitGutterExtension(),
 
     // Tab size
     tabSizeCompartment.of(tabSize(tabs)),

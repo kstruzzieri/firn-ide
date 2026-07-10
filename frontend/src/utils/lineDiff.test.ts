@@ -155,6 +155,26 @@ describe('inlineWordDiff', () => {
     expectRoundTrip('the quick brown fox', 'the slow brown cat');
   });
 
+  it('refines a similar word replacement down to characters (the *App -> *A case)', () => {
+    // Removing "pp {" from "*App {" must show as a char-level deletion after
+    // the kept "*A", not as del "*App {" + ins "*A".
+    const oldText = 'func NewApp() *App {';
+    const newText = 'func NewApp() *A';
+    const segs = inlineWordDiff(oldText, newText);
+
+    expect(ofType(segs, 'del')).toBe('pp {');
+    expect(ofType(segs, 'ins')).toBe('');
+    expectRoundTrip(oldText, newText);
+  });
+
+  it('keeps a dissimilar word replacement whole (no char confetti)', () => {
+    const segs = inlineWordDiff('the quick fox', 'the slow fox');
+
+    expect(segs).toContainEqual({ text: 'quick', type: 'del' });
+    expect(segs).toContainEqual({ text: 'slow', type: 'ins' });
+    expectRoundTrip('the quick fox', 'the slow fox');
+  });
+
   it('keeps a trailing-space edit on its own line (newline never joins a whitespace run)', () => {
     // A single space added at each line end must diff as two tiny ins
     // segments, not as del/ins of "\n\t" runs spanning the line break —
