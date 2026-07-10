@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { history, historyKeymap } from '@codemirror/commands';
 import { useGitStore, type DiffSession } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
@@ -192,6 +193,13 @@ export function GitDiffView({
                     localEditRevisionRef.current = 0;
                   }
                 ),
+                // The editable pane gets its own undo history (Cmd-Z /
+                // Cmd-Shift-Z), like the regular editor; undone edits persist
+                // through the same update listener as typed ones, and external
+                // reconciles are annotated addToHistory:false (reconcileDoc) so
+                // undo never un-applies a refresh.
+                history(),
+                keymap.of(historyKeymap),
               ]
             : readOnly),
           hunkCompartment.of(

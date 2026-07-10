@@ -69,6 +69,10 @@ jest.mock('@codemirror/state', () => ({
     }
   },
 }));
+jest.mock('@codemirror/commands', () => ({
+  history: jest.fn(() => 'HISTORY'),
+  historyKeymap: [],
+}));
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
   getLanguageExtension: jest.fn(() => null),
@@ -406,10 +410,13 @@ describe('GitDiffView', () => {
     expect(config.a.extensions).toContain('EDITABLE_FALSE');
     expect(config.a.extensions).toContain('READONLY');
     expect(config.a.extensions).not.toContain('EDIT_LISTENER');
-    // Right pane is the live working tree: editable, wired to persist edits.
+    // Right pane is the live working tree: editable, wired to persist edits,
+    // with its own undo history (Cmd-Z), like the regular editor.
     expect(config.b.extensions).toContain('EDIT_LISTENER');
+    expect(config.b.extensions).toContain('HISTORY');
     expect(config.b.extensions).not.toContain('EDITABLE_FALSE');
     expect(config.b.extensions).not.toContain('READONLY');
+    expect(config.a.extensions).not.toContain('HISTORY');
   });
 
   it('keeps both panes read-only in a staged diff (right side is the index)', () => {
@@ -428,6 +435,7 @@ describe('GitDiffView', () => {
     expect(config.b.extensions).toContain('EDITABLE_FALSE');
     expect(config.b.extensions).toContain('READONLY');
     expect(config.b.extensions).not.toContain('EDIT_LISTENER');
+    expect(config.b.extensions).not.toContain('HISTORY');
   });
 
   it('adds no hunk gutter when there are no hunks', () => {
