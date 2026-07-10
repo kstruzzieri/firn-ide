@@ -24,15 +24,27 @@ export function hunkStagingAction(context: DiffContext): { reverse: boolean; lab
 /**
  * The clickable gutter button for one hunk. Extracted from the GutterMarker so
  * the click → applyHunk wiring is testable without a live CodeMirror view.
+ * A stale button (its hunk's snapshot lines carry unsaved edits, so the patch
+ * no longer matches the screen) renders disabled instead of disappearing; the
+ * save/refresh cycle re-delivers it live with a fresh patch.
  */
-export function createHunkButton(hunk: git.Hunk, context: DiffContext): HTMLButtonElement {
+export function createHunkButton(
+  hunk: git.Hunk,
+  context: DiffContext,
+  stale = false
+): HTMLButtonElement {
   const { reverse, label } = hunkStagingAction(context);
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'cm-hunkStageBtn';
   btn.textContent = reverse ? '−' : '+';
-  btn.title = label;
   btn.setAttribute('aria-label', `${label} at line ${hunk.newStart}`);
+  if (stale) {
+    btn.disabled = true;
+    btn.title = 'Saving edit…';
+    return btn;
+  }
+  btn.title = label;
   // stopPropagation so the click doesn't reach the editor's own gutter/selection
   // handlers; preventDefault so the read-only view doesn't try to focus.
   btn.addEventListener('click', (e) => {
@@ -46,34 +58,36 @@ export function createHunkButton(hunk: git.Hunk, context: DiffContext): HTMLButt
 class HunkMarker extends GutterMarker {
   constructor(
     private readonly hunk: git.Hunk,
-    private readonly context: DiffContext
+    private readonly context: DiffContext,
+    private readonly stale: boolean
   ) {
     super();
   }
   override toDOM(): Node {
-    return createHunkButton(this.hunk, this.context);
+    return createHunkButton(this.hunk, this.context, this.stale);
   }
 }
 
 /**
- * Which hunk controls stay valid while the pane holds unsaved edits, and on
- * which line each now sits. A hunk's patch applies to the *index*, so a local
- * edit only invalidates the hunks whose snapshot lines it touches — the rest
- * stay stageable, with their anchors shifted past inserted/removed lines. This
- * keeps untouched +/− buttons from flickering away on every keystroke or
- * popup revert while the debounced save/refresh is in flight.
+ * Where each hunk control sits while the pane holds unsaved edits, and whether
+ * it is still live. A hunk's patch applies to the *index*, so a local edit
+ * only stales the hunks whose snapshot lines it touches — those render
+ * disabled in place (never vanishing mid-edit) until the save/refresh delivers
+ * fresh patches, while the rest stay stageable with their anchors shifted past
+ * inserted/removed lines.
  */
 export function visibleHunks(
   hunks: git.Hunk[],
   cleanContent: string,
   currentContent: string
-): { hunk: git.Hunk; line: number }[] {
-  if (currentContent === cleanContent) return hunks.map((h) => ({ hunk: h, line: h.newStart }));
+): { hunk: git.Hunk; line: number; stale: boolean }[] {
+  if (currentContent === cleanContent) {
+    return hunks.map((h) => ({ hunk: h, line: h.newStart, stale: false }));
+  }
   // Local edits as line ranges: [fromA, toA) in snapshot coords, [fromB, toB)
   // in on-screen coords (0-based, exclusive).
   const edits = diffLines(cleanContent, currentContent);
-  const out: { hunk: git.Hunk; line: number }[] = [];
-  for (const h of hunks) {
+  return hunks.map((h) => {
     const start = h.newStart - 1;
     const end = start + h.newLines;
     let offset = 0;
@@ -81,13 +95,12 @@ export function visibleHunks(
     for (const e of edits) {
       if (e.fromA < end && e.toA > start) {
         stale = true;
-        break;
+        continue;
       }
       if (e.toA <= start) offset += e.toB - e.fromB - (e.toA - e.fromA);
     }
-    if (!stale) out.push({ hunk: h, line: h.newStart + offset });
-  }
-  return out;
+    return { hunk: h, line: h.newStart + offset, stale };
+  });
 }
 
 /**
@@ -106,15 +119,17 @@ export function hunkStagingGutter(
     markers: (view: EditorView) => {
       const doc = view.state.doc;
       // An editable pane can diverge from the git snapshot before its debounced
-      // save/refresh. Keep the controls whose patches are still valid (shifted
-      // to their on-screen lines) and hide only the ones the edits touched.
+      // save/refresh. Keep every control in place — live ones shifted to their
+      // on-screen lines, edit-touched ones disabled — so nothing flickers away.
       const visible =
         cleanContent === undefined
-          ? hunks.map((h) => ({ hunk: h, line: h.newStart }))
+          ? hunks.map((h) => ({ hunk: h, line: h.newStart, stale: false }))
           : visibleHunks(hunks, cleanContent, doc.toString());
       const ranges = visible
         .filter(({ line }) => line >= 1 && line <= doc.lines)
-        .map(({ hunk, line }) => new HunkMarker(hunk, context).range(doc.line(line).from));
+        .map(({ hunk, line, stale }) =>
+          new HunkMarker(hunk, context, stale).range(doc.line(line).from)
+        );
       if (ranges.length === 0) return RangeSet.empty;
       return RangeSet.of(ranges, true); // true = sort; hunks are already ascending
     },

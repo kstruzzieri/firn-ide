@@ -70,19 +70,19 @@ const hunk1 = { patch: 'P1', newStart: 4, newLines: 2 };
 const hunk2 = { patch: 'P2', newStart: 8, newLines: 1 };
 
 describe('visibleHunks', () => {
-  it('keeps every hunk at its own line when the pane matches the snapshot', () => {
+  it('keeps every hunk live at its own line when the pane matches the snapshot', () => {
     expect(visibleHunks([hunk1, hunk2], clean, clean)).toEqual([
-      { hunk: hunk1, line: 4 },
-      { hunk: hunk2, line: 8 },
+      { hunk: hunk1, line: 4, stale: false },
+      { hunk: hunk2, line: 8, stale: false },
     ]);
   });
 
-  it('keeps untouched hunks when an edit lands elsewhere', () => {
+  it('keeps hunks live when an edit lands elsewhere', () => {
     const edited = clean.replace('l9', 'l9 changed');
 
     expect(visibleHunks([hunk1, hunk2], clean, edited)).toEqual([
-      { hunk: hunk1, line: 4 },
-      { hunk: hunk2, line: 8 },
+      { hunk: hunk1, line: 4, stale: false },
+      { hunk: hunk2, line: 8, stale: false },
     ]);
   });
 
@@ -90,23 +90,32 @@ describe('visibleHunks', () => {
     const edited = `new1\nnew2\n${clean}`;
 
     expect(visibleHunks([hunk1, hunk2], clean, edited)).toEqual([
-      { hunk: hunk1, line: 6 },
-      { hunk: hunk2, line: 10 },
+      { hunk: hunk1, line: 6, stale: false },
+      { hunk: hunk2, line: 10, stale: false },
     ]);
   });
 
-  it('drops only the hunk an edit touches (its patch is stale)', () => {
+  it('marks only the touched hunk stale, without dropping it', () => {
+    // The button must not vanish mid-edit — it dims until the save/refresh
+    // delivers a fresh patch.
     const edited = clean.replace('l4', 'l4 changed');
 
-    expect(visibleHunks([hunk1, hunk2], clean, edited)).toEqual([{ hunk: hunk2, line: 8 }]);
+    expect(visibleHunks([hunk1, hunk2], clean, edited)).toEqual([
+      { hunk: hunk1, line: 4, stale: true },
+      { hunk: hunk2, line: 8, stale: false },
+    ]);
   });
 
-  it('a reverted hunk disappears while the rest stay stageable, shifted', () => {
-    // Revert removes hunk1's two lines (its content went back to the index),
-    // so hunk2 sits two lines higher on screen.
+  it('a reverted hunk goes stale in place while the rest stay live, shifted', () => {
+    // Revert removed hunk1's two lines (content went back to the index); its
+    // control dims until the refresh drops the hunk, and hunk2 sits two lines
+    // higher, still stageable.
     const edited = 'l1\nl2\nl3\nl6\nl7\nl8\nl9';
 
-    expect(visibleHunks([hunk1, hunk2], clean, edited)).toEqual([{ hunk: hunk2, line: 6 }]);
+    expect(visibleHunks([hunk1, hunk2], clean, edited)).toEqual([
+      { hunk: hunk1, line: 4, stale: true },
+      { hunk: hunk2, line: 6, stale: false },
+    ]);
   });
 });
 
@@ -128,18 +137,44 @@ describe('hunkStagingGutter', () => {
     });
   };
 
-  it('keeps buttons for untouched hunks while the pane has unsaved edits', () => {
+  it('keeps every button while the pane has unsaved edits, dimming the touched one', () => {
     const markers = markersFor(clean.replace('l4', 'l4 changed'), clean) as {
       __ranges: unknown[];
     };
 
-    // hunk1 was edited (stale patch, hidden); hunk2 survives at line 8.
-    expect(markers.__ranges).toEqual([expect.objectContaining({ from: 800 })]);
+    // Both buttons stay: hunk1's is stale (disabled), hunk2's is live.
+    expect(markers.__ranges).toEqual([
+      expect.objectContaining({ from: 400 }),
+      expect.objectContaining({ from: 800 }),
+    ]);
   });
 
-  it('returns the empty set when edits touch every hunk', () => {
+  it('returns the empty set when the mapped anchors fall outside the document', () => {
     const markers = markersFor('completely different', clean);
 
     expect(markers).toBe(mockEmptyRangeSet);
+  });
+});
+
+describe('createHunkButton — stale state', () => {
+  it('renders a stale control disabled so a mid-save click cannot stage outdated content', () => {
+    const btn = createHunkButton(hunk, 'unstaged', true);
+
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe('Saving edit…');
+
+    btn.click();
+
+    expect(applyHunk).not.toHaveBeenCalled();
+  });
+
+  it('a live control stays enabled with the staging action', () => {
+    const btn = createHunkButton(hunk, 'unstaged', false);
+
+    expect(btn.disabled).toBe(false);
+
+    btn.click();
+
+    expect(applyHunk).toHaveBeenCalledWith('THE PATCH', false);
   });
 });

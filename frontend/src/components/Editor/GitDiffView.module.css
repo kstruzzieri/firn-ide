@@ -207,3 +207,16 @@
   color: var(--accent);
   background: var(--surface-hover);
 }
+
+/* A stale control (its hunk carries unsaved edits, patch mid-refresh) stays in
+ * place but dims — it must never flicker out of the gutter. */
+.mergeHost :global(.cm-hunkStageBtn:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mergeHost :global(.cm-hunkStageBtn:disabled:hover) {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface);
+}
