@@ -55,6 +55,11 @@ export interface DiffSession {
    * untracked/binary/too-large diffs (whole-file staging only). In an
    * 'unstaged' diff these stage; in a 'staged' diff they unstage. */
   hunks: git.Hunk[];
+  /** True when hunks were skipped only because the working-tree side is an
+   * unsaved editor buffer git hasn't diffed yet. The diff view keeps its
+   * previous hunk gutter through such a refresh (dimmed where edits touched)
+   * instead of collapsing the column for the sub-second save window. */
+  hunksSuppressed?: boolean;
   /** The working-tree file's detected encoding and line endings, captured when
    * an editable (unstaged) diff is built so an edit written straight to disk
    * (file not open in the editor) round-trips them instead of silently
@@ -91,6 +96,7 @@ function sameSession(a: DiffSession | null, b: DiffSession): boolean {
     a.right.content === b.right.content &&
     a.worktreeEncoding === b.worktreeEncoding &&
     a.worktreeLineEndings === b.worktreeLineEndings &&
+    a.hunksSuppressed === b.hunksSuppressed &&
     sameHunks(a.hunks, b.hunks)
   );
 }
@@ -466,7 +472,8 @@ export const useGitStore = create<GitStore>()(
           // so skip the extra git call and leave hunks empty (no gutter button).
           let hunks: git.Hunk[] = [];
           const stagedRename = context === 'staged' && change.origPath;
-          if (!untracked && !stagedRename && !binary && !truncated && !dirtyBufferWorktree) {
+          const hunkable = !untracked && !stagedRename && !binary && !truncated;
+          if (hunkable && !dirtyBufferWorktree) {
             const fh = await GitFileHunks(repoRoot, change.path, context === 'staged');
             hunks = fh.hunks ?? [];
           }
@@ -481,6 +488,9 @@ export const useGitStore = create<GitStore>()(
             binary,
             truncated,
             hunks,
+            // Skipped only because the buffer hasn't been saved yet — the next
+            // post-save refresh will deliver real hunks for the same diff.
+            hunksSuppressed: hunkable && dirtyBufferWorktree,
             worktreeEncoding,
             worktreeLineEndings,
           };

@@ -102,6 +102,10 @@ export function GitDiffView({
       const sig = hunkSignature(session);
       if (
         compartment &&
+        // A suppressed-hunks refresh (dirty buffer mid-save) ships no hunks;
+        // keep the previous gutter — its markers already dim where the edits
+        // landed — instead of collapsing the column until the next refresh.
+        !session.hunksSuppressed &&
         (sig !== hunkSigRef.current || session.right.content !== hunkContentRef.current)
       ) {
         hunkSigRef.current = sig;

@@ -370,7 +370,21 @@ describe('gitStore diff sessions', () => {
 
     expect(mockFileHunks).not.toHaveBeenCalled();
     expect(useGitStore.getState().diffSession?.hunks).toEqual([]);
+    // Flagged so the diff view keeps its previous hunk gutter through the
+    // save window instead of collapsing the column on this refresh.
+    expect(useGitStore.getState().diffSession?.hunksSuppressed).toBe(true);
     useIDEStore.setState({ openFiles: [] });
+  });
+
+  it('does not flag genuinely hunk-less diffs as suppressed', async () => {
+    mockFileAtRev.mockResolvedValueOnce(rev('index text'));
+    mockFileHunks.mockResolvedValueOnce(hunks());
+
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    expect(useGitStore.getState().diffSession?.hunksSuppressed).toBe(false);
   });
 
   it('still fetches hunks when the open file is saved (buffer matches disk)', async () => {

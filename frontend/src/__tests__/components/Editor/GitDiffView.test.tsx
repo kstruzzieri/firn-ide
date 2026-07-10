@@ -438,6 +438,35 @@ describe('GitDiffView', () => {
     expect(screen.getByTestId('diff-root').className).toContain('editableRight');
   });
 
+  it('keeps the previous hunk gutter through a suppressed-hunks refresh (no column collapse)', () => {
+    const withHunks = { ...base, hunks: [{ patch: 'P', newStart: 1, newLines: 1 }] };
+    const { rerender } = render(<GitDiffView session={withHunks} />);
+    fakeDispatch.mockClear();
+
+    // A refresh that ran while the editor buffer was still dirty ships no
+    // hunks; reconfiguring to an empty gutter would unmount the whole column
+    // for the sub-second save window, so the old gutter must stay.
+    rerender(<GitDiffView session={{ ...withHunks, hunks: [], hunksSuppressed: true }} />);
+
+    expect(fakeDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        effects: expect.objectContaining({ __reconfigure: expect.anything() }),
+      })
+    );
+
+    // The follow-up refresh (buffer saved) delivers real hunks again: now the
+    // gutter reconfigures with fresh patches.
+    rerender(
+      <GitDiffView session={{ ...withHunks, hunks: [{ patch: 'P2', newStart: 1, newLines: 1 }] }} />
+    );
+
+    expect(fakeDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        effects: expect.objectContaining({ __reconfigure: expect.anything() }),
+      })
+    );
+  });
+
   it('adds no clickable change gutter to a staged (read-only) diff', () => {
     render(
       <GitDiffView
