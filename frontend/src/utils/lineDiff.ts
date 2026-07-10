@@ -178,15 +178,43 @@ export function gitLineMarkers(baseline: string, current: string): GitLineMarker
   return markersFromHunks(diffLines(baseline, current), splitLines(current).length);
 }
 
+/**
+ * Strips the longest whitespace prefix shared by every non-empty line of both
+ * texts, so the peek popup shows a hunk flush-left instead of carrying the
+ * file's full indentation. Pure display helper — reverts use the raw baseline.
+ */
+export function stripCommonIndent(
+  oldText: string,
+  newText: string
+): { oldText: string; newText: string } {
+  const lines = [...splitLines(oldText), ...splitLines(newText)].filter((l) => l.trim() !== '');
+  if (lines.length === 0) return { oldText, newText };
+  let indent = /^\s*/.exec(lines[0])?.[0] ?? '';
+  for (const line of lines) {
+    while (indent && !line.startsWith(indent)) indent = indent.slice(0, -1);
+    if (!indent) break;
+  }
+  if (!indent) return { oldText, newText };
+  const strip = (text: string) =>
+    text
+      .split('\n')
+      .map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l))
+      .join('\n');
+  return { oldText: strip(oldText), newText: strip(newText) };
+}
+
 export interface InlineDiffSegment {
   text: string;
   /** `same` = unchanged, `del` = only in the baseline, `ins` = only in the working tree. */
   type: 'same' | 'del' | 'ins';
 }
 
-/** Splits text into whitespace and non-whitespace runs, preserving content. */
+/** Splits text into whitespace and non-whitespace runs, preserving content.
+ * Newlines are their own tokens — a whitespace run must never span a line
+ * break, or a trailing-space edit diffs as del/ins of "\n\t" runs and renders
+ * as bogus blocks across the break instead of a tiny change at the line end. */
 function tokenizeWords(text: string): string[] {
-  return text.match(/\s+|\S+/g) ?? [];
+  return text.match(/\n|[^\S\n]+|\S+/g) ?? [];
 }
 
 /**

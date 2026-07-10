@@ -1030,8 +1030,9 @@ export function buildChromeRules(palette: SyntaxPalette) {
       fontSize: '12px',
       lineHeight: '1.5',
       color: '#BCCBDC',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
+      // Code, not prose: never wrap (mid-line wraps scramble indentation);
+      // long lines scroll horizontally inside the popup body instead.
+      whiteSpace: 'pre',
     },
     '.firn-git-diff-del': {
       borderRadius: '2px',

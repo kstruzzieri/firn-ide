@@ -3,6 +3,7 @@ import {
   gitLineMarkers,
   inlineWordDiff,
   revertHunkChange,
+  stripCommonIndent,
   type GitLineMarker,
 } from './lineDiff';
 
@@ -152,5 +153,44 @@ describe('inlineWordDiff', () => {
 
   it('round-trips a multi-edit line', () => {
     expectRoundTrip('the quick brown fox', 'the slow brown cat');
+  });
+
+  it('keeps a trailing-space edit on its own line (newline never joins a whitespace run)', () => {
+    // A single space added at each line end must diff as two tiny ins
+    // segments, not as del/ins of "\n\t" runs spanning the line break —
+    // that rendered as bogus red/green blocks in the peek popup.
+    const oldText = '\tctx        context.Context\n\tconfigPath string';
+    const newText = '\tctx        context.Context \n\tconfigPath string ';
+    const segs = inlineWordDiff(oldText, newText);
+
+    expect(ofType(segs, 'del')).toBe('');
+    expect(ofType(segs, 'ins')).toBe('  ');
+    expectRoundTrip(oldText, newText);
+  });
+});
+
+describe('stripCommonIndent', () => {
+  it('removes the shared leading indent from both sides', () => {
+    const res = stripCommonIndent('\t\tfoo()\n\t\tbar()', '\t\tfoo()\n\t\t\tbaz()');
+    expect(res.oldText).toBe('foo()\nbar()');
+    expect(res.newText).toBe('foo()\n\tbaz()');
+  });
+
+  it('leaves unindented text untouched', () => {
+    const res = stripCommonIndent('a\nb', 'a\nc');
+    expect(res.oldText).toBe('a\nb');
+    expect(res.newText).toBe('a\nc');
+  });
+
+  it('ignores empty lines when finding the common indent', () => {
+    const res = stripCommonIndent('  a\n\n  b', '  a\n\n  c');
+    expect(res.oldText).toBe('a\n\nb');
+    expect(res.newText).toBe('a\n\nc');
+  });
+
+  it('handles an empty side (pure addition or deletion hunks)', () => {
+    const res = stripCommonIndent('', '    added');
+    expect(res.oldText).toBe('');
+    expect(res.newText).toBe('added');
   });
 });
