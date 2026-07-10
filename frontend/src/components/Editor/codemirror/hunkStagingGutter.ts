@@ -8,6 +8,7 @@ import { EditorView, gutter, GutterMarker } from '@codemirror/view';
 import { RangeSet, type Extension } from '@codemirror/state';
 import type { git } from '../../../../wailsjs/go/models';
 import { useGitStore, type DiffContext } from '../../../stores/gitStore';
+import { diffLines } from '../../../utils/lineDiff';
 
 /**
  * How a hunk control behaves in a given diff context. An 'unstaged' diff
@@ -55,6 +56,41 @@ class HunkMarker extends GutterMarker {
 }
 
 /**
+ * Which hunk controls stay valid while the pane holds unsaved edits, and on
+ * which line each now sits. A hunk's patch applies to the *index*, so a local
+ * edit only invalidates the hunks whose snapshot lines it touches — the rest
+ * stay stageable, with their anchors shifted past inserted/removed lines. This
+ * keeps untouched +/− buttons from flickering away on every keystroke or
+ * popup revert while the debounced save/refresh is in flight.
+ */
+export function visibleHunks(
+  hunks: git.Hunk[],
+  cleanContent: string,
+  currentContent: string
+): { hunk: git.Hunk; line: number }[] {
+  if (currentContent === cleanContent) return hunks.map((h) => ({ hunk: h, line: h.newStart }));
+  // Local edits as line ranges: [fromA, toA) in snapshot coords, [fromB, toB)
+  // in on-screen coords (0-based, exclusive).
+  const edits = diffLines(cleanContent, currentContent);
+  const out: { hunk: git.Hunk; line: number }[] = [];
+  for (const h of hunks) {
+    const start = h.newStart - 1;
+    const end = start + h.newLines;
+    let offset = 0;
+    let stale = false;
+    for (const e of edits) {
+      if (e.fromA < end && e.toA > start) {
+        stale = true;
+        break;
+      }
+      if (e.toA <= start) offset += e.toB - e.fromB - (e.toA - e.fromA);
+    }
+    if (!stale) out.push({ hunk: h, line: h.newStart + offset });
+  }
+  return out;
+}
+
+/**
  * A gutter for the right pane carrying a stage/unstage button at each hunk's
  * new-side start line. Returns nothing when there are no hunks (untracked,
  * binary, too-large, or clean diffs) so the pane stays plain.
@@ -70,11 +106,16 @@ export function hunkStagingGutter(
     markers: (view: EditorView) => {
       const doc = view.state.doc;
       // An editable pane can diverge from the git snapshot before its debounced
-      // save/refresh. Hide the old patch controls immediately in that window.
-      if (cleanContent !== undefined && doc.toString() !== cleanContent) return RangeSet.empty;
-      const ranges = hunks
-        .filter((h) => h.newStart >= 1 && h.newStart <= doc.lines)
-        .map((h) => new HunkMarker(h, context).range(doc.line(h.newStart).from));
+      // save/refresh. Keep the controls whose patches are still valid (shifted
+      // to their on-screen lines) and hide only the ones the edits touched.
+      const visible =
+        cleanContent === undefined
+          ? hunks.map((h) => ({ hunk: h, line: h.newStart }))
+          : visibleHunks(hunks, cleanContent, doc.toString());
+      const ranges = visible
+        .filter(({ line }) => line >= 1 && line <= doc.lines)
+        .map(({ hunk, line }) => new HunkMarker(hunk, context).range(doc.line(line).from));
+      if (ranges.length === 0) return RangeSet.empty;
       return RangeSet.of(ranges, true); // true = sort; hunks are already ascending
     },
   });
