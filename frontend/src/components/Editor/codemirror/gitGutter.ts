@@ -197,12 +197,16 @@ function stripIndent(ht: HighlightedText, indent: string): HighlightedText {
 }
 
 /** Appends `text` to `parent` as syntax-colored runs, reading each character's
- * class from `classes` starting at `offset`. */
+ * class from `classes` starting at `offset`. With `markNewlines`, each line
+ * break also gets a faint return glyph — inside a del/ins segment the break
+ * itself is part of the change (an added or removed line) and would otherwise
+ * be invisible. */
 function appendHighlighted(
   parent: HTMLElement,
   text: string,
   classes: string[],
-  offset: number
+  offset: number,
+  markNewlines = false
 ): void {
   let runClass = classes[offset] ?? '';
   let run = '';
@@ -219,6 +223,16 @@ function appendHighlighted(
     run = '';
   };
   for (let i = 0; i < text.length; i++) {
+    if (markNewlines && text[i] === '\n') {
+      flush();
+      const glyph = document.createElement('span');
+      glyph.className = 'firn-git-diff-newline';
+      glyph.textContent = '↵';
+      parent.appendChild(glyph);
+      parent.appendChild(document.createTextNode('\n'));
+      runClass = classes[offset + i + 1] ?? '';
+      continue;
+    }
     const cls = classes[offset + i] ?? '';
     if (cls !== runClass) {
       flush();
@@ -247,10 +261,10 @@ function renderInlineDiff(pre: HTMLElement, oldSide: HighlightedText, newSide: H
     const span = document.createElement('span');
     span.className = segment.type === 'del' ? 'firn-git-diff-del' : 'firn-git-diff-ins';
     if (segment.type === 'del') {
-      appendHighlighted(span, segment.text, oldSide.classes, oi);
+      appendHighlighted(span, segment.text, oldSide.classes, oi, true);
       oi += segment.text.length;
     } else {
-      appendHighlighted(span, segment.text, newSide.classes, ni);
+      appendHighlighted(span, segment.text, newSide.classes, ni, true);
       ni += segment.text.length;
     }
     pre.appendChild(span);

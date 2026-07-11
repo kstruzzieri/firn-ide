@@ -1046,6 +1046,12 @@ export function buildChromeRules(palette: SyntaxPalette) {
       backgroundColor: 'rgba(63, 185, 80, 0.25)',
       color: '#BBF7D0',
     },
+    // Return glyph marking an added/removed line break inside a diff segment,
+    // which would otherwise render invisibly. Inherits the segment's color.
+    '.firn-git-diff-newline': {
+      opacity: '0.55',
+      fontSize: '10px',
+    },
     '.firn-git-hunk-actions': {
       display: 'flex',
       justifyContent: 'flex-end',

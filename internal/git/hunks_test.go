@@ -85,8 +85,7 @@ func TestService_FileHunks_UnstageSingleHunk(t *testing.T) {
 func TestService_FileHunks_StageOneOfTwo(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
-	// 20 lines; edits at line 2 and line 19 sit far enough apart (well past
-	// 2x the 3-line context) that git emits two separate hunks.
+	// 20 lines with edits at line 2 and line 19: two separate hunks.
 	var base, edited strings.Builder
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&base, "%d\n", i)
@@ -114,11 +113,12 @@ func TestService_FileHunks_StageOneOfTwo(t *testing.T) {
 	if len(fh.Hunks) != 2 {
 		t.Fatalf("hunks = %d, want 2 (%+v)", len(fh.Hunks), fh.Hunks)
 	}
-	if fh.Hunks[0].NewStart != 1 {
-		t.Errorf("hunk[0].NewStart = %d, want 1", fh.Hunks[0].NewStart)
+	// Zero-context hunks anchor exactly at their changed lines.
+	if fh.Hunks[0].NewStart != 2 {
+		t.Errorf("hunk[0].NewStart = %d, want 2", fh.Hunks[0].NewStart)
 	}
-	if fh.Hunks[1].NewStart != 16 {
-		t.Errorf("hunk[1].NewStart = %d, want 16", fh.Hunks[1].NewStart)
+	if fh.Hunks[1].NewStart != 19 {
+		t.Errorf("hunk[1].NewStart = %d, want 19", fh.Hunks[1].NewStart)
 	}
 
 	// Stage only the second hunk (NINETEEN), not the first (TWO).
@@ -133,6 +133,62 @@ func TestService_FileHunks_StageOneOfTwo(t *testing.T) {
 	want := strings.Replace(base.String(), "19\n", "NINETEEN\n", 1) // only line 19 staged
 	if index.Content != want {
 		t.Errorf("index content = %q, want %q", index.Content, want)
+	}
+}
+
+// TestService_FileHunks_NearbyEditsStayIndependent is the user-visible crux of
+// zero-context hunks: two edits only four lines apart would coalesce into one
+// hunk under the default 3-line context (their windows overlap), leaving one
+// staging control for two visually separate changes. Each change block must be
+// its own hunk, anchored at its own line, and independently stageable.
+func TestService_FileHunks_NearbyEditsStayIndependent(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	var base, edited strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&base, "%d\n", i)
+		switch i {
+		case 2:
+			edited.WriteString("TWO\n")
+		case 6:
+			edited.WriteString("SIX\n")
+		default:
+			fmt.Fprintf(&edited, "%d\n", i)
+		}
+	}
+	writeFile(t, dir, "nums.txt", base.String())
+	svc := NewService()
+	if err := svc.Stage(ctx(), dir, []string{"nums.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-m", "add nums")
+	writeFile(t, dir, "nums.txt", edited.String())
+
+	fh, err := svc.FileHunks(ctx(), dir, "nums.txt", false)
+	if err != nil {
+		t.Fatalf("FileHunks() error = %v", err)
+	}
+	if len(fh.Hunks) != 2 {
+		t.Fatalf("hunks = %d, want 2 for edits 4 lines apart (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+	if fh.Hunks[0].NewStart != 2 || fh.Hunks[1].NewStart != 6 {
+		t.Errorf(
+			"NewStarts = %d, %d, want 2 and 6 (buttons must sit on the changed lines)",
+			fh.Hunks[0].NewStart, fh.Hunks[1].NewStart,
+		)
+	}
+
+	// Stage only the second edit; the first stays unstaged.
+	if err := svc.ApplyPatch(ctx(), dir, fh.Hunks[1].Patch, false); err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+	index, err := svc.FileAtRev(ctx(), dir, ":0", "nums.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(base.String(), "6\n", "SIX\n", 1)
+	if index.Content != want {
+		t.Errorf("index content = %q, want only SIX staged %q", index.Content, want)
 	}
 }
 
@@ -214,7 +270,7 @@ func TestService_FileHunks_PinsApplyableDiffOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitCmd(t, dir, "commit", "-m", "expand readme")
-	gitCmd(t, dir, "config", "diff.context", "0")
+	gitCmd(t, dir, "config", "diff.context", "10")
 	gitCmd(t, dir, "config", "diff.noprefix", "true")
 	writeFile(t, dir, "README.md", "1\n2\nTHREE\n4\n5\n")
 
@@ -228,8 +284,8 @@ func TestService_FileHunks_PinsApplyableDiffOutput(t *testing.T) {
 	if !strings.Contains(fh.Hunks[0].Patch, "diff --git a/README.md b/README.md") {
 		t.Fatalf("patch did not keep default prefixes:\n%s", fh.Hunks[0].Patch)
 	}
-	if !strings.Contains(fh.Hunks[0].Patch, "@@ -1,5 +1,5 @@") {
-		t.Fatalf("patch did not override zero-context config:\n%s", fh.Hunks[0].Patch)
+	if !strings.Contains(fh.Hunks[0].Patch, "@@ -3 +3 @@") {
+		t.Fatalf("patch did not override diff.context config with zero context:\n%s", fh.Hunks[0].Patch)
 	}
 	if err := svc.ApplyPatch(ctx(), dir, fh.Hunks[0].Patch, false); err != nil {
 		t.Fatalf("ApplyPatch() error = %v", err)

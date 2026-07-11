@@ -33,7 +33,12 @@ type FileHunks struct {
 // diffs the working tree against the index (hunks the user can stage);
 // staged=true diffs the index against HEAD (hunks the user can unstage).
 // --no-color/--no-ext-diff pin plain, applyable output regardless of user
-// config or diff drivers.
+// config or diff drivers. Zero context keeps nearby edits as separate hunks —
+// with the default 3 lines, changes within ~6 lines coalesce into one hunk and
+// the UI gets a single staging control for visually distinct changes — and
+// anchors each hunk exactly at its changed line. Exactness is safe here
+// because the patch preimage is the very index it is applied to (ApplyPatch),
+// so context lines add no protection.
 func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) (FileHunks, error) {
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return FileHunks{}, err
@@ -43,7 +48,7 @@ func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) 
 		"--no-color",
 		"--no-ext-diff",
 		"--no-textconv",
-		"--unified=3",
+		"--unified=0",
 		"--src-prefix=a/",
 		"--dst-prefix=b/",
 	}
@@ -61,12 +66,14 @@ func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) 
 // ApplyPatch applies a single-hunk patch to the index via `git apply --cached`
 // (reverse=true adds --reverse, which unstages). The patch must be one git
 // produced; it is validated as a diff and then run against the index, whose
-// content matches the patch's preimage by construction.
+// content matches the patch's preimage by construction. --unidiff-zero admits
+// the zero-context patches FileHunks generates (git otherwise insists on
+// context lines); the removed-line content is still verified against the index.
 func (s *Service) ApplyPatch(ctx context.Context, dir, patch string, reverse bool) error {
 	if !looksLikePatch(patch) {
 		return fmt.Errorf("not a git patch")
 	}
-	args := []string{"apply", "--cached"}
+	args := []string{"apply", "--cached", "--unidiff-zero"}
 	if reverse {
 		args = append(args, "--reverse")
 	}
