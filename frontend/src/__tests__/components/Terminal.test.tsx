@@ -32,6 +32,21 @@ describe('Terminal component', () => {
     });
   });
 
+  it('starts the shell in the loaded workspace root', async () => {
+    useIDEStore.setState({
+      workspace: { name: 'flux-ml', path: '/repo/flux-ml' } as ReturnType<
+        typeof useIDEStore.getState
+      >['workspace'],
+    });
+
+    render(<Terminal />);
+
+    await screen.findByText('Terminal 1');
+    // The PTY must spawn in the workspace, not the app process's cwd (which
+    // under wails dev is the firn checkout itself).
+    expect(mockCreateTerminal).toHaveBeenCalledWith('/repo/flux-ml');
+  });
+
   it('leaves the terminal panel empty after closing the last session and resets the next default title', async () => {
     render(<Terminal />);
 

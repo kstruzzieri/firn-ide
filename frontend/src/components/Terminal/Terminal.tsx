@@ -187,7 +187,9 @@ export function Terminal() {
       try {
         // Register global listener before creating the PTY so early output is buffered
         ensureGlobalOutputListener();
-        const id = await CreateTerminal();
+        // Start the shell in the loaded workspace root (not the app process's
+        // cwd, which under wails dev is the firn checkout itself).
+        const id = await CreateTerminal(useIDEStore.getState().workspace?.path ?? '');
         const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
         addSession({ id, title });
         if (options?.markInitialCreated) {

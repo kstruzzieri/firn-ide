@@ -16,7 +16,7 @@ export function CloseTerminal(arg1:string):Promise<void>;
 
 export function ConfirmBeforeCloseReady():Promise<void>;
 
-export function CreateTerminal():Promise<string>;
+export function CreateTerminal(arg1:string):Promise<string>;
 
 export function DeleteRunProfile(arg1:string):Promise<void>;
 

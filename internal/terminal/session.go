@@ -28,13 +28,22 @@ func defaultShell() string {
 	return "/bin/sh"
 }
 
-func NewSession() (*Session, error) {
+// NewSession starts a shell in dir (the loaded workspace root). An empty,
+// missing, or non-directory dir falls back to inheriting the app process's
+// working directory rather than failing terminal creation — the workspace may
+// have been deleted since it was recorded.
+func NewSession(dir string) (*Session, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = defaultShell()
 	}
 	cacheRoot, _ := os.UserCacheDir() // empty on error → integratedCommand falls open to plain
 	cmd := integratedCommand(shell, cacheRoot)
+	if dir != "" {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			cmd.Dir = dir
+		}
+	}
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		// ENXIO ("device not configured") from /dev/ptmx means the system PTY

@@ -18,8 +18,8 @@ export function ConfirmBeforeCloseReady() {
   return window['go']['main']['App']['ConfirmBeforeCloseReady']();
 }
 
-export function CreateTerminal() {
-  return window['go']['main']['App']['CreateTerminal']();
+export function CreateTerminal(arg1) {
+  return window['go']['main']['App']['CreateTerminal'](arg1);
 }
 
 export function DeleteRunProfile(arg1) {

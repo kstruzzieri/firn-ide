@@ -320,10 +320,12 @@ func (a *App) ToggleMaximize() {
 	runtime.WindowToggleMaximise(a.ctx)
 }
 
-// CreateTerminal creates a new terminal
+// CreateTerminal creates a new terminal whose shell starts in dir — the loaded
+// workspace root — instead of the app process's own working directory. An
+// empty or missing dir inherits the process default.
 // This is exposed to the frontend via Wails bindings.
-func (a *App) CreateTerminal() (string, error) {
-	id, err := a.termManager.Create()
+func (a *App) CreateTerminal(dir string) (string, error) {
+	id, err := a.termManager.Create(dir)
 	if err != nil {
 		runtime.LogErrorf(a.ctx, "CreateTerminal failed: %v", err)
 		return "", err
