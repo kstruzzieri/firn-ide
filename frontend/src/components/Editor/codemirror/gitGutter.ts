@@ -39,7 +39,7 @@ interface GitGutterState {
   markers: GitLineMarker[];
 }
 
-const gitGutterField = StateField.define<GitGutterState>({
+export const gitGutterField = StateField.define<GitGutterState>({
   create: () => ({ baseline: null, markers: [] }),
   update(value, tr) {
     let baseline = value.baseline;
