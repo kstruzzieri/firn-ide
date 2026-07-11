@@ -526,7 +526,19 @@ export const useGitStore = create<GitStore>()(
         // and drops the file from git status — still re-reads the live buffer.
         const change = (status.files ?? []).find((f) => f.path === diffSession.path) ?? diffSource;
         if (!change) return;
-        await get().openDiff(change, diffSession.context, { focus: false });
+        // Follow a whole-file stage/unstage (the panel checkbox): when the open
+        // context no longer has changes but the other one does, retarget so the
+        // diff keeps showing the change the user is tracking — and lands back
+        // in the editable working-tree view when they unstage. A partially
+        // staged file has content in both contexts and stays put.
+        let context = diffSession.context;
+        const cls = classifyChange(change);
+        if (context === 'unstaged' && !cls.unstaged && !cls.untracked && cls.staged) {
+          context = 'staged';
+        } else if (context === 'staged' && !cls.staged && (cls.unstaged || cls.untracked)) {
+          context = 'unstaged';
+        }
+        await get().openDiff(change, context, { focus: false });
       },
 
       closeDiff: () =>

@@ -587,6 +587,53 @@ describe('gitStore diff sessions', () => {
     useIDEStore.setState({ openFiles: [] });
   });
 
+  it('follows a whole-file stage: the unstaged diff retargets to the staged context', async () => {
+    // Open the unstaged diff, then stage the whole file via the panel checkbox:
+    // the unstaged side goes empty and the change now lives in the staged
+    // context, so the open diff must switch with it instead of going stale.
+    mockFileAtRev.mockResolvedValue(rev('index text'));
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+    expect(useGitStore.getState().diffSession?.context).toBe('unstaged');
+
+    useGitStore.setState({
+      status: repoStatus({ files: [{ path: 'src/a.ts', index: 'M', worktree: '.' }] }),
+    });
+    await useGitStore.getState().refreshOpenDiff();
+
+    expect(useGitStore.getState().diffSession?.context).toBe('staged');
+  });
+
+  it('follows a whole-file unstage back to the (editable) unstaged context', async () => {
+    mockFileAtRev.mockResolvedValue(rev('head text'));
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: '.' }, 'staged');
+
+    useGitStore.setState({
+      status: repoStatus({ files: [{ path: 'src/a.ts', index: '.', worktree: 'M' }] }),
+    });
+    await useGitStore.getState().refreshOpenDiff();
+
+    expect(useGitStore.getState().diffSession?.context).toBe('unstaged');
+  });
+
+  it('keeps the current context for a partially staged file', async () => {
+    // Both contexts still have content: no reason to yank the user elsewhere.
+    mockFileAtRev.mockResolvedValue(rev('index text'));
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: 'M', worktree: 'M' }, 'unstaged');
+
+    useGitStore.setState({
+      status: repoStatus({ files: [{ path: 'src/a.ts', index: 'M', worktree: 'M' }] }),
+    });
+    await useGitStore.getState().refreshOpenDiff();
+
+    expect(useGitStore.getState().diffSession?.context).toBe('unstaged');
+  });
+
   it('re-fetches the open diff on refresh even when git status no longer lists the file', async () => {
     // Unsaved edit: disk is unchanged so the file drops out of git status, but
     // the open diff must still update from the live buffer.
