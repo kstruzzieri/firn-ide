@@ -14,19 +14,26 @@
   font-size: 12px;
 }
 
-/* ── header row: scope toggle + branch switcher ────────────────────────── */
+/* ── header rows: scope toggle, then the branch switcher ───────────────── */
 
 .headerRow {
+  /* Stacked: the branch switcher gets its own full-width row so long branch
+   * names stay legible when the panel is narrow. */
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
   /* Own stacking context above the sync row and commit box so the branch
    * popup (an absolutely-positioned descendant) paints opaquely over them
    * instead of letting their text bleed through. */
   position: relative;
   z-index: 20;
+}
+
+.branchRow {
+  display: flex;
+  min-width: 0;
 }
 
 /* ── sync row (pull/push) ──────────────────────────────────────────────── */
