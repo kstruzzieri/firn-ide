@@ -51,7 +51,8 @@ jest.mock('@codemirror/view', () => ({
     lineWrapping: {},
   },
   lineNumbers: jest.fn(),
-  keymap: { of: jest.fn() },
+  // Pass bindings through so tests can assert which keymaps a pane carries.
+  keymap: { of: (bindings: unknown) => bindings },
   gutter: (config: unknown) => gutterMock(config),
   GutterMarker: class {},
 }));
@@ -71,7 +72,9 @@ jest.mock('@codemirror/state', () => ({
 }));
 jest.mock('@codemirror/commands', () => ({
   history: jest.fn(() => 'HISTORY'),
-  historyKeymap: [],
+  historyKeymap: ['HISTORY_KEYS'],
+  defaultKeymap: ['DEFAULT_KEYS'],
+  indentWithTab: 'INDENT_WITH_TAB',
 }));
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
@@ -413,9 +416,14 @@ describe('GitDiffView', () => {
     expect(config.a.extensions).toContain('READONLY');
     expect(config.a.extensions).not.toContain('EDIT_LISTENER');
     // Right pane is the live working tree: editable, wired to persist edits,
-    // with its own undo history (Cmd-Z), like the regular editor.
+    // with its own undo history (Cmd-Z), like the regular editor. It must also
+    // carry the standard editing keymap: without an Enter binding the key
+    // falls through to WebKit's contenteditable default, whose block insert
+    // reads back as TWO newlines per press.
     expect(config.b.extensions).toContain('EDIT_LISTENER');
     expect(config.b.extensions).toContain('HISTORY');
+    expect(config.b.extensions).toContainEqual(['DEFAULT_KEYS', 'INDENT_WITH_TAB']);
+    expect(config.a.extensions).not.toContainEqual(['DEFAULT_KEYS', 'INDENT_WITH_TAB']);
     expect(config.b.extensions).not.toContain('EDITABLE_FALSE');
     expect(config.b.extensions).not.toContain('READONLY');
     expect(config.a.extensions).not.toContain('HISTORY');

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { useGitStore, type DiffSession } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
@@ -204,6 +204,11 @@ export function GitDiffView({
                 // undo never un-applies a refresh.
                 history(),
                 keymap.of(historyKeymap),
+                // Standard editing keys, matching the main editor. Enter MUST
+                // be bound: unbound it falls through to WebKit's
+                // contenteditable default, whose block insert reads back
+                // through the DOM observer as two newlines per press.
+                keymap.of([...defaultKeymap, indentWithTab]),
                 // The file view's change gutter rides along: amber/green bars
                 // and deletion wedges against the index baseline (seeded after
                 // build), click -> peek/revert popup. Revert restores the index
