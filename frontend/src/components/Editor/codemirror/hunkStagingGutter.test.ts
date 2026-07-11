@@ -44,21 +44,28 @@ describe('hunkStagingAction', () => {
   });
 });
 
+// The control acts on mousedown, not click: in the editable pane a gutter
+// mousedown moves the cursor, whose active-line change re-renders the gutter
+// and can replace the button between mousedown and mouseup — the click event
+// then never fires on it.
+const press = (btn: HTMLButtonElement) =>
+  btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+
 describe('createHunkButton', () => {
-  it('clicking a button in an unstaged diff stages that hunk (reverse=false)', () => {
+  it('pressing a button in an unstaged diff stages that hunk (reverse=false)', () => {
     const btn = createHunkButton(hunk, 'unstaged');
     expect(btn.title).toBe('Stage hunk');
 
-    btn.click();
+    press(btn);
 
     expect(applyHunk).toHaveBeenCalledWith('THE PATCH', false);
   });
 
-  it('clicking a button in a staged diff unstages that hunk (reverse=true)', () => {
+  it('pressing a button in a staged diff unstages that hunk (reverse=true)', () => {
     const btn = createHunkButton(hunk, 'staged');
     expect(btn.title).toBe('Unstage hunk');
 
-    btn.click();
+    press(btn);
 
     expect(applyHunk).toHaveBeenCalledWith('THE PATCH', true);
   });
@@ -157,13 +164,13 @@ describe('hunkStagingGutter', () => {
 });
 
 describe('createHunkButton — stale state', () => {
-  it('renders a stale control disabled so a mid-save click cannot stage outdated content', () => {
+  it('renders a stale control disabled so a mid-save press cannot stage outdated content', () => {
     const btn = createHunkButton(hunk, 'unstaged', true);
 
     expect(btn.disabled).toBe(true);
     expect(btn.title).toBe('Saving edit…');
 
-    btn.click();
+    press(btn);
 
     expect(applyHunk).not.toHaveBeenCalled();
   });
@@ -173,7 +180,7 @@ describe('createHunkButton — stale state', () => {
 
     expect(btn.disabled).toBe(false);
 
-    btn.click();
+    press(btn);
 
     expect(applyHunk).toHaveBeenCalledWith('THE PATCH', false);
   });

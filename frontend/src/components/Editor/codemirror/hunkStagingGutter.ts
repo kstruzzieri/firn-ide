@@ -45,9 +45,12 @@ export function createHunkButton(
     return btn;
   }
   btn.title = label;
-  // stopPropagation so the click doesn't reach the editor's own gutter/selection
-  // handlers; preventDefault so the read-only view doesn't try to focus.
-  btn.addEventListener('click', (e) => {
+  // Act on mousedown, not click: in the editable pane a gutter mousedown moves
+  // the cursor, whose active-line change re-renders the gutter and can replace
+  // this button before mouseup — the click event then never fires on it.
+  // preventDefault + stopPropagation also keep CodeMirror's own gutter handling
+  // (line selection, focus) away from the press.
+  btn.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     void useGitStore.getState().applyHunk(hunk.patch, reverse);
