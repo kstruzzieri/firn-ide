@@ -60,6 +60,12 @@ export interface DiffSession {
    * previous hunk gutter through such a refresh (dimmed where edits touched)
    * instead of collapsing the column for the sub-second save window. */
   hunksSuppressed?: boolean;
+  /** Monotonic id of the openDiff request that produced this session. The diff
+   * view compares it against the id current when the user last typed, so a
+   * refresh that STARTED before a local edit can never reconcile the pane
+   * backward, while one that started after (and so read the post-edit
+   * buffer/disk) is authoritative. Not part of sameSession equality. */
+  requestRevision?: number;
   /** The working-tree file's detected encoding and line endings, captured when
    * an editable (unstaged) diff is built so an edit written straight to disk
    * (file not open in the editor) round-trips them instead of silently
@@ -202,6 +208,10 @@ type GitStore = GitState & GitActions;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let diffRequestRevision = 0;
+
+/** Current openDiff request id, read by the diff view when the user types so
+ * it can tell refreshes that predate the edit from ones that supersede it. */
+export const getDiffRequestRevision = () => diffRequestRevision;
 
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -491,6 +501,7 @@ export const useGitStore = create<GitStore>()(
             // Skipped only because the buffer hasn't been saved yet — the next
             // post-save refresh will deliver real hunks for the same diff.
             hunksSuppressed: hunkable && dirtyBufferWorktree,
+            requestRevision,
             worktreeEncoding,
             worktreeLineEndings,
           };

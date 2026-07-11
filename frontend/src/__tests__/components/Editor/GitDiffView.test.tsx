@@ -215,6 +215,42 @@ describe('GitDiffView', () => {
     await flushWorkingTreeEdit(base.absPath);
   });
 
+  it('a stale refresh arriving after the save completes cannot roll the pane back', async () => {
+    // The data-loss chain from GUI testing: edit -> save completes (onSaved
+    // fires) -> a refresh that STARTED before the save lands with the older
+    // content. If onSaved cleared the local-edit guard, the stale session
+    // reconciled the pane backward, silently eating the newest keystrokes and
+    // leaving the pane permanently diverged from the buffer/disk. The guard
+    // must persist until an arriving session actually matches the pane.
+    const { rerender } = render(<GitDiffView session={base} />);
+    fakeSideBDoc = 'const a = 20;\n';
+    mockEditListener?.({
+      docChanged: true,
+      transactions: [],
+      state: { doc: { toString: () => fakeSideBDoc } },
+    });
+
+    // Complete the debounced save: onSaved fires inside this flush.
+    await flushWorkingTreeEdit(base.absPath);
+
+    // Now the stale session (pre-edit content) lands.
+    rerender(
+      <GitDiffView
+        session={{ ...base, right: { label: 'Working Tree', content: 'const a = 3;\n' } }}
+      />
+    );
+
+    expect(fakeSideBDoc).toBe('const a = 20;\n');
+
+    // The refresh carrying the saved content converges and re-arms reconciles.
+    rerender(
+      <GitDiffView
+        session={{ ...base, right: { label: 'Working Tree', content: 'const a = 20;\n' } }}
+      />
+    );
+    expect(fakeSideBDoc).toBe('const a = 20;\n');
+  });
+
   it('preserves an explicit undo when a stale refresh contains the intermediate edit', async () => {
     const { rerender } = render(<GitDiffView session={base} />);
     fakeSideBDoc = 'const a = 20;\n';
@@ -251,9 +287,15 @@ describe('GitDiffView', () => {
     });
     await flushWorkingTreeEdit(base.absPath);
 
+    // The post-save refresh carries a request id past the edit barrier,
+    // marking its content as read AFTER the edit — authoritative.
     rerender(
       <GitDiffView
-        session={{ ...base, right: { label: 'Working Tree', content: 'external change\n' } }}
+        session={{
+          ...base,
+          right: { label: 'Working Tree', content: 'external change\n' },
+          requestRevision: 99,
+        }}
       />
     );
 
@@ -286,7 +328,11 @@ describe('GitDiffView', () => {
 
     rerender(
       <GitDiffView
-        session={{ ...base, right: { label: 'Working Tree', content: 'external change\n' } }}
+        session={{
+          ...base,
+          right: { label: 'Working Tree', content: 'external change\n' },
+          requestRevision: 99,
+        }}
       />
     );
 

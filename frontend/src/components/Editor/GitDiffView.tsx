@@ -3,7 +3,7 @@ import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { useGitStore, type DiffSession } from '../../stores/gitStore';
+import { getDiffRequestRevision, useGitStore, type DiffSession } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
@@ -43,6 +43,11 @@ export function GitDiffView({
   const mergeRef = useRef<MergeView | null>(null);
   const sessionKeyRef = useRef<string | null>(null);
   const localEditRevisionRef = useRef(0);
+  // The openDiff request id current when the user last typed. Sessions whose
+  // requestRevision is not past this barrier were built from a read that
+  // started before the edit — their content predates the pane and must never
+  // reconcile it backward.
+  const editBarrierRef = useRef(0);
   const structuralKeyRef = useRef<string | null>(null);
   const hunkCompartmentRef = useRef<Compartment | null>(null);
   const hunkSigRef = useRef('');
@@ -121,19 +126,25 @@ export function GitDiffView({
         });
       }
 
+      // A session whose request started after the user's last keystroke read
+      // the post-edit buffer/disk: it is authoritative even while local edits
+      // are outstanding. One that predates the edit must never win.
+      const postEdit = (session.requestRevision ?? 0) > editBarrierRef.current;
       const liveContent = current.b.state.doc.toString();
-      if (localEditRevisionRef.current > 0) {
-        if (liveContent === session.right.content) localEditRevisionRef.current = 0;
-      } else if (editableRight && liveContent !== session.right.content) {
+      if (liveContent === session.right.content) {
+        localEditRevisionRef.current = 0;
+      } else if (editableRight && (localEditRevisionRef.current === 0 || postEdit)) {
         reconcileDoc(current.b, session.right.content);
+        localEditRevisionRef.current = 0;
       }
       return;
     }
 
     let rightContent = session.right.content;
     if (current && sameSession && localEditRevisionRef.current > 0) {
+      const postEdit = (session.requestRevision ?? 0) > editBarrierRef.current;
       const liveContent = current.b.state.doc.toString();
-      if (liveContent !== session.right.content) {
+      if (liveContent !== session.right.content && !postEdit) {
         // A watcher refresh can finish with an older disk/buffer snapshot while
         // the user is still typing. Rebuild around the live document, not the
         // stale response; a later matching refresh becomes the new baseline.
@@ -186,15 +197,23 @@ export function GitDiffView({
                   session,
                   () => {
                     localEditRevisionRef.current += 1;
+                    // Refreshes requested up to this moment read pre-edit
+                    // content; only later ones may reconcile the pane.
+                    editBarrierRef.current = getDiffRequestRevision();
                   },
                   () => {
                     if (sessionKeyRef.current !== sessionKey) return;
                     // Start a post-write read after the latest content reaches
-                    // disk. This invalidates older refresh requests and provides
-                    // the authoritative current disk/buffer state. Any edit that
-                    // happens after this call increments the revision again.
+                    // disk; it invalidates older refresh requests and delivers
+                    // the authoritative buffer/disk state. Deliberately DO NOT
+                    // clear localEditRevision here: a refresh that started
+                    // before this save can still land afterwards, and with the
+                    // guard down its stale content would reconcile the pane
+                    // backward — eating the newest keystrokes and leaving the
+                    // pane silently diverged from the file (the mass-"deletion"
+                    // bug). The reconcile effect clears the guard only when an
+                    // arriving session's content actually matches the pane.
                     void useGitStore.getState().refreshOpenDiff();
-                    localEditRevisionRef.current = 0;
                   }
                 ),
                 // The editable pane gets its own undo history (Cmd-Z /
