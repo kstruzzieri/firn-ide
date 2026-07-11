@@ -2,6 +2,7 @@ import {
   diffLines,
   gitLineMarkers,
   inlineWordDiff,
+  revertChangeIsSafe,
   revertHunkChange,
   revertLineChange,
   stripCommonIndent,
@@ -248,6 +249,35 @@ describe('revertLineChange', () => {
     expect(
       revertLineChange('a\nd', 'a\nb\nc\nd', { fromA: 1, toA: 3, fromB: 1, toB: 1 }, 2)
     ).toBeNull();
+  });
+});
+
+describe('revertChangeIsSafe', () => {
+  // current: 5 lines, hunk covers lines 3-4 (0-based fromB=2, toB=4).
+  const cur = 'l1\nl2\nl3\nl4\nl5\n';
+  const hunk = { fromA: 2, toA: 2, fromB: 2, toB: 4 };
+
+  it('accepts a change inside the hunk lines (plus one boundary line each side)', () => {
+    // Deleting lines 3-4 (chars 6..12) is exactly the hunk's span.
+    expect(revertChangeIsSafe({ from: 6, to: 12, insert: '' }, hunk, cur)).toBe(true);
+    // EOF/boundary handling may extend one line beyond either edge.
+    expect(revertChangeIsSafe({ from: 3, to: 12, insert: '' }, hunk, cur)).toBe(true);
+  });
+
+  it('rejects a change reaching outside the hunk window (the data-loss guard)', () => {
+    // A change starting at the top of the document while the hunk sits at
+    // lines 3-4 would destroy unrelated content: never dispatch it.
+    expect(revertChangeIsSafe({ from: 0, to: 12, insert: '' }, hunk, cur)).toBe(false);
+    // Two lines past the hunk's end is beyond the one-line boundary slack.
+    const six = 'l1\nl2\nl3\nl4\nl5\nl6\n';
+    expect(revertChangeIsSafe({ from: 6, to: six.length, insert: '' }, hunk, six)).toBe(false);
+  });
+
+  it('accepts pure-deletion hunk re-insertions at their anchor', () => {
+    const del = { fromA: 1, toA: 3, fromB: 2, toB: 2 };
+    // Insertion at line 3's start (char 6), zero-width.
+    expect(revertChangeIsSafe({ from: 6, to: 6, insert: 'x\ny' }, del, cur)).toBe(true);
+    expect(revertChangeIsSafe({ from: 0, to: 6, insert: 'x' }, del, cur)).toBe(false);
   });
 });
 

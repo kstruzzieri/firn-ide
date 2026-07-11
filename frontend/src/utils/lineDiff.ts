@@ -255,6 +255,34 @@ export function stripCommonIndent(
 }
 
 /**
+ * Safety rail for popup reverts: a revert change derived from `hunk` must stay
+ * within that hunk's line window on the current document (one boundary line of
+ * slack on each side for the EOF/anchor edge cases). Any wider change means
+ * the hunk's coordinates do not match the document — e.g. a stale baseline —
+ * and dispatching it could destroy unrelated content. Callers refuse to apply
+ * a change this function rejects.
+ */
+export function revertChangeIsSafe(
+  change: { from: number; to: number; insert: string },
+  hunk: LineHunk,
+  currentText: string
+): boolean {
+  const curLines = splitLines(currentText);
+  const lineStart: number[] = [0];
+  for (let i = 0; i < curLines.length; i++) {
+    lineStart.push(lineStart[i] + curLines[i].length + 1);
+  }
+  const clamp = (i: number) => Math.max(0, Math.min(i, curLines.length));
+  const windowFrom = lineStart[clamp(hunk.fromB - 1)];
+  const windowToLine = clamp(hunk.toB + 1);
+  const windowTo =
+    windowToLine >= curLines.length
+      ? currentText.length
+      : lineStart[windowToLine] + curLines[windowToLine].length;
+  return change.from >= windowFrom && change.to <= windowTo && change.from <= change.to;
+}
+
+/**
  * Character-range edit that reverts a single current line inside `hunk` to its
  * baseline counterpart, or null when the clicked line has none to map to (a
  * pure-deletion hunk, or a line outside the hunk). Lines are paired

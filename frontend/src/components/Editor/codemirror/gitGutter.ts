@@ -19,12 +19,14 @@ import {
   diffLines,
   gitLineMarkers,
   inlineWordDiff,
+  revertChangeIsSafe,
   revertHunkChange,
   revertLineChange,
   splitLines,
   type GitLineMarker,
   type LineHunk,
 } from '../../../utils/lineDiff';
+import { useIDEStore } from '../../../stores/ideStore';
 
 /** Above this doc size the gutter goes dormant; diffing every keystroke on
  * huge files is not worth a decoration. Matches the backend diffable cap. */
@@ -319,8 +321,23 @@ function makeHunkTooltip(
       // Dispatch a revert with the cursor moved to the change site: the pane
       // may never have had a selection (gutter-only interaction leaves it at
       // doc start), and the focus() below scrolls to the cursor — without the
-      // anchor the view would jump to the top of the file.
+      // anchor the view would jump to the top of the file. The safety rail
+      // refuses any change wider than the displayed hunk's line window — that
+      // means the hunk's coordinates no longer match the document (stale
+      // baseline or similar) and applying it could destroy unrelated content.
       const applyRevert = (change: { from: number; to: number; insert: string }) => {
+        const docNow = view.state.doc.toString();
+        if (!revertChangeIsSafe(change, hunk, docNow)) {
+          useIDEStore
+            .getState()
+            .showToast(
+              `Revert blocked: change [${change.from}, ${change.to}] escapes hunk ` +
+                `lines ${hunk.fromB + 1}-${hunk.toB} (doc ${docNow.length} chars, ` +
+                `baseline ${baseline.length} chars) — please report this`,
+              'error'
+            );
+          return;
+        }
         view.dispatch({ changes: change, selection: { anchor: change.from } });
         view.focus();
       };
