@@ -56,12 +56,56 @@ export function diffSequences(a: string[], b: string[]): LineHunk[] {
   const subA = a.slice(start, endA);
   const subB = b.slice(start, endB);
   const trace = myersTrace(subA, subB);
-  return backtrackHunks(trace, subA, subB).map((h) => ({
+  const hunks = backtrackHunks(trace, subA, subB).map((h) => ({
     fromA: h.fromA + start,
     toA: h.toA + start,
     fromB: h.fromB + start,
     toB: h.toB + start,
   }));
+  return hunks.map((h) => slideHunkDown(a, b, h));
+}
+
+/**
+ * Canonicalize a change group by sliding it down over runs of identical lines,
+ * matching `git diff`'s default placement. Myers anchors an ambiguous change
+ * (e.g. a blank line added into a run of blanks, or a repeated line) at the top
+ * of the run; git anchors it at the bottom. Without this the change-gutter bars
+ * land a few lines above where git — and so the staging `+` button — puts the
+ * same change, which reads as the bars and the hunks disagreeing. Sliding only
+ * swaps identical lines between context and change, so the diff stays valid.
+ */
+function slideHunkDown(a: string[], b: string[], h: LineHunk): LineHunk {
+  if (h.fromA === h.toA) {
+    // Pure insertion: slide while the line after the block equals its first.
+    while (h.toB < b.length && b[h.fromB] === b[h.toB]) {
+      h.fromA++;
+      h.toA++;
+      h.fromB++;
+      h.toB++;
+    }
+  } else if (h.fromB === h.toB) {
+    // Pure deletion.
+    while (h.toA < a.length && a[h.fromA] === a[h.toA]) {
+      h.fromA++;
+      h.toA++;
+      h.fromB++;
+      h.toB++;
+    }
+  } else {
+    // Replacement: slide only while both sides can, so alignment is preserved.
+    while (
+      h.toA < a.length &&
+      h.toB < b.length &&
+      a[h.fromA] === a[h.toA] &&
+      b[h.fromB] === b[h.toB]
+    ) {
+      h.fromA++;
+      h.toA++;
+      h.fromB++;
+      h.toB++;
+    }
+  }
+  return h;
 }
 
 function myersTrace(a: string[], b: string[]): Int32Array[] {

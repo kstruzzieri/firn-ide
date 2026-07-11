@@ -49,6 +49,29 @@ describe('diffLines / markersFromHunks', () => {
   it('a deletion at the end anchors to the last line', () => {
     expect(markers('a\nb\n', 'a\n')).toEqual([{ line: 1, type: 'deleted' }]);
   });
+
+  // Ambiguous changes (a line added into a run of identical lines) are anchored
+  // where `git diff` puts them — the bottom of the run — so the change-gutter
+  // bars line up with the staging hunks git generates. Expectations below are
+  // git-verified via `git diff -U0`.
+  it('anchors a blank-run addition at the bottom of the run, like git', () => {
+    // 'a', blank, 'b' → two blanks added: git marks lines 3 and 4, not 2 and 3.
+    expect(markers('a\n\nb\n', 'a\n\n\n\nb\n')).toEqual([
+      { line: 3, type: 'added' },
+      { line: 4, type: 'added' },
+    ]);
+  });
+
+  it('slides a run addition past earlier edits to match git', () => {
+    // A blank inserted at line 4 and a third **ML** appended to the trailing
+    // run: the appended line anchors at line 10 (git), not line 8.
+    const base = 'y\n\n**ML**\nx\nc\na\n**ML**\n**ML**\n';
+    const cur = 'y\n\n**ML**\n\nx\nc\na\n**ML**\n**ML**\n**ML**\n';
+    expect(markers(base, cur)).toEqual([
+      { line: 4, type: 'added' },
+      { line: 10, type: 'added' },
+    ]);
+  });
 });
 
 describe('revertHunkChange', () => {
