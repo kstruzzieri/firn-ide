@@ -171,6 +171,28 @@ describe('createShellIntegration', () => {
     expect(() => integ?.dispose()).not.toThrow();
   });
 
+  it('never propagates a decoration failure into the OSC parser (wedge regression)', () => {
+    // Real-world failure: registerDecoration is proposed API in @xterm/xterm 6
+    // and throws without allowProposedApi. An exception escaping the OSC 133
+    // handler kills xterm's write loop permanently — the terminal stops
+    // rendering all further output (and looks completely wedged). The handler
+    // must contain any decoration error.
+    const f = makeFakeTerm();
+    f.term.registerDecoration = () => {
+      throw new Error('You must set the allowProposedApi option to true to use proposed API');
+    };
+    createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    expect(() => f.fire('D;0')).not.toThrow();
+    // The parser must keep working for subsequent commands.
+    expect(() => {
+      f.fire('A');
+      f.fire('C');
+      f.fire('D;1');
+    }).not.toThrow();
+  });
+
   it('dispose() tears down handler, markers and decorations', () => {
     const f = makeFakeTerm();
     const integ = createShellIntegration(f.term, COLORS);

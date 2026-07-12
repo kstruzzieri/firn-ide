@@ -24,6 +24,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { createShellIntegration } from './shellIntegration';
+import { XTERM_OPTIONS } from './xtermConfig';
 import {
   CreateTerminal,
   WriteTerminal,
@@ -41,32 +42,6 @@ const TERMINAL_TABS: Array<{
   { id: 'problems', icon: AlertCircleIcon, label: 'Problems' },
   { id: 'terminal', icon: TerminalIcon, label: 'Terminal' },
 ];
-
-const TERMINAL_ACCENT = '#38BDF8'; // Glacier blue — brand anchor
-
-const XTERM_THEME = {
-  background: '#040406', // Near-black void (glacier glow)
-  foreground: '#E2E8F0', // slate-200
-  cursor: TERMINAL_ACCENT,
-  cursorAccent: '#040406',
-  selectionBackground: `${TERMINAL_ACCENT}33`,
-  black: '#030712', // gray-950
-  red: '#FCA5A5', // red-300
-  green: '#86EFAC', // green-300
-  yellow: '#FDE68A', // amber-200
-  blue: '#7DD3FC', // sky-300
-  magenta: '#D8B4FE', // purple-300
-  cyan: '#67E8F9', // cyan-300
-  white: '#E2E8F0', // slate-200
-  brightBlack: '#64748B', // slate-500
-  brightRed: '#FDA4AF', // rose-300
-  brightGreen: '#A7F3D0', // emerald-200
-  brightYellow: '#FEF3C7', // amber-100
-  brightBlue: '#BAE6FD', // sky-200
-  brightMagenta: '#E9D5FF', // purple-200
-  brightCyan: '#A5F3FC', // cyan-200
-  brightWhite: '#F8FAFC', // slate-50
-};
 
 // Gutter marker / separator colors for shell-integration decorations.
 const SHELL_INTEGRATION_COLORS = {
@@ -566,14 +541,7 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
   useEffect(() => {
     if (!containerDiv.current) return;
 
-    const term = new XTerm({
-      theme: XTERM_THEME,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      fontSize: 13.5,
-      fontWeight: 500,
-      lineHeight: 1.3,
-      letterSpacing: 0,
-    });
+    const term = new XTerm(XTERM_OPTIONS);
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
