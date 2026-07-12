@@ -33,12 +33,17 @@ type FileHunks struct {
 // diffs the working tree against the index (hunks the user can stage);
 // staged=true diffs the index against HEAD (hunks the user can unstage).
 // --no-color/--no-ext-diff pin plain, applyable output regardless of user
-// config or diff drivers. Zero context keeps nearby edits as separate hunks —
-// with the default 3 lines, changes within ~6 lines coalesce into one hunk and
-// the UI gets a single staging control for visually distinct changes — and
-// anchors each hunk exactly at its changed line. Exactness is safe here
-// because the patch preimage is the very index it is applied to (ApplyPatch),
-// so context lines add no protection.
+// config or diff drivers.
+//
+// One line of context, not the default three and not zero: with three lines,
+// edits within ~6 lines coalesce into a single hunk and the UI gets one
+// staging control for visually distinct changes; with zero, an insertion hunk
+// has an empty preimage, so `git apply` cannot offset-search and anchors
+// blindly at the recorded line — staging only the later of two insertions
+// landed it one line off in the index (silent corruption). One context line
+// keeps nearby edits separate while giving git an anchor to search with.
+// parseFileHunks then shifts each anchor past the context so gutter buttons
+// still sit on the first changed line.
 func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) (FileHunks, error) {
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return FileHunks{}, err
@@ -48,7 +53,7 @@ func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) 
 		"--no-color",
 		"--no-ext-diff",
 		"--no-textconv",
-		"--unified=0",
+		"--unified=1",
 		"--src-prefix=a/",
 		"--dst-prefix=b/",
 	}
@@ -66,14 +71,12 @@ func (s *Service) FileHunks(ctx context.Context, dir, path string, staged bool) 
 // ApplyPatch applies a single-hunk patch to the index via `git apply --cached`
 // (reverse=true adds --reverse, which unstages). The patch must be one git
 // produced; it is validated as a diff and then run against the index, whose
-// content matches the patch's preimage by construction. --unidiff-zero admits
-// the zero-context patches FileHunks generates (git otherwise insists on
-// context lines); the removed-line content is still verified against the index.
+// content matches the patch's preimage by construction.
 func (s *Service) ApplyPatch(ctx context.Context, dir, patch string, reverse bool) error {
 	if !looksLikePatch(patch) {
 		return fmt.Errorf("not a git patch")
 	}
-	args := []string{"apply", "--cached", "--unidiff-zero"}
+	args := []string{"apply", "--cached"}
 	if reverse {
 		args = append(args, "--reverse")
 	}
@@ -95,6 +98,12 @@ func looksLikePatch(patch string) bool {
 // notice) simply produces no hunks.
 func parseFileHunks(raw, path string) FileHunks {
 	result := FileHunks{Path: path, Hunks: []Hunk{}}
+	// An unmerged file yields a combined diff (`diff --cc`, @@@ headers) whose
+	// hunks are not applyable patches; the conflict banner owns that state, so
+	// expose no per-hunk controls.
+	if strings.HasPrefix(raw, "diff --cc ") {
+		return result
+	}
 	firstHunk := strings.Index(raw, "\n@@")
 	if firstHunk < 0 {
 		if strings.HasPrefix(raw, "@@") {
@@ -119,10 +128,21 @@ func parseFileHunks(raw, path string) FileHunks {
 		if cur.Len() == 0 {
 			return
 		}
+		// The @@ header's new-side range includes the surrounding context
+		// lines; shift the anchor past the leading context and drop context
+		// from the count so the UI anchors controls on the first changed line
+		// (and a pure deletion anchors on the line after the removal, with a
+		// zero count, matching the change gutter's convention).
+		lead, trail := contextRuns(cur.String())
+		start := curStart + lead
+		count := curLines - lead - trail
+		if count < 0 {
+			count = 0
+		}
 		result.Hunks = append(result.Hunks, Hunk{
 			Patch:    header + cur.String(),
-			NewStart: curStart,
-			NewLines: curLines,
+			NewStart: start,
+			NewLines: count,
 		})
 		cur.Reset()
 	}
@@ -137,6 +157,34 @@ func parseFileHunks(raw, path string) FileHunks {
 	}
 	flush()
 	return result
+}
+
+// contextRuns counts the unchanged context lines (" "-prefixed) at the start
+// and end of one hunk's text. The first line is the @@ header and "\"-prefixed
+// lines ("\ No newline at end of file") annotate the preceding line, so both
+// are ignored.
+func contextRuns(hunk string) (lead, trail int) {
+	lines := strings.Split(strings.TrimSuffix(hunk, "\n"), "\n")
+	if len(lines) < 2 {
+		return 0, 0
+	}
+	body := lines[1:] // drop the @@ header
+	for _, l := range body {
+		if !strings.HasPrefix(l, " ") {
+			break
+		}
+		lead++
+	}
+	for i := len(body) - 1; i >= lead; i-- {
+		if strings.HasPrefix(body[i], "\\") {
+			continue
+		}
+		if !strings.HasPrefix(body[i], " ") {
+			break
+		}
+		trail++
+	}
+	return lead, trail
 }
 
 // parseHunkHeader extracts the new-side start line and line count from an

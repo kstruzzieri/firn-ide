@@ -63,6 +63,33 @@ beforeEach(() => {
 });
 
 describe('useWorkspacePersistence', () => {
+  it('recovers when a rename re-runs the restore effect mid-restore (no permanent save freeze)', async () => {
+    // The restore effect depends on workspace name; a name-only change aborts
+    // the in-flight restore, whose finally deliberately leaves the restoring
+    // flag set for a successor. The same-path rerun must BE that successor
+    // (restart the restore) - otherwise the flag wedges true forever and
+    // every debounced save stays disabled for the session.
+    let releaseRestore!: (v: unknown) => void;
+    mockLoadWorkspaceState.mockReturnValueOnce(
+      new Promise((res) => {
+        releaseRestore = res;
+      })
+    );
+    useIDEStore.setState({ workspace: { name: 'A', path: '/workspace/w' } });
+
+    const { rerender } = renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(true));
+
+    // Rename the workspace (same path) while the restore hangs.
+    act(() => {
+      useIDEStore.setState({ workspace: { name: 'B', path: '/workspace/w' } });
+    });
+    rerender();
+    releaseRestore(null);
+
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+  });
+
   it('resets workspace-scoped UI state to defaults when no saved session exists', async () => {
     useIDEStore.setState({
       workspace: { name: 'new-workspace', path: '/workspace/new-workspace' },

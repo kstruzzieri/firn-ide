@@ -48,6 +48,10 @@ export function GitDiffView({
   // started before the edit — their content predates the pane and must never
   // reconcile it backward.
   const editBarrierRef = useRef(0);
+  // Active divider drag's teardown, so unmount mid-drag removes the window
+  // listeners the mouseup would otherwise have to wait for.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
   const structuralKeyRef = useRef<string | null>(null);
   const hunkCompartmentRef = useRef<Compartment | null>(null);
   const hunkSigRef = useRef('');
@@ -304,9 +308,12 @@ export function GitDiffView({
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      dragCleanupRef.current = null;
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    // Unmount mid-drag must not leave window listeners behind.
+    dragCleanupRef.current = onUp;
   };
 
   const handleDividerKeyDown = (e: React.KeyboardEvent) => {

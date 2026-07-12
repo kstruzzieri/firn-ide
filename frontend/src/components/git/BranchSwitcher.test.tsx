@@ -110,6 +110,18 @@ describe('BranchSwitcher', () => {
     expect(popup.style.position).toBe('fixed');
   });
 
+  it('focuses the search input on the very first open', () => {
+    // First open renders with pos === null (the placement layout effect has
+    // not run), so the popup mounts one commit later; the focus effect must
+    // re-run when the input actually exists, not only when `open` flips.
+    seed(true);
+    render(<BranchSwitcher />);
+
+    fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Find or create branch'));
+  });
+
   it('anchors the popup on-screen even when the trigger is narrow and left-aligned', () => {
     // The panel trigger sits on its own left-aligned row; right-edge anchoring
     // computed from a short branch name pinned the popup's right edge near the

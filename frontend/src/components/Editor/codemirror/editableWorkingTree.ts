@@ -12,6 +12,7 @@
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import type { DiffSession } from '../../../stores/gitStore';
+import { useIDEStore } from '../../../stores/ideStore';
 import { queueWorkingTreeEdit } from '../../../utils/fileWrites';
 import { externalDocUpdate } from './reconcileDoc';
 
@@ -48,7 +49,12 @@ export function persistWorkingTreeEdit(
   // debounced, per-path serialized disk write.
   const encoding = session.worktreeEncoding;
   const lineEndings = session.worktreeLineEndings;
-  if (encoding === undefined || lineEndings === undefined) return;
+  if (encoding === undefined || lineEndings === undefined) {
+    // Unreachable while isWorkingTreeEditable gates the listener, but if that
+    // invariant ever breaks this drops user keystrokes — scream, don't swallow.
+    useIDEStore.getState().showToast(`Cannot save ${session.path}: unknown file encoding`, 'error');
+    return;
+  }
   queueWorkingTreeEdit({
     absPath: session.absPath,
     displayPath: session.path,

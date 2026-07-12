@@ -208,6 +208,10 @@ type GitStore = GitState & GitActions;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let diffRequestRevision = 0;
+/** User-initiated openDiff calls currently in flight. Background refreshes
+ * yield to these: a refresh that bumped the request revision mid-click would
+ * get the user's completion discarded and their click would appear dead. */
+let userDiffRequestsInFlight = 0;
 
 /** Current openDiff request id, read by the diff view when the user types so
  * it can tell refreshes that predate the edit from ones that supersede it. */
@@ -418,6 +422,7 @@ export const useGitStore = create<GitStore>()(
         const requestRevision = ++diffRequestRevision;
         const untracked = classifyChange(change).untracked;
         const focus = opts?.focus ?? true;
+        if (focus) userDiffRequestsInFlight++;
 
         try {
           let left: DiffSide;
@@ -523,6 +528,8 @@ export const useGitStore = create<GitStore>()(
           if (get().epoch === epoch && requestRevision === diffRequestRevision) {
             useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
           }
+        } finally {
+          if (focus) userDiffRequestsInFlight--;
         }
       },
 
@@ -532,6 +539,10 @@ export const useGitStore = create<GitStore>()(
       refreshOpenDiff: async () => {
         const { diffSession, diffSource, status } = get();
         if (!diffSession || !status?.isRepo) return;
+        // Yield to a click in flight: refreshing here would supersede the
+        // user's request revision and their newly opened diff would be
+        // discarded on completion. The user's own openDiff refreshes anyway.
+        if (userDiffRequestsInFlight > 0) return;
         // Prefer the current status entry (updated XY letters). Fall back to the
         // originating change so an unsaved edit — which leaves disk unchanged
         // and drops the file from git status — still re-reads the live buffer.

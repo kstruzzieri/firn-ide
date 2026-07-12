@@ -192,21 +192,35 @@ export function Terminal() {
       const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
       addSession({ id, title });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err) || 'Unknown error';
+      const message = err instanceof Error ? err.message : String(err ?? 'Unknown error');
       showToast(`Failed to create terminal: ${message}`, 'error');
     } finally {
       isCreatingRef.current = false;
     }
   }, [addSession, showToast]);
 
+  const closeSession = useCallback(
+    (sessionId: string) => {
+      cleanupSessionBuffers(sessionId);
+      // The frontend row is already gone; a failed backend close would orphan
+      // the PTY invisibly, so at least say so.
+      CloseTerminal(sessionId).catch((err: unknown) =>
+        showToast(
+          `Failed to close terminal: ${err instanceof Error ? err.message : String(err)}`,
+          'error'
+        )
+      );
+      removeSession(sessionId);
+    },
+    [removeSession, showToast]
+  );
+
   const handleCloseSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
-      cleanupSessionBuffers(sessionId);
-      void CloseTerminal(sessionId);
-      removeSession(sessionId);
+      closeSession(sessionId);
     },
-    [removeSession]
+    [closeSession]
   );
 
   const startRename = (session: { id: string; title: string }) => {
@@ -437,6 +451,15 @@ export function Terminal() {
                 isVisible={session.id === activeSessionId}
               />
             ))}
+            {terminalSessions.length === 0 && (
+              <button
+                type="button"
+                className={styles.emptyState}
+                onClick={() => void createNewSession()}
+              >
+                No terminal sessions — click here or press + to open a shell in the workspace root
+              </button>
+            )}
           </div>
         </div>
         {activeTab === 'output' && <OutputContent />}
@@ -452,9 +475,7 @@ export function Terminal() {
             closeContextMenu();
           }}
           onClose={() => {
-            cleanupSessionBuffers(contextMenu.sessionId);
-            void CloseTerminal(contextMenu.sessionId);
-            removeSession(contextMenu.sessionId);
+            closeSession(contextMenu.sessionId);
             closeContextMenu();
           }}
           onDismiss={closeContextMenu}

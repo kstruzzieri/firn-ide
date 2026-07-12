@@ -487,3 +487,21 @@
     opacity: 0.5;
   }
 }
+
+/* Empty terminal panel: sessions are opt-in, so give the blank space an
+ * affordance instead of a bare void. */
+.emptyState {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.emptyState:hover {
+  color: var(--text-primary);
+}

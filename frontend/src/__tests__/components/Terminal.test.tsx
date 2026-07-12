@@ -20,6 +20,7 @@ describe('Terminal component', () => {
   beforeEach(() => {
     mockCreateTerminal.mockReset();
     mockCloseTerminal.mockReset();
+    mockCloseTerminal.mockResolvedValue(undefined);
     mockCreateTerminal.mockResolvedValueOnce('term-1').mockResolvedValueOnce('term-2');
     useIDEStore.setState({
       activeTerminalTab: 'terminal',

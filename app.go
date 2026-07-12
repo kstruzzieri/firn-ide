@@ -331,10 +331,13 @@ func (a *App) CreateTerminal(dir string) (string, error) {
 		return "", err
 	}
 
-	session, _ := a.termManager.Get(id)
-	go session.ReadLoop(func(data string) {
-		runtime.EventsEmit(a.ctx, "terminal:output", id, data)
-	})
+	// Re-lookup can race a concurrent CloseTerminal; a vanished session just
+	// means there is no output to stream — never a nil-deref in the goroutine.
+	if session, ok := a.termManager.Get(id); ok {
+		go session.ReadLoop(func(data string) {
+			runtime.EventsEmit(a.ctx, "terminal:output", id, data)
+		})
+	}
 
 	return id, nil
 }

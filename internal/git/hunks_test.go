@@ -3,6 +3,7 @@ package git
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -192,6 +193,152 @@ func TestService_FileHunks_NearbyEditsStayIndependent(t *testing.T) {
 	}
 }
 
+// TestService_FileHunks_LaterInsertionStagesAtRightLine is the anchoring
+// regression a pure zero-context diff cannot survive: an insertion hunk has an
+// empty preimage, so `git apply` cannot offset-search and anchors blindly at
+// the recorded line number. With two insertions, staging ONLY the later one
+// against an index that lacks the earlier one landed the line one row off —
+// silent index corruption. Context lines give git an anchor to search with.
+func TestService_FileHunks_LaterInsertionStagesAtRightLine(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	var base strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&base, "%d\n", i)
+	}
+	writeFile(t, dir, "nums.txt", base.String())
+	svc := NewService()
+	if err := svc.Stage(ctx(), dir, []string{"nums.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-m", "add nums")
+	// Insert A after line 1 and B after line 8.
+	edited := "1\nA\n2\n3\n4\n5\n6\n7\n8\nB\n9\n10\n"
+	writeFile(t, dir, "nums.txt", edited)
+
+	fh, err := svc.FileHunks(ctx(), dir, "nums.txt", false)
+	if err != nil {
+		t.Fatalf("FileHunks() error = %v", err)
+	}
+	if len(fh.Hunks) != 2 {
+		t.Fatalf("hunks = %d, want 2 (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+
+	// Stage ONLY the second insertion; it must land after "8", not after "9".
+	if err := svc.ApplyPatch(ctx(), dir, fh.Hunks[1].Patch, false); err != nil {
+		t.Fatalf("ApplyPatch(hunk B) error = %v", err)
+	}
+	index, err := svc.FileAtRev(ctx(), dir, ":0", "nums.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "1\n2\n3\n4\n5\n6\n7\n8\nB\n9\n10\n"
+	if index.Content != want {
+		t.Errorf("index content = %q, want %q (insertion misanchored)", index.Content, want)
+	}
+}
+
+// TestService_FileHunks_ButtonsAnchorOnChangedLines: hunk anchors must point
+// at the first CHANGED line, not the leading context line the unified diff
+// includes, so the staging buttons align with the change-gutter bars.
+func TestService_FileHunks_ButtonsAnchorOnChangedLines(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	var base, edited strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&base, "%d\n", i)
+		if i == 5 {
+			edited.WriteString("FIVE\n")
+		} else {
+			fmt.Fprintf(&edited, "%d\n", i)
+		}
+	}
+	writeFile(t, dir, "nums.txt", base.String())
+	svc := NewService()
+	if err := svc.Stage(ctx(), dir, []string{"nums.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-m", "add nums")
+	writeFile(t, dir, "nums.txt", edited.String())
+
+	fh, err := svc.FileHunks(ctx(), dir, "nums.txt", false)
+	if err != nil {
+		t.Fatalf("FileHunks() error = %v", err)
+	}
+	if len(fh.Hunks) != 1 {
+		t.Fatalf("hunks = %d, want 1 (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+	if fh.Hunks[0].NewStart != 5 || fh.Hunks[0].NewLines != 1 {
+		t.Errorf(
+			"anchor = start %d lines %d, want 5/1 (changed line, context excluded)",
+			fh.Hunks[0].NewStart, fh.Hunks[0].NewLines,
+		)
+	}
+}
+
+// TestService_FileHunks_TopOfFileDeletionAnchorsAtLineOne: deleting the first
+// line must yield an anchor the UI can render (>= 1); a raw zero-context diff
+// reported new-start 0 and the gutter dropped the button entirely.
+func TestService_FileHunks_TopOfFileDeletionAnchorsAtLineOne(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "d.txt", "gone\nkeep1\nkeep2\n")
+	svc := NewService()
+	if err := svc.Stage(ctx(), dir, []string{"d.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-m", "add d")
+	writeFile(t, dir, "d.txt", "keep1\nkeep2\n")
+
+	fh, err := svc.FileHunks(ctx(), dir, "d.txt", false)
+	if err != nil {
+		t.Fatalf("FileHunks() error = %v", err)
+	}
+	if len(fh.Hunks) != 1 {
+		t.Fatalf("hunks = %d, want 1 (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+	if fh.Hunks[0].NewStart < 1 {
+		t.Errorf("NewStart = %d, want >= 1 so the gutter can anchor it", fh.Hunks[0].NewStart)
+	}
+	if err := svc.ApplyPatch(ctx(), dir, fh.Hunks[0].Patch, false); err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+	index, _ := svc.FileAtRev(ctx(), dir, ":0", "d.txt")
+	if index.Content != "keep1\nkeep2\n" {
+		t.Errorf("index content = %q, want top deletion staged", index.Content)
+	}
+}
+
+// TestService_FileHunks_ConflictedFileHasNoHunks: an unmerged file produces a
+// combined diff (diff --cc, @@@ headers) whose hunks are not applyable
+// patches; the conflict banner owns that state, so no per-hunk controls.
+func TestService_FileHunks_ConflictedFileHasNoHunks(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "c.txt", "base\n")
+	svc := NewService()
+	if err := svc.Stage(ctx(), dir, []string{"c.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "side")
+	writeFile(t, dir, "c.txt", "side\n")
+	gitCmd(t, dir, "commit", "-am", "side")
+	gitCmd(t, dir, "checkout", "-")
+	writeFile(t, dir, "c.txt", "main\n")
+	gitCmd(t, dir, "commit", "-am", "main")
+	// Merge conflicts; git merge exits non-zero, which gitCmd would fail on.
+	_ = exec.Command("git", "-C", dir, "merge", "side").Run()
+
+	fh, err := svc.FileHunks(ctx(), dir, "c.txt", false)
+	if err != nil {
+		t.Fatalf("FileHunks(conflicted) error = %v", err)
+	}
+	if len(fh.Hunks) != 0 {
+		t.Errorf("hunks = %d, want 0 for an unmerged file (%+v)", len(fh.Hunks), fh.Hunks)
+	}
+}
+
 // TestService_FileHunks_DeletionHunk covers a hunk that only removes lines
 // (new-side count 0): it must parse, anchor at the surviving line, and stage.
 func TestService_FileHunks_DeletionHunk(t *testing.T) {
@@ -284,8 +431,8 @@ func TestService_FileHunks_PinsApplyableDiffOutput(t *testing.T) {
 	if !strings.Contains(fh.Hunks[0].Patch, "diff --git a/README.md b/README.md") {
 		t.Fatalf("patch did not keep default prefixes:\n%s", fh.Hunks[0].Patch)
 	}
-	if !strings.Contains(fh.Hunks[0].Patch, "@@ -3 +3 @@") {
-		t.Fatalf("patch did not override diff.context config with zero context:\n%s", fh.Hunks[0].Patch)
+	if !strings.Contains(fh.Hunks[0].Patch, "@@ -2,3 +2,3 @@") {
+		t.Fatalf("patch did not override diff.context config with one-line context:\n%s", fh.Hunks[0].Patch)
 	}
 	if err := svc.ApplyPatch(ctx(), dir, fh.Hunks[0].Patch, false); err != nil {
 		t.Fatalf("ApplyPatch() error = %v", err)

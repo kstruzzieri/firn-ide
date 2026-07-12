@@ -73,9 +73,18 @@ export function BranchSwitcher({
     };
   }, [open, compact]);
 
+  // `pos` is a dependency because the very first open renders before the
+  // placement effect has produced coordinates: the popup (and its input)
+  // mounts on the pos-carrying re-render, after an [open]-only effect would
+  // already have run with no input to focus. Focusing an already-focused
+  // input on subsequent pos updates (scroll/resize) is a no-op.
   useEffect(() => {
     if (!open) return;
     inputRef.current?.focus();
+  }, [open, pos]);
+
+  useEffect(() => {
+    if (!open) return;
     // Refresh the branch list each time the popup opens so it reflects
     // branches created in a terminal since the last git refresh.
     void useGitStore.getState().loadBranches();
@@ -104,8 +113,11 @@ export function BranchSwitcher({
 
   if (!isRepo) return null;
 
-  const filtered = branches.filter((b) => b.includes(query));
-  const exactExists = branches.includes(query);
+  // Case-insensitive: "Main" must find "main", not offer to create a
+  // casing-duplicate branch that fails on case-insensitive ref storage.
+  const q = query.toLowerCase();
+  const filtered = branches.filter((b) => b.toLowerCase().includes(q));
+  const exactExists = branches.some((b) => b.toLowerCase() === q);
 
   const checkout = (name: string, create: boolean) => {
     setOpen(false);

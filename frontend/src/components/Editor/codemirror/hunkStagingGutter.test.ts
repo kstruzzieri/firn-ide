@@ -161,6 +161,20 @@ describe('hunkStagingGutter', () => {
 
     expect(markers).toBe(mockEmptyRangeSet);
   });
+
+  it('anchors a whole-file deletion at line one instead of dropping the button', () => {
+    // Deleting every line leaves the new side empty: git reports new-start 0
+    // (no context line exists to shift past), and a bare >= 1 filter would
+    // drop the only control that can stage the deletion.
+    gutterMock.mockClear();
+    hunkStagingGutter([{ patch: 'P', newStart: 0, newLines: 0 }], 'unstaged', '');
+    const config = gutterMock.mock.calls[0]?.[0] as { markers: (view: unknown) => unknown };
+    const markers = config.markers({
+      state: { doc: { toString: () => '', lines: 1, line: (n: number) => ({ from: n * 100 }) } },
+    }) as { __ranges: unknown[] };
+
+    expect(markers.__ranges).toEqual([expect.objectContaining({ from: 100 })]);
+  });
 });
 
 describe('createHunkButton — stale state', () => {

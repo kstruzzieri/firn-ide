@@ -587,6 +587,38 @@ describe('gitStore diff sessions', () => {
     useIDEStore.setState({ openFiles: [] });
   });
 
+  it('a background refresh cannot cancel a user-initiated diff open', async () => {
+    // The user clicks file B while a watcher refresh is mid-flight. The
+    // refresh's refreshOpenDiff must yield to the pending user request, not
+    // bump the request revision and get B's completion discarded.
+    mockFileAtRev.mockResolvedValue(rev('index a'));
+    useGitStore.setState({
+      status: repoStatus({ files: [{ path: 'src/a.ts', index: '.', worktree: 'M' }] }),
+    });
+    await useGitStore
+      .getState()
+      .openDiff({ path: 'src/a.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    // User clicks B; hold its worktree read open.
+    let releaseB!: (v: Awaited<ReturnType<typeof ReadFile>>) => void;
+    mockReadFile.mockReturnValueOnce(
+      new Promise((res) => {
+        releaseB = res;
+      })
+    );
+    const userOpen = useGitStore
+      .getState()
+      .openDiff({ path: 'src/b.ts', index: '.', worktree: 'M' }, 'unstaged');
+
+    // Watcher refresh lands while B is still loading.
+    await useGitStore.getState().refreshOpenDiff();
+
+    releaseB({ content: 'b worktree' } as Awaited<ReturnType<typeof ReadFile>>);
+    await userOpen;
+
+    expect(useGitStore.getState().diffSession?.path).toBe('src/b.ts');
+  });
+
   it('follows a whole-file stage: the unstaged diff retargets to the staged context', async () => {
     // Open the unstaged diff, then stage the whole file via the panel checkbox:
     // the unstaged side goes empty and the change now lives in the staged

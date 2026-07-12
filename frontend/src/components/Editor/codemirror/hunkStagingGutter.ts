@@ -8,6 +8,7 @@ import { EditorView, gutter, GutterMarker } from '@codemirror/view';
 import { RangeSet, type Extension } from '@codemirror/state';
 import type { git } from '../../../../wailsjs/go/models';
 import { useGitStore, type DiffContext } from '../../../stores/gitStore';
+import { useIDEStore } from '../../../stores/ideStore';
 import { diffLines } from '../../../utils/lineDiff';
 
 /**
@@ -53,7 +54,16 @@ export function createHunkButton(
   btn.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    void useGitStore.getState().applyHunk(hunk.patch, reverse);
+    // Single-flight: runOp silently refuses while another git op runs, which
+    // reads as a dead button — say why instead.
+    const { opInFlight, applyHunk } = useGitStore.getState();
+    if (opInFlight) {
+      useIDEStore
+        .getState()
+        .showToast(`Git ${opInFlight} in progress — try again in a moment`, 'info');
+      return;
+    }
+    void applyHunk(hunk.patch, reverse);
   });
   return btn;
 }
@@ -129,12 +139,19 @@ export function hunkStagingGutter(
           ? hunks.map((h) => ({ hunk: h, line: h.newStart, stale: false }))
           : visibleHunks(hunks, cleanContent, doc.toString());
       const ranges = visible
+        // A pure deletion anchors on the line after the removal; at the top of
+        // the file (or a whole-file deletion) that computes to 0 — clamp to
+        // line 1 like the change gutter does, instead of dropping the button.
+        .map((v) => (v.hunk.newLines === 0 ? { ...v, line: Math.max(1, v.line) } : v))
         .filter(({ line }) => line >= 1 && line <= doc.lines)
         .map(({ hunk, line, stale }) =>
           new HunkMarker(hunk, context, stale).range(doc.line(line).from)
         );
       if (ranges.length === 0) return RangeSet.empty;
-      return RangeSet.of(ranges, true); // true = sort; hunks are already ascending
+      // sort=true is load-bearing: visibleHunks' anchor shifts can reorder
+      // entries (a large deletion between hunks moves a later one above an
+      // earlier one), and RangeSet.of throws on unsorted input.
+      return RangeSet.of(ranges, true);
     },
   });
 }

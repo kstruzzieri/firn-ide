@@ -24,11 +24,6 @@
   align-items: stretch;
   gap: 6px;
   min-width: 0;
-  /* Own stacking context above the sync row and commit box so the branch
-   * popup (an absolutely-positioned descendant) paints opaquely over them
-   * instead of letting their text bleed through. */
-  position: relative;
-  z-index: 20;
 }
 
 .branchRow {

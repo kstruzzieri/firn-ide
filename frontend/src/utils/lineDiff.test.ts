@@ -1,11 +1,11 @@
 import {
+  commonIndent,
   diffLines,
   gitLineMarkers,
   inlineWordDiff,
   revertChangeIsSafe,
   revertHunkChange,
   revertLineChange,
-  stripCommonIndent,
   type GitLineMarker,
 } from './lineDiff';
 
@@ -281,28 +281,20 @@ describe('revertChangeIsSafe', () => {
   });
 });
 
-describe('stripCommonIndent', () => {
-  it('removes the shared leading indent from both sides', () => {
-    const res = stripCommonIndent('\t\tfoo()\n\t\tbar()', '\t\tfoo()\n\t\t\tbaz()');
-    expect(res.oldText).toBe('foo()\nbar()');
-    expect(res.newText).toBe('foo()\n\tbaz()');
+describe('commonIndent', () => {
+  it('finds the shared leading whitespace of both texts', () => {
+    expect(commonIndent('\t\tfoo()\n\t\tbar()', '\t\tfoo()\n\t\t\tbaz()')).toBe('\t\t');
   });
 
-  it('leaves unindented text untouched', () => {
-    const res = stripCommonIndent('a\nb', 'a\nc');
-    expect(res.oldText).toBe('a\nb');
-    expect(res.newText).toBe('a\nc');
+  it('returns empty for unindented text', () => {
+    expect(commonIndent('a\nb', 'a\nc')).toBe('');
   });
 
   it('ignores empty lines when finding the common indent', () => {
-    const res = stripCommonIndent('  a\n\n  b', '  a\n\n  c');
-    expect(res.oldText).toBe('a\n\nb');
-    expect(res.newText).toBe('a\n\nc');
+    expect(commonIndent('  a\n\n  b', '  a\n\n  c')).toBe('  ');
   });
 
   it('handles an empty side (pure addition or deletion hunks)', () => {
-    const res = stripCommonIndent('', '    added');
-    expect(res.oldText).toBe('');
-    expect(res.newText).toBe('added');
+    expect(commonIndent('', '    added')).toBe('    ');
   });
 });

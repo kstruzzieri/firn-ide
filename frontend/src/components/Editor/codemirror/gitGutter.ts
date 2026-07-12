@@ -375,14 +375,21 @@ function makeHunkTooltip(
   };
 }
 
-/** Opens the peek/revert popup for the change gutter cell that was clicked. */
+/** Opens the peek/revert popup for the change gutter cell that was clicked.
+ * A click on a cell with no hunk closes any open popup instead of leaving it
+ * dangling (the outside-click dismisser exempts the whole gutter). */
 function openHunkTooltip(view: EditorView, lineFrom: number): boolean {
   const { baseline } = view.state.field(gitGutterField);
   if (baseline === null) return false;
   const current = view.state.doc.toString();
   const line = view.state.doc.lineAt(lineFrom).number;
   const hunk = hunkForLine(baseline, current, line);
-  if (hunk === null) return false;
+  if (hunk === null) {
+    if (view.state.field(hunkTooltipField) !== null) {
+      view.dispatch({ effects: setHunkTooltip.of(null) });
+    }
+    return false;
+  }
   view.dispatch({ effects: setHunkTooltip.of(makeHunkTooltip(baseline, hunk, lineFrom, line)) });
   return true;
 }

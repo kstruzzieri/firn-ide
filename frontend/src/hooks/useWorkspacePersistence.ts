@@ -264,7 +264,17 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
       }
     }
   } catch (err) {
+    // Surface it: a silently failed restore is indistinguishable from a first
+    // open, and the user's tabs/layout appear to have vanished.
     console.warn('Failed to restore workspace state:', err);
+    if (!signal.aborted) {
+      useIDEStore
+        .getState()
+        .showToast(
+          `Failed to restore workspace session: ${err instanceof Error ? err.message : String(err)}`,
+          'error'
+        );
+    }
   } finally {
     if (!signal.aborted) {
       useIDEStore.getState().setRestoringWorkspace(false);
@@ -413,13 +423,27 @@ export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
   useEffect(() => {
     if (!workspace?.path) return;
 
-    // Don't restore on first mount if workspace was already set
-    if (prevWorkspaceRef.current?.path === workspace.path) return;
+    // A same-path rerun (rename: the name dep changed) whose cleanup just
+    // aborted an in-flight restore must act as that restore's successor and
+    // run it again — the aborted run deliberately leaves isRestoringWorkspace
+    // set for its successor, and skipping here would wedge it (and disable
+    // every debounced save) for the rest of the session.
+    const interruptedRestore = useIDEStore.getState().isRestoringWorkspace;
+
+    // Don't restore on first mount if workspace was already set.
+    if (prevWorkspaceRef.current?.path === workspace.path && !interruptedRestore) {
+      // Keep the recorded name fresh so a later switch-flush serializes the
+      // outgoing state under the current identity, not the pre-rename one.
+      prevWorkspaceRef.current = { path: workspace.path, name: workspace.name };
+      return;
+    }
 
     // Flush save for previous workspace BEFORE updating the ref.
     // Pass the old identity so collectWorkspaceState serializes
-    // the current editor state under the OLD workspace path.
-    if (prevWorkspaceRef.current) {
+    // the current editor state under the OLD workspace path. Never flush
+    // mid-restore: an aborted restore's partial state must not overwrite the
+    // last good snapshot (the restart below re-reads it instead).
+    if (prevWorkspaceRef.current && !interruptedRestore) {
       void flushSave(prevWorkspaceRef.current, { includeTreeSnapshot: true });
     }
 

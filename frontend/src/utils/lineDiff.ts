@@ -26,9 +26,10 @@ export function splitLines(text: string): string[] {
 }
 
 /**
- * Myers O(ND) diff over lines, returning maximal change hunks.
- * ponytail: quadratic worst case on pathological inputs; the git backend
- * already caps diffable content at 1MB so N stays sane.
+ * Myers O(ND) diff over lines, returning maximal change hunks. The 1MB backend
+ * cap bounds N (sequence length) but not D (edit distance); MAX_MYERS_D bounds
+ * the other axis, degrading a near-total rewrite to one coarse whole-file hunk
+ * instead of allocating O(D*(N+M)) trace memory on every keystroke.
  */
 export function diffLines(baseline: string, current: string): LineHunk[] {
   return diffSequences(splitLines(baseline), splitLines(current));
@@ -56,6 +57,11 @@ export function diffSequences(a: string[], b: string[]): LineHunk[] {
   const subA = a.slice(start, endA);
   const subB = b.slice(start, endB);
   const trace = myersTrace(subA, subB);
+  if (trace === null) {
+    // Edit distance exceeded MAX_MYERS_D: degrade to one coarse hunk covering
+    // everything between the common prefix and suffix.
+    return [{ fromA: start, toA: endA, fromB: start, toB: endB }];
+  }
   const hunks = backtrackHunks(trace, subA, subB).map((h) => ({
     fromA: h.fromA + start,
     toA: h.toA + start,
@@ -108,12 +114,20 @@ function slideHunkDown(a: string[], b: string[], h: LineHunk): LineHunk {
   return h;
 }
 
-function myersTrace(a: string[], b: string[]): Int32Array[] {
+/** Bound on the Myers search depth (= edit distance): the trace stores one
+ * O(N+M) snapshot per depth step, so an unbounded D on a near-total rewrite of
+ * a large file balloons to gigabytes. Past this, callers fall back to a single
+ * coarse hunk. Ordinary editing sits far below it. */
+const MAX_MYERS_D = 2000;
+
+/** Returns the Myers trace, or null when the edit distance exceeds
+ * MAX_MYERS_D and the caller should degrade to a whole-range hunk. */
+function myersTrace(a: string[], b: string[]): Int32Array[] | null {
   const n = a.length;
   const m = b.length;
-  const max = n + m;
-  const offset = max;
-  let v = new Int32Array(2 * max + 1);
+  const max = Math.min(n + m, MAX_MYERS_D);
+  const offset = n + m;
+  const v = new Int32Array(2 * (n + m) + 1);
   const trace: Int32Array[] = [];
 
   for (let d = 0; d <= max; d++) {
@@ -136,9 +150,8 @@ function myersTrace(a: string[], b: string[]): Int32Array[] {
         return trace;
       }
     }
-    v = v.slice() as Int32Array<ArrayBuffer>;
   }
-  return trace;
+  return null;
 }
 
 function backtrackHunks(trace: Int32Array[], a: string[], b: string[]): LineHunk[] {
@@ -236,25 +249,6 @@ export function commonIndent(oldText: string, newText: string): string {
 }
 
 /**
- * Strips the longest whitespace prefix shared by every non-empty line of both
- * texts, so the peek popup shows a hunk flush-left instead of carrying the
- * file's full indentation. Pure display helper — reverts use the raw baseline.
- */
-export function stripCommonIndent(
-  oldText: string,
-  newText: string
-): { oldText: string; newText: string } {
-  const indent = commonIndent(oldText, newText);
-  if (!indent) return { oldText, newText };
-  const strip = (text: string) =>
-    text
-      .split('\n')
-      .map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l))
-      .join('\n');
-  return { oldText: strip(oldText), newText: strip(newText) };
-}
-
-/**
  * Safety rail for popup reverts: a revert change derived from `hunk` must stay
  * within that hunk's line window on the current document (one boundary line of
  * slack on each side for the EOF/anchor edge cases). Any wider change means
@@ -274,7 +268,8 @@ export function revertChangeIsSafe(
   }
   const clamp = (i: number) => Math.max(0, Math.min(i, curLines.length));
   const windowFrom = lineStart[clamp(hunk.fromB - 1)];
-  const windowToLine = clamp(hunk.toB + 1);
+  // toB is exclusive, so line index toB IS the one-line slack below the hunk.
+  const windowToLine = clamp(hunk.toB);
   const windowTo =
     windowToLine >= curLines.length
       ? currentText.length
