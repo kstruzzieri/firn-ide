@@ -2,7 +2,10 @@ import type { ITerminalOptions } from '@xterm/xterm';
 
 const TERMINAL_ACCENT = '#38BDF8'; // Glacier blue — brand anchor
 
-const XTERM_THEME = {
+// Frozen: one module-level options object is shared by every terminal session,
+// and xterm holds `theme` by reference — a stray mutation would silently
+// restyle all sessions and bypass xterm's theme setter.
+const XTERM_THEME = Object.freeze({
   background: '#040406', // Near-black void (glacier glow)
   foreground: '#E2E8F0', // slate-200
   cursor: TERMINAL_ACCENT,
@@ -24,9 +27,9 @@ const XTERM_THEME = {
   brightMagenta: '#E9D5FF', // purple-200
   brightCyan: '#A5F3FC', // cyan-200
   brightWhite: '#F8FAFC', // slate-50
-};
+});
 
-export const XTERM_OPTIONS: ITerminalOptions = {
+export const XTERM_OPTIONS: ITerminalOptions = Object.freeze({
   // registerDecoration (shell-integration gutter markers) is proposed API in
   // @xterm/xterm 6. Without this flag the OSC 133 'D' handler throws inside
   // xterm's parser, which permanently stalls its write loop — the terminal
@@ -38,4 +41,4 @@ export const XTERM_OPTIONS: ITerminalOptions = {
   fontWeight: 500,
   lineHeight: 1.3,
   letterSpacing: 0,
-};
+});

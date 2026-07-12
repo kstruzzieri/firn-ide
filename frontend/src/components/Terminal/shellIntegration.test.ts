@@ -181,16 +181,42 @@ describe('createShellIntegration', () => {
     f.term.registerDecoration = () => {
       throw new Error('You must set the allowProposedApi option to true to use proposed API');
     };
-    createShellIntegration(f.term, COLORS);
-    f.fire('A');
-    f.fire('C');
-    expect(() => f.fire('D;0')).not.toThrow();
-    // The parser must keep working for subsequent commands.
-    expect(() => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createShellIntegration(f.term, COLORS);
       f.fire('A');
       f.fire('C');
-      f.fire('D;1');
-    }).not.toThrow();
+      // Still reports the sequence as handled, so xterm never prints it raw.
+      expect(f.fire('D;0')).toBe(true);
+      // The parser must keep working for subsequent commands.
+      expect(() => {
+        f.fire('A');
+        f.fire('C');
+        f.fire('D;1');
+      }).not.toThrow();
+      // Warns once, not per command.
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('contains a marker-registration failure too (whole handler is guarded)', () => {
+    const f = makeFakeTerm();
+    f.term.registerMarker = () => {
+      throw new Error('marker registration failed');
+    };
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createShellIntegration(f.term, COLORS);
+      expect(f.fire('A')).toBe(true);
+      expect(() => {
+        f.fire('C');
+        f.fire('D;0');
+      }).not.toThrow();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('dispose() tears down handler, markers and decorations', () => {

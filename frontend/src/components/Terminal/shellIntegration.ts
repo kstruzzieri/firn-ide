@@ -107,9 +107,12 @@ export function createShellIntegration(
         if (current && current.executed && !current.decorated) {
           const exit = Number.parseInt(parts[1] ?? '0', 10);
           const failed = !Number.isNaN(exit) && exit !== 0;
-          decorate(current, failed, decoratedCount > 0);
+          // Mark before decorating: if decorate() throws mid-way, a duplicate
+          // 'D' must not stack a second set of decorations on the same block.
           current.decorated = true;
+          const withSeparator = decoratedCount > 0;
           decoratedCount += 1;
+          decorate(current, failed, withSeparator);
         }
         break;
     }
