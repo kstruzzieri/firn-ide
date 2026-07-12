@@ -56,8 +56,11 @@ func osRunner(ctx context.Context, name string, args ...string) (string, error) 
 
 // PythonEnv resolves the workspace interpreter from pure detection, then either
 // overlays a manual per-workspace override or, for low-confidence detection, a
-// uv/poetry discovery result. Detector environment metadata survives either
-// interpreter overlay; a validated manual interpreter supersedes stale
+// uv/poetry discovery result. Project-derived metadata (extraPaths, version)
+// survives either interpreter overlay; the detected venv identity survives an
+// override only when the override interpreter lives inside that venv, because
+// venvPath/venv would otherwise redirect import resolution away from the
+// manually chosen interpreter. A validated manual interpreter supersedes stale
 // missing-interpreter diagnostics.
 func (p *envConfigProvider) PythonEnv(projectRoot string) pythonenv.Env {
 	env := p.detectPython(projectRoot, p.pythonDeps)
@@ -67,6 +70,9 @@ func (p *envConfigProvider) PythonEnv(projectRoot string) pythonenv.Env {
 			env.Source = "override"
 			env.Confidence = "high"
 			env.Diagnostics = nil
+			if !pythonenv.PathInside(env.VenvDir, ov) {
+				env.VenvDir = ""
+			}
 			return env
 		}
 	}

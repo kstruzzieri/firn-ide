@@ -157,8 +157,34 @@ func TestPythonEnv_overridePreservesDetectedMetadata(t *testing.T) {
 	if env.InterpreterPath != "/manual/python" || env.Source != "override" || env.Confidence != "high" {
 		t.Errorf("override fields = %+v", env)
 	}
-	if env.VenvDir != "/proj/.venv" || len(env.ExtraPaths) != 1 || env.ExtraPaths[0] != "src" || env.PythonVersion != "3.11" {
+	if len(env.ExtraPaths) != 1 || env.ExtraPaths[0] != "src" || env.PythonVersion != "3.11" {
 		t.Errorf("detected metadata lost after override: %+v", env)
+	}
+	// The override interpreter lives outside the detected venv, so the venv
+	// identity must be dropped: venvPath/venv would otherwise redirect the
+	// server's import resolution away from the manually chosen interpreter.
+	if env.VenvDir != "" {
+		t.Errorf("VenvDir = %q, want empty for override outside detected venv", env.VenvDir)
+	}
+}
+
+func TestPythonEnv_overrideInsideVenvKeepsVenvDir(t *testing.T) {
+	p := newEnvConfigProvider()
+	p.overrideFor = func(string) string { return "/proj/.venv/bin/python3" }
+	p.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
+		return pythonenv.Env{
+			InterpreterPath: "/proj/.venv/bin/python",
+			VenvDir:         "/proj/.venv",
+			Source:          ".venv",
+			Confidence:      "high",
+		}
+	}
+	env := p.PythonEnv("/proj")
+	if env.InterpreterPath != "/proj/.venv/bin/python3" || env.Source != "override" {
+		t.Errorf("override fields = %+v", env)
+	}
+	if env.VenvDir != "/proj/.venv" {
+		t.Errorf("VenvDir = %q, want /proj/.venv kept for override inside detected venv", env.VenvDir)
 	}
 }
 

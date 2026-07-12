@@ -674,6 +674,9 @@ func (m *Manager) overrideForRoot(projectRoot string) string {
 func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
 	m.overrideMu.Lock()
 	if !validInterpreterPath(interpreterPath) {
+		if interpreterPath != "" {
+			log.Printf("lsp: ignoring persisted interpreter override for %q: %q missing or a directory", projectRoot, interpreterPath)
+		}
 		delete(m.interpreterOverrides, projectRoot)
 	} else {
 		m.interpreterOverrides[projectRoot] = interpreterPath
@@ -700,8 +703,11 @@ func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) er
 }
 
 func validInterpreterPath(path string) bool {
+	if path == "" {
+		return false
+	}
 	info, err := os.Stat(path)
-	return path != "" && err == nil && !info.IsDir()
+	return err == nil && !info.IsDir()
 }
 
 // ClearInterpreterOverride removes the override and restarts python for that root.
