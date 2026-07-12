@@ -54,17 +54,22 @@ func osRunner(ctx context.Context, name string, args ...string) (string, error) 
 	return strings.TrimSpace(string(out)), err
 }
 
-// PythonEnv resolves the workspace interpreter with three precedence layers:
-// (1) a manual per-workspace override always wins; (2) pure Detect; (3) when
-// Detect is low-confidence, a uv/poetry discovery overlay (gated on markers by
-// DiscoverInterpreter, so marker-free workspaces never shell out).
+// PythonEnv resolves the workspace interpreter from pure detection, then either
+// overlays a manual per-workspace override or, for low-confidence detection, a
+// uv/poetry discovery result. Detector environment metadata survives either
+// interpreter overlay; a validated manual interpreter supersedes stale
+// missing-interpreter diagnostics.
 func (p *envConfigProvider) PythonEnv(projectRoot string) pythonenv.Env {
+	env := p.detectPython(projectRoot, p.pythonDeps)
 	if p.overrideFor != nil {
 		if ov := p.overrideFor(projectRoot); ov != "" {
-			return pythonenv.Env{InterpreterPath: ov, Source: "override", Confidence: "high"}
+			env.InterpreterPath = ov
+			env.Source = "override"
+			env.Confidence = "high"
+			env.Diagnostics = nil
+			return env
 		}
 	}
-	env := p.detectPython(projectRoot, p.pythonDeps)
 	if env.InterpreterPath == "" || env.Confidence == "low" || env.Source == "system" || env.Source == "none" {
 		if p.discover != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -107,6 +112,7 @@ func (p *envConfigProvider) Configuration(family, projectRoot string, items []Co
 		return results // all nil; server uses its own defaults
 	}
 	env := p.PythonEnv(projectRoot)
+	env.ExtraPaths = resolveExtraPaths(projectRoot, env.ExtraPaths)
 	pythonSection, analysisSection := pythonSettingSections(env)
 	// item.ScopeURI is intentionally ignored in Phase 1: the project-level env
 	// detected from projectRoot applies uniformly to all files in the workspace.
@@ -114,6 +120,18 @@ func (p *envConfigProvider) Configuration(family, projectRoot string, items []Co
 		results[i] = settingForSection(item.Section, pythonSection, analysisSection)
 	}
 	return results
+}
+
+func resolveExtraPaths(projectRoot string, paths []string) []string {
+	resolved := make([]string, len(paths))
+	for i, path := range paths {
+		if filepath.IsAbs(path) {
+			resolved[i] = path
+		} else {
+			resolved[i] = filepath.Join(projectRoot, path)
+		}
+	}
+	return resolved
 }
 
 // settingForSection answers a requested config section dialect-agnostically:

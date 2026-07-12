@@ -16,13 +16,14 @@ func stubProvider(env pythonenv.Env) *envConfigProvider {
 }
 
 func TestEnvConfigProvider_PythonSections(t *testing.T) {
+	projectRoot := t.TempDir()
 	p := stubProvider(pythonenv.Env{
-		InterpreterPath: "/proj/.venv/bin/python",
-		VenvDir:         "/proj/.venv",
+		InterpreterPath: filepath.Join(projectRoot, ".venv", "bin", "python"),
+		VenvDir:         filepath.Join(projectRoot, ".venv"),
 		ExtraPaths:      []string{"src"},
 	})
 
-	results := p.Configuration("python", "/proj", []ConfigurationItem{
+	results := p.Configuration("python", projectRoot, []ConfigurationItem{
 		{Section: "python"},
 		{Section: "python.analysis"},
 	})
@@ -34,19 +35,28 @@ func TestEnvConfigProvider_PythonSections(t *testing.T) {
 	if !ok {
 		t.Fatalf("results[0] type = %T, want map", results[0])
 	}
-	if py["pythonPath"] != "/proj/.venv/bin/python" {
+	if py["pythonPath"] != filepath.Join(projectRoot, ".venv", "bin", "python") {
 		t.Errorf("pythonPath = %v", py["pythonPath"])
 	}
-	if py["venvPath"] != "/proj" || py["venv"] != ".venv" {
-		t.Errorf("venvPath/venv = %v/%v, want /proj/.venv", py["venvPath"], py["venv"])
+	if py["venvPath"] != projectRoot || py["venv"] != ".venv" {
+		t.Errorf("venvPath/venv = %v/%v, want %s/.venv", py["venvPath"], py["venv"], projectRoot)
+	}
+	wholeAnalysis, ok := py["analysis"].(map[string]any)
+	if !ok {
+		t.Fatalf("python.analysis type = %T, want map", py["analysis"])
+	}
+	wantSrc := filepath.Join(projectRoot, "src")
+	wholePaths, ok := wholeAnalysis["extraPaths"].([]string)
+	if !ok || len(wholePaths) != 1 || wholePaths[0] != wantSrc {
+		t.Errorf("whole-section extraPaths = %v, want [%s]", wholeAnalysis["extraPaths"], wantSrc)
 	}
 	analysis, ok := results[1].(map[string]any)
 	if !ok {
 		t.Fatalf("results[1] type = %T, want map", results[1])
 	}
 	paths, ok := analysis["extraPaths"].([]string)
-	if !ok || len(paths) != 1 || paths[0] != "src" {
-		t.Errorf("extraPaths = %v, want [src]", analysis["extraPaths"])
+	if !ok || len(paths) != 1 || paths[0] != wantSrc {
+		t.Errorf("extraPaths = %v, want [%s]", analysis["extraPaths"], wantSrc)
 	}
 }
 
@@ -66,29 +76,45 @@ func TestEnvConfigProvider_DialectAnalysis(t *testing.T) {
 	}
 }
 
+func TestEnvConfigProvider_AbsoluteExtraPathsRemainUnchanged(t *testing.T) {
+	absolute := filepath.Join(t.TempDir(), "src")
+	p := stubProvider(pythonenv.Env{ExtraPaths: []string{absolute}})
+
+	results := p.Configuration("python", t.TempDir(), []ConfigurationItem{
+		{Section: "basedpyright.analysis.extraPaths"},
+	})
+
+	paths, ok := results[0].([]string)
+	if !ok || len(paths) != 1 || paths[0] != absolute {
+		t.Fatalf("absolute extraPaths = %v, want [%s]", results[0], absolute)
+	}
+}
+
 func TestEnvConfigProvider_LeafSections(t *testing.T) {
+	projectRoot := t.TempDir()
 	p := stubProvider(pythonenv.Env{
-		InterpreterPath: "/proj/.venv/bin/python",
-		VenvDir:         "/proj/.venv",
+		InterpreterPath: filepath.Join(projectRoot, ".venv", "bin", "python"),
+		VenvDir:         filepath.Join(projectRoot, ".venv"),
 		ExtraPaths:      []string{"src"},
 	})
 
-	results := p.Configuration("python", "/proj", []ConfigurationItem{
+	results := p.Configuration("python", projectRoot, []ConfigurationItem{
 		{Section: "python.pythonPath"},
 		{Section: "python.venvPath"},
 		{Section: "python.venv"},
 		{Section: "python.analysis.extraPaths"},
 	})
 
-	if results[0] != "/proj/.venv/bin/python" {
+	if results[0] != filepath.Join(projectRoot, ".venv", "bin", "python") {
 		t.Fatalf("python.pythonPath = %v", results[0])
 	}
-	if results[1] != "/proj" || results[2] != ".venv" {
-		t.Fatalf("venvPath/venv = %v/%v, want /proj/.venv", results[1], results[2])
+	if results[1] != projectRoot || results[2] != ".venv" {
+		t.Fatalf("venvPath/venv = %v/%v, want %s/.venv", results[1], results[2], projectRoot)
 	}
 	paths, ok := results[3].([]string)
-	if !ok || len(paths) != 1 || paths[0] != "src" {
-		t.Fatalf("python.analysis.extraPaths = %v, want [src]", results[3])
+	wantSrc := filepath.Join(projectRoot, "src")
+	if !ok || len(paths) != 1 || paths[0] != wantSrc {
+		t.Fatalf("python.analysis.extraPaths = %v, want [%s]", results[3], wantSrc)
 	}
 }
 
@@ -114,17 +140,25 @@ func TestEnvConfigProvider_EmptyPythonEnvReturnsNil(t *testing.T) {
 	}
 }
 
-func TestPythonEnv_overrideWins(t *testing.T) {
+func TestPythonEnv_overridePreservesDetectedMetadata(t *testing.T) {
 	p := newEnvConfigProvider()
 	p.overrideFor = func(string) string { return "/manual/python" }
-	// detectPython/discover must NOT override the manual choice; stub them to prove it.
 	p.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
-		return pythonenv.Env{InterpreterPath: "/auto", Source: "system"}
+		return pythonenv.Env{
+			InterpreterPath: "/auto",
+			VenvDir:         "/proj/.venv",
+			ExtraPaths:      []string{"src"},
+			PythonVersion:   "3.11",
+			Source:          ".venv",
+			Confidence:      "high",
+		}
 	}
-	p.discover = func(context.Context, string) (string, string, bool) { return "/discovered", "uv", true }
 	env := p.PythonEnv("/whatever")
-	if env.InterpreterPath != "/manual/python" || env.Source != "override" {
-		t.Fatalf("env = %+v, want override interpreter", env)
+	if env.InterpreterPath != "/manual/python" || env.Source != "override" || env.Confidence != "high" {
+		t.Errorf("override fields = %+v", env)
+	}
+	if env.VenvDir != "/proj/.venv" || len(env.ExtraPaths) != 1 || env.ExtraPaths[0] != "src" || env.PythonVersion != "3.11" {
+		t.Errorf("detected metadata lost after override: %+v", env)
 	}
 }
 

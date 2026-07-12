@@ -673,7 +673,7 @@ func (m *Manager) overrideForRoot(projectRoot string) string {
 // workspace load to apply a persisted choice before the first DidOpen).
 func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
 	m.overrideMu.Lock()
-	if interpreterPath == "" {
+	if !validInterpreterPath(interpreterPath) {
 		delete(m.interpreterOverrides, projectRoot)
 	} else {
 		m.interpreterOverrides[projectRoot] = interpreterPath
@@ -687,10 +687,7 @@ func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
 func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) error {
 	// Override paths bypass the discovery layer's stat validation, so validate
 	// here: the env layer trusts whatever this map returns.
-	if interpreterPath == "" {
-		return fmt.Errorf("interpreter not found: %q", interpreterPath)
-	}
-	if info, err := os.Stat(interpreterPath); err != nil || info.IsDir() {
+	if !validInterpreterPath(interpreterPath) {
 		return fmt.Errorf("interpreter not found: %q", interpreterPath)
 	}
 
@@ -700,6 +697,11 @@ func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) er
 
 	m.restartRunningFamily("python", projectRoot)
 	return nil
+}
+
+func validInterpreterPath(path string) bool {
+	info, err := os.Stat(path)
+	return path != "" && err == nil && !info.IsDir()
 }
 
 // ClearInterpreterOverride removes the override and restarts python for that root.
