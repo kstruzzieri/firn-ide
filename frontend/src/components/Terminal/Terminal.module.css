@@ -489,12 +489,15 @@
 }
 
 /* Empty terminal panel: sessions are opt-in, so give the blank space an
- * affordance instead of a bare void. */
-.emptyState {
-  flex: 1;
+ * affordance instead of a bare void. Own class name - .emptyState above styles
+ * the problems/output placeholders and must not merge with a button. */
+.terminalEmptyState {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0 24px;
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -502,6 +505,6 @@
   cursor: pointer;
 }
 
-.emptyState:hover {
+.terminalEmptyState:hover {
   color: var(--text-primary);
 }

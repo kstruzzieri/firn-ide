@@ -454,7 +454,7 @@ export function Terminal() {
             {terminalSessions.length === 0 && (
               <button
                 type="button"
-                className={styles.emptyState}
+                className={styles.terminalEmptyState}
                 onClick={() => void createNewSession()}
               >
                 No terminal sessions — click here or press + to open a shell in the workspace root
