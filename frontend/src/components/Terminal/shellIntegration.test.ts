@@ -171,6 +171,54 @@ describe('createShellIntegration', () => {
     expect(() => integ?.dispose()).not.toThrow();
   });
 
+  it('never propagates a decoration failure into the OSC parser (wedge regression)', () => {
+    // Real-world failure: registerDecoration is proposed API in @xterm/xterm 6
+    // and throws without allowProposedApi. An exception escaping the OSC 133
+    // handler kills xterm's write loop permanently — the terminal stops
+    // rendering all further output (and looks completely wedged). The handler
+    // must contain any decoration error.
+    const f = makeFakeTerm();
+    f.term.registerDecoration = () => {
+      throw new Error('You must set the allowProposedApi option to true to use proposed API');
+    };
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createShellIntegration(f.term, COLORS);
+      f.fire('A');
+      f.fire('C');
+      // Still reports the sequence as handled, so xterm never prints it raw.
+      expect(f.fire('D;0')).toBe(true);
+      // The parser must keep working for subsequent commands.
+      expect(() => {
+        f.fire('A');
+        f.fire('C');
+        f.fire('D;1');
+      }).not.toThrow();
+      // Warns once, not per command.
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('contains a marker-registration failure too (whole handler is guarded)', () => {
+    const f = makeFakeTerm();
+    f.term.registerMarker = () => {
+      throw new Error('marker registration failed');
+    };
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createShellIntegration(f.term, COLORS);
+      expect(f.fire('A')).toBe(true);
+      expect(() => {
+        f.fire('C');
+        f.fire('D;0');
+      }).not.toThrow();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('dispose() tears down handler, markers and decorations', () => {
     const f = makeFakeTerm();
     const integ = createShellIntegration(f.term, COLORS);
