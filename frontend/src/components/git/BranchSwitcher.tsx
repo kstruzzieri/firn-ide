@@ -7,9 +7,11 @@ import styles from './BranchSwitcher.module.css';
 /** Fixed-position coordinates for the portaled popup. */
 interface PopupPos {
   top: number;
-  left?: number;
-  right?: number;
+  left: number;
 }
+
+/** The popup's CSS max-width; the anchor clamp keeps this span on-screen. */
+const POPUP_MAX_WIDTH = 280;
 
 /**
  * Branch name + searchable checkout/create popup. Shared by the git panel
@@ -46,20 +48,21 @@ export function BranchSwitcher({
     if (respondToFocusRequest) setOpen(true);
   }
 
-  // Anchor the fixed-position popup under the trigger. Compact (header) aligns
-  // to the trigger's left edge; the panel variant right-aligns so a wide popup
-  // never spills off the narrow panel. Recomputed on open and on scroll/resize.
+  // Anchor the fixed-position popup under the trigger's left edge, clamped so
+  // its widest possible span stays on-screen. (Right-edge anchoring broke once
+  // the panel trigger moved to its own left-aligned row: a short branch name
+  // put rect.right near the window's left, hanging the menu off-screen.)
+  // Recomputed on open and on scroll/resize.
   useLayoutEffect(() => {
     if (!open) return undefined;
     const place = () => {
       const trigger = wrapRef.current;
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
-      setPos(
-        compact
-          ? { top: rect.bottom + 4, left: rect.left }
-          : { top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) }
-      );
+      setPos({
+        top: rect.bottom + 4,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - POPUP_MAX_WIDTH - 8)),
+      });
     };
     place();
     window.addEventListener('resize', place);
@@ -70,9 +73,18 @@ export function BranchSwitcher({
     };
   }, [open, compact]);
 
+  // `pos` is a dependency because the very first open renders before the
+  // placement effect has produced coordinates: the popup (and its input)
+  // mounts on the pos-carrying re-render, after an [open]-only effect would
+  // already have run with no input to focus. Focusing an already-focused
+  // input on subsequent pos updates (scroll/resize) is a no-op.
   useEffect(() => {
     if (!open) return;
     inputRef.current?.focus();
+  }, [open, pos]);
+
+  useEffect(() => {
+    if (!open) return;
     // Refresh the branch list each time the popup opens so it reflects
     // branches created in a terminal since the last git refresh.
     void useGitStore.getState().loadBranches();
@@ -101,8 +113,11 @@ export function BranchSwitcher({
 
   if (!isRepo) return null;
 
-  const filtered = branches.filter((b) => b.includes(query));
-  const exactExists = branches.includes(query);
+  // Case-insensitive: "Main" must find "main", not offer to create a
+  // casing-duplicate branch that fails on case-insensitive ref storage.
+  const q = query.toLowerCase();
+  const filtered = branches.filter((b) => b.toLowerCase().includes(q));
+  const exactExists = branches.some((b) => b.toLowerCase() === q);
 
   const checkout = (name: string, create: boolean) => {
     setOpen(false);
@@ -132,7 +147,7 @@ export function BranchSwitcher({
             ref={popupRef}
             className={styles.popup}
             data-testid="branch-popup"
-            style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right }}
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
           >
             <input
               ref={inputRef}

@@ -17,9 +17,10 @@ func NewManager() *Manager {
 	return &Manager{sessions: make(map[string]*Session)}
 }
 
-// Create creates a new terminal session and returns its ID.
-func (m *Manager) Create() (string, error) {
-	session, err := NewSession()
+// Create creates a new terminal session starting in dir (empty inherits the
+// app process working directory) and returns its ID.
+func (m *Manager) Create(dir string) (string, error) {
+	session, err := NewSession(dir)
 	if err != nil {
 		return "", err
 	}

@@ -151,10 +151,6 @@ export function Terminal() {
   const setActiveSession = useIDEStore((state) => state.setActiveTerminalSession);
   const renameSession = useIDEStore((state) => state.renameTerminalSession);
   const reorderSessions = useIDEStore((state) => state.reorderTerminalSessions);
-  const hasAutoCreatedInitialSession = useIDEStore(
-    (state) => state.hasAutoCreatedInitialTerminalSession
-  );
-  const markInitialSessionCreated = useIDEStore((state) => state.markInitialTerminalSessionCreated);
   const showToast = useIDEStore((state) => state.showToast);
 
   useRunOutputListener();
@@ -180,48 +176,51 @@ export function Terminal() {
     ensureGlobalOutputListener();
   }, []);
 
-  const createNewSession = useCallback(
-    async (options?: { markInitialCreated?: boolean }) => {
-      if (isCreatingRef.current) return;
-      isCreatingRef.current = true;
-      try {
-        // Register global listener before creating the PTY so early output is buffered
-        ensureGlobalOutputListener();
-        const id = await CreateTerminal();
-        const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
-        addSession({ id, title });
-        if (options?.markInitialCreated) {
-          markInitialSessionCreated();
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err) || 'Unknown error';
-        showToast(`Failed to create terminal: ${message}`, 'error');
-      } finally {
-        isCreatingRef.current = false;
-      }
-    },
-    [addSession, markInitialSessionCreated, showToast]
-  );
-
-  // Auto-create the first terminal once, but honor an explicit close-all state.
-  useEffect(() => {
-    if (
-      activeTab === 'terminal' &&
-      terminalSessions.length === 0 &&
-      !hasAutoCreatedInitialSession
-    ) {
-      createNewSession({ markInitialCreated: true });
+  // Sessions are created only on explicit user request (the + button): a shell
+  // process is a side effect the user should opt into, and an auto-spawned one
+  // sat in whatever directory the app started from, inviting wrong-repo
+  // commands before the workspace cwd fix could apply.
+  const createNewSession = useCallback(async () => {
+    if (isCreatingRef.current) return;
+    isCreatingRef.current = true;
+    try {
+      // Register global listener before creating the PTY so early output is buffered
+      ensureGlobalOutputListener();
+      // Start the shell in the loaded workspace root (not the app process's
+      // cwd, which under wails dev is the firn checkout itself).
+      const id = await CreateTerminal(useIDEStore.getState().workspace?.path ?? '');
+      const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
+      addSession({ id, title });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+      showToast(`Failed to create terminal: ${message}`, 'error');
+    } finally {
+      isCreatingRef.current = false;
     }
-  }, [activeTab, createNewSession, hasAutoCreatedInitialSession, terminalSessions.length]);
+  }, [addSession, showToast]);
+
+  const closeSession = useCallback(
+    (sessionId: string) => {
+      cleanupSessionBuffers(sessionId);
+      // The frontend row is already gone; a failed backend close would orphan
+      // the PTY invisibly, so at least say so.
+      CloseTerminal(sessionId).catch((err: unknown) =>
+        showToast(
+          `Failed to close terminal: ${err instanceof Error ? err.message : String(err)}`,
+          'error'
+        )
+      );
+      removeSession(sessionId);
+    },
+    [removeSession, showToast]
+  );
 
   const handleCloseSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
-      cleanupSessionBuffers(sessionId);
-      void CloseTerminal(sessionId);
-      removeSession(sessionId);
+      closeSession(sessionId);
     },
-    [removeSession]
+    [closeSession]
   );
 
   const startRename = (session: { id: string; title: string }) => {
@@ -452,6 +451,15 @@ export function Terminal() {
                 isVisible={session.id === activeSessionId}
               />
             ))}
+            {terminalSessions.length === 0 && (
+              <button
+                type="button"
+                className={styles.terminalEmptyState}
+                onClick={() => void createNewSession()}
+              >
+                No terminal sessions — click here or press + to open a shell in the workspace root
+              </button>
+            )}
           </div>
         </div>
         {activeTab === 'output' && <OutputContent />}
@@ -467,9 +475,7 @@ export function Terminal() {
             closeContextMenu();
           }}
           onClose={() => {
-            cleanupSessionBuffers(contextMenu.sessionId);
-            void CloseTerminal(contextMenu.sessionId);
-            removeSession(contextMenu.sessionId);
+            closeSession(contextMenu.sessionId);
             closeContextMenu();
           }}
           onDismiss={closeContextMenu}

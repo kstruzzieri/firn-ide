@@ -26,9 +26,10 @@ export function splitLines(text: string): string[] {
 }
 
 /**
- * Myers O(ND) diff over lines, returning maximal change hunks.
- * ponytail: quadratic worst case on pathological inputs; the git backend
- * already caps diffable content at 1MB so N stays sane.
+ * Myers O(ND) diff over lines, returning maximal change hunks. The 1MB backend
+ * cap bounds N (sequence length) but not D (edit distance); MAX_MYERS_D bounds
+ * the other axis, degrading a near-total rewrite to one coarse whole-file hunk
+ * instead of allocating O(D*(N+M)) trace memory on every keystroke.
  */
 export function diffLines(baseline: string, current: string): LineHunk[] {
   return diffSequences(splitLines(baseline), splitLines(current));
@@ -56,20 +57,77 @@ export function diffSequences(a: string[], b: string[]): LineHunk[] {
   const subA = a.slice(start, endA);
   const subB = b.slice(start, endB);
   const trace = myersTrace(subA, subB);
-  return backtrackHunks(trace, subA, subB).map((h) => ({
+  if (trace === null) {
+    // Edit distance exceeded MAX_MYERS_D: degrade to one coarse hunk covering
+    // everything between the common prefix and suffix.
+    return [{ fromA: start, toA: endA, fromB: start, toB: endB }];
+  }
+  const hunks = backtrackHunks(trace, subA, subB).map((h) => ({
     fromA: h.fromA + start,
     toA: h.toA + start,
     fromB: h.fromB + start,
     toB: h.toB + start,
   }));
+  return hunks.map((h) => slideHunkDown(a, b, h));
 }
 
-function myersTrace(a: string[], b: string[]): Int32Array[] {
+/**
+ * Canonicalize a change group by sliding it down over runs of identical lines,
+ * matching `git diff`'s default placement. Myers anchors an ambiguous change
+ * (e.g. a blank line added into a run of blanks, or a repeated line) at the top
+ * of the run; git anchors it at the bottom. Without this the change-gutter bars
+ * land a few lines above where git — and so the staging `+` button — puts the
+ * same change, which reads as the bars and the hunks disagreeing. Sliding only
+ * swaps identical lines between context and change, so the diff stays valid.
+ */
+function slideHunkDown(a: string[], b: string[], h: LineHunk): LineHunk {
+  if (h.fromA === h.toA) {
+    // Pure insertion: slide while the line after the block equals its first.
+    while (h.toB < b.length && b[h.fromB] === b[h.toB]) {
+      h.fromA++;
+      h.toA++;
+      h.fromB++;
+      h.toB++;
+    }
+  } else if (h.fromB === h.toB) {
+    // Pure deletion.
+    while (h.toA < a.length && a[h.fromA] === a[h.toA]) {
+      h.fromA++;
+      h.toA++;
+      h.fromB++;
+      h.toB++;
+    }
+  } else {
+    // Replacement: slide only while both sides can, so alignment is preserved.
+    while (
+      h.toA < a.length &&
+      h.toB < b.length &&
+      a[h.fromA] === a[h.toA] &&
+      b[h.fromB] === b[h.toB]
+    ) {
+      h.fromA++;
+      h.toA++;
+      h.fromB++;
+      h.toB++;
+    }
+  }
+  return h;
+}
+
+/** Bound on the Myers search depth (= edit distance): the trace stores one
+ * O(N+M) snapshot per depth step, so an unbounded D on a near-total rewrite of
+ * a large file balloons to gigabytes. Past this, callers fall back to a single
+ * coarse hunk. Ordinary editing sits far below it. */
+const MAX_MYERS_D = 2000;
+
+/** Returns the Myers trace, or null when the edit distance exceeds
+ * MAX_MYERS_D and the caller should degrade to a whole-range hunk. */
+function myersTrace(a: string[], b: string[]): Int32Array[] | null {
   const n = a.length;
   const m = b.length;
-  const max = n + m;
-  const offset = max;
-  let v = new Int32Array(2 * max + 1);
+  const max = Math.min(n + m, MAX_MYERS_D);
+  const offset = n + m;
+  const v = new Int32Array(2 * (n + m) + 1);
   const trace: Int32Array[] = [];
 
   for (let d = 0; d <= max; d++) {
@@ -92,9 +150,8 @@ function myersTrace(a: string[], b: string[]): Int32Array[] {
         return trace;
       }
     }
-    v = v.slice() as Int32Array<ArrayBuffer>;
   }
-  return trace;
+  return null;
 }
 
 function backtrackHunks(trace: Int32Array[], a: string[], b: string[]): LineHunk[] {
@@ -178,27 +235,101 @@ export function gitLineMarkers(baseline: string, current: string): GitLineMarker
   return markersFromHunks(diffLines(baseline, current), splitLines(current).length);
 }
 
+/** The longest whitespace prefix shared by every non-empty line of both
+ * texts; '' when there is none. */
+export function commonIndent(oldText: string, newText: string): string {
+  const lines = [...splitLines(oldText), ...splitLines(newText)].filter((l) => l.trim() !== '');
+  if (lines.length === 0) return '';
+  let indent = /^\s*/.exec(lines[0])?.[0] ?? '';
+  for (const line of lines) {
+    while (indent && !line.startsWith(indent)) indent = indent.slice(0, -1);
+    if (!indent) break;
+  }
+  return indent;
+}
+
+/**
+ * Safety rail for popup reverts: a revert change derived from `hunk` must stay
+ * within that hunk's line window on the current document (one boundary line of
+ * slack on each side for the EOF/anchor edge cases). Any wider change means
+ * the hunk's coordinates do not match the document — e.g. a stale baseline —
+ * and dispatching it could destroy unrelated content. Callers refuse to apply
+ * a change this function rejects.
+ */
+export function revertChangeIsSafe(
+  change: { from: number; to: number; insert: string },
+  hunk: LineHunk,
+  currentText: string
+): boolean {
+  const curLines = splitLines(currentText);
+  const lineStart: number[] = [0];
+  for (let i = 0; i < curLines.length; i++) {
+    lineStart.push(lineStart[i] + curLines[i].length + 1);
+  }
+  const clamp = (i: number) => Math.max(0, Math.min(i, curLines.length));
+  const windowFrom = lineStart[clamp(hunk.fromB - 1)];
+  // toB is exclusive, so line index toB IS the one-line slack below the hunk.
+  const windowToLine = clamp(hunk.toB);
+  const windowTo =
+    windowToLine >= curLines.length
+      ? currentText.length
+      : lineStart[windowToLine] + curLines[windowToLine].length;
+  return change.from >= windowFrom && change.to <= windowTo && change.from <= change.to;
+}
+
+/**
+ * Character-range edit that reverts a single current line inside `hunk` to its
+ * baseline counterpart, or null when the clicked line has none to map to (a
+ * pure-deletion hunk, or a line outside the hunk). Lines are paired
+ * positionally — inside one contiguous changed region that is the only stable
+ * correspondence — so line fromB+1+k restores baseline line fromA+k, and a
+ * current line past the baseline range (a pure addition) is deleted.
+ */
+export function revertLineChange(
+  currentText: string,
+  baselineText: string,
+  hunk: LineHunk,
+  line: number
+): { from: number; to: number; insert: string } | null {
+  const k = line - 1 - hunk.fromB;
+  if (k < 0 || line - 1 >= hunk.toB) return null;
+
+  const curLines = splitLines(currentText);
+  if (line - 1 >= curLines.length) return null;
+  const lineStart: number[] = [0];
+  for (let i = 0; i < curLines.length; i++) {
+    lineStart.push(lineStart[i] + curLines[i].length + 1);
+  }
+  const from = lineStart[line - 1];
+  const to = from + curLines[line - 1].length;
+
+  const aIdx = hunk.fromA + k;
+  if (aIdx < hunk.toA) {
+    const restored = splitLines(baselineText)[aIdx] ?? '';
+    return { from, to, insert: restored };
+  }
+  // No baseline counterpart: the line was added — deleting it consumes its
+  // line break so no blank line is left behind.
+  if (line - 1 < curLines.length - 1) return { from, to: to + 1, insert: '' };
+  return { from: Math.max(0, from - 1), to, insert: '' };
+}
+
 export interface InlineDiffSegment {
   text: string;
   /** `same` = unchanged, `del` = only in the baseline, `ins` = only in the working tree. */
   type: 'same' | 'del' | 'ins';
 }
 
-/** Splits text into whitespace and non-whitespace runs, preserving content. */
+/** Splits text into whitespace and non-whitespace runs, preserving content.
+ * Newlines are their own tokens — a whitespace run must never span a line
+ * break, or a trailing-space edit diffs as del/ins of "\n\t" runs and renders
+ * as bogus blocks across the break instead of a tiny change at the line end. */
 function tokenizeWords(text: string): string[] {
-  return text.match(/\s+|\S+/g) ?? [];
+  return text.match(/\n|[^\S\n]+|\S+/g) ?? [];
 }
 
-/**
- * Unified word-level diff of `oldText` (baseline) against `newText` (working
- * tree) as a segment list. Word granularity keeps boundaries clean (whole-word
- * replaces, no mid-word splits). The concatenation of non-`ins` segments
- * reproduces `oldText`, and of non-`del` segments reproduces `newText`, so the
- * peek can render both sides distinctly (JetBrains-style inline diff).
- */
-export function inlineWordDiff(oldText: string, newText: string): InlineDiffSegment[] {
-  const oldTokens = tokenizeWords(oldText);
-  const newTokens = tokenizeWords(newText);
+/** Builds same/del/ins segments from a token-level diff of two sequences. */
+function segmentsFromTokens(oldTokens: string[], newTokens: string[]): InlineDiffSegment[] {
   const segments: InlineDiffSegment[] = [];
   let ai = 0;
   for (const h of diffSequences(oldTokens, newTokens)) {
@@ -213,6 +344,53 @@ export function inlineWordDiff(oldText: string, newText: string): InlineDiffSegm
   }
   if (ai < oldTokens.length) segments.push({ text: oldTokens.slice(ai).join(''), type: 'same' });
   return segments;
+}
+
+/** Char-refinement cap: Myers is O(ND); replaced regions bigger than this stay
+ * at word granularity. */
+const REFINE_MAX_CHARS = 2000;
+
+/**
+ * Char-level breakdown of a word-level del+ins replacement, or null when the
+ * two sides are too dissimilar for it to read well — unrelated words char-diff
+ * into confetti, so those stay whole. "Similar" = at least half the characters
+ * survive the edit ("*App {" -> "*A" refines; "quick" -> "slow" does not).
+ */
+function refineReplacement(oldText: string, newText: string): InlineDiffSegment[] | null {
+  if (oldText.length + newText.length > REFINE_MAX_CHARS) return null;
+  const segments = segmentsFromTokens([...oldText], [...newText]);
+  const sameChars = segments
+    .filter((s) => s.type === 'same')
+    .reduce((n, s) => n + s.text.length, 0);
+  if (2 * sameChars < 0.5 * (oldText.length + newText.length)) return null;
+  return segments;
+}
+
+/**
+ * Unified word-level diff of `oldText` (baseline) against `newText` (working
+ * tree) as a segment list, with similar del+ins replacements refined down to
+ * characters (a partial word edit shows just the changed characters, not the
+ * whole word swapped). The concatenation of non-`ins` segments reproduces
+ * `oldText`, and of non-`del` segments reproduces `newText`, so the peek can
+ * render both sides distinctly (JetBrains-style inline diff).
+ */
+export function inlineWordDiff(oldText: string, newText: string): InlineDiffSegment[] {
+  const coarse = segmentsFromTokens(tokenizeWords(oldText), tokenizeWords(newText));
+  const refined: InlineDiffSegment[] = [];
+  for (let i = 0; i < coarse.length; i++) {
+    const seg = coarse[i];
+    const next = coarse[i + 1];
+    if (seg.type === 'del' && next?.type === 'ins') {
+      const sub = refineReplacement(seg.text, next.text);
+      if (sub) {
+        refined.push(...sub);
+        i++;
+        continue;
+      }
+    }
+    refined.push(seg);
+  }
+  return refined;
 }
 
 /**

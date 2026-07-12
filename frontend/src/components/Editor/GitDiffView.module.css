@@ -18,8 +18,15 @@
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
+  /* Anchor for the absolutely-positioned nav (see .nav). */
+  position: relative;
 }
 
+/* The labels span the full toolbar width so the INDEX / WORKING TREE split
+ * (--diff-left) lines up with the pane divider, which is measured against the
+ * full width. The nav is pulled out of flow (absolute) so it can't shrink this
+ * row narrower than the panes — otherwise the boundary drifts left of the
+ * divider and WORKING TREE no longer sits over its column. */
 .labels {
   display: flex;
   flex: 1;
@@ -51,11 +58,14 @@
 }
 
 .nav {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 0 8px;
-  flex-shrink: 0;
 }
 
 .diffCount {
@@ -163,6 +173,13 @@
   font-size: 13px;
 }
 
+/* The editable working-tree pane carries the file view's clickable git gutter
+ * (peek/revert popup), so hide the merge view's own non-clickable change bars
+ * there — otherwise the same change is marked twice. */
+.editableRight .mergeHost :global(.cm-mergeViewEditor:last-child .cm-changeGutter) {
+  display: none;
+}
+
 /* Per-hunk staging gutter (right pane): a compact +/− button anchored at each
  * hunk's first new-side line. Global because CodeMirror owns the class names. */
 .mergeHost :global(.cm-hunkGutter) {
@@ -189,4 +206,17 @@
   border-color: var(--accent);
   color: var(--accent);
   background: var(--surface-hover);
+}
+
+/* A stale control (its hunk carries unsaved edits, patch mid-refresh) stays in
+ * place but dims — it must never flicker out of the gutter. */
+.mergeHost :global(.cm-hunkStageBtn:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mergeHost :global(.cm-hunkStageBtn:disabled:hover) {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface);
 }

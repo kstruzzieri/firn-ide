@@ -55,6 +55,24 @@ export interface DiffSession {
    * untracked/binary/too-large diffs (whole-file staging only). In an
    * 'unstaged' diff these stage; in a 'staged' diff they unstage. */
   hunks: git.Hunk[];
+  /** True when hunks were skipped only because the working-tree side is an
+   * unsaved editor buffer git hasn't diffed yet. The diff view keeps its
+   * previous hunk gutter through such a refresh (dimmed where edits touched)
+   * instead of collapsing the column for the sub-second save window. */
+  hunksSuppressed?: boolean;
+  /** Monotonic id of the openDiff request that produced this session. The diff
+   * view compares it against the id current when the user last typed, so a
+   * refresh that STARTED before a local edit can never reconcile the pane
+   * backward, while one that started after (and so read the post-edit
+   * buffer/disk) is authoritative. Not part of sameSession equality. */
+  requestRevision?: number;
+  /** The working-tree file's detected encoding and line endings, captured when
+   * an editable (unstaged) diff is built so an edit written straight to disk
+   * (file not open in the editor) round-trips them instead of silently
+   * rewriting to UTF-8/LF. Undefined when there is no writable worktree file
+   * (staged, deleted, binary, or too-large sessions stay read-only). */
+  worktreeEncoding?: string;
+  worktreeLineEndings?: string;
 }
 
 /** Friendly post-commit summary shown in the panel instead of raw git output. */
@@ -74,6 +92,7 @@ function sameSession(a: DiffSession | null, b: DiffSession): boolean {
   return (
     a !== null &&
     a.path === b.path &&
+    a.absPath === b.absPath &&
     a.context === b.context &&
     a.binary === b.binary &&
     a.truncated === b.truncated &&
@@ -81,6 +100,9 @@ function sameSession(a: DiffSession | null, b: DiffSession): boolean {
     a.left.content === b.left.content &&
     a.right.label === b.right.label &&
     a.right.content === b.right.content &&
+    a.worktreeEncoding === b.worktreeEncoding &&
+    a.worktreeLineEndings === b.worktreeLineEndings &&
+    a.hunksSuppressed === b.hunksSuppressed &&
     sameHunks(a.hunks, b.hunks)
   );
 }
@@ -185,6 +207,15 @@ interface GitActions {
 type GitStore = GitState & GitActions;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let diffRequestRevision = 0;
+/** User-initiated openDiff calls currently in flight. Background refreshes
+ * yield to these: a refresh that bumped the request revision mid-click would
+ * get the user's completion discarded and their click would appear dead. */
+let userDiffRequestsInFlight = 0;
+
+/** Current openDiff request id, read by the diff view when the user types so
+ * it can tell refreshes that predate the edit from ones that supersede it. */
+export const getDiffRequestRevision = () => diffRequestRevision;
 
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -388,14 +419,20 @@ export const useGitStore = create<GitStore>()(
         const { root, status, epoch } = get();
         const repoRoot = status?.isRepo ? status.repoRoot : root;
         if (!repoRoot) return;
+        const requestRevision = ++diffRequestRevision;
         const untracked = classifyChange(change).untracked;
         const focus = opts?.focus ?? true;
+        if (focus) userDiffRequestsInFlight++;
 
         try {
           let left: DiffSide;
           let right: DiffSide;
           let binary = false;
           let truncated = false;
+          // The working-tree file's encoding/line endings, for round-tripping a
+          // disk-write edit. Only unstaged sessions have a live worktree side.
+          let worktreeEncoding: string | undefined;
+          let worktreeLineEndings: string | undefined;
           // The working-tree side is showing an unsaved editor buffer, which
           // git hasn't diffed — its disk-based hunks wouldn't line up with (or
           // stage) what's on screen, so per-hunk staging is suppressed until save.
@@ -429,14 +466,18 @@ export const useGitStore = create<GitStore>()(
             let worktree = '';
             if (openFile) {
               worktree = openFile.content ?? '';
+              worktreeEncoding = openFile.encoding;
+              worktreeLineEndings = openFile.lineEndings;
               dirtyBufferWorktree = openFile.isModified === true;
+            } else if (change.worktree === 'D') {
+              // A deleted file has no metadata to preserve, so its empty
+              // worktree snapshot remains read-only.
             } else {
-              try {
-                const result = await ReadFile(abs);
-                worktree = result.content ?? '';
-              } catch {
-                // Deleted from the worktree → empty right side is the truth.
-              }
+              const result = await ReadFile(abs);
+              worktree = result.content ?? '';
+              binary = binary || result.isBinary === true;
+              worktreeEncoding = result.encoding;
+              worktreeLineEndings = result.lineEndings;
             }
             right = { label: 'Working Tree', content: worktree };
           }
@@ -446,12 +487,13 @@ export const useGitStore = create<GitStore>()(
           // so skip the extra git call and leave hunks empty (no gutter button).
           let hunks: git.Hunk[] = [];
           const stagedRename = context === 'staged' && change.origPath;
-          if (!untracked && !stagedRename && !binary && !truncated && !dirtyBufferWorktree) {
+          const hunkable = !untracked && !stagedRename && !binary && !truncated;
+          if (hunkable && !dirtyBufferWorktree) {
             const fh = await GitFileHunks(repoRoot, change.path, context === 'staged');
             hunks = fh.hunks ?? [];
           }
 
-          if (get().epoch !== epoch) return; // workspace switched mid-fetch
+          if (get().epoch !== epoch || requestRevision !== diffRequestRevision) return;
           const next: DiffSession = {
             path: change.path,
             absPath: abs,
@@ -461,6 +503,12 @@ export const useGitStore = create<GitStore>()(
             binary,
             truncated,
             hunks,
+            // Skipped only because the buffer hasn't been saved yet — the next
+            // post-save refresh will deliver real hunks for the same diff.
+            hunksSuppressed: hunkable && dirtyBufferWorktree,
+            requestRevision,
+            worktreeEncoding,
+            worktreeLineEndings,
           };
           set(
             (state) => ({
@@ -477,7 +525,11 @@ export const useGitStore = create<GitStore>()(
             'git/openDiff'
           );
         } catch (err) {
-          useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
+          if (get().epoch === epoch && requestRevision === diffRequestRevision) {
+            useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
+          }
+        } finally {
+          if (focus) userDiffRequestsInFlight--;
         }
       },
 
@@ -487,12 +539,28 @@ export const useGitStore = create<GitStore>()(
       refreshOpenDiff: async () => {
         const { diffSession, diffSource, status } = get();
         if (!diffSession || !status?.isRepo) return;
+        // Yield to a click in flight: refreshing here would supersede the
+        // user's request revision and their newly opened diff would be
+        // discarded on completion. The user's own openDiff refreshes anyway.
+        if (userDiffRequestsInFlight > 0) return;
         // Prefer the current status entry (updated XY letters). Fall back to the
         // originating change so an unsaved edit — which leaves disk unchanged
         // and drops the file from git status — still re-reads the live buffer.
         const change = (status.files ?? []).find((f) => f.path === diffSession.path) ?? diffSource;
         if (!change) return;
-        await get().openDiff(change, diffSession.context, { focus: false });
+        // Follow a whole-file stage/unstage (the panel checkbox): when the open
+        // context no longer has changes but the other one does, retarget so the
+        // diff keeps showing the change the user is tracking — and lands back
+        // in the editable working-tree view when they unstage. A partially
+        // staged file has content in both contexts and stays put.
+        let context = diffSession.context;
+        const cls = classifyChange(change);
+        if (context === 'unstaged' && !cls.unstaged && !cls.untracked && cls.staged) {
+          context = 'staged';
+        } else if (context === 'staged' && !cls.staged && (cls.unstaged || cls.untracked)) {
+          context = 'unstaged';
+        }
+        await get().openDiff(change, context, { focus: false });
       },
 
       closeDiff: () =>

@@ -1,8 +1,11 @@
 import {
+  commonIndent,
   diffLines,
   gitLineMarkers,
   inlineWordDiff,
+  revertChangeIsSafe,
   revertHunkChange,
+  revertLineChange,
   type GitLineMarker,
 } from './lineDiff';
 
@@ -46,6 +49,29 @@ describe('diffLines / markersFromHunks', () => {
 
   it('a deletion at the end anchors to the last line', () => {
     expect(markers('a\nb\n', 'a\n')).toEqual([{ line: 1, type: 'deleted' }]);
+  });
+
+  // Ambiguous changes (a line added into a run of identical lines) are anchored
+  // where `git diff` puts them — the bottom of the run — so the change-gutter
+  // bars line up with the staging hunks git generates. Expectations below are
+  // git-verified via `git diff -U0`.
+  it('anchors a blank-run addition at the bottom of the run, like git', () => {
+    // 'a', blank, 'b' → two blanks added: git marks lines 3 and 4, not 2 and 3.
+    expect(markers('a\n\nb\n', 'a\n\n\n\nb\n')).toEqual([
+      { line: 3, type: 'added' },
+      { line: 4, type: 'added' },
+    ]);
+  });
+
+  it('slides a run addition past earlier edits to match git', () => {
+    // A blank inserted at line 4 and a third **ML** appended to the trailing
+    // run: the appended line anchors at line 10 (git), not line 8.
+    const base = 'y\n\n**ML**\nx\nc\na\n**ML**\n**ML**\n';
+    const cur = 'y\n\n**ML**\n\nx\nc\na\n**ML**\n**ML**\n**ML**\n';
+    expect(markers(base, cur)).toEqual([
+      { line: 4, type: 'added' },
+      { line: 10, type: 'added' },
+    ]);
   });
 });
 
@@ -152,5 +178,123 @@ describe('inlineWordDiff', () => {
 
   it('round-trips a multi-edit line', () => {
     expectRoundTrip('the quick brown fox', 'the slow brown cat');
+  });
+
+  it('refines a similar word replacement down to characters (the *App -> *A case)', () => {
+    // Removing "pp {" from "*App {" must show as a char-level deletion after
+    // the kept "*A", not as del "*App {" + ins "*A".
+    const oldText = 'func NewApp() *App {';
+    const newText = 'func NewApp() *A';
+    const segs = inlineWordDiff(oldText, newText);
+
+    expect(ofType(segs, 'del')).toBe('pp {');
+    expect(ofType(segs, 'ins')).toBe('');
+    expectRoundTrip(oldText, newText);
+  });
+
+  it('keeps a dissimilar word replacement whole (no char confetti)', () => {
+    const segs = inlineWordDiff('the quick fox', 'the slow fox');
+
+    expect(segs).toContainEqual({ text: 'quick', type: 'del' });
+    expect(segs).toContainEqual({ text: 'slow', type: 'ins' });
+    expectRoundTrip('the quick fox', 'the slow fox');
+  });
+
+  it('keeps a trailing-space edit on its own line (newline never joins a whitespace run)', () => {
+    // A single space added at each line end must diff as two tiny ins
+    // segments, not as del/ins of "\n\t" runs spanning the line break —
+    // that rendered as bogus red/green blocks in the peek popup.
+    const oldText = '\tctx        context.Context\n\tconfigPath string';
+    const newText = '\tctx        context.Context \n\tconfigPath string ';
+    const segs = inlineWordDiff(oldText, newText);
+
+    expect(ofType(segs, 'del')).toBe('');
+    expect(ofType(segs, 'ins')).toBe('  ');
+    expectRoundTrip(oldText, newText);
+  });
+});
+
+describe('revertLineChange', () => {
+  // Baseline lines 2-3 modified: hunk fromA=1 toA=3, fromB=1 toB=3.
+  const baseline = 'a\nb\nc\nd';
+  const current = 'a\nB\nC\nd';
+  const hunk = { fromA: 1, toA: 3, fromB: 1, toB: 3 };
+
+  it('reverts only the clicked line inside a multi-line hunk', () => {
+    // Line 2 ("B") reverts to "b"; line 3 ("C") stays.
+    expect(revertLineChange(current, baseline, hunk, 2)).toEqual({
+      from: 2,
+      to: 3,
+      insert: 'b',
+    });
+    expect(revertLineChange(current, baseline, hunk, 3)).toEqual({
+      from: 4,
+      to: 5,
+      insert: 'c',
+    });
+  });
+
+  it('deletes an added line that has no baseline counterpart', () => {
+    // Baseline lost nothing; current inserted "x" as line 2.
+    const insHunk = { fromA: 1, toA: 1, fromB: 1, toB: 2 };
+    expect(revertLineChange('a\nx\nb', 'a\nb', insHunk, 2)).toEqual({
+      from: 2,
+      to: 4,
+      insert: '',
+    });
+  });
+
+  it('returns null for a line outside the hunk or a pure deletion', () => {
+    expect(revertLineChange(current, baseline, hunk, 1)).toBeNull();
+    expect(
+      revertLineChange('a\nd', 'a\nb\nc\nd', { fromA: 1, toA: 3, fromB: 1, toB: 1 }, 2)
+    ).toBeNull();
+  });
+});
+
+describe('revertChangeIsSafe', () => {
+  // current: 5 lines, hunk covers lines 3-4 (0-based fromB=2, toB=4).
+  const cur = 'l1\nl2\nl3\nl4\nl5\n';
+  const hunk = { fromA: 2, toA: 2, fromB: 2, toB: 4 };
+
+  it('accepts a change inside the hunk lines (plus one boundary line each side)', () => {
+    // Deleting lines 3-4 (chars 6..12) is exactly the hunk's span.
+    expect(revertChangeIsSafe({ from: 6, to: 12, insert: '' }, hunk, cur)).toBe(true);
+    // EOF/boundary handling may extend one line beyond either edge.
+    expect(revertChangeIsSafe({ from: 3, to: 12, insert: '' }, hunk, cur)).toBe(true);
+  });
+
+  it('rejects a change reaching outside the hunk window (the data-loss guard)', () => {
+    // A change starting at the top of the document while the hunk sits at
+    // lines 3-4 would destroy unrelated content: never dispatch it.
+    expect(revertChangeIsSafe({ from: 0, to: 12, insert: '' }, hunk, cur)).toBe(false);
+    // Two lines past the hunk's end is beyond the one-line boundary slack.
+    const six = 'l1\nl2\nl3\nl4\nl5\nl6\n';
+    expect(revertChangeIsSafe({ from: 6, to: six.length, insert: '' }, hunk, six)).toBe(false);
+  });
+
+  it('accepts pure-deletion hunk re-insertions at their anchor', () => {
+    const del = { fromA: 1, toA: 3, fromB: 2, toB: 2 };
+    // Insertion at line 3's start (char 6), zero-width.
+    expect(revertChangeIsSafe({ from: 6, to: 6, insert: 'x\ny' }, del, cur)).toBe(true);
+    expect(revertChangeIsSafe({ from: 0, to: 6, insert: 'x' }, del, cur)).toBe(false);
+  });
+});
+
+describe('commonIndent', () => {
+  it('finds the shared leading whitespace of both texts', () => {
+    expect(commonIndent('\t\tfoo()\n\t\tbar()', '\t\tfoo()\n\t\t\tbaz()')).toBe('\t\t');
+  });
+
+  it('returns empty for unindented text', () => {
+    expect(commonIndent('a\nb', 'a\nc')).toBe('');
+  });
+
+  it('ignores empty lines when finding the common indent', () => {
+    expect(commonIndent('  a\n\n  b', '  a\n\n  c')).toBe('  ');
+  });
+
+  it('handles an empty side (pure addition or deletion hunks)', () => {
+    expect(commonIndent('', '    added')).toBe('    ');
   });
 });

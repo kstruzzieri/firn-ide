@@ -63,6 +63,33 @@ beforeEach(() => {
 });
 
 describe('useWorkspacePersistence', () => {
+  it('recovers when a rename re-runs the restore effect mid-restore (no permanent save freeze)', async () => {
+    // The restore effect depends on workspace name; a name-only change aborts
+    // the in-flight restore, whose finally deliberately leaves the restoring
+    // flag set for a successor. The same-path rerun must BE that successor
+    // (restart the restore) - otherwise the flag wedges true forever and
+    // every debounced save stays disabled for the session.
+    let releaseRestore!: (v: unknown) => void;
+    mockLoadWorkspaceState.mockReturnValueOnce(
+      new Promise((res) => {
+        releaseRestore = res;
+      })
+    );
+    useIDEStore.setState({ workspace: { name: 'A', path: '/workspace/w' } });
+
+    const { rerender } = renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(true));
+
+    // Rename the workspace (same path) while the restore hangs.
+    act(() => {
+      useIDEStore.setState({ workspace: { name: 'B', path: '/workspace/w' } });
+    });
+    rerender();
+    releaseRestore(null);
+
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+  });
+
   it('resets workspace-scoped UI state to defaults when no saved session exists', async () => {
     useIDEStore.setState({
       workspace: { name: 'new-workspace', path: '/workspace/new-workspace' },
@@ -126,6 +153,45 @@ describe('useWorkspacePersistence', () => {
 
     await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
     expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+  });
+
+  it('flushes pending editor work before acknowledging app close', async () => {
+    let resolveFlush!: () => void;
+    const flushPendingEdits = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFlush = resolve;
+        })
+    );
+    renderHook(() => useWorkspacePersistence(flushPendingEdits));
+    await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+    act(() => {
+      beforeCloseHandler?.();
+    });
+    await waitFor(() => expect(flushPendingEdits).toHaveBeenCalledTimes(1));
+    expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+    act(() => resolveFlush());
+    await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not acknowledge app close when pending editor work fails to flush', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const flushPendingEdits = jest.fn(() => Promise.reject(new Error('disk full')));
+    try {
+      renderHook(() => useWorkspacePersistence(flushPendingEdits));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+
+      await waitFor(() => expect(flushPendingEdits).toHaveBeenCalledTimes(1));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('restores a cached explorer tree immediately from saved workspace state', async () => {

@@ -1,29 +1,65 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
-import { WriteFile } from '../../wailsjs/go/main/App';
 import { isMac } from '../utils/platform';
+import { writeFileSerialized } from '../utils/fileWrites';
 
 const AUTOSAVE_DELAY = 1500;
+
+/** Retry backoff cap for failed saves: doubling from AUTOSAVE_DELAY stops
+ * here, so a persistently failing file (read-only, disk full) retries at a
+ * calm cadence instead of hammering every 1.5s until the disk recovers. */
+const MAX_RETRY_DELAY = 30_000;
 
 export function useAutosave() {
   const debounceTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const savingFiles = useRef(new Set<string>());
+  // Consecutive failures per file: drives the retry backoff and keeps the
+  // error toast to one per failure streak instead of one per retry.
+  const failureCounts = useRef(new Map<string, number>());
 
   // Save a single file by ID
   const saveFile = useCallback(async (fileId: string) => {
     if (savingFiles.current.has(fileId)) return;
 
-    const file = useIDEStore.getState().openFiles.find((f) => f.id === fileId);
-    if (!file || !file.isModified) return;
+    let file = useIDEStore.getState().openFiles.find((f) => f.id === fileId);
+    if (!file?.isModified) return;
+    const fileName = file.name;
 
     savingFiles.current.add(fileId);
 
     try {
-      await WriteFile(file.path, file.content, file.encoding, file.lineEndings, false);
-      useIDEStore.getState().setFileModified(fileId, false);
+      while (file?.isModified) {
+        const savedContent = file.content;
+        await writeFileSerialized(file.path, savedContent, file.encoding, file.lineEndings, false);
+        file = useIDEStore.getState().openFiles.find((f) => f.id === fileId);
+        if (!file || file.content === savedContent) {
+          if (file) useIDEStore.getState().setFileModified(fileId, false);
+          failureCounts.current.delete(fileId);
+          return;
+        }
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      useIDEStore.getState().showToast(`Failed to save ${file.name}: ${message}`, 'error');
+      const failures = (failureCounts.current.get(fileId) ?? 0) + 1;
+      failureCounts.current.set(fileId, failures);
+      if (failures === 1) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        useIDEStore.getState().showToast(`Failed to save ${fileName}: ${message}`, 'error');
+      }
+      // Re-arm the debounce with backoff: the file is still modified, and
+      // scheduling is transition-based (isModified false -> true), so without
+      // this a transient failure would permanently disable autosave for the
+      // file — later keystrokes see isModified already true and never
+      // reschedule.
+      const delay = Math.min(AUTOSAVE_DELAY * 2 ** (failures - 1), MAX_RETRY_DELAY);
+      const existing = debounceTimers.current.get(fileId);
+      if (existing) clearTimeout(existing);
+      debounceTimers.current.set(
+        fileId,
+        setTimeout(() => {
+          debounceTimers.current.delete(fileId);
+          void saveFile(fileId);
+        }, delay)
+      );
     } finally {
       savingFiles.current.delete(fileId);
     }
@@ -59,7 +95,7 @@ export function useAutosave() {
   const saveFileData = useCallback(async (file: EditorFile) => {
     if (!file.isModified) return;
     try {
-      await WriteFile(file.path, file.content, file.encoding, file.lineEndings, false);
+      await writeFileSerialized(file.path, file.content, file.encoding, file.lineEndings, false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       useIDEStore.getState().showToast(`Failed to save ${file.name}: ${message}`, 'error');

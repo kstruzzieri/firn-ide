@@ -110,6 +110,36 @@ describe('BranchSwitcher', () => {
     expect(popup.style.position).toBe('fixed');
   });
 
+  it('focuses the search input on the very first open', () => {
+    // First open renders with pos === null (the placement layout effect has
+    // not run), so the popup mounts one commit later; the focus effect must
+    // re-run when the input actually exists, not only when `open` flips.
+    seed(true);
+    render(<BranchSwitcher />);
+
+    fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Find or create branch'));
+  });
+
+  it('anchors the popup on-screen even when the trigger is narrow and left-aligned', () => {
+    // The panel trigger sits on its own left-aligned row; right-edge anchoring
+    // computed from a short branch name pinned the popup's right edge near the
+    // window's left, hanging the whole menu off-screen. The popup must anchor
+    // by its left edge, clamped inside the viewport (jsdom rects are all
+    // zeros, which models the narrowest possible trigger).
+    seed(true);
+    render(<BranchSwitcher />);
+
+    fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
+    const popup = screen.getByTestId('branch-popup');
+
+    expect(popup.style.right).toBe('');
+    const left = Number.parseFloat(popup.style.left);
+    expect(left).toBeGreaterThanOrEqual(8);
+    expect(left + 280).toBeLessThanOrEqual(window.innerWidth);
+  });
+
   it('stays open when clicking inside the portaled popup', () => {
     seed(true);
     render(<BranchSwitcher />);

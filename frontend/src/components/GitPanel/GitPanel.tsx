@@ -125,14 +125,14 @@ export function GitPanel() {
       <div className={styles.panelBody}>
         <div className={styles.headerRow}>
           {/* Scope toggle mirrors the shared workspace focus; shown only when
-              there are workspaces to focus. An empty span otherwise keeps the
-              branch switcher right-aligned. */}
-          {canFocusWorkspace ? (
-            <ScopeToggle scope={treeViewMode} onChange={setTreeViewMode} />
-          ) : (
-            <span />
-          )}
-          <BranchSwitcher respondToFocusRequest={false} />
+              there are workspaces to focus. */}
+          {canFocusWorkspace && <ScopeToggle scope={treeViewMode} onChange={setTreeViewMode} />}
+          {/* The branch switcher gets its own full-width row so long branch
+              names stay legible in a narrow panel instead of truncating beside
+              the scope toggle. */}
+          <div className={styles.branchRow}>
+            <BranchSwitcher respondToFocusRequest={false} />
+          </div>
         </div>
         <SyncControls />
         {buckets.conflicts.length > 0 && (
