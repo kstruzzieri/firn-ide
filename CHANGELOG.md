@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.0] - Pending
+## [0.11.0] - 2026-07-12
 
 Stabilization release for the managed language-server, Structure view, Git,
 terminal, and installation work completed since v0.10.0.
