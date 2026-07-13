@@ -28,18 +28,234 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 4: Run Profiles | **COMPLETE** | #16-17, #59-64 complete; #18/#71 Phase 1 (#123) + #71 P2 panel (#125) + P2 follow-ups/recency sidecar (#127) + #18 P3 header selector (#129) + lifecycle-script detection fix (#130) + #18 P4 create/edit form (#132) + UI polish (#133) + store persist rollback (#134) shipped → **#18/#71 closed**; LANES output #107 (#138) + #137 (#139) shipped; #103 run execution identity (#144) merged → epic complete |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
-| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); follow-ups #164/#166/#169 |
+| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); #169 editable diff shipped (PR #181); follow-ups #164-166 |
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147) shipped; follow-ups #148/#149; #39 open |
-| Editor & LSP DX | **IN PROGRESS** | #113/#114 theme + #119 picker a11y; #112 Phase 1 env-wiring (#121) + Phase 2 managed provisioning (#150) + Phase 3 gopls/tsserver/rust-analyzer (#151, PR #178) shipped; per-file undo on tab switch #153 (#154) shipped; follow-up #152 |
+| Editor & LSP DX | **COMPLETE** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178 and its 2026-07-12 packaged native closure gate passed |
 | Dependency Upgrades | **COMPLETE** | #40 |
-| Code Quality | Not started | #41-42 |
-| Accessibility | Not started | #43 |
+| Code Quality | **IN PROGRESS** | #42 closed as completed; #41 open and needs re-scoping against the current 1,787-line store |
+| Accessibility | **IN PROGRESS** | #43 open; tree roving focus, `aria-busy`, and several live regions already shipped, so the remaining scope requires an audit |
 | Future Features | Not started | #44-46 |
-| Bug Fixes | Not started | #33-34 |
+| Bug Fixes | **IN PROGRESS** | #33 closed; #34 open |
 
 ---
 
-## Next Priorities
+## Current Repository Review and Prioritized Roadmap
+
+> **Authoritative snapshot:** 2026-07-11 (America/New_York), `develop` at `e2575ec`. This section supersedes the archived delivery narrative below for current prioritization.
+
+### Repository health
+
+- `develop` is clean and synchronized with `origin/develop`; GitHub has **16 open issues and no open pull requests**.
+- The latest release is `v0.10.0`, while `develop` is **62 commits ahead**. LSP Phase 3, the Structure view, editable Git diffs, and the terminal-wedge fix are unreleased; prepare a `v0.11.0` stabilization release before starting another large epic.
+- Verification at this snapshot is green: **652 Go tests** across 12 packages, `go vet` clean, **1,424 frontend tests** across 131 suites, TypeScript/Vite production build successful, ESLint with 0 errors/12 warnings, and Prettier clean.
+- The CodeMirror language bundle is still eager: `codemirror-languages` is **382.35 kB / 143.21 kB gzip**, providing a measurable baseline for #39.
+- `frontend/src/stores/ideStore.ts` is now **1,787 lines**. Git, LSP, and search already have dedicated stores, so #41's original "255-line monolith" description is obsolete and should target the remaining workspace/tree/editor/terminal/run-output responsibilities.
+- Roadmap and release documentation had drifted behind implementation. Closed #152/#168/#169 were still listed as pending, #112's completed phases were described as open, and the `CHANGELOG.md` Unreleased section did not cover the 62 post-`v0.10.0` commits.
+- CI debt not represented by an issue: backend tests request Go 1.21 even though `go.mod` requires Go 1.23, while build/release workflows install Wails with `@latest`. File a release-engineering ticket to pin the toolchain and add cross-platform PR verification where practical.
+- The frontend suite passes but some non-silent runs emit React `act(...)` console warnings. File a focused test-hygiene ticket so warnings cannot hide real regressions.
+
+### Immediate backlog normalization (Wave 0)
+
+Complete these before beginning another large feature:
+
+1. **#42 — closed:** cross-platform path handling is implemented through `os.UserHomeDir`, `filepath`, platform-specific files, and the release build matrix.
+2. **#112 — close:** the 2026-07-12 packaged native rerun passed lazy provisioning for Python, Go, TypeScript, and Rust, Python environment/override wiring, and same-session Offline-to-Retry recovery. The rerun also found and fixed the missing frontend `.rs` LSP mapping.
+3. **#41 — re-scope:** preserve the public selector/action contract, acknowledge the already-extracted Git/LSP/search stores, and phase the remaining extraction by domain.
+4. **#43 — audit then re-scope:** mark already-shipped tree focus, busy state, and live-region work complete; define the remaining contrast, skip-link, keyboard, and screen-reader findings from evidence.
+5. **#142 — narrow scope:** the invalid nested-button tab DOM has already been fixed; keep only owning-workspace tab accents and the optional active-workspace filter stretch goal.
+6. Update `README.md` and `CHANGELOG.md`, then cut a `v0.11.0` stabilization release.
+
+### Parallel development plan
+
+#### Wave 1 — foundations
+
+| Track | Tickets | Execution rule |
+|-------|---------|----------------|
+| Quality and accessibility | #34, then the audited remainder of #43 | Land before adding more keyboard-driven menus. #34 currently has 53 of 112 frontend buttons without an explicit type. |
+| Performance and filesystem | #39 and #149 in parallel; benchmark #148 | #39 is frontend and #149 backend, so they can proceed independently. Do not implement #148 unless profiling proves startup time or descriptor pressure. |
+| Workspace visual identity | #142, then #143 | Localized frontend work; land before the central store refactor to reduce conflicts. |
+| State architecture | #41 | Contract tests and decomposition design can start in parallel, but land after #142/#143. Preserve selectors/actions while extracting domains incrementally. |
+
+#### Wave 2 — product tracks
+
+Begin after #41 and the #43 accessibility baseline land:
+
+| Track | Tickets | Dependencies and sequencing |
+|-------|---------|-----------------------------|
+| Command UX | #44, then #45 and #46 in parallel | #44 should introduce a shared command/action registry reused by context menus, breadcrumbs, shortcuts, and later VCS actions. |
+| Run engine | #146 | Depends on #41 cleanly isolating run-output/execution state. Split persistence, per-run tabs, same-profile parallelism, and execution plans into independently reviewable phases. |
+| Git conflict UX | #164 | Can run alongside #44/#146. Treat it as data-loss-sensitive work with real-repository conflict fixtures and manual smoke tests. |
+
+#### Wave 3 — Git expansion and conditional work
+
+- **#166:** split into a safe/read-only phase (remote/local/tag model, tracking metadata, search, keyboard navigation) and a destructive phase (merge/rebase/rename/delete). Land destructive operations only after #164 establishes conflict recovery.
+- **#148:** implement only when a benchmark demonstrates a real bottleneck; otherwise leave deferred.
+- **#165:** blocked on an upstream API decision. `go-llm` exposes `provider.Router`, but convenient provider assembly remains under `internal/providerbootstrap`, which Firn cannot import. Export a supported bootstrap API upstream first; keep agentflow proof-artifact UI out of this ticket.
+
+### Ticket priority, model, and reasoning assignment
+
+Model guidance follows OpenAI's current [GPT-5.6 model guide](https://developers.openai.com/api/docs/guides/latest-model), [reasoning-effort guidance](https://learn.chatgpt.com/docs/models#pick-a-reasoning-effort), and [granular UI guidance](https://learn.chatgpt.com/use-cases/make-granular-ui-changes#pick-your-model): use `gpt-5.6-sol` for frontier/cross-cutting work, `gpt-5.6-terra` for cost-balanced work, and `gpt-5.3-codex-spark` for fast localized UI iteration. Use the lowest reasoning level that reliably covers the risk.
+
+| Priority | Ticket | Recommended disposition | Model | Reasoning |
+|----------|--------|-------------------------|-------|-----------|
+| Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. | `gpt-5.6-terra` | Light |
+| Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; close after the final fix/evidence PR merges. | `gpt-5.6-sol` | High |
+| P0 | #34 Button types | Implement now; mechanical correctness sweep with focused form regression tests. | `gpt-5.3-codex-spark` | Light |
+| P0 | #43 WCAG AA | Audit and re-scope before implementation; test keyboard, contrast, and screen-reader behavior. | `gpt-5.6-sol` | High |
+| P1 | #142 Workspace-colored tabs | Implement owning-workspace accents only; the nested-button fix is already shipped. | `gpt-5.3-codex-spark` | Medium |
+| P1 | #143 Infra file accents | Localized tree-row presentation change using existing workspace-region resolution. | `gpt-5.3-codex-spark` | Light |
+| P1 | #39 Dynamic languages | Lazy-import and reconfigure CodeMirror languages; enforce a bundle-size regression budget. | `gpt-5.6-terra` | Medium |
+| P1 | #149 Nested `.gitignore` | Implement Git-compatible nested precedence and negation semantics with fixtures. | `gpt-5.6-sol` | High |
+| P1 | #41 Zustand slices | Incremental domain extraction with unchanged public selectors/actions. | `gpt-5.6-sol` | High |
+| P2 | #44 Command Palette | Build the shared command registry first, then fuzzy-search UI and shortcuts. | `gpt-5.6-terra` | High |
+| P2 | #146 Run identity Phase 2 | Execute after #41; split the capability upgrade into small review gates. | `gpt-5.6-sol` | Extra High |
+| P2 | #164 Three-way merge UI | Require real conflicts, recovery tests, and manual verification before merge. | `gpt-5.6-sol` | Extra High |
+| P2 | #166 Rich VCS menu | Separate safe/read-only behavior from destructive branch operations. | `gpt-5.6-sol` | Extra High |
+| P3 | #45 Context menus | Reuse #44 commands; file-explorer and editor-tab surfaces can then proceed in parallel. | `gpt-5.6-terra` | Medium |
+| P3 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract. | `gpt-5.6-terra` | Medium |
+| Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. | `gpt-5.6-sol` | Extra High |
+| Blocked | #165 `go-llm` integration | Export a supported upstream provider-bootstrap API before changing Firn. | `gpt-5.6-sol` | High |
+
+### #112 manual smoke pass and closure gate
+
+The automated coverage is already strong; this smoke pass verifies the user-visible seams that unit tests cannot fully prove. Run it against the current `develop` build using a disposable Firn home so the test does not touch real Firn settings or managed-server caches.
+
+#### 2026-07-12 packaged native rerun: PASS — #112 ready to close after merge
+
+The packaged macOS arm64 app was exercised from disposable root `/private/tmp/firn-112-gate.qiqBFG` with user-installed language servers excluded from the launch `PATH`.
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Clean-cache lazy provisioning | **Pass** | Python `1.39.9`, gopls `v0.22.0`, TypeScript `5.3.0`, and rust-analyzer `2026-07-06` appeared under the disposable Firn cache only after their files were opened, one family at a time. The rerun exposed a missing frontend `.rs` mapping; a failing regression was added before the one-line fix, after which the packaged Rust path provisioned and reached ready. |
+| Python environment wiring | **Pass** | `structlog`, `src/smoke_pkg`, and `datetime.UTC` resolved with the detected Python 3.11.14 `.venv`. The Problems panel contained only the deliberate `Literal[42]`-to-`str` diagnostic; no import diagnostic or raw setup toast appeared. |
+| Interpreter override/reset | **Pass** | The native picker selected `/private/tmp/firn-112-gate.qiqBFG/manual-venv/bin/python3`, the setup card identified the manual interpreter, imports remained resolved, and **Reset to auto** restored the project `.venv` and cleared the persisted override. |
+| Offline and same-session Retry | **Pass** | A second empty Firn cache and isolated empty installer cache ran behind a deliberately unavailable process-scoped proxy. Firn stayed usable and rendered `Could not download the language server (offline)` with **Retry**. Bringing the proxy online and clicking Retry in the same app session installed basedpyright and restored the single deliberate diagnostic. |
+| Scope and host hygiene | **Pass** | Managed artifacts remained under the disposable Firn homes; the host language-server paths and global `PATH` were unchanged. Wi-Fi and all smoke processes were restored/stopped after the run. |
+
+All close criteria below are satisfied. The remaining sequencing requirement is to merge the fix/evidence PR, then close #112.
+
+#### 2026-07-12 defect-fix rerun: AUTOMATED PASS; NATIVE GATE UNOBSERVED — keep #112 open
+
+The fix was exercised on macOS arm64 with disposable root `/private/tmp/firn-112-smoke.I3boO5`. The temporary real-server Go harness was removed after the run. Production changes remain unstaged in the working tree.
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| TDD regressions | **Pass** | The initial focused run failed in the intended four places: whole-section and leaf-section configuration still returned `[src]`, while override mode lost detected metadata in both provider and emitted status. Review then exposed stale missing-interpreter diagnostics and unvalidated persisted overrides; focused regressions failed with `misconfigured_env` and an accepted deleted interpreter before their fixes. Reset-to-auto now returns to ordinary detection. |
+| LSP and repository Go verification | **Pass** | `go test ./internal/lsp/... -count=1`: **214 tests passed** across 3 packages. `go test ./... -count=1`: **655 tests passed** across 12 packages. `go vet ./...`: no issues. |
+| Real basedpyright 1.39.9, detected environment | **Pass** | A Python **3.11.14** `.venv` contained a normal `six==1.17.0` site-packages install; the workspace also contained `src/smoke_pkg`, `datetime.UTC`, and one deliberate line-8 assignment error. Basedpyright requested `python`, `basedpyright.analysis`, and `basedpyright`; its only diagnostic was `Literal[42]` not assignable to `str`. No site-packages, `src`, or stdlib import diagnostic appeared. |
+| Real basedpyright 1.39.9, manual override | **Pass** | Repeating the same stdio session setup with the manual override pointed at the fixture `.venv/bin/python` retained detected venv and rooted `extraPaths`; the unit regression also covers preservation of detected Python-version metadata. The same three configuration sections were requested and the deliberate line-8 type error remained the only diagnostic. |
+| Explicit project configuration semantics | **Pass** | The detector remains unchanged: existing `pyrightconfig.json` or `[tool.pyright] extraPaths` declarations suppress Firn's `src` injection. Only detector-delivered relative paths are rooted at the LSP configuration boundary; already-absolute paths remain absolute. Existing detector/config-provider coverage passed in the complete suite. |
+| Packaged build | **Pass** | Wails 2.11.0 production build completed and produced `build/bin/Firn.app/Contents/MacOS/firn`. Generated-binding content remained unchanged. |
+| Native lazy-family and Offline-to-Retry gate | **Not observed** | The packaged app launched with fresh home `/private/tmp/firn-112-native.HWdWfR`; `.firn/servers` was absent before launch. macOS returned `osascript is not allowed assistive access` and displayed the Accessibility permission dialog over Firn. Screen capture worked, but interaction was blocked, so no claim is made for one-family-at-a-time provisioning or same-session Offline-to-Retry recovery. |
+
+2026-07-12 outcome: required follow-up items 1–3 below are complete in the working tree. Item 4 remains the closure blocker.
+
+#### 2026-07-11 execution result: FAILED — keep #112 open
+
+Smoke root: `/private/tmp/firn-lsp-smoke.XCPypG` on macOS arm64, using a fresh packaged `develop` build and disposable homes/caches. Temporary harness files were removed after the run; only this evidence remains in the repository.
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Packaged build | **Pass** | `wails build` completed and produced `build/bin/Firn.app/Contents/MacOS/firn`. |
+| Fresh real managed installs | **Pass** | Pinned basedpyright `1.39.9`, gopls `v0.22.0`, typescript-language-server `5.3.0`, and rust-analyzer `2026-07-06` downloaded, verified/extracted, committed to a fresh cache, resolved from `launch.json`, and each stayed alive over stdio during a launch probe. |
+| Python 3.11 interpreter + site-packages | **Pass** | Firn detected the fixture `.venv/bin/python`; a normally installed site-packages module resolved. `datetime.UTC` produced no compatibility diagnostic. Editable installs that rely on executable `.pth` import hooks are not a valid static-analysis fixture, so the final pass used a normal wheel install. |
+| Python `src` layout | **Fail — product blocker** | The detector returned `extraPaths: ["src"]`; basedpyright requested `python`, `basedpyright.analysis`, and `basedpyright` configuration and received that value, but still published `Import "smoke_pkg" could not be resolved`. A smoke-only absolute value (`<projectRoot>/src`) immediately cleared the import error while retaining the deliberate type-error diagnostic. Production must resolve injected paths against the project root before returning LSP configuration. |
+| Manual interpreter override | **Fail — product blocker** | Selecting the same valid `.venv` interpreter changed `ConfigSource` to `override`, but `PythonEnv` replaced the detected environment with an interpreter-only object. `VenvDir`, `ExtraPaths`, and `PythonVersion` were lost (`extraPaths=[]`), so override mode can regress the same imports it is intended to repair. Overlay the override path/source onto detected metadata instead of returning early with a partial environment. |
+| Offline/retry plumbing | **Automated pass; native manual check pending** | Six focused Go tests passed for offline classification, retry root routing, and override plumbing; all 18 `LSPSetupCard` tests passed, including Retry invocation and error handling. A real native offline toggle/retry was not observed. |
+| Native setup-card/lazy-family UI | **Not observed** | The isolated Firn process launched, but macOS withheld both the Accessibility tree and screen capture from the automation host. No visual claim is made. Rerun this portion after granting the host Accessibility and Screen Recording permissions, or perform it manually. |
+
+Required #112 follow-up, in order:
+
+1. Convert detector-generated relative extra paths to project-root-resolved absolute paths at the LSP configuration boundary; retain explicit project config semantics.
+2. Make interpreter overrides enrich/overlay the detected environment so venv, `src`, and Python-version metadata survive.
+3. Add regressions for absolute `workspace/configuration` values and override metadata retention, plus a real basedpyright integration smoke that proves site-packages, `src` imports, Python 3.11 stdlib, and a deliberate diagnostic together.
+4. Rerun the full packaged native pass, including lazy one-family-at-a-time provisioning and an offline-to-Retry recovery in the same app session. Close #112 only when every row above passes.
+
+#### 1. Prepare a clean launch environment
+
+Build the current `develop` revision normally, then launch the packaged binary with a disposable home and a minimal tool shim. Building first avoids making the Go/npm build caches part of the smoke environment. The shim keeps the Go toolchain available for managed `gopls` installation while excluding user-installed `gopls`, `typescript-language-server`, `rust-analyzer`, and Python language servers from `PATH`.
+
+```bash
+wails build
+SMOKE_HOME="$(mktemp -d)"
+SMOKE_BIN="$SMOKE_HOME/bin"
+mkdir -p "$SMOKE_BIN"
+ln -s "$(command -v go)" "$SMOKE_BIN/go"
+env HOME="$SMOKE_HOME" \
+  PATH="$SMOKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
+  build/bin/Firn.app/Contents/MacOS/firn
+```
+
+The final path is the macOS build. Use `build/bin/firn` for Linux; on Windows, launch `build/bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
+
+#### 2. Use a four-workspace smoke repository
+
+Prepare a disposable repository with:
+
+- Python: `pyproject.toml`, Python 3.11+ `.venv`, `src/smoke_pkg/__init__.py`, and `src/main.py`; install one third-party package such as `structlog` into the venv.
+- Go: `go.mod` and `main.go`.
+- TypeScript: `package.json`, `tsconfig.json`, and `src/index.ts`.
+- Rust: `Cargo.toml` and `src/main.rs`.
+
+In `src/main.py`, import all three cases from #112:
+
+```python
+import structlog
+from datetime import UTC
+from smoke_pkg import VALUE
+```
+
+The file must be clean without `pyrightconfig.json` or Firn-specific configuration.
+
+#### 3. Verify lazy managed provisioning
+
+1. Open only the Python workspace and `src/main.py`.
+2. Confirm the setup card reports provisioning without a raw error toast, then clears or reports ready.
+3. Confirm only the Python family appears under `$SMOKE_HOME/.firn/servers`; Go, TypeScript, and Rust must not provision before their workspaces become active.
+4. Open one file in each remaining workspace, one family at a time. Confirm each transitions through managed provisioning to ready and creates only its own pinned cache directory.
+5. Confirm `command -v basedpyright-langserver`, `command -v gopls`, `command -v typescript-language-server`, and `command -v rust-analyzer` remain unchanged outside the smoke process. Firn must not mutate the global `PATH` or install into a global tool directory.
+
+#### 4. Verify Python environment wiring
+
+- `structlog` resolves from `.venv` site-packages.
+- `smoke_pkg` resolves through the detected `src` layout.
+- `datetime.UTC` resolves under the detected Python 3.11+ interpreter.
+- Add a deliberate type error and confirm a diagnostic appears; remove it and confirm the diagnostic clears.
+- If a project `pyrightconfig.json` or `[tool.pyright]` is added, confirm Firn honors it rather than overriding it.
+
+#### 5. Verify actionable failure and retry
+
+1. Use a second fresh smoke home, disconnect networking, and open a supported file that requires provisioning.
+2. Confirm Firn remains usable and shows an actionable non-blocking Offline/Failed card with **Retry**, not a bare server-not-found error or blocking dialog.
+3. Reconnect networking and click **Retry** without changing projects.
+4. Confirm provisioning completes and language features become active.
+
+#### 6. Verify interpreter override polish
+
+- Exercise **Select interpreter** with a valid alternate Python interpreter.
+- Confirm the setup UI identifies the manual override.
+- Click **Reset to auto** and confirm Firn returns to the detected project interpreter.
+- In a nested monorepo Python project, trigger **Retry** and confirm the server starts at the nested project root, not the repository root.
+
+#### 7. Close criteria
+
+Close #112 when all of the following are recorded in a final issue comment:
+
+- [x] Clean-cache managed provisioning succeeds without a system/project server.
+- [x] Python third-party, first-party `src`, and Python-version imports resolve with zero Firn config.
+- [x] Missing network/server produces a non-blocking actionable card and Retry recovers.
+- [x] Provisioning is lazy by active workspace and writes only under the Firn-managed cache.
+- [x] Python, Go, TypeScript, and Rust each reach a usable ready state.
+- [x] Interpreter override, Reset to auto, and nested-project Retry behave correctly.
+- [x] No raw setup error toast, global install, or global `PATH` mutation occurs.
+
+One primary-platform manual pass is sufficient for closure when the cross-platform catalog/provisioner tests and release build matrix remain green. Repeat the smoke on another OS only if the primary pass exposes platform-specific behavior.
+
+---
+
+## Delivery History (Archived)
+
+> The narrative below preserves implementation context from earlier roadmap snapshots. Its references to "open" or "remaining" work are historical; the authoritative backlog and priorities are in the section above.
 
 Current status: **Milestone 7 (Git Integration) is complete and merged (PR #162, develop `eb43370`) — every planned milestone is now shipped.** Working-tree status in the file tree and status bar; a read-only side-by-side diff viewer with next/prev navigation, resizable columns, and a live editor-buffer diff; JetBrains-style commit panel with per-file include checkboxes, stage/commit/pull/push (Publish when there is no upstream), and workspace scoping via the ownership model; a portaled branch switcher shared between the header pill and the status bar; and gutter change bars with a peek popup showing a unified word-level inline diff and one-click revert-to-HEAD. The LSP hover was also reworked to highlight signatures with the file's real language parser (Go and all languages) and render doc links as clickable. **#163** hunk-level staging shipped (PR #173, hardened via review PR #174/#176) and **#167** intent-to-add (`git add -N`, track-without-staging on untracked rows so new files diff and hunk-stage) shipped via PR #177; on the LSP side **#151** Phase 3 managed provisioning for `gopls`, `tsserver`, and `rust-analyzer` shipped via PR #178 (Python landed in #150). Open Git follow-ups: **#164** 3-way merge UI, **#165** go-llm library integration (replace the golem shell-out), **#166** richer branch/VCS menu, **#169** editable diff. Other open follow-ups: #152 (LSP provisioning polish), #148/#149 (lazy-load watcher + nested gitignore), #146 (run-identity Phase 2), #142 (workspace-colored tabs), #168 (Structure view from document symbols).
 
@@ -221,9 +437,9 @@ Backend prerequisite for the Run Profiles UI — profiles now carry an owning wo
 
 ### #107: Run Profiles - LANES Output View Polish
 UI-only follow-up on the run-output LANES tab.
-- [ ] Resizable stdout/stderr columns (currently hard-split 50/50 via `flex: 1`)
-- [ ] STDERR header glyph color (final letter renders off-color; likely sticky-header bleed-through)
-- [ ] Sticky header bleed-through — virtualized rows paint over the header on fast scroll; remove the `.outputContent` top-padding gap above `top: 0`
+- [x] Resizable stdout/stderr columns (PR #138)
+- [x] STDERR header glyph color (PR #138)
+- [x] Sticky header bleed-through and independent lane scrolling (PR #138, refined by #137/PR #139)
 
 ### Run-output preview (shipped, PR #106)
 - [x] Scrollable in-card output preview (`overflow-y: auto`, taller `max-height`)
@@ -374,12 +590,16 @@ Dynamic `import()` for language extensions per file type to reduce initial bundl
 
 Surfaced while testing a Python workspace (`quantum_trader`) during the file-tree work (#111).
 
-### #112: LSP - auto-provision language servers + wire project environment
-Zero-config language support, in two layers.
+### #112: LSP - auto-provision language servers + wire project environment (COMPLETE; CLOSE AFTER PR MERGE)
+Zero-config language support, in two layers. Provisioning implementation and review follow-ups are shipped, and the 2026-07-12 packaged native closure gate passed. See the [recorded smoke evidence and closure gate](#112-manual-smoke-pass-and-closure-gate).
 
 **Phase 1 — project environment auto-wiring: SHIPPED via PR #121.** Pyright now resolves third-party (venv site-packages), first-party (`src` via `extraPaths`), and version-gated stdlib (`datetime.UTC`) imports in a standard `src`-layout uv/venv project with no per-project Firn config. New pure (no command execution) `internal/lsp/pythonenv` detector (interpreter precedence: in-root `VIRTUAL_ENV` → `.venv` → `venv` → pyenv stat-check → system; out-of-root `VIRTUAL_ENV` ignored). The client gained a server→client request handler that answers pyright's `workspace/configuration` pull (root cause: it was replying `-32601` to **all** server requests), advertises the `workspace.configuration` capability, and sends `didChangeConfiguration`. A Manager-owned, language-generic `WorkspaceConfigProvider` (dialect-agnostic across `python`/`pyright`/`basedpyright`, object + leaf sections) forwards `pythonPath`/`venvPath`/`analysis.extraPaths`. Raw server error strings replaced by typed `ServerStatus` setup fields (`setupState`: ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable, + action/detailCode) rendered as a non-blocking `LSPSetupCard` above the editor; `useLSPEvents` suppresses the raw Toast when typed status is present.
 
-**Phase 2 — managed server provisioning: OPEN.** Provision the server **binary** itself: download a pinned version (`basedpyright` standalone, no Node dependency) into an app cache (`~/.firn/servers/<lang>/<version>/`) when none is found locally/on PATH; offline/failure → actionable install/retry UI (`download_available`/`offline` states reserved in Phase 1). Lazy (active workspace only); never mutates the user's global env/PATH. The config-forwarding plumbing already generalizes (Python only wired today; gopls/tsserver/rust-analyzer plug into the same provider seam). Smaller Phase 1 follow-ups: command-backed uv/poetry env discovery outside the project root; interactive interpreter picker / "Doctor" panel; enrich the polled `GetLSPStatus` path with the typed setup fields (event path already does).
+**Phase 2 — managed Python server provisioning: SHIPPED via PR #150.** Missing Python servers provision a pinned `basedpyright` toolchain under `~/.firn/servers`, with checksum verification, atomic installation, command-backed uv/poetry interpreter discovery, a Doctor-backed interpreter picker, and actionable offline/retry states. Provisioning is lazy to the active workspace and never mutates global PATH or project dependencies.
+
+**Phase 3 — managed Go/TypeScript/Rust provisioning: SHIPPED via #151 / PR #178.** The family-generic provisioner now covers `gopls`, `typescript-language-server`, and `rust-analyzer` with pinned artifacts/toolchain installs, shared cache resolution, and family-aware failure guidance.
+
+**Review polish: SHIPPED via #152; remaining override defect fixed locally on 2026-07-12.** Manual interpreter overrides surface so **Reset to auto** is reachable; Retry preserves the nested project root; musllinux Node wheels cover Alpine's manual fallback. The current working tree overlays the override interpreter path/source onto the detected environment, retaining venv, rooted `extraPaths`, Python-version metadata, and confidence while clearing superseded missing-interpreter diagnostics; reset returns to ordinary detection. Real basedpyright 1.39.9 retained only the deliberate diagnostic before and after override.
 
 ### #113: Editor - diagnostic hover tooltip has no background ✅
 Shipped: the lint tooltip content (`.cm-tooltip-lint`, which renders inside the intentionally-transparent `.cm-tooltip-hover` container) now gets an opaque surface — background, border, padding, shadow, z-index — with per-severity (error/warning/info/hint) left-accent borders, all from the shared chrome design tokens.
@@ -399,17 +619,17 @@ TypeScript 5.7+, Vite 6.x, @swc/jest, path aliases, optimizeDeps.
 ## Code Quality
 
 ### #41: Split Zustand Store into Domain Slices
-Split monolithic store into workspace/fileTree/editor/terminal/ui slices.
+Re-scope against the current architecture: `ideStore.ts` is 1,787 lines, while Git, LSP, and search already have dedicated stores. Incrementally extract workspace, file-tree, editor, terminal, UI, run-profile, and run-output domains while preserving the existing selector/action API during migration. Land after #142/#143 and before #146.
 
-### #42: Fix Hardcoded macOS Paths
-Cross-platform path handling for macOS, Linux, and Windows support.
+### #42: Fix Hardcoded macOS Paths ✅ CLOSED
+Closed as completed on 2026-07-11. Production paths use `os.UserHomeDir`, `filepath`, platform-specific implementations, and cross-platform release builds rather than hard-coded macOS locations.
 
 ---
 
 ## Accessibility
 
 ### #43: Accessibility Improvements (WCAG AA)
-Fix contrast ratios, skip-to-content link, aria-busy, roving tabindex for tree, aria-live regions.
+Audit and re-scope before implementation. Already shipped: WAI-ARIA file-tree navigation with an active descendant, roving/single-tab-stop behavior, file-tree `aria-busy`, toast/search/LSP live regions, and several accessible tab/listbox patterns. Remaining evidence-driven work should cover contrast, skip-to-content, full keyboard traversal, focus restoration, dialog/menu semantics, and screen-reader verification.
 
 ---
 
@@ -434,8 +654,8 @@ Service Adapter Pattern for connecting to external backends.
 
 ## Bug Fixes
 
-### #33: Window Dragging Not Working
-Likely fixed in code via Wails macOS titlebar configuration and `--wails-draggable: drag` on the header; keep open until verified in a packaged macOS app smoke test.
+### #33: Window Dragging Not Working ✅ CLOSED
+Fixed via Wails macOS titlebar configuration and `--wails-draggable: drag` on the header.
 
 ### #34: Add Button Type Attributes
 Missing explicit `type` attributes on non-submit buttons.

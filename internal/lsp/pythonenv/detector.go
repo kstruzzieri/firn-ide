@@ -98,7 +98,7 @@ func Detect(projectRoot string, deps Deps) Env {
 // In-root VIRTUAL_ENV beats .venv beats venv. An out-of-root VIRTUAL_ENV is
 // ignored: an unrelated active venv must not silently miswire the workspace.
 func resolveVenvDir(projectRoot string, deps Deps) (string, string) {
-	if active := deps.Getenv("VIRTUAL_ENV"); active != "" && pathInside(projectRoot, active) && isDir(active, deps) {
+	if active := deps.Getenv("VIRTUAL_ENV"); active != "" && PathInside(projectRoot, active) && isDir(active, deps) {
 		return active, "VIRTUAL_ENV"
 	}
 	if projectRoot != "" {
@@ -273,7 +273,9 @@ func requiresPythonVersion(projectRoot string, deps Deps) string {
 	return ""
 }
 
-func pathInside(root, p string) bool {
+// PathInside reports whether p is root or lies under root after cleaning.
+// False when either argument is empty.
+func PathInside(root, p string) bool {
 	if root == "" || p == "" {
 		return false
 	}

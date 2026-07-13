@@ -1965,8 +1965,15 @@ func TestEmitStatus_PythonOverrideEmitsOverrideConfigSource(t *testing.T) {
 	})
 	m.configProvider = &envConfigProvider{
 		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
-			t.Fatal("detect must not run when an override is active")
-			return pythonenv.Env{}
+			return pythonenv.Env{
+				InterpreterPath: "/proj/.venv/bin/python",
+				VenvDir:         "/proj/.venv",
+				ExtraPaths:      []string{"src"},
+				PythonVersion:   "3.11",
+				Source:          ".venv",
+				Confidence:      "high",
+				Diagnostics:     []string{"venv_without_interpreter:/proj/.venv"},
+			}
 		},
 		pythonDeps:  pythonenv.Deps{},
 		overrideFor: func(string) string { return "/manual/bin/python" },
@@ -1982,6 +1989,9 @@ func TestEmitStatus_PythonOverrideEmitsOverrideConfigSource(t *testing.T) {
 	}
 	if got.InterpreterPath != "/manual/bin/python" {
 		t.Errorf("InterpreterPath = %q, want /manual/bin/python", got.InterpreterPath)
+	}
+	if len(got.ExtraPaths) != 1 || got.ExtraPaths[0] != "src" || got.PythonVersion != "3.11" {
+		t.Errorf("detected metadata lost from override status: %+v", got)
 	}
 }
 
@@ -2276,9 +2286,22 @@ func TestSetAndClearInterpreterOverride_roundTrip(t *testing.T) {
 func TestSeedInterpreterOverride_setsWithoutRestart(t *testing.T) {
 	m := NewManager(nil)
 	root := t.TempDir()
-	m.SeedInterpreterOverride(root, "/some/interp")
-	if got := m.overrideForRoot(root); got != "/some/interp" {
-		t.Errorf("seeded override = %q, want /some/interp", got)
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.SeedInterpreterOverride(root, interp)
+	if got := m.overrideForRoot(root); got != interp {
+		t.Errorf("seeded override = %q, want %q", got, interp)
+	}
+}
+
+func TestSeedInterpreterOverride_ignoresMissingPath(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	m.SeedInterpreterOverride(root, filepath.Join(root, "deleted-python"))
+	if got := m.overrideForRoot(root); got != "" {
+		t.Errorf("seeded override = %q, want empty for missing path", got)
 	}
 }
 
@@ -2295,6 +2318,46 @@ func TestOverrideFeedsConfigProvider(t *testing.T) {
 	env := pythonEnvFromProvider(m.configProvider, root)
 	if env.InterpreterPath != interp || env.Source != "override" {
 		t.Errorf("provider env = %+v, want interpreter %q source override", env, interp)
+	}
+}
+
+func TestClearInterpreterOverride_restoresDetectedEnvironment(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	auto := filepath.Join(root, ".venv", "bin", "python")
+	manual := filepath.Join(root, "manual", "python")
+	if err := os.MkdirAll(filepath.Dir(manual), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manual, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	provider := m.configProvider.(*envConfigProvider)
+	provider.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
+		return pythonenv.Env{
+			InterpreterPath: auto,
+			VenvDir:         filepath.Join(root, ".venv"),
+			ExtraPaths:      []string{"src"},
+			PythonVersion:   "3.11",
+			Source:          ".venv",
+			Confidence:      "high",
+		}
+	}
+
+	m.SeedInterpreterOverride(root, manual)
+	overridden := provider.PythonEnv(root)
+	if overridden.InterpreterPath != manual || overridden.Source != "override" {
+		t.Fatalf("overridden env = %+v", overridden)
+	}
+	if err := m.ClearInterpreterOverride(root); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	detected := provider.PythonEnv(root)
+	if detected.InterpreterPath != auto || detected.Source != ".venv" || detected.VenvDir != filepath.Join(root, ".venv") {
+		t.Fatalf("detected env after clear = %+v", detected)
+	}
+	if len(detected.ExtraPaths) != 1 || detected.ExtraPaths[0] != "src" || detected.PythonVersion != "3.11" {
+		t.Errorf("detected metadata after clear = %+v", detected)
 	}
 }
 
