@@ -113,17 +113,17 @@ The roadmap includes a built-in AI assistant panel with:
 │                        Wails Runtime                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  ┌─────────────────┐              ┌─────────────────────────┐  │
-│  │   Go Backend    │◄────────────►│    React Frontend       │  │
-│  │                 │   bindings   │                         │  │
-│  │  • File System  │              │  • CodeMirror 6 Editor  │  │
-│  │  • FS Watcher   │              │  • Zustand State        │  │
-│  │  • Run Profiles │              │  • Run Profile Cards    │  │
-│  │  • PTY Terminal │              │  • Panel System         │  │
-│  │  • Workspace    │              │  • Run Output Views     │  │
-│  │  • LSP Client   │              │  • LSP Editor UX        │  │
-│  │  • ripgrep      │              │  • Search UI            │  │
-│  └─────────────────┘              └─────────────────────────┘  │
+│  ┌─────────────────┐              ┌─────────────────────────┐   │
+│  │   Go Backend    │◄────────────►│    React Frontend       │   │
+│  │                 │   bindings   │                         │   │
+│  │  • File System  │              │  • CodeMirror 6 Editor  │   │
+│  │  • FS Watcher   │              │  • Zustand State        │   │
+│  │  • Run Profiles │              │  • Run Profile Cards    │   │
+│  │  • PTY Terminal │              │  • Panel System         │   │
+│  │  • Workspace    │              │  • Run Output Views     │   │
+│  │  • LSP Client   │              │  • LSP Editor UX        │   │
+│  │  • ripgrep      │              │  • Search UI            │   │
+│  └─────────────────┘              └─────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
