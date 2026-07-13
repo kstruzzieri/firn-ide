@@ -1,18 +1,18 @@
 #!/bin/sh
 # Firn IDE one-command installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | sh
 #
 # Resolves the platform binary from the latest GitHub release, downloads it, and
 # installs it. Supports macOS (arm64/amd64) and Linux (amd64). Windows users:
 # use the manual zip from the Releases page.
 #
 # Env overrides:
-#   FIRN_VERSION   pin a release tag (e.g. v0.10.0) instead of "latest"
+#   FIRN_VERSION   pin a release tag (e.g. v0.11.0) instead of "latest"
 #   FIRN_DRY_RUN   set to 1 to print the resolved URL + target dir and exit
 #
-# ponytail: no checksum/signature verification of the download -- binaries are
-# unsigned today; add when code signing/notarization lands.
+# SHA256SUMS detects a corrupt or substituted asset before extraction.
+# ponytail: releases remain unsigned; add signatures with code signing/notarization.
 
 set -e
 
@@ -61,6 +61,7 @@ else
 		| head -n 1)
 	[ -n "$URL" ] || err "could not find asset '$ASSET' in the latest release ($api)"
 fi
+CHECKSUM_URL="${URL%/"$ASSET"}/SHA256SUMS"
 
 # Pick install target (per-OS), preferring a system location, falling back to
 # a user-writable one so the script works without sudo.
@@ -83,6 +84,7 @@ if [ "$FIRN_DRY_RUN" = 1 ]; then
 	echo "arch:     $ARCH"
 	echo "asset:    $ASSET"
 	echo "url:      $URL"
+	echo "checksum: $CHECKSUM_URL"
 	echo "dest_dir: $DEST_DIR"
 	exit 0
 fi
@@ -94,6 +96,28 @@ trap 'rm -rf "$tmp"' EXIT
 
 echo "Downloading $ASSET ..."
 curl -fsSL "$URL" -o "$tmp/$ASSET" || err "download failed: $URL"
+curl -fsSL "$CHECKSUM_URL" -o "$tmp/SHA256SUMS" || err "checksum download failed: $CHECKSUM_URL"
+
+expected=$(awk -v asset="$ASSET" '$2 == asset { print $1; matches++ } END { if (matches != 1) exit 1 }' "$tmp/SHA256SUMS") ||
+	err "checksum entry missing or duplicated for $ASSET"
+if [ "${#expected}" -ne 64 ]; then
+	err "invalid checksum for $ASSET"
+fi
+case "$expected" in
+	*[!0-9a-f]*) err "invalid checksum for $ASSET" ;;
+esac
+
+if command -v sha256sum >/dev/null 2>&1; then
+	actual=$(sha256sum "$tmp/$ASSET" | awk '{ print $1 }')
+elif command -v shasum >/dev/null 2>&1; then
+	actual=$(shasum -a 256 "$tmp/$ASSET" | awk '{ print $1 }')
+else
+	err "sha256sum or shasum is required but not found"
+fi
+
+if [ "$actual" != "$expected" ]; then
+	err "checksum mismatch for $ASSET"
+fi
 
 if [ "$OS" = macos ]; then
 	command -v unzip >/dev/null 2>&1 || err "unzip is required but not found"

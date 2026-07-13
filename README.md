@@ -33,17 +33,17 @@ Each workspace has independent layout state, scoped language servers (only the a
 **Quick install** (macOS and Linux) — downloads the latest release and installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | sh
 ```
 
 Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
 
 ```bash
 # preview the resolved download URL and target dir without installing
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | FIRN_DRY_RUN=1 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | FIRN_DRY_RUN=1 sh
 
 # pin a specific release instead of the latest
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/develop/install.sh | FIRN_VERSION=v0.10.0 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | FIRN_VERSION=v0.11.0 sh
 ```
 
 Windows users: use the manual zip below.
@@ -198,7 +198,7 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Completion source with trigger characters, detail/docs, and snippet support
 - [x] Hover tooltips and go-to-definition (`F12`, Cmd/Ctrl-click)
 - [x] Shared registry entries for Go (`gopls`) and Python (`pyright-langserver`)
-- [x] Managed server provisioning — pinned `basedpyright` downloaded into `~/.firn` with interpreter wiring and an offline/retry setup card (active workspace only; never mutates global env/PATH)
+- [x] Managed server provisioning — pinned `basedpyright`, `gopls`, `typescript-language-server`, and `rust-analyzer` installed under `~/.firn`, with interpreter wiring and offline/retry setup guidance (active workspace only; never mutates global env/PATH)
 
 **Search**
 - [x] Workspace-wide ripgrep search with regex, case, and whole-word options
@@ -226,14 +226,14 @@ The roadmap includes a built-in AI assistant panel with:
 **Version Control (Git)**
 - [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
 - [x] Branch switcher shared between an always-visible header pill and the status bar
-- [x] Diff viewer — read-only side-by-side, next/prev change navigation, resizable columns, and a live diff against the open editor buffer
+- [x] Diff viewer — side-by-side, next/prev change navigation, resizable columns, and an editable working-tree side for unstaged changes
 - [x] Commit panel — per-file and section include checkboxes, stage/commit, pull/push (Publish when there is no upstream), workspace-scoped
 - [x] Gutter change bars with a peek popup — unified word-level inline diff and one-click revert-to-HEAD
+- [x] Hunk-level stage/unstage from editor and diff gutters, including intent-to-add support for untracked files
 
 ### Planned
 
-- [ ] Git — hunk-level staging, intent-to-add for new files, richer branch menu, 3-way merge UI (#163-#169)
-- [ ] Managed provisioning Phase 3 — `gopls`, `tsserver`, `rust-analyzer` (Python shipped)
+- [ ] Git — richer branch menu (#166) and 3-way merge UI (#164)
 - [ ] Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted history
 - [ ] AI Chat Panel
 
@@ -279,7 +279,7 @@ firn-ide/
 
 - Go 1.23+
 - Node.js 18+
-- Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0`
 
 ### Commands
 
@@ -319,10 +319,10 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-1. Git integration (Milestone 7: #26 status display, #27 basic operations) — the only unstarted milestone and the highest-value remaining gap.
-2. LSP follow-ups — managed provisioning Phase 3 (#151: gopls/tsserver/rust-analyzer) and Phase 2 polish (#152).
-3. File-tree follow-ups — lazy watcher reconcile (#148) and nested `.gitignore` handling (#149).
-4. Run execution identity Phase 2 (#146) — per-run retained tabs, same-profile parallelism, persisted run history.
+1. Finalize the v0.11.0 stabilization release: merge the verified preparation work to `develop`, open a `develop` → `main` release PR, tag the resulting `main` commit as `v0.11.0-rc.1`, validate every packaged platform and install behavior, then tag final `v0.11.0` only after owner approval.
+2. Quality and accessibility: add explicit button types (#34), then audit and re-scope the remaining WCAG AA work (#43).
+3. Product hardening: workspace-owned editor-tab accents (#142), infrastructure file accents (#143), dynamic CodeMirror language loading (#39), and nested `.gitignore` support (#149).
+4. State architecture (#41), followed by the command palette (#44), run execution identity Phase 2 (#146), and three-way Git conflict resolution (#164).
 
 ## Contributing
 
