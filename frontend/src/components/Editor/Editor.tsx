@@ -5,7 +5,14 @@
  * Manages open files, tab switching, and editor state.
  */
 
-import { useCallback, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import styles from './Editor.module.css';
 import {
   useOpenFiles,
@@ -13,6 +20,7 @@ import {
   useIDEStore,
   useRecentWorkspaces,
   useWorkspace,
+  useWorkspaces,
 } from '../../stores/ideStore';
 import { FileIcon } from '../FileExplorer/FileIcon';
 import { FolderOutlineIcon, GitBranchIcon } from '../icons';
@@ -23,13 +31,19 @@ import { GitDiffView } from './GitDiffView';
 import { useGitStore } from '../../stores/gitStore';
 import { useGitBaseline } from '../../hooks/useGitBaseline';
 import { getLanguageName } from './codemirror';
+import { createWorkspacePathResolver } from '../../utils/workspaceRegions';
 import firnLogo from '../../assets/branding/banner-transparent.svg';
 
 export function Editor() {
   const openFiles = useOpenFiles();
   const activeFile = useActiveFile();
   const workspace = useWorkspace();
+  const workspaces = useWorkspaces();
   const recentWorkspaces = useRecentWorkspaces();
+  const resolveWorkspace = useMemo(
+    () => createWorkspacePathResolver(workspace?.path ?? '', workspaces),
+    [workspace?.path, workspaces]
+  );
   const diffSession = useGitStore((state) => state.diffSession);
   const diffFocused = useGitStore((state) => state.diffFocused);
   const gitBaseline = useGitBaseline(activeFile?.path);
@@ -117,6 +131,7 @@ export function Editor() {
   // instead (e.g. the file opened from a diff was closed, leaving only the
   // diff tab) — otherwise the panel would render blank.
   const showDiff = !!diffSession && (diffFocused || !activeFile);
+  const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
 
   // Re-fetch the diff each time it becomes visible so it reflects edits made in
   // the editor while it was in the background (the working-tree side re-reads
@@ -188,6 +203,10 @@ export function Editor() {
           // opened from doesn't also read as active.
           const isActive = file.id === activeFile?.id && !showDiff;
           const languageName = getLanguageName(file.name);
+          const owner = resolveWorkspace(file.path);
+          const tabStyle = owner
+            ? ({ ['--tab-accent' as string]: `var(--accent-${owner.accent})` } as CSSProperties)
+            : undefined;
 
           const activateFileTab = () => {
             useGitStore.getState().setDiffFocused(false);
@@ -198,7 +217,8 @@ export function Editor() {
             <div
               key={file.id}
               id={`tab-${file.id}`}
-              className={`${styles.tab} ${isActive ? styles.active : ''}`}
+              className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
+              style={tabStyle}
               role="tab"
               tabIndex={0}
               aria-selected={isActive}
@@ -227,7 +247,14 @@ export function Editor() {
         {diffSession && (
           <div
             id="tab-git-diff"
-            className={`${styles.tab} ${showDiff ? styles.active : ''}`}
+            className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
+            style={
+              diffOwner
+                ? ({
+                    ['--tab-accent' as string]: `var(--accent-${diffOwner.accent})`,
+                  } as CSSProperties)
+                : undefined
+            }
             role="tab"
             tabIndex={0}
             aria-selected={showDiff}

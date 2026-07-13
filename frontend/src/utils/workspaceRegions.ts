@@ -30,6 +30,39 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
   return null;
 }
 
+function orderedWorkspaces(workspaces: workspace.WorkspaceDef[]): workspace.WorkspaceDef[] {
+  return workspaces
+    .filter((candidate) => candidate.id !== 'project')
+    .sort((a, b) => b.relDir.length - a.relDir.length);
+}
+
+function resolveRelativeWorkspace(
+  relPath: string,
+  workspaces: workspace.WorkspaceDef[]
+): workspace.WorkspaceDef | null {
+  return (
+    workspaces.find(
+      (candidate) =>
+        candidate.relDir === '' ||
+        relPath === candidate.relDir ||
+        relPath.startsWith(candidate.relDir + '/')
+    ) ?? null
+  );
+}
+
+/** Builds a segment-safe, longest-prefix resolver for file workspace ownership. */
+export function createWorkspacePathResolver(
+  repoRoot: string,
+  workspaces: workspace.WorkspaceDef[]
+): (absPath: string) => workspace.WorkspaceDef | null {
+  const ordered = orderedWorkspaces(workspaces);
+
+  return (absPath: string): workspace.WorkspaceDef | null => {
+    const rel = relativePathFromRoot(absPath, repoRoot);
+    return rel === null ? null : resolveRelativeWorkspace(rel, ordered);
+  };
+}
+
 /**
  * Project-View tinting of LOOSE ROOT FILES only. Workspace *directory*
  * classification stays backend-owned (internal/workspace/detect.go markerRules).
@@ -65,20 +98,14 @@ export function createRegionAccentResolver(
   repoRoot: string,
   workspaces: workspace.WorkspaceDef[]
 ): (entry: FileEntry) => WorkspaceAccent | null {
-  const regions = workspaces
-    .filter((w) => w.id !== 'project' && w.relDir !== '')
-    .map((w) => ({ relDir: w.relDir, accent: w.accent as WorkspaceAccent }))
-    .sort((a, b) => b.relDir.length - a.relDir.length);
+  const ordered = orderedWorkspaces(workspaces);
 
   return (entry: FileEntry): WorkspaceAccent | null => {
     const rel = relativePathFromRoot(entry.path, repoRoot);
     if (rel === null) return null;
 
-    for (const region of regions) {
-      if (rel === region.relDir || rel.startsWith(region.relDir + '/')) {
-        return region.accent;
-      }
-    }
+    const owner = resolveRelativeWorkspace(rel, ordered);
+    if (owner?.relDir) return owner.accent as WorkspaceAccent;
 
     if (!entry.isDir && !rel.includes('/')) {
       const exact = rootFileAccentRules.exact[entry.name];

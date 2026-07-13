@@ -1,4 +1,4 @@
-import { relativePathFromRoot } from '../../utils/workspaceRegions';
+import { createWorkspacePathResolver, relativePathFromRoot } from '../../utils/workspaceRegions';
 
 describe('relativePathFromRoot', () => {
   const root = '/Users/me/repo';
@@ -52,6 +52,40 @@ function ws(partial: Partial<workspace.WorkspaceDef>): workspace.WorkspaceDef {
 function entry(path: string, isDir = false, name?: string): FileEntry {
   return { path, isDir, name: name ?? path.split('/').pop()! } as FileEntry;
 }
+
+describe('createWorkspacePathResolver', () => {
+  const root = '/Users/me/repo';
+  const workspaces = [
+    ws({ id: 'project', relDir: '', accent: 'project' }),
+    ws({ id: 'root:go', relDir: '', accent: 'amber' }),
+    ws({ id: 'backend', relDir: 'backend', accent: 'cyan' }),
+    ws({ id: 'backend/api', relDir: 'backend/api', accent: 'green' }),
+  ];
+
+  it('uses the root workspace for files outside nested workspace regions', () => {
+    const resolve = createWorkspacePathResolver(root, workspaces);
+    expect(resolve('/Users/me/repo/main.go')?.id).toBe('root:go');
+  });
+
+  it('prefers the longest matching workspace path', () => {
+    const resolve = createWorkspacePathResolver(root, workspaces);
+    expect(resolve('/Users/me/repo/backend/api/main.go')?.id).toBe('backend/api');
+    expect(resolve('/Users/me/repo/backend/db/query.go')?.id).toBe('backend');
+  });
+
+  it('returns null for paths outside the repository', () => {
+    const resolve = createWorkspacePathResolver(root, workspaces);
+    expect(resolve('/Users/me/other/main.go')).toBeNull();
+  });
+
+  it('does not match workspace names across path-segment boundaries', () => {
+    const resolve = createWorkspacePathResolver(root, [
+      ws({ id: 'project', relDir: '', accent: 'project' }),
+      ws({ id: 'api', relDir: 'backend/api', accent: 'green' }),
+    ]);
+    expect(resolve('/Users/me/repo/backend/apiary/main.go')).toBeNull();
+  });
+});
 
 describe('createRegionAccentResolver', () => {
   const root = '/Users/me/repo';

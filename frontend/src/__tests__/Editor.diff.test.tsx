@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useIDEStore } from '../stores/ideStore';
 import { useGitStore, type DiffSession } from '../stores/gitStore';
+import type { workspace } from '../../wailsjs/go/models';
 
 jest.mock('../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: jest.fn(),
@@ -194,5 +195,66 @@ describe('Editor git diff tab', () => {
     });
 
     expect(useGitStore.getState().diffFocused).toBe(true);
+  });
+});
+
+describe('Editor workspace tab accents', () => {
+  const workspaces = [
+    { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
+    { id: 'root:go', name: 'Root Go', relDir: '', type: 'go', accent: 'amber' },
+    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'web', accent: 'blue' },
+    { id: 'backend', name: 'Backend', relDir: 'backend', type: 'go', accent: 'cyan' },
+    { id: 'api', name: 'API', relDir: 'backend/api', type: 'go', accent: 'green' },
+  ] as workspace.WorkspaceDef[];
+
+  it('resolves root, nested, boundary, and unrelated tabs independently of the active workspace', () => {
+    useIDEStore.setState({
+      workspaces,
+      activeWorkspaceId: 'frontend',
+      openFiles: [
+        { ...openFile('f1', 'App.tsx'), path: '/repo/frontend/src/App.tsx' },
+        { ...openFile('f2', 'root.go'), path: '/repo/root.go' },
+        { ...openFile('f3', 'api.go'), path: '/repo/backend/api/api.go' },
+        { ...openFile('f4', 'apiary.go'), path: '/repo/backend/apiary/apiary.go' },
+        { ...openFile('f5', 'notes.md'), path: '/outside/notes.md' },
+      ],
+      activeFileId: 'f1',
+    });
+
+    render(<Editor />);
+
+    expect(screen.getByRole('tab', { name: /App\.tsx/i })).toHaveStyle(
+      '--tab-accent: var(--accent-blue)'
+    );
+    expect(screen.getByRole('tab', { name: /root\.go/i })).toHaveStyle(
+      '--tab-accent: var(--accent-amber)'
+    );
+    expect(screen.getByRole('tab', { name: /api\.go/i })).toHaveStyle(
+      '--tab-accent: var(--accent-green)'
+    );
+    expect(screen.getByRole('tab', { name: /apiary\.go/i })).toHaveStyle(
+      '--tab-accent: var(--accent-cyan)'
+    );
+    expect(
+      screen.getByRole('tab', { name: /notes\.md/i }).style.getPropertyValue('--tab-accent')
+    ).toBe('');
+  });
+
+  it('colors a diff tab with its file workspace rather than the active workspace', () => {
+    useIDEStore.setState({ workspaces, activeWorkspaceId: 'frontend' });
+    useGitStore.setState({
+      diffSession: {
+        ...session,
+        path: 'backend/api/diff.go',
+        absPath: '/repo/backend/api/diff.go',
+      },
+      diffFocused: true,
+    });
+
+    render(<Editor />);
+
+    expect(screen.getByRole('tab', { name: /diff\.go.*diff/i })).toHaveStyle(
+      '--tab-accent: var(--accent-green)'
+    );
   });
 });
