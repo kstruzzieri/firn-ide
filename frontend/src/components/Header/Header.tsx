@@ -134,6 +134,7 @@ export function Header() {
       {/* Workspace selector with dropdown */}
       <div className={styles.workspaceWrapper}>
         <button
+          type="button"
           ref={buttonRef}
           className={styles.workspaceBtn}
           onClick={toggleMenu}
@@ -158,6 +159,7 @@ export function Header() {
             onKeyDown={handleMenuKeyDown}
           >
             <button
+              type="button"
               className={styles.menuItem}
               onClick={handleOpenFolder}
               role="menuitem"
@@ -174,6 +176,7 @@ export function Header() {
                 <div className={styles.menuLabel}>Recent Projects</div>
                 {recentProjects.map((project) => (
                   <button
+                    type="button"
                     key={project.path}
                     className={styles.menuItem}
                     onClick={() => handleOpenRecent(project.path)}
@@ -198,7 +201,11 @@ export function Header() {
       <BranchSwitcher compact />
 
       {/* Search */}
-      <button className={`${styles.headerBtn} ${styles.searchBtn}`} aria-label="Search everywhere">
+      <button
+        type="button"
+        className={`${styles.headerBtn} ${styles.searchBtn}`}
+        aria-label="Search everywhere"
+      >
         <SearchIcon aria-hidden="true" />
         <span>Search Everywhere</span>
         <span className={styles.searchShortcut}>{formatShortcut('\u21e7\u2318P')}</span>
