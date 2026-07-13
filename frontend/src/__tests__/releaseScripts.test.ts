@@ -51,14 +51,33 @@ describe('release changelog extraction', () => {
 
   it('rejects a final tag while its changelog date is Pending', () => {
     withTempDir((dir) => {
+      // Use a fixture rather than the live CHANGELOG so the test stays valid
+      // once a release dates its own entry.
+      const pendingChangelog = join(dir, 'CHANGELOG.md');
+      writeFileSync(
+        pendingChangelog,
+        '# Changelog\n\n## [0.11.0] - Pending\n\nFixture entry.\n\n## [0.10.0] - 2026-07-08\n\nPrior.\n'
+      );
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0', changelog, join(dir, 'notes.md'), packageJson, wailsJson],
+        [script, 'v0.11.0', pendingChangelog, join(dir, 'notes.md'), packageJson, wailsJson],
         { encoding: 'utf8' }
       );
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('replace Pending with the release date');
+    });
+  });
+
+  it('accepts a final tag once the changelog entry is dated', () => {
+    withTempDir((dir) => {
+      const output = join(dir, 'notes.md');
+
+      execFileSync('sh', [script, 'v0.11.0', changelog, output, packageJson, wailsJson]);
+
+      const notes = readFileSync(output, 'utf8');
+      expect(notes.trim()).not.toBe('');
+      expect(notes).toContain('Stabilization release');
     });
   });
 
