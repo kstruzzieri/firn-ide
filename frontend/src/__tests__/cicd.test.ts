@@ -5,7 +5,7 @@
  * TDD: Written first to define expected behavior.
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { resolve } from 'path';
 
 const rootDir = resolve(__dirname, '../../..');
@@ -22,6 +22,37 @@ describe('CI Workflow', () => {
 
   it('should have build.yml workflow', () => {
     expect(existsSync(resolve(workflowsDir, 'build.yml'))).toBe(true);
+  });
+
+  it('should test the backend with the Go version required by go.mod', () => {
+    const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
+    const goVersion = goMod.match(/^go\s+(\d+\.\d+)/m)?.[1];
+    const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
+    const configuredVersions = workflowFiles.flatMap((file) => {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      return [...content.matchAll(/go-version:\s*['"]?([^'"\s]+)/g)].map((match) => match[1]);
+    });
+
+    expect(goVersion).toBeDefined();
+    expect(configuredVersions.length).toBeGreaterThan(0);
+    expect(new Set(configuredVersions)).toEqual(new Set([goVersion]));
+  });
+
+  it('should pin workflow Wails installs to the module version', () => {
+    const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
+    const wailsVersion = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v2\s+(v\S+)/m)?.[1];
+
+    expect(wailsVersion).toBeDefined();
+    const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
+    const installVersions = workflowFiles.flatMap((workflow) => {
+      const content = readFileSync(resolve(workflowsDir, workflow), 'utf-8');
+      return [...content.matchAll(/github\.com\/wailsapp\/wails\/v2\/cmd\/wails@(\S+)/g)].map(
+        (match) => match[1]
+      );
+    });
+
+    expect(installVersions.length).toBeGreaterThan(0);
+    expect(new Set(installVersions)).toEqual(new Set([wailsVersion]));
   });
 });
 
@@ -43,6 +74,14 @@ describe('Release Workflow', () => {
   it('should build for Linux', () => {
     const releaseYml = readFileSync(resolve(workflowsDir, 'release.yml'), 'utf-8');
     expect(releaseYml).toMatch(/linux|ubuntu/i);
+  });
+
+  it('should use the tested release-note and checksum scripts', () => {
+    const releaseYml = readFileSync(resolve(workflowsDir, 'release.yml'), 'utf-8');
+
+    expect(releaseYml).toContain('.github/scripts/extract-changelog.sh');
+    expect(releaseYml).toContain('.github/scripts/generate-checksums.sh');
+    expect(releaseYml).toContain('SHA256SUMS');
   });
 });
 

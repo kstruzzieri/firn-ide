@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - Pending
+
+Stabilization release for the managed language-server, Structure view, Git,
+terminal, and installation work completed since v0.10.0.
+
+### Language Intelligence
+
+- Managed provisioning now covers pinned, checksum-verified Python, Go,
+  TypeScript/JavaScript, and Rust language servers without modifying the
+  user's project or global PATH (#112, #151).
+- Python analysis now wires detected project environments and rooted import
+  paths correctly, preserves project metadata across interpreter overrides,
+  rejects stale overrides, and restores automatic detection on reset (#112).
+- Provisioning retry, nested-project roots, Alpine/musl Node fallbacks, Rust
+  document sync, and actionable offline recovery were hardened and verified in
+  the packaged native closure pass for #112.
+- A Structure view exposes document symbols for the active file with refresh,
+  filtering, keyboard navigation, and click-to-reveal (#168).
+
+### Git
+
+- Stage or unstage individual hunks from the editor gutter and diff views, with
+  zero-context patches so nearby edits remain independent (#163).
+- Intent-to-add support makes untracked files diffable and hunk-stageable
+  without staging their contents (#167).
+- The working-tree side of unstaged diffs is editable in place, with save
+  ordering and hunk anchors hardened against stale refreshes and accidental
+  cross-hunk edits (#169).
+
+### Terminal
+
+- Terminal sessions now start only on explicit request, open in the loaded
+  workspace root, and recover the prompt reliably after command completion
+  instead of leaving xterm input wedged.
+
+### Installation
+
+- Added a macOS/Linux install script with latest-release resolution, explicit
+  version pinning, dry-run output, SHA-256 verification, and platform-aware
+  installation targets.
+
 ## [0.10.0] - 2026-07-08
 
 Milestone 7: Git integration. Firn now surfaces working-tree status, diffs,
@@ -113,6 +154,7 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kstruzzieri/firn-ide/releases/tag/v0.9.0

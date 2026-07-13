@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Install frontend dependencies
         run: |
@@ -79,7 +79,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Install frontend dependencies
         run: |
@@ -126,7 +126,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Install frontend dependencies
         run: |
@@ -162,31 +162,20 @@ jobs:
 
       - name: Generate changelog
         id: changelog
-        run: |
-          # Get the previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        run: sh .github/scripts/extract-changelog.sh "$GITHUB_REF_NAME" CHANGELOG.md changelog.md frontend/package.json
 
-          if [ -z "$PREV_TAG" ]; then
-            # First release - get all commits
-            COMMITS=$(git log --pretty=format:"- %s" HEAD)
-          else
-            # Get commits since last tag
-            COMMITS=$(git log --pretty=format:"- %s" "${PREV_TAG}..HEAD")
-          fi
-
-          # Write to file for the release body
-          echo "## Changes" > changelog.md
-          echo "" >> changelog.md
-          echo "$COMMITS" >> changelog.md
+      - name: Generate checksums
+        run: sh .github/scripts/generate-checksums.sh artifacts SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           body_path: changelog.md
           files: |
+            SHA256SUMS
             artifacts/**/*.zip
             artifacts/**/*.tar.gz
           draft: false
-          # Tags with a pre-release suffix (e.g. v0.9.0-rc.1) publish as a
+          # Tags with a pre-release suffix (e.g. v0.11.0-rc.1) publish as a
           # prerelease so the build matrix can be dry-run before the real tag.
           prerelease: ${{ contains(github.ref_name, '-') }}
