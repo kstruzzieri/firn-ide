@@ -33,12 +33,13 @@ describe('release changelog extraction', () => {
   const script = resolve(releaseScriptsDir, 'extract-changelog.sh');
   const changelog = resolve(rootDir, 'CHANGELOG.md');
   const packageJson = resolve(rootDir, 'frontend/package.json');
+  const wailsJson = resolve(rootDir, 'wails.json');
 
   it('extracts the requested stable section without bleeding into the prior release', () => {
     withTempDir((dir) => {
       const output = join(dir, 'notes.md');
 
-      execFileSync('sh', [script, 'v0.11.0-rc.1', changelog, output, packageJson]);
+      execFileSync('sh', [script, 'v0.11.0-rc.1', changelog, output, packageJson, wailsJson]);
 
       const notes = readFileSync(output, 'utf8');
       expect(notes.trim()).not.toBe('');
@@ -52,7 +53,7 @@ describe('release changelog extraction', () => {
     withTempDir((dir) => {
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0', changelog, join(dir, 'notes.md'), packageJson],
+        [script, 'v0.11.0', changelog, join(dir, 'notes.md'), packageJson, wailsJson],
         { encoding: 'utf8' }
       );
 
@@ -67,13 +68,40 @@ describe('release changelog extraction', () => {
       writeFileSync(stalePackage, '{"version":"0.10.0"}\n');
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), stalePackage],
+        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), stalePackage, wailsJson],
         { encoding: 'utf8' }
       );
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('package version 0.10.0 does not match tag v0.11.0-rc.1');
     });
+  });
+
+  it('rejects a Wails product version that does not match the tag', () => {
+    withTempDir((dir) => {
+      const staleWails = join(dir, 'wails.json');
+      writeFileSync(staleWails, '{\n  "info": {\n    "productVersion": "1.0.0"\n  }\n}\n');
+      const result = spawnSync(
+        'sh',
+        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), packageJson, staleWails],
+        { encoding: 'utf8' }
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('wails productVersion 1.0.0 does not match tag v0.11.0-rc.1');
+    });
+  });
+});
+
+describe('release version consistency', () => {
+  it('keeps the Wails product version in lockstep with the frontend package version', () => {
+    const packageVersion = JSON.parse(
+      readFileSync(resolve(rootDir, 'frontend/package.json'), 'utf8')
+    ).version;
+    const wailsProductVersion = JSON.parse(readFileSync(resolve(rootDir, 'wails.json'), 'utf8'))
+      .info?.productVersion;
+
+    expect(wailsProductVersion).toBe(packageVersion);
   });
 });
 
@@ -106,22 +134,19 @@ describe('release checksums', () => {
 });
 
 describe('installer integrity verification', () => {
-  it('rejects a checksum mismatch before extracting the downloaded asset', () => {
-    withTempDir((dir) => {
-      const bin = join(dir, 'bin');
-      mkdirSync(bin);
-      const asset = join(dir, 'asset.tar.gz');
-      const manifest = join(dir, 'SHA256SUMS');
-      const tarSentinel = join(dir, 'tar-called');
-      writeFileSync(asset, 'tampered archive');
-      writeFileSync(manifest, `${'0'.repeat(64)}  Firn-linux-amd64.tar.gz\n`);
-      writeExecutable(
-        join(bin, 'uname'),
-        '#!/bin/sh\nif [ "$1" = "-s" ]; then echo Linux; else echo x86_64; fi\n'
-      );
-      writeExecutable(
-        join(bin, 'curl'),
-        `#!/bin/sh
+  const ASSET_NAME = 'Firn-linux-amd64.tar.gz';
+
+  // Stub uname (report Linux/amd64), curl (serve the fixture asset + manifest),
+  // and tar (record that extraction was reached). tar exits non-zero on purpose
+  // so the run stops at extraction regardless of the host's install target.
+  function writeLinuxInstallerStubs(bin: string) {
+    writeExecutable(
+      join(bin, 'uname'),
+      '#!/bin/sh\nif [ "$1" = "-s" ]; then echo Linux; else echo x86_64; fi\n'
+    );
+    writeExecutable(
+      join(bin, 'curl'),
+      `#!/bin/sh
 out=
 url=
 while [ "$#" -gt 0 ]; do
@@ -136,24 +161,76 @@ case "$url" in
   *) cp "$FIXTURE_ASSET" "$out" ;;
 esac
 `
-      );
-      writeExecutable(join(bin, 'tar'), `#!/bin/sh\ntouch "$TAR_SENTINEL"\nexit 1\n`);
+    );
+    writeExecutable(join(bin, 'tar'), '#!/bin/sh\ntouch "$TAR_SENTINEL"\nexit 1\n');
+  }
 
-      const result = spawnSync('sh', [resolve(rootDir, 'install.sh')], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH}`,
-          FIRN_VERSION: 'v0.11.0',
-          FIXTURE_ASSET: asset,
-          FIXTURE_MANIFEST: manifest,
-          TAR_SENTINEL: tarSentinel,
-        },
-      });
+  function runInstaller(dir: string, assetContent: string, manifestBody: string) {
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    const asset = join(dir, 'asset.tar.gz');
+    const manifest = join(dir, 'SHA256SUMS');
+    const tarSentinel = join(dir, 'tar-called');
+    writeFileSync(asset, assetContent);
+    writeFileSync(manifest, manifestBody);
+    writeLinuxInstallerStubs(bin);
+
+    const result = spawnSync('sh', [resolve(rootDir, 'install.sh')], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        FIRN_VERSION: 'v0.11.0',
+        FIXTURE_ASSET: asset,
+        FIXTURE_MANIFEST: manifest,
+        TAR_SENTINEL: tarSentinel,
+      },
+    });
+
+    return { result, tarReached: existsSync(tarSentinel) };
+  }
+
+  function sha256(content: string) {
+    return createHash('sha256').update(content).digest('hex');
+  }
+
+  it('rejects a checksum mismatch before extracting the downloaded asset', () => {
+    withTempDir((dir) => {
+      const { result, tarReached } = runInstaller(
+        dir,
+        'tampered archive',
+        `${'0'.repeat(64)}  ${ASSET_NAME}\n`
+      );
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('checksum mismatch');
-      expect(existsSync(tarSentinel)).toBe(false);
+      expect(tarReached).toBe(false);
+    });
+  });
+
+  it('rejects a manifest with no entry for the requested asset', () => {
+    withTempDir((dir) => {
+      const asset = 'valid archive';
+      const { result, tarReached } = runInstaller(
+        dir,
+        asset,
+        `${sha256(asset)}  Firn-macos-arm64.zip\n`
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('checksum entry missing or duplicated');
+      expect(tarReached).toBe(false);
+    });
+  });
+
+  it('proceeds to extraction once the checksum matches', () => {
+    withTempDir((dir) => {
+      const asset = 'valid archive';
+      const { result, tarReached } = runInstaller(dir, asset, `${sha256(asset)}  ${ASSET_NAME}\n`);
+
+      expect(tarReached).toBe(true);
+      expect(result.stderr).not.toContain('checksum mismatch');
+      expect(result.stderr).toContain('extract failed');
     });
   });
 });

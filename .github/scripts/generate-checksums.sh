@@ -10,7 +10,6 @@ fi
 artifact_dir=$1
 output=$2
 
-: > "$output"
 find "$artifact_dir" -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print |
 	LC_ALL=C sort |
 	while IFS= read -r file; do

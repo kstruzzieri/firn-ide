@@ -9,5 +9,8 @@
   "author": {
     "name": "Keith Struzzieri",
     "email": "krstruzz@gmail.com"
+  },
+  "info": {
+    "productVersion": "0.11.0"
   }
 }

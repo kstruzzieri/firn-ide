@@ -162,7 +162,7 @@ jobs:
 
       - name: Generate changelog
         id: changelog
-        run: sh .github/scripts/extract-changelog.sh "$GITHUB_REF_NAME" CHANGELOG.md changelog.md frontend/package.json
+        run: sh .github/scripts/extract-changelog.sh "$GITHUB_REF_NAME" CHANGELOG.md changelog.md frontend/package.json wails.json
 
       - name: Generate checksums
         run: sh .github/scripts/generate-checksums.sh artifacts SHA256SUMS
