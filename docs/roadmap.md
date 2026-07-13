@@ -30,7 +30,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 6: Search | **COMPLETE** | #23-25 |
 | Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); #169 editable diff shipped (PR #181); follow-ups #164-166 |
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147) shipped; follow-ups #148/#149; #39 open |
-| Editor & LSP DX | **NATIVE GATE PENDING** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178. The 2026-07-12 working tree fixes both Python configuration blockers and passes the real basedpyright smoke, but macOS Accessibility still blocked the native lazy-family/Retry gate; keep #112 open |
+| Editor & LSP DX | **COMPLETE** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178 and its 2026-07-12 packaged native closure gate passed |
 | Dependency Upgrades | **COMPLETE** | #40 |
 | Code Quality | **IN PROGRESS** | #42 closed as completed; #41 open and needs re-scoping against the current 1,787-line store |
 | Accessibility | **IN PROGRESS** | #43 open; tree roving focus, `aria-busy`, and several live regions already shipped, so the remaining scope requires an audit |
@@ -59,7 +59,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 Complete these before beginning another large feature:
 
 1. **#42 — closed:** cross-platform path handling is implemented through `os.UserHomeDir`, `filepath`, platform-specific files, and the release build matrix.
-2. **#112 — finish the native closure gate:** the 2026-07-12 working tree roots detector-generated `extraPaths` at the configuration boundary and overlays manual interpreter overrides onto detected metadata. Unit regressions and the real basedpyright smoke pass before and after override; rerun lazy one-family provisioning and Offline-to-Retry recovery after granting the automation host macOS Accessibility access, and only then close.
+2. **#112 — close:** the 2026-07-12 packaged native rerun passed lazy provisioning for Python, Go, TypeScript, and Rust, Python environment/override wiring, and same-session Offline-to-Retry recovery. The rerun also found and fixed the missing frontend `.rs` LSP mapping.
 3. **#41 — re-scope:** preserve the public selector/action contract, acknowledge the already-extracted Git/LSP/search stores, and phase the remaining extraction by domain.
 4. **#43 — audit then re-scope:** mark already-shipped tree focus, busy state, and live-region work complete; define the remaining contrast, skip-link, keyboard, and screen-reader findings from evidence.
 5. **#142 — narrow scope:** the invalid nested-button tab DOM has already been fixed; keep only owning-workspace tab accents and the optional active-workspace filter stretch goal.
@@ -99,7 +99,7 @@ Model guidance follows OpenAI's current [GPT-5.6 model guide](https://developers
 | Priority | Ticket | Recommended disposition | Model | Reasoning |
 |----------|--------|-------------------------|-------|-----------|
 | Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. | `gpt-5.6-terra` | Light |
-| P0 | #112 LSP zero-config | Fix absolute `extraPaths` delivery and overlay manual overrides onto the detected environment; add real-server regressions and rerun the native smoke before closure. | `gpt-5.6-sol` | High |
+| Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; close after the final fix/evidence PR merges. | `gpt-5.6-sol` | High |
 | P0 | #34 Button types | Implement now; mechanical correctness sweep with focused form regression tests. | `gpt-5.3-codex-spark` | Light |
 | P0 | #43 WCAG AA | Audit and re-scope before implementation; test keyboard, contrast, and screen-reader behavior. | `gpt-5.6-sol` | High |
 | P1 | #142 Workspace-colored tabs | Implement owning-workspace accents only; the nested-button fix is already shipped. | `gpt-5.3-codex-spark` | Medium |
@@ -119,6 +119,20 @@ Model guidance follows OpenAI's current [GPT-5.6 model guide](https://developers
 ### #112 manual smoke pass and closure gate
 
 The automated coverage is already strong; this smoke pass verifies the user-visible seams that unit tests cannot fully prove. Run it against the current `develop` build using a disposable Firn home so the test does not touch real Firn settings or managed-server caches.
+
+#### 2026-07-12 packaged native rerun: PASS — #112 ready to close after merge
+
+The packaged macOS arm64 app was exercised from disposable root `/private/tmp/firn-112-gate.qiqBFG` with user-installed language servers excluded from the launch `PATH`.
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Clean-cache lazy provisioning | **Pass** | Python `1.39.9`, gopls `v0.22.0`, TypeScript `5.3.0`, and rust-analyzer `2026-07-06` appeared under the disposable Firn cache only after their files were opened, one family at a time. The rerun exposed a missing frontend `.rs` mapping; a failing regression was added before the one-line fix, after which the packaged Rust path provisioned and reached ready. |
+| Python environment wiring | **Pass** | `structlog`, `src/smoke_pkg`, and `datetime.UTC` resolved with the detected Python 3.11.14 `.venv`. The Problems panel contained only the deliberate `Literal[42]`-to-`str` diagnostic; no import diagnostic or raw setup toast appeared. |
+| Interpreter override/reset | **Pass** | The native picker selected `/private/tmp/firn-112-gate.qiqBFG/manual-venv/bin/python3`, the setup card identified the manual interpreter, imports remained resolved, and **Reset to auto** restored the project `.venv` and cleared the persisted override. |
+| Offline and same-session Retry | **Pass** | A second empty Firn cache and isolated empty installer cache ran behind a deliberately unavailable process-scoped proxy. Firn stayed usable and rendered `Could not download the language server (offline)` with **Retry**. Bringing the proxy online and clicking Retry in the same app session installed basedpyright and restored the single deliberate diagnostic. |
+| Scope and host hygiene | **Pass** | Managed artifacts remained under the disposable Firn homes; the host language-server paths and global `PATH` were unchanged. Wi-Fi and all smoke processes were restored/stopped after the run. |
+
+All close criteria below are satisfied. The remaining sequencing requirement is to merge the fix/evidence PR, then close #112.
 
 #### 2026-07-12 defect-fix rerun: AUTOMATED PASS; NATIVE GATE UNOBSERVED — keep #112 open
 
@@ -227,13 +241,13 @@ The file must be clean without `pyrightconfig.json` or Firn-specific configurati
 
 Close #112 when all of the following are recorded in a final issue comment:
 
-- [ ] Clean-cache managed provisioning succeeds without a system/project server.
-- [ ] Python third-party, first-party `src`, and Python-version imports resolve with zero Firn config.
-- [ ] Missing network/server produces a non-blocking actionable card and Retry recovers.
-- [ ] Provisioning is lazy by active workspace and writes only under the Firn-managed cache.
-- [ ] Python, Go, TypeScript, and Rust each reach a usable ready state.
-- [ ] Interpreter override, Reset to auto, and nested-project Retry behave correctly.
-- [ ] No raw setup error toast, global install, or global `PATH` mutation occurs.
+- [x] Clean-cache managed provisioning succeeds without a system/project server.
+- [x] Python third-party, first-party `src`, and Python-version imports resolve with zero Firn config.
+- [x] Missing network/server produces a non-blocking actionable card and Retry recovers.
+- [x] Provisioning is lazy by active workspace and writes only under the Firn-managed cache.
+- [x] Python, Go, TypeScript, and Rust each reach a usable ready state.
+- [x] Interpreter override, Reset to auto, and nested-project Retry behave correctly.
+- [x] No raw setup error toast, global install, or global `PATH` mutation occurs.
 
 One primary-platform manual pass is sufficient for closure when the cross-platform catalog/provisioner tests and release build matrix remain green. Repeat the smoke on another OS only if the primary pass exposes platform-specific behavior.
 
@@ -576,8 +590,8 @@ Dynamic `import()` for language extensions per file type to reduce initial bundl
 
 Surfaced while testing a Python workspace (`quantum_trader`) during the file-tree work (#111).
 
-### #112: LSP - auto-provision language servers + wire project environment (PYTHON SMOKE FIXED; NATIVE GATE PENDING)
-Zero-config language support, in two layers. Provisioning implementation and review follow-ups are shipped. The 2026-07-12 working tree fixes both Python environment-wiring defects and passes the real basedpyright smoke before and after a manual override. See the [recorded smoke evidence and closure gate](#112-manual-smoke-pass-and-closure-gate); keep the epic open until the native lazy-family and Offline-to-Retry pass is observed.
+### #112: LSP - auto-provision language servers + wire project environment (COMPLETE; CLOSE AFTER PR MERGE)
+Zero-config language support, in two layers. Provisioning implementation and review follow-ups are shipped, and the 2026-07-12 packaged native closure gate passed. See the [recorded smoke evidence and closure gate](#112-manual-smoke-pass-and-closure-gate).
 
 **Phase 1 — project environment auto-wiring: SHIPPED via PR #121.** Pyright now resolves third-party (venv site-packages), first-party (`src` via `extraPaths`), and version-gated stdlib (`datetime.UTC`) imports in a standard `src`-layout uv/venv project with no per-project Firn config. New pure (no command execution) `internal/lsp/pythonenv` detector (interpreter precedence: in-root `VIRTUAL_ENV` → `.venv` → `venv` → pyenv stat-check → system; out-of-root `VIRTUAL_ENV` ignored). The client gained a server→client request handler that answers pyright's `workspace/configuration` pull (root cause: it was replying `-32601` to **all** server requests), advertises the `workspace.configuration` capability, and sends `didChangeConfiguration`. A Manager-owned, language-generic `WorkspaceConfigProvider` (dialect-agnostic across `python`/`pyright`/`basedpyright`, object + leaf sections) forwards `pythonPath`/`venvPath`/`analysis.extraPaths`. Raw server error strings replaced by typed `ServerStatus` setup fields (`setupState`: ready|missing_server|missing_interpreter|misconfigured_env|config_degraded|retryable, + action/detailCode) rendered as a non-blocking `LSPSetupCard` above the editor; `useLSPEvents` suppresses the raw Toast when typed status is present.
 
