@@ -6,6 +6,8 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
 import { SearchPanel } from './components/Search';
+import { GitPanel } from './components/GitPanel';
+import { StructureView } from './components/Structure';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
 import { RunProfiles } from './components/RunProfiles';
@@ -19,15 +21,18 @@ import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
+import { useGitSync } from './hooks/useGitSync';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
+import { useGitStore } from './stores/gitStore';
 import { ReadFile } from '../wailsjs/go/main/App';
 import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
 import { isDirVisible } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
 import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
+import { flushAllFileEdits } from './utils/fileWrites';
 
 function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
@@ -35,7 +40,7 @@ function App() {
   const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useAutosave();
-  useWorkspacePersistence();
+  useWorkspacePersistence(flushAllFileEdits);
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
@@ -43,6 +48,7 @@ function App() {
   // Mount workspace-search wiring once at the App level so the in-flight
   // request guards (workspace switch, unmount) survive panel toggling.
   useWorkspaceSearch();
+  useGitSync();
   const workspace = useWorkspace();
   const sidebarView = useSidebarView();
   const activeAccent = useActiveAccent();
@@ -86,6 +92,9 @@ function App() {
 
   const handleFileChange = useCallback(
     (event: FileEvent) => {
+      // Any working-tree event can change git status; the store debounces.
+      useGitStore.getState().scheduleRefresh();
+
       const { openFiles } = useIDEStore.getState();
       const openFile = openFiles.find((f) => f.path === event.path);
 
@@ -123,8 +132,8 @@ function App() {
   useFileWatcher(workspace?.path ?? null, handleFileChange);
 
   useEffect(() => {
+    const timers = reconcileTimersRef.current;
     return () => {
-      const timers = reconcileTimersRef.current;
       timers.forEach((t) => clearTimeout(t));
       timers.clear();
     };
@@ -136,7 +145,17 @@ function App() {
         accent={activeAccent}
         header={<Header />}
         sidebar={<Sidebar />}
-        leftPanel={sidebarView === 'search' ? <SearchPanel /> : <FileExplorer />}
+        leftPanel={
+          sidebarView === 'search' ? (
+            <SearchPanel />
+          ) : sidebarView === 'git' ? (
+            <GitPanel />
+          ) : sidebarView === 'structure' ? (
+            <StructureView />
+          ) : (
+            <FileExplorer />
+          )
+        }
         centerPanel={<Editor />}
         bottomPanel={<Terminal />}
         rightPanel={<RunProfiles />}

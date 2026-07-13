@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { LSPServerStatus } from '../../stores/lspStore';
+import { useIDEStore } from '../../stores/ideStore';
 import { describeSetup } from './lspSetupNotice';
 import {
   LSPRetryProvision,
@@ -8,6 +9,11 @@ import {
   LSPDoctor,
 } from '../../../wailsjs/go/main/App';
 import styles from './LSPSetupCard.module.css';
+
+function showActionError(action: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  useIDEStore.getState().showToast(`Failed to ${action}: ${message}`, 'error');
+}
 
 export function LSPSetupCard({
   status,
@@ -48,7 +54,14 @@ export function LSPSetupCard({
       {showActions && (
         <div className={styles.actions}>
           {action === 'retry' && status && (
-            <button type="button" onClick={() => LSPRetryProvision(status.family)}>
+            <button
+              type="button"
+              onClick={() =>
+                LSPRetryProvision(status.family, status.projectRoot ?? workspacePath).catch(
+                  (error) => showActionError('retry LSP provisioning', error)
+                )
+              }
+            >
               Retry
             </button>
           )}
@@ -71,7 +84,14 @@ export function LSPSetupCard({
             </select>
           )}
           {status?.configSource === 'override' && (
-            <button type="button" onClick={() => LSPClearInterpreter(workspacePath)}>
+            <button
+              type="button"
+              onClick={() =>
+                LSPClearInterpreter(workspacePath).catch((error) =>
+                  showActionError('reset the Python interpreter', error)
+                )
+              }
+            >
               Reset to auto
             </button>
           )}

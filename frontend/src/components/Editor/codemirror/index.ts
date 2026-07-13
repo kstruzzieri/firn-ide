@@ -65,3 +65,11 @@ export { reconcileDoc } from './reconcileDoc';
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';
 export { EditorState, type Extension } from '@codemirror/state';
+
+// Git change gutter
+export {
+  gitGutterExtension,
+  setGitBaseline,
+  gotoNextGitChange,
+  gotoPrevGitChange,
+} from './gitGutter';

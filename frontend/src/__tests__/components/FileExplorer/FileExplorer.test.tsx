@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorer, rowDomId } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
+import { useGitStore } from '../../../stores/gitStore';
 import { ReadDirectory, ReadFile } from '../../../../wailsjs/go/main/App';
 import { filesystem } from '../../../../wailsjs/go/models';
 import { installVirtualLayout } from '../../helpers/virtualTree';
@@ -166,6 +167,35 @@ describe('FileExplorer', () => {
       // the root row, 'src', and 'package.json' at the top level.
       expect(screen.getByText('src')).toBeInTheDocument();
       expect(screen.getByText('package.json')).toBeInTheDocument();
+    });
+
+    it('decorates rows from the gitStore status map', () => {
+      act(() => {
+        useGitStore.setState({
+          statusByPath: { '/workspace/package.json': 'modified' },
+        });
+      });
+
+      render(<FileExplorer />);
+
+      const badge = screen.getByTestId('git-badge');
+      expect(badge).toHaveTextContent('M');
+      expect(screen.getByText('package.json').closest('[role="treeitem"]')).toHaveAttribute(
+        'data-git',
+        'modified'
+      );
+    });
+
+    it('leaves unrelated rows undecorated', () => {
+      act(() => {
+        useGitStore.setState({
+          statusByPath: { '/workspace/other.ts': 'modified' },
+        });
+      });
+
+      render(<FileExplorer />);
+
+      expect(screen.queryByTestId('git-badge')).not.toBeInTheDocument();
     });
 
     it('does not render nested files when folder is collapsed', () => {

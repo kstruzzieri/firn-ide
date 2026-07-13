@@ -8,6 +8,7 @@ describe('lspLanguageId', () => {
     ['view.jsx', 'javascriptreact', 'typescript'],
     ['main.go', 'go', 'go'],
     ['MAIN.GO', 'go', 'go'],
+    ['main.rs', 'rust', 'rust'],
     ['app.py', 'python', 'python'],
     ['APP.PY', 'python', 'python'],
     ['app.pyw', 'python', 'python'],

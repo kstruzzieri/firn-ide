@@ -45,3 +45,7 @@
 .container :global(.cm-scroller) {
   scroll-behavior: smooth;
 }
+
+/* Git change gutter marker styles live in codemirror/theme.ts (buildTheme) so
+   the diff view's working-tree pane, which also mounts gitGutterExtension,
+   renders them identically. */

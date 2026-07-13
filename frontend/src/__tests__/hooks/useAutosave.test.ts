@@ -82,6 +82,36 @@ describe('useAutosave', () => {
     expect(file.isModified).toBe(false);
   });
 
+  it('writes a newer buffer revision that arrives while a save is in flight', async () => {
+    let resolveFirst!: () => void;
+    mockWriteFile
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          })
+      )
+      .mockResolvedValueOnce(undefined);
+    openTestFile();
+    renderHook(() => useAutosave());
+
+    act(() => useIDEStore.getState().updateFileContent('/test/file.ts', 'first edit'));
+    act(() => jest.advanceTimersByTime(1600));
+    await act(async () => Promise.resolve());
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+
+    act(() => useIDEStore.getState().updateFileContent('/test/file.ts', 'second edit'));
+    await act(async () => {
+      resolveFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockWriteFile.mock.calls[1][1]).toBe('second edit');
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(false);
+  });
+
   it('should show toast on save failure', async () => {
     mockWriteFile.mockRejectedValueOnce(new Error('Permission denied'));
     openTestFile();
@@ -102,6 +132,38 @@ describe('useAutosave', () => {
     const toast = useIDEStore.getState().toast;
     expect(toast).not.toBeNull();
     expect(toast?.type).toBe('error');
+  });
+
+  it('re-arms the debounce after a failed save so autosave keeps trying', async () => {
+    // A transient failure (file locked, disk full) must not permanently
+    // disable autosave: scheduling is transition-based (isModified false ->
+    // true), and a failed save leaves the flag true, so without a re-arm no
+    // later keystroke would ever schedule another save.
+    mockWriteFile.mockRejectedValueOnce(new Error('EBUSY'));
+    openTestFile();
+    renderHook(() => useAutosave());
+
+    act(() => {
+      useIDEStore.getState().updateFileContent('/test/file.ts', 'modified');
+    });
+    act(() => {
+      jest.advanceTimersByTime(1600);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+
+    // No further edits: the retry must fire on its own.
+    act(() => {
+      jest.advanceTimersByTime(1600);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockWriteFile).toHaveBeenCalledTimes(2);
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(false);
   });
 
   it('should not save unmodified files', () => {

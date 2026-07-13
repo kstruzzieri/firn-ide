@@ -1,13 +1,16 @@
 import { ensureEditorFileOpen, navigateToEditorLocation } from '../../utils/editorNavigation';
 import { useIDEStore } from '../../stores/ideStore';
 import { toNativeLocalPath } from '../../utils/lspUri';
-import { ReadFile } from '../../../wailsjs/go/main/App';
+import { ReadFile, WriteFile } from '../../../wailsjs/go/main/App';
+import { queueWorkingTreeEdit } from '../../utils/fileWrites';
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
   ReadFile: jest.fn(),
+  WriteFile: jest.fn(),
 }));
 
 const mockReadFile = ReadFile as jest.MockedFunction<typeof ReadFile>;
+const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
 
 function createReadFileResult(content: string) {
   return {
@@ -22,6 +25,7 @@ function createReadFileResult(content: string) {
 beforeEach(() => {
   useIDEStore.setState(useIDEStore.getInitialState());
   jest.clearAllMocks();
+  mockWriteFile.mockResolvedValue(undefined);
 });
 
 describe('ensureEditorFileOpen', () => {
@@ -52,6 +56,30 @@ describe('ensureEditorFileOpen', () => {
     expect(file!.name).toBe('new.ts');
     expect(file!.language).toBe('TypeScript');
     expect(useIDEStore.getState().openFiles).toHaveLength(1);
+  });
+
+  it('flushes a pending diff edit before reading the file into an editor buffer', async () => {
+    queueWorkingTreeEdit({
+      absPath: '/test/pending.ts',
+      displayPath: 'pending.ts',
+      content: 'latest diff text',
+      encoding: 'utf-8',
+      lineEndings: 'lf',
+    });
+    mockReadFile.mockResolvedValue(createReadFileResult('latest diff text') as never);
+
+    await ensureEditorFileOpen('/test/pending.ts');
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      '/test/pending.ts',
+      'latest diff text',
+      'utf-8',
+      'lf',
+      false
+    );
+    expect(mockWriteFile.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReadFile.mock.invocationCallOrder[0]
+    );
   });
 
   it('reuses an already-open file when the requested path is slash-normalized', async () => {
@@ -149,6 +177,7 @@ describe('navigateToEditorLocation', () => {
     const navigation = navigateToEditorLocation('/workspace-a/file.ts', 2, 5, {
       shouldApply: () => useIDEStore.getState().workspace?.path === '/workspace-a',
     });
+    await Promise.resolve(); // allow the shared pre-open flush to settle
 
     useIDEStore.setState({ workspace: { name: 'Workspace B', path: '/workspace-b' } });
     resolveRead(createReadFileResult('line1\nline2'));

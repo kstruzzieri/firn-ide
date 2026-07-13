@@ -41,7 +41,7 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
 }
 
 // Types
-export type SidebarView = 'explorer' | 'search' | 'git' | 'run';
+export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
 export type WorkspaceAccent =
   | 'project'
@@ -163,7 +163,6 @@ interface IDEState {
   activeTerminalTab: TerminalTab;
   terminalSessions: TerminalSession[];
   activeTerminalSessionId: string | null;
-  hasAutoCreatedInitialTerminalSession: boolean;
   workingDirectory: string;
 
   // Run Profiles
@@ -206,7 +205,6 @@ interface IDEState {
   recentWorkspacesVersion: number;
 
   // Status
-  gitBranch: string;
   editorSyntaxTheme: SyntaxThemeId;
 
   // Editor navigation
@@ -266,7 +264,6 @@ interface IDEActions {
   setActiveTerminalSession: (sessionId: string) => void;
   renameTerminalSession: (sessionId: string, title: string) => void;
   reorderTerminalSessions: (fromIndex: number, toIndex: number) => void;
-  markInitialTerminalSessionCreated: () => void;
   setWorkingDirectory: (path: string) => void;
 
   // Run Profile actions
@@ -320,7 +317,6 @@ interface IDEActions {
   setRecentWorkspaces: (workspaces: workspace.Summary[]) => void;
 
   // Status actions
-  setGitBranch: (branch: string) => void;
   setEditorSyntaxTheme: (id: SyntaxThemeId) => void;
 
   // Editor navigation actions
@@ -425,7 +421,6 @@ export const useIDEStore = create<IDEStore>()(
       activeTerminalTab: 'terminal',
       terminalSessions: [],
       activeTerminalSessionId: null,
-      hasAutoCreatedInitialTerminalSession: false,
       workingDirectory: '',
       runProfiles: [],
       runProfileState: {},
@@ -449,7 +444,6 @@ export const useIDEStore = create<IDEStore>()(
       isRestoringWorkspace: false,
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
-      gitBranch: '',
       editorSyntaxTheme: loadInitialSyntaxTheme(),
       pendingEditorNavigation: null,
 
@@ -770,13 +764,6 @@ export const useIDEStore = create<IDEStore>()(
           },
           false,
           'reorderTerminalSessions'
-        ),
-
-      markInitialTerminalSessionCreated: () =>
-        set(
-          { hasAutoCreatedInitialTerminalSession: true },
-          false,
-          'markInitialTerminalSessionCreated'
         ),
 
       setWorkingDirectory: (workingDirectory) =>
@@ -1634,8 +1621,6 @@ export const useIDEStore = create<IDEStore>()(
         set({ recentWorkspaces }, false, 'setRecentWorkspaces'),
 
       // Status actions
-      setGitBranch: (gitBranch) => set({ gitBranch }, false, 'setGitBranch'),
-
       setEditorSyntaxTheme: (id) => {
         if (!isSyntaxThemeId(id)) return;
         set({ editorSyntaxTheme: id }, false, 'setEditorSyntaxTheme');
@@ -1765,7 +1750,6 @@ export const useActiveTerminalSession = () =>
     const id = state.activeTerminalSessionId;
     return id ? (state.terminalSessions.find((s) => s.id === id) ?? null) : null;
   });
-export const useGitBranch = () => useIDEStore((state) => state.gitBranch);
 export const useEditorSyntaxTheme = (): SyntaxThemeId =>
   useIDEStore((state) => state.editorSyntaxTheme);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);

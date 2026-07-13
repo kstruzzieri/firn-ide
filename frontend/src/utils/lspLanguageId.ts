@@ -17,6 +17,7 @@ const extensionToLSPInfo: Record<string, LSPFileInfo> = {
   mjs: { languageId: 'javascript', family: 'typescript' },
   cjs: { languageId: 'javascript', family: 'typescript' },
   go: { languageId: 'go', family: 'go' },
+  rs: { languageId: 'rust', family: 'rust' },
   py: { languageId: 'python', family: 'python' },
   pyw: { languageId: 'python', family: 'python' },
   pyi: { languageId: 'python', family: 'python' },

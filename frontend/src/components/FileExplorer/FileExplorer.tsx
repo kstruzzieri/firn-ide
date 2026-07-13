@@ -25,6 +25,8 @@ import type { FlatRow } from '../../utils/flattenTree';
 import { useTreeKeyboardNav } from './useTreeKeyboardNav';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { relativePathFromRoot } from '../../utils/workspaceRegions';
+import { useGitStatusByPath } from '../../stores/gitStore';
+import { normalizeFsPath } from '../../utils/paths';
 import styles from './FileExplorer.module.css';
 
 export function FileExplorer() {
@@ -39,6 +41,7 @@ export function FileExplorer() {
   const presentation = useFileTreePresentation();
   const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
     presentation;
+  const gitStatusByPath = useGitStatusByPath();
 
   const ensurePathLoaded = useEnsurePathLoaded();
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
@@ -300,6 +303,9 @@ export function FileExplorer() {
                   rowId={rowDomId(row.key)}
                   isActive={row.key === activeKey}
                   canExpand={row.canExpand}
+                  gitStatus={
+                    row.entry ? gitStatusByPath[normalizeFsPath(row.entry.path)] : undefined
+                  }
                   onToggle={handleToggle}
                   onSelect={handleSelect}
                   onOpen={handleOpen}

@@ -130,6 +130,49 @@
   opacity: 0.6;
 }
 
+/*
+ * Git working-tree decoration (VS Code-style): the filename takes the status
+ * color and a trailing letter badge names the state. Semantic tokens with
+ * status-token fallbacks so themes can override --git-* independently.
+ */
+.gitBadge {
+  margin-left: auto;
+  padding-left: 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.row[data-git='modified'] .name,
+.row[data-git='modified'] .gitBadge,
+.row[data-git='renamed'] .name,
+.row[data-git='renamed'] .gitBadge {
+  color: var(--git-modified, var(--status-warning));
+}
+
+.row[data-git='added'] .name,
+.row[data-git='added'] .gitBadge {
+  color: var(--git-added, var(--status-success));
+}
+
+.row[data-git='untracked'] .name,
+.row[data-git='untracked'] .gitBadge {
+  color: var(--git-untracked, var(--text-muted));
+}
+
+.row[data-git='deleted'] .name,
+.row[data-git='deleted'] .gitBadge {
+  color: var(--git-deleted, var(--status-error));
+  text-decoration: line-through;
+}
+
+.row[data-git='conflicted'] .name,
+.row[data-git='conflicted'] .gitBadge {
+  color: var(--git-conflicted, var(--status-error));
+  font-weight: 700;
+}
+
 /* Root folder styling */
 .root {
   margin-bottom: 0;

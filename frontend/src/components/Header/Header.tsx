@@ -8,6 +8,7 @@ import { formatShortcut, isMac } from '../../utils/platform';
 import firnIcon from '../../assets/branding/icon.svg';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { RunProfileSelector } from './RunProfileSelector';
+import { BranchSwitcher } from '../git/BranchSwitcher';
 
 const MENU_ID = 'workspace-menu';
 
@@ -192,6 +193,9 @@ export function Header() {
 
       {/* Workspace selector (within-repo focus) */}
       <WorkspaceSelector />
+
+      {/* Always-visible branch switcher (hidden when the workspace isn't a repo) */}
+      <BranchSwitcher compact />
 
       {/* Search */}
       <button className={`${styles.headerBtn} ${styles.searchBtn}`} aria-label="Search everywhere">

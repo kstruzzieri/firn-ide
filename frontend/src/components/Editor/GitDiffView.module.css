@@ -1,0 +1,222 @@
+/*
+ * flex + min-width:0 bind the diff to its flex-row parent (.content) width.
+ * Without it the root sizes to content, so long code lines push the whole
+ * surface wider than the panel: the toolbar's right-side nav scrolls out of
+ * reach and the panes appear to march right as you scroll ("progressive
+ * indent"). overflow:hidden keeps that width authoritative for the children.
+ */
+.diffRoot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  /* Anchor for the absolutely-positioned nav (see .nav). */
+  position: relative;
+}
+
+/* The labels span the full toolbar width so the INDEX / WORKING TREE split
+ * (--diff-left) lines up with the pane divider, which is measured against the
+ * full width. The nav is pulled out of flow (absolute) so it can't shrink this
+ * row narrower than the panes — otherwise the boundary drifts left of the
+ * divider and WORKING TREE no longer sits over its column. */
+.labels {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Header labels track the pane split so INDEX / WORKING TREE stay aligned
+ * with their columns after a resize. */
+.labels span {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.labels span:first-child {
+  flex: 0 0 var(--diff-left, 50%);
+  box-sizing: border-box;
+}
+
+.labels span:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.nav {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.diffCount {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.navBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.navBtn:hover {
+  background: var(--surface-hover);
+}
+
+.openBtn {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.openBtn:hover {
+  background: var(--surface-hover);
+}
+
+/*
+ * Scroll contract (from @codemirror/merge's own base theme): .cm-mergeView is
+ * THE scroll container (overflowY: auto), and the inner editors are forced to
+ * height auto / overflowY visible — they grow, they never scroll themselves.
+ * So the only sizing we may impose is bounding .cm-mergeView to the host;
+ * pinning .cm-mergeViewEditors or .cm-editor to 100% height makes the scroll
+ * container's child exactly viewport-sized and freezes scrolling entirely.
+ */
+.mergeHost {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.mergeHost :global(.cm-mergeView) {
+  height: 100%;
+}
+
+/* Resizable split: the package defaults both panes to flex 1/0; driving the
+ * left pane from --diff-left keeps the right pane absorbing the remainder. */
+.mergeHost :global(.cm-mergeViewEditor:first-child) {
+  flex: 0 0 var(--diff-left, 50%);
+}
+
+.divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--diff-left, 50%);
+  width: 7px;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+
+.divider:hover::after,
+.divider:focus-visible::after {
+  width: 3px;
+  left: 2px;
+  background: var(--accent);
+}
+
+.stateMessage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* The editable working-tree pane carries the file view's clickable git gutter
+ * (peek/revert popup), so hide the merge view's own non-clickable change bars
+ * there — otherwise the same change is marked twice. */
+.editableRight .mergeHost :global(.cm-mergeViewEditor:last-child .cm-changeGutter) {
+  display: none;
+}
+
+/* Per-hunk staging gutter (right pane): a compact +/− button anchored at each
+ * hunk's first new-side line. Global because CodeMirror owns the class names. */
+.mergeHost :global(.cm-hunkGutter) {
+  min-width: 18px;
+}
+
+.mergeHost :global(.cm-hunkStageBtn) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mergeHost :global(.cm-hunkStageBtn:hover) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+/* A stale control (its hunk carries unsaved edits, patch mid-refresh) stays in
+ * place but dims — it must never flicker out of the gutter. */
+.mergeHost :global(.cm-hunkStageBtn:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mergeHost :global(.cm-hunkStageBtn:disabled:hover) {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface);
+}

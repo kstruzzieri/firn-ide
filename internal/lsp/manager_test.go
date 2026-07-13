@@ -110,7 +110,8 @@ func TestRegistry_LanguageIDMapping(t *testing.T) {
 		{".py", "python", "python"},
 		{".pyw", "python", "python"},
 		{".pyi", "python", "python"},
-		{".rs", "", ""},
+		{".rs", "rust", "rust"},
+		{".txt", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -348,9 +349,90 @@ func TestManager_DidOpenUnsupported(t *testing.T) {
 	mgr.SetWorkspaceRoot("/tmp/test")
 
 	ctx := context.Background()
-	err := mgr.DidOpen(ctx, "/tmp/test/main.rs", "", 1, "fn main() {}")
+	err := mgr.DidOpen(ctx, "/tmp/test/notes.txt", "", 1, "just some notes")
 	if err != nil {
 		t.Errorf("DidOpen unsupported file should be no-op, got: %v", err)
+	}
+}
+
+func TestManager_DocumentSymbolNoServer(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	mgr.SetWorkspaceRoot("/tmp/test")
+
+	// No language server covers .txt in the test registry, so DocumentSymbol
+	// must return (nil, nil) rather than erroring.
+	symbols, err := mgr.DocumentSymbol(context.Background(), "/tmp/test/notes.txt")
+	if err != nil {
+		t.Errorf("DocumentSymbol on unsupported file should not error, got: %v", err)
+	}
+	if symbols != nil {
+		t.Errorf("expected nil symbols for unsupported file, got %+v", symbols)
+	}
+}
+
+func TestManager_DocumentSymbolProviderFalseSkipsRequest(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	root := t.TempDir()
+	mgr.SetWorkspaceRoot(root)
+
+	path := filepath.Join(root, "main.ts")
+	uri, err := FileToURI(path)
+	if err != nil {
+		t.Fatalf("FileToURI: %v", err)
+	}
+
+	transport := newFakeTransport()
+	client := NewClient(transport, nil)
+	t.Cleanup(func() { _ = transport.Close() })
+	client.capabilities = ServerCapabilities{DocumentSymbolProvider: json.RawMessage(`false`)}
+
+	key := serverKey{family: "typescript", workspace: root}
+	mgr.mu.Lock()
+	mgr.servers[key] = &serverEntry{
+		client: client,
+		config: &ServerConfig{Command: "typescript-language-server"},
+		openDocs: map[string]*docState{
+			uri: {refCount: 1, version: 1},
+		},
+	}
+	mgr.docKeys[uri] = key
+	mgr.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	symbols, err := mgr.DocumentSymbol(ctx, path)
+	if err != nil {
+		t.Fatalf("DocumentSymbol: %v", err)
+	}
+	if symbols != nil {
+		t.Fatalf("symbols = %+v, want nil", symbols)
+	}
+	select {
+	case msg := <-transport.outgoing:
+		t.Fatalf("sent %s despite documentSymbolProvider=false", msg.Method)
+	default:
+	}
+}
+
+func TestDocumentSymbolSupported(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+		want bool
+	}{
+		{name: "missing", raw: nil, want: false},
+		{name: "null", raw: json.RawMessage(`null`), want: false},
+		{name: "false", raw: json.RawMessage(`false`), want: false},
+		{name: "true", raw: json.RawMessage(`true`), want: true},
+		{name: "options", raw: json.RawMessage(`{"workDoneProgress":true}`), want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := documentSymbolSupported(tt.raw); got != tt.want {
+				t.Fatalf("documentSymbolSupported(%s) = %v, want %v", string(tt.raw), got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1243,6 +1325,25 @@ func TestManager_ProjectRootForPath_GoUsesNearestGoMod(t *testing.T) {
 	}
 }
 
+func TestManager_ProjectRootForPath_RustUsesNearestCargoToml(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	ws := t.TempDir()
+	touch(t, filepath.Join(ws, "Cargo.toml"))
+	touch(t, filepath.Join(ws, "crates", "tool", "Cargo.toml"))
+	file := filepath.Join(ws, "crates", "tool", "src", "main.rs")
+	touch(t, file)
+	mgr.SetWorkspaceRoot(ws)
+
+	root, err := mgr.projectRootForPath("rust", file)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(ws, "crates", "tool")
+	if root != want {
+		t.Errorf("Rust project root = %q, want nearest Cargo.toml root %q", root, want)
+	}
+}
+
 func TestManager_ProjectRootForPath_PythonUsesNearestProjectMarker(t *testing.T) {
 	for _, marker := range []string{"pyproject.toml", "requirements.txt", "setup.py"} {
 		t.Run(marker, func(t *testing.T) {
@@ -1855,6 +1956,45 @@ func TestGetStatus_PythonReadyEnriched(t *testing.T) {
 	}
 }
 
+func TestEmitStatus_PythonOverrideEmitsOverrideConfigSource(t *testing.T) {
+	var got ServerStatus
+	m := NewManager(func(event string, data ...any) {
+		if event == "lsp:status" && len(data) > 0 {
+			got, _ = data[0].(ServerStatus)
+		}
+	})
+	m.configProvider = &envConfigProvider{
+		detectPython: func(string, pythonenv.Deps) pythonenv.Env {
+			return pythonenv.Env{
+				InterpreterPath: "/proj/.venv/bin/python",
+				VenvDir:         "/proj/.venv",
+				ExtraPaths:      []string{"src"},
+				PythonVersion:   "3.11",
+				Source:          ".venv",
+				Confidence:      "high",
+				Diagnostics:     []string{"venv_without_interpreter:/proj/.venv"},
+			}
+		},
+		pythonDeps:  pythonenv.Deps{},
+		overrideFor: func(string) string { return "/manual/bin/python" },
+	}
+
+	m.emitStatus("python", "/proj", "ready", "", "pyright-langserver")
+
+	if got.SetupState != "ready" {
+		t.Fatalf("SetupState = %q, want ready", got.SetupState)
+	}
+	if got.ConfigSource != "override" {
+		t.Errorf("ConfigSource = %q, want override", got.ConfigSource)
+	}
+	if got.InterpreterPath != "/manual/bin/python" {
+		t.Errorf("InterpreterPath = %q, want /manual/bin/python", got.InterpreterPath)
+	}
+	if len(got.ExtraPaths) != 1 || got.ExtraPaths[0] != "src" || got.PythonVersion != "3.11" {
+		t.Errorf("detected metadata lost from override status: %+v", got)
+	}
+}
+
 // --- Managed provisioning orchestration (#112) ---
 
 // scriptedProv is a test Provisioner whose Resolve flips to StateAvailable only
@@ -2063,6 +2203,49 @@ func TestManager_provisionChecksumFailed(t *testing.T) {
 	}
 }
 
+func TestRetryProvision_usesProvidedProjectRoot(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+	nested := filepath.Join(workspace, "services", "api")
+
+	if err := mgr.RetryProvision("python", nested); err != nil {
+		t.Fatalf("RetryProvision: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status for nested root", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+	s, _ := latestPythonStatus(collector)
+	if s.ProjectRoot != nested {
+		t.Errorf("ProjectRoot = %q, want nested root %q", s.ProjectRoot, nested)
+	}
+}
+
+func TestRetryProvision_emptyRootFallsBackToWorkspaceRoot(t *testing.T) {
+	prov := &scriptedProv{
+		family:     "python",
+		installRes: provision.Resolution{State: provision.StateOffline, Err: errors.New("network down")},
+	}
+	mgr, collector, workspace := newProvisionManager(t, prov)
+
+	if err := mgr.RetryProvision("python", ""); err != nil {
+		t.Fatalf("RetryProvision: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "offline status for workspace root", func() bool {
+		s, ok := latestPythonStatus(collector)
+		return ok && s.SetupState == "offline"
+	})
+	s, _ := latestPythonStatus(collector)
+	if s.ProjectRoot != workspace {
+		t.Errorf("ProjectRoot = %q, want workspace root %q", s.ProjectRoot, workspace)
+	}
+}
+
 func TestSetInterpreterOverride_rejectsMissingPath(t *testing.T) {
 	m := NewManager(nil)
 	err := m.SetInterpreterOverride(t.TempDir(), filepath.Join(t.TempDir(), "nope", "python"))
@@ -2103,9 +2286,22 @@ func TestSetAndClearInterpreterOverride_roundTrip(t *testing.T) {
 func TestSeedInterpreterOverride_setsWithoutRestart(t *testing.T) {
 	m := NewManager(nil)
 	root := t.TempDir()
-	m.SeedInterpreterOverride(root, "/some/interp")
-	if got := m.overrideForRoot(root); got != "/some/interp" {
-		t.Errorf("seeded override = %q, want /some/interp", got)
+	interp := filepath.Join(root, "python")
+	if err := os.WriteFile(interp, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.SeedInterpreterOverride(root, interp)
+	if got := m.overrideForRoot(root); got != interp {
+		t.Errorf("seeded override = %q, want %q", got, interp)
+	}
+}
+
+func TestSeedInterpreterOverride_ignoresMissingPath(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	m.SeedInterpreterOverride(root, filepath.Join(root, "deleted-python"))
+	if got := m.overrideForRoot(root); got != "" {
+		t.Errorf("seeded override = %q, want empty for missing path", got)
 	}
 }
 
@@ -2122,6 +2318,46 @@ func TestOverrideFeedsConfigProvider(t *testing.T) {
 	env := pythonEnvFromProvider(m.configProvider, root)
 	if env.InterpreterPath != interp || env.Source != "override" {
 		t.Errorf("provider env = %+v, want interpreter %q source override", env, interp)
+	}
+}
+
+func TestClearInterpreterOverride_restoresDetectedEnvironment(t *testing.T) {
+	m := NewManager(nil)
+	root := t.TempDir()
+	auto := filepath.Join(root, ".venv", "bin", "python")
+	manual := filepath.Join(root, "manual", "python")
+	if err := os.MkdirAll(filepath.Dir(manual), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manual, []byte("#!py"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	provider := m.configProvider.(*envConfigProvider)
+	provider.detectPython = func(string, pythonenv.Deps) pythonenv.Env {
+		return pythonenv.Env{
+			InterpreterPath: auto,
+			VenvDir:         filepath.Join(root, ".venv"),
+			ExtraPaths:      []string{"src"},
+			PythonVersion:   "3.11",
+			Source:          ".venv",
+			Confidence:      "high",
+		}
+	}
+
+	m.SeedInterpreterOverride(root, manual)
+	overridden := provider.PythonEnv(root)
+	if overridden.InterpreterPath != manual || overridden.Source != "override" {
+		t.Fatalf("overridden env = %+v", overridden)
+	}
+	if err := m.ClearInterpreterOverride(root); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	detected := provider.PythonEnv(root)
+	if detected.InterpreterPath != auto || detected.Source != ".venv" || detected.VenvDir != filepath.Join(root, ".venv") {
+		t.Fatalf("detected env after clear = %+v", detected)
+	}
+	if len(detected.ExtraPaths) != 1 || detected.ExtraPaths[0] != "src" || detected.PythonVersion != "3.11" {
+		t.Errorf("detected metadata after clear = %+v", detected)
 	}
 }
 

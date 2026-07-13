@@ -4,6 +4,7 @@ import {runprofile} from '../models';
 import {workspace} from '../models';
 import {lsp} from '../models';
 import {main} from '../models';
+import {git} from '../models';
 import {filesystem} from '../models';
 import {search} from '../models';
 
@@ -15,7 +16,7 @@ export function CloseTerminal(arg1:string):Promise<void>;
 
 export function ConfirmBeforeCloseReady():Promise<void>;
 
-export function CreateTerminal():Promise<string>;
+export function CreateTerminal(arg1:string):Promise<string>;
 
 export function DeleteRunProfile(arg1:string):Promise<void>;
 
@@ -35,6 +36,34 @@ export function GetWatchedPath():Promise<string>;
 
 export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
 
+export function GitApplyHunk(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function GitBranches(arg1:string):Promise<Array<string>>;
+
+export function GitCheckout(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function GitCommit(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
+export function GitCommitMessageAvailable():Promise<boolean>;
+
+export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<git.FileContent>;
+
+export function GitFileHunks(arg1:string,arg2:string,arg3:boolean):Promise<git.FileHunks>;
+
+export function GitGenerateCommitMessage(arg1:string):Promise<string>;
+
+export function GitIntentToAdd(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function GitPull(arg1:string):Promise<string>;
+
+export function GitPush(arg1:string):Promise<string>;
+
+export function GitStage(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function GitStatus(arg1:string):Promise<git.RepoStatus>;
+
+export function GitUnstage(arg1:string,arg2:Array<string>):Promise<void>;
+
 export function IsWatching():Promise<boolean>;
 
 export function LSPClearInterpreter(arg1:string):Promise<void>;
@@ -53,11 +82,13 @@ export function LSPDidSave(arg1:string):Promise<void>;
 
 export function LSPDoctor(arg1:string):Promise<lsp.DoctorReport>;
 
+export function LSPDocumentSymbol(arg1:string):Promise<Array<lsp.DocumentSymbol>>;
+
 export function LSPHover(arg1:string,arg2:number,arg3:number):Promise<lsp.Hover>;
 
 export function LSPResolveCompletionItem(arg1:string,arg2:lsp.CompletionItem):Promise<lsp.CompletionItem>;
 
-export function LSPRetryProvision(arg1:string):Promise<void>;
+export function LSPRetryProvision(arg1:string,arg2:string):Promise<void>;
 
 export function LSPSetInterpreter(arg1:string,arg2:string):Promise<void>;
 

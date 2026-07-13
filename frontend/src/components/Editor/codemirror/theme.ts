@@ -886,7 +886,10 @@ export function buildChromeRules(palette: SyntaxPalette) {
       border: `1px solid ${colors.border}`,
       borderRadius: '7px',
       padding: '0',
-      minWidth: '320px',
+      // Shrink-wrap to the widest line instead of a fixed 320px, so short
+      // hovers don't carry a slab of empty space; still cap + scroll when long.
+      width: 'max-content',
+      minWidth: '0',
       maxWidth: '520px',
       maxHeight: '360px',
       overflow: 'auto',
@@ -932,6 +935,16 @@ export function buildChromeRules(palette: SyntaxPalette) {
       color: colors.keyword,
       fontWeight: '600',
     },
+    '.firn-hover-link': {
+      color: colors.accent,
+      textDecoration: 'underline',
+      textDecorationColor: 'rgba(56, 189, 248, 0.5)',
+      textUnderlineOffset: '2px',
+      cursor: 'pointer',
+    },
+    '.firn-hover-link:hover': {
+      textDecorationColor: colors.accent,
+    },
     '.firn-hover-actions': {
       display: 'flex',
       justifyContent: 'flex-end',
@@ -949,6 +962,115 @@ export function buildChromeRules(palette: SyntaxPalette) {
       transition: 'color 120ms ease-out',
     },
     '.firn-hover-action:hover': {
+      color: colors.accent,
+    },
+
+    // --- Git change gutter markers (gitGutter.ts) ---
+    // Shared here (not per-view module CSS) so both the file editor and the
+    // diff view's working-tree pane render them identically.
+    '.cm-gitGutter': {
+      // Wider than the visible bar so the whole column is a comfortable click
+      // target for the peek/revert popup.
+      width: '8px',
+      cursor: 'pointer',
+    },
+    '.cm-gitGutterMarker': {
+      width: '3px',
+      height: '100%',
+      margin: '0 auto',
+      borderRadius: '1px',
+      transition: 'width 0.1s ease-out, filter 0.1s ease-out',
+    },
+    // Hovering the change bar fattens and brightens it — a JetBrains-style cue
+    // that it is clickable, without auto-opening the peek.
+    '.cm-gitGutter .cm-gutterElement:hover .cm-gitGutterMarker': {
+      width: '6px',
+      filter: 'brightness(1.3)',
+    },
+    '.cm-gitGutter-added': {
+      background: 'var(--git-added, var(--status-success))',
+    },
+    '.cm-gitGutter-modified': {
+      background: 'var(--git-modified, var(--status-warning))',
+    },
+    // Deleted lines have no row of their own: mark the boundary with a small
+    // right-pointing wedge (JetBrains/VS Code convention) instead of a bare
+    // horizontal bar, which reads as a rendering artifact.
+    '.cm-gitGutter-deleted': {
+      width: '0',
+      height: '0',
+      margin: '0',
+      borderRadius: '0',
+      background: 'transparent',
+      borderLeft: '7px solid var(--git-deleted, var(--status-error))',
+      borderTop: '4px solid transparent',
+      borderBottom: '4px solid transparent',
+      alignSelf: 'end',
+    },
+    '.cm-gitGutter .cm-gutterElement:hover .cm-gitGutter-deleted': {
+      width: '0',
+      filter: 'brightness(1.3)',
+    },
+
+    // --- Git hunk peek/revert popup (gitGutter.ts) ---
+    '.firn-git-hunk': {
+      minWidth: '160px',
+      maxWidth: '520px',
+      overflow: 'hidden',
+    },
+    '.firn-git-hunk-body': {
+      maxHeight: '220px',
+      overflow: 'auto',
+    },
+    '.firn-git-hunk-diff': {
+      margin: '0',
+      padding: '8px 12px',
+      backgroundColor: colors.activeLine,
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: '12px',
+      lineHeight: '1.5',
+      color: '#BCCBDC',
+      // Code, not prose: never wrap (mid-line wraps scramble indentation);
+      // long lines scroll horizontally inside the popup body instead.
+      whiteSpace: 'pre',
+    },
+    '.firn-git-diff-del': {
+      borderRadius: '2px',
+      backgroundColor: 'rgba(244, 63, 94, 0.25)',
+      color: '#FECDD3',
+      textDecoration: 'line-through',
+      textDecorationColor: 'rgba(244, 63, 94, 0.7)',
+    },
+    '.firn-git-diff-ins': {
+      borderRadius: '2px',
+      backgroundColor: 'rgba(63, 185, 80, 0.25)',
+      color: '#BBF7D0',
+    },
+    // Return glyph marking an added/removed line break inside a diff segment,
+    // which would otherwise render invisibly. Inherits the segment's color.
+    '.firn-git-diff-newline': {
+      opacity: '0.8',
+      fontWeight: '700',
+    },
+    '.firn-git-hunk-actions': {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: '16px',
+      padding: '8px 12px',
+      borderTop: `1px solid ${colors.border}`,
+      backgroundColor: '#0F172A',
+    },
+    '.firn-git-hunk-action': {
+      background: 'none',
+      border: 'none',
+      padding: '0',
+      color: '#9FB5CF',
+      fontSize: '11px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      transition: 'color 120ms ease-out',
+    },
+    '.firn-git-hunk-action:hover': {
       color: colors.accent,
     },
 

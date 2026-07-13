@@ -9,11 +9,22 @@ export interface LSPSetupNotice {
 /**
  * Maps a server's typed setup status onto a user-facing message + next-step
  * hint. Returns null when there is nothing actionable to show (server ready,
- * or no setup state reported). The interactive affordances (interpreter
- * picker, retry) live in LSPSetupCard.
+ * or no setup state reported) — except ready on a manual override, which keeps
+ * a lightweight notice so Reset-to-auto stays reachable. The interactive
+ * affordances (interpreter picker, retry, reset) live in LSPSetupCard.
  */
 export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNotice | null {
-  if (!status?.setupState || status.setupState === 'ready') return null;
+  if (!status?.setupState) return null;
+  if (status.setupState === 'ready') {
+    if (status.configSource === 'override') {
+      return {
+        message: `Using a manually selected interpreter${status.interpreterPath ? ` (${status.interpreterPath})` : ''}.`,
+        hint: 'Reset to auto to re-detect the project environment.',
+        tone: 'info',
+      };
+    }
+    return null;
+  }
 
   switch (status.setupState) {
     case 'missing_server':
@@ -61,12 +72,19 @@ export function describeSetup(status: LSPServerStatus | undefined): LSPSetupNoti
         hint: 'Check your connection, then Retry.',
         tone: 'error',
       };
-    case 'provision_failed':
+    case 'provision_failed': {
+      // Python has a well-known package name worth naming; other families get a
+      // generic manual-install suggestion so the copy is never Python-specific.
+      const manual =
+        status.family === 'python'
+          ? 'install basedpyright/pyright manually'
+          : `install the ${status.family} language server manually`;
       return {
         message: 'Language server setup failed.',
-        hint: 'Retry, or install basedpyright/pyright manually.',
+        hint: `Retry, or ${manual}.`,
         tone: 'error',
       };
+    }
     default:
       return null;
   }

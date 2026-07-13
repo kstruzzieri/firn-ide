@@ -63,7 +63,24 @@ export function createShellIntegration(
     return { dispose() {} };
   }
 
+  let warned = false;
+
   const handler = parser.registerOscHandler(133, (data: string): boolean => {
+    // An exception escaping an OSC handler kills xterm's write loop: the
+    // terminal permanently stops rendering output (it looks wedged, while the
+    // shell stays alive). Decorations are cosmetic — contain any failure here.
+    try {
+      handle(data);
+    } catch (err) {
+      if (!warned) {
+        warned = true;
+        console.warn('Shell integration marker failed; continuing without decorations.', err);
+      }
+    }
+    return true; // handled — xterm will not print the sequence
+  });
+
+  function handle(data: string): void {
     const parts = data.split(';');
     switch (parts[0]) {
       case 'A': {
@@ -90,14 +107,16 @@ export function createShellIntegration(
         if (current && current.executed && !current.decorated) {
           const exit = Number.parseInt(parts[1] ?? '0', 10);
           const failed = !Number.isNaN(exit) && exit !== 0;
-          decorate(current, failed, decoratedCount > 0);
+          // Mark before decorating: if decorate() throws mid-way, a duplicate
+          // 'D' must not stack a second set of decorations on the same block.
           current.decorated = true;
+          const withSeparator = decoratedCount > 0;
           decoratedCount += 1;
+          decorate(current, failed, withSeparator);
         }
         break;
     }
-    return true; // handled — xterm will not print the sequence
-  });
+  }
 
   function discard(block: PromptBlock): void {
     for (const d of block.decorations) d.dispose();

@@ -107,6 +107,8 @@ jest.mock('../../../components/Editor/codemirror', () => {
     reconfigureHover: mockReconfigureHover,
     resetCompletion: mockResetCompletion,
     updateEditorDiagnostics: mockUpdateEditorDiagnostics,
+    setGitBaseline: { of: (value: unknown) => ({ value }) },
+    gitGutterExtension: jest.fn(() => []),
   };
 });
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"firn/internal/filesystem"
+	"firn/internal/git"
 	"firn/internal/lsp"
 	"firn/internal/lsp/provision"
 	"firn/internal/runprofile"
@@ -40,6 +41,8 @@ type App struct {
 	workspaceStore *workspace.Store
 	lspManager     *lsp.Manager
 	searchManager  *search.Manager
+	gitService     *git.Service
+	gitMsgGen      *git.MessageGenerator
 	closeMu        sync.Mutex
 	isClosing      bool
 	closeReady     chan struct{}
@@ -67,6 +70,8 @@ func NewApp() *App {
 		osFS:           osFS,
 		workspaceStore: workspace.NewStore(osFS, workspaceBaseDir),
 		searchManager:  search.NewManager(),
+		gitService:     git.NewService(),
+		gitMsgGen:      git.NewMessageGenerator(),
 	}
 }
 
@@ -94,8 +99,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // wireLSPProvisioners builds and registers the managed-server provisioners on
-// the LSP manager. Currently only the Python (basedpyright) provisioner is
-// managed. When the home directory is unavailable the provisioner is skipped
+// the LSP manager. When the home directory is unavailable, provisioners are skipped
 // gracefully — managed installs simply won't be offered, while interpreter/env
 // wiring still works.
 func (a *App) wireLSPProvisioners() {
@@ -116,7 +120,26 @@ func (a *App) wireLSPProvisioners() {
 		},
 		// Fetch nil -> defaultFetch (real download+verify+unzip).
 	})
-	a.lspManager.SetProvisioners(map[string]provision.Provisioner{"python": pyProv})
+	goProv := provision.NewGoProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.GoDeps{
+		LookPath: exec.LookPath,
+		RunGo: func(ctx context.Context, goBin string, args, env []string) error {
+			cmd := exec.CommandContext(ctx, goBin, args...)
+			cmd.Env = env
+			return cmd.Run()
+		},
+	})
+	rustProv := provision.NewRustProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.RustDeps{
+		// Fetch nil -> defaultRustFetch (real download+verify+gunzip/unzip).
+	})
+	tsProv := provision.NewTypeScriptProvisioner(cacheRoot, stdruntime.GOOS, stdruntime.GOARCH, provision.TypeScriptDeps{
+		// Fetch nil -> defaultTypeScriptFetch (real download+verify+untar/unzip).
+	})
+	a.lspManager.SetProvisioners(map[string]provision.Provisioner{
+		"python":     pyProv,
+		"go":         goProv,
+		"rust":       rustProv,
+		"typescript": tsProv,
+	})
 }
 
 // beforeClose is called by Wails before the application window closes.
@@ -297,19 +320,24 @@ func (a *App) ToggleMaximize() {
 	runtime.WindowToggleMaximise(a.ctx)
 }
 
-// CreateTerminal creates a new terminal
+// CreateTerminal creates a new terminal whose shell starts in dir — the loaded
+// workspace root — instead of the app process's own working directory. An
+// empty or missing dir inherits the process default.
 // This is exposed to the frontend via Wails bindings.
-func (a *App) CreateTerminal() (string, error) {
-	id, err := a.termManager.Create()
+func (a *App) CreateTerminal(dir string) (string, error) {
+	id, err := a.termManager.Create(dir)
 	if err != nil {
 		runtime.LogErrorf(a.ctx, "CreateTerminal failed: %v", err)
 		return "", err
 	}
 
-	session, _ := a.termManager.Get(id)
-	go session.ReadLoop(func(data string) {
-		runtime.EventsEmit(a.ctx, "terminal:output", id, data)
-	})
+	// Re-lookup can race a concurrent CloseTerminal; a vanished session just
+	// means there is no output to stream — never a nil-deref in the goroutine.
+	if session, ok := a.termManager.Get(id); ok {
+		go session.ReadLoop(func(data string) {
+			runtime.EventsEmit(a.ctx, "terminal:output", id, data)
+		})
+	}
 
 	return id, nil
 }
@@ -726,6 +754,17 @@ func (a *App) LSPDefinition(path string, line, character int) ([]lsp.Location, e
 	return a.lspManager.Definition(ctx, path, line, character)
 }
 
+// LSPDocumentSymbol requests the document symbols (structure/outline) for a file.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LSPDocumentSymbol(path string) ([]lsp.DocumentSymbol, error) {
+	if a.lspManager == nil {
+		return nil, fmt.Errorf("LSP not initialized")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, lsp.DefaultRequestTimeout)
+	defer cancel()
+	return a.lspManager.DocumentSymbol(ctx, path)
+}
+
 // LSPComplete requests completion items for a position in a document.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) LSPComplete(path string, line, character int, triggerCharacter string) (*lsp.CompletionList, error) {
@@ -816,13 +855,15 @@ func (a *App) LSPClearInterpreter(workspacePath string) error {
 	return a.persistLSPInterpreter(workspacePath, "") // empty clears it
 }
 
-// LSPRetryProvision re-attempts a managed server install for a family.
+// LSPRetryProvision re-attempts a managed server install for a family, keyed
+// to the project root the failing status reported (empty falls back to the
+// workspace root).
 // This is exposed to the frontend via Wails bindings.
-func (a *App) LSPRetryProvision(family string) error {
+func (a *App) LSPRetryProvision(family, projectRoot string) error {
 	if a.lspManager == nil {
 		return fmt.Errorf("LSP not initialized")
 	}
-	return a.lspManager.RetryProvision(family)
+	return a.lspManager.RetryProvision(family, projectRoot)
 }
 
 // persistLSPInterpreter writes the interpreter override into the workspace's

@@ -157,10 +157,43 @@ type InitializeResult struct {
 
 // ServerCapabilities describe the capabilities provided by the language server.
 type ServerCapabilities struct {
-	TextDocumentSync   json.RawMessage `json:"textDocumentSync,omitempty"`
-	CompletionProvider json.RawMessage `json:"completionProvider,omitempty"`
-	HoverProvider      json.RawMessage `json:"hoverProvider,omitempty"`
-	DefinitionProvider json.RawMessage `json:"definitionProvider,omitempty"`
+	TextDocumentSync       json.RawMessage `json:"textDocumentSync,omitempty"`
+	CompletionProvider     json.RawMessage `json:"completionProvider,omitempty"`
+	HoverProvider          json.RawMessage `json:"hoverProvider,omitempty"`
+	DefinitionProvider     json.RawMessage `json:"definitionProvider,omitempty"`
+	DocumentSymbolProvider json.RawMessage `json:"documentSymbolProvider,omitempty"`
+}
+
+// SymbolKind enumerates the kind of a document symbol per the LSP spec.
+// Values match the protocol's numeric codes (1-26).
+type SymbolKind int
+
+// DocumentSymbol represents a programming construct in a document, such as a
+// class, method, or variable. Symbols can nest via Children when the server
+// supports hierarchical document symbols.
+//
+// This is the normalized shape Firn works with. Servers that only return the
+// legacy flat SymbolInformation[] are converted into a flat slice of these
+// (no Children) before reaching the manager — see normalizeDocumentSymbols.
+type DocumentSymbol struct {
+	Name   string     `json:"name"`
+	Detail string     `json:"detail,omitempty"`
+	Kind   SymbolKind `json:"kind"`
+	// Range is the full source range enclosing the symbol (including its body).
+	Range Range `json:"range"`
+	// SelectionRange is the range that should be selected/revealed when the
+	// symbol is picked (typically the identifier). Always contained in Range.
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []DocumentSymbol `json:"children,omitempty"`
+}
+
+// symbolInformation is the legacy flat symbol shape returned by servers that
+// don't support hierarchicalDocumentSymbolSupport. It is only used internally
+// during normalization and never crosses the Wails boundary.
+type symbolInformation struct {
+	Name     string     `json:"name"`
+	Kind     SymbolKind `json:"kind"`
+	Location Location   `json:"location"`
 }
 
 // CompletionProviderOptions describes the server's completion capabilities.
@@ -203,6 +236,11 @@ type DidSaveTextDocumentParams struct {
 
 // DidCloseTextDocumentParams are the parameters for textDocument/didClose.
 type DidCloseTextDocumentParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// DocumentSymbolParams are the parameters for textDocument/documentSymbol.
+type DocumentSymbolParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }
 

@@ -8,7 +8,7 @@ import (
 
 func TestNewSession(t *testing.T) {
 	requirePTY(t)
-	session, err := NewSession()
+	session, err := NewSession("")
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
 	}
@@ -22,9 +22,42 @@ func TestNewSession(t *testing.T) {
 	}
 }
 
+// TestNewSession_StartsInDir: the shell must start in the workspace root, not
+// wherever the app process happens to run from (wails dev runs from the repo
+// checkout, so without this every terminal opened there instead of the loaded
+// project).
+func TestNewSession_StartsInDir(t *testing.T) {
+	requirePTY(t)
+	dir := t.TempDir()
+	session, err := NewSession(dir)
+	if err != nil {
+		t.Fatalf("NewSession(dir) returned error: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	if session.cmd.Dir != dir {
+		t.Errorf("cmd.Dir = %q, want %q", session.cmd.Dir, dir)
+	}
+}
+
+// TestNewSession_MissingDirFallsBack: a stale or deleted workspace path must
+// not break terminal creation — fall back to the process default.
+func TestNewSession_MissingDirFallsBack(t *testing.T) {
+	requirePTY(t)
+	session, err := NewSession("/nonexistent/definitely/gone")
+	if err != nil {
+		t.Fatalf("NewSession(missing dir) returned error: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	if session.cmd.Dir != "" {
+		t.Errorf("cmd.Dir = %q, want empty fallback", session.cmd.Dir)
+	}
+}
+
 func TestSessionWriteRead(t *testing.T) {
 	requirePTY(t)
-	session, err := NewSession()
+	session, err := NewSession("")
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
 	}
@@ -70,7 +103,7 @@ func TestSessionWriteRead(t *testing.T) {
 
 func TestSessionCloseGraceful(t *testing.T) {
 	requirePTY(t)
-	session, err := NewSession()
+	session, err := NewSession("")
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
 	}
@@ -92,7 +125,7 @@ func TestSessionCloseGraceful(t *testing.T) {
 
 func TestSessionCloseTerminatesStubbornProcess(t *testing.T) {
 	requirePTY(t)
-	session, err := NewSession()
+	session, err := NewSession("")
 	if err != nil {
 		t.Fatalf("NewSession() returned error: %v", err)
 	}

@@ -40,6 +40,7 @@ import {
 } from '@codemirror/autocomplete';
 import { lintKeymap } from '@codemirror/lint';
 import { inFileSearchExtensions, inFileSearchKeymap } from './search';
+import { gitGutterExtension } from './gitGutter';
 export { inFileSearchKeymap } from './search';
 
 // Language imports
@@ -334,6 +335,9 @@ export function createEditorExtensions(options: {
 
     // Behavior
     ...behaviorExtensions(),
+
+    // Git change markers (dormant until a baseline is dispatched)
+    gitGutterExtension(),
 
     // Tab size
     tabSizeCompartment.of(tabSize(tabs)),

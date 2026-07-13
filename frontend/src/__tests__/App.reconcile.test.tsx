@@ -15,6 +15,8 @@ import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
 import type { FileEntry } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
+import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from '../stores/gitStore';
+import { GitStatus } from '../../wailsjs/go/main/App';
 import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
 import { ReadDirectoryShallow } from '../../wailsjs/go/main/App';
 import { __resetEnsurePathLoaded } from '../hooks/useEnsurePathLoaded';
@@ -72,6 +74,26 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   SearchWorkspace: jest.fn().mockResolvedValue({}),
   CancelSearch: jest.fn().mockResolvedValue(undefined),
   DetectWorkspaces: jest.fn(() => Promise.resolve([])),
+  GitStatus: jest.fn(() =>
+    Promise.resolve({
+      isRepo: false,
+      repoRoot: '',
+      branch: '',
+      upstream: '',
+      ahead: 0,
+      behind: 0,
+      files: [],
+    })
+  ),
+  GitBranches: jest.fn(() => Promise.resolve([])),
+  GitCommitMessageAvailable: jest.fn(() => Promise.resolve(false)),
+  GitStage: jest.fn(),
+  GitUnstage: jest.fn(),
+  GitCommit: jest.fn(),
+  GitPull: jest.fn(),
+  GitPush: jest.fn(),
+  GitCheckout: jest.fn(),
+  GitGenerateCommitMessage: jest.fn(),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
@@ -135,6 +157,38 @@ describe('App — surgical watcher reconcile', () => {
     expect(cb).toBeDefined();
     return cb!;
   }
+
+  it('schedules a debounced git status refresh on any file event', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/r');
+    });
+    (GitStatus as jest.Mock).mockClear();
+
+    const fire = getWatcherCallback();
+    act(() => {
+      fire({
+        type: 'modified',
+        path: '/r/some/file.ts',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      fire({
+        type: 'modified',
+        path: '/r/other/file.ts',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      jest.advanceTimersByTime(GIT_REFRESH_DEBOUNCE_MS + 10);
+    });
+    await act(async () => {});
+
+    // Burst of events → exactly one debounced status call.
+    expect(GitStatus).toHaveBeenCalledTimes(1);
+    expect(GitStatus).toHaveBeenCalledWith('/r');
+  });
 
   // ── (a) visible loaded dir → ReadDirectoryShallow called ──────────────────
   it('(a) change under a visible loaded dir triggers ReadDirectoryShallow for that dir', async () => {

@@ -18,8 +18,8 @@ export function ConfirmBeforeCloseReady() {
   return window['go']['main']['App']['ConfirmBeforeCloseReady']();
 }
 
-export function CreateTerminal() {
-  return window['go']['main']['App']['CreateTerminal']();
+export function CreateTerminal(arg1) {
+  return window['go']['main']['App']['CreateTerminal'](arg1);
 }
 
 export function DeleteRunProfile(arg1) {
@@ -58,6 +58,62 @@ export function GetWorkspaceInfo() {
   return window['go']['main']['App']['GetWorkspaceInfo']();
 }
 
+export function GitApplyHunk(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitApplyHunk'](arg1, arg2, arg3);
+}
+
+export function GitBranches(arg1) {
+  return window['go']['main']['App']['GitBranches'](arg1);
+}
+
+export function GitCheckout(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitCheckout'](arg1, arg2, arg3);
+}
+
+export function GitCommit(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitCommit'](arg1, arg2, arg3);
+}
+
+export function GitCommitMessageAvailable() {
+  return window['go']['main']['App']['GitCommitMessageAvailable']();
+}
+
+export function GitFileAtRev(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitFileAtRev'](arg1, arg2, arg3);
+}
+
+export function GitFileHunks(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitFileHunks'](arg1, arg2, arg3);
+}
+
+export function GitGenerateCommitMessage(arg1) {
+  return window['go']['main']['App']['GitGenerateCommitMessage'](arg1);
+}
+
+export function GitIntentToAdd(arg1, arg2) {
+  return window['go']['main']['App']['GitIntentToAdd'](arg1, arg2);
+}
+
+export function GitPull(arg1) {
+  return window['go']['main']['App']['GitPull'](arg1);
+}
+
+export function GitPush(arg1) {
+  return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function GitStage(arg1, arg2) {
+  return window['go']['main']['App']['GitStage'](arg1, arg2);
+}
+
+export function GitStatus(arg1) {
+  return window['go']['main']['App']['GitStatus'](arg1);
+}
+
+export function GitUnstage(arg1, arg2) {
+  return window['go']['main']['App']['GitUnstage'](arg1, arg2);
+}
+
 export function IsWatching() {
   return window['go']['main']['App']['IsWatching']();
 }
@@ -94,6 +150,10 @@ export function LSPDoctor(arg1) {
   return window['go']['main']['App']['LSPDoctor'](arg1);
 }
 
+export function LSPDocumentSymbol(arg1) {
+  return window['go']['main']['App']['LSPDocumentSymbol'](arg1);
+}
+
 export function LSPHover(arg1, arg2, arg3) {
   return window['go']['main']['App']['LSPHover'](arg1, arg2, arg3);
 }
@@ -102,8 +162,8 @@ export function LSPResolveCompletionItem(arg1, arg2) {
   return window['go']['main']['App']['LSPResolveCompletionItem'](arg1, arg2);
 }
 
-export function LSPRetryProvision(arg1) {
-  return window['go']['main']['App']['LSPRetryProvision'](arg1);
+export function LSPRetryProvision(arg1, arg2) {
+  return window['go']['main']['App']['LSPRetryProvision'](arg1, arg2);
 }
 
 export function LSPSetInterpreter(arg1, arg2) {

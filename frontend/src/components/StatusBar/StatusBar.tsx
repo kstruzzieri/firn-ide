@@ -1,24 +1,61 @@
 import styles from './StatusBar.module.css';
 import { StatusBranchIcon, CheckIcon, AlertCircleIcon } from '../icons';
-import { useGitBranch, useActiveFile, useCursorPosition } from '../../stores/ideStore';
+import { useActiveFile, useCursorPosition } from '../../stores/ideStore';
+import { useGitBranchInfo, useGitStore } from '../../stores/gitStore';
 import { useLSPErrorCount, useLSPInfoCount, useLSPWarningCount } from '../../stores/lspStore';
 import { EditorThemePicker } from './EditorThemePicker';
 
 export function StatusBar() {
-  const gitBranch = useGitBranch();
+  const { branch, ahead, behind } = useGitBranchInfo();
   const errorCount = useLSPErrorCount();
   const warningCount = useLSPWarningCount();
   const infoCount = useLSPInfoCount();
   const activeFile = useActiveFile();
   const cursorPosition = useCursorPosition();
 
+  // The git segment is a control, not a label: clicking the branch opens the
+  // always-visible header branch switcher; the arrows push/pull directly.
+  const handleBranchClick = () => {
+    useGitStore.getState().requestBranchPopupFocus();
+  };
+
   return (
     <>
       <div className={styles.left}>
-        {gitBranch && (
+        {branch && (
           <span className={styles.item}>
-            <StatusBranchIcon aria-hidden="true" />
-            <span>{gitBranch}</span>
+            <button
+              type="button"
+              className={styles.segmentBtn}
+              onClick={handleBranchClick}
+              aria-label={`Branch: ${branch}. Open branch switcher`}
+              title="Switch branch"
+            >
+              <StatusBranchIcon aria-hidden="true" />
+              <span>{branch}</span>
+            </button>
+            {ahead > 0 && (
+              <button
+                type="button"
+                className={`${styles.segmentBtn} ${styles.aheadBehind}`}
+                onClick={() => void useGitStore.getState().push()}
+                aria-label={`Push ${ahead} outgoing ${ahead === 1 ? 'commit' : 'commits'}`}
+                title="Push"
+              >
+                {`↑${ahead}`}
+              </button>
+            )}
+            {behind > 0 && (
+              <button
+                type="button"
+                className={`${styles.segmentBtn} ${styles.aheadBehind}`}
+                onClick={() => void useGitStore.getState().pull()}
+                aria-label={`Pull ${behind} incoming ${behind === 1 ? 'commit' : 'commits'}`}
+                title="Pull"
+              >
+                {`↓${behind}`}
+              </button>
+            )}
           </span>
         )}
         <DiagnosticsIndicator errors={errorCount} warnings={warningCount} info={infoCount} />

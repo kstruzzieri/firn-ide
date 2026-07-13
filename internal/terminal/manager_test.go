@@ -10,12 +10,12 @@ func TestManagerCreateUniqueIDs(t *testing.T) {
 	mgr := NewManager()
 	defer func() { _ = mgr.CloseAll() }()
 
-	id1, err := mgr.Create()
+	id1, err := mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() returned error: %v", err)
 	}
 
-	id2, err := mgr.Create()
+	id2, err := mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() returned error: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestManagerIDUniquenessAfterDeletion(t *testing.T) {
 	mgr := NewManager()
 	defer func() { _ = mgr.CloseAll() }()
 
-	id1, err := mgr.Create()
+	id1, err := mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() returned error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestManagerIDUniquenessAfterDeletion(t *testing.T) {
 	}
 
 	// Create a new session — should NOT reuse id1
-	id2, err := mgr.Create()
+	id2, err := mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() returned error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestManagerConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			id, err := mgr.Create()
+			id, err := mgr.Create("")
 			if err != nil {
 				// PTY allocation can fail under resource limits; skip
 				t.Logf("Create() returned error (may be resource limit): %v", err)
@@ -122,11 +122,11 @@ func TestManagerCloseAll(t *testing.T) {
 	requirePTY(t)
 	mgr := NewManager()
 
-	_, err := mgr.Create()
+	_, err := mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() returned error: %v", err)
 	}
-	_, err = mgr.Create()
+	_, err = mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() returned error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestManagerCloseAll(t *testing.T) {
 	}
 
 	// Creating after CloseAll should still work
-	id, err := mgr.Create()
+	id, err := mgr.Create("")
 	if err != nil {
 		t.Fatalf("Create() after CloseAll returned error: %v", err)
 	}

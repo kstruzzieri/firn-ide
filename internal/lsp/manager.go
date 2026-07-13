@@ -400,6 +400,27 @@ func (m *Manager) Definition(ctx context.Context, path string, line, character i
 	return result, err
 }
 
+// DocumentSymbol sends a documentSymbol request for the given file and returns
+// its normalized symbol tree. Returns nil when no server covers the file.
+func (m *Manager) DocumentSymbol(ctx context.Context, path string) ([]DocumentSymbol, error) {
+	entry, uri, key := m.serverForPath(path)
+	if entry == nil {
+		return nil, nil
+	}
+	// Skip servers that don't advertise documentSymbol support. The Structure
+	// view fetches on every file switch and (debounced) edit, so blindly
+	// sending the request to a server that will reject it would spam
+	// request-failure logs and surface a misleading error state to the user.
+	if !documentSymbolSupported(entry.client.ServerCapabilities().DocumentSymbolProvider) {
+		return nil, nil
+	}
+	result, err := entry.client.DocumentSymbol(ctx, uri)
+	if err != nil {
+		m.logRequestFailure(key, "textDocument/documentSymbol", err)
+	}
+	return result, err
+}
+
 // Complete sends a completion request for the given file position.
 func (m *Manager) Complete(ctx context.Context, path string, line, character int, triggerChar string) (*CompletionList, error) {
 	entry, uri, key := m.serverForPath(path)
@@ -593,13 +614,18 @@ func (m *Manager) beginProvision(family, projectRoot string) {
 	}()
 }
 
-// RetryProvision re-attempts a managed install (frontend Retry action). It uses
-// the manager's current workspace root as the project root.
-func (m *Manager) RetryProvision(family string) error {
+// RetryProvision re-attempts a managed install (frontend Retry action) keyed
+// to the same project root the failed auto-provision used, so a nested
+// monorepo sub-project retries the right scope. An empty projectRoot falls
+// back to the workspace root (older callers and root-level workspaces).
+func (m *Manager) RetryProvision(family, projectRoot string) error {
 	if _, ok := m.provisioners[family]; !ok {
 		return fmt.Errorf("no managed provisioner for %q", family)
 	}
-	m.beginProvision(family, m.WorkspaceRoot())
+	if projectRoot == "" {
+		projectRoot = m.WorkspaceRoot()
+	}
+	m.beginProvision(family, projectRoot)
 	return nil
 }
 
@@ -647,7 +673,10 @@ func (m *Manager) overrideForRoot(projectRoot string) string {
 // workspace load to apply a persisted choice before the first DidOpen).
 func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
 	m.overrideMu.Lock()
-	if interpreterPath == "" {
+	if !validInterpreterPath(interpreterPath) {
+		if interpreterPath != "" {
+			log.Printf("lsp: ignoring persisted interpreter override for %q: %q missing or a directory", projectRoot, interpreterPath)
+		}
 		delete(m.interpreterOverrides, projectRoot)
 	} else {
 		m.interpreterOverrides[projectRoot] = interpreterPath
@@ -661,10 +690,7 @@ func (m *Manager) SeedInterpreterOverride(projectRoot, interpreterPath string) {
 func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) error {
 	// Override paths bypass the discovery layer's stat validation, so validate
 	// here: the env layer trusts whatever this map returns.
-	if interpreterPath == "" {
-		return fmt.Errorf("interpreter not found: %q", interpreterPath)
-	}
-	if info, err := os.Stat(interpreterPath); err != nil || info.IsDir() {
+	if !validInterpreterPath(interpreterPath) {
 		return fmt.Errorf("interpreter not found: %q", interpreterPath)
 	}
 
@@ -674,6 +700,14 @@ func (m *Manager) SetInterpreterOverride(projectRoot, interpreterPath string) er
 
 	m.restartRunningFamily("python", projectRoot)
 	return nil
+}
+
+func validInterpreterPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // ClearInterpreterOverride removes the override and restarts python for that root.
@@ -1118,6 +1152,8 @@ func projectRootMarkers(family string) []string {
 		return []string{"go.mod"}
 	case "python":
 		return []string{"pyproject.toml", "requirements.txt", "setup.py"}
+	case "rust":
+		return []string{"Cargo.toml"}
 	}
 	return nil
 }
@@ -1150,6 +1186,8 @@ func defaultServerCommand(family string) string {
 		return "gopls"
 	case "python":
 		return "pyright-langserver"
+	case "rust":
+		return "rust-analyzer"
 	default:
 		return ""
 	}
@@ -1269,9 +1307,12 @@ func (m *Manager) enrichPythonSetup(status *ServerStatus) {
 		status.InterpreterPath = env.InterpreterPath
 		status.ExtraPaths = env.ExtraPaths
 		status.PythonVersion = env.PythonVersion
-		if env.InterpreterPath == "" {
+		switch {
+		case env.InterpreterPath == "":
 			status.ConfigSource = "none"
-		} else {
+		case env.Source == "override":
+			status.ConfigSource = "override"
+		default:
 			status.ConfigSource = "detected"
 		}
 		switch {
@@ -1316,4 +1357,15 @@ func completionTriggerChars(entry *serverEntry) []string {
 		return nil
 	}
 	return opts.TriggerCharacters
+}
+
+func documentSymbolSupported(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var enabled bool
+	if err := json.Unmarshal(raw, &enabled); err == nil {
+		return enabled
+	}
+	return true
 }

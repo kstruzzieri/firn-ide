@@ -33,6 +33,9 @@ func TestClient_InitializeAndShutdown(t *testing.T) {
 	if caps.DefinitionProvider == nil {
 		t.Error("DefinitionProvider capability not stored")
 	}
+	if caps.DocumentSymbolProvider == nil {
+		t.Error("DocumentSymbolProvider capability not stored")
+	}
 
 	if err := client.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -110,6 +113,120 @@ func TestClient_Definition(t *testing.T) {
 	}
 
 	_ = client.Shutdown(ctx)
+}
+
+func TestClient_DocumentSymbol(t *testing.T) {
+	transport := startMockTransport(t)
+	client := NewClient(transport, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Initialize(ctx, "file:///tmp/test", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	symbols, err := client.DocumentSymbol(ctx, "file:///tmp/test/main.ts")
+	if err != nil {
+		t.Fatalf("DocumentSymbol: %v", err)
+	}
+	if len(symbols) != 1 {
+		t.Fatalf("got %d top-level symbols, want 1", len(symbols))
+	}
+	if symbols[0].Name != "Widget" || symbols[0].Kind != 5 {
+		t.Errorf("top symbol = %q kind %d, want Widget kind 5", symbols[0].Name, symbols[0].Kind)
+	}
+	if len(symbols[0].Children) != 1 || symbols[0].Children[0].Name != "render" {
+		t.Errorf("expected one child 'render', got %+v", symbols[0].Children)
+	}
+
+	_ = client.Shutdown(ctx)
+}
+
+func TestNormalizeDocumentSymbols(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       string
+		wantLen   int
+		wantFirst string
+		wantChild string // name of first child of first symbol, "" if none expected
+		wantRange Range
+	}{
+		{
+			name:    "null result",
+			raw:     "null",
+			wantLen: 0,
+		},
+		{
+			name:    "empty array",
+			raw:     "[]",
+			wantLen: 0,
+		},
+		{
+			name:      "hierarchical DocumentSymbol with children",
+			raw:       `[{"name":"App","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":9,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":9}},"children":[{"name":"run","kind":6,"range":{"start":{"line":1,"character":2},"end":{"line":3,"character":3}},"selectionRange":{"start":{"line":1,"character":2},"end":{"line":1,"character":5}}}]}]`,
+			wantLen:   1,
+			wantFirst: "App",
+			wantChild: "run",
+			wantRange: Range{Start: Position{Line: 0, Character: 0}, End: Position{Line: 9, Character: 1}},
+		},
+		{
+			name:      "flat SymbolInformation is converted and flattened",
+			raw:       `[{"name":"helper","kind":12,"location":{"uri":"file:///a.ts","range":{"start":{"line":4,"character":0},"end":{"line":6,"character":1}}},"containerName":"mod"}]`,
+			wantLen:   1,
+			wantFirst: "helper",
+			wantChild: "",
+			// For the flat shape, both Range and SelectionRange come from location.range.
+			wantRange: Range{Start: Position{Line: 4, Character: 0}, End: Position{Line: 6, Character: 1}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeDocumentSymbols(json.RawMessage(tt.raw))
+			if err != nil {
+				t.Fatalf("normalizeDocumentSymbols: %v", err)
+			}
+			if len(got) != tt.wantLen {
+				t.Fatalf("len = %d, want %d", len(got), tt.wantLen)
+			}
+			if tt.wantLen == 0 {
+				return
+			}
+			if got[0].Name != tt.wantFirst {
+				t.Errorf("first name = %q, want %q", got[0].Name, tt.wantFirst)
+			}
+			if got[0].Range != tt.wantRange {
+				t.Errorf("first range = %+v, want %+v", got[0].Range, tt.wantRange)
+			}
+			if tt.wantChild == "" {
+				if len(got[0].Children) != 0 {
+					t.Errorf("expected no children, got %d", len(got[0].Children))
+				}
+			} else {
+				if len(got[0].Children) != 1 || got[0].Children[0].Name != tt.wantChild {
+					t.Errorf("expected child %q, got %+v", tt.wantChild, got[0].Children)
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeDocumentSymbols_FlatUsesLocationForSelection(t *testing.T) {
+	// A flat SymbolInformation must map location.range to SelectionRange so
+	// click-to-jump reveals the symbol even without a distinct selection range.
+	raw := `[{"name":"x","kind":13,"location":{"uri":"file:///a.ts","range":{"start":{"line":2,"character":4},"end":{"line":2,"character":5}}}}]`
+	got, err := normalizeDocumentSymbols(json.RawMessage(raw))
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	want := Range{Start: Position{Line: 2, Character: 4}, End: Position{Line: 2, Character: 5}}
+	if got[0].SelectionRange != want {
+		t.Errorf("SelectionRange = %+v, want %+v", got[0].SelectionRange, want)
+	}
 }
 
 func TestClient_Completion(t *testing.T) {
