@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +24,14 @@ type DirectoryReader struct {
 	fs FileSystem
 }
 
+type ignoreRule struct {
+	baseDir  string
+	pattern  string
+	negated  bool
+	dirOnly  bool
+	anchored bool
+}
+
 // NewDirectoryReader creates a new DirectoryReader with the given filesystem.
 func NewDirectoryReader(fs FileSystem) *DirectoryReader {
 	return &DirectoryReader{fs: fs}
@@ -32,56 +41,143 @@ func NewDirectoryReader(fs FileSystem) *DirectoryReader {
 // It respects .gitignore patterns and includes file metadata.
 // Returns an error if the path is invalid or inaccessible.
 func (d *DirectoryReader) ReadDirectory(path string) ([]FileEntry, error) {
-	// Load gitignore patterns from the directory
-	ignorePatterns := d.loadGitignore(path)
-
-	return d.readDirRecursive(path, ignorePatterns)
+	return d.readDirRecursive(path, nil)
 }
 
-// loadGitignore reads .gitignore file and returns patterns to ignore.
-func (d *DirectoryReader) loadGitignore(path string) []string {
+// loadGitignore reads the rules scoped to one directory.
+func (d *DirectoryReader) loadGitignore(path string) []ignoreRule {
 	gitignorePath := filepath.Join(path, ".gitignore")
 	content, err := d.fs.ReadFile(gitignorePath)
 	if err != nil {
 		return nil
 	}
 
-	var patterns []string
+	var rules []ignoreRule
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// Skip empty lines and comments
+		line = trimGitignoreLine(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		patterns = append(patterns, line)
+
+		rule := ignoreRule{baseDir: path}
+		if strings.HasPrefix(line, "!") {
+			rule.negated = true
+			line = strings.TrimPrefix(line, "!")
+		}
+		if line == "" {
+			continue
+		}
+		if strings.HasSuffix(line, "/") {
+			rule.dirOnly = true
+			line = strings.TrimSuffix(line, "/")
+		}
+		if strings.HasPrefix(line, "/") {
+			rule.anchored = true
+			line = strings.TrimPrefix(line, "/")
+		}
+		rule.anchored = rule.anchored || strings.Contains(line, "/")
+		rule.pattern = normalizeGitignorePattern(line)
+		rules = append(rules, rule)
 	}
-	return patterns
+	return rules
 }
 
-// shouldIgnore checks if a name matches any gitignore pattern.
-func (d *DirectoryReader) shouldIgnore(name string, isDir bool, patterns []string) bool {
-	for _, pattern := range patterns {
-		// Handle directory-specific patterns (ending with /)
-		if dirPattern, found := strings.CutSuffix(pattern, "/"); found {
-			if isDir && name == dirPattern {
-				return true
-			}
+func trimGitignoreLine(line string) string {
+	line = strings.TrimSuffix(line, "\r")
+	for strings.HasSuffix(line, " ") {
+		backslashes := 0
+		for i := len(line) - 2; i >= 0 && line[i] == '\\'; i-- {
+			backslashes++
+		}
+		if backslashes%2 == 1 {
+			break
+		}
+		line = strings.TrimSuffix(line, " ")
+	}
+	return line
+}
+
+func normalizeGitignorePattern(pattern string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(pattern))
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == '\\' && i+1 < len(pattern) {
+			normalized.WriteByte(pattern[i])
+			i++
+			normalized.WriteByte(pattern[i])
+			continue
+		}
+		if pattern[i] == '[' && i+1 < len(pattern) && pattern[i+1] == '!' {
+			normalized.WriteString("[^")
+			i++
+			continue
+		}
+		normalized.WriteByte(pattern[i])
+	}
+	return normalized.String()
+}
+
+// shouldIgnore applies matching rules in order; the last match wins.
+func (d *DirectoryReader) shouldIgnore(path string, isDir bool, rules []ignoreRule) bool {
+	ignored := false
+	for _, rule := range rules {
+		if rule.dirOnly && !isDir {
 			continue
 		}
 
-		// Simple name matching (not full glob support)
-		matched, _ := filepath.Match(pattern, name)
+		rel, err := filepath.Rel(rule.baseDir, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		candidate := pathpkg.Base(rel)
+		if rule.anchored {
+			candidate = rel
+		}
+		matched := matchGitignorePath(rule.pattern, candidate)
 		if matched {
-			return true
+			ignored = !rule.negated
 		}
 	}
-	return false
+	return ignored
+}
+
+func matchGitignorePath(pattern, name string) bool {
+	patternParts := strings.Split(pattern, "/")
+	nameParts := strings.Split(name, "/")
+	memo := make(map[[2]int]bool)
+	var match func(int, int) bool
+	match = func(patternIndex, nameIndex int) bool {
+		state := [2]int{patternIndex, nameIndex}
+		if matched, ok := memo[state]; ok {
+			return matched
+		}
+
+		matched := false
+		switch {
+		case patternIndex == len(patternParts):
+			matched = nameIndex == len(nameParts)
+		case patternParts[patternIndex] == "**":
+			if patternIndex == len(patternParts)-1 {
+				matched = nameIndex < len(nameParts)
+			} else {
+				matched = match(patternIndex+1, nameIndex) ||
+					(nameIndex < len(nameParts) && match(patternIndex, nameIndex+1))
+			}
+		case nameIndex < len(nameParts):
+			componentMatched, err := pathpkg.Match(patternParts[patternIndex], nameParts[nameIndex])
+			matched = err == nil && componentMatched && match(patternIndex+1, nameIndex+1)
+		}
+		memo[state] = matched
+		return matched
+	}
+	return match(0, 0)
 }
 
 // buildEntries reads ONE directory level: filter (dot-dirs, gitignore), stat,
 // sort folders-first. Child directories are returned WITHOUT Children populated.
-func (d *DirectoryReader) buildEntries(path string, ignorePatterns []string) ([]FileEntry, error) {
+func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule) ([]FileEntry, error) {
 	dirEntries, err := d.fs.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -93,10 +189,10 @@ func (d *DirectoryReader) buildEntries(path string, ignorePatterns []string) ([]
 		if de.IsDir() && strings.HasPrefix(name, ".") {
 			continue
 		}
-		if name != ".gitignore" && d.shouldIgnore(name, de.IsDir(), ignorePatterns) {
+		fullPath := filepath.Join(path, name)
+		if name != ".gitignore" && d.shouldIgnore(fullPath, de.IsDir(), ignoreRules) {
 			continue
 		}
-		fullPath := filepath.Join(path, name)
 		info, err := d.fs.Stat(fullPath)
 		if err != nil {
 			continue
@@ -116,19 +212,23 @@ func (d *DirectoryReader) buildEntries(path string, ignorePatterns []string) ([]
 // ReadDirectoryShallow reads a single directory level (immediate children only).
 // Child directories are returned without their own children populated.
 func (d *DirectoryReader) ReadDirectoryShallow(path string, rootPath string) ([]FileEntry, error) {
-	ignorePatterns := d.loadGitignore(rootPath)
-	return d.buildEntries(path, ignorePatterns)
+	ignoreRules, ignored := d.loadGitignoreRules(rootPath, path)
+	if ignored {
+		return []FileEntry{}, nil
+	}
+	return d.buildEntries(path, ignoreRules)
 }
 
 // readDirRecursive reads a directory recursively and returns FileEntry slice.
-func (d *DirectoryReader) readDirRecursive(path string, ignorePatterns []string) ([]FileEntry, error) {
-	entries, err := d.buildEntries(path, ignorePatterns)
+func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreRule) ([]FileEntry, error) {
+	ignoreRules := append(inheritedRules, d.loadGitignore(path)...)
+	entries, err := d.buildEntries(path, ignoreRules)
 	if err != nil {
 		return nil, err
 	}
 	for i := range entries {
 		if entries[i].IsDir {
-			children, err := d.readDirRecursive(entries[i].Path, ignorePatterns)
+			children, err := d.readDirRecursive(entries[i].Path, ignoreRules)
 			if err != nil {
 				entries[i].Children = []FileEntry{}
 			} else {
@@ -137,6 +237,24 @@ func (d *DirectoryReader) readDirRecursive(path string, ignorePatterns []string)
 		}
 	}
 	return entries, nil
+}
+
+func (d *DirectoryReader) loadGitignoreRules(rootPath, path string) ([]ignoreRule, bool) {
+	rules := d.loadGitignore(rootPath)
+	rel, err := filepath.Rel(rootPath, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return rules, false
+	}
+
+	current := rootPath
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		if d.shouldIgnore(current, true, rules) {
+			return rules, true
+		}
+		rules = append(rules, d.loadGitignore(current)...)
+	}
+	return rules, false
 }
 
 // sortEntries sorts file entries with folders first, then alphabetically by name.

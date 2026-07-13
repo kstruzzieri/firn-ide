@@ -3,6 +3,8 @@ package filesystem
 import (
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -508,4 +510,149 @@ func TestReadDirectoryShallow_UsesParentGitignore(t *testing.T) {
 	if len(entries) != 1 || entries[0].Name != "keep.txt" {
 		t.Fatalf("expected only keep.txt after parent .gitignore, got %+v", entries)
 	}
+}
+
+func TestReadDirectory_NestedGitignoreRules(t *testing.T) {
+	root := nestedGitignoreFixture(t)
+
+	entries, err := NewDirectoryReader(&OS{}).ReadDirectory(root)
+	if err != nil {
+		t.Fatalf("ReadDirectory() error = %v", err)
+	}
+	paths := entryPaths(t, root, entries)
+
+	for _, path := range []string{
+		".gitignore",
+		"artifacts",
+		"builder",
+		"builder/root.txt",
+		"class-1.txt",
+		"keep.tmp",
+		"src/.gitignore",
+		"src/keep.log",
+		"src/nested/.gitignore",
+		"src/nested/drop.log",
+		"src/nested/local-only.txt",
+		"sibling/local-only.txt",
+		"sibling/nested-only.txt",
+		"sibling/vendor",
+	} {
+		if !paths[path] {
+			t.Errorf("expected %q to be visible", path)
+		}
+	}
+	for _, path := range []string{
+		"build",
+		"class-a.txt",
+		"drop.tmp",
+		"artifacts/output.bin",
+		"src/drop.log",
+		"src/local-only.txt",
+		"src/nested/nested-only.txt",
+		"src/vendor",
+		"sibling/keep.log",
+	} {
+		if paths[path] {
+			t.Errorf("expected %q to be ignored", path)
+		}
+	}
+}
+
+func TestReadDirectoryShallow_NestedGitignoreRules(t *testing.T) {
+	root := nestedGitignoreFixture(t)
+
+	tests := []struct {
+		path    string
+		visible []string
+		hidden  []string
+	}{
+		{root, []string{".gitignore", "artifacts", "builder", "class-1.txt", "keep.tmp", "src", "sibling"}, []string{"build", "class-a.txt", "drop.tmp"}},
+		{filepath.Join(root, "artifacts"), nil, []string{"output.bin"}},
+		{filepath.Join(root, "src"), []string{".gitignore", "keep.log", "nested"}, []string{"drop.log", "local-only.txt", "vendor"}},
+		{filepath.Join(root, "src", "nested"), []string{".gitignore", "drop.log", "local-only.txt"}, []string{"nested-only.txt"}},
+		{filepath.Join(root, "src", "vendor"), nil, []string{"dependency.go"}},
+		{filepath.Join(root, "sibling"), []string{"local-only.txt", "nested-only.txt", "vendor"}, []string{"keep.log"}},
+	}
+
+	reader := NewDirectoryReader(&OS{})
+	for _, test := range tests {
+		entries, err := reader.ReadDirectoryShallow(test.path, root)
+		if err != nil {
+			t.Fatalf("ReadDirectoryShallow(%q) error = %v", test.path, err)
+		}
+		names := make(map[string]bool, len(entries))
+		for _, entry := range entries {
+			names[entry.Name] = true
+		}
+		for _, name := range test.visible {
+			if !names[name] {
+				t.Errorf("ReadDirectoryShallow(%q): expected %q to be visible", test.path, name)
+			}
+		}
+		for _, name := range test.hidden {
+			if names[name] {
+				t.Errorf("ReadDirectoryShallow(%q): expected %q to be ignored", test.path, name)
+			}
+		}
+	}
+}
+
+func nestedGitignoreFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeDirectoryFixture(t, root, map[string]string{
+		".gitignore":                 "*.log\n/build/\nvendor/\n*.tmp\n!keep.tmp\nartifacts/**\nclass-[!0-9].txt\n",
+		"artifacts/output.bin":       "",
+		"build/root.txt":             "",
+		"builder/root.txt":           "",
+		"class-1.txt":                "",
+		"class-a.txt":                "",
+		"drop.tmp":                   "",
+		"keep.tmp":                   "",
+		"src/.gitignore":             "!keep.log\n/local-only.txt\nnested-only.txt\n",
+		"src/keep.log":               "",
+		"src/drop.log":               "",
+		"src/local-only.txt":         "",
+		"src/nested/.gitignore":      "!drop.log\n",
+		"src/nested/drop.log":        "",
+		"src/nested/local-only.txt":  "",
+		"src/nested/nested-only.txt": "",
+		"src/vendor/dependency.go":   "",
+		"sibling/keep.log":           "",
+		"sibling/local-only.txt":     "",
+		"sibling/nested-only.txt":    "",
+		"sibling/vendor":             "",
+	})
+	return root
+}
+
+func writeDirectoryFixture(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+}
+
+func entryPaths(t *testing.T, root string, entries []FileEntry) map[string]bool {
+	t.Helper()
+	paths := make(map[string]bool)
+	var walk func([]FileEntry)
+	walk = func(entries []FileEntry) {
+		for _, entry := range entries {
+			rel, err := filepath.Rel(root, entry.Path)
+			if err != nil {
+				t.Fatalf("Rel(%q, %q) error = %v", root, entry.Path, err)
+			}
+			paths[filepath.ToSlash(rel)] = true
+			walk(entry.Children)
+		}
+	}
+	walk(entries)
+	return paths
 }
