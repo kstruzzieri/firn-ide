@@ -319,10 +319,13 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-1. Finalize the v0.11.0 stabilization release: merge the verified preparation work to `develop`, open a `develop` → `main` release PR, tag the resulting `main` commit as `v0.11.0-rc.1`, validate every packaged platform and install behavior, then tag final `v0.11.0` only after owner approval.
-2. Quality and accessibility: add explicit button types (#34), then audit and re-scope the remaining WCAG AA work (#43).
-3. Product hardening: workspace-owned editor-tab accents (#142), infrastructure file accents (#143), dynamic CodeMirror language loading (#39), and nested `.gitignore` support (#149).
-4. State architecture (#41), followed by the command palette (#44), run execution identity Phase 2 (#146), and three-way Git conflict resolution (#164).
+`v0.11.0` is live. Wave 1 now runs as three independent tracks:
+
+1. Quality and accessibility: explicit button types (#34) shipped in PR #190; next, audit and re-scope the remaining WCAG AA work (#43).
+2. Filesystem and performance: nested `.gitignore` correctness (#149), then dynamic CodeMirror language loading (#39); lazy watcher registration (#148) stays benchmark-gated.
+3. Workspace visual identity: owning-workspace editor-tab accents (#142), then infrastructure file accents (#143).
+
+Next product work is the command palette (#44), followed by context menus and breadcrumbs (#45/#46), run execution identity Phase 2 (#146), and three-way Git conflict recovery before destructive VCS operations (#164/#166). Store extraction (#41) happens only when one of those features needs it, not as a standalone rewrite.
 
 ## Contributing
 

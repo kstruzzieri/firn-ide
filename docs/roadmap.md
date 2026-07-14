@@ -32,39 +32,35 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147) shipped; follow-ups #148/#149; #39 open |
 | Editor & LSP DX | **COMPLETE** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178, final fixes merged in PR #183, packaged native closure gate passed, and #112 closed as completed |
 | Dependency Upgrades | **COMPLETE** | #40 |
-| Code Quality | **IN PROGRESS** | #42 closed as completed; #41 open and needs re-scoping against the current 1,787-line store |
+| Code Quality | **IN PROGRESS** | #42 closed; #41 remains an incremental extraction constraint, not a standalone refactor project |
 | Accessibility | **IN PROGRESS** | #43 open; tree roving focus, `aria-busy`, and several live regions already shipped, so the remaining scope requires an audit |
 | Future Features | Not started | #44-46 |
-| Bug Fixes | **IN PROGRESS** | #33 closed; #34 open |
+| Bug Fixes | **COMPLETE** | #33 and #34 closed |
 
 ---
 
 ## Current Repository Review and Prioritized Roadmap
 
-> **Authoritative snapshot:** 2026-07-12 (America/New_York), `develop` at `b0445c9`. This section supersedes the archived delivery narrative below for current prioritization.
+> **Authoritative snapshot:** 2026-07-13 (America/New_York), `develop` at `7728dcc`. This section supersedes the archived delivery narrative below for current prioritization.
 
 ### Repository health
 
-- `develop` is clean and synchronized with `origin/develop`; GitHub has **15 open issues and no open pull requests**. Issue #112 is closed as completed, and its final fix/evidence PR #183 is merged at `b0445c9`.
-- The latest release is `v0.10.0`. The v0.11.0 release-preparation branch now covers LSP Phase 3 and #112 closure fixes, the Structure view, hunk staging and editable Git diffs, intent-to-add, terminal recovery, and the checksum-verifying install path; release publication remains pending verification and owner authorization.
-- Required release flow: merge the verified preparation work to `develop`, open a `develop` → `main` release PR, tag the resulting `main` commit as `v0.11.0-rc.1`, validate macOS amd64/arm64, Linux amd64, Windows amd64, and install behavior, then tag final `v0.11.0` only after the RC passes and the owner authorizes promotion. Tagging `develop` instead requires an explicit branch-policy update.
-- Verification at this snapshot is green across the Go and frontend suites, `go vet`, TypeScript/Vite production build, ESLint, Prettier, and workflow validation.
+- `develop` is clean and synchronized with `origin/develop`; GitHub has **14 open issues and 2 open pull requests** (#191 workspace-colored tabs, #192 nested `.gitignore`). Issue #112 is closed as completed, and its final fix/evidence PR #183 is merged.
+- `v0.11.0` is live from `main` at `4707c59`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
+- No planned stabilization sprint follows the release. Cut `v0.11.1` only for observed regressions; otherwise proceed directly with the three Wave 1 tracks below.
 - The CodeMirror language bundle is still eager: `codemirror-languages` is **382.35 kB / 143.21 kB gzip**, providing a measurable baseline for #39.
-- `frontend/src/stores/ideStore.ts` is now **1,787 lines**. Git, LSP, and search already have dedicated stores, so #41's original "255-line monolith" description is obsolete and should target the remaining workspace/tree/editor/terminal/run-output responsibilities.
-- Release documentation is refreshed for the post-`v0.10.0` work. Release candidates may use the v0.11.0 **Pending** entry; the final tag is blocked until it has an ISO release date.
+- `frontend/src/stores/ideStore.ts` is now **1,787 lines**, but Git, LSP, and search already have dedicated stores. Do not run #41 as a big-bang refactor; extract only the domain touched by later feature work.
+- Release documentation and install examples now target `v0.11.0`.
 - Release hardening aligns backend CI with Go 1.23 and pins every workflow Wails install to the module's v2.11.0. Cross-platform PR verification remains a future release-engineering improvement.
 - The frontend suite passes but some non-silent runs emit React `act(...)` console warnings. File a focused test-hygiene ticket so warnings cannot hide real regressions.
 
-### Immediate backlog normalization (Wave 0)
+### Post-release reset
 
-Complete these before beginning another large feature:
+Start one ticket in each Wave 1 track; the tracks are independent and can use parallel worktrees:
 
-1. **#42 — closed:** cross-platform path handling is implemented through `os.UserHomeDir`, `filepath`, platform-specific files, and the release build matrix.
-2. **#112 — closed as completed:** the 2026-07-12 packaged native rerun passed lazy provisioning for Python, Go, TypeScript, and Rust, Python environment/override wiring, and same-session Offline-to-Retry recovery. The rerun also found and fixed the missing frontend `.rs` LSP mapping; final fixes merged in PR #183.
-3. **#41 — re-scope:** preserve the public selector/action contract, acknowledge the already-extracted Git/LSP/search stores, and phase the remaining extraction by domain.
-4. **#43 — audit then re-scope:** mark already-shipped tree focus, busy state, and live-region work complete; define the remaining contrast, skip-link, keyboard, and screen-reader findings from evidence.
-5. **#142 — narrow scope:** the invalid nested-button tab DOM has already been fixed; keep only owning-workspace tab accents and the optional active-workspace filter stretch goal.
-6. Update `README.md` and `CHANGELOG.md`, then cut a `v0.11.0` stabilization release.
+1. **#34 — closed via PR #190:** all 111 production buttons carry explicit literal types, enforced by an AST regression test; the track moves to the #43 accessibility audit.
+2. **#149 — nested `.gitignore`:** fix repository-tree correctness first, then move the track to #39 dynamic language loading.
+3. **#142 — workspace-colored tabs:** narrow to owning-workspace accents, then move the track to #143 infrastructure file accents.
 
 ### Parallel development plan
 
@@ -72,24 +68,24 @@ Complete these before beginning another large feature:
 
 | Track | Tickets | Execution rule |
 |-------|---------|----------------|
-| Quality and accessibility | #34, then the audited remainder of #43 | Land before adding more keyboard-driven menus. #34 currently has 53 of 112 frontend buttons without an explicit type. |
-| Performance and filesystem | #39 and #149 in parallel; benchmark #148 | #39 is frontend and #149 backend, so they can proceed independently. Do not implement #148 unless profiling proves startup time or descriptor pressure. |
-| Workspace visual identity | #142, then #143 | Localized frontend work; land before the central store refactor to reduce conflicts. |
-| State architecture | #41 | Contract tests and decomposition design can start in parallel, but land after #142/#143. Preserve selectors/actions while extracting domains incrementally. |
+| Quality and accessibility | #43 audited remainder (#34 closed) | Land before adding more keyboard-driven menus. #34 shipped in PR #190; an AST regression test now requires an explicit literal type on every production button. |
+| Filesystem and performance | #149, then #39; benchmark #148 only if needed | Correctness before bundle optimization. Do not implement #148 unless profiling proves startup time or descriptor pressure. |
+| Workspace visual identity | #142, then #143 | Keep #142 to the remaining owning-workspace accent scope; the nested-button fix is already shipped. |
 
 #### Wave 2 — product tracks
 
-Begin after #41 and the #43 accessibility baseline land:
+Begin after the #43 accessibility baseline lands. Treat #41 as opportunistic extraction inside the feature that needs it, not as a prerequisite project:
 
 | Track | Tickets | Dependencies and sequencing |
 |-------|---------|-----------------------------|
 | Command UX | #44, then #45 and #46 in parallel | #44 should introduce a shared command/action registry reused by context menus, breadcrumbs, shortcuts, and later VCS actions. |
-| Run engine | #146 | Depends on #41 cleanly isolating run-output/execution state. Split persistence, per-run tabs, same-profile parallelism, and execution plans into independently reviewable phases. |
+| Run engine | #146 | Extract only the run state needed by each phase; split persistence, per-run tabs, same-profile parallelism, and execution plans into independently reviewable changes. |
 | Git conflict UX | #164 | Can run alongside #44/#146. Treat it as data-loss-sensitive work with real-repository conflict fixtures and manual smoke tests. |
 
 #### Wave 3 — Git expansion and conditional work
 
 - **#166:** split into a safe/read-only phase (remote/local/tag model, tracking metadata, search, keyboard navigation) and a destructive phase (merge/rebase/rename/delete). Land destructive operations only after #164 establishes conflict recovery.
+- **#41:** no standalone refactor. Preserve public selectors/actions and extract a domain only when #44, #146, or another feature directly benefits.
 - **#148:** implement only when a benchmark demonstrates a real bottleneck; otherwise leave deferred.
 - **#165:** blocked on an upstream API decision. `go-llm` exposes `provider.Router`, but convenient provider assembly remains under `internal/providerbootstrap`, which Firn cannot import. Export a supported bootstrap API upstream first; keep agentflow proof-artifact UI out of this ticket.
 
@@ -101,19 +97,19 @@ Model guidance follows OpenAI's current [GPT-5.6 model guide](https://developers
 |----------|--------|-------------------------|-------|-----------|
 | Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. | `gpt-5.6-terra` | Light |
 | Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; final fixes merged in PR #183 and the issue is closed as completed. | `gpt-5.6-sol` | High |
-| P0 | #34 Button types | Implement now; mechanical correctness sweep with focused form regression tests. | `gpt-5.3-codex-spark` | Light |
-| P0 | #43 WCAG AA | Audit and re-scope before implementation; test keyboard, contrast, and screen-reader behavior. | `gpt-5.6-sol` | High |
-| P1 | #142 Workspace-colored tabs | Implement owning-workspace accents only; the nested-button fix is already shipped. | `gpt-5.3-codex-spark` | Medium |
-| P1 | #143 Infra file accents | Localized tree-row presentation change using existing workspace-region resolution. | `gpt-5.3-codex-spark` | Light |
-| P1 | #39 Dynamic languages | Lazy-import and reconfigure CodeMirror languages; enforce a bundle-size regression budget. | `gpt-5.6-terra` | Medium |
-| P1 | #149 Nested `.gitignore` | Implement Git-compatible nested precedence and negation semantics with fixtures. | `gpt-5.6-sol` | High |
-| P1 | #41 Zustand slices | Incremental domain extraction with unchanged public selectors/actions. | `gpt-5.6-sol` | High |
+| Closed | #34 Button types | Closed via PR #190 on 2026-07-13; explicit literal types on all production buttons plus an AST regression guard. | `gpt-5.3-codex-spark` | Light |
+| P0 | #149 Nested `.gitignore` | Implement Git-compatible nested precedence and negation semantics with fixtures. | `gpt-5.6-sol` | High |
+| P0 | #142 Workspace-colored tabs | Implement owning-workspace accents only; the nested-button fix is already shipped. | `gpt-5.3-codex-spark` | Medium |
+| P1 | #43 WCAG AA | Audit and re-scope now that #34 has landed; test keyboard, contrast, and screen-reader behavior. | `gpt-5.6-sol` | High |
+| P1 | #39 Dynamic languages | Follow #149; lazy-import and reconfigure CodeMirror languages with a bundle-size regression budget. | `gpt-5.6-terra` | Medium |
+| P1 | #143 Infra file accents | Follow #142 using the existing workspace-region resolution. | `gpt-5.3-codex-spark` | Light |
 | P2 | #44 Command Palette | Build the shared command registry first, then fuzzy-search UI and shortcuts. | `gpt-5.6-terra` | High |
-| P2 | #146 Run identity Phase 2 | Execute after #41; split the capability upgrade into small review gates. | `gpt-5.6-sol` | Extra High |
+| P2 | #146 Run identity Phase 2 | Extract only the run state each phase needs; split the capability upgrade into small review gates. | `gpt-5.6-sol` | Extra High |
 | P2 | #164 Three-way merge UI | Require real conflicts, recovery tests, and manual verification before merge. | `gpt-5.6-sol` | Extra High |
 | P2 | #166 Rich VCS menu | Separate safe/read-only behavior from destructive branch operations. | `gpt-5.6-sol` | Extra High |
 | P3 | #45 Context menus | Reuse #44 commands; file-explorer and editor-tab surfaces can then proceed in parallel. | `gpt-5.6-terra` | Medium |
 | P3 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract. | `gpt-5.6-terra` | Medium |
+| Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. | `gpt-5.6-sol` | High |
 | Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. | `gpt-5.6-sol` | Extra High |
 | Blocked | #165 `go-llm` integration | Export a supported upstream provider-bootstrap API before changing Firn. | `gpt-5.6-sol` | High |
 
@@ -620,7 +616,7 @@ TypeScript 5.7+, Vite 6.x, @swc/jest, path aliases, optimizeDeps.
 ## Code Quality
 
 ### #41: Split Zustand Store into Domain Slices
-Re-scope against the current architecture: `ideStore.ts` is 1,787 lines, while Git, LSP, and search already have dedicated stores. Incrementally extract workspace, file-tree, editor, terminal, UI, run-profile, and run-output domains while preserving the existing selector/action API during migration. Land after #142/#143 and before #146.
+Re-scope against the current architecture: Git, LSP, and search already have dedicated stores. Do not schedule a standalone 1,787-line decomposition. Preserve the existing selector/action API and extract only the workspace, tree, editor, terminal, UI, or run domain directly touched by active feature work such as #44 or #146.
 
 ### #42: Fix Hardcoded macOS Paths ✅ CLOSED
 Closed as completed on 2026-07-11. Production paths use `os.UserHomeDir`, `filepath`, platform-specific implementations, and cross-platform release builds rather than hard-coded macOS locations.
@@ -658,8 +654,8 @@ Service Adapter Pattern for connecting to external backends.
 ### #33: Window Dragging Not Working ✅ CLOSED
 Fixed via Wails macOS titlebar configuration and `--wails-draggable: drag` on the header.
 
-### #34: Add Button Type Attributes
-Missing explicit `type` attributes on non-submit buttons.
+### #34: Add Button Type Attributes ✅ CLOSED
+Closed via PR #190 on 2026-07-13. All production buttons declare explicit literal `type` attributes, and a TypeScript AST regression test enforces valid literal values while guarding against a vacuous directory scan.
 
 ---
 
