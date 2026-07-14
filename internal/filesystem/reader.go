@@ -24,12 +24,23 @@ type DirectoryReader struct {
 	fs FileSystem
 }
 
+// ignoreRule is a single parsed .gitignore line, scoped to the directory whose
+// .gitignore it came from (baseDir). patternParts is the normalized pattern
+// pre-split on "/" so matching never re-splits it; hasDoubleStar records whether
+// any component is "**" so the matcher only pays for memoization when a pattern
+// can actually branch.
+//
+// Scope note: matching is always case-sensitive (git's core.ignorecase is not
+// consulted), and only per-directory .gitignore files are read — global excludes
+// (core.excludesFile) and .git/info/exclude are intentionally out of scope for
+// the file tree.
 type ignoreRule struct {
-	baseDir  string
-	pattern  string
-	negated  bool
-	dirOnly  bool
-	anchored bool
+	baseDir       string
+	patternParts  []string
+	hasDoubleStar bool
+	negated       bool
+	dirOnly       bool
+	anchored      bool
 }
 
 // NewDirectoryReader creates a new DirectoryReader with the given filesystem.
@@ -77,10 +88,45 @@ func (d *DirectoryReader) loadGitignore(path string) []ignoreRule {
 			line = strings.TrimPrefix(line, "/")
 		}
 		rule.anchored = rule.anchored || strings.Contains(line, "/")
-		rule.pattern = normalizeGitignorePattern(line)
+
+		pattern := normalizeGitignorePattern(line)
+		if pattern == "" {
+			// e.g. a bare "/" line: nothing left to match on.
+			continue
+		}
+		parts := strings.Split(pattern, "/")
+		if !validGitignoreParts(parts) {
+			// Malformed pattern (e.g. an unterminated "["). Reject it once here
+			// rather than letting path.Match fail and be swallowed on every
+			// candidate it is later tested against.
+			continue
+		}
+		rule.patternParts = parts
+		for _, part := range parts {
+			if part == "**" {
+				rule.hasDoubleStar = true
+				break
+			}
+		}
 		rules = append(rules, rule)
 	}
 	return rules
+}
+
+// validGitignoreParts reports whether every non-"**" component is a pattern
+// path.Match can evaluate. Invalid components (unterminated character classes)
+// make path.Match return ErrBadPattern; catching that here keeps shouldIgnore's
+// hot loop free of swallowed errors.
+func validGitignoreParts(parts []string) bool {
+	for _, part := range parts {
+		if part == "**" {
+			continue
+		}
+		if _, err := pathpkg.Match(part, ""); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func trimGitignoreLine(line string) string {
@@ -135,7 +181,7 @@ func (d *DirectoryReader) shouldIgnore(path string, isDir bool, rules []ignoreRu
 		if rule.anchored {
 			candidate = rel
 		}
-		matched := matchGitignorePath(rule.pattern, candidate)
+		matched := matchGitignorePath(rule, candidate)
 		if matched {
 			ignored = !rule.negated
 		}
@@ -143,15 +189,27 @@ func (d *DirectoryReader) shouldIgnore(path string, isDir bool, rules []ignoreRu
 	return ignored
 }
 
-func matchGitignorePath(pattern, name string) bool {
-	patternParts := strings.Split(pattern, "/")
+// matchGitignorePath reports whether the pre-split pattern matches name (also
+// "/"-separated). "**" spans zero or more path components; every other component
+// is matched with path.Match (which never crosses "/"). The memo is allocated
+// only when the pattern contains "**"; without it the recursion advances both
+// indices together and never revisits a state, so a per-call map would be waste.
+func matchGitignorePath(rule ignoreRule, name string) bool {
+	patternParts := rule.patternParts
 	nameParts := strings.Split(name, "/")
-	memo := make(map[[2]int]bool)
+
+	var memo map[[2]int]bool
+	if rule.hasDoubleStar {
+		memo = make(map[[2]int]bool)
+	}
+
 	var match func(int, int) bool
 	match = func(patternIndex, nameIndex int) bool {
 		state := [2]int{patternIndex, nameIndex}
-		if matched, ok := memo[state]; ok {
-			return matched
+		if memo != nil {
+			if matched, ok := memo[state]; ok {
+				return matched
+			}
 		}
 
 		matched := false
@@ -169,7 +227,9 @@ func matchGitignorePath(pattern, name string) bool {
 			componentMatched, err := pathpkg.Match(patternParts[patternIndex], nameParts[nameIndex])
 			matched = err == nil && componentMatched && match(patternIndex+1, nameIndex+1)
 		}
-		memo[state] = matched
+		if memo != nil {
+			memo[state] = matched
+		}
 		return matched
 	}
 	return match(0, 0)
@@ -221,7 +281,13 @@ func (d *DirectoryReader) ReadDirectoryShallow(path string, rootPath string) ([]
 
 // readDirRecursive reads a directory recursively and returns FileEntry slice.
 func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreRule) ([]FileEntry, error) {
-	ignoreRules := append(inheritedRules, d.loadGitignore(path)...)
+	local := d.loadGitignore(path)
+	// Build on a fresh backing array. Reusing inheritedRules' array via
+	// append(inheritedRules, ...) would let each sibling recursion write local
+	// rules into the same spare capacity and clobber the previous sibling's.
+	ignoreRules := make([]ignoreRule, 0, len(inheritedRules)+len(local))
+	ignoreRules = append(ignoreRules, inheritedRules...)
+	ignoreRules = append(ignoreRules, local...)
 	entries, err := d.buildEntries(path, ignoreRules)
 	if err != nil {
 		return nil, err

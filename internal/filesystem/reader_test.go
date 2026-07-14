@@ -597,6 +597,39 @@ func TestReadDirectoryShallow_NestedGitignoreRules(t *testing.T) {
 	}
 }
 
+func TestReadDirectory_MalformedAndEmptyPatternsAreSkipped(t *testing.T) {
+	root := t.TempDir()
+	writeDirectoryFixture(t, root, map[string]string{
+		// "bad[pattern" is an unterminated character class (path.Match rejects
+		// it); "/" normalizes to an empty pattern. Both must be dropped at load
+		// without disturbing the valid rules around them, and "logs/**" must
+		// still match through the double-star fast path.
+		".gitignore":      "*.log\nbad[pattern\n/\nlogs/**\n",
+		"app.log":         "",
+		"keep.txt":        "",
+		"bad[pattern":     "",
+		"logs/deep/a.txt": "",
+		"logs/b.txt":      "",
+	})
+
+	entries, err := NewDirectoryReader(&OS{}).ReadDirectory(root)
+	if err != nil {
+		t.Fatalf("ReadDirectory() error = %v", err)
+	}
+	paths := entryPaths(t, root, entries)
+
+	for _, p := range []string{"keep.txt", "bad[pattern", "logs"} {
+		if !paths[p] {
+			t.Errorf("expected %q to be visible (invalid/empty rule must not hide it)", p)
+		}
+	}
+	for _, p := range []string{"app.log", "logs/deep/a.txt", "logs/b.txt"} {
+		if paths[p] {
+			t.Errorf("expected %q to be ignored by a valid rule", p)
+		}
+	}
+}
+
 func nestedGitignoreFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
