@@ -47,3 +47,25 @@ PASS src/__tests__/utils/workspaceRegions.test.ts
 Test Suites: 2 passed, 2 total
 Tests:       30 passed, 30 total
 ```
+
+## Review Round 2: Accent Token Validation
+
+Code review found the tab accent interpolated `WorkspaceDef.accent` into
+`var(--accent-*)` unvalidated, unlike the existing `VALID_ACCENTS` guard in
+WorkspaceTabs, WorkspaceSelector, and RunProfiles. A stale or hand-edited
+persisted accent would produce an undefined custom property and silently break
+the `color-mix()` styling. The regression test failed first:
+
+```text
+FAIL src/__tests__/Editor.diff.test.tsx
+  Expected: --tab-accent: var(--accent-project)
+  Received: --tab-accent: var(--accent-magenta)
+```
+
+Fix: shared `utils/accent.ts` (`accentVar`) with the neutral `project`
+fallback, wired through a single `tabAccentStyle` helper for both tab kinds.
+
+```text
+PASS src/__tests__/Editor.diff.test.tsx
+Tests: 31 passed (full suite: 1445 passed)
+```

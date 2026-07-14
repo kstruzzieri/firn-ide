@@ -67,6 +67,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   useIDEStore.setState({
     workspace: { name: 'repo', path: '/repo' },
+    workspaces: [],
+    activeWorkspaceId: 'project',
     openFiles: [],
     activeFileId: null,
     recentWorkspaces: [],
@@ -256,5 +258,22 @@ describe('Editor workspace tab accents', () => {
     expect(screen.getByRole('tab', { name: /diff\.go.*diff/i })).toHaveStyle(
       '--tab-accent: var(--accent-green)'
     );
+  });
+
+  it('falls back to the neutral project token for an accent without a CSS token', () => {
+    useIDEStore.setState({
+      workspaces: [
+        { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
+        { id: 'legacy', name: 'Legacy', relDir: 'legacy', type: 'web', accent: 'magenta' },
+      ] as workspace.WorkspaceDef[],
+      openFiles: [{ ...openFile('f1', 'old.ts'), path: '/repo/legacy/old.ts' }],
+      activeFileId: 'f1',
+    });
+
+    render(<Editor />);
+
+    const tab = screen.getByRole('tab', { name: /old\.ts/i });
+    expect(tab).toHaveStyle('--tab-accent: var(--accent-project)');
+    expect(tab.className).toContain('workspaceTab');
   });
 });

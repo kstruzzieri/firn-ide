@@ -32,6 +32,8 @@ import { useGitStore } from '../../stores/gitStore';
 import { useGitBaseline } from '../../hooks/useGitBaseline';
 import { getLanguageName } from './codemirror';
 import { createWorkspacePathResolver } from '../../utils/workspaceRegions';
+import { accentVar } from '../../utils/accent';
+import type { workspace as workspaceModels } from '../../../wailsjs/go/models';
 import firnLogo from '../../assets/branding/banner-transparent.svg';
 
 export function Editor() {
@@ -204,9 +206,6 @@ export function Editor() {
           const isActive = file.id === activeFile?.id && !showDiff;
           const languageName = getLanguageName(file.name);
           const owner = resolveWorkspace(file.path);
-          const tabStyle = owner
-            ? ({ ['--tab-accent' as string]: `var(--accent-${owner.accent})` } as CSSProperties)
-            : undefined;
 
           const activateFileTab = () => {
             useGitStore.getState().setDiffFocused(false);
@@ -218,7 +217,7 @@ export function Editor() {
               key={file.id}
               id={`tab-${file.id}`}
               className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
-              style={tabStyle}
+              style={tabAccentStyle(owner)}
               role="tab"
               tabIndex={0}
               aria-selected={isActive}
@@ -248,13 +247,7 @@ export function Editor() {
           <div
             id="tab-git-diff"
             className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
-            style={
-              diffOwner
-                ? ({
-                    ['--tab-accent' as string]: `var(--accent-${diffOwner.accent})`,
-                  } as CSSProperties)
-                : undefined
-            }
+            style={tabAccentStyle(diffOwner)}
             role="tab"
             tabIndex={0}
             aria-selected={showDiff}
@@ -321,6 +314,12 @@ export function Editor() {
       </div>
     </div>
   );
+}
+
+/** Inline style carrying a tab's owning-workspace accent token, if any. */
+function tabAccentStyle(owner: workspaceModels.WorkspaceDef | null): CSSProperties | undefined {
+  if (!owner) return undefined;
+  return { ['--tab-accent' as string]: accentVar(owner.accent) } as CSSProperties;
 }
 
 /** Tab label for the diff preview: filename only, path lives in the tooltip. */
