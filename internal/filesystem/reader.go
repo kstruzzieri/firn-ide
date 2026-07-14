@@ -190,10 +190,10 @@ func (d *DirectoryReader) shouldIgnore(path string, isDir bool, rules []ignoreRu
 }
 
 // matchGitignorePath reports whether the pre-split pattern matches name (also
-// "/"-separated). "**" spans zero or more path components; every other component
-// is matched with path.Match (which never crosses "/"). The memo is allocated
-// only when the pattern contains "**"; without it the recursion advances both
-// indices together and never revisits a state, so a per-call map would be waste.
+// "/"-separated). A non-final "**" spans zero or more components; a final "**"
+// matches one or more, so "dir/**" matches its contents but not "dir" itself.
+// Every other component uses path.Match (which never crosses "/"). The memo is
+// allocated only for "**" patterns; otherwise recursion never revisits a state.
 func matchGitignorePath(rule ignoreRule, name string) bool {
 	patternParts := rule.patternParts
 	nameParts := strings.Split(name, "/")
