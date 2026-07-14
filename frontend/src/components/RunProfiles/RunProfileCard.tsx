@@ -251,6 +251,7 @@ export function RunProfileCard({
     if (visualState === 'stopping') {
       return (
         <button
+          type="button"
           className={`${styles.actionBtn} ${styles.actionBtnLoading}`}
           disabled
           aria-label="Stopping"
@@ -264,6 +265,7 @@ export function RunProfileCard({
     if (visualState === 'running') {
       return (
         <button
+          type="button"
           className={`${styles.actionBtn} ${styles.actionBtnStop}`}
           onClick={handleActionClick}
           aria-label={`Stop ${profile.name}`}
@@ -276,6 +278,7 @@ export function RunProfileCard({
     if (visualState === 'stopped' || visualState === 'failed') {
       return (
         <button
+          type="button"
           className={`${styles.actionBtn} ${styles.actionBtnRestart}`}
           onClick={handleActionClick}
           aria-label={`Restart ${profile.name}`}
@@ -288,6 +291,7 @@ export function RunProfileCard({
     // idle / success
     return (
       <button
+        type="button"
         className={`${styles.actionBtn} ${styles.actionBtnPlay}`}
         onClick={handleActionClick}
         aria-label={`Run ${profile.name}`}
@@ -332,6 +336,7 @@ export function RunProfileCard({
         {durationLabel && <span className={styles.duration}>{durationLabel}</span>}
         {(section === 'recent' || section === 'detected') && (
           <button
+            type="button"
             className={styles.adoptBtn}
             onClick={(e) => {
               e.stopPropagation();

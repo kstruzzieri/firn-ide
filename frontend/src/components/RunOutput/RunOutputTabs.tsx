@@ -39,6 +39,7 @@ export function RunOutputTabs() {
         const isActive = activeId === id;
         return (
           <button
+            type="button"
             key={id}
             className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
             onClick={() => setActiveRunOutput(id)}
@@ -54,6 +55,7 @@ export function RunOutputTabs() {
           all-steps view, so gate this tab on the ordinary outputs count. */}
       {ordinaryIds.length >= 2 && (
         <button
+          type="button"
           className={`${styles.tab} ${activeId === ALL_PROFILES_ID ? styles.tabActive : ''} ${styles.tabAll}`}
           onClick={() => setActiveRunOutput(ALL_PROFILES_ID)}
         >

@@ -88,6 +88,7 @@ export function RunOutputToolbar() {
         <div className={styles.viewModeGroup}>
           {VIEW_MODES.map(({ id, label }) => (
             <button
+              type="button"
               key={id}
               className={`${styles.viewModeBtn} ${viewMode === id ? styles.active : ''}`}
               onClick={() => handleViewMode(id)}
@@ -102,6 +103,7 @@ export function RunOutputToolbar() {
       <div className={styles.toolbarDivider} />
 
       <button
+        type="button"
         className={styles.toolbarBtn}
         onClick={handleRerun}
         disabled={!hasActiveProfile}
@@ -122,6 +124,7 @@ export function RunOutputToolbar() {
       </button>
 
       <button
+        type="button"
         className={`${styles.toolbarBtn} ${styles.danger}`}
         onClick={handleStop}
         disabled={!isRunning}
@@ -141,6 +144,7 @@ export function RunOutputToolbar() {
       </button>
 
       <button
+        type="button"
         className={styles.toolbarBtn}
         onClick={handleClear}
         disabled={!activeId}
@@ -164,6 +168,7 @@ export function RunOutputToolbar() {
       <div className={styles.toolbarSpacer} />
 
       <button
+        type="button"
         className={`${styles.autoscrollIndicator} ${autoScroll ? styles.pinned : ''}`}
         onClick={toggleAutoScroll}
         title={autoScroll ? 'Auto-scroll enabled' : 'Auto-scroll disabled'}

@@ -133,6 +133,7 @@ export function WorkspaceSelector() {
   return (
     <div className={styles.wrapper}>
       <button
+        type="button"
         ref={buttonRef}
         className={styles.trigger}
         onClick={() => setIsOpen((p) => !p)}
@@ -165,6 +166,7 @@ export function WorkspaceSelector() {
           </div>
           {workspaces.map((w) => (
             <button
+              type="button"
               key={w.id}
               className={styles.menuItem}
               role="menuitemradio"

@@ -68,6 +68,19 @@ it('disables Save until name and command are present', () => {
   expect(save).toBeEnabled();
 });
 
+it('does not submit an enclosing form when Cancel is clicked', () => {
+  const onSubmit = jest.fn((event: React.FormEvent) => event.preventDefault());
+  render(
+    <form onSubmit={onSubmit}>
+      <RunProfileForm state={{ mode: 'create' }} />
+    </form>
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
 it('saves a new profile and closes on a valid result', async () => {
   (SaveRunProfile as jest.Mock).mockResolvedValue({ valid: true, errors: [] });
   useIDEStore.getState().openRunProfileForm({ mode: 'create' });

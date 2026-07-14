@@ -51,6 +51,7 @@ export function Sidebar() {
     <>
       {SIDEBAR_ITEMS.map(({ view, icon: Icon, label, shortcut }) => (
         <button
+          type="button"
           key={view}
           className={`${styles.activityBtn} ${activeView === view && !isLeftPanelCollapsed ? styles.active : ''}`}
           title={`${label} (${formatShortcut(shortcut)})`}
@@ -64,7 +65,7 @@ export function Sidebar() {
 
       <div className={styles.spacer} />
 
-      <button className={styles.activityBtn} title="Settings" aria-label="Settings">
+      <button type="button" className={styles.activityBtn} title="Settings" aria-label="Settings">
         <SettingsIcon aria-hidden="true" />
       </button>
     </>

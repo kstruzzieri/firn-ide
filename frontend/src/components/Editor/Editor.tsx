@@ -159,6 +159,7 @@ export function Editor() {
                 {recentProjects.map((project) => (
                   <li key={project.path}>
                     <button
+                      type="button"
                       className={styles.recentItem}
                       onClick={() => openWorkspaceByPath(project.path)}
                       title={project.path}

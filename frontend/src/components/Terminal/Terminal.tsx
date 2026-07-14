@@ -265,6 +265,7 @@ export function Terminal() {
 
           return (
             <button
+              type="button"
               key={id}
               className={`${styles.tab} ${isActive ? styles.active : ''}`}
               role="tab"
@@ -331,6 +332,7 @@ export function Terminal() {
                     <span className={styles.sessionTabLabel}>{session.title}</span>
                   )}
                   <button
+                    type="button"
                     className={styles.sessionTabClose}
                     onClick={(e) => handleCloseSession(e, session.id)}
                     aria-label={`Close ${session.title}`}
@@ -341,6 +343,7 @@ export function Terminal() {
               );
             })}
             <button
+              type="button"
               className={styles.newSessionButton}
               onClick={() => {
                 void createNewSession();
@@ -357,6 +360,7 @@ export function Terminal() {
             <div className={styles.divider} />
             {outputIds.length >= 2 && (
               <button
+                type="button"
                 className={`${styles.sessionTab} ${activeRunOutputId === ALL_PROFILES_ID ? styles.active : ''}`}
                 onClick={() => {
                   setActiveRunOutput(ALL_PROFILES_ID);
@@ -395,6 +399,7 @@ export function Terminal() {
 
               return (
                 <button
+                  type="button"
                   key={id}
                   className={`${styles.sessionTab} ${isActive ? styles.active : ''}`}
                   onClick={() => {
@@ -494,7 +499,7 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
     <>
       <div className={styles.contextMenuOverlay} onClick={onDismiss} />
       <div ref={clampRef} className={styles.contextMenu} style={{ left: x, top: y }}>
-        <button className={styles.contextMenuItem} onClick={onRename}>
+        <button type="button" className={styles.contextMenuItem} onClick={onRename}>
           <svg
             width="12"
             height="12"
@@ -511,6 +516,7 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
         </button>
         <div className={styles.contextMenuDivider} />
         <button
+          type="button"
           className={`${styles.contextMenuItem} ${styles.contextMenuItemDanger}`}
           onClick={onClose}
         >

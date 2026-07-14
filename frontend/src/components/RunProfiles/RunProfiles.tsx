@@ -249,6 +249,7 @@ export function RunProfiles() {
           <>
             <TreeViewToggle ariaLabel="Run profiles view" />
             <button
+              type="button"
               className={styles.createButton}
               onClick={() => openRunProfileForm({ mode: 'create' })}
               aria-label="New profile"
@@ -330,6 +331,7 @@ function HiddenSection({
         <div key={p.id} className={styles.hiddenRow}>
           <div className={styles.hiddenName}>{p.name}</div>
           <button
+            type="button"
             className={styles.hiddenShow}
             onClick={() => unhideProfile(p.id)}
             aria-label={`Show ${p.name}`}
