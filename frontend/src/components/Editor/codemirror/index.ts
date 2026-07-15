@@ -30,7 +30,6 @@ export {
 export {
   createEditorExtensions,
   applyEditorTheme,
-  getLanguageExtension,
   getLanguageName,
   languageCompartment,
   themeCompartment,
@@ -46,6 +45,7 @@ export {
   readOnly,
   tabSize,
 } from './extensions';
+export { loadLanguageSupport } from './languages';
 
 // Diagnostics
 export { updateEditorDiagnostics, lspToCMDiagnostics, diagnosticsCompartment } from './diagnostics';
