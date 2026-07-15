@@ -13,6 +13,19 @@ import (
 // their existing credential helpers, SSH agents, and hooks keep working.
 type Service struct{}
 
+func scrubGitEnv(env []string) []string {
+	clean := env[:0]
+	for _, variable := range env {
+		name, _, _ := strings.Cut(variable, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX":
+			continue
+		}
+		clean = append(clean, variable)
+	}
+	return clean
+}
+
 // NewService returns a Service. It does not verify git is installed; Status
 // reports IsRepo=false when git is missing, and operations surface the error.
 func NewService() *Service {
@@ -25,7 +38,7 @@ func NewService() *Service {
 func (s *Service) run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(scrubGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

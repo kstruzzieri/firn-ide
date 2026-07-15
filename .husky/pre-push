@@ -4,6 +4,7 @@
 # intentionally NOT mirrored — it installs wails + system GTK deps and is too
 # heavy for a hook; CI keeps that one. Bypass all of this with `git push --no-verify`.
 
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX
 set -e
 
 # --- Frontend: ESLint + build + Jest (build.yml/test.yml/lint.yml) ----------
