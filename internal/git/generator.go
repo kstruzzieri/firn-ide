@@ -33,6 +33,18 @@ func NewMessageGenerator() *MessageGenerator {
 	return &MessageGenerator{
 		LookPath: exec.LookPath,
 		Run: func(ctx context.Context, bin string, args []string) (string, error) {
+			// ponytail: cmd.Env is intentionally left nil so golem inherits the
+			// full parent environment. Unlike service.go — which scrubs the
+			// repository-local GIT_* vars because it execs `git` directly, where an
+			// inherited GIT_DIR would override cmd.Dir and redirect the operation —
+			// golem never runs git: it only shells out through its generic exec
+			// tool, and that tool (a) is not registered in the `-p` one-shot mode
+			// Firn invokes (approval-gated tools are unavailable), and (b) even in
+			// REPL mode rebuilds the child env from a PATH/HOME/LANG/USER/TMPDIR
+			// allowlist that excludes every GIT_* variable. So no inherited GIT_DIR
+			// can redirect golem, and there is nothing to scrub here. If a future
+			// backend swap (the planned go-llm library embed) starts touching git,
+			// revisit this and reuse scrubGitEnv.
 			cmd := exec.CommandContext(ctx, bin, args...)
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
