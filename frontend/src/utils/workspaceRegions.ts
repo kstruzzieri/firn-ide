@@ -63,10 +63,17 @@ export function createWorkspacePathResolver(
   };
 }
 
+// Exact, case-sensitive Docker filenames. Includes both the legacy
+// `docker-compose.*` and the Compose-Spec canonical `compose.*` names.
+// ponytail: exact-match only — override/env compose variants
+// (docker-compose.prod.yml, compose.override.yaml) are intentionally not
+// matched; add pattern matching only if a concrete need appears.
 const DOCKER_FILE_NAMES = new Set([
   'Dockerfile',
   'docker-compose.yml',
   'docker-compose.yaml',
+  'compose.yml',
+  'compose.yaml',
   '.dockerignore',
 ]);
 
