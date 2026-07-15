@@ -39,8 +39,16 @@ export function FileExplorer() {
   const activeFileId = useActiveFileId();
 
   const presentation = useFileTreePresentation();
-  const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
-    presentation;
+  const {
+    mode,
+    rootLabel,
+    rootPath,
+    roots,
+    scopedError,
+    getRegionAccent,
+    getFileAccent,
+    treeAccent,
+  } = presentation;
   const gitStatusByPath = useGitStatusByPath();
 
   const ensurePathLoaded = useEnsurePathLoaded();
@@ -156,11 +164,21 @@ export function FileExplorer() {
         expandedPaths,
         selectedPath,
         getRegionAccent,
+        getFileAccent,
         isRootExpanded,
         rootLabel,
         rootPath,
       }),
-    [roots, expandedPaths, selectedPath, getRegionAccent, isRootExpanded, rootLabel, rootPath]
+    [
+      roots,
+      expandedPaths,
+      selectedPath,
+      getRegionAccent,
+      getFileAccent,
+      isRootExpanded,
+      rootLabel,
+      rootPath,
+    ]
   );
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -297,6 +315,7 @@ export function FileExplorer() {
                   isExpanded={row.isExpanded}
                   isSelected={row.isSelected}
                   regionAccent={row.regionAccent}
+                  fileAccent={row.fileAccent}
                   setSize={row.setSize}
                   posInSet={row.posInSet}
                   rootPath={row.rootPath}

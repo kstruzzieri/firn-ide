@@ -5,6 +5,7 @@ import { FileIcon } from './FileIcon';
 import { getFolderType } from './fileIconUtils';
 import type { WorkspaceAccent } from '../../stores/ideStore';
 import type { GitRowStatus } from '../../types/git';
+import { accentVar } from '../../utils/accent';
 import { shortenPath } from '../../utils/workspace';
 import styles from './TreeRow.module.css';
 
@@ -37,6 +38,7 @@ export interface TreeRowProps {
   isExpanded: boolean;
   isSelected: boolean;
   regionAccent: WorkspaceAccent | null;
+  fileAccent: WorkspaceAccent | null;
   setSize: number;
   posInSet: number;
   /** Root only: absolute path shown as a dimmed label. */
@@ -69,6 +71,7 @@ function TreeRowImpl({
   isExpanded,
   isSelected,
   regionAccent,
+  fileAccent,
   setSize,
   posInSet,
   rootPath,
@@ -117,14 +120,13 @@ function TreeRowImpl({
       className={className}
       data-hidden={isHidden || undefined}
       data-git={gitStatus}
-      style={{
-        paddingLeft: `${indentPx}px`,
-        ...(regionAccent
-          ? ({
-              ['--region-accent' as string]: `var(--accent-${regionAccent})`,
-            } as React.CSSProperties)
-          : {}),
-      }}
+      style={
+        {
+          paddingLeft: `${indentPx}px`,
+          ...(regionAccent ? { '--region-accent': `var(--accent-${regionAccent})` } : {}),
+          ...(fileAccent ? { '--file-accent': accentVar(fileAccent) } : {}),
+        } as React.CSSProperties
+      }
       onClick={handleRowClick}
       onDoubleClick={handleRowDoubleClick}
       role="treeitem"
@@ -155,6 +157,9 @@ function TreeRowImpl({
       )}
 
       <FileIcon name={name} isDir={isDir} isExpanded={isExpanded} className={styles.icon} />
+      {fileAccent && (
+        <span className={styles.fileAccent} data-testid="file-accent-marker" aria-hidden="true" />
+      )}
       <span className={styles.name}>{name}</span>
       {kind === 'root' && rootPath && <span className={styles.path}>{shortenPath(rootPath)}</span>}
       {gitStatus && (

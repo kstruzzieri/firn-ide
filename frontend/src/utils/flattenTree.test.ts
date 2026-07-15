@@ -1,6 +1,7 @@
 // src/utils/flattenTree.test.ts
 import { flattenVisibleTree, ROOT_ROW_KEY } from './flattenTree';
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
+import { getInfraFileAccent } from './workspaceRegions';
 
 const file = (path: string, name: string): FileEntry =>
   ({ name, path, isDir: false, size: 0, modTime: '' }) as FileEntry;
@@ -23,7 +24,13 @@ describe('flattenVisibleTree', () => {
       expandedPaths: new Set(),
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: 'root', key: ROOT_ROW_KEY, depth: 0, level: 1 });
+    expect(rows[0]).toMatchObject({
+      kind: 'root',
+      key: ROOT_ROW_KEY,
+      depth: 0,
+      level: 1,
+      fileAccent: null,
+    });
   });
 
   it('walks expanded branches in pre-order with correct depth/level', () => {
@@ -84,6 +91,21 @@ describe('flattenVisibleTree', () => {
 
     const untinted = flattenVisibleTree({ ...base, roots, expandedPaths: new Set() });
     expect(untinted.find((r) => r.key === '/repo/a.ts')?.regionAccent).toBeNull();
+  });
+
+  it('precomputes independent region and file accents for a nested infra file', () => {
+    const dockerfile = file('/repo/frontend/Dockerfile', 'Dockerfile');
+    const rows = flattenVisibleTree({
+      ...base,
+      roots: [dir('/repo/frontend', 'frontend', [dockerfile])],
+      expandedPaths: new Set(['/repo/frontend']),
+      getRegionAccent: () => 'blue',
+      getFileAccent: getInfraFileAccent,
+    });
+    const row = rows.find((candidate) => candidate.key === dockerfile.path)!;
+
+    expect(row.regionAccent).toBe('blue');
+    expect(row.fileAccent).toBe('purple');
   });
 
   it('marks the selected entry', () => {
