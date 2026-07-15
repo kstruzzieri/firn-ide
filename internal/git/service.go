@@ -17,11 +17,11 @@ type Service struct{}
 // (and that hooks re-export to their children). Left in place, an inherited
 // GIT_DIR/GIT_INDEX_FILE/GIT_OBJECT_DIRECTORY/etc. overrides cmd.Dir and
 // redirects the operation into whatever repository the parent was pointed at.
-// The set mirrors Git's own local_repo_env (see `git help environment`): these
-// are exactly the variables Git treats as repository-scoped and refuses to leak
-// into submodules, so scrubbing the same set is the root-cause fix rather than
-// patching the one variable that happened to bite us. Returns a fresh slice;
-// the input is never mutated.
+// The set mirrors Git's own repository-local env (`git rev-parse
+// --local-env-vars`): these are exactly the variables Git treats as
+// repository-scoped and refuses to leak into submodules, so scrubbing the same
+// set is the root-cause fix rather than patching the one variable that happened
+// to bite us. Returns a fresh slice; the input is never mutated.
 func scrubGitEnv(env []string) []string {
 	clean := make([]string, 0, len(env))
 	for _, variable := range env {
@@ -36,6 +36,7 @@ func scrubGitEnv(env []string) []string {
 			"GIT_OBJECT_DIRECTORY",
 			"GIT_ALTERNATE_OBJECT_DIRECTORIES",
 			"GIT_GRAFT_FILE",
+			"GIT_SHALLOW_FILE",
 			"GIT_NAMESPACE",
 			"GIT_NO_REPLACE_OBJECTS",
 			"GIT_REPLACE_REF_BASE",
