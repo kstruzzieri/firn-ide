@@ -1,12 +1,14 @@
 package lsp
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"firn/internal/lsp/provision"
 )
@@ -237,10 +239,17 @@ func (r *Registry) resolveRustServer(projectRoot string) (*ServerConfig, error) 
 	path, err := exec.LookPath("rust-analyzer")
 	if err != nil {
 		path = findCargoBinary("rust-analyzer")
-		if path == "" {
-			return r.managedOrMiss("rust", projectRoot, "rust-analyzer not found. Firn can install it automatically, "+
-				"or install it with \"rustup component add rust-analyzer\" and add it to PATH.")
-		}
+	}
+	if path != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		probe := exec.CommandContext(ctx, path, "--version")
+		probe.Dir = projectRoot
+		err = probe.Run()
+		cancel()
+	}
+	if path == "" || err != nil {
+		return r.managedOrMiss("rust", projectRoot, "rust-analyzer not found. Firn can install it automatically, "+
+			"or install it with \"rustup component add rust-analyzer\" and add it to PATH.")
 	}
 
 	return &ServerConfig{
