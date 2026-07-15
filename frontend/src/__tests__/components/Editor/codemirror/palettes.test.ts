@@ -7,18 +7,44 @@ import {
   type SyntaxPalette,
   type SyntaxThemeId,
 } from '../../../../components/Editor/codemirror/palettes';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
+type RGB = [number, number, number];
+
+const themeSource = readFileSync(
+  resolve(__dirname, '../../../../components/Editor/codemirror/theme.ts'),
+  'utf8'
+);
 
 // Derive role keys from a live palette so a new SyntaxPalette field is auto-covered.
 const ROLES = Object.keys(SYNTAX_THEMES[0].palette) as (keyof SyntaxPalette)[];
 
 // Relative luminance + contrast ratio (WCAG) for the comment-contrast guard.
-function luminance(hex: string): number {
-  const m = hex.replace('#', '');
-  const rgb = [0, 2, 4].map((i) => parseInt(m.slice(i, i + 2), 16) / 255);
-  const lin = rgb.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+function parseHex(hex: string): RGB {
+  const value = hex.replace('#', '');
+  return [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16)) as RGB;
+}
+
+function activeLineBackground(background: string): RGB {
+  const channels = themeSource
+    .match(/activeLine:\s*'rgba\(([^)]+)\)'/)?.[1]
+    .split(',')
+    .map(Number);
+  if (!channels || channels.length !== 4) throw new Error('Missing CodeMirror active-line color');
+  const canvas = parseHex(background);
+  return channels
+    .slice(0, 3)
+    .map((channel, index) => channel * channels[3] + canvas[index] * (1 - channels[3])) as RGB;
+}
+
+function luminance(rgb: RGB): number {
+  const lin = rgb
+    .map((channel) => channel / 255)
+    .map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
   return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
 }
-function contrast(a: string, b: string): number {
+function contrast(a: RGB, b: RGB): number {
   const l1 = luminance(a);
   const l2 = luminance(b);
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
@@ -66,10 +92,13 @@ describe('syntax palette registry', () => {
     }
   });
 
-  it('keeps comment contrast at or above 4:1 on each theme canvas', () => {
+  it('keeps comment contrast at or above 4.5:1 on each active-line background', () => {
     for (const theme of SYNTAX_THEMES) {
-      const ratio = contrast(theme.palette.comment, theme.palette.background);
-      expect(ratio).toBeGreaterThanOrEqual(4);
+      const ratio = contrast(
+        parseHex(theme.palette.comment),
+        activeLineBackground(theme.palette.background)
+      );
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
     }
   });
 

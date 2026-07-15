@@ -127,7 +127,6 @@
 /* Dim hidden (dot-prefix) folder names */
 .row[data-hidden] .name {
   color: var(--text-muted);
-  opacity: 0.6;
 }
 
 /*

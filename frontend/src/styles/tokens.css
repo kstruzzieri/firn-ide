@@ -23,7 +23,7 @@
   /* Text */
   --text-primary: #f1f5f9; /* slate-100 */
   --text-secondary: #94a3b8; /* slate-400 */
-  --text-muted: #64748b; /* slate-500 */
+  --text-muted: #90a0b6; /* AA through selected workspace-accent tints */
   --text-disabled: #475569; /* slate-600 */
 
   /* Workspace Accent Palette */
@@ -37,6 +37,7 @@
 
   /* Project/Default Accent — Glacier Blue (matches FIRN wordmark) */
   --accent-project: #38bdf8;
+  --focus-ring: #38bdf8;
 
   /* Active Workspace Accent — change this to swap the entire theme */
   --accent: var(--accent-project);

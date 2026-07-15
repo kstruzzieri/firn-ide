@@ -1,4 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { RunProfileForm } from '../../../components/RunProfiles/RunProfileForm';
 import { useIDEStore } from '../../../stores/ideStore';
 import {
@@ -57,6 +59,15 @@ beforeEach(() => {
   jest.clearAllMocks();
   seedStore();
   useIDEStore.getState().closeRunProfileForm();
+});
+
+it('keeps preview-tag text independent of the workspace accent', () => {
+  const css = readFileSync(
+    resolve(__dirname, '../../../components/RunProfiles/RunProfileForm.module.css'),
+    'utf8'
+  );
+  expect(css).toMatch(/\.tag\s*\{[^}]*color:\s*var\(--text-primary\)/s);
+  expect(css).not.toMatch(/\.tag\s*\{[^}]*color:\s*var\(--accent\)/s);
 });
 
 it('disables Save until name and command are present', () => {
