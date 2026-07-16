@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 type DispatchSpec = {
   selection?: { anchor: number };
   changes?: { from: number; to: number; insert: string };
-  effects?: unknown[];
+  effects?: unknown | unknown[];
   scrollIntoView?: boolean;
 };
 
@@ -62,6 +62,11 @@ const mockHoverCompartmentReconfigure = jest.fn((value: unknown) => ({
   kind: 'hover-compartment',
   value,
 }));
+const mockLanguageCompartmentReconfigure = jest.fn((value: unknown) => ({
+  kind: 'language-compartment',
+  value,
+}));
+const mockLoadLanguageSupport = jest.fn<Promise<unknown>, [string]>();
 
 jest.mock('../../../components/Editor/codemirror', () => {
   class MockEditorView {
@@ -101,6 +106,10 @@ jest.mock('../../../components/Editor/codemirror', () => {
     hoverCompartment: {
       reconfigure: mockHoverCompartmentReconfigure,
     },
+    languageCompartment: {
+      reconfigure: mockLanguageCompartmentReconfigure,
+    },
+    loadLanguageSupport: mockLoadLanguageSupport,
     createEditorExtensions: mockCreateEditorExtensions,
     applyEditorTheme: jest.fn(),
     reconfigureCompletion: mockReconfigureCompletion,
@@ -126,6 +135,7 @@ import { useLSPStore } from '../../../stores/lspStore';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLoadLanguageSupport.mockResolvedValue(null);
   lastEditorView = null;
   useIDEStore.setState(useIDEStore.getInitialState());
   useLSPStore.setState(useLSPStore.getInitialState());
@@ -136,6 +146,115 @@ beforeEach(() => {
 });
 
 describe('CodeMirrorEditor', () => {
+  it('reconfigures the current file language after it loads', async () => {
+    const language = { name: 'typescript-support' };
+    mockLoadLanguageSupport.mockResolvedValueOnce(language);
+
+    render(
+      <CodeMirrorEditor
+        fileId="/project/main.ts"
+        filename="main.ts"
+        content="const value = 1;"
+        openFileIds={['/project/main.ts']}
+      />
+    );
+
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledWith('main.ts'));
+    expect(lastEditorView?.dispatch).toHaveBeenCalledWith({
+      effects: { kind: 'language-compartment', value: language },
+    });
+  });
+
+  it('ignores a language that resolves after switching files', async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    mockLoadLanguageSupport.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const { rerender } = render(
+      <CodeMirrorEditor
+        fileId="/project/a.ts"
+        filename="a.ts"
+        content="const a = 1;"
+        openFileIds={['/project/a.ts', '/project/b.py']}
+      />
+    );
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledWith('a.ts'));
+
+    rerender(
+      <CodeMirrorEditor
+        fileId="/project/b.py"
+        filename="b.py"
+        content="b = 1"
+        openFileIds={['/project/a.ts', '/project/b.py']}
+      />
+    );
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledWith('b.py'));
+    lastEditorView?.dispatch.mockClear();
+
+    await act(async () => first.resolve({ name: 'stale-typescript' }));
+    expect(lastEditorView?.dispatch).not.toHaveBeenCalled();
+
+    const python = { name: 'python-support' };
+    await act(async () => second.resolve(python));
+    expect(lastEditorView?.dispatch).toHaveBeenCalledWith({
+      effects: { kind: 'language-compartment', value: python },
+    });
+  });
+
+  it('distinguishes stale and current generations when switching A to B to A', async () => {
+    const firstA = deferred<unknown>();
+    const b = deferred<unknown>();
+    const secondA = deferred<unknown>();
+    mockLoadLanguageSupport
+      .mockReturnValueOnce(firstA.promise)
+      .mockReturnValueOnce(b.promise)
+      .mockReturnValueOnce(secondA.promise);
+
+    const props = {
+      content: 'const a = 1;',
+      openFileIds: ['/project/a.ts', '/project/b.py'],
+    };
+    const { rerender } = render(
+      <CodeMirrorEditor fileId="/project/a.ts" filename="a.ts" {...props} />
+    );
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledTimes(1));
+    rerender(<CodeMirrorEditor fileId="/project/b.py" filename="b.py" {...props} />);
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledTimes(2));
+    rerender(<CodeMirrorEditor fileId="/project/a.ts" filename="a.ts" {...props} />);
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledTimes(3));
+    lastEditorView?.dispatch.mockClear();
+
+    await act(async () => firstA.resolve({ name: 'stale-a' }));
+    expect(lastEditorView?.dispatch).not.toHaveBeenCalled();
+
+    const currentA = { name: 'current-a' };
+    await act(async () => secondA.resolve(currentA));
+    expect(lastEditorView?.dispatch).toHaveBeenCalledWith({
+      effects: { kind: 'language-compartment', value: currentA },
+    });
+  });
+
+  it('ignores a language that resolves after unmount', async () => {
+    const pending = deferred<unknown>();
+    mockLoadLanguageSupport.mockReturnValueOnce(pending.promise);
+    const { unmount } = render(
+      <CodeMirrorEditor
+        fileId="/project/main.ts"
+        filename="main.ts"
+        content="const value = 1;"
+        openFileIds={['/project/main.ts']}
+      />
+    );
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalled());
+    const view = lastEditorView;
+    view?.dispatch.mockClear();
+
+    unmount();
+    await act(async () => pending.resolve({ name: 'late-language' }));
+
+    expect(view?.dispatch).not.toHaveBeenCalled();
+  });
+
   it('reconfigures the editor theme when the global syntax theme changes', () => {
     render(
       <CodeMirrorEditor
@@ -354,3 +473,11 @@ describe('CodeMirrorEditor', () => {
     );
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}

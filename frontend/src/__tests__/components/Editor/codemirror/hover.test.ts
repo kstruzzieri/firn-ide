@@ -18,6 +18,7 @@ jest.mock('../../../../utils/lspDocumentSync', () => ({
 import { LSPHover } from '../../../../../wailsjs/go/main/App';
 import { lsp } from '../../../../../wailsjs/go/models';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
+import { loadLanguageSupport } from '../../../../components/Editor/codemirror/languages';
 import {
   collapseBlankRuns,
   createLSPHoverSource,
@@ -111,7 +112,14 @@ describe('highlightSignatureParts', () => {
     ]);
   });
 
-  it('highlights a Go signature with the real Go parser when given a .go path', () => {
+  it('uses the regex fallback until the file language has loaded', () => {
+    const parts = highlightSignatureParts('func LogWarning(ctx context.Context)', '/proj/app.go');
+
+    expect(parts).not.toContainEqual({ text: 'func', className: 'firn-hover-keyword' });
+  });
+
+  it('highlights a Go signature with the already-loaded Go parser', async () => {
+    await expect(loadLanguageSupport('/proj/app.go')).resolves.not.toBeNull();
     const parts = highlightSignatureParts(
       'func LogWarning(ctx context.Context, message string)',
       '/proj/app.go'

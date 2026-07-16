@@ -23,19 +23,6 @@ export default defineConfig({
             '@codemirror/lint',
             '@codemirror/search',
           ],
-          // Split CodeMirror language support
-          'codemirror-languages': [
-            '@codemirror/lang-javascript',
-            '@codemirror/lang-python',
-            '@codemirror/lang-go',
-            '@codemirror/lang-css',
-            '@codemirror/lang-html',
-            '@codemirror/lang-json',
-            '@codemirror/lang-markdown',
-            '@codemirror/lang-rust',
-            '@codemirror/lang-xml',
-            '@codemirror/lang-yaml',
-          ],
           // React vendor chunk
           react: ['react', 'react-dom', 'react-dom/client'],
           // Terminal emulator

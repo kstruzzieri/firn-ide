@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build --manifest && node scripts/check-language-bundle.mjs",
     "preview": "vite preview",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "check:language-bundle": "node scripts/check-language-bundle.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",

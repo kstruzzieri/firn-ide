@@ -17,6 +17,8 @@ import {
   EditorState,
   createEditorExtensions,
   applyEditorTheme,
+  languageCompartment,
+  loadLanguageSupport,
   completionCompartment,
   hoverCompartment,
   reconfigureCompletion,
@@ -263,6 +265,23 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     prevFileIdRef.current = fileId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  // Language chunks load independently of state construction. The same view
+  // serves every tab, so each effect generation must reject late results.
+  useEffect(() => {
+    const view = editorRef.current;
+    if (!view) return;
+
+    let cancelled = false;
+    void loadLanguageSupport(filename).then((language) => {
+      if (cancelled || editorRef.current !== view) return;
+      view.dispatch({ effects: languageCompartment.reconfigure(language ?? []) });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileId, filename]);
 
   // Push the git gutter baseline into the (possibly just-swapped) state.
   // Depends on fileId so a file switch re-applies it after view.setState,
