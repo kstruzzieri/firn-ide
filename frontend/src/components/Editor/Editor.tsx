@@ -57,6 +57,8 @@ export function Editor() {
   const setScrollPosition = useIDEStore((state) => state.setScrollPosition);
   const scrollPositions = useIDEStore((state) => state.scrollPositions);
   const cursorPositions = useIDEStore((state) => state.cursorPositions);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const restoreFocusAfterCloseRef = useRef(false);
 
   // Handle content changes from the editor
   const handleContentChange = useCallback(
@@ -135,6 +137,24 @@ export function Editor() {
   const showDiff = !!diffSession && (diffFocused || !activeFile);
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
 
+  useEffect(() => {
+    if (!restoreFocusAfterCloseRef.current) return undefined;
+
+    // Closing an active file can also update diff focus in a following effect.
+    // Wait for that state to settle, then focus the final selected tab or the
+    // main landmark when the tablist became empty.
+    const timeout = window.setTimeout(() => {
+      restoreFocusAfterCloseRef.current = false;
+      const selectedTab = editorRef.current?.querySelector<HTMLElement>(
+        '[role="tab"][aria-selected="true"]'
+      );
+      const fallback = document.getElementById('main-content') ?? editorRef.current;
+      (selectedTab ?? fallback)?.focus();
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeFileId, diffFocused, diffSession, openFiles]);
+
   // Re-fetch the diff each time it becomes visible so it reflects edits made in
   // the editor while it was in the background (the working-tree side re-reads
   // the live buffer).
@@ -152,7 +172,7 @@ export function Editor() {
     const recentProjects = recentWorkspaces.filter((w) => w.path !== workspace?.path);
 
     return (
-      <div className={styles.editor}>
+      <div ref={editorRef} className={styles.editor} tabIndex={-1}>
         <div className={styles.welcome}>
           <img src={firnLogo} alt="Firn IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
@@ -198,7 +218,7 @@ export function Editor() {
   }
 
   return (
-    <div className={styles.editor}>
+    <div ref={editorRef} className={styles.editor} tabIndex={-1}>
       {/* Tab bar */}
       <div className={styles.tabBar} role="tablist" aria-label="Open files">
         {openFiles.map((file) => {
@@ -216,24 +236,31 @@ export function Editor() {
           return (
             <div
               key={file.id}
-              id={`tab-${file.id}`}
               className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
               style={tabAccentStyle(owner)}
-              role="tab"
-              tabIndex={0}
-              aria-selected={isActive}
-              aria-controls={`panel-${file.id}`}
               title={`${file.path}\n${languageName}`}
               onClick={activateFileTab}
-              onKeyDown={(event) => activateTab(event, activateFileTab)}
             >
-              <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
-              <span className={styles.tabName}>{file.name}</span>
-              {file.isModified && <span className={styles.tabDot} aria-label="Modified" />}
+              <div
+                id={editorTabId(file.id)}
+                className={styles.tabTarget}
+                role="tab"
+                tabIndex={isActive ? 0 : -1}
+                aria-selected={isActive}
+                aria-controls="editor-tabpanel"
+                onKeyDown={(event) => handleTabKeyDown(event, activateFileTab)}
+              >
+                <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
+                <span className={styles.tabName}>{file.name}</span>
+                {file.isModified && (
+                  <span className={styles.tabDot} role="img" aria-label="Modified" />
+                )}
+              </div>
               <button
                 className={styles.tabClose}
                 onClick={(e) => {
                   e.stopPropagation();
+                  restoreFocusAfterCloseRef.current = true;
                   closeFile(file.id);
                 }}
                 aria-label={`Close ${file.name}`}
@@ -246,25 +273,30 @@ export function Editor() {
         })}
         {diffSession && (
           <div
-            id="tab-git-diff"
             className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
             style={tabAccentStyle(diffOwner)}
-            role="tab"
-            tabIndex={0}
-            aria-selected={showDiff}
-            aria-controls="panel-git-diff"
             title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
             onClick={() => useGitStore.getState().setDiffFocused(true)}
-            onKeyDown={(event) =>
-              activateTab(event, () => useGitStore.getState().setDiffFocused(true))
-            }
           >
-            <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
-            <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
+            <div
+              id="tab-git-diff"
+              className={styles.tabTarget}
+              role="tab"
+              tabIndex={showDiff ? 0 : -1}
+              aria-selected={showDiff}
+              aria-controls="editor-tabpanel"
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, () => useGitStore.getState().setDiffFocused(true))
+              }
+            >
+              <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
+              <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
+            </div>
             <button
               className={styles.tabClose}
               onClick={(e) => {
                 e.stopPropagation();
+                restoreFocusAfterCloseRef.current = true;
                 useGitStore.getState().closeDiff();
               }}
               aria-label="Close diff"
@@ -278,12 +310,12 @@ export function Editor() {
 
       {/* Editor content */}
       <div
-        id={showDiff ? 'panel-git-diff' : activeFile ? `panel-${activeFile.id}` : undefined}
+        id="editor-tabpanel"
         className={styles.content}
         role="tabpanel"
         tabIndex={0}
         aria-labelledby={
-          showDiff ? 'tab-git-diff' : activeFile ? `tab-${activeFile.id}` : undefined
+          showDiff ? 'tab-git-diff' : activeFile ? editorTabId(activeFile.id) : undefined
         }
       >
         {/* Both surfaces stay mounted and are toggled with CSS so switching
@@ -317,6 +349,10 @@ export function Editor() {
   );
 }
 
+function editorTabId(fileId: string): string {
+  return `tab-file-${encodeURIComponent(fileId)}`;
+}
+
 /** Inline style carrying a tab's owning-workspace accent token, if any. */
 function tabAccentStyle(owner: workspaceModels.WorkspaceDef | null): CSSProperties | undefined {
   if (!owner) return undefined;
@@ -329,10 +365,41 @@ function diffTabName(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
-function activateTab(event: ReactKeyboardEvent<HTMLDivElement>, action: () => void) {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  event.preventDefault();
-  action();
+function handleTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>, action: () => void) {
+  if (event.currentTarget !== event.target) return;
+
+  const tabs = Array.from(
+    event.currentTarget
+      .closest('[role="tablist"]')
+      ?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []
+  );
+  const index = tabs.indexOf(event.currentTarget);
+  let next: number | null = null;
+
+  switch (event.key) {
+    case 'ArrowRight':
+      next = index < tabs.length - 1 ? index + 1 : 0;
+      break;
+    case 'ArrowLeft':
+      next = index > 0 ? index - 1 : tabs.length - 1;
+      break;
+    case 'Home':
+      next = 0;
+      break;
+    case 'End':
+      next = tabs.length - 1;
+      break;
+    case 'Enter':
+    case ' ':
+      event.preventDefault();
+      action();
+      return;
+  }
+
+  if (next !== null) {
+    event.preventDefault();
+    tabs[next]?.focus();
+  }
 }
 
 /**

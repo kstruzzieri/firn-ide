@@ -143,11 +143,14 @@ export function IDEShell({
       data-right-collapsed={isRightPanelCollapsed || undefined}
       data-bottom-collapsed={isBottomPanelCollapsed || undefined}
     >
+      <a className={styles.skipLink} href="#main-content">
+        Skip to main content
+      </a>
       <header className={styles.header} onDoubleClick={handleHeaderDoubleClick}>
         {header}
       </header>
       <aside className={styles.sidebar}>{sidebar}</aside>
-      <main className={styles.content}>
+      <main id="main-content" className={styles.content} tabIndex={-1}>
         {!isLeftPanelCollapsed && <section className={styles.leftPanel}>{leftPanel}</section>}
         <ResizeHandle
           direction="horizontal"

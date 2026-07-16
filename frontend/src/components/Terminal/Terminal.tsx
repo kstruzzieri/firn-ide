@@ -16,7 +16,13 @@ import {
 } from '../../stores/lspStore';
 import { navigateToEditorLocation } from '../../utils/editorNavigation';
 import { getDirectoryPath, getFileNameFromPath } from '../../utils/lspUri';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { RunOutputPanel } from '../RunOutput';
 import { ALL_PROFILES_ID } from '../../types/runOutput';
@@ -115,6 +121,35 @@ function getNextTerminalTitle(sessions: Array<{ title: string }>) {
   return `Terminal ${nextNumber}`;
 }
 
+function moveTabFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
+  const target = event.target as HTMLElement;
+  if (target.getAttribute('role') !== 'tab') return;
+
+  const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+  const index = tabs.indexOf(target);
+  let next: number | null = null;
+
+  switch (event.key) {
+    case 'ArrowRight':
+      next = index < tabs.length - 1 ? index + 1 : 0;
+      break;
+    case 'ArrowLeft':
+      next = index > 0 ? index - 1 : tabs.length - 1;
+      break;
+    case 'Home':
+      next = 0;
+      break;
+    case 'End':
+      next = tabs.length - 1;
+      break;
+  }
+
+  if (next !== null) {
+    event.preventDefault();
+    tabs[next]?.focus();
+  }
+}
+
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
@@ -140,6 +175,9 @@ export function Terminal() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameCancelledRef = useRef(false);
+  const sessionTabRefs = useRef(new Map<string, HTMLDivElement>());
+  const newSessionButtonRef = useRef<HTMLButtonElement>(null);
   const [contextMenu, setContextMenu] = useState<{
     sessionId: string;
     x: number;
@@ -174,8 +212,15 @@ export function Terminal() {
     }
   }, [addSession, showToast]);
 
+  const focusSessionOrNew = useCallback((sessionId: string | null) => {
+    requestAnimationFrame(() => {
+      const destination = sessionId ? sessionTabRefs.current.get(sessionId) : null;
+      (destination ?? newSessionButtonRef.current)?.focus();
+    });
+  }, []);
+
   const closeSession = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, restoreFocus = false) => {
       cleanupSessionBuffers(sessionId);
       // The frontend row is already gone; a failed backend close would orphan
       // the PTY invisibly, so at least say so.
@@ -186,28 +231,40 @@ export function Terminal() {
         )
       );
       removeSession(sessionId);
+      if (restoreFocus) {
+        focusSessionOrNew(useIDEStore.getState().activeTerminalSessionId);
+      }
     },
-    [removeSession, showToast]
+    [focusSessionOrNew, removeSession, showToast]
   );
 
   const handleCloseSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
-      closeSession(sessionId);
+      closeSession(sessionId, true);
     },
     [closeSession]
   );
 
   const startRename = (session: { id: string; title: string }) => {
+    renameCancelledRef.current = false;
     setRenamingId(session.id);
     setRenameValue(session.title);
   };
 
-  const commitRename = () => {
-    if (renamingId && renameValue.trim()) {
+  const commitRename = (focusSessionId?: string) => {
+    if (!renameCancelledRef.current && renamingId && renameValue.trim()) {
       renameSession(renamingId, renameValue.trim());
     }
+    renameCancelledRef.current = false;
     setRenamingId(null);
+    if (focusSessionId) focusSessionOrNew(focusSessionId);
+  };
+
+  const cancelRename = (sessionId: string) => {
+    renameCancelledRef.current = true;
+    setRenamingId(null);
+    focusSessionOrNew(sessionId);
   };
 
   useEffect(() => {
@@ -221,8 +278,6 @@ export function Terminal() {
     e.preventDefault();
     setContextMenu({ sessionId, x: e.clientX, y: e.clientY });
   }, []);
-
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -256,93 +311,147 @@ export function Terminal() {
     setDragOverIndex(null);
   }, []);
 
+  const contextMenuSession = contextMenu
+    ? terminalSessions.find((session) => session.id === contextMenu.sessionId)
+    : undefined;
+
   return (
     <div className={styles.terminal} data-accent="project">
-      <div className={styles.tabBar} role="tablist" aria-label="Terminal panels">
-        {TERMINAL_TABS.map(({ id, icon: Icon, label }) => {
-          const isActive = id === activeTab;
-          const count = id === 'problems' ? problemCount : undefined;
+      <div className={styles.tabBar}>
+        <div
+          className={styles.tabList}
+          role="tablist"
+          aria-label="Terminal panels"
+          onKeyDown={moveTabFocus}
+        >
+          {TERMINAL_TABS.map(({ id, icon: Icon, label }) => {
+            const isActive = id === activeTab;
+            const count = id === 'problems' ? problemCount : undefined;
 
-          return (
-            <button
-              type="button"
-              key={id}
-              className={`${styles.tab} ${isActive ? styles.active : ''}`}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => setTerminalTab(id)}
-            >
-              <Icon aria-hidden="true" />
-              <span>{label}</span>
-              {count !== undefined && count > 0 && (
-                <span className={styles.badge} aria-label={`${count} issues`}>
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+            return (
+              <button
+                type="button"
+                key={id}
+                id={`terminal-panel-tab-${id}`}
+                className={`${styles.tab} ${isActive ? styles.active : ''}`}
+                role="tab"
+                aria-selected={isActive}
+                aria-controls="terminal-panel-content"
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => setTerminalTab(id)}
+              >
+                <Icon aria-hidden="true" />
+                <span>{label}</span>
+                {count !== undefined && count > 0 && (
+                  <span className={styles.badge} aria-label={`${count} issues`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
         {activeTab === 'terminal' && (
           <>
             <div className={styles.divider} />
-            {terminalSessions.map((session, index) => {
-              const isActive = session.id === activeSessionId;
-              const isRenaming = session.id === renamingId;
-              const isDragging = dragIndex === index;
-              const isDragOver = dragOverIndex === index && dragIndex !== index;
+            {terminalSessions.length > 0 && (
+              <div
+                className={styles.tabList}
+                role="tablist"
+                aria-label="Terminal sessions"
+                onKeyDown={moveTabFocus}
+              >
+                {terminalSessions.map((session, index) => {
+                  const isActive = session.id === activeSessionId;
+                  const isRenaming = session.id === renamingId;
+                  const isDragging = dragIndex === index;
+                  const isDragOver = dragOverIndex === index && dragIndex !== index;
+                  const sessionTabId = `terminal-session-tab-${session.id}`;
+                  const sessionPanelId = `terminal-session-panel-${session.id}`;
 
-              return (
-                <div
-                  key={session.id}
-                  className={`${styles.sessionTab} ${isActive ? styles.active : ''} ${isDragging ? styles.dragging : ''} ${isDragOver ? styles.dragOver : ''}`}
-                  role="tab"
-                  tabIndex={0}
-                  aria-selected={isActive}
-                  onClick={() => setActiveSession(session.id)}
-                  onDoubleClick={() => startRename(session)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setActiveSession(session.id);
-                    }
-                  }}
-                  onContextMenu={(e) => handleContextMenu(e, session.id)}
-                  draggable={!isRenaming}
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDrop={(e) => handleDrop(e, index)}
-                  onDragEnd={handleDragEnd}
-                  title={session.title}
-                >
-                  <TerminalIcon aria-hidden="true" />
-                  {isRenaming ? (
-                    <input
-                      ref={renameInputRef}
-                      className={styles.sessionTabInput}
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitRename();
-                        if (e.key === 'Escape') setRenamingId(null);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span className={styles.sessionTabLabel}>{session.title}</span>
-                  )}
-                  <button
-                    type="button"
-                    className={styles.sessionTabClose}
-                    onClick={(e) => handleCloseSession(e, session.id)}
-                    aria-label={`Close ${session.title}`}
-                  >
-                    &times;
-                  </button>
-                </div>
-              );
-            })}
+                  return (
+                    <div
+                      key={session.id}
+                      className={`${styles.sessionTab} ${isActive ? styles.active : ''} ${isDragging ? styles.dragging : ''} ${isDragOver ? styles.dragOver : ''}`}
+                      draggable={!isRenaming}
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={(e) => handleDragOver(e, index)}
+                      onDrop={(e) => handleDrop(e, index)}
+                      onDragEnd={handleDragEnd}
+                      onClick={() => setActiveSession(session.id)}
+                      onDoubleClick={() => startRename(session)}
+                      onContextMenu={(e) => handleContextMenu(e, session.id)}
+                      title={session.title}
+                    >
+                      <div
+                        ref={(node) => {
+                          if (node) sessionTabRefs.current.set(session.id, node);
+                          else sessionTabRefs.current.delete(session.id);
+                        }}
+                        id={sessionTabId}
+                        className={styles.sessionTabTarget}
+                        role="tab"
+                        tabIndex={isActive ? 0 : -1}
+                        aria-label={session.title}
+                        aria-selected={isActive}
+                        aria-controls={sessionPanelId}
+                        aria-haspopup="menu"
+                        onKeyDown={(e) => {
+                          if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+                            e.preventDefault();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setContextMenu({ sessionId: session.id, x: rect.left, y: rect.bottom });
+                          } else if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setActiveSession(session.id);
+                          }
+                        }}
+                      >
+                        <TerminalIcon aria-hidden="true" />
+                        {!isRenaming && (
+                          <span className={styles.sessionTabLabel}>{session.title}</span>
+                        )}
+                      </div>
+                      {isRenaming && (
+                        <input
+                          ref={renameInputRef}
+                          className={styles.sessionTabInput}
+                          aria-label={`Rename ${session.title}`}
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={() => commitRename()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              commitRename(session.id);
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelRename(session.id);
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => e.stopPropagation()}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className={styles.sessionTabClose}
+                        onClick={(e) => handleCloseSession(e, session.id)}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                        onContextMenu={(e) => e.stopPropagation()}
+                        aria-label={`Close ${session.title}`}
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <button
+              ref={newSessionButtonRef}
               type="button"
               className={styles.newSessionButton}
               onClick={() => {
@@ -418,7 +527,13 @@ export function Terminal() {
           </>
         )}
       </div>
-      <div className={styles.content} role="tabpanel" tabIndex={0}>
+      <div
+        id="terminal-panel-content"
+        className={styles.content}
+        role="tabpanel"
+        aria-labelledby={`terminal-panel-tab-${activeTab}`}
+        tabIndex={0}
+      >
         <div
           className={styles.tabContent}
           style={{ display: activeTab === 'terminal' ? 'flex' : 'none' }}
@@ -429,6 +544,8 @@ export function Terminal() {
                 key={session.id}
                 sessionId={session.id}
                 isVisible={session.id === activeSessionId}
+                tabId={`terminal-session-tab-${session.id}`}
+                panelId={`terminal-session-panel-${session.id}`}
               />
             ))}
             {terminalSessions.length === 0 && (
@@ -445,20 +562,25 @@ export function Terminal() {
         {activeTab === 'output' && <OutputContent />}
         {activeTab === 'problems' && <ProblemsContent />}
       </div>
-      {contextMenu && (
+      {contextMenu && contextMenuSession && (
         <SessionContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          sessionTitle={contextMenuSession.title}
           onRename={() => {
-            const session = terminalSessions.find((s) => s.id === contextMenu.sessionId);
-            if (session) startRename(session);
-            closeContextMenu();
+            setContextMenu(null);
+            startRename(contextMenuSession);
           }}
           onClose={() => {
-            closeSession(contextMenu.sessionId);
-            closeContextMenu();
+            const sessionId = contextMenu.sessionId;
+            setContextMenu(null);
+            closeSession(sessionId, true);
           }}
-          onDismiss={closeContextMenu}
+          onDismiss={(restoreFocus) => {
+            const sessionId = contextMenu.sessionId;
+            if (restoreFocus) sessionTabRefs.current.get(sessionId)?.focus();
+            setContextMenu(null);
+          }}
         />
       )}
     </div>
@@ -468,23 +590,51 @@ export function Terminal() {
 interface SessionContextMenuProps {
   x: number;
   y: number;
+  sessionTitle: string;
   onRename: () => void;
   onClose: () => void;
-  onDismiss: () => void;
+  onDismiss: (restoreFocus: boolean) => void;
 }
 
-function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionContextMenuProps) {
+function focusRelativeTabStop(origin: HTMLElement, reverse: boolean) {
+  const tabStops = Array.from(
+    document.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]')
+  ).filter((element) => {
+    const style = window.getComputedStyle(element);
+    return (
+      element.tabIndex >= 0 &&
+      !element.matches(':disabled') &&
+      !element.closest('[hidden], [inert]') &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden'
+    );
+  });
+  const ordered = reverse ? [...tabStops].reverse() : tabStops;
+  const relation = reverse ? Node.DOCUMENT_POSITION_PRECEDING : Node.DOCUMENT_POSITION_FOLLOWING;
+  const target =
+    ordered.find((element) => (origin.compareDocumentPosition(element) & relation) !== 0) ??
+    ordered[0];
+  target?.focus();
+}
+
+function SessionContextMenu({
+  x,
+  y,
+  sessionTitle,
+  onRename,
+  onClose,
+  onDismiss,
+}: SessionContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onDismiss();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onDismiss]);
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, []);
 
   // Clamp menu position to viewport on mount via callback ref.
   // The context menu remounts each time it opens, so this runs with fresh x/y.
   const clampRef = useCallback((node: HTMLDivElement | null) => {
+    menuRef.current = node;
     if (!node) return;
     const rect = node.getBoundingClientRect();
     if (rect.right > window.innerWidth) {
@@ -495,11 +645,78 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
     }
   }, []);
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') {
+      // Let the browser complete its native forward/reverse focus movement
+      // while the focused item is still mounted, then close without restoring
+      // the invoker over the destination it chose.
+      const reverse = event.shiftKey;
+      queueMicrotask(() => {
+        const menu = menuRef.current;
+        const active = document.activeElement;
+        if (menu && (!active || active === document.body || menu.contains(active))) {
+          focusRelativeTabStop(menu, reverse);
+        }
+        onDismiss(false);
+      });
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onDismiss(true);
+      return;
+    }
+
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    );
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    let next: number | null = null;
+
+    switch (event.key) {
+      case 'ArrowDown':
+        next = index < items.length - 1 ? index + 1 : 0;
+        break;
+      case 'ArrowUp':
+        next = index > 0 ? index - 1 : items.length - 1;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = items.length - 1;
+        break;
+    }
+
+    if (next !== null) {
+      event.preventDefault();
+      items[next]?.focus();
+    }
+  };
+
   return (
     <>
-      <div className={styles.contextMenuOverlay} onClick={onDismiss} />
-      <div ref={clampRef} className={styles.contextMenu} style={{ left: x, top: y }}>
-        <button type="button" className={styles.contextMenuItem} onClick={onRename}>
+      <div
+        className={styles.contextMenuOverlay}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => onDismiss(menuRef.current?.contains(document.activeElement) ?? false)}
+      />
+      <div
+        ref={clampRef}
+        className={styles.contextMenu}
+        style={{ left: x, top: y }}
+        role="menu"
+        aria-label={`Actions for ${sessionTitle}`}
+        onKeyDown={handleKeyDown}
+      >
+        <button
+          type="button"
+          className={styles.contextMenuItem}
+          role="menuitem"
+          tabIndex={-1}
+          onClick={onRename}
+        >
           <svg
             width="12"
             height="12"
@@ -518,6 +735,8 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
         <button
           type="button"
           className={`${styles.contextMenuItem} ${styles.contextMenuItemDanger}`}
+          role="menuitem"
+          tabIndex={-1}
           onClick={onClose}
         >
           <svg
@@ -543,9 +762,11 @@ function SessionContextMenu({ x, y, onRename, onClose, onDismiss }: SessionConte
 interface TerminalContentProps {
   sessionId: string;
   isVisible: boolean;
+  tabId: string;
+  panelId: string;
 }
 
-function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
+function TerminalContent({ sessionId, isVisible, tabId, panelId }: TerminalContentProps) {
   const containerDiv = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -615,7 +836,10 @@ function TerminalContent({ sessionId, isVisible }: TerminalContentProps) {
   return (
     <div
       ref={containerDiv}
+      id={panelId}
       className={styles.terminalContent}
+      role="tabpanel"
+      aria-labelledby={tabId}
       style={{ display: isVisible ? 'block' : 'none' }}
     />
   );

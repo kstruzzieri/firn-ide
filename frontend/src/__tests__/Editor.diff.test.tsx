@@ -1,4 +1,5 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, createEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useIDEStore } from '../stores/ideStore';
 import { useGitStore, type DiffSession } from '../stores/gitStore';
 import type { workspace } from '../../wailsjs/go/models';
@@ -198,6 +199,183 @@ describe('Editor git diff tab', () => {
 
     expect(useGitStore.getState().diffFocused).toBe(true);
   });
+
+  it('uses one selected tab stop and moves focus without activating tabs', () => {
+    useIDEStore.setState({
+      openFiles: [openFile('f1', 'one.ts'), openFile('f2', 'two.ts')],
+      activeFileId: 'f1',
+    });
+    useGitStore.setState({ diffSession: session, diffFocused: false });
+
+    render(<Editor />);
+
+    const one = screen.getByRole('tab', { name: /one\.ts/i });
+    const two = screen.getByRole('tab', { name: /two\.ts/i });
+    const diff = screen.getByRole('tab', { name: /a\.ts.*diff/i });
+    expect([one.tabIndex, two.tabIndex, diff.tabIndex]).toEqual([0, -1, -1]);
+
+    one.focus();
+    fireEvent.keyDown(one, { key: 'ArrowRight' });
+    expect(two).toHaveFocus();
+    expect(useIDEStore.getState().activeFileId).toBe('f1');
+
+    fireEvent.keyDown(two, { key: 'ArrowLeft' });
+    expect(one).toHaveFocus();
+    fireEvent.keyDown(one, { key: 'ArrowLeft' });
+    expect(diff).toHaveFocus();
+    fireEvent.keyDown(diff, { key: 'ArrowRight' });
+    expect(one).toHaveFocus();
+
+    two.focus();
+    fireEvent.keyDown(two, { key: 'End' });
+    expect(diff).toHaveFocus();
+    expect(useGitStore.getState().diffFocused).toBe(false);
+
+    fireEvent.keyDown(diff, { key: 'ArrowRight' });
+    expect(one).toHaveFocus();
+    fireEvent.keyDown(one, { key: 'End' });
+    fireEvent.keyDown(diff, { key: 'Home' });
+    expect(one).toHaveFocus();
+  });
+
+  it('activates focused file and diff tabs with Enter and Space', () => {
+    useIDEStore.setState({
+      openFiles: [openFile('f1', 'one.ts'), openFile('f2', 'two.ts')],
+      activeFileId: 'f1',
+    });
+    useGitStore.setState({ diffSession: session, diffFocused: false });
+
+    render(<Editor />);
+
+    const one = screen.getByRole('tab', { name: /one\.ts/i });
+    const two = screen.getByRole('tab', { name: /two\.ts/i });
+    const diff = screen.getByRole('tab', { name: /a\.ts.*diff/i });
+
+    one.focus();
+    fireEvent.keyDown(one, { key: 'ArrowRight' });
+    fireEvent.keyDown(two, { key: 'Enter' });
+    expect(useIDEStore.getState().activeFileId).toBe('f2');
+
+    two.focus();
+    fireEvent.keyDown(two, { key: 'End' });
+    fireEvent.keyDown(diff, { key: ' ' });
+    expect(useGitStore.getState().diffFocused).toBe(true);
+  });
+
+  it('keeps every tab associated with the stable editor panel', () => {
+    const spacedPath = '/repo/src/My File.ts';
+    useIDEStore.setState({
+      openFiles: [openFile(spacedPath, 'My File.ts'), openFile('f2', 'two.ts')],
+      activeFileId: spacedPath,
+    });
+    useGitStore.setState({ diffSession: session, diffFocused: false });
+
+    render(<Editor />);
+
+    const panel = screen.getByRole('tabpanel');
+    const tabs = screen.getAllByRole('tab');
+    expect(panel).toHaveAttribute('id', 'editor-tabpanel');
+    for (const tab of tabs) expect(tab).toHaveAttribute('aria-controls', panel.id);
+    expect(tabs[0].id).not.toMatch(/\s/);
+    expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+    expect(document.getElementById(panel.getAttribute('aria-labelledby') ?? '')).toBe(tabs[0]);
+
+    fireEvent.click(tabs[1]);
+    expect(panel).toHaveAttribute('aria-labelledby', tabs[1].id);
+  });
+
+  it('keeps editor close buttons outside tab semantics', () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'one.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ diffSession: session, diffFocused: false });
+
+    render(<Editor />);
+
+    for (const close of screen.getAllByRole('button', { name: /close/i })) {
+      expect(close.closest('[role="tab"]')).toBeNull();
+    }
+  });
+
+  it('exposes the modified indicator to assistive tech', () => {
+    useIDEStore.setState({
+      openFiles: [{ ...openFile('f1', 'one.ts'), isModified: true }],
+      activeFileId: 'f1',
+    });
+
+    render(<Editor />);
+
+    const dot = screen.getByRole('img', { name: 'Modified' });
+    expect(dot.closest('[role="tab"]')).not.toBeNull();
+    // The indicator folds into the tab's accessible name rather than staying a silent glyph.
+    expect(screen.getByRole('tab', { name: /one\.ts.*modified/i })).toBe(
+      dot.closest('[role="tab"]')
+    );
+  });
+
+  it('does not consume native keyboard events from close buttons', () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'one.ts')], activeFileId: 'f1' });
+
+    render(<Editor />);
+
+    const close = screen.getByRole('button', { name: 'Close one.ts' });
+    const event = createEvent.keyDown(close, { key: ' ' });
+    fireEvent(close, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(useIDEStore.getState().openFiles).toHaveLength(1);
+  });
+
+  it('moves focus to the selected file tab after a keyboard close', async () => {
+    const user = userEvent.setup();
+    useIDEStore.setState({
+      openFiles: [openFile('f1', 'one.ts'), openFile('f2', 'two.ts')],
+      activeFileId: 'f1',
+    });
+
+    render(<Editor />);
+
+    const close = screen.getByRole('button', { name: 'Close one.ts' });
+    close.focus();
+    await user.keyboard(' ');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Close one.ts' })).not.toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /two\.ts/i })).toHaveFocus();
+    });
+  });
+
+  it('moves focus to the selected file tab after closing a diff with Enter', async () => {
+    const user = userEvent.setup();
+    useIDEStore.setState({ openFiles: [openFile('f1', 'one.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ diffSession: session, diffFocused: true });
+
+    render(<Editor />);
+
+    const close = screen.getByRole('button', { name: 'Close diff' });
+    close.focus();
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Close diff' })).not.toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /one\.ts/i })).toHaveFocus();
+    });
+  });
+
+  it('moves focus to main content after closing the last editor tab', async () => {
+    const user = userEvent.setup();
+    useIDEStore.setState({ openFiles: [openFile('f1', 'one.ts')], activeFileId: 'f1' });
+
+    render(
+      <main id="main-content" tabIndex={-1}>
+        <Editor />
+      </main>
+    );
+
+    const close = screen.getByRole('button', { name: 'Close one.ts' });
+    close.focus();
+    await user.keyboard(' ');
+
+    await waitFor(() => expect(document.getElementById('main-content')).toHaveFocus());
+  });
 });
 
 describe('Editor workspace tab accents', () => {
@@ -225,20 +403,22 @@ describe('Editor workspace tab accents', () => {
 
     render(<Editor />);
 
-    expect(screen.getByRole('tab', { name: /App\.tsx/i })).toHaveStyle(
+    expect(screen.getByRole('tab', { name: /App\.tsx/i }).parentElement).toHaveStyle(
       '--tab-accent: var(--accent-blue)'
     );
-    expect(screen.getByRole('tab', { name: /root\.go/i })).toHaveStyle(
+    expect(screen.getByRole('tab', { name: /root\.go/i }).parentElement).toHaveStyle(
       '--tab-accent: var(--accent-amber)'
     );
-    expect(screen.getByRole('tab', { name: /api\.go/i })).toHaveStyle(
+    expect(screen.getByRole('tab', { name: /api\.go/i }).parentElement).toHaveStyle(
       '--tab-accent: var(--accent-green)'
     );
-    expect(screen.getByRole('tab', { name: /apiary\.go/i })).toHaveStyle(
+    expect(screen.getByRole('tab', { name: /apiary\.go/i }).parentElement).toHaveStyle(
       '--tab-accent: var(--accent-cyan)'
     );
     expect(
-      screen.getByRole('tab', { name: /notes\.md/i }).style.getPropertyValue('--tab-accent')
+      screen
+        .getByRole('tab', { name: /notes\.md/i })
+        .parentElement?.style.getPropertyValue('--tab-accent')
     ).toBe('');
   });
 
@@ -255,7 +435,7 @@ describe('Editor workspace tab accents', () => {
 
     render(<Editor />);
 
-    expect(screen.getByRole('tab', { name: /diff\.go.*diff/i })).toHaveStyle(
+    expect(screen.getByRole('tab', { name: /diff\.go.*diff/i }).parentElement).toHaveStyle(
       '--tab-accent: var(--accent-green)'
     );
   });
@@ -273,7 +453,7 @@ describe('Editor workspace tab accents', () => {
     render(<Editor />);
 
     const tab = screen.getByRole('tab', { name: /old\.ts/i });
-    expect(tab).toHaveStyle('--tab-accent: var(--accent-project)');
-    expect(tab.className).toContain('workspaceTab');
+    expect(tab.parentElement).toHaveStyle('--tab-accent: var(--accent-project)');
+    expect(tab.parentElement?.className).toContain('workspaceTab');
   });
 });
