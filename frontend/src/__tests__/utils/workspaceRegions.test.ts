@@ -1,4 +1,8 @@
-import { createWorkspacePathResolver, relativePathFromRoot } from '../../utils/workspaceRegions';
+import {
+  createWorkspacePathResolver,
+  getInfraFileAccent,
+  relativePathFromRoot,
+} from '../../utils/workspaceRegions';
 
 describe('relativePathFromRoot', () => {
   const root = '/Users/me/repo';
@@ -52,6 +56,53 @@ function ws(partial: Partial<workspace.WorkspaceDef>): workspace.WorkspaceDef {
 function entry(path: string, isDir = false, name?: string): FileEntry {
   return { path, isDir, name: name ?? path.split('/').pop()! } as FileEntry;
 }
+
+function infraFileAccent(path: string, isDir = false) {
+  return getInfraFileAccent(entry(path, isDir));
+}
+
+describe('getInfraFileAccent', () => {
+  it.each([
+    ['Dockerfile', 'purple'],
+    ['docker-compose.yml', 'purple'],
+    ['docker-compose.yaml', 'purple'],
+    ['compose.yml', 'purple'],
+    ['compose.yaml', 'purple'],
+    ['.dockerignore', 'purple'],
+    ['main.tf', 'amber'],
+    ['production.tfvars', 'amber'],
+  ] as const)('matches %s as %s', (name, accent) => {
+    expect(infraFileAccent(`/Users/me/repo/${name}`)).toBe(accent);
+  });
+
+  it('matches files at any tree depth', () => {
+    expect(infraFileAccent('/Users/me/repo/services/api/Dockerfile')).toBe('purple');
+    expect(infraFileAccent('/Users/me/repo/infra/live/main.tf')).toBe('amber');
+  });
+
+  it.each([
+    'Dockerfile.dev',
+    'dockerfile',
+    'docker-compose.xml',
+    'docker-compose.YML',
+    'compose.xml',
+    'compose.yaml.bak',
+    'Compose.yaml',
+    '.Dockerignore',
+    '.dockerignore.bak',
+    'main.tf.json',
+    'main.TF',
+    'main.TFVARS',
+    'main.tfvars.json',
+    '.terraform.lock.hcl',
+  ])('leaves near-miss file %s neutral', (name) => {
+    expect(infraFileAccent(`/Users/me/repo/${name}`)).toBeNull();
+  });
+
+  it.each(['Dockerfile', 'main.tf'])('leaves matching directory %s neutral', (name) => {
+    expect(infraFileAccent(`/Users/me/repo/${name}`, true)).toBeNull();
+  });
+});
 
 describe('createWorkspacePathResolver', () => {
   const root = '/Users/me/repo';
@@ -126,7 +177,9 @@ describe('createRegionAccentResolver', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
     expect(resolve(entry('/Users/me/repo/docker-compose.yml'))).toBe('purple');
     expect(resolve(entry('/Users/me/repo/Dockerfile'))).toBe('purple');
-    expect(resolve(entry('/Users/me/repo/main.tf'))).toBe('purple');
+    expect(resolve(entry('/Users/me/repo/.dockerignore'))).toBe('purple');
+    expect(resolve(entry('/Users/me/repo/main.tf'))).toBe('amber');
+    expect(resolve(entry('/Users/me/repo/production.tfvars'))).toBe('amber');
   });
 
   it('does NOT tint a nested .tf outside any workspace', () => {

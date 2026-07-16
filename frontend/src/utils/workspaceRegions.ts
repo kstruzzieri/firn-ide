@@ -63,26 +63,28 @@ export function createWorkspacePathResolver(
   };
 }
 
-/**
- * Project-View tinting of LOOSE ROOT FILES only. Workspace *directory*
- * classification stays backend-owned (internal/workspace/detect.go markerRules).
- * Keep this intentionally tiny — it only colors loose/root files, it does not
- * classify workspaces.
- */
-const rootFileAccentRules: {
-  exact: Record<string, WorkspaceAccent>;
-  suffix: ReadonlyArray<{ ext: string; accent: WorkspaceAccent }>;
-} = {
-  exact: {
-    'docker-compose.yml': 'purple',
-    'docker-compose.yaml': 'purple',
-    Dockerfile: 'purple',
-  },
-  suffix: [
-    { ext: '.tf', accent: 'purple' },
-    { ext: '.tfvars', accent: 'purple' },
-  ],
-};
+// Exact, case-sensitive Docker filenames. Includes both the legacy
+// `docker-compose.*` and the Compose-Spec canonical `compose.*` names.
+// ponytail: exact-match only — override/env compose variants
+// (docker-compose.prod.yml, compose.override.yaml) are intentionally not
+// matched; add pattern matching only if a concrete need appears.
+const DOCKER_FILE_NAMES = new Set([
+  'Dockerfile',
+  'docker-compose.yml',
+  'docker-compose.yaml',
+  'compose.yml',
+  'compose.yaml',
+  '.dockerignore',
+]);
+
+/** Fixed file-type accent for Docker and Terraform files at any tree depth. */
+export function getInfraFileAccent(
+  entry: Pick<FileEntry, 'name' | 'isDir'>
+): WorkspaceAccent | null {
+  if (entry.isDir) return null;
+  if (DOCKER_FILE_NAMES.has(entry.name)) return 'purple';
+  return entry.name.endsWith('.tf') || entry.name.endsWith('.tfvars') ? 'amber' : null;
+}
 
 /**
  * Builds a per-entry accent resolver for Project View region tinting. Call once
@@ -91,7 +93,7 @@ const rootFileAccentRules: {
  * Rules (in order):
  *  1. Longest segment-safe non-empty relDir prefix wins → that workspace accent.
  *  2. Root workspaces (relDir === "") contribute no ambient region tint.
- *  3. Loose root file (not a dir, no path separator) → rootFileAccentRules.
+ *  3. Loose root file (not a dir, no path separator) → getInfraFileAccent.
  *  4. Otherwise null.
  */
 export function createRegionAccentResolver(
@@ -108,10 +110,7 @@ export function createRegionAccentResolver(
     if (owner?.relDir) return owner.accent as WorkspaceAccent;
 
     if (!entry.isDir && !rel.includes('/')) {
-      const exact = rootFileAccentRules.exact[entry.name];
-      if (exact) return exact;
-      const suf = rootFileAccentRules.suffix.find((s) => entry.name.endsWith(s.ext));
-      if (suf) return suf.accent;
+      return getInfraFileAccent(entry);
     }
     return null;
   };

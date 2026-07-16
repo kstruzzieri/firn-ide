@@ -118,6 +118,14 @@
   flex-shrink: 0;
 }
 
+.fileAccent {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--file-accent);
+}
+
 .name {
   overflow: hidden;
   text-overflow: ellipsis;

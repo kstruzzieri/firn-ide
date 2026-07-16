@@ -8,6 +8,7 @@ const baseProps = {
   rowId: rowDomId('/repo/a.ts'),
   isActive: false,
   canExpand: false,
+  fileAccent: null,
   onToggle: noop,
   onSelect: noop,
   onOpen: noop,
@@ -77,6 +78,7 @@ describe('TreeRow', () => {
     );
     expect(screen.getByText('a.ts')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /toggle/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('file-accent-marker')).not.toBeInTheDocument();
   });
 
   it('creates a sanitized active-descendant id from a path key', () => {
@@ -150,6 +152,38 @@ describe('TreeRow', () => {
     const row = container.querySelector('[role="treeitem"]') as HTMLElement;
     expect(row.className).toContain('tinted');
     expect(row.getAttribute('style')).toContain('--region-accent');
+  });
+
+  it('keeps file and region accents independent without changing Git or tree semantics', () => {
+    const props = {
+      ...baseProps,
+      kind: 'entry' as const,
+      path: '/repo/frontend/Dockerfile',
+      rowId: rowDomId('/repo/frontend/Dockerfile'),
+      name: 'Dockerfile',
+      depth: 2,
+      level: 3,
+      isDir: false,
+      isExpanded: false,
+      isSelected: true,
+      regionAccent: 'blue' as const,
+      fileAccent: 'purple' as const,
+      setSize: 2,
+      posInSet: 1,
+      gitStatus: 'modified' as const,
+    };
+    render(<TreeRow {...props} />);
+
+    const row = screen.getByRole('treeitem', { name: 'Dockerfile' });
+    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+    expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
+    expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+    expect(row).toHaveAttribute('id', rowDomId('/repo/frontend/Dockerfile'));
+    expect(row).toHaveAttribute('tabindex', '-1');
+    expect(row).toHaveAttribute('aria-level', '3');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row).toHaveAttribute('data-git', 'modified');
+    expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
   });
 
   it('exposes both tinted and aria-selected when a region file is selected', () => {

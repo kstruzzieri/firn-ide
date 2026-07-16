@@ -13,6 +13,7 @@ const mkRow = (over: Partial<FlatRow> & { key: string }): FlatRow => ({
   isExpanded: false,
   isSelected: false,
   regionAccent: null,
+  fileAccent: null,
   setSize: 1,
   posInSet: 1,
   name: over.key,

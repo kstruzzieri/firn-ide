@@ -8,7 +8,11 @@ import {
   useCanFocusWorkspace,
 } from '../stores/ideStore';
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
-import { createRegionAccentResolver, relativePathFromRoot } from '../utils/workspaceRegions';
+import {
+  createRegionAccentResolver,
+  getInfraFileAccent,
+  relativePathFromRoot,
+} from '../utils/workspaceRegions';
 
 export interface FileTreePresentation {
   mode: 'project' | 'workspace';
@@ -26,6 +30,8 @@ export interface FileTreePresentation {
    * Workspace View → uniform resolver returning the active workspace accent.
    */
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
+  /** Fixed Docker/Terraform accent, independent of the workspace region tint. */
+  getFileAccent: (entry: FileEntry) => WorkspaceAccent | null;
   /**
    * Active workspace accent, used for the Workspace-View left rail. Undefined in
    * Project View (regions are multi-color) and when the workspace has no accent.
@@ -68,7 +74,7 @@ export function useFileTreePresentation(): FileTreePresentation {
   );
 
   return useMemo<FileTreePresentation>(() => {
-    const base = { mode, canFocusWorkspace };
+    const base = { mode, canFocusWorkspace, getFileAccent: getInfraFileAccent };
 
     if (mode === 'project') {
       return {

@@ -11,13 +11,22 @@ const defs = [
   { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
 ] as workspace.WorkspaceDef[];
 
+const nestedDockerfile = {
+  name: 'Dockerfile',
+  path: `${root}/frontend/Dockerfile`,
+  isDir: false,
+} as FileEntry;
+
 const tree: FileEntry[] = [
   { name: 'README.md', path: `${root}/README.md`, isDir: false } as FileEntry,
   {
     name: 'frontend',
     path: `${root}/frontend`,
     isDir: true,
-    children: [{ name: 'App.tsx', path: `${root}/frontend/App.tsx`, isDir: false } as FileEntry],
+    children: [
+      { name: 'App.tsx', path: `${root}/frontend/App.tsx`, isDir: false } as FileEntry,
+      nestedDockerfile,
+    ],
   } as FileEntry,
   {
     name: 'backend',
@@ -56,6 +65,17 @@ describe('useFileTreePresentation', () => {
     expect(result.current.scopedError).toBe(false);
     expect(result.current.treeAccent).toBeUndefined();
     expect(result.current.getRegionAccent?.(tree[1])).toBe('blue');
+    expect(result.current.getRegionAccent?.(nestedDockerfile)).toBe('blue');
+    expect(result.current.getFileAccent(nestedDockerfile)).toBe('purple');
+  });
+
+  it('workspace mode keeps file and region accents independent for nested infra files', () => {
+    seed('frontend');
+    const { result } = renderHook(() => useFileTreePresentation());
+
+    expect(result.current.roots).toContain(nestedDockerfile);
+    expect(result.current.getRegionAccent?.(nestedDockerfile)).toBe('blue');
+    expect(result.current.getFileAccent(nestedDockerfile)).toBe('purple');
   });
 
   it('workspace mode scopes to the children and washes the tree in the workspace accent', () => {

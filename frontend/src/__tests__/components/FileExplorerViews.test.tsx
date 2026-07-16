@@ -30,13 +30,22 @@ const defs = [
   { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
 ] as workspace.WorkspaceDef[];
 
+const nestedDockerfile = {
+  name: 'Dockerfile',
+  path: `${root}/frontend/Dockerfile`,
+  isDir: false,
+} as FileEntry;
+
 const tree: FileEntry[] = [
   { name: 'README.md', path: `${root}/README.md`, isDir: false } as FileEntry,
   {
     name: 'frontend',
     path: `${root}/frontend`,
     isDir: true,
-    children: [{ name: 'App.tsx', path: `${root}/frontend/App.tsx`, isDir: false } as FileEntry],
+    children: [
+      { name: 'App.tsx', path: `${root}/frontend/App.tsx`, isDir: false } as FileEntry,
+      nestedDockerfile,
+    ],
   } as FileEntry,
 ];
 
@@ -78,6 +87,21 @@ describe('FileExplorer views', () => {
     render(<FileExplorer />);
     expect(screen.getByRole('tablist')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Frontend' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it.each(['project', 'frontend'])('renders nested infra accents in %s view', (activeId) => {
+    const restoreVirtualLayout = installVirtualLayout(400);
+    try {
+      seed(activeId);
+      render(<FileExplorer />);
+
+      const row = screen.getByRole('treeitem', { name: 'Dockerfile' });
+      expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+      expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
+      expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+    } finally {
+      restoreVirtualLayout();
+    }
   });
 
   it('renders the scoped-error state when the workspace folder is missing', async () => {
