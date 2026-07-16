@@ -396,7 +396,6 @@ export function Terminal() {
                         aria-selected={isActive}
                         aria-controls={sessionPanelId}
                         aria-haspopup="menu"
-                        aria-expanded={contextMenu?.sessionId === session.id}
                         onKeyDown={(e) => {
                           if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
                             e.preventDefault();

@@ -322,7 +322,9 @@ describe('Terminal component', () => {
       { name: /Terminal 1/ }
     );
     expect(tab).toHaveAttribute('aria-haspopup', 'menu');
-    expect(tab).toHaveAttribute('aria-expanded', 'false');
+    // aria-expanded is deliberately absent: on a role="tab" it would describe the
+    // tabpanel state and contradict aria-selected. Menu state is conveyed by focus.
+    expect(tab).not.toHaveAttribute('aria-expanded');
 
     tab.focus();
     fireEvent.keyDown(tab, { key, shiftKey });
@@ -330,7 +332,6 @@ describe('Terminal component', () => {
     const menu = screen.getByRole('menu', { name: 'Actions for Terminal 1' });
     const rename = within(menu).getByRole('menuitem', { name: 'Rename' });
     const close = within(menu).getByRole('menuitem', { name: 'Close Terminal' });
-    expect(tab).toHaveAttribute('aria-expanded', 'true');
     expect([rename.tabIndex, close.tabIndex]).toEqual([-1, -1]);
     expect(rename).toHaveFocus();
 
@@ -348,7 +349,6 @@ describe('Terminal component', () => {
     fireEvent.keyDown(close, { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(tab).toHaveFocus();
-    expect(tab).toHaveAttribute('aria-expanded', 'false');
   });
 
   it.each([

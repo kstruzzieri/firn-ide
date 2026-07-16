@@ -252,7 +252,9 @@ export function Editor() {
               >
                 <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
                 <span className={styles.tabName}>{file.name}</span>
-                {file.isModified && <span className={styles.tabDot} aria-label="Modified" />}
+                {file.isModified && (
+                  <span className={styles.tabDot} role="img" aria-label="Modified" />
+                )}
               </div>
               <button
                 className={styles.tabClose}
