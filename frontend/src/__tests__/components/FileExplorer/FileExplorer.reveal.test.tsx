@@ -114,6 +114,28 @@ describe('FileExplorer active-file reveal with lazy loading', () => {
         expect(useIDEStore.getState().selectedPath).toBe('/r/a/b/file.ts');
       });
     });
+
+    it('stops revealing after the first ancestor load fails', async () => {
+      (ReadDirectoryShallow as jest.Mock).mockRejectedValue(new Error('permission denied'));
+
+      render(<FileExplorer />);
+      act(() => {
+        useIDEStore.setState({ activeFileId: '/r/a/b/c/file.ts' });
+      });
+
+      await waitFor(() => {
+        expect(useIDEStore.getState().dirtyPaths.has('/r/a/b')).toBe(true);
+      });
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a/b', '/r');
+      expect(ReadDirectoryShallow).not.toHaveBeenCalledWith('/r/a/b/c', '/r');
+      expect(useIDEStore.getState().dirtyPaths.has('/r/a/b/c')).toBe(false);
+      expect(useIDEStore.getState().expandedPaths.has('/r/a/b')).toBe(false);
+      expect(useIDEStore.getState().expandedPaths.has('/r/a/b/c')).toBe(false);
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to load b',
+        type: 'error',
+      });
+    });
   });
 
   describe('(b) reveal aborts on workspace change', () => {

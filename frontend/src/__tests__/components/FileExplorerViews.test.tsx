@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FileExplorer } from '../../components/FileExplorer/FileExplorer';
 import { useIDEStore } from '../../stores/ideStore';
 import type { workspace } from '../../../wailsjs/go/models';
@@ -163,5 +163,163 @@ describe('FileExplorer views', () => {
     });
 
     restoreVirtualLayout();
+  });
+
+  it('renders an unreadable scoped workspace on its synthetic root row', () => {
+    const restoreVirtualLayout = installVirtualLayout(400);
+    try {
+      seed('frontend', {
+        directoryTree: [
+          {
+            name: 'frontend',
+            path: `${root}/frontend`,
+            isDir: true,
+            children: [],
+            unreadable: true,
+          } as unknown as FileEntry,
+        ],
+      });
+
+      render(<FileExplorer />);
+
+      expect(screen.getByRole('treeitem', { name: 'Frontend, unreadable' })).toBeInTheDocument();
+      expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute(
+        'title',
+        'Unable to read this item'
+      );
+      expect(screen.queryByText(/no files in workspace/i)).not.toBeInTheDocument();
+    } finally {
+      restoreVirtualLayout();
+    }
+  });
+
+  it('retries an unreadable ancestor before hydrating a nested workspace', async () => {
+    const restoreVirtualLayout = installVirtualLayout(400);
+    const nestedDefs = [
+      defs[0],
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+    ] as workspace.WorkspaceDef[];
+    const goDir = {
+      name: 'go',
+      path: `${root}/backend/go`,
+      isDir: true,
+      size: 0,
+      modTime: '',
+    } as FileEntry;
+    const mainGo = {
+      name: 'main.go',
+      path: `${root}/backend/go/main.go`,
+      isDir: false,
+      size: 0,
+      modTime: '',
+    } as FileEntry;
+
+    try {
+      seed('go', {
+        workspaces: nestedDefs,
+        directoryTree: [
+          {
+            name: 'backend',
+            path: `${root}/backend`,
+            isDir: true,
+            unreadable: true,
+          } as unknown as FileEntry,
+        ],
+        expandedPaths: new Set(),
+      });
+      (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) => {
+        if (path === `${root}/backend`) return Promise.resolve([goDir]);
+        if (path === `${root}/backend/go`) return Promise.resolve([mainGo]);
+        return Promise.resolve([]);
+      });
+
+      render(<FileExplorer />);
+
+      expect(screen.getByRole('treeitem', { name: 'Go, unreadable' })).toBeInTheDocument();
+      expect(screen.queryByText(/workspace folder not found/i)).not.toBeInTheDocument();
+      const toggle = screen.getByRole('button', { name: 'Toggle Go' });
+      fireEvent.click(toggle);
+      fireEvent.click(toggle);
+
+      await waitFor(() => {
+        expect(screen.getByRole('treeitem', { name: 'main.go' })).toBeInTheDocument();
+      });
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/backend`, root);
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/backend/go`, root);
+      expect(screen.queryByTestId('unreadable-indicator')).not.toBeInTheDocument();
+    } finally {
+      restoreVirtualLayout();
+    }
+  });
+
+  it('stops nested workspace hydration at the first unreadable ancestor', async () => {
+    const nestedDefs = [
+      defs[0],
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+    ] as workspace.WorkspaceDef[];
+    seed('go', {
+      workspaces: nestedDefs,
+      directoryTree: [],
+      dirtyPaths: new Set(),
+      toast: null,
+    });
+    (ReadDirectoryShallow as jest.Mock).mockRejectedValue(new Error('permission denied'));
+
+    render(<FileExplorer />);
+
+    await waitFor(() => {
+      expect(useIDEStore.getState().dirtyPaths.has(`${root}/backend`)).toBe(true);
+    });
+    await Promise.resolve();
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/backend`, root);
+    expect(ReadDirectoryShallow).not.toHaveBeenCalledWith(`${root}/backend/go`, root);
+    expect(useIDEStore.getState().dirtyPaths.has(`${root}/backend/go`)).toBe(false);
+    expect(useIDEStore.getState().toast).toEqual({
+      message: 'Failed to load backend',
+      type: 'error',
+    });
+  });
+
+  it('stops scoped hydration when a same-path workspace is reopened', async () => {
+    let resolveBackend!: (entries: FileEntry[]) => void;
+    const nestedDefs = [
+      defs[0],
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+    ] as workspace.WorkspaceDef[];
+    seed('go', {
+      workspaces: nestedDefs,
+      directoryTree: [],
+      dirtyPaths: new Set(),
+      toast: null,
+    });
+    (ReadDirectoryShallow as jest.Mock).mockImplementation(
+      (path: string) =>
+        new Promise<FileEntry[]>((resolve) => {
+          if (path === `${root}/backend`) {
+            resolveBackend = resolve;
+            return;
+          }
+          resolve([]);
+        })
+    );
+
+    render(<FileExplorer />);
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/backend`, root);
+    });
+
+    await act(async () => {
+      useIDEStore.setState({
+        workspace: { name: 'reopened', path: root },
+        workspaces: nestedDefs,
+        activeWorkspaceId: 'go',
+        directoryTree: [],
+      });
+      resolveBackend([]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).not.toHaveBeenCalledWith(`${root}/backend/go`, root);
   });
 });

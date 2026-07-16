@@ -59,6 +59,7 @@ describe('FileExplorer virtualization', () => {
 
   it('mounts only a bounded window of rows for a large tree', () => {
     const tree = makeFlatTree(5000);
+    tree[0].unreadable = true;
     act(() => {
       useIDEStore.setState({
         // workspace is WorkspaceInfo: { name, path }
@@ -77,6 +78,8 @@ describe('FileExplorer virtualization', () => {
     render(<FileExplorer />);
 
     const rendered = screen.getAllByRole('treeitem');
+    expect(screen.getByRole('treeitem', { name: 'file-0.ts, unreadable' })).toBeInTheDocument();
+    expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute('aria-hidden', 'true');
     // 400px / 28px ≈ 15 visible + overscan + root, nowhere near 5000.
     expect(rendered.length).toBeGreaterThan(0);
     expect(rendered.length).toBeLessThan(100);

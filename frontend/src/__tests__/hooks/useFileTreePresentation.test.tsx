@@ -149,4 +149,66 @@ describe('useFileTreePresentation', () => {
     expect(result.current.scopedError).toBe(true);
     expect(result.current.roots).toEqual([]);
   });
+
+  it('exposes an unreadable scoped directory as the workspace root state', () => {
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: root },
+      workspaces: defs,
+      activeWorkspaceId: 'frontend',
+      lastFocusedWorkspaceId: 'frontend',
+      directoryTree: [
+        {
+          name: 'frontend',
+          path: `${root}/frontend`,
+          isDir: true,
+          children: [],
+          unreadable: true,
+        } as unknown as FileEntry,
+      ],
+    });
+
+    const { result } = renderHook(() => useFileTreePresentation());
+
+    expect(result.current.rootUnreadable).toBe(true);
+    expect(result.current.scopedError).toBe(false);
+    expect(result.current.roots).toEqual([]);
+  });
+
+  it('exposes the nearest unreadable ancestor of a nested workspace', () => {
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: root },
+      workspaces: defs,
+      activeWorkspaceId: 'go',
+      lastFocusedWorkspaceId: 'go',
+      directoryTree: [
+        {
+          name: 'backend',
+          path: `${root}/backend`,
+          isDir: true,
+          unreadable: true,
+          children: [
+            {
+              name: 'go',
+              path: `${root}/backend/go`,
+              isDir: true,
+              children: [
+                {
+                  name: 'stale.go',
+                  path: `${root}/backend/go/stale.go`,
+                  isDir: false,
+                } as FileEntry,
+              ],
+            } as FileEntry,
+          ],
+        } as unknown as FileEntry,
+      ],
+    });
+
+    const { result } = renderHook(() => useFileTreePresentation());
+
+    expect(result.current.rootUnreadable).toBe(true);
+    expect(result.current.rootPath).toBe(`${root}/backend`);
+    expect(result.current.scopedError).toBe(false);
+    expect(result.current.roots).toEqual([]);
+  });
 });

@@ -1,10 +1,16 @@
 import { useCallback } from 'react';
 import { ReadDirectoryShallow } from '../../wailsjs/go/main/App';
 import { useIDEStore } from '../stores/ideStore';
+import type { WorkspaceInfo } from '../stores/ideStore';
 import { pathsReferToSameFile, getFileNameFromPath } from '../utils/lspUri';
 import { findEntryByPath } from '../utils/findEntryByPath';
 
-const inFlight = new Map<string, Promise<void>>();
+interface InFlightLoad {
+  workspace: WorkspaceInfo;
+  promise: Promise<void>;
+}
+
+const inFlight = new Map<string, InFlightLoad>();
 
 /** TEST-ONLY: clear the in-flight cache between tests. */
 export function __resetEnsurePathLoaded(): void {
@@ -26,44 +32,47 @@ interface EnsureOpts {
  */
 export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<void> {
   const store = useIDEStore.getState();
-  const root = store.workspace?.path;
-  if (!root) return Promise.resolve();
+  const workspace = store.workspace;
+  if (!workspace) return Promise.resolve();
+  const root = workspace.path;
   const isRoot = pathsReferToSameFile(path, root);
 
   if (!opts.force) {
     const node = isRoot
-      ? { children: store.directoryTree }
+      ? { children: store.directoryTree, unreadable: false }
       : findEntryByPath(store.directoryTree, path);
-    const alreadyLoaded = node?.children !== undefined && !store.dirtyPaths.has(path);
+    const alreadyLoaded =
+      node?.children !== undefined && !node.unreadable && !store.dirtyPaths.has(path);
     if (alreadyLoaded) return Promise.resolve();
   }
 
   const existing = inFlight.get(path);
   // ponytail: a {force:true} call arriving while a non-force load is in flight piggybacks on it — harmless, since the in-flight load fetches the same fresh data.
-  if (existing) return existing;
+  if (existing?.workspace === workspace) return existing.promise;
 
-  const generation = root; // workspace identity captured at start
-
-  const promise = (async () => {
-    useIDEStore.getState().addLoadingPath(path);
-    try {
-      const children = await ReadDirectoryShallow(path, root);
+  useIDEStore.getState().addLoadingPath(path);
+  const promise = Promise.resolve()
+    .then(() => ReadDirectoryShallow(path, root))
+    .then((children) => {
       const after = useIDEStore.getState();
-      if (after.workspace?.path !== generation) return; // stale workspace — drop
+      if (after.workspace !== workspace) return; // stale workspace — drop
       after.mergeChildren(path, children);
       after.clearDirty(path);
-    } catch {
+    })
+    .catch(() => {
       const after = useIDEStore.getState();
-      if (after.workspace?.path !== generation) return;
+      if (after.workspace !== workspace) return;
+      if (!isRoot) after.markUnreadable(path);
       after.markDirty(path);
       after.showToast(`Failed to load ${getFileNameFromPath(path)}`, 'error');
-    } finally {
+    })
+    .finally(() => {
+      if (inFlight.get(path)?.promise !== promise) return;
       useIDEStore.getState().removeLoadingPath(path);
       inFlight.delete(path);
-    }
-  })();
+    });
 
-  inFlight.set(path, promise);
+  inFlight.set(path, { workspace, promise });
   return promise;
 }
 

@@ -8,6 +8,7 @@ const baseProps = {
   rowId: rowDomId('/repo/a.ts'),
   isActive: false,
   canExpand: false,
+  unreadable: false,
   fileAccent: null,
   onToggle: noop,
   onSelect: noop,
@@ -184,6 +185,71 @@ describe('TreeRow', () => {
     expect(row).toHaveAttribute('aria-selected', 'true');
     expect(row).toHaveAttribute('data-git', 'modified');
     expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
+  });
+
+  it('renders unreadable visually and in the tree item name without changing row state', () => {
+    render(
+      <TreeRow
+        {...baseProps}
+        kind="entry"
+        path="/repo/src"
+        name="src"
+        depth={1}
+        level={2}
+        isDir={true}
+        isExpanded={false}
+        isSelected={true}
+        isActive={true}
+        regionAccent="blue"
+        fileAccent={null}
+        setSize={2}
+        posInSet={1}
+        canExpand={true}
+        unreadable={true}
+        gitStatus="modified"
+      />
+    );
+
+    const row = screen.getByRole('treeitem', { name: 'src, unreadable' });
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row).toHaveAttribute('aria-level', '2');
+    expect(row).toHaveAttribute('tabindex', '-1');
+    expect(row.className).toContain('active');
+    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+    expect(row).toHaveAttribute('data-git', 'modified');
+    expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
+    const indicator = screen.getByTestId('unreadable-indicator');
+    expect(indicator).toHaveAttribute('title', 'Unable to read this item');
+    expect(indicator).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button', { name: 'Toggle src' })).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('keeps an unreadable file marker independent from its file accent', () => {
+    render(
+      <TreeRow
+        {...baseProps}
+        kind="entry"
+        path="/repo/Dockerfile"
+        name="Dockerfile"
+        depth={1}
+        level={2}
+        isDir={false}
+        isExpanded={false}
+        isSelected={false}
+        regionAccent={null}
+        fileAccent="purple"
+        setSize={1}
+        posInSet={1}
+        unreadable={true}
+      />
+    );
+
+    expect(screen.getByRole('treeitem', { name: 'Dockerfile, unreadable' })).toHaveStyle({
+      '--file-accent': 'var(--accent-purple)',
+    });
+    expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('exposes both tinted and aria-selected when a region file is selected', () => {
