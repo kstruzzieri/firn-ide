@@ -90,7 +90,6 @@ jest.mock('@codemirror/commands', () => ({
 const mockLoadLanguageSupport = jest.fn<Promise<unknown>, [string]>();
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
-  getLanguageExtension: jest.fn(() => null),
   loadLanguageSupport: mockLoadLanguageSupport,
   gitGutterExtension: jest.fn(() => 'GIT_GUTTER'),
   setGitBaseline: { of: jest.fn((v: unknown) => ({ __baseline: v })) },

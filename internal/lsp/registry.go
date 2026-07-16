@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -246,6 +247,13 @@ func (r *Registry) resolveRustServer(projectRoot string) (*ServerConfig, error) 
 		probe.Dir = projectRoot
 		err = probe.Run()
 		cancel()
+		if err != nil {
+			// A discovered binary that cannot run --version is a broken rustup
+			// proxy (a stale shim for an uninstalled component is the common
+			// case). Record why we bypass it before falling through to the
+			// managed installer, so the decision is diagnosable in the field.
+			log.Printf("lsp: ignoring rust-analyzer at %q: version probe failed: %v", path, err)
+		}
 	}
 	if path == "" || err != nil {
 		return r.managedOrMiss("rust", projectRoot, "rust-analyzer not found. Firn can install it automatically, "+
