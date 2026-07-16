@@ -306,7 +306,9 @@ describe('Editor git diff tab', () => {
     const dot = screen.getByRole('img', { name: 'Modified' });
     expect(dot.closest('[role="tab"]')).not.toBeNull();
     // The indicator folds into the tab's accessible name rather than staying a silent glyph.
-    expect(screen.getByRole('tab', { name: /one\.ts.*modified/i })).toBe(dot.closest('[role="tab"]'));
+    expect(screen.getByRole('tab', { name: /one\.ts.*modified/i })).toBe(
+      dot.closest('[role="tab"]')
+    );
   });
 
   it('does not consume native keyboard events from close buttons', () => {
