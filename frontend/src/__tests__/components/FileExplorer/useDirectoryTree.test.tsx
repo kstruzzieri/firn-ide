@@ -180,6 +180,54 @@ describe('useDirectoryTree', () => {
     expect(useIDEStore.getState().treeError).toBeNull();
   });
 
+  it('keeps the loading skeleton up while an uncached workspace fetch is pending', async () => {
+    let resolveRead!: (entries: FileEntry[]) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRead = resolve;
+      })
+    );
+
+    renderHook(() => useDirectoryTree());
+
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/workspace', '/workspace');
+    });
+    // Uncached workspace with an in-flight read: the skeleton must stay up, or
+    // the empty directoryTree renders a false "No files in workspace" state.
+    expect(useIDEStore.getState().isLoadingTree).toBe(true);
+
+    await act(async () => {
+      resolveRead([]);
+      await Promise.resolve();
+    });
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
+    expect(useIDEStore.getState().treeError).toBeNull();
+  });
+
+  it('ends the loading skeleton with an error when an uncached fetch fails', async () => {
+    let rejectRead!: (reason: unknown) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectRead = reject;
+      })
+    );
+
+    renderHook(() => useDirectoryTree());
+
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/workspace', '/workspace');
+    });
+    expect(useIDEStore.getState().isLoadingTree).toBe(true);
+
+    await act(async () => {
+      rejectRead(new Error('open /workspace: permission denied'));
+      await Promise.resolve();
+    });
+    expect(useIDEStore.getState().treeError).toBe('Failed to read directory');
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
+  });
+
   it('drops a root failure after the workspace closes', async () => {
     let reject!: (reason: unknown) => void;
     (ReadDirectoryShallow as jest.Mock).mockReturnValue(
