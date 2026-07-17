@@ -131,6 +131,9 @@ describe('useDirectoryTree', () => {
     });
     expect(useIDEStore.getState().directoryTree).toBe(cached);
     expect(useIDEStore.getState().treeError).toBeNull();
+    // A cached refresh never raises the skeleton, and its finally block never
+    // lowers it, so a wrongly-raised skeleton would persist past settle.
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
     expect(useIDEStore.getState().dirtyPaths.has('/workspace')).toBe(true);
 
     await act(async () => {

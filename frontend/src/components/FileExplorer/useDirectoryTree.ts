@@ -60,7 +60,7 @@ export function useDirectoryTree() {
       if (
         requestIdRef.current === requestId &&
         useIDEStore.getState().workspace === workspace &&
-        !hasCachedTree
+        !hasCachedEntry
       ) {
         setTreeLoading(false);
       }

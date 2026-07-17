@@ -48,6 +48,11 @@ Minimal reorder plus one derived flag in `useDirectoryTree.ts` `fetchTree()`:
   the skeleton on cache existence, while `hasCachedTree` still selects the
   error strategy (cached-empty failures surface `treeError`, cached-non-empty
   failures toast and mark dirty).
+- Review pass aligned the `finally` gate to the same flag: the skeleton is
+  now lowered on `!hasCachedEntry`, matching the raise gate, so only the
+  request that raised the skeleton lowers it. A companion assertion in the
+  cached-non-empty refresh test locks this in — a wrongly-raised skeleton
+  there would persist past settle.
 - `setDirectoryTree` intentionally still writes `isLoadingTree: false`; the
   cached-restore path in `useWorkspacePersistence.ts` depends on it and was
   not changed.
