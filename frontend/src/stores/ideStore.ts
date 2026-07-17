@@ -226,6 +226,7 @@ interface IDEActions {
   // File Explorer actions
   setDirectoryTree: (tree: filesystem.FileEntry[]) => void;
   mergeChildren: (path: string, children: FileEntry[]) => void;
+  markUnreadable: (path: string) => void;
   toggleExpanded: (path: string) => void;
   addLoadingPath: (path: string) => void;
   removeLoadingPath: (path: string) => void;
@@ -535,6 +536,15 @@ export const useIDEStore = create<IDEStore>()(
           },
           false,
           'mergeChildren'
+        ),
+
+      markUnreadable: (path) =>
+        set(
+          (state) => ({
+            directoryTree: replaceChildrenAt(state.directoryTree, path, undefined, true),
+          }),
+          false,
+          'markUnreadable'
         ),
 
       addLoadingPath: (path) =>

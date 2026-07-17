@@ -1,6 +1,6 @@
 // src/components/FileExplorer/TreeRow.tsx
 import React from 'react';
-import { ChevronRightIcon, ChevronDownIcon } from '../icons';
+import { AlertCircleIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { FileIcon } from './FileIcon';
 import { getFolderType } from './fileIconUtils';
 import type { WorkspaceAccent } from '../../stores/ideStore';
@@ -49,6 +49,8 @@ export interface TreeRowProps {
   isActive: boolean;
   /** Show the expand chevron: true for unloaded dirs or dirs with children; false for loaded-empty dirs and files. */
   canExpand: boolean;
+  /** The backend or latest lazy read could not read this item. */
+  unreadable: boolean;
   /** Git working-tree decoration; undefined renders an undecorated row. */
   gitStatus?: GitRowStatus;
   onToggle: (kind: 'root' | 'entry', path?: string) => void;
@@ -78,6 +80,7 @@ function TreeRowImpl({
   rowId,
   isActive,
   canExpand,
+  unreadable,
   gitStatus,
   onToggle,
   onSelect,
@@ -135,6 +138,12 @@ function TreeRowImpl({
       aria-posinset={posInSet}
       aria-expanded={isDir ? isExpanded : undefined}
       aria-selected={isSelected || undefined}
+      aria-label={
+        // Keep the path a sighted user still sees when overriding the root name.
+        unreadable
+          ? `${name}, unreadable${kind === 'root' && rootPath ? `, ${shortenPath(rootPath)}` : ''}`
+          : undefined
+      }
       tabIndex={-1}
     >
       {canExpand ? (
@@ -161,6 +170,16 @@ function TreeRowImpl({
         <span className={styles.fileAccent} data-testid="file-accent-marker" aria-hidden="true" />
       )}
       <span className={styles.name}>{name}</span>
+      {unreadable && (
+        <span
+          className={styles.unreadable}
+          title="Unable to read this item"
+          data-testid="unreadable-indicator"
+          aria-hidden="true"
+        >
+          <AlertCircleIcon />
+        </span>
+      )}
       {kind === 'root' && rootPath && <span className={styles.path}>{shortenPath(rootPath)}</span>}
       {gitStatus && (
         <span className={styles.gitBadge} data-testid="git-badge" aria-hidden="true">

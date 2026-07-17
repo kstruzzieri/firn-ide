@@ -50,6 +50,9 @@ describe('FileExplorer lazy-load on expand', () => {
       directoryTree: [dir('/r/a')], // children undefined = unloaded
       expandedPaths: new Set<string>(),
       isRootExpanded: true,
+      loadingPaths: new Set<string>(),
+      dirtyPaths: new Set<string>(),
+      toast: null,
     });
 
     (ReadDirectoryShallow as jest.Mock).mockResolvedValue([dir('/r/a/x')]);
@@ -86,5 +89,84 @@ describe('FileExplorer lazy-load on expand', () => {
     // Give any async call a chance to fire
     await new Promise((r) => setTimeout(r, 10));
     expect(ReadDirectoryShallow).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unreadable loaded-empty dir visible and retryable', async () => {
+    const unreadable = dir('/r/a', []);
+    unreadable.unreadable = true;
+    act(() => {
+      useIDEStore.setState({ directoryTree: [unreadable] });
+    });
+
+    render(<FileExplorer />);
+
+    const row = screen.getByRole('treeitem', { name: 'a, unreadable' });
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('unreadable-indicator')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /toggle a/i }));
+
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
+      expect(screen.getByRole('treeitem', { name: 'a' })).toBeInTheDocument();
+      expect(screen.queryByTestId('unreadable-indicator')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps keyboard focus on an unreadable row while ArrowRight retries it', async () => {
+    const unreadable = dir('/r/a', []);
+    unreadable.unreadable = true;
+    act(() => {
+      useIDEStore.setState({ directoryTree: [unreadable] });
+    });
+
+    render(<FileExplorer />);
+    const tree = screen.getByRole('tree', { name: 'File explorer' });
+    fireEvent.keyDown(tree, { key: 'ArrowDown' });
+
+    const row = screen.getByRole('treeitem', { name: 'a, unreadable' });
+    expect(tree).toHaveAttribute('aria-activedescendant', row.id);
+    fireEvent.keyDown(tree, { key: 'ArrowRight' });
+
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
+      expect(tree).toHaveAttribute('aria-activedescendant', row.id);
+    });
+  });
+
+  it('retries a rejected expansion after collapse and re-expand', async () => {
+    const realChild = dir('/r/a/real', []);
+    (ReadDirectoryShallow as jest.Mock)
+      .mockRejectedValueOnce(new Error('open /private/r/a: permission denied'))
+      .mockResolvedValueOnce([realChild]);
+
+    render(<FileExplorer />);
+    const toggle = screen.getByRole('button', { name: /toggle a/i });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByRole('treeitem', { name: 'a, unreadable' })).toHaveAttribute(
+        'aria-expanded',
+        'true'
+      );
+    });
+    expect(useIDEStore.getState().toast).toEqual({
+      message: 'Failed to load a',
+      type: 'error',
+    });
+
+    fireEvent.click(toggle);
+    expect(screen.getByRole('treeitem', { name: 'a, unreadable' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByRole('treeitem', { name: 'real' })).toBeInTheDocument();
+      expect(screen.getByRole('treeitem', { name: 'a' })).toHaveAttribute('aria-expanded', 'true');
+    });
+    expect(ReadDirectoryShallow).toHaveBeenCalledTimes(2);
+    expect(useIDEStore.getState().directoryTree[0].unreadable).toBe(false);
+    expect(useIDEStore.getState().dirtyPaths.has('/r/a')).toBe(false);
   });
 });

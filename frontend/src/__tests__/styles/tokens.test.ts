@@ -125,6 +125,34 @@ it.each(WORKSPACE_ACCENTS)(
   }
 );
 
+it.each(['surface-panel', 'surface-hover', 'surface-active'])(
+  'keeps the unreadable marker at 3:1 or better on --%s',
+  (surface) => {
+    expect(rule(treeRowCss, '.unreadable')).toMatch(/color:\s*var\(--status-warning\)/);
+    expect(
+      contrast(parseHex(token('status-warning')), parseHex(token(surface)))
+    ).toBeGreaterThanOrEqual(3);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  'keeps the unreadable marker at 3:1 or better on the selected %s tint',
+  (accent) => {
+    const selectedRule = rule(treeRowCss, ".row.tinted[aria-selected='true']");
+    const tint = Number(
+      selectedRule.match(/var\(--region-accent\)\s*([\d.]+)%,\s*transparent/)?.[1]
+    );
+    if (!Number.isFinite(tint)) throw new Error('Missing selected tree-row tint');
+
+    const background = composite(
+      parseHex(token(`accent-${accent}`)),
+      parseHex(token('surface-panel')),
+      tint / 100
+    );
+    expect(contrast(parseHex(token('status-warning')), background)).toBeGreaterThanOrEqual(3);
+  }
+);
+
 it.each(WORKSPACE_ACCENTS)(
   'keeps the %s active editor-tab focus indicator at 3:1 or better',
   (accent) => {

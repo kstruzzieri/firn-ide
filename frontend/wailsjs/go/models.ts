@@ -28,6 +28,7 @@ export namespace filesystem {
 	    // Go type: time
 	    modTime: any;
 	    children?: FileEntry[];
+	    unreadable?: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new FileEntry(source);
@@ -41,6 +42,7 @@ export namespace filesystem {
 	        this.size = source["size"];
 	        this.modTime = this.convertValues(source["modTime"], null);
 	        this.children = this.convertValues(source["children"], FileEntry);
+	        this.unreadable = source["unreadable"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

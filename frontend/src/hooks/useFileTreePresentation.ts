@@ -25,6 +25,8 @@ export interface FileTreePresentation {
   roots: FileEntry[];
   /** True when a workspace's relDir cannot be located in the loaded tree. */
   scopedError: boolean;
+  /** The scoped workspace directory itself could not be read. */
+  rootUnreadable: boolean;
   /**
    * Per-entry tint resolver. Project View → per-region multi-color resolver.
    * Workspace View → uniform resolver returning the active workspace accent.
@@ -40,19 +42,19 @@ export interface FileTreePresentation {
 }
 
 /**
- * Finds the directory node whose normalized repo-relative path equals `relDir`.
- * This uses the same helper as region tinting so Workspace View scoping has the
- * same segment-safe containment and Windows/backslash behavior.
+ * Finds the exact scoped directory, or the nearest unreadable ancestor when
+ * that directory cannot yet be reached. This uses the same normalized relative
+ * paths as region tinting, including segment-safe Windows/backslash behavior.
  */
 function findScopedNode(tree: FileEntry[], repoRoot: string, relDir: string): FileEntry | null {
   for (const entry of tree) {
-    if (entry.isDir && relativePathFromRoot(entry.path, repoRoot) === relDir) {
-      return entry;
-    }
+    if (!entry.isDir) continue;
+    const entryRel = relativePathFromRoot(entry.path, repoRoot);
+    if (entryRel === relDir) return entry;
+    if (!entryRel || !relDir.startsWith(`${entryRel}/`)) continue;
+    if (entry.unreadable) return entry;
     const childMatch = entry.children ? findScopedNode(entry.children, repoRoot, relDir) : null;
-    if (childMatch) {
-      return childMatch;
-    }
+    if (childMatch) return childMatch;
   }
   return null;
 }
@@ -74,7 +76,12 @@ export function useFileTreePresentation(): FileTreePresentation {
   );
 
   return useMemo<FileTreePresentation>(() => {
-    const base = { mode, canFocusWorkspace, getFileAccent: getInfraFileAccent };
+    const base = {
+      mode,
+      canFocusWorkspace,
+      getFileAccent: getInfraFileAccent,
+      rootUnreadable: false,
+    };
 
     if (mode === 'project') {
       return {
@@ -107,13 +114,16 @@ export function useFileTreePresentation(): FileTreePresentation {
     }
 
     const scoped = findScopedNode(tree, repoRoot, relDir);
-    const scopedUnloaded = scoped !== null && scoped.children === undefined;
+    const scopedIsExact = scoped !== null && relativePathFromRoot(scoped.path, repoRoot) === relDir;
+    const rootUnreadable = Boolean(scoped?.unreadable);
+    const scopedUnloaded = scopedIsExact && scoped.children === undefined && !rootUnreadable;
     return {
       ...base,
       rootLabel: workspaceLabel,
       rootPath: scoped?.path ?? `${repoRoot}/${relDir}`,
-      roots: scoped?.children ?? [],
+      roots: scopedIsExact ? (scoped.children ?? []) : [],
       scopedError: scoped === null || scopedUnloaded,
+      rootUnreadable,
       getRegionAccent: workspaceResolver,
       treeAccent,
     };

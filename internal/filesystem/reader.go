@@ -11,12 +11,13 @@ import (
 // FileEntry represents a file or directory in the tree.
 // Used by ReadDirectory to return the directory structure.
 type FileEntry struct {
-	Name     string      `json:"name"`
-	Path     string      `json:"path"`
-	IsDir    bool        `json:"isDir"`
-	Size     int64       `json:"size"`
-	ModTime  time.Time   `json:"modTime"`
-	Children []FileEntry `json:"children,omitempty"`
+	Name       string      `json:"name"`
+	Path       string      `json:"path"`
+	IsDir      bool        `json:"isDir"`
+	Size       int64       `json:"size"`
+	ModTime    time.Time   `json:"modTime"`
+	Children   []FileEntry `json:"children,omitempty"`
+	Unreadable bool        `json:"unreadable,omitempty"`
 }
 
 // DirectoryReader provides directory tree reading functionality.
@@ -253,17 +254,15 @@ func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule) ([
 		if name != ".gitignore" && d.shouldIgnore(fullPath, de.IsDir(), ignoreRules) {
 			continue
 		}
+		entry := FileEntry{Name: name, Path: fullPath, IsDir: de.IsDir()}
 		info, err := d.fs.Stat(fullPath)
 		if err != nil {
-			continue
+			entry.Unreadable = true
+		} else {
+			entry.Size = info.Size()
+			entry.ModTime = info.ModTime()
 		}
-		entries = append(entries, FileEntry{
-			Name:    name,
-			Path:    fullPath,
-			IsDir:   de.IsDir(),
-			Size:    info.Size(),
-			ModTime: info.ModTime(),
-		})
+		entries = append(entries, entry)
 	}
 	sortEntries(entries)
 	return entries, nil
@@ -293,10 +292,10 @@ func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreR
 		return nil, err
 	}
 	for i := range entries {
-		if entries[i].IsDir {
+		if entries[i].IsDir && !entries[i].Unreadable {
 			children, err := d.readDirRecursive(entries[i].Path, ignoreRules)
 			if err != nil {
-				entries[i].Children = []FileEntry{}
+				entries[i].Unreadable = true
 			} else {
 				entries[i].Children = children
 			}

@@ -1,10 +1,12 @@
 package filesystem
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,6 +143,99 @@ func TestReadDirectory_IncludesMetadata(t *testing.T) {
 	}
 	if entry.IsDir {
 		t.Error("Expected IsDir to be false")
+	}
+}
+
+func TestReadDirectory_StatFailureKeepsEntryUnreadable(t *testing.T) {
+	unknownPath := filepath.Join("/test", "unknown.txt")
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			return []fs.DirEntry{
+				&mockDirEntry{name: "healthy.txt"},
+				&mockDirEntry{name: "unknown.txt"},
+			}, nil
+		},
+		StatFunc: func(path string) (fs.FileInfo, error) {
+			if path == unknownPath {
+				return nil, errors.New("metadata unavailable")
+			}
+			return &mockFileInfo{name: "healthy.txt", size: 12, modTime: time.Now()}, nil
+		},
+	}
+
+	entries, err := NewDirectoryReader(mockFS).ReadDirectory("/test")
+	if err != nil {
+		t.Fatalf("ReadDirectory(/test): %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("visible DirEntry must not disappear on Stat failure, got %+v", entries)
+	}
+	if entries[0].Name != "healthy.txt" || entries[0].Unreadable {
+		t.Errorf("healthy entry changed: %+v", entries[0])
+	}
+	if entries[1].Name != "unknown.txt" || entries[1].Path != unknownPath || !entries[1].Unreadable {
+		t.Errorf("failed metadata must remain visible and marked unreadable: %+v", entries[1])
+	}
+}
+
+func TestReadDirectory_StatFailureDoesNotDescend(t *testing.T) {
+	restrictedPath := filepath.Join("/test", "restricted")
+	readablePath := filepath.Join("/test", "readable")
+	restrictedRead := false
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			switch path {
+			case "/test":
+				return []fs.DirEntry{
+					&mockDirEntry{name: "restricted", isDir: true},
+					&mockDirEntry{name: "readable", isDir: true},
+				}, nil
+			case restrictedPath:
+				restrictedRead = true
+				return []fs.DirEntry{&mockDirEntry{name: "unknown.txt"}}, nil
+			case readablePath:
+				return []fs.DirEntry{&mockDirEntry{name: "visible.txt"}}, nil
+			}
+			return nil, nil
+		},
+		StatFunc: func(path string) (fs.FileInfo, error) {
+			if path == restrictedPath {
+				return nil, errors.New("metadata unavailable")
+			}
+			return &mockFileInfo{modTime: time.Now()}, nil
+		},
+	}
+
+	entries, err := NewDirectoryReader(mockFS).ReadDirectory("/test")
+	if err != nil {
+		t.Fatalf("ReadDirectory(/test): %v", err)
+	}
+	if restrictedRead {
+		t.Fatal("must not descend after the directory metadata read failed")
+	}
+	if !entries[1].Unreadable || entries[1].Children != nil {
+		t.Errorf("restricted directory must stay visible, marked, and unloaded: %+v", entries[1])
+	}
+	if len(entries[0].Children) != 1 || entries[0].Children[0].Name != "visible.txt" {
+		t.Errorf("readable sibling descendants changed: %+v", entries[0])
+	}
+}
+
+func TestFileEntryJSON_OmitsFalseAndCarriesTrueUnreadable(t *testing.T) {
+	readable, err := json.Marshal(FileEntry{Name: "readable"})
+	if err != nil {
+		t.Fatalf("Marshal(readable): %v", err)
+	}
+	if strings.Contains(string(readable), "Unreadable") || strings.Contains(string(readable), "unreadable") {
+		t.Fatalf("readable JSON must omit unreadable, got %s", readable)
+	}
+
+	unreadable, err := json.Marshal(FileEntry{Name: "restricted", Unreadable: true})
+	if err != nil {
+		t.Fatalf("Marshal(unreadable): %v", err)
+	}
+	if !strings.Contains(string(unreadable), `"unreadable":true`) {
+		t.Fatalf("unreadable JSON must carry the optional marker, got %s", unreadable)
 	}
 }
 
@@ -297,20 +392,23 @@ func TestReadDirectory_HidesDotDirectories(t *testing.T) {
 func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 	modTime := time.Now()
 	permErr := errors.New("permission denied")
+	root := filepath.Join(string(filepath.Separator), "test")
+	accessiblePath := filepath.Join(root, "accessible")
+	restrictedPath := filepath.Join(root, "restricted")
 
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			switch path {
-			case "/test":
+			case root:
 				return []fs.DirEntry{
 					&mockDirEntry{name: "accessible", isDir: true},
 					&mockDirEntry{name: "restricted", isDir: true},
 				}, nil
-			case "/test/accessible":
+			case accessiblePath:
 				return []fs.DirEntry{
 					&mockDirEntry{name: "file.txt", isDir: false},
 				}, nil
-			case "/test/restricted":
+			case restrictedPath:
 				return nil, permErr
 			}
 			return nil, nil
@@ -324,7 +422,7 @@ func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 	}
 
 	reader := NewDirectoryReader(mockFS)
-	entries, err := reader.ReadDirectory("/test")
+	entries, err := reader.ReadDirectory(root)
 
 	// Should not return error for permission denied on subdirectory
 	if err != nil {
@@ -336,13 +434,63 @@ func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 		t.Errorf("Expected 2 entries, got %d", len(entries))
 	}
 
-	// accessible should have children, restricted should have empty children
+	// accessible should have children, restricted should remain unreadable and unloaded
 	for _, entry := range entries {
-		if entry.Name == "accessible" && len(entry.Children) != 1 {
-			t.Errorf("Expected accessible to have 1 child, got %d", len(entry.Children))
+		if entry.Name == "accessible" {
+			if entry.Unreadable {
+				t.Error("Expected accessible to remain readable")
+			}
+			if len(entry.Children) != 1 {
+				t.Errorf("Expected accessible to have 1 child, got %d", len(entry.Children))
+			}
 		}
-		if entry.Name == "restricted" && len(entry.Children) != 0 {
-			t.Errorf("Expected restricted to have 0 children, got %d", len(entry.Children))
+		if entry.Name == "restricted" {
+			if !entry.Unreadable {
+				t.Error("Expected restricted to be marked unreadable")
+			}
+			if entry.Children != nil {
+				t.Errorf("Expected restricted children to remain unknown, got %v", entry.Children)
+			}
+		}
+	}
+}
+
+func TestReadDirectory_PermissionSmoke(t *testing.T) {
+	root := t.TempDir()
+	writeDirectoryFixture(t, root, map[string]string{
+		"readable/file.txt":     "",
+		"restricted/hidden.txt": "",
+	})
+	restrictedPath := filepath.Join(root, "restricted")
+	if err := os.Chmod(restrictedPath, 0); err != nil {
+		t.Skipf("cannot create an unreadable directory on this platform: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(restrictedPath, 0o755); err != nil {
+			t.Errorf("restore restricted directory permissions: %v", err)
+		}
+	})
+	if _, err := os.ReadDir(restrictedPath); err == nil {
+		t.Skip("mode 000 does not deny directory reads for this platform or account")
+	}
+
+	entries, err := NewDirectoryReader(&OS{}).ReadDirectory(root)
+	if err != nil {
+		t.Fatalf("ReadDirectory(root): %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want both readable and restricted siblings, got %+v", entries)
+	}
+	for _, entry := range entries {
+		switch entry.Name {
+		case "readable":
+			if entry.Unreadable || len(entry.Children) != 1 {
+				t.Errorf("readable sibling changed: %+v", entry)
+			}
+		case "restricted":
+			if !entry.Unreadable {
+				t.Errorf("restricted sibling must be marked unreadable: %+v", entry)
+			}
 		}
 	}
 }
@@ -437,6 +585,20 @@ func TestReadDirectoryShallow_EmptyDir(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("want 0 entries, got %d", len(entries))
+	}
+}
+
+func TestReadDirectoryShallow_RootFailureReturnsError(t *testing.T) {
+	permissionErr := errors.New("permission denied")
+	mockFS := &Mock{
+		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
+			return nil, permissionErr
+		},
+	}
+
+	_, err := NewDirectoryReader(mockFS).ReadDirectoryShallow("/test", "/test")
+	if !errors.Is(err, permissionErr) {
+		t.Fatalf("root failure must remain actionable, got %v", err)
 	}
 }
 

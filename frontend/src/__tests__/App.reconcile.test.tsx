@@ -380,6 +380,7 @@ describe('App — surgical watcher reconcile', () => {
             size: 0,
             modTime: '',
             children: [existingChild],
+            unreadable: true,
           } as FileEntry,
         ],
         expandedPaths: new Set(['/r/a']),
@@ -412,5 +413,48 @@ describe('App — surgical watcher reconcile', () => {
     expect(newNode).toBeTruthy();
     // /r/a must retain its previously-loaded children (not revert to undefined)
     expect(aNode?.children).toEqual([existingChild]);
+    // Reading only /r does not prove that /r/a's contents became readable.
+    expect(aNode?.unreadable).toBe(true);
+  });
+
+  it('a successful watcher retry of the unreadable dir clears its marker', async () => {
+    const realChild = {
+      name: 'new.ts',
+      path: '/r/a/new.ts',
+      isDir: false,
+      size: 0,
+      modTime: '',
+    } as FileEntry;
+    (ReadDirectoryShallow as jest.Mock).mockResolvedValue([realChild]);
+
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [{ ...loadedDir('/r/a'), unreadable: true } as FileEntry],
+        expandedPaths: new Set(['/r/a']),
+        isRootExpanded: true,
+      });
+    });
+
+    const fire = getWatcherCallback();
+    act(() => {
+      fire({
+        type: 'created',
+        path: '/r/a/new.ts',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
+    const aNode = useIDEStore.getState().directoryTree[0];
+    expect(aNode.children).toEqual([realChild]);
+    expect(aNode.unreadable).toBe(false);
   });
 });
