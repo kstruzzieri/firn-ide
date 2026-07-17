@@ -26,6 +26,9 @@ interface EnsureOpts {
  * deduped across concurrent callers. `force` re-fetches even if loaded (watcher
  * reconcile uses this for dirty dirs). Failures clear loading + mark the dir
  * dirty and surface a toast — they never replace the whole explorer via setTreeError.
+ * Only the first failure of a clean path toasts; automatic retries (watcher,
+ * reveal) of an already-dirty path keep the row marker without re-toasting, and
+ * a node removed from the tree mid-flight is not annotated at all.
  *
  * ponytail: non-async so callers get the exact same Promise object (referential
  * equality) on concurrent calls — async wrapper would create a fresh Promise each time.
@@ -50,6 +53,11 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
   // ponytail: a {force:true} call arriving while a non-force load is in flight piggybacks on it — harmless, since the in-flight load fetches the same fresh data.
   if (existing?.workspace === workspace) return existing.promise;
 
+  // Distinguishes "removed from the tree mid-flight" (skip all annotations)
+  // from "probed before its parent loaded" (reveal/hydration still need the
+  // dirty flag as their abort signal).
+  const existedBefore = isRoot || Boolean(findEntryByPath(store.directoryTree, path));
+
   useIDEStore.getState().addLoadingPath(path);
   const promise = Promise.resolve()
     .then(() => ReadDirectoryShallow(path, root))
@@ -62,9 +70,14 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
     .catch(() => {
       const after = useIDEStore.getState();
       if (after.workspace !== workspace) return;
-      if (!isRoot) after.markUnreadable(path);
+      const node = isRoot ? null : findEntryByPath(after.directoryTree, path);
+      if (!isRoot && existedBefore && !node) return; // removed mid-flight — nothing to annotate
+      if (node) after.markUnreadable(path);
+      const alreadyDirty = after.dirtyPaths.has(path);
       after.markDirty(path);
-      after.showToast(`Failed to load ${getFileNameFromPath(path)}`, 'error');
+      if (!alreadyDirty) {
+        after.showToast(`Failed to load ${getFileNameFromPath(path)}`, 'error');
+      }
     })
     .finally(() => {
       if (inFlight.get(path)?.promise !== promise) return;

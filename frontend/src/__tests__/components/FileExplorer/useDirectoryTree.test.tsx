@@ -153,6 +153,33 @@ describe('useDirectoryTree', () => {
     expect(useIDEStore.getState().toast).toBeNull();
   });
 
+  it('does not flash the loading skeleton for a cached-empty workspace', async () => {
+    mockGetCachedTree.mockReturnValue([]);
+    let resolveRead!: (entries: FileEntry[]) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRead = resolve;
+      })
+    );
+
+    renderHook(() => useDirectoryTree());
+
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/workspace', '/workspace');
+    });
+    // Cached-empty content is already known; the refresh must not surface a
+    // loading skeleton across the pending read — only the error strategy differs
+    // from the cached-non-empty case.
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
+
+    await act(async () => {
+      resolveRead([]);
+      await Promise.resolve();
+    });
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
+    expect(useIDEStore.getState().treeError).toBeNull();
+  });
+
   it('drops a root failure after the workspace closes', async () => {
     let reject!: (reason: unknown) => void;
     (ReadDirectoryShallow as jest.Mock).mockReturnValue(

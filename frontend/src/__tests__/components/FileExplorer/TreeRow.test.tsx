@@ -348,6 +348,32 @@ describe('TreeRow', () => {
     expect(container.querySelector('[data-hidden]')).toBeInTheDocument();
   });
 
+  it('keeps the shortened root path in an unreadable root accessible name', () => {
+    render(
+      <TreeRow
+        {...baseProps}
+        kind="root"
+        name="Go"
+        rootPath="/repo/backend"
+        depth={0}
+        level={1}
+        isDir={true}
+        isExpanded={false}
+        isSelected={false}
+        regionAccent={null}
+        setSize={1}
+        posInSet={1}
+        canExpand={true}
+        unreadable={true}
+      />
+    );
+
+    // The label override must not drop the path a sighted user still sees.
+    expect(
+      screen.getByRole('treeitem', { name: 'Go, unreadable, /repo/backend' })
+    ).toBeInTheDocument();
+  });
+
   it('renders the root row with its label and path and toggles the root', () => {
     const onToggle = jest.fn();
     render(

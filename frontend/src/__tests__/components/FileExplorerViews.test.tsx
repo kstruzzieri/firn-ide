@@ -182,7 +182,9 @@ describe('FileExplorer views', () => {
 
       render(<FileExplorer />);
 
-      expect(screen.getByRole('treeitem', { name: 'Frontend, unreadable' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('treeitem', { name: `Frontend, unreadable, ${root}/frontend` })
+      ).toBeInTheDocument();
       expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute(
         'title',
         'Unable to read this item'
@@ -235,7 +237,10 @@ describe('FileExplorer views', () => {
 
       render(<FileExplorer />);
 
-      expect(screen.getByRole('treeitem', { name: 'Go, unreadable' })).toBeInTheDocument();
+      // The accessible name carries the blocking ancestor path, not the scoped dir.
+      expect(
+        screen.getByRole('treeitem', { name: `Go, unreadable, ${root}/backend` })
+      ).toBeInTheDocument();
       expect(screen.queryByText(/workspace folder not found/i)).not.toBeInTheDocument();
       const toggle = screen.getByRole('button', { name: 'Toggle Go' });
       fireEvent.click(toggle);

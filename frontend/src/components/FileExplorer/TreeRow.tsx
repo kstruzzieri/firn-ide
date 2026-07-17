@@ -123,7 +123,6 @@ function TreeRowImpl({
       className={className}
       data-hidden={isHidden || undefined}
       data-git={gitStatus}
-      data-unreadable={unreadable || undefined}
       style={
         {
           paddingLeft: `${indentPx}px`,
@@ -139,7 +138,12 @@ function TreeRowImpl({
       aria-posinset={posInSet}
       aria-expanded={isDir ? isExpanded : undefined}
       aria-selected={isSelected || undefined}
-      aria-label={unreadable ? `${name}, unreadable` : undefined}
+      aria-label={
+        // Keep the path a sighted user still sees when overriding the root name.
+        unreadable
+          ? `${name}, unreadable${kind === 'root' && rootPath ? `, ${shortenPath(rootPath)}` : ''}`
+          : undefined
+      }
       tabIndex={-1}
     >
       {canExpand ? (

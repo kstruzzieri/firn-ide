@@ -102,6 +102,40 @@ it('a successful forced retry clears unreadable and installs real children', asy
   expect(useIDEStore.getState().dirtyPaths.has('/r/a')).toBe(false);
 });
 
+it('does not re-toast a repeated failure of an already-dirty path', async () => {
+  mockRead.mockRejectedValue(new Error('permission denied'));
+
+  await ensurePathLoaded('/r/a');
+  expect(useIDEStore.getState().toast).toEqual({ message: 'Failed to load a', type: 'error' });
+
+  useIDEStore.setState({ toast: null });
+  await ensurePathLoaded('/r/a', { force: true });
+
+  expect(useIDEStore.getState().toast).toBeNull();
+  expect(useIDEStore.getState().dirtyPaths.has('/r/a')).toBe(true);
+  expect(useIDEStore.getState().directoryTree[0].unreadable).toBe(true);
+});
+
+it('skips annotations when the node was removed mid-flight', async () => {
+  let reject!: (reason: unknown) => void;
+  mockRead.mockReturnValue(
+    new Promise((_resolve, rejectPromise) => {
+      reject = rejectPromise;
+    })
+  );
+
+  const p = ensurePathLoaded('/r/a');
+  // Watcher reconcile removed /r/a from the tree while its load was in flight.
+  useIDEStore.setState({ directoryTree: [] });
+  reject(new Error('no such file or directory'));
+  await p;
+
+  const state = useIDEStore.getState();
+  expect(state.dirtyPaths.size).toBe(0);
+  expect(state.toast).toBeNull();
+  expect(state.loadingPaths.has('/r/a')).toBe(false);
+});
+
 it('drops result if workspace changed during load', async () => {
   let resolve!: (v: unknown) => void;
   mockRead.mockReturnValue(
