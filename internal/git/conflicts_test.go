@@ -144,11 +144,16 @@ func TestParseConflictRegions_NestedStartIsError(t *testing.T) {
 	}
 }
 
-func TestParseConflictRegions_SeparatorOutsideConflictIsError(t *testing.T) {
-	// A ======= with no preceding <<<<<<< is a stray marker, not a conflict.
+func TestParseConflictRegions_SeparatorWithoutOpeningIsContent(t *testing.T) {
+	// A ======= with no preceding <<<<<<< opening is ordinary content (e.g. a
+	// Markdown heading underline), not a conflict and not an error.
 	content := "plain\n=======\nmore\n"
-	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
-		t.Fatal("parseConflictRegions(stray separator) error = nil, want error")
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
+	if err != nil {
+		t.Fatalf("parseConflictRegions(no opening) error = %v, want nil", err)
+	}
+	if len(regions) != 0 {
+		t.Errorf("regions = %d, want 0", len(regions))
 	}
 }
 
@@ -919,5 +924,47 @@ func TestParseConflictRegions_RegionWidthLocked(t *testing.T) {
 	}
 	if !reflect.DeepEqual(regions[0].Ours, []string{"======="}) {
 		t.Errorf("Ours = %v, want the 7-char line kept as content", regions[0].Ours)
+	}
+}
+
+func TestParseConflictRegions_MarkerShapedContentOutsideIsNotError(t *testing.T) {
+	// A conflicted file can legitimately contain a Markdown setext heading
+	// underline (7+ '=') outside any conflict; it is content, and the real
+	// conflict below it must still parse (not be lost to a stray-marker error).
+	content := "" +
+		"Title\n" +
+		"=======\n" +
+		"intro\n" +
+		"<<<<<<< HEAD\n" +
+		"ours\n" +
+		"=======\n" +
+		"theirs\n" +
+		">>>>>>> feature\n"
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
+	if err != nil {
+		t.Fatalf("error = %v (heading '=======' outside a conflict must be content)", err)
+	}
+	if len(regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(regions))
+	}
+	if !reflect.DeepEqual(regions[0].Ours, []string{"ours"}) {
+		t.Errorf("Ours = %v, want [ours]", regions[0].Ours)
+	}
+}
+
+func TestParseConflictRegions_PrematureCloseInOursIsError(t *testing.T) {
+	// A width-w closing marker inside the ours section (no separator seen) is
+	// malformed: git never emits it, so reject to fallback rather than silently
+	// swallow it as content.
+	content := "<<<<<<< HEAD\nours\n>>>>>>> feature\n"
+	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
+		t.Fatal("premature close in ours: error = nil, want error")
+	}
+}
+
+func TestParseConflictRegions_StrayMarkerInTheirsIsError(t *testing.T) {
+	content := "<<<<<<< HEAD\nours\n=======\ntheirs\n<<<<<<< again\n>>>>>>> feature\n"
+	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
+		t.Fatal("stray opening in theirs: error = nil, want error")
 	}
 }
