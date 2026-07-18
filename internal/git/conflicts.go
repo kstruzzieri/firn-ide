@@ -486,9 +486,12 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 			}
 		}
 	}
-	if len(markerLines) == 0 {
-		return false, nil
-	}
+	// Git inserts a newline around the markers even when a side ends without one,
+	// so a last-region-at-EOF whose stage lacks a trailing newline would silently
+	// gain a newline on resolve. ConflictRegion carries no per-side no-newline
+	// flag yet (a Phase 1 reconstruction concern), so fail closed for that case.
+	eofAtRisk := lastRegionEndsFile(lines, regions)
+
 	const utf8BOM = "\xef\xbb\xbf"
 	for _, rev := range []string{":1", ":2", ":3"} {
 		fc, err := s.FileAtRev(ctx, dir, rev, path)
@@ -503,6 +506,9 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 		if fc.Content == "" {
 			continue // stage absent (delete/modify) or empty
 		}
+		if eofAtRisk && !strings.HasSuffix(fc.Content, "\n") {
+			return false, fmt.Errorf("cannot resolve %s: conflict at end of file without a trailing newline", path)
+		}
 		blob := strings.TrimPrefix(fc.Content, utf8BOM)
 		for _, raw := range strings.Split(blob, "\n") {
 			if markerLines[strings.TrimSuffix(raw, "\r")] {
@@ -511,6 +517,22 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 		}
 	}
 	return false, nil
+}
+
+// lastRegionEndsFile reports whether the final conflict region's closing marker
+// is the last meaningful line of the file (only blank lines follow). Only such a
+// region is exposed to the trailing-newline ambiguity git introduces at EOF.
+func lastRegionEndsFile(lines []string, regions []ConflictRegion) bool {
+	if len(regions) == 0 {
+		return false
+	}
+	end := regions[len(regions)-1].EndLine // 1-based line of >>>>>>>
+	for i := end; i < len(lines); i++ {     // lines after the closing marker
+		if strings.TrimSuffix(lines[i], "\r") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // repoRoot returns the repository top-level for dir. Unlike runAtRoot (which

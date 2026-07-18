@@ -1116,3 +1116,29 @@ func TestService_ConflictSnapshot_ContentFilterFailsClosed(t *testing.T) {
 		t.Fatal("ConflictSnapshot(ident filter active) error = nil, want fail-closed refusal")
 	}
 }
+
+func TestService_ConflictSnapshot_NoTrailingNewlineAtEOFFailsClosed(t *testing.T) {
+	requireGit(t)
+	// A conflict at EOF where the sides have no trailing newline. Git inserts a
+	// newline around the markers regardless, so the region carries no signal
+	// that "ours" was newline-free; accepting it would silently add a newline.
+	// Until per-side no-newline metadata exists (Phase 1 reconstruction), refuse.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, "f.txt", "common") // no trailing newline
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", "theirs") // no trailing newline
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours") // no trailing newline
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(no trailing newline at EOF) error = nil, want fail-closed refusal")
+	}
+}
