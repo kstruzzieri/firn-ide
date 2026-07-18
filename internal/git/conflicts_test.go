@@ -997,3 +997,39 @@ func TestParseConflictRegions_TooManyWidthsRejected(t *testing.T) {
 		t.Fatal("too many candidate widths: error = nil, want rejection")
 	}
 }
+
+func TestService_ConflictSnapshot_LiteralMarkerContentIsRejected(t *testing.T) {
+	requireGit(t)
+	// A file whose UNCHANGED content contains a complete literal conflict
+	// example (same width as the real markers). Git does not widen markers for
+	// marker-shaped content, so the working tree holds two width-7 marker sets:
+	// the real conflict and the content example. The parser cannot tell them
+	// apart, so ConflictSnapshot must refuse (fallback to plain editor) rather
+	// than return a spurious region the user could "resolve" and corrupt.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	doc := "intro\n" +
+		"<<<<<<< example\n" +
+		"alpha\n" +
+		"=======\n" +
+		"beta\n" +
+		">>>>>>> example\n" +
+		"tail\n"
+	writeFile(t, dir, "f.txt", doc+"shared base\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", doc+"shared theirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", doc+"shared ours\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	_, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err == nil {
+		t.Fatal("ConflictSnapshot(literal marker content) error = nil, want refusal")
+	}
+}

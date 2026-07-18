@@ -77,6 +77,23 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	if err != nil {
 		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: %w", path, err)
 	}
+	// Git adds conflict markers around the merge hunks; it does NOT widen them
+	// to avoid colliding with marker-shaped lines already in the file's content.
+	// So a file whose unchanged content contains a literal conflict example
+	// produces a region the parser cannot distinguish from a real one. A real
+	// region's opening marker is git-added and never appears in a stage blob; a
+	// spurious one is content and does. If any region's opener is found in a
+	// stage, refuse and fall back rather than surface a region that, if
+	// "resolved", would corrupt unchanged text.
+	if len(regions) > 0 {
+		spurious, err := s.regionOpenerInStages(ctx, dir, path, fc.Content, regions)
+		if err != nil {
+			return ConflictSnapshot{}, err
+		}
+		if spurious {
+			return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file content contains literal conflict markers", path)
+		}
+	}
 	return ConflictSnapshot{
 		Content:     fc.Content,
 		Encoding:    fc.Encoding,
@@ -385,6 +402,39 @@ func (s *Service) conflictMarkerSize(ctx context.Context, dir, path string) int 
 		return n
 	}
 	return defaultMarkerSize
+}
+
+// regionOpenerInStages reports whether any parsed region's opening marker line
+// appears verbatim as a line in one of the conflict's index stages (base/ours/
+// theirs). Because git adds real conflict markers around the merge — they are
+// never part of the clean stage blobs — a match means that region's markers are
+// literal file content, so the marker-based parse cannot be trusted.
+func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content string, regions []ConflictRegion) (bool, error) {
+	lines := strings.Split(content, "\n")
+	openers := make(map[string]bool, len(regions))
+	for _, r := range regions {
+		if idx := r.StartLine - 1; idx >= 0 && idx < len(lines) {
+			openers[strings.TrimSuffix(lines[idx], "\r")] = true
+		}
+	}
+	if len(openers) == 0 {
+		return false, nil
+	}
+	for _, rev := range []string{":1", ":2", ":3"} {
+		fc, err := s.FileAtRev(ctx, dir, rev, path)
+		if err != nil {
+			return false, err
+		}
+		if fc.Content == "" {
+			continue // stage absent (delete/modify) or binary/too-large
+		}
+		for _, raw := range strings.Split(fc.Content, "\n") {
+			if openers[strings.TrimSuffix(raw, "\r")] {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // repoRoot returns the repository top-level for dir. Unlike runAtRoot (which
