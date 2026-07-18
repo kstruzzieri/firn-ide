@@ -427,30 +427,33 @@ const (
 	defaultMarkerSize = 7
 )
 
-// markerLabel reports whether line is a conflict marker whose run consists of
-// EXACTLY size copies of the character ch, and returns the label after it
-// (empty when the marker stands alone). Matching the exact configured width
-// (not a fixed 7, and not "7 or more") is faithful to git's per-path
-// conflict-marker-size: a repo that narrowed or widened its markers parses
-// correctly, and a content line that happens to be a longer divider of the same
-// character is not mistaken for a marker. A marker is only recognized when the
-// run is followed by end-of-line or a single space.
-func markerLabel(line string, ch byte, size int) (label string, ok bool) {
+// markerRun measures the leading run of the character ch in line and, if it is
+// a conflict marker (run of at least minWidth, followed by end-of-line or a
+// single space), returns the run width and the label after it. minWidth is the
+// exact width to require when > 0 (used for the base/separator/closing markers,
+// which must match the width of the region's opening marker), or the minimum
+// acceptable width when passed as a floor for the opening marker.
+func markerRun(line string, ch byte, exactWidth, minWidth int) (width int, label string, ok bool) {
 	n := 0
 	for n < len(line) && line[n] == ch {
 		n++
 	}
-	if n != size {
-		return "", false
+	if exactWidth > 0 {
+		if n != exactWidth {
+			return 0, "", false
+		}
+	} else if n < minWidth {
+		return 0, "", false
 	}
 	rest := line[n:]
-	if rest == "" {
-		return "", true
+	switch {
+	case rest == "":
+		return n, "", true
+	case rest[0] == ' ':
+		return n, rest[1:], true
+	default:
+		return 0, "", false
 	}
-	if rest[0] == ' ' {
-		return rest[1:], true
-	}
-	return "", false
 }
 
 // parseConflictRegions extracts conflict regions from decoded file text. It is
@@ -474,6 +477,13 @@ func parseConflictRegions(content string, markerSize int) ([]ConflictRegion, err
 	)
 	section := outside
 	var cur ConflictRegion
+	// curWidth is the marker width of the region currently open, set from its
+	// opening <<< run. Git widens outer markers by one char for rename/add and
+	// rename/rename conflicts (and by more for nested merges), so the opening
+	// run is >= markerSize; every later marker in the SAME region must match
+	// that exact width, which keeps a narrower marker-shaped content line from
+	// being read as a separator.
+	curWidth := 0
 
 	newRegion := func(lineNo int, label string) ConflictRegion {
 		return ConflictRegion{
@@ -494,46 +504,50 @@ func parseConflictRegions(content string, markerSize int) ([]ConflictRegion, err
 		// the resolved file is written, so dropping \r here is lossless.
 		line := strings.TrimSuffix(raw, "\r")
 
-		if label, ok := markerLabel(line, markerOurs, markerSize); ok {
-			if section != outside {
-				return nil, fmt.Errorf("nested conflict marker at line %d", lineNo)
+		if section == outside {
+			if w, label, ok := markerRun(line, markerOurs, 0, markerSize); ok {
+				cur = newRegion(lineNo, label)
+				curWidth = w
+				section = inOurs
+				continue
 			}
-			cur = newRegion(lineNo, label)
-			section = inOurs
-			continue
-		}
-		if _, ok := markerLabel(line, markerBase, markerSize); ok {
-			if section != inOurs {
-				return nil, fmt.Errorf("unexpected base marker at line %d", lineNo)
+			// A closing/base/separator marker with no open conflict is malformed.
+			if isStrayMarker(line, markerSize) {
+				return nil, fmt.Errorf("unexpected conflict marker at line %d", lineNo)
 			}
-			cur.HasBase = true
-			section = inBase
-			continue
-		}
-		if _, ok := markerLabel(line, markerSep, markerSize); ok {
-			if section != inOurs && section != inBase {
-				return nil, fmt.Errorf("unexpected separator at line %d", lineNo)
-			}
-			section = inTheirs
-			continue
-		}
-		if label, ok := markerLabel(line, markerTheir, markerSize); ok {
-			if section != inTheirs {
-				return nil, fmt.Errorf("unexpected %q at line %d", markerTheir, lineNo)
-			}
-			cur.EndLine = lineNo
-			cur.TheirLabel = label
-			regions = append(regions, cur)
-			section = outside
-			continue
+			continue // ordinary content outside any conflict
 		}
 
 		switch section {
 		case inOurs:
+			if _, _, ok := markerRun(line, markerBase, curWidth, 0); ok {
+				cur.HasBase = true
+				section = inBase
+				continue
+			}
+			if _, _, ok := markerRun(line, markerSep, curWidth, 0); ok {
+				section = inTheirs
+				continue
+			}
+			if _, _, ok := markerRun(line, markerOurs, curWidth, 0); ok {
+				return nil, fmt.Errorf("nested conflict marker at line %d", lineNo)
+			}
 			cur.Ours = append(cur.Ours, line)
 		case inBase:
+			if _, _, ok := markerRun(line, markerSep, curWidth, 0); ok {
+				section = inTheirs
+				continue
+			}
 			cur.Base = append(cur.Base, line)
 		case inTheirs:
+			if _, label, ok := markerRun(line, markerTheir, curWidth, 0); ok {
+				cur.EndLine = lineNo
+				cur.TheirLabel = label
+				regions = append(regions, cur)
+				section = outside
+				curWidth = 0
+				continue
+			}
 			cur.Theirs = append(cur.Theirs, line)
 		}
 	}
@@ -542,4 +556,16 @@ func parseConflictRegions(content string, markerSize int) ([]ConflictRegion, err
 		return nil, fmt.Errorf("unterminated conflict starting at line %d", cur.StartLine)
 	}
 	return regions, nil
+}
+
+// isStrayMarker reports whether line is a base, separator, or closing marker
+// (run >= markerSize) appearing with no conflict open — a malformed file the
+// caller treats as fallback-to-plain-editor.
+func isStrayMarker(line string, markerSize int) bool {
+	for _, ch := range []byte{markerBase, markerSep, markerTheir} {
+		if _, _, ok := markerRun(line, ch, 0, markerSize); ok {
+			return true
+		}
+	}
+	return false
 }

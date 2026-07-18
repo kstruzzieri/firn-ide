@@ -864,3 +864,60 @@ func TestService_ConflictSnapshot_HonorsConflictMarkerSizeAttr(t *testing.T) {
 		t.Errorf("expected 9-char markers in content:\n%s", snap.Content)
 	}
 }
+
+func TestService_ResolveConflictSide_PathWithSpace(t *testing.T) {
+	requireGit(t)
+	// -z output is verbatim (no core.quotePath quoting), so a filename with a
+	// space must still match exactly through ConflictStages/ResolveConflictSide.
+	name := "a file.txt"
+	dir := makeConflictNamed(t, name)
+	if err := NewService().ResolveConflictSide(ctx(), dir, name, "ours"); err != nil {
+		t.Fatalf("ResolveConflictSide(%q) error = %v", name, err)
+	}
+	if isUnmerged(t, dir, name) {
+		t.Errorf("%q still unmerged", name)
+	}
+}
+
+func TestParseConflictRegions_RenameWidensOuterMarkerByOne(t *testing.T) {
+	// Rename/add and rename/rename conflicts get outer markers one char wider
+	// than the base conflict-marker-size (git bumps them to nest inner content).
+	// With base size 7 the real markers are 8 chars and must still parse.
+	content := "" +
+		"<<<<<<<< HEAD\n" +
+		"ours\n" +
+		"========\n" +
+		"theirs\n" +
+		">>>>>>>> feature\n"
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
+	if err != nil {
+		t.Fatalf("parseConflictRegions(rename +1 markers) error = %v", err)
+	}
+	if len(regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(regions))
+	}
+	if regions[0].OursLabel != "HEAD" || regions[0].TheirLabel != "feature" {
+		t.Errorf("labels = %q / %q", regions[0].OursLabel, regions[0].TheirLabel)
+	}
+}
+
+func TestParseConflictRegions_RegionWidthLocked(t *testing.T) {
+	// A region opened at width 8 must require its closing markers at width 8;
+	// a 7-char line inside is content, not a separator.
+	content := "" +
+		"<<<<<<<< HEAD\n" +
+		"=======\n" + // 7 chars: content within an 8-wide region
+		"========\n" + // 8 chars: the real separator
+		"theirs\n" +
+		">>>>>>>> feature\n"
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	if len(regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(regions))
+	}
+	if !reflect.DeepEqual(regions[0].Ours, []string{"======="}) {
+		t.Errorf("Ours = %v, want the 7-char line kept as content", regions[0].Ours)
+	}
+}
