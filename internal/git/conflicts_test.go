@@ -1033,3 +1033,31 @@ func TestService_ConflictSnapshot_LiteralMarkerContentIsRejected(t *testing.T) {
 		t.Fatal("ConflictSnapshot(literal marker content) error = nil, want refusal")
 	}
 }
+
+func TestService_ConflictSnapshot_BOMLiteralMarkerStillRejected(t *testing.T) {
+	requireGit(t)
+	// A UTF-8-BOM file whose content begins with a literal conflict example.
+	// The worktree opener is decoded (BOM stripped) while the stage blob keeps
+	// the BOM bytes; verification must normalize both so the spurious region is
+	// still detected and the file refused.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	bom := "\xef\xbb\xbf"
+	doc := bom + "<<<<<<< example\n" + "alpha\n" + "=======\n" + "beta\n" + ">>>>>>> example\n" + "tail\n"
+	writeFile(t, dir, "f.txt", doc+"shared base\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", doc+"shared theirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", doc+"shared ours\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(BOM + literal markers) error = nil, want refusal")
+	}
+}

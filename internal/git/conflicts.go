@@ -86,7 +86,7 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	// stage, refuse and fall back rather than surface a region that, if
 	// "resolved", would corrupt unchanged text.
 	if len(regions) > 0 {
-		spurious, err := s.regionOpenerInStages(ctx, dir, path, fc.Content, regions)
+		spurious, err := s.regionOpenerInStages(ctx, dir, path, fc.Content, fc.Encoding, regions)
 		if err != nil {
 			return ConflictSnapshot{}, err
 		}
@@ -409,7 +409,17 @@ func (s *Service) conflictMarkerSize(ctx context.Context, dir, path string) int 
 // theirs). Because git adds real conflict markers around the merge — they are
 // never part of the clean stage blobs — a match means that region's markers are
 // literal file content, so the marker-based parse cannot be trusted.
-func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content string, regions []ConflictRegion) (bool, error) {
+func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content, encoding string, regions []ConflictRegion) (bool, error) {
+	// The worktree content is decoded (BOM stripped) while FileAtRev returns raw
+	// blob bytes. That only compares reliably for UTF-8; for a wide or legacy
+	// encoding the bytes differ and a spurious region could slip through, so
+	// fail closed (refuse) rather than risk exposing one.
+	switch encoding {
+	case "utf-8", "utf-8-bom":
+	default:
+		return false, fmt.Errorf("cannot resolve %s: %s encoding cannot be verified against conflict markers", path, encoding)
+	}
+
 	lines := strings.Split(content, "\n")
 	openers := make(map[string]bool, len(regions))
 	for _, r := range regions {
@@ -420,15 +430,22 @@ func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content s
 	if len(openers) == 0 {
 		return false, nil
 	}
+	const utf8BOM = "\xef\xbb\xbf"
 	for _, rev := range []string{":1", ":2", ":3"} {
 		fc, err := s.FileAtRev(ctx, dir, rev, path)
 		if err != nil {
 			return false, err
 		}
-		if fc.Content == "" {
-			continue // stage absent (delete/modify) or binary/too-large
+		if fc.Binary || fc.Truncated {
+			// Cannot read the stage to compare — a literal marker could hide in
+			// the part we did not see, so refuse rather than miss it.
+			return false, fmt.Errorf("cannot resolve %s: %s stage is binary or too large to verify", path, rev)
 		}
-		for _, raw := range strings.Split(fc.Content, "\n") {
+		if fc.Content == "" {
+			continue // stage absent (delete/modify) or empty
+		}
+		blob := strings.TrimPrefix(fc.Content, utf8BOM)
+		for _, raw := range strings.Split(blob, "\n") {
 			if openers[strings.TrimSuffix(raw, "\r")] {
 				return true, nil
 			}
