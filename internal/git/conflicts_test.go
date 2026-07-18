@@ -968,3 +968,32 @@ func TestParseConflictRegions_StrayMarkerInTheirsIsError(t *testing.T) {
 		t.Fatal("stray opening in theirs: error = nil, want error")
 	}
 }
+
+func TestParseConflictRegions_AmbiguousWidthsRejected(t *testing.T) {
+	// A width-8 (rename) conflict whose content contains a COMPLETE width-7
+	// conflict sample parses cleanly at both 7 and 8. Returning either silently
+	// would be a wrong parse, so it must be rejected (fallback to plain editor).
+	content := "" +
+		"<<<<<<<< HEAD\n" +
+		"<<<<<<< inner\n" +
+		"a\n" +
+		"=======\n" +
+		"b\n" +
+		">>>>>>> inner\n" +
+		"========\n" +
+		"theirs\n" +
+		">>>>>>>> feature\n"
+	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
+		t.Fatal("ambiguous widths: error = nil, want rejection")
+	}
+}
+
+func TestParseConflictRegions_TooManyWidthsRejected(t *testing.T) {
+	var b strings.Builder
+	for w := 7; w < 20; w++ { // 13 distinct opening-run widths
+		b.WriteString(strings.Repeat("<", w) + " x\n")
+	}
+	if _, err := parseConflictRegions(b.String(), defaultMarkerSize); err == nil {
+		t.Fatal("too many candidate widths: error = nil, want rejection")
+	}
+}

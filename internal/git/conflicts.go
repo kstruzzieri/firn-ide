@@ -242,9 +242,12 @@ func (s *Service) ResolveConflictSide(ctx context.Context, dir, path, side strin
 	}
 
 	// Chosen side is a deletion (its stage is absent though the path IS
-	// conflicted): remove the path and stage the removal.
+	// conflicted): remove the path and stage the removal. No -f: plain `git rm`
+	// still removes an unmerged path, but keeps git's up-to-date safety check so
+	// a resolution raced in between ConflictStages and here is rejected rather
+	// than force-deleted.
 	if chosen == nil {
-		_, err := s.runAtRoot(ctx, dir, literalPathspecs, "rm", "-f", "--", path)
+		_, err := s.runAtRoot(ctx, dir, literalPathspecs, "rm", "--", path)
 		return err
 	}
 	// Chosen side has content: write it to the working tree, then stage it,
@@ -487,21 +490,39 @@ func parseConflictRegions(content string, markerSize int) ([]ConflictRegion, err
 	if len(widths) == 0 {
 		return []ConflictRegion{}, nil // no conflict openings: nothing to resolve
 	}
+	// A well-formed file uses one marker width (occasionally a couple across
+	// nested merges). A large spread of distinct opening-run widths is either
+	// malformed or crafted to make us parse the whole file many times; cap the
+	// candidates and fall back rather than do superlinear work.
+	const maxCandidateWidths = 8
+	if len(widths) > maxCandidateWidths {
+		return nil, fmt.Errorf("too many distinct conflict marker widths (%d)", len(widths))
+	}
 
+	var cleanParses [][]ConflictRegion
 	var firstErr error
 	for _, w := range widths {
 		regions, err := parseAtWidth(lines, w)
-		if err == nil && len(regions) > 0 {
-			return regions, nil
-		}
-		if err != nil && firstErr == nil {
+		switch {
+		case err == nil && len(regions) > 0:
+			cleanParses = append(cleanParses, regions)
+		case err != nil && firstErr == nil:
 			firstErr = err
 		}
 	}
-	if firstErr != nil {
+	switch {
+	case len(cleanParses) == 1:
+		return cleanParses[0], nil
+	case len(cleanParses) > 1:
+		// More than one width parses cleanly (e.g. a widened conflict whose
+		// content contains a complete narrower marker sample). We cannot tell
+		// which is the real structure, so refuse rather than pick wrong.
+		return nil, fmt.Errorf("ambiguous conflict markers: %d widths parse cleanly", len(cleanParses))
+	case firstErr != nil:
 		return nil, firstErr
+	default:
+		return []ConflictRegion{}, nil
 	}
-	return []ConflictRegion{}, nil
 }
 
 // openingWidths returns the distinct widths of opening (<<<) marker runs of at
