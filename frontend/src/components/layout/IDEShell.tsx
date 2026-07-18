@@ -7,8 +7,11 @@ import {
   useIsBottomPanelCollapsed,
 } from '../../stores/ideStore';
 import type { WorkspaceAccent } from '../../stores/ideStore';
+import { CommandPalette } from '../CommandPalette';
 import { ResizeHandle } from './ResizeHandle';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
+import { useOpenFolder } from '../../hooks/useOpenFolder';
+import { createCommands } from '../../utils/commands';
 import styles from './IDEShell.module.css';
 
 /** Maximum fraction of viewport a single panel may occupy */
@@ -35,7 +38,7 @@ const HORIZONTAL_OVERHEAD = CONTENT_PADDING * 2 + PANEL_GAP * 2;
 const VERTICAL_OVERHEAD = HEADER_HEIGHT + STATUSBAR_HEIGHT + CONTENT_PADDING * 2 + PANEL_GAP;
 
 interface IDEShellProps {
-  header: ReactNode;
+  header: (openCommandPalette: () => void) => ReactNode;
   sidebar: ReactNode;
   leftPanel: ReactNode;
   centerPanel: ReactNode;
@@ -65,9 +68,13 @@ export function IDEShell({
   const leftPanelSize = useIDEStore((s) => s.panelSizes.left);
   const rightPanelSize = useIDEStore((s) => s.panelSizes.right);
   const bottomPanelSize = useIDEStore((s) => s.panelSizes.bottom);
+  const [isCommandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
+  const { openFolder } = useOpenFolder();
+  const commands = useMemo(() => createCommands(openFolder), [openFolder]);
 
   // Global keyboard shortcuts (Cmd+O, etc.) — registered once here
-  useKeyboardShortcuts();
+  useKeyboardShortcuts(openFolder, openCommandPalette, isCommandPaletteOpen);
 
   // Track viewport dimensions for dynamic max constraints
   const [viewport, setViewport] = useState(() => ({
@@ -147,7 +154,7 @@ export function IDEShell({
         Skip to main content
       </a>
       <header className={styles.header} onDoubleClick={handleHeaderDoubleClick}>
-        {header}
+        {header(openCommandPalette)}
       </header>
       <aside className={styles.sidebar}>{sidebar}</aside>
       <main id="main-content" className={styles.content} tabIndex={-1}>
@@ -196,6 +203,11 @@ export function IDEShell({
         {!isRightPanelCollapsed && <section className={styles.rightPanel}>{rightPanel}</section>}
       </main>
       <footer className={styles.statusBar}>{statusBar}</footer>
+      <CommandPalette
+        open={isCommandPaletteOpen}
+        commands={commands}
+        onClose={() => setCommandPaletteOpen(false)}
+      />
     </div>
   );
 }

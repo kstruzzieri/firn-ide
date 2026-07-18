@@ -12,7 +12,7 @@ import { BranchSwitcher } from '../git/BranchSwitcher';
 
 const MENU_ID = 'workspace-menu';
 
-export function Header() {
+export function Header({ onOpenCommandPalette }: { onOpenCommandPalette: () => void }) {
   const workspace = useWorkspace();
   const workspaceName = workspace?.name || 'No workspace';
   const { openFolder } = useOpenFolder();
@@ -205,10 +205,10 @@ export function Header() {
         type="button"
         className={`${styles.headerBtn} ${styles.searchBtn}`}
         aria-label="Search everywhere"
+        onClick={onOpenCommandPalette}
       >
         <SearchIcon aria-hidden="true" />
         <span>Search Everywhere</span>
-        <span className={styles.searchShortcut}>{formatShortcut('\u21e7\u2318P')}</span>
       </button>
 
       {/* Spacer */}

@@ -32,6 +32,6 @@ beforeEach(() => {
 });
 
 test('renders the run-profile selector in the header', () => {
-  render(<Header />);
+  render(<Header onOpenCommandPalette={jest.fn()} />);
   expect(screen.getByRole('button', { name: /Run selected profile: dev/i })).toBeInTheDocument();
 });

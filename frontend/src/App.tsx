@@ -143,7 +143,7 @@ function App() {
     <ErrorBoundary>
       <IDEShell
         accent={activeAccent}
-        header={<Header />}
+        header={(openCommandPalette) => <Header onOpenCommandPalette={openCommandPalette} />}
         sidebar={<Sidebar />}
         leftPanel={
           sidebarView === 'search' ? (
