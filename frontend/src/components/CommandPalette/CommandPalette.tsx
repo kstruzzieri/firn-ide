@@ -100,6 +100,9 @@ export function CommandPalette({
         event.preventDefault();
         closePalette();
       }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) closePalette();
+      }}
       onKeyDown={(event) => {
         event.stopPropagation();
 

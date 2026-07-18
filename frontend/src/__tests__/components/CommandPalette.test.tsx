@@ -242,6 +242,23 @@ test('a native cancel close request closes once and keeps state in sync', () => 
   expect(dialog).not.toHaveAttribute('open');
 });
 
+test('closes on a backdrop click but stays open for clicks inside the palette', () => {
+  const { onClose } = renderPalette();
+  const dialog = screen.getByRole('dialog');
+
+  fireEvent.click(screen.getByRole('combobox', { name: 'Command palette' }));
+  expect(onClose).not.toHaveBeenCalled();
+  expect(dialog).toHaveAttribute('open');
+
+  fireEvent.click(dialog);
+
+  expect(actions.open).not.toHaveBeenCalled();
+  expect(actions.sidebar).not.toHaveBeenCalled();
+  expect(actions.test).not.toHaveBeenCalled();
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(dialog).not.toHaveAttribute('open');
+});
+
 test('stops every dialog keydown before window and prevents default only for handled keys', () => {
   const onWindowKeyDown = jest.fn();
   window.addEventListener('keydown', onWindowKeyDown);
