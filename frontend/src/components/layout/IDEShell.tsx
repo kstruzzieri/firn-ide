@@ -38,7 +38,7 @@ const HORIZONTAL_OVERHEAD = CONTENT_PADDING * 2 + PANEL_GAP * 2;
 const VERTICAL_OVERHEAD = HEADER_HEIGHT + STATUSBAR_HEIGHT + CONTENT_PADDING * 2 + PANEL_GAP;
 
 interface IDEShellProps {
-  header: ReactNode;
+  header: (openCommandPalette: () => void) => ReactNode;
   sidebar: ReactNode;
   leftPanel: ReactNode;
   centerPanel: ReactNode;
@@ -154,7 +154,7 @@ export function IDEShell({
         Skip to main content
       </a>
       <header className={styles.header} onDoubleClick={handleHeaderDoubleClick}>
-        {header}
+        {header(openCommandPalette)}
       </header>
       <aside className={styles.sidebar}>{sidebar}</aside>
       <main id="main-content" className={styles.content} tabIndex={-1}>

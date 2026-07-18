@@ -39,7 +39,7 @@ beforeAll(() => {
 const createShell = (accent?: 'project' | 'general') => (
   <IDEShell
     accent={accent}
-    header={<div />}
+    header={() => <div />}
     sidebar={<div />}
     leftPanel={<div />}
     centerPanel={<div />}
@@ -53,7 +53,7 @@ it('applies data-accent="general"', () => {
   const { container } = render(
     <IDEShell
       accent="general"
-      header={<div />}
+      header={() => <div />}
       sidebar={<div />}
       leftPanel={<div />}
       centerPanel={<div />}
@@ -68,7 +68,7 @@ it('applies data-accent="general"', () => {
 it('renders a skip link before the shell chrome and a focusable main target', () => {
   const { container } = render(
     <IDEShell
-      header={<div />}
+      header={() => <div />}
       sidebar={<div />}
       leftPanel={<div />}
       centerPanel={<div />}

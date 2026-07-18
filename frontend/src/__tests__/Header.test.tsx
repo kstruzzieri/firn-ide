@@ -22,6 +22,9 @@ jest.mock('../../wailsjs/runtime/runtime', () => ({
 import { OpenFolderDialog } from '../../wailsjs/go/main/App';
 import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
 
+const renderHeader = (onOpenCommandPalette = jest.fn()) =>
+  render(<Header onOpenCommandPalette={onOpenCommandPalette} />);
+
 describe('Header Component', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -32,25 +35,29 @@ describe('Header Component', () => {
   });
 
   it('should render the app name', () => {
-    render(<Header />);
+    renderHeader();
     expect(screen.getByText('Firn')).toBeInTheDocument();
   });
 
   it('should render navigation buttons', () => {
-    render(<Header />);
+    renderHeader();
     const buttons = screen.getAllByRole('button');
     expect(buttons.length).toBeGreaterThan(0);
   });
 
-  it('should render Search Everywhere without the Command Palette shortcut', () => {
-    render(<Header />);
+  it('should open the command palette from Search Everywhere without showing its shortcut', () => {
+    const onOpenCommandPalette = jest.fn();
+    renderHeader(onOpenCommandPalette);
     const searchButton = screen.getByRole('button', { name: 'Search everywhere' });
+    fireEvent.click(searchButton);
+
     expect(searchButton).toHaveTextContent('Search Everywhere');
     expect(searchButton).not.toHaveTextContent(formatShortcut('⇧⌘P'));
+    expect(onOpenCommandPalette).toHaveBeenCalledTimes(1);
   });
 
   it('should show "No workspace" when no workspace is set', () => {
-    render(<Header />);
+    renderHeader();
     expect(screen.getByText('No workspace')).toBeInTheDocument();
   });
 
@@ -58,14 +65,14 @@ describe('Header Component', () => {
     useIDEStore.setState({
       workspace: { name: 'my-project', path: '/Users/test/my-project' },
     });
-    render(<Header />);
+    renderHeader();
     expect(screen.getByText('my-project')).toBeInTheDocument();
   });
 
   it('should call OpenFolderDialog when Open Folder menu item is clicked', async () => {
     (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
 
-    render(<Header />);
+    renderHeader();
 
     // Open the repository dropdown menu
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
@@ -81,7 +88,7 @@ describe('Header Component', () => {
   it('should update workspace and window title after folder selection', async () => {
     (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/my-app');
 
-    render(<Header />);
+    renderHeader();
 
     // Open the repository dropdown menu
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
@@ -112,7 +119,7 @@ describe('Header Component', () => {
       ],
     });
 
-    render(<Header />);
+    renderHeader();
 
     // Open the repository dropdown menu
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
@@ -144,7 +151,7 @@ describe('Header Component', () => {
       ],
     });
 
-    render(<Header />);
+    renderHeader();
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
 
     // The dropdown menu items should include only non-current workspaces.
@@ -172,7 +179,7 @@ describe('Header Component', () => {
       ],
     });
 
-    render(<Header />);
+    renderHeader();
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
     fireEvent.click(screen.getByText('target-project'));
 
@@ -193,7 +200,7 @@ describe('Header Component', () => {
       ] as never,
       activeWorkspaceId: 'project',
     });
-    render(<Header />);
+    renderHeader();
     expect(screen.getByRole('button', { name: /workspace selector/i })).toBeInTheDocument();
   });
 });

@@ -5,7 +5,6 @@ import { useWorkspace, useRecentWorkspaces } from '../../stores/ideStore';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { openWorkspaceByPath } from '../../utils/workspace';
 import { formatShortcut, isMac } from '../../utils/platform';
-import { showSidebarView } from '../../utils/commands';
 import firnIcon from '../../assets/branding/icon.svg';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { RunProfileSelector } from './RunProfileSelector';
@@ -13,7 +12,7 @@ import { BranchSwitcher } from '../git/BranchSwitcher';
 
 const MENU_ID = 'workspace-menu';
 
-export function Header() {
+export function Header({ onOpenCommandPalette }: { onOpenCommandPalette: () => void }) {
   const workspace = useWorkspace();
   const workspaceName = workspace?.name || 'No workspace';
   const { openFolder } = useOpenFolder();
@@ -206,7 +205,7 @@ export function Header() {
         type="button"
         className={`${styles.headerBtn} ${styles.searchBtn}`}
         aria-label="Search everywhere"
-        onClick={() => showSidebarView('search')}
+        onClick={onOpenCommandPalette}
       >
         <SearchIcon aria-hidden="true" />
         <span>Search Everywhere</span>

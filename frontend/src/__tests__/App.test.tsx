@@ -5,7 +5,7 @@
  * TDD: Written first to define expected behavior.
  */
 
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
@@ -70,6 +70,25 @@ jest.mock('../components/Editor', () => ({
 jest.mock('../components/FileExplorer/useDirectoryTree', () => ({
   useDirectoryTree: () => ({ refetch: jest.fn() }),
 }));
+
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute('open');
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: jest.fn(),
+  });
+});
 
 describe('App Component', () => {
   beforeEach(() => {
@@ -147,7 +166,7 @@ describe('App Component', () => {
     expect(screen.getByLabelText('Search query')).toBeInTheDocument();
   });
 
-  it('opens workspace search from the header and accepts a query', async () => {
+  it('opens the command palette from Search Everywhere without switching sidebar views', async () => {
     useIDEStore.setState({
       workspace: { name: 'workspace', path: '/test/workspace' },
       activeSidebarView: 'explorer',
@@ -159,11 +178,12 @@ describe('App Component', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Search everywhere' }));
 
-    const input = screen.getByRole('textbox', { name: 'Search query' });
-    expect(input).toHaveFocus();
-    fireEvent.change(input, { target: { value: 'needle' } });
-    expect(input).toHaveValue('needle');
-    expect(useSearchStore.getState().query).toBe('needle');
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toHaveAttribute('open');
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Command palette' })).toHaveFocus()
+    );
+    expect(useIDEStore.getState().activeSidebarView).toBe('explorer');
+    expect(screen.queryByRole('textbox', { name: 'Search query' })).not.toBeInTheDocument();
   });
 
   it.each(['created', 'deleted', 'renamed'] as const)(
