@@ -7,6 +7,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Header } from '../components/Header';
 import { useIDEStore } from '../stores/ideStore';
+import { formatShortcut } from '../utils/platform';
 
 jest.mock('../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: jest.fn(),
@@ -41,9 +42,11 @@ describe('Header Component', () => {
     expect(buttons.length).toBeGreaterThan(0);
   });
 
-  it('should render search button with keyboard shortcut', () => {
+  it('should render Search Everywhere without the Command Palette shortcut', () => {
     render(<Header />);
-    expect(screen.getByText(/search/i)).toBeInTheDocument();
+    const searchButton = screen.getByRole('button', { name: 'Search everywhere' });
+    expect(searchButton).toHaveTextContent('Search Everywhere');
+    expect(searchButton).not.toHaveTextContent(formatShortcut('⇧⌘P'));
   });
 
   it('should show "No workspace" when no workspace is set', () => {

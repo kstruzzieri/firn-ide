@@ -208,7 +208,6 @@ export function Header() {
       >
         <SearchIcon aria-hidden="true" />
         <span>Search Everywhere</span>
-        <span className={styles.searchShortcut}>{formatShortcut('\u21e7\u2318P')}</span>
       </button>
 
       {/* Spacer */}

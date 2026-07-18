@@ -131,3 +131,11 @@ Three habits that would catch this earlier:
 This applies even to "small" work (like the cleanup commit) — once the first commit lands on the wrong branch, every subsequent commit compounds the problem and the recovery cost grows linearly.
 
 **Bootstrap caveat for the repo-local pre-commit hook:** `.husky/pre-commit` only protects `develop` after the commit that adds the protection has actually reached `develop`. While the protection PR is open, `develop`'s working tree still has the old (unprotected) hook, so commits to `develop` continue to succeed silently. Verified: switching to `develop` and running `git commit --allow-empty` succeeded with the message "hook was ignored because it's not set as executable" until the protection PR merged. The robust counterpart to a repo-local hook is **GitHub branch protection rules** on the server side, which apply regardless of what's in any local working tree. Repo-local hooks complement but do not replace server-side protection.
+
+## Issue #44 Design Review (2026-07-17)
+
+### 13. Re-check moving baselines, complete shortcut ownership, and runtime APIs
+
+**What happened:** The first Command Palette checkpoint used the handoff baseline after `develop` had advanced, omitted row shortcut chips, did not specify key-event containment, and accepted native-dialog testability without retaining the executable jsdom probe as a design constraint.
+
+**Lesson:** Before implementation, compare the feature branch to current `develop`, search every displayed and handled shortcut owner, trace bubbling into global listeners, and execute a capability probe in the actual test runtime. Keep production on the native platform API when supported, but isolate any missing jsdom behavior in a test-only shim.
