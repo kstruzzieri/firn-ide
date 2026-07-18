@@ -7,8 +7,33 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// isolatedGitEnv strips the repository-local GIT_* variables (so an inherited
+// GIT_DIR from a linked worktree cannot redirect these test git commands into
+// the real repo) and pins config to /dev/null. Package main cannot reach the
+// git package's unexported scrubGitEnv, so this mirrors it locally.
+func isolatedGitEnv() []string {
+	env := make([]string, 0, len(os.Environ())+6)
+	for _, v := range os.Environ() {
+		switch {
+		case strings.HasPrefix(v, "GIT_DIR="),
+			strings.HasPrefix(v, "GIT_WORK_TREE="),
+			strings.HasPrefix(v, "GIT_INDEX_FILE="),
+			strings.HasPrefix(v, "GIT_COMMON_DIR="),
+			strings.HasPrefix(v, "GIT_OBJECT_DIRECTORY="):
+			continue
+		}
+		env = append(env, v)
+	}
+	return append(env,
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+}
 
 func initGitRepoForApp(t *testing.T) string {
 	t.Helper()
@@ -23,6 +48,7 @@ func initGitRepoForApp(t *testing.T) string {
 	} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -164,6 +190,7 @@ func makeAppConflict(t *testing.T) string {
 	run := func(allowFail bool, args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
 		if out, err := cmd.CombinedOutput(); err != nil && !allowFail {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}

@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +40,20 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	}
 	abs := filepath.Join(root, filepath.FromSlash(path))
 
+	// Lstat before reading: reject a symlink (ReadFileWithMetadata would follow
+	// it out of the repository) and enforce the size cap on the raw file before
+	// decoding a huge file into memory.
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return ConflictSnapshot{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: path is a symlink", path)
+	}
+	if info.Size() > maxDiffableBytes {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is too large (%d bytes)", path, info.Size())
+	}
+
 	reader := filesystem.NewFileReader(filesystem.NewOS())
 	fc, err := reader.ReadFileWithMetadata(abs)
 	if err != nil {
@@ -46,9 +61,6 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	}
 	if fc.IsBinary {
 		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is binary", path)
-	}
-	if fc.Size > maxDiffableBytes {
-		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is too large (%d bytes)", path, fc.Size)
 	}
 
 	regions, err := parseConflictRegions(fc.Content)
@@ -90,12 +102,22 @@ type MergeHeads struct {
 func (s *Service) MergeHeads(ctx context.Context, dir string) (MergeHeads, error) {
 	operation, incomingRef := "", ""
 	switch {
-	case s.refExists(ctx, dir, "MERGE_HEAD"):
-		operation, incomingRef = "merge", "MERGE_HEAD"
-	case s.refExists(ctx, dir, "CHERRY_PICK_HEAD"):
+	// Rebase is detected by its state directory (git's own signal in
+	// wt-status.c) and takes precedence: a stale REBASE_HEAD can linger, and a
+	// merge step inside `rebase --rebase-merges` sets MERGE_HEAD while still
+	// being a rebase. Its incoming ref is MERGE_HEAD for an inner merge step,
+	// else REBASE_HEAD for a normal pick step.
+	case s.gitPathExists(ctx, dir, "rebase-merge"), s.gitPathExists(ctx, dir, "rebase-apply"):
+		operation = "rebase"
+		if s.refExists(ctx, dir, "MERGE_HEAD") {
+			incomingRef = "MERGE_HEAD"
+		} else {
+			incomingRef = "REBASE_HEAD"
+		}
+	case s.gitPathExists(ctx, dir, "CHERRY_PICK_HEAD"):
 		operation, incomingRef = "cherry-pick", "CHERRY_PICK_HEAD"
-	case s.refExists(ctx, dir, "REBASE_HEAD"):
-		operation, incomingRef = "rebase", "REBASE_HEAD"
+	case s.gitPathExists(ctx, dir, "MERGE_HEAD"):
+		operation, incomingRef = "merge", "MERGE_HEAD"
 	default:
 		return MergeHeads{}, fmt.Errorf("no merge, rebase, or cherry-pick in progress")
 	}
@@ -117,11 +139,33 @@ func (s *Service) MergeHeads(ctx context.Context, dir string) (MergeHeads, error
 	return MergeHeads{Operation: operation, Ours: ours, Theirs: theirs}, nil
 }
 
-// refExists reports whether a ref resolves (used to detect which operation is
-// underway from its head ref).
+// refExists reports whether a ref resolves to a commit. Used only for
+// REBASE_HEAD (a genuine ref); operation heads are detected via gitPathExists
+// so a branch that happens to be named MERGE_HEAD cannot be DWIM-resolved into
+// a false "merge in progress".
 func (s *Service) refExists(ctx context.Context, dir, ref string) bool {
 	_, err := s.run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	return err == nil
+}
+
+// gitPathExists reports whether a file or directory exists under the git dir
+// (e.g. "MERGE_HEAD", "rebase-merge"). It asks git for the path so linked
+// worktrees resolve correctly, then stats it. This checks the operation-state
+// file directly rather than resolving a ref name, which cannot be shadowed.
+func (s *Service) gitPathExists(ctx context.Context, dir, name string) bool {
+	out, err := s.run(ctx, dir, "rev-parse", "--git-path", name)
+	if err != nil {
+		return false
+	}
+	p := strings.TrimSpace(out)
+	if p == "" {
+		return false
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	_, statErr := os.Stat(p)
+	return statErr == nil
 }
 
 // describeHead resolves a ref to short hash + subject, seeding Label with the
@@ -161,24 +205,40 @@ func (s *Service) ResolveConflictSide(ctx context.Context, dir, path, side strin
 	if err != nil {
 		return err
 	}
+	// Refuse when the path has no conflict stages at all: it is not conflicted
+	// (already resolved, a stale card, or a double-click). Without this guard
+	// the "chosen side absent = deletion" branch below would `git rm -f` a
+	// clean tracked file and destroy uncommitted content.
+	if stages.Base == nil && stages.Ours == nil && stages.Theirs == nil {
+		return fmt.Errorf("%s is not conflicted", path)
+	}
 	chosen := stages.Ours
 	if side == "theirs" {
 		chosen = stages.Theirs
 	}
 
-	// Chosen side is a deletion: remove the path and stage the removal.
+	// Chosen side is a deletion (its stage is absent though the path IS
+	// conflicted): remove the path and stage the removal.
 	if chosen == nil {
-		_, err := s.runAtRoot(ctx, dir, "rm", "-f", "--", path)
+		_, err := s.runAtRoot(ctx, dir, literalPathspecs, "rm", "-f", "--", path)
 		return err
 	}
 	// Chosen side has content: write it to the working tree, then stage it,
 	// collapsing the conflict stages to a resolved entry.
-	if _, err := s.runAtRoot(ctx, dir, "checkout", checkoutFlag, "--", path); err != nil {
+	if _, err := s.runAtRoot(ctx, dir, literalPathspecs, "checkout", checkoutFlag, "--", path); err != nil {
 		return err
 	}
-	_, err = s.runAtRoot(ctx, dir, "add", "--", path)
+	_, err = s.runAtRoot(ctx, dir, literalPathspecs, "add", "--", path)
 	return err
 }
+
+// literalPathspecs is the global git flag that disables pathspec magic, so a
+// user-supplied path is always matched as a literal filename. It guards the
+// path-bearing commands (checkout, rm, add, ls-files) against a filename that
+// contains pathspec metacharacters ("*", a leading ":") matching or mutating
+// unrelated files — critical for the destructive rm/checkout in
+// ResolveConflictSide.
+const literalPathspecs = "--literal-pathspecs"
 
 // StageBlob is one conflict index entry (a stage-1/2/3 object). Size is the
 // blob byte size. A nil *StageBlob on ConflictStages means the stage is absent
@@ -209,7 +269,7 @@ func (s *Service) ConflictStages(ctx context.Context, dir, path string) (Conflic
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return ConflictStages{}, err
 	}
-	out, err := s.runAtRoot(ctx, dir, "ls-files", "-u", "-z", "--", path)
+	out, err := s.runAtRoot(ctx, dir, literalPathspecs, "ls-files", "-u", "-z", "--", path)
 	if err != nil {
 		return ConflictStages{}, err
 	}
@@ -239,11 +299,11 @@ func (s *Service) ConflictStages(ctx context.Context, dir, path string) (Conflic
 		}
 	}
 
-	// Binary is a property of the file, so probe one present stage — ours
-	// first, then theirs, then base.
-	for _, blob := range []*StageBlob{result.Ours, result.Theirs, result.Base} {
-		if blob != nil {
-			result.Binary = s.blobIsBinary(ctx, dir, blob.Hash)
+	// Git merges a file as binary when ANY present stage is binary, so probe
+	// every present stage — a text-ours/binary-theirs conflict is still binary.
+	for _, blob := range []*StageBlob{result.Base, result.Ours, result.Theirs} {
+		if blob != nil && s.blobIsBinary(ctx, dir, blob) {
+			result.Binary = true
 			break
 		}
 	}
@@ -263,9 +323,15 @@ func (s *Service) blobSize(ctx context.Context, dir, hash string) int64 {
 	return n
 }
 
-// blobIsBinary probes a blob for a NUL byte using git's own heuristic.
-func (s *Service) blobIsBinary(ctx context.Context, dir, hash string) bool {
-	out, err := s.runAtRoot(ctx, dir, "cat-file", "blob", hash)
+// blobIsBinary probes a blob for a NUL byte using git's own heuristic. A blob
+// past the diffable size cap is treated as binary without reading it: the merge
+// surface refuses over-cap text anyway (ConflictSnapshot), so this both avoids
+// an unbounded read of a huge object and routes it to the whole-file-side UI.
+func (s *Service) blobIsBinary(ctx context.Context, dir string, blob *StageBlob) bool {
+	if blob.Size > maxDiffableBytes {
+		return true
+	}
+	out, err := s.runAtRoot(ctx, dir, "cat-file", "blob", blob.Hash)
 	if err != nil {
 		return false
 	}
@@ -303,25 +369,40 @@ type ConflictRegion struct {
 	TheirLabel string   `json:"theirLabel"` // text after >>>>>>> (e.g. branch name)
 }
 
-// Conflict marker prefixes. Git always emits exactly seven marker characters,
-// optionally followed by a space and a label. A line is a marker only when it
-// is exactly the seven characters or the seven characters followed by a space,
-// so ordinary content that merely starts with "=" is never misread.
+// Conflict marker characters. Git begins each marker line with a run of the
+// same character; the run is at least conflictMarkerMinSize long (git's
+// conflict-marker-size attribute can widen it per path but never below the
+// default 7), optionally followed by a space and a label.
 const (
-	markerOurs  = "<<<<<<<"
-	markerBase  = "|||||||"
-	markerSep   = "======="
-	markerTheir = ">>>>>>>"
+	markerOurs  = '<'
+	markerBase  = '|'
+	markerSep   = '='
+	markerTheir = '>'
+	// conflictMarkerMinSize is git's minimum (and default) marker width.
+	conflictMarkerMinSize = 7
 )
 
-// markerLabel reports whether line is the given 7-char conflict marker and, if
-// so, returns the label after it (empty when the marker stands alone).
-func markerLabel(line, marker string) (label string, ok bool) {
-	if line == marker {
+// markerLabel reports whether line is a conflict marker whose run consists of
+// the character ch (at least conflictMarkerMinSize of them), and returns the
+// label after it (empty when the marker stands alone). Matching a run rather
+// than a fixed 7 characters honors git's configurable conflict-marker-size, so
+// a file that widened its markers still parses. Ordinary content that merely
+// starts with the character is not a marker unless the run reaches the minimum
+// width and is followed by end-of-line or a single space.
+func markerLabel(line string, ch byte) (label string, ok bool) {
+	n := 0
+	for n < len(line) && line[n] == ch {
+		n++
+	}
+	if n < conflictMarkerMinSize {
+		return "", false
+	}
+	rest := line[n:]
+	if rest == "" {
 		return "", true
 	}
-	if rest, found := strings.CutPrefix(line, marker+" "); found {
-		return rest, true
+	if rest[0] == ' ' {
+		return rest[1:], true
 	}
 	return "", false
 }

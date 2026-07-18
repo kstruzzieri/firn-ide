@@ -353,6 +353,9 @@ func TestService_MergeHeads_Rebase(t *testing.T) {
 	if mh.Theirs.Hash == "" {
 		t.Errorf("theirs hash empty during rebase: %+v", mh)
 	}
+	if mh.Theirs.Subject != "feature work" {
+		t.Errorf("Theirs.Subject = %q, want feature work (replayed commit)", mh.Theirs.Subject)
+	}
 }
 
 func TestService_MergeHeads_CherryPick(t *testing.T) {
@@ -379,6 +382,9 @@ func TestService_MergeHeads_CherryPick(t *testing.T) {
 	}
 	if mh.Operation != "cherry-pick" {
 		t.Errorf("Operation = %q, want cherry-pick", mh.Operation)
+	}
+	if mh.Theirs.Subject != "feature edit" {
+		t.Errorf("Theirs.Subject = %q, want feature edit", mh.Theirs.Subject)
 	}
 }
 
@@ -574,5 +580,177 @@ func TestService_ResolveConflictSide_InvalidSideIsError(t *testing.T) {
 	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
 	if err := NewService().ResolveConflictSide(ctx(), dir, "f.txt", "sideways"); err == nil {
 		t.Fatal("ResolveConflictSide(bad side) error = nil, want error")
+	}
+}
+
+func TestParseConflictRegions_LongerMarkerSize(t *testing.T) {
+	// git's conflict-marker-size attribute can widen markers past 7 chars
+	// (minimum 7). A valid conflict with 8-char markers must still parse.
+	content := "" +
+		"<<<<<<<< HEAD\n" +
+		"ours\n" +
+		"========\n" +
+		"theirs\n" +
+		">>>>>>>> feature\n"
+	regions, err := parseConflictRegions(content)
+	if err != nil {
+		t.Fatalf("parseConflictRegions(8-char markers) error = %v", err)
+	}
+	if len(regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(regions))
+	}
+	if regions[0].OursLabel != "HEAD" || regions[0].TheirLabel != "feature" {
+		t.Errorf("labels = %q / %q", regions[0].OursLabel, regions[0].TheirLabel)
+	}
+}
+
+// ── review-round hardening ──
+
+func TestService_ResolveConflictSide_NotConflictedIsErrorNoDelete(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t) // README.md committed, clean, NOT conflicted
+
+	err := NewService().ResolveConflictSide(ctx(), dir, "README.md", "ours")
+	if err == nil {
+		t.Fatal("ResolveConflictSide(clean file) error = nil, want refusal")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "README.md")); statErr != nil {
+		t.Errorf("README.md must not be deleted for a non-conflicted path: %v", statErr)
+	}
+}
+
+func TestService_ConflictStages_UnconflictedAllNil(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+
+	st, err := NewService().ConflictStages(ctx(), dir, "README.md")
+	if err != nil {
+		t.Fatalf("ConflictStages(clean) error = %v", err)
+	}
+	if st.Base != nil || st.Ours != nil || st.Theirs != nil {
+		t.Errorf("stages = %+v, want all nil for unconflicted path", st)
+	}
+}
+
+func TestService_ConflictStages_BinaryOnOneSideOnly(t *testing.T) {
+	requireGit(t)
+	// ours text, theirs binary: git must classify the file binary even though
+	// the first present stage probed (ours) is text.
+	dir := makeConflict(t, "base\n", "ours text\n", "theirs\x00binary\n", false)
+
+	st, err := NewService().ConflictStages(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictStages error = %v", err)
+	}
+	if !st.Binary {
+		t.Errorf("Binary = false, want true when any stage is binary")
+	}
+}
+
+func TestService_ConflictStages_SizeMatchesBlob(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+
+	st, err := NewService().ConflictStages(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictStages error = %v", err)
+	}
+	if st.Ours == nil || st.Ours.Size != int64(len("ours\n")) {
+		t.Errorf("Ours.Size = %v, want %d", st.Ours, len("ours\n"))
+	}
+}
+
+func TestService_ConflictSnapshot_LineCoordinatesAndEncoding(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "top\nbase\n", "top\nours\n", "top\ntheirs\n", false)
+
+	snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictSnapshot error = %v", err)
+	}
+	if snap.Encoding != "utf-8" {
+		t.Errorf("Encoding = %q, want utf-8", snap.Encoding)
+	}
+	r := snap.Regions[0]
+	// Region markers must map to the real lines in the returned content.
+	lines := strings.Split(snap.Content, "\n")
+	if r.StartLine < 1 || r.StartLine > len(lines) || !strings.HasPrefix(lines[r.StartLine-1], "<<<<<<<") {
+		t.Errorf("StartLine %d does not point at a <<<<<<< line", r.StartLine)
+	}
+	if r.EndLine < 1 || r.EndLine > len(lines) || !strings.HasPrefix(lines[r.EndLine-1], ">>>>>>>") {
+		t.Errorf("EndLine %d does not point at a >>>>>>> line", r.EndLine)
+	}
+}
+
+func TestService_MergeHeads_OursLabelIsBranch(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+
+	mh, err := NewService().MergeHeads(ctx(), dir)
+	if err != nil {
+		t.Fatalf("MergeHeads error = %v", err)
+	}
+	if mh.Ours.Label != "main" {
+		t.Errorf("Ours.Label = %q, want main (branch name)", mh.Ours.Label)
+	}
+	if mh.Theirs.Subject != "theirs" {
+		t.Errorf("Theirs.Subject = %q, want theirs", mh.Theirs.Subject)
+	}
+}
+
+func TestService_ConflictSnapshot_SymlinkIsError(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	// Point a tracked path at a file outside the repo via symlink.
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "link.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(symlink) error = nil, want refusal")
+	}
+}
+
+// makeConflictNamed builds a merge conflict on an arbitrarily named binary file.
+func makeConflictNamed(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, name, "b\x00ase\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, name, "t\x00heirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, name, "o\x00urs\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+	return dir
+}
+
+func TestService_ResolveConflictSide_LiteralPathspecName(t *testing.T) {
+	requireGit(t)
+	// "f[x].txt" contains pathspec metacharacters; without --literal-pathspecs
+	// git treats "[x]" as a character class and never matches this literal
+	// filename, so the resolve would silently no-op and leave it unmerged.
+	name := "f[x].txt"
+	dir := makeConflictNamed(t, name)
+
+	if err := NewService().ResolveConflictSide(ctx(), dir, name, "ours"); err != nil {
+		t.Fatalf("ResolveConflictSide(%q) error = %v", name, err)
+	}
+	if isUnmerged(t, dir, name) {
+		t.Errorf("%q still unmerged; pathspec metacharacters not treated literally", name)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, name))
+	if string(got) != "o\x00urs\n" {
+		t.Errorf("content = %q, want ours", got)
 	}
 }
