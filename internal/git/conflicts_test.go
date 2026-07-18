@@ -233,6 +233,50 @@ func TestService_ConflictSnapshot_Diff3CapturesBase(t *testing.T) {
 	}
 }
 
+func TestService_ConflictSnapshot_AddAddWithoutBase(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	gitCmd(t, dir, "commit", "--allow-empty", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", "theirs\n")
+	gitCmd(t, dir, "add", "f.txt")
+	gitCmd(t, dir, "commit", "-m", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours\n")
+	gitCmd(t, dir, "add", "f.txt")
+	gitCmd(t, dir, "commit", "-m", "ours")
+	mergeConflict(t, dir, "feature")
+
+	snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictSnapshot(add/add) error = %v", err)
+	}
+	if len(snap.Regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(snap.Regions))
+	}
+}
+
+func TestService_ConflictSnapshot_MarkerShapedContentOutsideRegionAllowed(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t,
+		"Title\n=======\nbase\n",
+		"Title\n=======\nours\n",
+		"Title\n=======\ntheirs\n",
+		false,
+	)
+
+	snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictSnapshot(marker content outside region) error = %v", err)
+	}
+	if len(snap.Regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(snap.Regions))
+	}
+}
+
 func TestService_ConflictSnapshot_ReportsLineEndings(t *testing.T) {
 	requireGit(t)
 	dir := makeConflict(t, "l1\r\nl2\r\n", "l1\r\nours\r\n", "l1\r\ntheirs\r\n", false)
@@ -458,6 +502,36 @@ func TestService_ConflictStages_BinaryFlag(t *testing.T) {
 	}
 	if !st.Binary {
 		t.Errorf("Binary = false, want true for binary conflict")
+	}
+}
+
+func TestService_ConflictStages_BinaryMergeAttribute(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, ".gitattributes", "f.txt -merge\n")
+	writeFile(t, dir, "f.txt", "base\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", "theirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	stages, err := NewService().ConflictStages(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictStages error = %v", err)
+	}
+	if !stages.Binary {
+		t.Error("Binary = false, want true for -merge attribute")
+	}
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(-merge) error = nil, want binary refusal")
 	}
 }
 

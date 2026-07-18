@@ -221,6 +221,7 @@ func (s *Service) FileAtRev(ctx context.Context, dir, rev, path string) (FileCon
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") ||
 			strings.Contains(err.Error(), "exists on disk, but not in") ||
+			strings.Contains(err.Error(), "but not at stage") ||
 			strings.Contains(err.Error(), "invalid object name 'HEAD'") {
 			return FileContent{}, nil
 		}

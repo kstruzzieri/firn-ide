@@ -72,6 +72,11 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	if fc.IsBinary {
 		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is binary", path)
 	}
+	if binary, err := s.binaryMergeAttribute(ctx, dir, path); err != nil {
+		return ConflictSnapshot{}, err
+	} else if binary {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: git attributes require binary merging", path)
+	}
 
 	regions, err := parseConflictRegions(fc.Content, s.conflictMarkerSize(ctx, dir, path))
 	if err != nil {
@@ -346,15 +351,36 @@ func (s *Service) ConflictStages(ctx context.Context, dir, path string) (Conflic
 		}
 	}
 
-	// Git merges a file as binary when ANY present stage is binary, so probe
-	// every present stage — a text-ours/binary-theirs conflict is still binary.
-	for _, blob := range []*StageBlob{result.Base, result.Ours, result.Theirs} {
-		if blob != nil && s.blobIsBinary(ctx, dir, blob) {
-			result.Binary = true
-			break
+	result.Binary, err = s.binaryMergeAttribute(ctx, dir, path)
+	if err != nil {
+		return ConflictStages{}, err
+	}
+	if !result.Binary {
+		// Git merges a file as binary when ANY present stage is binary, so probe
+		// every present stage — a text-ours/binary-theirs conflict is still binary.
+		for _, blob := range []*StageBlob{result.Base, result.Ours, result.Theirs} {
+			if blob != nil && s.blobIsBinary(ctx, dir, blob) {
+				result.Binary = true
+				break
+			}
 		}
 	}
 	return result, nil
+}
+
+// binaryMergeAttribute reports whether Git attributes select its binary merge
+// behavior. The `binary` macro expands to `-merge`; `merge=binary` names the
+// same built-in driver explicitly.
+func (s *Service) binaryMergeAttribute(ctx context.Context, dir, path string) (bool, error) {
+	out, err := s.runAtRoot(ctx, dir, literalPathspecs, "check-attr", "-z", "merge", "--", path)
+	if err != nil {
+		return false, err
+	}
+	fields := strings.Split(out, "\x00")
+	if len(fields) < 3 {
+		return false, fmt.Errorf("cannot read merge attribute for %s", path)
+	}
+	return fields[2] == "unset" || fields[2] == "binary", nil
 }
 
 // blobSize returns the byte size of a git object, or 0 when it cannot be read.
@@ -427,15 +453,11 @@ func (s *Service) conflictMarkerSize(ctx context.Context, dir, path string) int 
 	return defaultMarkerSize
 }
 
-// regionMarkersInStages reports whether any conflict-marker-shaped line the
-// parser consumed as structure within a region's span appears verbatim as a
-// line in one of the conflict's index stages (base/ours/theirs). Git's real
-// markers are added around the merge and never appear in the clean stage blobs,
-// so a match means a marker-shaped line inside the region is literal file
-// content — the parser mis-read content as structure (e.g. a literal ">>>>>>>"
-// in the theirs side truncating the region), and the parse cannot be trusted.
-// Only lines within region spans are checked, so a marker-shaped line elsewhere
-// in the file (a Markdown heading outside any conflict) does not force a refusal.
+// regionMarkersInStages reports whether a marker plus its immediate content
+// context appears in one of the conflict's index stages (base/ours/theirs).
+// Git's real markers are absent from the clean stage blobs, while a literal
+// marker and its neighbors remain together. Context avoids mistaking an
+// unrelated marker-shaped line elsewhere in a stage for region structure.
 func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content, encoding string, regions []ConflictRegion) (bool, error) {
 	// The worktree content is decoded (BOM stripped) while FileAtRev returns raw
 	// blob bytes. That only compares reliably for UTF-8; for a wide or legacy
@@ -463,10 +485,10 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 		}
 		return ""
 	}
-	// Collect every marker-shaped line within each region's span. The region's
-	// marker width is taken from its opening <<< run so nested-width regions are
-	// measured correctly.
-	markerLines := map[string]bool{}
+	// Collect each marker-shaped line with its immediate non-marker neighbors.
+	// The region's width comes from its opening <<< run so nested-width regions
+	// are measured correctly. Keys contain one to three complete lines.
+	markerContexts := map[string]bool{}
 	for _, r := range regions {
 		w := 0
 		opener := lineAt(r.StartLine)
@@ -476,14 +498,27 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 		if w == 0 {
 			continue
 		}
-		for n := r.StartLine; n <= r.EndLine; n++ {
-			line := lineAt(n)
+		isMarker := func(line string) bool {
 			for _, ch := range []byte{markerOurs, markerBase, markerSep, markerTheir} {
 				if _, _, ok := markerRun(line, ch, w, 0); ok {
-					markerLines[line] = true
-					break
+					return true
 				}
 			}
+			return false
+		}
+		for n := r.StartLine; n <= r.EndLine; n++ {
+			line := lineAt(n)
+			if !isMarker(line) {
+				continue
+			}
+			context := []string{line}
+			if n > 1 && !isMarker(lineAt(n-1)) {
+				context = append([]string{lineAt(n - 1)}, context...)
+			}
+			if n < len(lines) && !isMarker(lineAt(n+1)) {
+				context = append(context, lineAt(n+1))
+			}
+			markerContexts[strings.Join(context, "\n")] = true
 		}
 	}
 	// Git inserts a newline around the markers even when a side ends without one,
@@ -509,10 +544,15 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 		if eofAtRisk && !strings.HasSuffix(fc.Content, "\n") {
 			return false, fmt.Errorf("cannot resolve %s: conflict at end of file without a trailing newline", path)
 		}
-		blob := strings.TrimPrefix(fc.Content, utf8BOM)
-		for _, raw := range strings.Split(blob, "\n") {
-			if markerLines[strings.TrimSuffix(raw, "\r")] {
-				return true, nil
+		stageLines := strings.Split(strings.TrimPrefix(fc.Content, utf8BOM), "\n")
+		for i := range stageLines {
+			stageLines[i] = strings.TrimSuffix(stageLines[i], "\r")
+		}
+		for i := range stageLines {
+			for width := 1; width <= 3 && i+width <= len(stageLines); width++ {
+				if markerContexts[strings.Join(stageLines[i:i+width], "\n")] {
+					return true, nil
+				}
 			}
 		}
 	}
