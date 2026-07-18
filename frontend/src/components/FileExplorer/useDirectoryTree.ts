@@ -30,11 +30,16 @@ export function useDirectoryTree() {
 
     const cachedTree = getCachedWorkspaceTree(workspace.path);
     const hasCachedTree = Boolean(cachedTree?.length);
+    // A cached-empty tree is still known content: no skeleton across its
+    // refresh, but failures use the uncached error strategy (hasCachedTree).
+    const hasCachedEntry = cachedTree !== undefined;
 
-    if (!hasCachedTree) {
+    // setTreeError also clears isLoadingTree, so it must run before
+    // setTreeLoading(true) or the skeleton never survives the same batch.
+    setTreeError(null);
+    if (!hasCachedEntry) {
       setTreeLoading(true);
     }
-    setTreeError(null);
 
     try {
       const entries = await ReadDirectoryShallow(workspace.path, workspace.path);
@@ -55,7 +60,7 @@ export function useDirectoryTree() {
       if (
         requestIdRef.current === requestId &&
         useIDEStore.getState().workspace === workspace &&
-        !hasCachedTree
+        !hasCachedEntry
       ) {
         setTreeLoading(false);
       }
