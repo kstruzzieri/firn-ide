@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"firn/internal/filesystem"
@@ -40,9 +41,17 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	}
 	abs := filepath.Join(root, filepath.FromSlash(path))
 
-	// Lstat before reading: reject a symlink (ReadFileWithMetadata would follow
-	// it out of the repository) and enforce the size cap on the raw file before
-	// decoding a huge file into memory.
+	// Containment: the fully symlink-resolved path must stay under the
+	// symlink-resolved repo root, so a crafted path through an in-repo
+	// directory symlink (which git never emits but a tampered binding could
+	// send) cannot read outside the repository.
+	if err := verifyUnderRoot(root, abs); err != nil {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: %w", path, err)
+	}
+	// Lstat before reading: reject a final-component symlink (ReadFileWithMetadata
+	// would follow it) and enforce the size cap on the raw file before decoding
+	// a huge file into memory. A small TOCTOU window remains before the read;
+	// acceptable for a single-user local IDE reading its own working tree.
 	info, err := os.Lstat(abs)
 	if err != nil {
 		return ConflictSnapshot{}, err
@@ -63,7 +72,7 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is binary", path)
 	}
 
-	regions, err := parseConflictRegions(fc.Content)
+	regions, err := parseConflictRegions(fc.Content, s.conflictMarkerSize(ctx, dir, path))
 	if err != nil {
 		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: %w", path, err)
 	}
@@ -109,7 +118,12 @@ func (s *Service) MergeHeads(ctx context.Context, dir string) (MergeHeads, error
 	// else REBASE_HEAD for a normal pick step.
 	case s.gitPathExists(ctx, dir, "rebase-merge"), s.gitPathExists(ctx, dir, "rebase-apply"):
 		operation = "rebase"
-		if s.refExists(ctx, dir, "MERGE_HEAD") {
+		// An inner merge step of `rebase --rebase-merges` writes MERGE_HEAD;
+		// otherwise the pick step's incoming commit is REBASE_HEAD. Detect the
+		// former via its state file (not a DWIM ref) so a branch literally
+		// named MERGE_HEAD cannot shadow it. If the apply backend leaves no
+		// REBASE_HEAD, describeHead errors and the caller falls back safely.
+		if s.gitPathExists(ctx, dir, "MERGE_HEAD") {
 			incomingRef = "MERGE_HEAD"
 		} else {
 			incomingRef = "REBASE_HEAD"
@@ -139,21 +153,13 @@ func (s *Service) MergeHeads(ctx context.Context, dir string) (MergeHeads, error
 	return MergeHeads{Operation: operation, Ours: ours, Theirs: theirs}, nil
 }
 
-// refExists reports whether a ref resolves to a commit. Used only for
-// REBASE_HEAD (a genuine ref); operation heads are detected via gitPathExists
-// so a branch that happens to be named MERGE_HEAD cannot be DWIM-resolved into
-// a false "merge in progress".
-func (s *Service) refExists(ctx context.Context, dir, ref string) bool {
-	_, err := s.run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
-	return err == nil
-}
-
 // gitPathExists reports whether a file or directory exists under the git dir
-// (e.g. "MERGE_HEAD", "rebase-merge"). It asks git for the path so linked
-// worktrees resolve correctly, then stats it. This checks the operation-state
-// file directly rather than resolving a ref name, which cannot be shadowed.
+// (e.g. "MERGE_HEAD", "rebase-merge"). It asks git for the absolute path so
+// linked worktrees resolve correctly and a symlinked dir cannot mislead a
+// lexical join, then stats it. This checks the operation-state file directly
+// rather than resolving a ref name, which cannot be shadowed by a branch.
 func (s *Service) gitPathExists(ctx context.Context, dir, name string) bool {
-	out, err := s.run(ctx, dir, "rev-parse", "--git-path", name)
+	out, err := s.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-path", name)
 	if err != nil {
 		return false
 	}
@@ -161,11 +167,28 @@ func (s *Service) gitPathExists(ctx context.Context, dir, name string) bool {
 	if p == "" {
 		return false
 	}
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(dir, p)
-	}
 	_, statErr := os.Stat(p)
 	return statErr == nil
+}
+
+// verifyUnderRoot fails unless abs, with all symlinks resolved, stays within
+// the symlink-resolved repository root. Both sides are resolved so platform
+// symlinks in the root path itself (e.g. macOS /var -> /private/var) do not
+// cause a false escape.
+func verifyUnderRoot(root, abs string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	realAbs, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(realRoot, realAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes the repository")
+	}
+	return nil
 }
 
 // describeHead resolves a ref to short hash + subject, seeding Label with the
@@ -279,9 +302,12 @@ func (s *Service) ConflictStages(ctx context.Context, dir, path string) (Conflic
 		if rec == "" {
 			continue
 		}
-		// Record: "<mode> <object> <stage>\t<path>".
-		meta, _, ok := strings.Cut(rec, "\t")
-		if !ok {
+		// Record: "<mode> <object> <stage>\t<path>". Accept only records for
+		// the exact requested path — a directory-like pathspec (e.g. ".") would
+		// otherwise aggregate descendants' stages into one result and let
+		// ResolveConflictSide act on the wrong files.
+		meta, name, ok := strings.Cut(rec, "\t")
+		if !ok || name != path {
 			continue
 		}
 		fields := strings.Fields(meta)
@@ -338,6 +364,25 @@ func (s *Service) blobIsBinary(ctx context.Context, dir string, blob *StageBlob)
 	return isBinary(out)
 }
 
+// conflictMarkerSize returns the effective conflict-marker-size for a path
+// (git's gitattributes-controlled marker width), defaulting to 7 when unset or
+// unparseable. `git check-attr -z` emits "<path>\0conflict-marker-size\0<value>\0";
+// value is a positive integer when set, else "unspecified"/"set"/"unset".
+func (s *Service) conflictMarkerSize(ctx context.Context, dir, path string) int {
+	out, err := s.runAtRoot(ctx, dir, literalPathspecs, "check-attr", "-z", "conflict-marker-size", "--", path)
+	if err != nil {
+		return defaultMarkerSize
+	}
+	fields := strings.Split(out, "\x00")
+	if len(fields) < 3 {
+		return defaultMarkerSize
+	}
+	if n, convErr := strconv.Atoi(fields[2]); convErr == nil && n > 0 {
+		return n
+	}
+	return defaultMarkerSize
+}
+
 // repoRoot returns the repository top-level for dir. Unlike runAtRoot (which
 // silently falls back to dir), this surfaces the error, because a path that
 // cannot be resolved to a repo root must fail the operation rather than read a
@@ -370,31 +415,32 @@ type ConflictRegion struct {
 }
 
 // Conflict marker characters. Git begins each marker line with a run of the
-// same character; the run is at least conflictMarkerMinSize long (git's
-// conflict-marker-size attribute can widen it per path but never below the
-// default 7), optionally followed by a space and a label.
+// same character exactly conflict-marker-size long, optionally followed by a
+// space and a label.
 const (
 	markerOurs  = '<'
 	markerBase  = '|'
 	markerSep   = '='
 	markerTheir = '>'
-	// conflictMarkerMinSize is git's minimum (and default) marker width.
-	conflictMarkerMinSize = 7
+	// defaultMarkerSize is git's default marker width when the
+	// conflict-marker-size attribute is unset.
+	defaultMarkerSize = 7
 )
 
 // markerLabel reports whether line is a conflict marker whose run consists of
-// the character ch (at least conflictMarkerMinSize of them), and returns the
-// label after it (empty when the marker stands alone). Matching a run rather
-// than a fixed 7 characters honors git's configurable conflict-marker-size, so
-// a file that widened its markers still parses. Ordinary content that merely
-// starts with the character is not a marker unless the run reaches the minimum
-// width and is followed by end-of-line or a single space.
-func markerLabel(line string, ch byte) (label string, ok bool) {
+// EXACTLY size copies of the character ch, and returns the label after it
+// (empty when the marker stands alone). Matching the exact configured width
+// (not a fixed 7, and not "7 or more") is faithful to git's per-path
+// conflict-marker-size: a repo that narrowed or widened its markers parses
+// correctly, and a content line that happens to be a longer divider of the same
+// character is not mistaken for a marker. A marker is only recognized when the
+// run is followed by end-of-line or a single space.
+func markerLabel(line string, ch byte, size int) (label string, ok bool) {
 	n := 0
 	for n < len(line) && line[n] == ch {
 		n++
 	}
-	if n < conflictMarkerMinSize {
+	if n != size {
 		return "", false
 	}
 	rest := line[n:]
@@ -412,7 +458,10 @@ func markerLabel(line string, ch byte) (label string, ok bool) {
 // Malformed markers (a nested <<<<<<<, a stray =======, an unterminated block,
 // or a >>>>>>> with no open conflict) return an error: the caller falls back to
 // a plain editor rather than presenting a resolution surface it cannot trust.
-func parseConflictRegions(content string) ([]ConflictRegion, error) {
+func parseConflictRegions(content string, markerSize int) ([]ConflictRegion, error) {
+	if markerSize < 1 {
+		markerSize = defaultMarkerSize
+	}
 	regions := []ConflictRegion{}
 	lines := strings.Split(content, "\n")
 
@@ -445,30 +494,30 @@ func parseConflictRegions(content string) ([]ConflictRegion, error) {
 		// the resolved file is written, so dropping \r here is lossless.
 		line := strings.TrimSuffix(raw, "\r")
 
-		if label, ok := markerLabel(line, markerOurs); ok {
+		if label, ok := markerLabel(line, markerOurs, markerSize); ok {
 			if section != outside {
-				return nil, fmt.Errorf("nested conflict marker %q at line %d", markerOurs, lineNo)
+				return nil, fmt.Errorf("nested conflict marker at line %d", lineNo)
 			}
 			cur = newRegion(lineNo, label)
 			section = inOurs
 			continue
 		}
-		if _, ok := markerLabel(line, markerBase); ok {
+		if _, ok := markerLabel(line, markerBase, markerSize); ok {
 			if section != inOurs {
-				return nil, fmt.Errorf("unexpected %q at line %d", markerBase, lineNo)
+				return nil, fmt.Errorf("unexpected base marker at line %d", lineNo)
 			}
 			cur.HasBase = true
 			section = inBase
 			continue
 		}
-		if _, ok := markerLabel(line, markerSep); ok {
+		if _, ok := markerLabel(line, markerSep, markerSize); ok {
 			if section != inOurs && section != inBase {
-				return nil, fmt.Errorf("unexpected %q at line %d", markerSep, lineNo)
+				return nil, fmt.Errorf("unexpected separator at line %d", lineNo)
 			}
 			section = inTheirs
 			continue
 		}
-		if label, ok := markerLabel(line, markerTheir); ok {
+		if label, ok := markerLabel(line, markerTheir, markerSize); ok {
 			if section != inTheirs {
 				return nil, fmt.Errorf("unexpected %q at line %d", markerTheir, lineNo)
 			}

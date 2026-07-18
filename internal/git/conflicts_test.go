@@ -23,7 +23,7 @@ func TestParseConflictRegions_TwoWayMergeStyle(t *testing.T) {
 		">>>>>>> feature\n" +
 		"line after\n"
 
-	regions, err := parseConflictRegions(content)
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
 	if err != nil {
 		t.Fatalf("parseConflictRegions error = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestParseConflictRegions_Diff3StyleHasBase(t *testing.T) {
 		"theirs\n" +
 		">>>>>>> other\n"
 
-	regions, err := parseConflictRegions(content)
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
 	if err != nil {
 		t.Fatalf("parseConflictRegions error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestParseConflictRegions_MultipleRegionsIndexed(t *testing.T) {
 		"t2\n" +
 		">>>>>>> b\n"
 
-	regions, err := parseConflictRegions(content)
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
 	if err != nil {
 		t.Fatalf("parseConflictRegions error = %v", err)
 	}
@@ -111,7 +111,7 @@ func TestParseConflictRegions_EmptySideKeepsEmptySlice(t *testing.T) {
 		"=======\n" +
 		">>>>>>> b\n"
 
-	regions, err := parseConflictRegions(content)
+	regions, err := parseConflictRegions(content, defaultMarkerSize)
 	if err != nil {
 		t.Fatalf("parseConflictRegions error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestParseConflictRegions_EmptySideKeepsEmptySlice(t *testing.T) {
 }
 
 func TestParseConflictRegions_NoMarkersReturnsEmpty(t *testing.T) {
-	regions, err := parseConflictRegions("just\nplain\ntext\n")
+	regions, err := parseConflictRegions("just\nplain\ntext\n", defaultMarkerSize)
 	if err != nil {
 		t.Fatalf("parseConflictRegions error = %v", err)
 	}
@@ -132,14 +132,14 @@ func TestParseConflictRegions_NoMarkersReturnsEmpty(t *testing.T) {
 
 func TestParseConflictRegions_UnterminatedIsError(t *testing.T) {
 	content := "<<<<<<< HEAD\nours\n=======\ntheirs\n" // no >>>>>>>
-	if _, err := parseConflictRegions(content); err == nil {
+	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
 		t.Fatal("parseConflictRegions(unterminated) error = nil, want error")
 	}
 }
 
 func TestParseConflictRegions_NestedStartIsError(t *testing.T) {
 	content := "<<<<<<< HEAD\nours\n<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> b\n"
-	if _, err := parseConflictRegions(content); err == nil {
+	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
 		t.Fatal("parseConflictRegions(nested) error = nil, want error")
 	}
 }
@@ -147,7 +147,7 @@ func TestParseConflictRegions_NestedStartIsError(t *testing.T) {
 func TestParseConflictRegions_SeparatorOutsideConflictIsError(t *testing.T) {
 	// A ======= with no preceding <<<<<<< is a stray marker, not a conflict.
 	content := "plain\n=======\nmore\n"
-	if _, err := parseConflictRegions(content); err == nil {
+	if _, err := parseConflictRegions(content, defaultMarkerSize); err == nil {
 		t.Fatal("parseConflictRegions(stray separator) error = nil, want error")
 	}
 }
@@ -583,21 +583,26 @@ func TestService_ResolveConflictSide_InvalidSideIsError(t *testing.T) {
 	}
 }
 
-func TestParseConflictRegions_LongerMarkerSize(t *testing.T) {
-	// git's conflict-marker-size attribute can widen markers past 7 chars
-	// (minimum 7). A valid conflict with 8-char markers must still parse.
+func TestParseConflictRegions_ExactMarkerSize(t *testing.T) {
+	// A conflict written with an 8-char conflict-marker-size parses when the
+	// exact width is supplied, and a content line that is a longer divider of
+	// the same character is NOT mistaken for a marker.
 	content := "" +
 		"<<<<<<<< HEAD\n" +
 		"ours\n" +
+		"================ (a real divider in ours)\n" +
 		"========\n" +
 		"theirs\n" +
 		">>>>>>>> feature\n"
-	regions, err := parseConflictRegions(content)
+	regions, err := parseConflictRegions(content, 8)
 	if err != nil {
-		t.Fatalf("parseConflictRegions(8-char markers) error = %v", err)
+		t.Fatalf("parseConflictRegions(size 8) error = %v", err)
 	}
 	if len(regions) != 1 {
 		t.Fatalf("regions = %d, want 1", len(regions))
+	}
+	if !reflect.DeepEqual(regions[0].Ours, []string{"ours", "================ (a real divider in ours)"}) {
+		t.Errorf("Ours = %v, want the divider kept as content", regions[0].Ours)
 	}
 	if regions[0].OursLabel != "HEAD" || regions[0].TheirLabel != "feature" {
 		t.Errorf("labels = %q / %q", regions[0].OursLabel, regions[0].TheirLabel)
@@ -752,5 +757,110 @@ func TestService_ResolveConflictSide_LiteralPathspecName(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(dir, name))
 	if string(got) != "o\x00urs\n" {
 		t.Errorf("content = %q, want ours", got)
+	}
+}
+
+// ── review round 2: directory pathspec + ancestor symlink containment ──
+
+func TestService_ConflictStages_DirectoryPathIsAllNil(t *testing.T) {
+	requireGit(t)
+	// Real conflict in a subdir; querying a DIRECTORY ("sub" or ".") must not
+	// aggregate the child's stages — otherwise ResolveConflictSide could act on
+	// a directory pathspec and touch unrelated files.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, "sub/f.txt", "base\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "sub/f.txt", "theirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "sub/f.txt", "ours\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	st, err := NewService().ConflictStages(ctx(), dir, "sub")
+	if err != nil {
+		t.Fatalf("ConflictStages(dir) error = %v", err)
+	}
+	if st.Base != nil || st.Ours != nil || st.Theirs != nil {
+		t.Errorf("stages = %+v, want all nil for a directory path", st)
+	}
+}
+
+func TestService_ResolveConflictSide_DirectoryPathRefused(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, "sub/f.txt", "base\n")
+	writeFile(t, dir, "bystander.txt", "keep me\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "sub/f.txt", "theirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "sub/f.txt", "ours\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	if err := NewService().ResolveConflictSide(ctx(), dir, ".", "ours"); err == nil {
+		t.Fatal("ResolveConflictSide(directory) error = nil, want refusal")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bystander.txt")); err != nil {
+		t.Errorf("bystander.txt must survive a directory-path resolve: %v", err)
+	}
+}
+
+func TestService_ConflictSnapshot_AncestorSymlinkEscapeIsError(t *testing.T) {
+	requireGit(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := initRepo(t)
+	// An in-repo directory symlink pointing outside; a path through it would
+	// escape the repository if only the final component is checked.
+	if err := os.Symlink(outside, filepath.Join(dir, "out")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "out/secret.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(ancestor symlink escape) error = nil, want refusal")
+	}
+}
+
+func TestService_ConflictSnapshot_HonorsConflictMarkerSizeAttr(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	// Widen markers for f.txt to 9 chars via gitattributes.
+	writeFile(t, dir, ".gitattributes", "f.txt conflict-marker-size=9\n")
+	writeFile(t, dir, "f.txt", "base\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", "theirs\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictSnapshot error = %v", err)
+	}
+	if len(snap.Regions) != 1 {
+		t.Fatalf("regions = %d, want 1 (must detect 9-char markers from gitattributes)", len(snap.Regions))
+	}
+	if !strings.Contains(snap.Content, "<<<<<<<<<") {
+		t.Errorf("expected 9-char markers in content:\n%s", snap.Content)
 	}
 }
