@@ -1,0 +1,415 @@
+package git
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"firn/internal/filesystem"
+)
+
+// ConflictSnapshot is the single, atomic read of a conflicted working-tree
+// file: the exact bytes the frontend displays plus the regions parsed from
+// those same bytes. Parsing regions from the same read the UI renders closes
+// the window where an external write between two reads would leave region
+// coordinates pointing at different content. Encoding/LineEndings mirror
+// filesystem.FileContent so the frontend can persist the resolved file without
+// a lossy round-trip.
+type ConflictSnapshot struct {
+	Content     string           `json:"content"`
+	Encoding    string           `json:"encoding"`
+	LineEndings string           `json:"lineEndings"`
+	Regions     []ConflictRegion `json:"regions"`
+}
+
+// ConflictSnapshot reads the conflicted file at a repo-root-relative path once
+// and parses its conflict regions. dir may be a nested workspace inside the
+// repo, so the path is resolved against the repository top-level (porcelain
+// paths are always repo-root-relative). Binary files and files past the
+// diffable size cap are refused with an error — the resolution surface only
+// handles text, and the caller falls back to the plain conflict playbook.
+func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (ConflictSnapshot, error) {
+	if err := validateRepoRelPaths([]string{path}); err != nil {
+		return ConflictSnapshot{}, err
+	}
+	root, err := s.repoRoot(ctx, dir)
+	if err != nil {
+		return ConflictSnapshot{}, err
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
+
+	reader := filesystem.NewFileReader(filesystem.NewOS())
+	fc, err := reader.ReadFileWithMetadata(abs)
+	if err != nil {
+		return ConflictSnapshot{}, err
+	}
+	if fc.IsBinary {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is binary", path)
+	}
+	if fc.Size > maxDiffableBytes {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is too large (%d bytes)", path, fc.Size)
+	}
+
+	regions, err := parseConflictRegions(fc.Content)
+	if err != nil {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: %w", path, err)
+	}
+	return ConflictSnapshot{
+		Content:     fc.Content,
+		Encoding:    fc.Encoding,
+		LineEndings: fc.LineEndings,
+		Regions:     regions,
+	}, nil
+}
+
+// MergeHead describes one side of an in-progress conflict for the card header.
+// Label is a branch name when resolvable, else the short hash; Hash/Subject
+// come from the commit that side points at.
+type MergeHead struct {
+	Label   string `json:"label"`
+	Hash    string `json:"hash"`
+	Subject string `json:"subject"`
+}
+
+// MergeHeads names both sides of the conflict the user is resolving, plus the
+// operation (merge, rebase, or cherry-pick) so the UI can phrase "incoming"
+// correctly. It reads HEAD (ours) and the operation's incoming ref (theirs).
+type MergeHeads struct {
+	Operation string    `json:"operation"`
+	Ours      MergeHead `json:"ours"`
+	Theirs    MergeHead `json:"theirs"`
+}
+
+// MergeHeads returns the two sides of the in-progress conflict. The incoming
+// ref is chosen by which operation is underway: MERGE_HEAD for a merge,
+// CHERRY_PICK_HEAD for a cherry-pick, REBASE_HEAD for a rebase. When no
+// conflicting operation is in progress it returns an error rather than
+// inventing a side — porcelain reports "(detached)" mid-rebase, so ours is
+// always taken from HEAD directly, never from the branch name.
+func (s *Service) MergeHeads(ctx context.Context, dir string) (MergeHeads, error) {
+	operation, incomingRef := "", ""
+	switch {
+	case s.refExists(ctx, dir, "MERGE_HEAD"):
+		operation, incomingRef = "merge", "MERGE_HEAD"
+	case s.refExists(ctx, dir, "CHERRY_PICK_HEAD"):
+		operation, incomingRef = "cherry-pick", "CHERRY_PICK_HEAD"
+	case s.refExists(ctx, dir, "REBASE_HEAD"):
+		operation, incomingRef = "rebase", "REBASE_HEAD"
+	default:
+		return MergeHeads{}, fmt.Errorf("no merge, rebase, or cherry-pick in progress")
+	}
+
+	ours, err := s.describeHead(ctx, dir, "HEAD")
+	if err != nil {
+		return MergeHeads{}, err
+	}
+	// Prefer the current branch name for ours; empty (detached) keeps the hash.
+	if branch, err := s.run(ctx, dir, "symbolic-ref", "--short", "-q", "HEAD"); err == nil {
+		if name := strings.TrimSpace(branch); name != "" {
+			ours.Label = name
+		}
+	}
+	theirs, err := s.describeHead(ctx, dir, incomingRef)
+	if err != nil {
+		return MergeHeads{}, err
+	}
+	return MergeHeads{Operation: operation, Ours: ours, Theirs: theirs}, nil
+}
+
+// refExists reports whether a ref resolves (used to detect which operation is
+// underway from its head ref).
+func (s *Service) refExists(ctx context.Context, dir, ref string) bool {
+	_, err := s.run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	return err == nil
+}
+
+// describeHead resolves a ref to short hash + subject, seeding Label with the
+// short hash (callers may override with a branch name).
+func (s *Service) describeHead(ctx context.Context, dir, ref string) (MergeHead, error) {
+	out, err := s.run(ctx, dir, "log", "-1", "--format=%h%x00%s", ref)
+	if err != nil {
+		return MergeHead{}, err
+	}
+	hash, subject, _ := strings.Cut(strings.TrimRight(out, "\n"), "\x00")
+	return MergeHead{Label: hash, Hash: hash, Subject: subject}, nil
+}
+
+// ResolveConflictSide finalizes a whole-file conflict (binary, or a
+// delete/modify where a marker-based resolution is impossible) by taking one
+// side. side is "ours" or "theirs". When the chosen side has content (its
+// index stage exists) that content is checked out and staged; when the chosen
+// side is a deletion (its stage is absent) the path is removed and the deletion
+// is staged. This is the only write the merge surface makes, and only at Write
+// and stage time — never on a click — so closing the surface leaves the working
+// tree untouched.
+func (s *Service) ResolveConflictSide(ctx context.Context, dir, path, side string) error {
+	if err := validateRepoRelPaths([]string{path}); err != nil {
+		return err
+	}
+	var checkoutFlag string
+	switch side {
+	case "ours":
+		checkoutFlag = "--ours"
+	case "theirs":
+		checkoutFlag = "--theirs"
+	default:
+		return fmt.Errorf("invalid conflict side %q (allowed: ours, theirs)", side)
+	}
+
+	stages, err := s.ConflictStages(ctx, dir, path)
+	if err != nil {
+		return err
+	}
+	chosen := stages.Ours
+	if side == "theirs" {
+		chosen = stages.Theirs
+	}
+
+	// Chosen side is a deletion: remove the path and stage the removal.
+	if chosen == nil {
+		_, err := s.runAtRoot(ctx, dir, "rm", "-f", "--", path)
+		return err
+	}
+	// Chosen side has content: write it to the working tree, then stage it,
+	// collapsing the conflict stages to a resolved entry.
+	if _, err := s.runAtRoot(ctx, dir, "checkout", checkoutFlag, "--", path); err != nil {
+		return err
+	}
+	_, err = s.runAtRoot(ctx, dir, "add", "--", path)
+	return err
+}
+
+// StageBlob is one conflict index entry (a stage-1/2/3 object). Size is the
+// blob byte size. A nil *StageBlob on ConflictStages means the stage is absent
+// — the explicit signal for a delete/modify conflict, never conflated with
+// empty content.
+type StageBlob struct {
+	Hash string `json:"hash"`
+	Size int64  `json:"size"`
+}
+
+// ConflictStages reports which index stages exist for a conflicted path, so the
+// frontend can tell a whole-file side conflict (binary, or delete/modify with a
+// stage absent) from a mergeable text conflict, and offer only the sides that
+// actually exist. Stage 1 is the merge base, 2 is ours (HEAD), 3 is theirs.
+type ConflictStages struct {
+	Path   string     `json:"path"`
+	Base   *StageBlob `json:"base"`
+	Ours   *StageBlob `json:"ours"`
+	Theirs *StageBlob `json:"theirs"`
+	Binary bool       `json:"binary"`
+}
+
+// ConflictStages runs `git ls-files -u` for a single path and records which of
+// the three conflict stages are present, along with a binary flag derived from
+// a representative present stage. An unconflicted path yields all-nil stages
+// and no error, letting the caller decide it is nothing to resolve.
+func (s *Service) ConflictStages(ctx context.Context, dir, path string) (ConflictStages, error) {
+	if err := validateRepoRelPaths([]string{path}); err != nil {
+		return ConflictStages{}, err
+	}
+	out, err := s.runAtRoot(ctx, dir, "ls-files", "-u", "-z", "--", path)
+	if err != nil {
+		return ConflictStages{}, err
+	}
+
+	result := ConflictStages{Path: path}
+	for _, rec := range strings.Split(out, "\x00") {
+		if rec == "" {
+			continue
+		}
+		// Record: "<mode> <object> <stage>\t<path>".
+		meta, _, ok := strings.Cut(rec, "\t")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(meta)
+		if len(fields) != 3 {
+			continue
+		}
+		blob := &StageBlob{Hash: fields[1], Size: s.blobSize(ctx, dir, fields[1])}
+		switch fields[2] {
+		case "1":
+			result.Base = blob
+		case "2":
+			result.Ours = blob
+		case "3":
+			result.Theirs = blob
+		}
+	}
+
+	// Binary is a property of the file, so probe one present stage — ours
+	// first, then theirs, then base.
+	for _, blob := range []*StageBlob{result.Ours, result.Theirs, result.Base} {
+		if blob != nil {
+			result.Binary = s.blobIsBinary(ctx, dir, blob.Hash)
+			break
+		}
+	}
+	return result, nil
+}
+
+// blobSize returns the byte size of a git object, or 0 when it cannot be read.
+func (s *Service) blobSize(ctx context.Context, dir, hash string) int64 {
+	out, err := s.runAtRoot(ctx, dir, "cat-file", "-s", hash)
+	if err != nil {
+		return 0
+	}
+	var n int64
+	if _, scanErr := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); scanErr != nil {
+		return 0
+	}
+	return n
+}
+
+// blobIsBinary probes a blob for a NUL byte using git's own heuristic.
+func (s *Service) blobIsBinary(ctx context.Context, dir, hash string) bool {
+	out, err := s.runAtRoot(ctx, dir, "cat-file", "blob", hash)
+	if err != nil {
+		return false
+	}
+	return isBinary(out)
+}
+
+// repoRoot returns the repository top-level for dir. Unlike runAtRoot (which
+// silently falls back to dir), this surfaces the error, because a path that
+// cannot be resolved to a repo root must fail the operation rather than read a
+// file relative to the wrong directory.
+func (s *Service) repoRoot(ctx context.Context, dir string) (string, error) {
+	out, err := s.run(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ConflictRegion is one <<<<<<< / ======= / >>>>>>> block in a conflicted
+// working-tree file. Line numbers are 1-based into the file the frontend
+// displays. Ours/Base/Theirs hold the region's lines without their trailing
+// newline (each entry is one line); they are always non-nil slices so a side
+// that resolves to nothing (a delete/modify within the block) is an empty
+// slice, never a JSON null. Base is populated only for diff3-style markers
+// (HasBase); the default merge style omits the ||||||| section.
+type ConflictRegion struct {
+	Index      int      `json:"index"`
+	StartLine  int      `json:"startLine"` // 1-based line of the <<<<<<< marker
+	EndLine    int      `json:"endLine"`   // 1-based line of the >>>>>>> marker
+	Ours       []string `json:"ours"`
+	Base       []string `json:"base"`
+	Theirs     []string `json:"theirs"`
+	HasBase    bool     `json:"hasBase"`
+	OursLabel  string   `json:"oursLabel"`  // text after <<<<<<< (e.g. "HEAD")
+	TheirLabel string   `json:"theirLabel"` // text after >>>>>>> (e.g. branch name)
+}
+
+// Conflict marker prefixes. Git always emits exactly seven marker characters,
+// optionally followed by a space and a label. A line is a marker only when it
+// is exactly the seven characters or the seven characters followed by a space,
+// so ordinary content that merely starts with "=" is never misread.
+const (
+	markerOurs  = "<<<<<<<"
+	markerBase  = "|||||||"
+	markerSep   = "======="
+	markerTheir = ">>>>>>>"
+)
+
+// markerLabel reports whether line is the given 7-char conflict marker and, if
+// so, returns the label after it (empty when the marker stands alone).
+func markerLabel(line, marker string) (label string, ok bool) {
+	if line == marker {
+		return "", true
+	}
+	if rest, found := strings.CutPrefix(line, marker+" "); found {
+		return rest, true
+	}
+	return "", false
+}
+
+// parseConflictRegions extracts conflict regions from decoded file text. It is
+// pure (no git, no disk) so the marker grammar is unit-testable in isolation.
+// Malformed markers (a nested <<<<<<<, a stray =======, an unterminated block,
+// or a >>>>>>> with no open conflict) return an error: the caller falls back to
+// a plain editor rather than presenting a resolution surface it cannot trust.
+func parseConflictRegions(content string) ([]ConflictRegion, error) {
+	regions := []ConflictRegion{}
+	lines := strings.Split(content, "\n")
+
+	// section tracks where inside a conflict block we are.
+	const (
+		outside = iota
+		inOurs
+		inBase
+		inTheirs
+	)
+	section := outside
+	var cur ConflictRegion
+
+	newRegion := func(lineNo int, label string) ConflictRegion {
+		return ConflictRegion{
+			Index:     len(regions),
+			StartLine: lineNo,
+			Ours:      []string{},
+			Base:      []string{},
+			Theirs:    []string{},
+			OursLabel: label,
+		}
+	}
+
+	for i, raw := range lines {
+		lineNo := i + 1
+		// CRLF files decode with a trailing \r on every line; strip it so
+		// markers match and side lines stay logical. The file's line ending is
+		// carried separately (ConflictSnapshot.LineEndings) and reapplied when
+		// the resolved file is written, so dropping \r here is lossless.
+		line := strings.TrimSuffix(raw, "\r")
+
+		if label, ok := markerLabel(line, markerOurs); ok {
+			if section != outside {
+				return nil, fmt.Errorf("nested conflict marker %q at line %d", markerOurs, lineNo)
+			}
+			cur = newRegion(lineNo, label)
+			section = inOurs
+			continue
+		}
+		if _, ok := markerLabel(line, markerBase); ok {
+			if section != inOurs {
+				return nil, fmt.Errorf("unexpected %q at line %d", markerBase, lineNo)
+			}
+			cur.HasBase = true
+			section = inBase
+			continue
+		}
+		if _, ok := markerLabel(line, markerSep); ok {
+			if section != inOurs && section != inBase {
+				return nil, fmt.Errorf("unexpected %q at line %d", markerSep, lineNo)
+			}
+			section = inTheirs
+			continue
+		}
+		if label, ok := markerLabel(line, markerTheir); ok {
+			if section != inTheirs {
+				return nil, fmt.Errorf("unexpected %q at line %d", markerTheir, lineNo)
+			}
+			cur.EndLine = lineNo
+			cur.TheirLabel = label
+			regions = append(regions, cur)
+			section = outside
+			continue
+		}
+
+		switch section {
+		case inOurs:
+			cur.Ours = append(cur.Ours, line)
+		case inBase:
+			cur.Base = append(cur.Base, line)
+		case inTheirs:
+			cur.Theirs = append(cur.Theirs, line)
+		}
+	}
+
+	if section != outside {
+		return nil, fmt.Errorf("unterminated conflict starting at line %d", cur.StartLine)
+	}
+	return regions, nil
+}

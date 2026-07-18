@@ -68,6 +68,122 @@ export namespace filesystem {
 
 export namespace git {
 
+	export class ConflictRegion {
+	    index: number;
+	    startLine: number;
+	    endLine: number;
+	    ours: string[];
+	    base: string[];
+	    theirs: string[];
+	    hasBase: boolean;
+	    oursLabel: string;
+	    theirLabel: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ConflictRegion(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.index = source["index"];
+	        this.startLine = source["startLine"];
+	        this.endLine = source["endLine"];
+	        this.ours = source["ours"];
+	        this.base = source["base"];
+	        this.theirs = source["theirs"];
+	        this.hasBase = source["hasBase"];
+	        this.oursLabel = source["oursLabel"];
+	        this.theirLabel = source["theirLabel"];
+	    }
+	}
+	export class ConflictSnapshot {
+	    content: string;
+	    encoding: string;
+	    lineEndings: string;
+	    regions: ConflictRegion[];
+
+	    static createFrom(source: any = {}) {
+	        return new ConflictSnapshot(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.content = source["content"];
+	        this.encoding = source["encoding"];
+	        this.lineEndings = source["lineEndings"];
+	        this.regions = this.convertValues(source["regions"], ConflictRegion);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StageBlob {
+	    hash: string;
+	    size: number;
+
+	    static createFrom(source: any = {}) {
+	        return new StageBlob(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hash = source["hash"];
+	        this.size = source["size"];
+	    }
+	}
+	export class ConflictStages {
+	    path: string;
+	    base?: StageBlob;
+	    ours?: StageBlob;
+	    theirs?: StageBlob;
+	    binary: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ConflictStages(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.base = this.convertValues(source["base"], StageBlob);
+	        this.ours = this.convertValues(source["ours"], StageBlob);
+	        this.theirs = this.convertValues(source["theirs"], StageBlob);
+	        this.binary = source["binary"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class FileChange {
 	    path: string;
 	    origPath?: string;
@@ -153,6 +269,56 @@ export namespace git {
 		}
 	}
 
+	export class MergeHead {
+	    label: string;
+	    hash: string;
+	    subject: string;
+
+	    static createFrom(source: any = {}) {
+	        return new MergeHead(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.hash = source["hash"];
+	        this.subject = source["subject"];
+	    }
+	}
+	export class MergeHeads {
+	    operation: string;
+	    ours: MergeHead;
+	    theirs: MergeHead;
+
+	    static createFrom(source: any = {}) {
+	        return new MergeHeads(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.operation = source["operation"];
+	        this.ours = this.convertValues(source["ours"], MergeHead);
+	        this.theirs = this.convertValues(source["theirs"], MergeHead);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RepoStatus {
 	    isRepo: boolean;
 	    repoRoot: string;

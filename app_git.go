@@ -134,6 +134,46 @@ func (a *App) GitApplyHunk(root, patch string, reverse bool) error {
 	return a.gitService.ApplyPatch(ctx, root, patch, reverse)
 }
 
+// GitConflictSnapshot returns a conflicted file's content, encoding, line
+// endings, and parsed conflict regions in one read, for the merge resolution
+// surface. Binary or too-large files, and malformed markers, return an error so
+// the frontend falls back to the plain conflict playbook.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitConflictSnapshot(root, path string) (git.ConflictSnapshot, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.ConflictSnapshot(ctx, root, path)
+}
+
+// GitMergeHeads returns the two sides (ours/theirs) and operation type of the
+// in-progress merge, rebase, or cherry-pick, for the resolution card headers.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitMergeHeads(root string) (git.MergeHeads, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.MergeHeads(ctx, root)
+}
+
+// GitConflictStages reports which index stages (base/ours/theirs) exist for a
+// conflicted path plus a binary flag, so the frontend can choose a text or
+// whole-file-side resolution UI.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitConflictStages(root, path string) (git.ConflictStages, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.ConflictStages(ctx, root, path)
+}
+
+// GitResolveConflictSide finalizes a whole-file conflict by taking one side
+// ("ours" or "theirs"): the side's content is checked out and staged, or the
+// path is removed and its deletion staged when that side is a deletion.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitResolveConflictSide(root, path, side string) error {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.ResolveConflictSide(ctx, root, path, side)
+}
+
 // GitCommitMessageAvailable reports whether AI commit-message generation is
 // usable (golem with one-shot support on PATH). The frontend hides the
 // generate button when false.

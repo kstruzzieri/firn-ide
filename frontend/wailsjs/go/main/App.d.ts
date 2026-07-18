@@ -46,6 +46,10 @@ export function GitCommit(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function GitCommitMessageAvailable():Promise<boolean>;
 
+export function GitConflictSnapshot(arg1:string,arg2:string):Promise<git.ConflictSnapshot>;
+
+export function GitConflictStages(arg1:string,arg2:string):Promise<git.ConflictStages>;
+
 export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<git.FileContent>;
 
 export function GitFileHunks(arg1:string,arg2:string,arg3:boolean):Promise<git.FileHunks>;
@@ -54,9 +58,13 @@ export function GitGenerateCommitMessage(arg1:string):Promise<string>;
 
 export function GitIntentToAdd(arg1:string,arg2:Array<string>):Promise<void>;
 
+export function GitMergeHeads(arg1:string):Promise<git.MergeHeads>;
+
 export function GitPull(arg1:string):Promise<string>;
 
 export function GitPush(arg1:string):Promise<string>;
+
+export function GitResolveConflictSide(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function GitStage(arg1:string,arg2:Array<string>):Promise<void>;
 
