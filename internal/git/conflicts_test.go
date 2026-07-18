@@ -1061,3 +1061,31 @@ func TestService_ConflictSnapshot_BOMLiteralMarkerStillRejected(t *testing.T) {
 		t.Fatal("ConflictSnapshot(BOM + literal markers) error = nil, want refusal")
 	}
 }
+
+func TestService_ConflictSnapshot_LiteralCloseInTheirsRejected(t *testing.T) {
+	requireGit(t)
+	// theirs content contains a literal closing-marker line (">>>>>>> literal",
+	// width 7). Git does not widen, so the parser would mis-consume it as the
+	// region close, truncating Theirs. That is silent data corruption if a side
+	// is accepted, so the snapshot must be refused.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	// The theirs side of the conflict itself contains a literal closing-marker
+	// line, so the parser mis-consumes it as the region close and truncates.
+	writeFile(t, dir, "f.txt", "common\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", "theirs-before\n>>>>>>> literal\ntheirs-after\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours-content\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(literal close in theirs) error = nil, want refusal")
+	}
+}

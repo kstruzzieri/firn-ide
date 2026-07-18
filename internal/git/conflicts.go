@@ -86,7 +86,7 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	// stage, refuse and fall back rather than surface a region that, if
 	// "resolved", would corrupt unchanged text.
 	if len(regions) > 0 {
-		spurious, err := s.regionOpenerInStages(ctx, dir, path, fc.Content, fc.Encoding, regions)
+		spurious, err := s.regionMarkersInStages(ctx, dir, path, fc.Content, fc.Encoding, regions)
 		if err != nil {
 			return ConflictSnapshot{}, err
 		}
@@ -404,12 +404,16 @@ func (s *Service) conflictMarkerSize(ctx context.Context, dir, path string) int 
 	return defaultMarkerSize
 }
 
-// regionOpenerInStages reports whether any parsed region's opening marker line
-// appears verbatim as a line in one of the conflict's index stages (base/ours/
-// theirs). Because git adds real conflict markers around the merge — they are
-// never part of the clean stage blobs — a match means that region's markers are
-// literal file content, so the marker-based parse cannot be trusted.
-func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content, encoding string, regions []ConflictRegion) (bool, error) {
+// regionMarkersInStages reports whether any conflict-marker-shaped line the
+// parser consumed as structure within a region's span appears verbatim as a
+// line in one of the conflict's index stages (base/ours/theirs). Git's real
+// markers are added around the merge and never appear in the clean stage blobs,
+// so a match means a marker-shaped line inside the region is literal file
+// content — the parser mis-read content as structure (e.g. a literal ">>>>>>>"
+// in the theirs side truncating the region), and the parse cannot be trusted.
+// Only lines within region spans are checked, so a marker-shaped line elsewhere
+// in the file (a Markdown heading outside any conflict) does not force a refusal.
+func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content, encoding string, regions []ConflictRegion) (bool, error) {
 	// The worktree content is decoded (BOM stripped) while FileAtRev returns raw
 	// blob bytes. That only compares reliably for UTF-8; for a wide or legacy
 	// encoding the bytes differ and a spurious region could slip through, so
@@ -421,13 +425,36 @@ func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content, 
 	}
 
 	lines := strings.Split(content, "\n")
-	openers := make(map[string]bool, len(regions))
+	lineAt := func(n int) string { // 1-based; "" if out of range
+		if n >= 1 && n <= len(lines) {
+			return strings.TrimSuffix(lines[n-1], "\r")
+		}
+		return ""
+	}
+	// Collect every marker-shaped line within each region's span. The region's
+	// marker width is taken from its opening <<< run so nested-width regions are
+	// measured correctly.
+	markerLines := map[string]bool{}
 	for _, r := range regions {
-		if idx := r.StartLine - 1; idx >= 0 && idx < len(lines) {
-			openers[strings.TrimSuffix(lines[idx], "\r")] = true
+		w := 0
+		opener := lineAt(r.StartLine)
+		for w < len(opener) && opener[w] == markerOurs {
+			w++
+		}
+		if w == 0 {
+			continue
+		}
+		for n := r.StartLine; n <= r.EndLine; n++ {
+			line := lineAt(n)
+			for _, ch := range []byte{markerOurs, markerBase, markerSep, markerTheir} {
+				if _, _, ok := markerRun(line, ch, w, 0); ok {
+					markerLines[line] = true
+					break
+				}
+			}
 		}
 	}
-	if len(openers) == 0 {
+	if len(markerLines) == 0 {
 		return false, nil
 	}
 	const utf8BOM = "\xef\xbb\xbf"
@@ -446,7 +473,7 @@ func (s *Service) regionOpenerInStages(ctx context.Context, dir, path, content, 
 		}
 		blob := strings.TrimPrefix(fc.Content, utf8BOM)
 		for _, raw := range strings.Split(blob, "\n") {
-			if openers[strings.TrimSuffix(raw, "\r")] {
+			if markerLines[strings.TrimSuffix(raw, "\r")] {
 				return true, nil
 			}
 		}
