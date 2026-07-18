@@ -385,6 +385,29 @@ func (s *Service) blobIsBinary(ctx context.Context, dir string, blob *StageBlob)
 	return isBinary(out)
 }
 
+// contentTransformActive reports whether a checkout-time content transform is
+// configured for a path — a smudge/clean `filter`, `ident` keyword expansion,
+// or a `working-tree-encoding` — any of which makes the working-tree bytes
+// diverge from the raw index blob. `git check-attr -z` emits a
+// "<path>\0<attr>\0<value>\0" triple per attribute; a value other than
+// "unspecified"/"unset" means the transform is active.
+func (s *Service) contentTransformActive(ctx context.Context, dir, path string) (bool, error) {
+	out, err := s.runAtRoot(ctx, dir, literalPathspecs, "check-attr", "-z",
+		"filter", "ident", "working-tree-encoding", "--", path)
+	if err != nil {
+		return false, err
+	}
+	fields := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(fields); i += 3 {
+		switch fields[i+2] {
+		case "", "unspecified", "unset":
+		default:
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // conflictMarkerSize returns the effective conflict-marker-size for a path
 // (git's gitattributes-controlled marker width), defaulting to 7 when unset or
 // unparseable. `git check-attr -z` emits "<path>\0conflict-marker-size\0<value>\0";
@@ -422,6 +445,15 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 	case "utf-8", "utf-8-bom":
 	default:
 		return false, fmt.Errorf("cannot resolve %s: %s encoding cannot be verified against conflict markers", path, encoding)
+	}
+	// A checkout-time content transform (an ident keyword, a smudge filter, or a
+	// working-tree-encoding) makes the worktree bytes differ from the raw stage
+	// blobs, so the marker comparison below would silently miss a literal marker.
+	// Fail closed rather than enumerate every transform.
+	if active, err := s.contentTransformActive(ctx, dir, path); err != nil {
+		return false, err
+	} else if active {
+		return false, fmt.Errorf("cannot resolve %s: a git content filter is active and cannot be verified against conflict markers", path)
 	}
 
 	lines := strings.Split(content, "\n")

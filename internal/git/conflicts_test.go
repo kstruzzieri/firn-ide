@@ -1089,3 +1089,30 @@ func TestService_ConflictSnapshot_LiteralCloseInTheirsRejected(t *testing.T) {
 		t.Fatal("ConflictSnapshot(literal close in theirs) error = nil, want refusal")
 	}
 }
+
+func TestService_ConflictSnapshot_ContentFilterFailsClosed(t *testing.T) {
+	requireGit(t)
+	// With an `ident` attribute (or any smudge filter) git transforms content on
+	// checkout, so the worktree no longer equals the raw stage blob and the
+	// literal-marker verification cannot be trusted. Such a file must fail closed
+	// (refuse) rather than risk a silently truncated region.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, ".gitattributes", "f.txt ident\n")
+	writeFile(t, dir, "f.txt", "base $Id$\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", "theirs $Id$\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours $Id$\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+
+	if _, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictSnapshot(ident filter active) error = nil, want fail-closed refusal")
+	}
+}
