@@ -94,6 +94,12 @@ export function CommandPalette({
       className={styles.dialog}
       aria-label="Command palette"
       aria-modal="true"
+      onCancel={(event) => {
+        // Native close requests (e.g. platform Escape handling) must route
+        // through closePalette, or the open prop desyncs from the dialog.
+        event.preventDefault();
+        closePalette();
+      }}
       onKeyDown={(event) => {
         event.stopPropagation();
 

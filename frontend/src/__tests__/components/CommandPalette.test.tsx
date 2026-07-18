@@ -231,6 +231,17 @@ test('Escape closes once without executing a command', async () => {
   expect(dialog).not.toHaveAttribute('open');
 });
 
+test('a native cancel close request closes once and keeps state in sync', () => {
+  const { onClose } = renderPalette();
+  const dialog = screen.getByRole('dialog');
+
+  const prevented = !fireEvent(dialog, new Event('cancel', { cancelable: true }));
+
+  expect(prevented).toBe(true);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(dialog).not.toHaveAttribute('open');
+});
+
 test('stops every dialog keydown before window and prevents default only for handled keys', () => {
   const onWindowKeyDown = jest.fn();
   window.addEventListener('keydown', onWindowKeyDown);
