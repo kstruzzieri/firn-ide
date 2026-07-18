@@ -5,6 +5,7 @@ import { useWorkspace, useRecentWorkspaces } from '../../stores/ideStore';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { openWorkspaceByPath } from '../../utils/workspace';
 import { formatShortcut, isMac } from '../../utils/platform';
+import { showSidebarView } from '../../utils/commands';
 import firnIcon from '../../assets/branding/icon.svg';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { RunProfileSelector } from './RunProfileSelector';
@@ -205,6 +206,7 @@ export function Header() {
         type="button"
         className={`${styles.headerBtn} ${styles.searchBtn}`}
         aria-label="Search everywhere"
+        onClick={() => showSidebarView('search')}
       >
         <SearchIcon aria-hidden="true" />
         <span>Search Everywhere</span>

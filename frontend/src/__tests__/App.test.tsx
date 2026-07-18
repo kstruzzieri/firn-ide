@@ -5,7 +5,7 @@
  * TDD: Written first to define expected behavior.
  */
 
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
@@ -145,6 +145,25 @@ describe('App Component', () => {
       render(<App />);
     });
     expect(screen.getByLabelText('Search query')).toBeInTheDocument();
+  });
+
+  it('opens workspace search from the header and accepts a query', async () => {
+    useIDEStore.setState({
+      workspace: { name: 'workspace', path: '/test/workspace' },
+      activeSidebarView: 'explorer',
+      isLeftPanelCollapsed: true,
+    });
+    await act(async () => {
+      render(<App />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search everywhere' }));
+
+    const input = screen.getByRole('textbox', { name: 'Search query' });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: 'needle' } });
+    expect(input).toHaveValue('needle');
+    expect(useSearchStore.getState().query).toBe('needle');
   });
 
   it.each(['created', 'deleted', 'renamed'] as const)(
