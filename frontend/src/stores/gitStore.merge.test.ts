@@ -743,6 +743,127 @@ describe('mergeFinalizeAndStage', () => {
   });
 });
 
+describe('review round 2 hardening', () => {
+  const RESOLVED = 'resolved line\n';
+
+  async function openTextSession(queue = ['file.txt']) {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', queue);
+    expect(ok).toBe(true);
+  }
+
+  beforeEach(() => {
+    mockGitStage.mockResolvedValue(undefined);
+    mockResolveSide.mockResolvedValue(undefined);
+  });
+
+  it('keeps the tab and warns when an edit lands during a sides apply', async () => {
+    useIDEStore.setState({ openFiles: [openFile({ isModified: false })] });
+    mockStages.mockResolvedValue(allStages({ binary: true }));
+    mockHeads.mockResolvedValue(heads());
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    useGitStore.getState().selectMergeSide('theirs');
+    const gate = deferred<void>();
+    mockResolveSide.mockReturnValue(gate.promise);
+
+    const call = useGitStore.getState().mergeFinalizeAndStage();
+    await Promise.resolve();
+    useIDEStore.getState().updateFileContent('f1', 'edit during apply');
+    gate.resolve();
+    const ok = await call;
+
+    expect(ok).toBe(true);
+    const file = useIDEStore.getState().openFiles[0];
+    expect(file).toBeDefined();
+    expect(file.content).toBe('edit during apply');
+    expect(file.isModified).toBe(true);
+    expect(useIDEStore.getState().toast?.message).toMatch(/unsaved|preserved/i);
+  });
+
+  it('refuses a same-file re-open while a finalize is mid-write', async () => {
+    await openTextSession();
+    const gate = deferred<void>();
+    mockWriteFile.mockReturnValue(gate.promise);
+
+    const finalize = useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+    await Promise.resolve();
+    mockStages.mockClear();
+    const reopened = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    gate.resolve();
+    const ok = await finalize;
+
+    expect(reopened).toBe(false);
+    expect(mockStages).not.toHaveBeenCalled();
+    expect(ok).toBe(true);
+    expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+
+  it('allows a retry with a corrected result after a staging failure', async () => {
+    useIDEStore.setState({
+      openFiles: [openFile({ content: snapshot().content, isModified: false })],
+    });
+    await openTextSession();
+    mockGitStage.mockRejectedValueOnce(new Error('index locked'));
+
+    expect(await useGitStore.getState().mergeFinalizeAndStage(RESOLVED)).toBe(false);
+    const corrected = 'corrected line\n';
+    const retry = await useGitStore.getState().mergeFinalizeAndStage(corrected);
+
+    expect(retry).toBe(true);
+    expect(mockWriteFile).toHaveBeenLastCalledWith(
+      '/repo/file.txt',
+      corrected,
+      'utf-8',
+      'lf',
+      false
+    );
+    expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+});
+
+describe('resolveConflict fallback', () => {
+  beforeEach(() => {
+    (
+      jest.requireMock('../../wailsjs/go/main/App') as { ReadFile: jest.Mock }
+    ).ReadFile.mockResolvedValue({
+      content: 'marker body',
+      encoding: 'utf-8',
+      lineEndings: 'lf',
+      isBinary: false,
+    });
+  });
+
+  it('falls back to a plain open when no session could be built', async () => {
+    mockStages.mockResolvedValue(
+      allStages({ base: undefined, ours: undefined, theirs: undefined })
+    );
+
+    await useGitStore.getState().resolveConflict('file.txt', ['file.txt'], '/repo/file.txt');
+
+    const { ReadFile } = jest.requireMock('../../wailsjs/go/main/App') as { ReadFile: jest.Mock };
+    expect(ReadFile).toHaveBeenCalledWith('/repo/file.txt');
+  });
+
+  it('suppresses the fallback when a newer request superseded the click', async () => {
+    const gate = deferred<git.ConflictStages>();
+    mockStages.mockImplementation((_root, p) =>
+      p === 'a.txt' ? gate.promise : Promise.resolve(allStages({ path: 'b.txt', binary: true }))
+    );
+    mockHeads.mockResolvedValue(heads());
+
+    const first = useGitStore.getState().resolveConflict('a.txt', ['a.txt'], '/repo/a.txt');
+    await useGitStore.getState().resolveConflict('b.txt', ['b.txt'], '/repo/b.txt');
+    gate.resolve(allStages({ path: 'a.txt', base: undefined, ours: undefined, theirs: undefined }));
+    await first;
+
+    const { ReadFile } = jest.requireMock('../../wailsjs/go/main/App') as { ReadFile: jest.Mock };
+    expect(ReadFile).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession?.path).toBe('b.txt');
+  });
+});
+
 describe('closeMergeResolution invalidation', () => {
   it('invalidates an in-flight open so a closed surface cannot reappear', async () => {
     const gate = deferred<git.ConflictStages>();

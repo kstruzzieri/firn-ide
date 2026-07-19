@@ -433,23 +433,11 @@ function ConflictBanner({
 
   // The queue is the banner's own workspace-scoped list, in panel order —
   // never rebuilt from raw repo status, which would cross workspace scope.
+  // Fallback-vs-supersession policy lives in the store, where the merge
+  // request revision is visible.
   const resolve = (f: BucketedChange) => {
     const queue = conflicts.map((c) => c.change.path);
-    const epochAtClick = useGitStore.getState().epoch;
-    void useGitStore
-      .getState()
-      .openMergeResolution(f.change.path, queue)
-      .then((opened) => {
-        if (opened) return;
-        // Stale click: the workspace switched or a competing Resolve won —
-        // opening the loser's marker-filled file beside the winner's merge
-        // surface (or a file from the previous repo) would be wrong.
-        const s = useGitStore.getState();
-        if (s.epoch !== epochAtClick || s.mergeSession) return;
-        // No merge session could be built (already toasted why): fall back to
-        // opening the file plainly so the user can still act on it.
-        void ensureEditorFileOpen(f.absPath);
-      });
+    void useGitStore.getState().resolveConflict(f.change.path, queue, f.absPath);
   };
 
   return (
