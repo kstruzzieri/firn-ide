@@ -685,6 +685,17 @@ export const useGitStore = create<GitStore>()(
         const requestRevision = ++mergeRequestRevision;
         const isCurrent = () => get().epoch === epoch && requestRevision === mergeRequestRevision;
         const abs = joinRepoPath(repoRoot, path);
+        // Our bump made any installed session stale. When WE fail (and are
+        // still the newest request), re-stamp that session with OUR id so its
+        // Write & stage does not silently dead-end forever — a failed open of
+        // file B must not brick the open session for file A. Reusing this
+        // request's id (no fresh bump) keeps resolveConflict's fallback
+        // identity check intact for the failed click itself.
+        const reviveInstalledSession = () => {
+          const live = get().mergeSession;
+          if (!live || !isCurrent() || get().epoch !== live.epoch) return;
+          set({ mergeSession: { ...live, requestRevision } }, false, 'git/mergeReviveSession');
+        };
 
         // Flush any unsaved editor buffer first: the snapshot must be parsed
         // from the same bytes the session displays, and git only sees disk.
@@ -696,6 +707,7 @@ export const useGitStore = create<GitStore>()(
               .getState()
               .showToast(`Could not save ${path}: ${toErrorMessage(err)}`, 'error');
           }
+          reviveInstalledSession();
           return false;
         }
         if (!isCurrent()) return false;
@@ -708,6 +720,7 @@ export const useGitStore = create<GitStore>()(
           if (!isCurrent()) return false;
           if (!stages.base && !stages.ours && !stages.theirs) {
             useIDEStore.getState().showToast(`${path} is not conflicted`, 'info');
+            reviveInstalledSession();
             return false;
           }
 
@@ -728,6 +741,7 @@ export const useGitStore = create<GitStore>()(
           if (!isCurrent()) return false;
           if (!snap.regions || snap.regions.length === 0) {
             useIDEStore.getState().showToast(`No conflict markers found in ${path}`, 'info');
+            reviveInstalledSession();
             return false;
           }
           set(
@@ -753,6 +767,7 @@ export const useGitStore = create<GitStore>()(
               .getState()
               .showToast(`Merge resolution failed: ${toErrorMessage(err)}`, 'error');
           }
+          reviveInstalledSession();
           return false;
         }
       },
