@@ -985,6 +985,26 @@ describe('resolveConflict fallback', () => {
 });
 
 describe('failed open leaves the installed session finalizable', () => {
+  it('a not-conflicted Resolve on another file does not dead-end the open session', async () => {
+    mockStages.mockImplementation((_root, p) =>
+      p === 'file.txt'
+        ? Promise.resolve(allStages())
+        : Promise.resolve(
+            allStages({ path: 'b.txt', base: undefined, ours: undefined, theirs: undefined })
+          )
+    );
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    mockGitStage.mockResolvedValue(undefined);
+    expect(await useGitStore.getState().openMergeResolution('file.txt', ['file.txt'])).toBe(true);
+
+    expect(await useGitStore.getState().openMergeResolution('b.txt', ['b.txt'])).toBe(false);
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage('resolved line\n');
+    expect(ok).toBe(true);
+    expect(mockGitStage).toHaveBeenCalledWith('/repo', ['file.txt']);
+  });
+
   it('a failed Resolve on another file does not dead-end the open session', async () => {
     mockStages.mockImplementation((_root, p) =>
       p === 'file.txt' ? Promise.resolve(allStages()) : Promise.reject(new Error('too large'))
