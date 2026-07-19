@@ -301,3 +301,101 @@ describe('openMergeResolution', () => {
     expect(session.readOnly).toBe(true);
   });
 });
+
+describe('merge decision actions', () => {
+  async function openTextSession() {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    expect(ok).toBe(true);
+  }
+
+  async function openSidesSession() {
+    mockStages.mockResolvedValue(allStages({ binary: true }));
+    mockHeads.mockResolvedValue(heads());
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    expect(ok).toBe(true);
+  }
+
+  it('recordDecision stores a choice for a region on a text session', async () => {
+    await openTextSession();
+
+    useGitStore.getState().recordDecision(0, 'C');
+
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'text') throw new Error('expected text session');
+    expect(session.decisions).toEqual({ 0: 'C' });
+  });
+
+  it('recordDecision replaces an earlier choice for the same region', async () => {
+    await openTextSession();
+
+    useGitStore.getState().recordDecision(0, 'C');
+    useGitStore.getState().recordDecision(0, 'I');
+
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'text') throw new Error('expected text session');
+    expect(session.decisions).toEqual({ 0: 'I' });
+  });
+
+  it('reopenDecision removes a recorded choice', async () => {
+    await openTextSession();
+    useGitStore.getState().recordDecision(0, 'B');
+
+    useGitStore.getState().reopenDecision(0);
+
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'text') throw new Error('expected text session');
+    expect(session.decisions).toEqual({});
+  });
+
+  it('recordDecision is a no-op on a sides session and with no session', async () => {
+    useGitStore.getState().recordDecision(0, 'C');
+    expect(useGitStore.getState().mergeSession).toBeNull();
+
+    await openSidesSession();
+    const before = useGitStore.getState().mergeSession;
+    useGitStore.getState().recordDecision(0, 'C');
+    expect(useGitStore.getState().mergeSession).toBe(before);
+  });
+
+  it('selectMergeSide sets the chosen side on a sides session', async () => {
+    await openSidesSession();
+
+    useGitStore.getState().selectMergeSide('theirs');
+
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'sides') throw new Error('expected sides session');
+    expect(session.selectedSide).toBe('theirs');
+  });
+
+  it('selectMergeSide is a no-op on a text session and with no session', async () => {
+    useGitStore.getState().selectMergeSide('ours');
+    expect(useGitStore.getState().mergeSession).toBeNull();
+
+    await openTextSession();
+    const before = useGitStore.getState().mergeSession;
+    useGitStore.getState().selectMergeSide('ours');
+    expect(useGitStore.getState().mergeSession).toBe(before);
+  });
+
+  it('closeMergeResolution discards the session without writing anything', async () => {
+    await openTextSession();
+    useGitStore.getState().recordDecision(0, 'C');
+    mockWriteFile.mockClear();
+
+    useGitStore.getState().closeMergeResolution();
+
+    expect(useGitStore.getState().mergeSession).toBeNull();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it('resetForWorkspace clears an open merge session', async () => {
+    await openTextSession();
+
+    useGitStore.getState().resetForWorkspace('/other');
+
+    expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+});

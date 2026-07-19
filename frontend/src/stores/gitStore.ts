@@ -262,6 +262,14 @@ interface GitActions {
    * where actionable) when no session could be built — the caller falls back
    * to opening the file plainly. */
   openMergeResolution: (path: string, fileQueue: string[]) => Promise<boolean>;
+  /** Record how a region was resolved (text sessions only). */
+  recordDecision: (index: number, choice: MergeDecision) => void;
+  /** Reopen a resolved region: forget its decision (text sessions only). */
+  reopenDecision: (index: number) => void;
+  /** Choose which whole-file side wins (sides sessions only). */
+  selectMergeSide: (side: 'ours' | 'theirs') => void;
+  /** Discard the session. Never writes — worktree and markers stay intact. */
+  closeMergeResolution: () => void;
 }
 
 type GitStore = GitState & GitActions;
@@ -712,6 +720,32 @@ export const useGitStore = create<GitStore>()(
           return false;
         }
       },
+
+      recordDecision: (index, choice) => {
+        const session = get().mergeSession;
+        if (session?.kind !== 'text') return;
+        set(
+          { mergeSession: { ...session, decisions: { ...session.decisions, [index]: choice } } },
+          false,
+          'git/recordDecision'
+        );
+      },
+
+      reopenDecision: (index) => {
+        const session = get().mergeSession;
+        if (session?.kind !== 'text') return;
+        const decisions = { ...session.decisions };
+        delete decisions[index];
+        set({ mergeSession: { ...session, decisions } }, false, 'git/reopenDecision');
+      },
+
+      selectMergeSide: (side) => {
+        const session = get().mergeSession;
+        if (session?.kind !== 'sides') return;
+        set({ mergeSession: { ...session, selectedSide: side } }, false, 'git/selectMergeSide');
+      },
+
+      closeMergeResolution: () => set({ mergeSession: null }, false, 'git/closeMergeResolution'),
     }),
     { name: 'git-store' }
   )
