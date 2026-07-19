@@ -833,8 +833,14 @@ describe('review round 2 hardening', () => {
 
     expect(ok).toBe(false);
     expect(mockGitStage).not.toHaveBeenCalled();
-    expect(useGitStore.getState().mergeSession).not.toBeNull();
     expect(useIDEStore.getState().toast?.message).toMatch(/not staged/i);
+    // The session CLOSES on this refusal: its baseline was already rebased to
+    // the result, so a blind retry would rewrite the result over the
+    // close-saved edit. The user was told to reopen and re-resolve instead.
+    expect(useGitStore.getState().mergeSession).toBeNull();
+    mockWriteFile.mockClear();
+    expect(await useGitStore.getState().mergeFinalizeAndStage(RESOLVED)).toBe(false);
+    expect(mockWriteFile).not.toHaveBeenCalled();
   });
 
   it('refuses a same-file re-open while a finalize is mid-write', async () => {

@@ -985,9 +985,19 @@ export const useGitStore = create<GitStore>()(
             // resolved write — disk may end up holding the old markers, so
             // staging now could stage a resolution the worktree no longer
             // shows. Stop and let the user re-resolve from the real state.
+            // The session must CLOSE here: its baseline was rebased to the
+            // result above, so a blind retry would rewrite the result over
+            // the close-saved edit — re-resolving is the only safe path, and
+            // it snapshots whatever the close-save actually left on disk.
             showError(
               `${session.path}: the editor tab closed while the resolved file was being written, and its auto-saved content may have overwritten the resolution. The file was NOT staged — reopen it and re-resolve.`
             );
+            if (
+              get().mergeSession?.requestRevision === session.requestRevision &&
+              isSameWorkspace()
+            ) {
+              set({ mergeSession: null }, false, 'git/mergeInterrupted');
+            }
             return false;
           }
 
