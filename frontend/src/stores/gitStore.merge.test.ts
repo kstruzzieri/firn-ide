@@ -790,6 +790,29 @@ describe('review round 2 hardening', () => {
     expect(useIDEStore.getState().toast?.message).toMatch(/unsaved|preserved/i);
   });
 
+  it('warns when the tab closes during a sides apply (close-save may recreate)', async () => {
+    useIDEStore.setState({ openFiles: [openFile({ isModified: false })] });
+    mockStages.mockResolvedValue(allStages({ binary: true }));
+    mockHeads.mockResolvedValue(heads());
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    useGitStore.getState().selectMergeSide('theirs');
+    const gate = deferred<void>();
+    mockResolveSide.mockReturnValue(gate.promise);
+
+    const call = useGitStore.getState().mergeFinalizeAndStage();
+    await Promise.resolve();
+    // Edit then close mid-apply: the close-save path (useAutosave's
+    // subscription) writes the captured content and can recreate a file
+    // whose deletion was just staged.
+    useIDEStore.getState().updateFileContent('f1', 'edit during apply');
+    useIDEStore.getState().closeFile('f1');
+    gate.resolve();
+    const ok = await call;
+
+    expect(ok).toBe(true);
+    expect(useIDEStore.getState().toast?.message).toMatch(/closed|check/i);
+  });
+
   it('refuses a same-file re-open while a finalize is mid-write', async () => {
     await openTextSession();
     const gate = deferred<void>();

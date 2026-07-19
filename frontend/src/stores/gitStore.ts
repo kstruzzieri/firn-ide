@@ -860,7 +860,8 @@ export const useGitStore = create<GitStore>()(
             // The plain tab bypasses this surface entirely: unsaved edits
             // would be silently discarded (kept side) or resurrected by
             // autosave (deletion side).
-            if (findOpenFile()?.isModified) {
+            const before = findOpenFile();
+            if (before?.isModified) {
               showError(
                 `Cannot finalize ${session.path}: the file has unsaved edits. Save or revert them first.`
               );
@@ -882,6 +883,12 @@ export const useGitStore = create<GitStore>()(
                   // undo the resolution.
                   useIDEStore.getState().closeFile(after.id);
                 }
+              } else if (before) {
+                // The tab closed DURING the apply. Closing a dirty tab
+                // auto-saves its captured content, which can recreate a file
+                // whose deletion was just staged (or diverge from the kept
+                // side) — the user must check before committing.
+                warningAfter = `${session.path}: the editor tab closed while the side was being applied. If it had unsaved edits they were auto-saved and may conflict with the staged resolution — check the file's git status before committing.`;
               }
             }
             return ok;
