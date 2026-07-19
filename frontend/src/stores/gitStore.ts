@@ -979,6 +979,16 @@ export const useGitStore = create<GitStore>()(
               );
               return false;
             }
+          } else if (openFile) {
+            // The tab closed DURING the write. Closing a dirty tab auto-saves
+            // its captured content into the same per-path queue BEHIND the
+            // resolved write — disk may end up holding the old markers, so
+            // staging now could stage a resolution the worktree no longer
+            // shows. Stop and let the user re-resolve from the real state.
+            showError(
+              `${session.path}: the editor tab closed while the resolved file was being written, and its auto-saved content may have overwritten the resolution. The file was NOT staged — reopen it and re-resolve.`
+            );
+            return false;
           }
 
           return stageResolved(() => GitStage(session.repoRoot, [session.path]));

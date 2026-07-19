@@ -813,6 +813,30 @@ describe('review round 2 hardening', () => {
     expect(useIDEStore.getState().toast?.message).toMatch(/closed|check/i);
   });
 
+  it('blocks staging when the tab closes with edits during the resolved write', async () => {
+    useIDEStore.setState({
+      openFiles: [openFile({ content: snapshot().content, isModified: false })],
+    });
+    await openTextSession();
+    const gate = deferred<void>();
+    mockWriteFile.mockReturnValueOnce(gate.promise);
+
+    const call = useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+    await Promise.resolve();
+    // Edit + close mid-write: the close-save queues the marker-bearing edit
+    // BEHIND the resolved write in the same per-path queue — disk will not
+    // hold the staged resolution.
+    useIDEStore.getState().updateFileContent('f1', 'markers still here');
+    useIDEStore.getState().closeFile('f1');
+    gate.resolve();
+    const ok = await call;
+
+    expect(ok).toBe(false);
+    expect(mockGitStage).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession).not.toBeNull();
+    expect(useIDEStore.getState().toast?.message).toMatch(/not staged/i);
+  });
+
   it('refuses a same-file re-open while a finalize is mid-write', async () => {
     await openTextSession();
     const gate = deferred<void>();
