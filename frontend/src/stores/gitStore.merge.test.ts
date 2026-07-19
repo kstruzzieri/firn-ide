@@ -572,12 +572,20 @@ describe('mergeFinalizeAndStage', () => {
     mockWriteFile.mockReturnValue(gate.promise as never);
 
     const call = useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+    // Let the finalize reach the actual disk write before switching away.
+    for (let i = 0; i < 10 && mockWriteFile.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(mockWriteFile).toHaveBeenCalled();
     useGitStore.getState().resetForWorkspace('/other');
     gate.resolve();
     const ok = await call;
 
     expect(ok).toBe(false);
     expect(mockGitStage).not.toHaveBeenCalled();
+    // The resolved text WAS written but never staged — the user must be told
+    // what manual recovery the stranded file needs.
+    expect(useIDEStore.getState().toast?.message).toMatch(/written but not staged/i);
   });
 
   it('is a no-op without a session or without a result on a text session', async () => {

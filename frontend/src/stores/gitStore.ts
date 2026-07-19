@@ -939,7 +939,15 @@ export const useGitStore = create<GitStore>()(
               showError(`Could not write ${session.path}: ${toErrorMessage(err)}`);
             return false;
           }
-          if (!isSameWorkspace()) return false;
+          if (!isSameWorkspace()) {
+            // The resolved text IS on disk but staging never ran — without
+            // this the user returns to a markerless file whose conflict rows
+            // cannot be staged in-app and no explanation of why.
+            showError(
+              `Workspace switched while finalizing ${session.path}: the resolved file was written but NOT staged. Stage it manually in its original repository.`
+            );
+            return false;
+          }
 
           // Disk now holds the Result: rebase the live session's baseline so
           // a retry after a failed stage — possibly with a CORRECTED result —
