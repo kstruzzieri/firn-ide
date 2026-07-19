@@ -846,6 +846,65 @@ describe('resolveConflict fallback', () => {
     expect(ReadFile).toHaveBeenCalledWith('/repo/file.txt');
   });
 
+  it('abandons a fallback that goes stale during its own file read', async () => {
+    const readGate = deferred<{
+      content: string;
+      encoding: string;
+      lineEndings: string;
+      isBinary: boolean;
+    }>();
+    const { ReadFile } = jest.requireMock('../../wailsjs/go/main/App') as { ReadFile: jest.Mock };
+    ReadFile.mockReturnValue(readGate.promise);
+    mockStages.mockImplementation((_root, p) =>
+      p === 'a.txt'
+        ? Promise.resolve(allStages({ base: undefined, ours: undefined, theirs: undefined }))
+        : Promise.resolve(allStages({ path: 'b.txt', binary: true }))
+    );
+    mockHeads.mockResolvedValue(heads());
+
+    // a.txt is not conflicted -> fallback starts and blocks in ReadFile.
+    const first = useGitStore.getState().resolveConflict('a.txt', ['a.txt'], '/repo/a.txt');
+    for (let i = 0; i < 10 && (ReadFile as jest.Mock).mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(ReadFile).toHaveBeenCalledWith('/repo/a.txt');
+    // b.txt wins a merge session while a's read is still pending.
+    await useGitStore.getState().resolveConflict('b.txt', ['b.txt'], '/repo/b.txt');
+    readGate.resolve({ content: 'markers', encoding: 'utf-8', lineEndings: 'lf', isBinary: false });
+    await first;
+
+    expect(useIDEStore.getState().openFiles).toHaveLength(0);
+    expect(useGitStore.getState().mergeSession?.path).toBe('b.txt');
+  });
+
+  it('lets a failed next-open toast survive a sides warning', async () => {
+    useIDEStore.setState({ openFiles: [openFile({ isModified: false })] });
+    mockStages.mockImplementation((_root, p) =>
+      p === 'file.txt'
+        ? Promise.resolve(allStages({ binary: true }))
+        : Promise.resolve(
+            allStages({ path: 'next.txt', base: undefined, ours: undefined, theirs: undefined })
+          )
+    );
+    mockHeads.mockResolvedValue(heads());
+    mockResolveSide.mockReset();
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt', 'next.txt']);
+    useGitStore.getState().selectMergeSide('theirs');
+    const gate = deferred<void>();
+    mockResolveSide.mockReturnValue(gate.promise);
+
+    const call = useGitStore.getState().mergeFinalizeAndStage();
+    await Promise.resolve();
+    useIDEStore.getState().updateFileContent('f1', 'edit during apply');
+    gate.resolve();
+    const ok = await call;
+
+    expect(ok).toBe(true);
+    // next.txt failed to open ("not conflicted") — that explanation must be
+    // the surviving toast, not the sides warning emitted for file.txt.
+    expect(useIDEStore.getState().toast?.message).toMatch(/not conflicted/i);
+  });
+
   it('suppresses the fallback when a newer request superseded the click', async () => {
     const gate = deferred<git.ConflictStages>();
     mockStages.mockImplementation((_root, p) =>

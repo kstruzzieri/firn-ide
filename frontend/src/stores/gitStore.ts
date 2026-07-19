@@ -976,6 +976,11 @@ export const useGitStore = create<GitStore>()(
         } finally {
           mergeFinalizeInFlight = false;
         }
+        // The warning goes out BEFORE the advance: a failed next-open raises
+        // its own explanatory toast, which must be the one that survives
+        // (single-toast UI). The completion toast is suppressed instead so a
+        // warning on an exhausted queue is not buried either.
+        if (ok && warningAfter) showError(warningAfter);
         if (ok && advanceAfter) {
           // Close the finalized session, then open the next queued conflicted
           // file, or report completion when the queue is exhausted.
@@ -987,7 +992,6 @@ export const useGitStore = create<GitStore>()(
             useIDEStore.getState().showToast('All conflicts resolved', 'info');
           }
         }
-        if (ok && warningAfter) showError(warningAfter);
         return ok;
       },
 
@@ -996,14 +1000,16 @@ export const useGitStore = create<GitStore>()(
         // The id our open will take — openMergeResolution bumps the counter
         // exactly once before its first await.
         const requestRevision = mergeRequestRevision + 1;
-        const opened = await get().openMergeResolution(path, fileQueue);
-        if (opened) return;
-        // Fall back to a plain open only when this click is still the newest
+        // Fall back to a plain open only while this click is still the newest
         // request in this workspace — a superseded or refused click must not
         // open the loser's marker-filled file beside the winner's surface.
-        if (get().epoch !== epoch) return;
-        if (mergeRequestRevision !== requestRevision) return;
-        await ensureEditorFileOpen(absPath);
+        // The predicate is re-checked by ensureEditorFileOpen right before it
+        // opens/activates, covering staleness that develops during its own
+        // flush and read awaits.
+        const stillWanted = () => get().epoch === epoch && mergeRequestRevision === requestRevision;
+        const opened = await get().openMergeResolution(path, fileQueue);
+        if (opened || !stillWanted()) return;
+        await ensureEditorFileOpen(absPath, { shouldApply: stillWanted });
       },
     }),
     { name: 'git-store' }
