@@ -431,6 +431,20 @@ function ConflictBanner({
 }) {
   const [showRaw, setShowRaw] = useState(false);
 
+  // The queue is the banner's own workspace-scoped list, in panel order —
+  // never rebuilt from raw repo status, which would cross workspace scope.
+  const resolve = (f: BucketedChange) => {
+    const queue = conflicts.map((c) => c.change.path);
+    void useGitStore
+      .getState()
+      .openMergeResolution(f.change.path, queue)
+      .then((opened) => {
+        // No merge session could be built (already toasted why): fall back to
+        // opening the file plainly so the user can still act on it.
+        if (!opened) void ensureEditorFileOpen(f.absPath);
+      });
+  };
+
   return (
     <div className={styles.conflictBanner} data-testid="conflict-banner" role="alert">
       <div className={styles.conflictTitle}>
@@ -439,7 +453,15 @@ function ConflictBanner({
       </div>
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
-          <li key={f.change.path}>
+          <li key={f.change.path} className={styles.conflictRow}>
+            <button
+              type="button"
+              className={styles.conflictResolve}
+              onClick={() => resolve(f)}
+              aria-label={`Resolve ${fileName(f.change.path)}`}
+            >
+              Resolve
+            </button>
             <button
               type="button"
               className={styles.conflictOpen}

@@ -591,6 +591,66 @@ describe('GitPanel conflicts and errors', () => {
 
     expect(screen.getByTestId('git-error')).toHaveTextContent('hook rejected: lint failed');
   });
+
+  it('Resolve opens the merge surface with the panel-scoped conflict queue', async () => {
+    const openMerge = jest.fn().mockResolvedValue(true);
+    const original = useGitStore.getState().openMergeResolution;
+    act(() => {
+      useGitStore.setState({ openMergeResolution: openMerge });
+    });
+    try {
+      seed([file('clash.go', 'U', 'U', true), file('other.go', 'U', 'U', true)]);
+
+      render(<GitPanel />);
+      fireEvent.click(screen.getByRole('button', { name: /resolve clash\.go/i }));
+      await act(async () => {});
+
+      expect(openMerge).toHaveBeenCalledWith('clash.go', ['clash.go', 'other.go']);
+      expect(ReadFile).not.toHaveBeenCalled();
+    } finally {
+      act(() => {
+        useGitStore.setState({ openMergeResolution: original });
+      });
+    }
+  });
+
+  it('Resolve falls back to opening the file when no session could be built', async () => {
+    const openMerge = jest.fn().mockResolvedValue(false);
+    const original = useGitStore.getState().openMergeResolution;
+    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
+    act(() => {
+      useIDEStore.setState({ openFiles: [] });
+      useGitStore.setState({ openMergeResolution: openMerge });
+    });
+    try {
+      seed([file('clash.go', 'U', 'U', true)]);
+
+      render(<GitPanel />);
+      fireEvent.click(screen.getByRole('button', { name: /resolve clash\.go/i }));
+      await act(async () => {});
+
+      expect(openMerge).toHaveBeenCalledWith('clash.go', ['clash.go']);
+      expect(ReadFile).toHaveBeenCalledWith('/repo/clash.go');
+    } finally {
+      act(() => {
+        useGitStore.setState({ openMergeResolution: original });
+      });
+    }
+  });
+
+  it('keeps the plain Open action beside Resolve', async () => {
+    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
+    act(() => {
+      useIDEStore.setState({ openFiles: [] });
+    });
+    seed([file('clash.go', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /open clash\.go/i }));
+    await act(async () => {});
+
+    expect(ReadFile).toHaveBeenCalledWith('/repo/clash.go');
+  });
 });
 
 describe('GitPanel branch and sync controls', () => {

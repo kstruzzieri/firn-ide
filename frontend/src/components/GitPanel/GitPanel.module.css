@@ -306,6 +306,26 @@
   padding: 0;
 }
 
+.conflictRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conflictResolve {
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-error) 55%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--status-error);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.conflictResolve:hover {
+  background: color-mix(in srgb, var(--status-error) 14%, transparent);
+}
+
 .conflictOpen {
   border: none;
   background: transparent;
