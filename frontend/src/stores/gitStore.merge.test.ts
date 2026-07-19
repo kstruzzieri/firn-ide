@@ -23,16 +23,22 @@ jest.mock('../../wailsjs/go/main/App', () => ({
 
 import {
   GitStatus,
+  GitStage,
   WriteFile,
   GitConflictStages,
   GitMergeHeads,
   GitConflictSnapshot,
+  GitResolveConflictSide,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
 import { useGitStore } from './gitStore';
 import { useIDEStore, type EditorFile } from './ideStore';
 
 const mockStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
+const mockGitStage = GitStage as jest.MockedFunction<typeof GitStage>;
+const mockResolveSide = GitResolveConflictSide as jest.MockedFunction<
+  typeof GitResolveConflictSide
+>;
 const mockHeads = GitMergeHeads as jest.MockedFunction<typeof GitMergeHeads>;
 const mockSnapshot = GitConflictSnapshot as jest.MockedFunction<typeof GitConflictSnapshot>;
 const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
@@ -397,5 +403,178 @@ describe('merge decision actions', () => {
     useGitStore.getState().resetForWorkspace('/other');
 
     expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+});
+
+describe('mergeFinalizeAndStage', () => {
+  const RESOLVED = 'resolved line\n';
+
+  async function openTextSession(queue = ['file.txt']) {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', queue);
+    expect(ok).toBe(true);
+  }
+
+  async function openSidesSession(queue = ['file.txt']) {
+    mockStages.mockResolvedValue(allStages({ binary: true }));
+    mockHeads.mockResolvedValue(heads());
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', queue);
+    expect(ok).toBe(true);
+  }
+
+  beforeEach(() => {
+    mockGitStage.mockResolvedValue(undefined as never);
+    mockResolveSide.mockResolvedValue(undefined as never);
+  });
+
+  it('writes the result, stages the file, and closes on an exhausted queue', async () => {
+    await openTextSession();
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(true);
+    expect(mockWriteFile).toHaveBeenCalledWith('/repo/file.txt', RESOLVED, 'utf-8', 'lf', false);
+    expect(mockGitStage).toHaveBeenCalledWith('/repo', ['file.txt']);
+    const writeOrder = mockWriteFile.mock.invocationCallOrder[0];
+    const stageOrder = mockGitStage.mock.invocationCallOrder[0];
+    expect(writeOrder).toBeLessThan(stageOrder);
+    expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+
+  it('reconciles an open clean buffer with the resolved content', async () => {
+    useIDEStore.setState({
+      openFiles: [openFile({ content: snapshot().content, isModified: false })],
+    });
+    await openTextSession();
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(true);
+    const file = useIDEStore.getState().openFiles[0];
+    expect(file.content).toBe(RESOLVED);
+    expect(file.isModified).toBe(false);
+  });
+
+  it('blocks finalize when the open buffer diverged from the session content', async () => {
+    useIDEStore.setState({
+      openFiles: [openFile({ content: snapshot().content, isModified: false })],
+    });
+    await openTextSession();
+    useIDEStore.setState({
+      openFiles: [openFile({ content: 'concurrent edit', isModified: true })],
+    });
+    mockWriteFile.mockClear();
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(false);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockGitStage).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession).not.toBeNull();
+    expect(useIDEStore.getState().toast?.message).toBeTruthy();
+  });
+
+  it('refuses to finalize a read-only text session', async () => {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot({ encoding: 'latin-1' }));
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    mockWriteFile.mockClear();
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(false);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockGitStage).not.toHaveBeenCalled();
+  });
+
+  it('finalizes a sides session through GitResolveConflictSide', async () => {
+    await openSidesSession();
+    useGitStore.getState().selectMergeSide('theirs');
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage();
+
+    expect(ok).toBe(true);
+    expect(mockResolveSide).toHaveBeenCalledWith('/repo', 'file.txt', 'theirs');
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+
+  it('refuses a sides finalize before a side is selected', async () => {
+    await openSidesSession();
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage();
+
+    expect(ok).toBe(false);
+    expect(mockResolveSide).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession).not.toBeNull();
+  });
+
+  it('keeps the session open and reports when staging fails', async () => {
+    await openTextSession();
+    mockGitStage.mockRejectedValue(new Error('index locked'));
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(false);
+    expect(useGitStore.getState().mergeSession).not.toBeNull();
+    expect(useIDEStore.getState().toast?.message).toContain('index locked');
+  });
+
+  it('keeps the session open and reports when the write fails', async () => {
+    await openTextSession();
+    mockWriteFile.mockRejectedValue(new Error('disk full'));
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(false);
+    expect(mockGitStage).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession).not.toBeNull();
+    expect(useIDEStore.getState().toast?.message).toContain('disk full');
+  });
+
+  it('advances to the next queued conflicted file after a successful finalize', async () => {
+    mockStages.mockImplementation((_root, p) =>
+      p === 'file.txt'
+        ? Promise.resolve(allStages())
+        : Promise.resolve(allStages({ path: 'other.txt', binary: true }))
+    );
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt', 'other.txt']);
+
+    const ok = await useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+
+    expect(ok).toBe(true);
+    const session = useGitStore.getState().mergeSession;
+    expect(session?.path).toBe('other.txt');
+    expect(session?.kind).toBe('sides');
+    expect(session?.fileQueue).toEqual(['other.txt']);
+  });
+
+  it('aborts before staging when the workspace switches mid-write', async () => {
+    await openTextSession();
+    const gate = deferred<void>();
+    mockWriteFile.mockReturnValue(gate.promise as never);
+
+    const call = useGitStore.getState().mergeFinalizeAndStage(RESOLVED);
+    useGitStore.getState().resetForWorkspace('/other');
+    gate.resolve();
+    const ok = await call;
+
+    expect(ok).toBe(false);
+    expect(mockGitStage).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op without a session or without a result on a text session', async () => {
+    expect(await useGitStore.getState().mergeFinalizeAndStage(RESOLVED)).toBe(false);
+
+    await openTextSession();
+    mockWriteFile.mockClear();
+    expect(await useGitStore.getState().mergeFinalizeAndStage()).toBe(false);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeSession).not.toBeNull();
   });
 });

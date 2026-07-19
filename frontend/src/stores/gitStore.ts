@@ -19,6 +19,7 @@ import {
   GitConflictStages,
   GitMergeHeads,
   GitConflictSnapshot,
+  GitResolveConflictSide,
   ReadFile,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
@@ -30,7 +31,12 @@ import {
 } from '../types/git';
 import { joinRepoPath } from '../utils/paths';
 import { pathsReferToSameFile } from '../utils/lspUri';
-import { isWritableFormat, saveOpenFileToDisk } from '../utils/fileWrites';
+import {
+  flushWorkingTreeEdit,
+  isWritableFormat,
+  saveOpenFileToDisk,
+  writeFileSerialized,
+} from '../utils/fileWrites';
 import { useIDEStore } from './ideStore';
 
 /** Which pair of revisions a diff shows. Staged rows compare HEAD to the
@@ -270,6 +276,11 @@ interface GitActions {
   selectMergeSide: (side: 'ours' | 'theirs') => void;
   /** Discard the session. Never writes — worktree and markers stay intact. */
   closeMergeResolution: () => void;
+  /** Write the resolved file and stage it, then advance to the next queued
+   * conflicted file. Text sessions require the resolved Result document;
+   * sides sessions apply the previously selected side via the backend
+   * finalize op. Any failure leaves the session open and resolves false. */
+  mergeFinalizeAndStage: (result?: string) => Promise<boolean>;
 }
 
 type GitStore = GitState & GitActions;
@@ -746,6 +757,103 @@ export const useGitStore = create<GitStore>()(
       },
 
       closeMergeResolution: () => set({ mergeSession: null }, false, 'git/closeMergeResolution'),
+
+      mergeFinalizeAndStage: async (result) => {
+        const session = get().mergeSession;
+        if (!session) return false;
+        // Revalidated after every await: a workspace switch (epoch) or a
+        // superseding open (requestRevision) makes this finalize stale — it
+        // must stop before staging into the wrong repo or clobbering the
+        // newer session.
+        const isCurrent = () =>
+          get().epoch === session.epoch &&
+          get().mergeSession?.requestRevision === session.requestRevision;
+        const showError = (message: string) => useIDEStore.getState().showToast(message, 'error');
+
+        // Close the finalized session, then open the next queued conflicted
+        // file, or report completion when the queue is exhausted.
+        const advance = async (): Promise<void> => {
+          const remaining = session.fileQueue.filter((p) => p !== session.path);
+          set({ mergeSession: null }, false, 'git/mergeFinalized');
+          if (remaining.length > 0) {
+            await get().openMergeResolution(remaining[0], remaining);
+          } else {
+            useIDEStore.getState().showToast('All conflicts resolved', 'info');
+          }
+        };
+
+        // Staging runs through runOp for single-flight + status refresh, but
+        // against the session's CAPTURED repo root — never the live one.
+        const stageResolved = async (fn: () => Promise<void>): Promise<boolean> => {
+          const ok = await runOp('stage', get, set, async () => {
+            await fn();
+            return null;
+          });
+          if (!ok || !isCurrent()) return false;
+          await advance();
+          return true;
+        };
+
+        if (session.kind === 'sides') {
+          const side = session.selectedSide;
+          if (!side) return false;
+          return stageResolved(() =>
+            GitResolveConflictSide(session.repoRoot, session.path, side).then(() => undefined)
+          );
+        }
+
+        if (result == null || session.readOnly) return false;
+
+        // Settle any queued diff edit for this path so the resolved write is
+        // ordered after it in the per-path queue.
+        try {
+          await flushWorkingTreeEdit(session.absPath);
+        } catch (err) {
+          if (isCurrent()) showError(`Could not save ${session.path}: ${toErrorMessage(err)}`);
+          return false;
+        }
+        if (!isCurrent()) return false;
+
+        // The buffer matched the session content when the session opened (it
+        // was flushed then). A mismatch now means a concurrent edit in the
+        // plain editor — writing the Result would silently discard it.
+        const findOpenFile = () =>
+          useIDEStore
+            .getState()
+            .openFiles.find((f) => pathsReferToSameFile(f.path, session.absPath));
+        const openFile = findOpenFile();
+        if (openFile && openFile.content !== session.content) {
+          showError(
+            `Cannot finalize ${session.path}: the editor buffer changed after this merge session started. Close the merge tab and re-resolve, or undo the buffer edit.`
+          );
+          return false;
+        }
+
+        try {
+          await writeFileSerialized(
+            session.absPath,
+            result,
+            session.encoding,
+            session.lineEndings,
+            false
+          );
+        } catch (err) {
+          if (isCurrent()) showError(`Could not write ${session.path}: ${toErrorMessage(err)}`);
+          return false;
+        }
+        if (!isCurrent()) return false;
+
+        // Reflect the resolved file in an open editor tab as clean content —
+        // disk and buffer now agree, so the tab must not show stale markers.
+        const after = findOpenFile();
+        if (after) {
+          const ide = useIDEStore.getState();
+          ide.updateFileContent(after.id, result);
+          ide.setFileModified(after.id, false);
+        }
+
+        return stageResolved(() => GitStage(session.repoRoot, [session.path]));
+      },
     }),
     { name: 'git-store' }
   )
