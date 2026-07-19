@@ -435,13 +435,20 @@ function ConflictBanner({
   // never rebuilt from raw repo status, which would cross workspace scope.
   const resolve = (f: BucketedChange) => {
     const queue = conflicts.map((c) => c.change.path);
+    const epochAtClick = useGitStore.getState().epoch;
     void useGitStore
       .getState()
       .openMergeResolution(f.change.path, queue)
       .then((opened) => {
+        if (opened) return;
+        // Stale click: the workspace switched or a competing Resolve won —
+        // opening the loser's marker-filled file beside the winner's merge
+        // surface (or a file from the previous repo) would be wrong.
+        const s = useGitStore.getState();
+        if (s.epoch !== epochAtClick || s.mergeSession) return;
         // No merge session could be built (already toasted why): fall back to
         // opening the file plainly so the user can still act on it.
-        if (!opened) void ensureEditorFileOpen(f.absPath);
+        void ensureEditorFileOpen(f.absPath);
       });
   };
 

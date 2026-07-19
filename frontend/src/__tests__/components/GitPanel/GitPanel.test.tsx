@@ -638,6 +638,37 @@ describe('GitPanel conflicts and errors', () => {
     }
   });
 
+  it('suppresses the fallback when another merge session won the race', async () => {
+    // A stale Resolve click resolves false AFTER a competing session was
+    // installed — falling back would open the loser's marker-filled file
+    // beside the winner's merge surface.
+    const openMerge = jest.fn().mockImplementation(async () => {
+      useGitStore.setState({
+        mergeSession: { kind: 'sides', path: 'winner.go' } as never,
+      });
+      return false;
+    });
+    const original = useGitStore.getState().openMergeResolution;
+    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
+    act(() => {
+      useIDEStore.setState({ openFiles: [] });
+      useGitStore.setState({ openMergeResolution: openMerge });
+    });
+    try {
+      seed([file('clash.go', 'U', 'U', true)]);
+
+      render(<GitPanel />);
+      fireEvent.click(screen.getByRole('button', { name: /resolve clash\.go/i }));
+      await act(async () => {});
+
+      expect(ReadFile).not.toHaveBeenCalled();
+    } finally {
+      act(() => {
+        useGitStore.setState({ openMergeResolution: original, mergeSession: null });
+      });
+    }
+  });
+
   it('keeps the plain Open action beside Resolve', async () => {
     (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
     act(() => {
