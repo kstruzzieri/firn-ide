@@ -29,6 +29,43 @@ export function writeFileSerialized(
   return write;
 }
 
+/** Encodings and line endings WriteFile can round-trip without loss. The
+ * single source of truth for "may this surface write this file" — shared by
+ * the editable diff pane and the merge resolution session. */
+const WRITABLE_ENCODINGS = new Set(['utf-8', 'utf-8-bom', 'utf-16le', 'utf-16be']);
+const WRITABLE_LINE_ENDINGS = new Set(['lf', 'crlf', 'none']);
+
+export function isWritableFormat(encoding?: string, lineEndings?: string): boolean {
+  return WRITABLE_ENCODINGS.has(encoding ?? '') && WRITABLE_LINE_ENDINGS.has(lineEndings ?? '');
+}
+
+/**
+ * Await a durable flush of an open editor buffer to disk. Unlike autosave
+ * (debounced, hook-local) and queueWorkingTreeEdit (whose open-file branch only
+ * updates the buffer), this WRITES through the per-path serialized queue and
+ * resolves only when the on-disk bytes match a stable buffer snapshot — looping
+ * if a keystroke lands mid-write — then clears isModified. A file that is not
+ * open, or is already clean, resolves immediately. Callers that must read the
+ * file's true on-disk state (merge resolution) await this first.
+ */
+export async function saveOpenFileToDisk(absPath: string): Promise<void> {
+  // Settle any pending debounced diff edit first so buffer/disk ordering holds.
+  await flushWorkingTreeEdit(absPath);
+  for (;;) {
+    const file = openFileFor(absPath);
+    if (!file || !file.isModified) return;
+    const snapshot = file.content;
+    await writeFileSerialized(file.path, snapshot, file.encoding, file.lineEndings, false);
+    const after = openFileFor(absPath);
+    if (!after) return; // closed mid-write; disk holds the snapshot
+    if (after.content === snapshot) {
+      useIDEStore.getState().setFileModified(after.id, false);
+      return;
+    }
+    // The buffer moved while writing — write again with the newer content.
+  }
+}
+
 interface WorkingTreeEdit {
   absPath: string;
   displayPath: string;
