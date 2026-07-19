@@ -78,6 +78,14 @@ export function GitCommitMessageAvailable() {
   return window['go']['main']['App']['GitCommitMessageAvailable']();
 }
 
+export function GitConflictSnapshot(arg1, arg2) {
+  return window['go']['main']['App']['GitConflictSnapshot'](arg1, arg2);
+}
+
+export function GitConflictStages(arg1, arg2) {
+  return window['go']['main']['App']['GitConflictStages'](arg1, arg2);
+}
+
 export function GitFileAtRev(arg1, arg2, arg3) {
   return window['go']['main']['App']['GitFileAtRev'](arg1, arg2, arg3);
 }
@@ -94,12 +102,20 @@ export function GitIntentToAdd(arg1, arg2) {
   return window['go']['main']['App']['GitIntentToAdd'](arg1, arg2);
 }
 
+export function GitMergeHeads(arg1) {
+  return window['go']['main']['App']['GitMergeHeads'](arg1);
+}
+
 export function GitPull(arg1) {
   return window['go']['main']['App']['GitPull'](arg1);
 }
 
 export function GitPush(arg1) {
   return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function GitResolveConflictSide(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitResolveConflictSide'](arg1, arg2, arg3);
 }
 
 export function GitStage(arg1, arg2) {
