@@ -852,6 +852,10 @@ describe('review round 2 hardening', () => {
     await Promise.resolve();
     mockStages.mockClear();
     const reopened = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    // The refusal must not be a silent dead click — the fallback identity
+    // check suppresses resolveConflict's plain-open for pre-bump refusals,
+    // so the toast is the only feedback the user gets.
+    expect(useIDEStore.getState().toast?.message).toMatch(/finishing|try again/i);
     gate.resolve();
     const ok = await finalize;
 

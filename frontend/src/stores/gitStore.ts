@@ -681,7 +681,15 @@ export const useGitStore = create<GitStore>()(
         // markers and install a stale session over the completed resolution.
         // (Refused BEFORE the counter bump so the running finalize's own
         // guards are unaffected; the post-finalize advance re-opens freely.)
-        if (mergeFinalizeInFlight) return false;
+        // Toasted because the pre-bump refusal also suppresses
+        // resolveConflict's plain-open fallback — without it the click would
+        // be silently dead.
+        if (mergeFinalizeInFlight) {
+          useIDEStore
+            .getState()
+            .showToast('Finishing the previous resolution — try again in a moment', 'info');
+          return false;
+        }
         const requestRevision = ++mergeRequestRevision;
         const isCurrent = () => get().epoch === epoch && requestRevision === mergeRequestRevision;
         const abs = joinRepoPath(repoRoot, path);
