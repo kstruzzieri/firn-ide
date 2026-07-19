@@ -16,6 +16,9 @@ import {
   GitFileAtRev,
   GitFileHunks,
   GitApplyHunk,
+  GitConflictStages,
+  GitMergeHeads,
+  GitConflictSnapshot,
   ReadFile,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
@@ -27,6 +30,7 @@ import {
 } from '../types/git';
 import { joinRepoPath } from '../utils/paths';
 import { pathsReferToSameFile } from '../utils/lspUri';
+import { isWritableFormat, saveOpenFileToDisk } from '../utils/fileWrites';
 import { useIDEStore } from './ideStore';
 
 /** Which pair of revisions a diff shows. Staged rows compare HEAD to the
@@ -74,6 +78,54 @@ export interface DiffSession {
   worktreeEncoding?: string;
   worktreeLineEndings?: string;
 }
+
+/** How one conflict region was resolved: Current, Incoming, Both, or Manual. */
+export type MergeDecision = 'C' | 'I' | 'B' | 'M';
+
+interface MergeSessionBase {
+  /** Repo-relative path of the conflicted file. */
+  path: string;
+  /** Absolute worktree path. */
+  absPath: string;
+  /** Repo root captured at open; finalize revalidates against the live root
+   * so a workspace switch mid-session can never stage into the wrong repo. */
+  repoRoot: string;
+  /** Card/header labels for the two sides of the active operation. */
+  labels: git.MergeHeads;
+  /** Workspace-scoped conflicted paths still to resolve, in panel order. */
+  fileQueue: string[];
+  /** Monotonic id of the openMergeResolution request that built this session. */
+  requestRevision: number;
+  /** Store epoch captured at open; async work checks it after every await. */
+  epoch: number;
+}
+
+/** Three-way textual conflict with marker blocks: the Result-spine editor. */
+export interface TextMergeSession extends MergeSessionBase {
+  kind: 'text';
+  /** Full working-tree document, markers included — the exact bytes the
+   * regions were parsed from (single atomic backend read). */
+  content: string;
+  encoding: string;
+  lineEndings: string;
+  regions: git.ConflictRegion[];
+  /** Region index → how it was resolved. Absent = still unresolved. */
+  decisions: Record<number, MergeDecision>;
+  /** True when the file's format can't be written back losslessly — the
+   * session renders read-only and finalize stays disabled. */
+  readOnly: boolean;
+}
+
+/** Whole-file side choice: binary conflicts and textual delete/modify, which
+ * have no marker block to edit. */
+export interface SidesMergeSession extends MergeSessionBase {
+  kind: 'sides';
+  /** Per-stage presence (absent side = deleted on that side) + binary flags. */
+  stages: git.ConflictStages;
+  selectedSide?: 'ours' | 'theirs';
+}
+
+export type MergeSession = TextMergeSession | SidesMergeSession;
 
 /** Friendly post-commit summary shown in the panel instead of raw git output. */
 export interface CommitReceipt {
@@ -170,6 +222,8 @@ interface GitState {
   diffSource: GitFileChange | null;
   /** True when the diff tab is the visible editor surface. */
   diffFocused: boolean;
+  /** The open merge-resolution session; null when none. */
+  mergeSession: MergeSession | null;
 }
 
 interface GitActions {
@@ -202,12 +256,22 @@ interface GitActions {
   refreshOpenDiff: () => Promise<void>;
   closeDiff: () => void;
   setDiffFocused: (focused: boolean) => void;
+  /** Open the merge-resolution surface for a conflicted file. Flushes the
+   * file's dirty editor buffer to disk first so markers are parsed from the
+   * bytes the session will display. Resolves false (with a user-facing toast
+   * where actionable) when no session could be built — the caller falls back
+   * to opening the file plainly. */
+  openMergeResolution: (path: string, fileQueue: string[]) => Promise<boolean>;
 }
 
 type GitStore = GitState & GitActions;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let diffRequestRevision = 0;
+/** Monotonic id for openMergeResolution requests, so a superseded open (or
+ * one predating a workspace switch) drops its result instead of clobbering
+ * the newer session. */
+let mergeRequestRevision = 0;
 /** User-initiated openDiff calls currently in flight. Background refreshes
  * yield to these: a refresh that bumped the request revision mid-click would
  * get the user's completion discarded and their click would appear dead. */
@@ -241,6 +305,7 @@ export const useGitStore = create<GitStore>()(
       diffSession: null,
       diffSource: null,
       diffFocused: false,
+      mergeSession: null,
 
       resetForWorkspace: (root) => {
         if (refreshTimer) {
@@ -262,6 +327,7 @@ export const useGitStore = create<GitStore>()(
             diffSession: null,
             diffSource: null,
             diffFocused: false,
+            mergeSession: null,
             epoch: state.epoch + 1,
             statusRevision: 0,
           }),
@@ -567,6 +633,85 @@ export const useGitStore = create<GitStore>()(
         set({ diffSession: null, diffSource: null, diffFocused: false }, false, 'git/closeDiff'),
 
       setDiffFocused: (diffFocused) => set({ diffFocused }, false, 'git/setDiffFocused'),
+
+      openMergeResolution: async (path, fileQueue) => {
+        const { root, status, epoch } = get();
+        const repoRoot = status?.isRepo ? status.repoRoot : root;
+        if (!repoRoot) return false;
+        const requestRevision = ++mergeRequestRevision;
+        const isCurrent = () => get().epoch === epoch && requestRevision === mergeRequestRevision;
+        const abs = joinRepoPath(repoRoot, path);
+
+        // Flush any unsaved editor buffer first: the snapshot must be parsed
+        // from the same bytes the session displays, and git only sees disk.
+        try {
+          await saveOpenFileToDisk(abs);
+        } catch (err) {
+          if (isCurrent()) {
+            useIDEStore
+              .getState()
+              .showToast(`Could not save ${path}: ${toErrorMessage(err)}`, 'error');
+          }
+          return false;
+        }
+        if (!isCurrent()) return false;
+
+        try {
+          // Stage presence decides the session kind: a missing side or a
+          // binary file has no marker block to edit, so it gets a whole-file
+          // side choice instead of the Result-spine editor.
+          const stages = await GitConflictStages(repoRoot, path);
+          if (!isCurrent()) return false;
+          if (!stages.base && !stages.ours && !stages.theirs) {
+            useIDEStore.getState().showToast(`${path} is not conflicted`, 'info');
+            return false;
+          }
+
+          const labels = await GitMergeHeads(repoRoot);
+          if (!isCurrent()) return false;
+
+          const base = { path, absPath: abs, repoRoot, labels, fileQueue, requestRevision, epoch };
+          if (stages.binary || !stages.ours || !stages.theirs) {
+            set(
+              { mergeSession: { kind: 'sides', ...base, stages } },
+              false,
+              'git/openMergeResolution'
+            );
+            return true;
+          }
+
+          const snap = await GitConflictSnapshot(repoRoot, path);
+          if (!isCurrent()) return false;
+          if (!snap.regions || snap.regions.length === 0) {
+            useIDEStore.getState().showToast(`No conflict markers found in ${path}`, 'info');
+            return false;
+          }
+          set(
+            {
+              mergeSession: {
+                kind: 'text',
+                ...base,
+                content: snap.content,
+                encoding: snap.encoding,
+                lineEndings: snap.lineEndings,
+                regions: snap.regions,
+                decisions: {},
+                readOnly: !isWritableFormat(snap.encoding, snap.lineEndings),
+              },
+            },
+            false,
+            'git/openMergeResolution'
+          );
+          return true;
+        } catch (err) {
+          if (isCurrent()) {
+            useIDEStore
+              .getState()
+              .showToast(`Merge resolution failed: ${toErrorMessage(err)}`, 'error');
+          }
+          return false;
+        }
+      },
     }),
     { name: 'git-store' }
   )
