@@ -431,15 +431,6 @@ function ConflictBanner({
 }) {
   const [showRaw, setShowRaw] = useState(false);
 
-  // The queue is the banner's own workspace-scoped list, in panel order —
-  // never rebuilt from raw repo status, which would cross workspace scope.
-  // Fallback-vs-supersession policy lives in the store, where the merge
-  // request revision is visible.
-  const resolve = (f: BucketedChange) => {
-    const queue = conflicts.map((c) => c.change.path);
-    void useGitStore.getState().resolveConflict(f.change.path, queue, f.absPath);
-  };
-
   return (
     <div className={styles.conflictBanner} data-testid="conflict-banner" role="alert">
       <div className={styles.conflictTitle}>
@@ -448,20 +439,12 @@ function ConflictBanner({
       </div>
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
-          <li key={f.change.path} className={styles.conflictRow}>
-            <button
-              type="button"
-              className={styles.conflictResolve}
-              onClick={() => resolve(f)}
-              aria-label={`Resolve ${fileName(f.change.path)}`}
-            >
-              Resolve
-            </button>
+          <li key={f.change.path}>
             <button
               type="button"
               className={styles.conflictOpen}
               onClick={() => void ensureEditorFileOpen(f.absPath)}
-              aria-label={`Open ${fileName(f.change.path)}`}
+              aria-label={`Open ${f.change.path}`}
             >
               {f.change.path}
             </button>

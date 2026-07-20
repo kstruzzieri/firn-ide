@@ -592,34 +592,15 @@ describe('GitPanel conflicts and errors', () => {
     expect(screen.getByTestId('git-error')).toHaveTextContent('hook rejected: lint failed');
   });
 
-  it('Resolve hands the panel-scoped conflict queue to the store', async () => {
-    // Fallback-vs-supersession policy lives in the store (resolveConflict),
-    // where the request revision is visible; the panel only wires the click.
-    const resolveConflict = jest.fn().mockResolvedValue(undefined);
-    const original = useGitStore.getState().resolveConflict;
-    act(() => {
-      useGitStore.setState({ resolveConflict });
-    });
-    try {
-      seed([file('clash.go', 'U', 'U', true), file('other.go', 'U', 'U', true)]);
+  it('does not expose Resolve before the merge editor surface exists', () => {
+    seed([file('clash.go', 'U', 'U', true)]);
 
-      render(<GitPanel />);
-      fireEvent.click(screen.getByRole('button', { name: /resolve clash\.go/i }));
-      await act(async () => {});
+    render(<GitPanel />);
 
-      expect(resolveConflict).toHaveBeenCalledWith(
-        'clash.go',
-        ['clash.go', 'other.go'],
-        '/repo/clash.go'
-      );
-    } finally {
-      act(() => {
-        useGitStore.setState({ resolveConflict: original });
-      });
-    }
+    expect(screen.queryByRole('button', { name: /resolve clash\.go/i })).not.toBeInTheDocument();
   });
 
-  it('keeps the plain Open action beside Resolve', async () => {
+  it('keeps the plain Open action', async () => {
     (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
     act(() => {
       useIDEStore.setState({ openFiles: [] });
@@ -631,6 +612,15 @@ describe('GitPanel conflicts and errors', () => {
     await act(async () => {});
 
     expect(ReadFile).toHaveBeenCalledWith('/repo/clash.go');
+  });
+
+  it('distinguishes duplicate conflict basenames by repository path', () => {
+    seed([file('frontend/index.ts', 'U', 'U', true), file('backend/index.ts', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: 'Open frontend/index.ts' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open backend/index.ts' })).toBeInTheDocument();
   });
 });
 
