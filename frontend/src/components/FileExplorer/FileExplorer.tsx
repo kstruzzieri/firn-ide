@@ -27,6 +27,7 @@ import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { relativePathFromRoot } from '../../utils/workspaceRegions';
 import { useGitStatusByPath } from '../../stores/gitStore';
 import { normalizeFsPath } from '../../utils/paths';
+import { accentVar } from '../../utils/accent';
 import styles from './FileExplorer.module.css';
 
 export function FileExplorer() {
@@ -48,6 +49,7 @@ export function FileExplorer() {
     rootUnreadable,
     getRegionAccent,
     getFileAccent,
+    getOwnershipAccent,
     treeAccent,
   } = presentation;
   const gitStatusByPath = useGitStatusByPath();
@@ -175,6 +177,8 @@ export function FileExplorer() {
         selectedPath,
         getRegionAccent,
         getFileAccent,
+        getOwnershipAccent,
+        rootOwnershipAccent: treeAccent,
         isRootExpanded,
         rootLabel,
         rootPath,
@@ -185,6 +189,8 @@ export function FileExplorer() {
       selectedPath,
       getRegionAccent,
       getFileAccent,
+      getOwnershipAccent,
+      treeAccent,
       isRootExpanded,
       rootLabel,
       rootPath,
@@ -288,7 +294,7 @@ export function FileExplorer() {
     return (
       <div
         ref={scrollRef}
-        className={styles.scrollArea}
+        className={`${styles.scrollArea}${treeAccent ? ` ${styles.workspaceTree}` : ''}`}
         role="tree"
         aria-label="File explorer"
         aria-activedescendant={activeRowRendered ? activeId : undefined}
@@ -296,7 +302,7 @@ export function FileExplorer() {
         onKeyDown={onKeyDown}
         style={
           treeAccent
-            ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})`, minHeight: '100%' }
+            ? ({ '--tree-accent': accentVar(treeAccent) } as React.CSSProperties)
             : undefined
         }
       >
@@ -328,6 +334,7 @@ export function FileExplorer() {
                   isSelected={row.isSelected}
                   regionAccent={row.regionAccent}
                   fileAccent={row.fileAccent}
+                  ownershipAccent={row.ownershipAccent}
                   setSize={row.setSize}
                   posInSet={row.posInSet}
                   rootPath={row.rootPath}

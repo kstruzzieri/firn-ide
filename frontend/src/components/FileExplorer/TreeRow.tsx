@@ -39,6 +39,7 @@ export interface TreeRowProps {
   isSelected: boolean;
   regionAccent: WorkspaceAccent | null;
   fileAccent: WorkspaceAccent | null;
+  ownershipAccent?: WorkspaceAccent | null;
   setSize: number;
   posInSet: number;
   /** Root only: absolute path shown as a dimmed label. */
@@ -74,6 +75,7 @@ function TreeRowImpl({
   isSelected,
   regionAccent,
   fileAccent,
+  ownershipAccent,
   setSize,
   posInSet,
   rootPath,
@@ -115,6 +117,7 @@ function TreeRowImpl({
     `${styles.row}` +
     (kind === 'root' ? ` ${styles.root}` : '') +
     (regionAccent ? ` ${styles.tinted}` : '') +
+    (ownershipAccent ? ` ${styles.ownershipRail}` : '') +
     (isActive ? ` ${styles.active}` : '');
 
   return (
@@ -128,6 +131,7 @@ function TreeRowImpl({
           paddingLeft: `${indentPx}px`,
           ...(regionAccent ? { '--region-accent': `var(--accent-${regionAccent})` } : {}),
           ...(fileAccent ? { '--file-accent': accentVar(fileAccent) } : {}),
+          ...(ownershipAccent ? { '--ownership-accent': accentVar(ownershipAccent) } : {}),
         } as React.CSSProperties
       }
       onClick={handleRowClick}

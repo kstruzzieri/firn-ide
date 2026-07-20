@@ -10,6 +10,10 @@ const treeRowCss = readFileSync(
   resolve(__dirname, '../../components/FileExplorer/TreeRow.module.css'),
   'utf8'
 );
+const fileExplorerCss = readFileSync(
+  resolve(__dirname, '../../components/FileExplorer/FileExplorer.module.css'),
+  'utf8'
+);
 const editorCss = readFileSync(
   resolve(__dirname, '../../components/Editor/Editor.module.css'),
   'utf8'
@@ -77,6 +81,17 @@ function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]
     ? token(`accent-${accent}`)
     : token(focusVariable);
 }
+
+it('uses one full-strength outer rail and one adjacent 35% ownership rail without shadows', () => {
+  const outerRail = rule(fileExplorerCss, '.workspaceTree');
+  const ownershipRail = rule(treeRowCss, '.row.ownershipRail::before');
+
+  expect(outerRail).toMatch(/border-left:\s*3px solid var\(--tree-accent\)/);
+  expect(ownershipRail).toMatch(/background:\s*var\(--ownership-accent\)/);
+  expect(ownershipRail).toMatch(/opacity:\s*0\.35/);
+  expect(`${outerRail}\n${ownershipRail}`).not.toMatch(/(?:box-shadow|filter):/);
+  expect(treeRowCss).not.toMatch(/\.row\.ownershipRail::after/);
+});
 
 it.each([
   'surface-base',

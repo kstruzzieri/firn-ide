@@ -28,6 +28,7 @@ const root = '/repo';
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
   { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'go', name: 'Go', relDir: 'frontend/go', type: 'go', accent: 'cyan' },
 ] as workspace.WorkspaceDef[];
 
 const nestedDockerfile = {
@@ -45,6 +46,14 @@ const tree: FileEntry[] = [
     children: [
       { name: 'App.tsx', path: `${root}/frontend/App.tsx`, isDir: false } as FileEntry,
       nestedDockerfile,
+      {
+        name: 'go',
+        path: `${root}/frontend/go`,
+        isDir: true,
+        children: [
+          { name: 'main.go', path: `${root}/frontend/go/main.go`, isDir: false } as FileEntry,
+        ],
+      } as FileEntry,
     ],
   } as FileEntry,
 ];
@@ -59,7 +68,9 @@ function seed(
     activeWorkspaceId,
     lastFocusedWorkspaceId: activeWorkspaceId !== 'project' ? activeWorkspaceId : null,
     directoryTree: tree,
-    expandedPaths: new Set([`${root}/frontend`]),
+    expandedPaths: new Set([`${root}/frontend`, `${root}/frontend/go`]),
+    selectedPath: null,
+    activeFileId: null,
     isRootExpanded: true,
     isLoadingTree: false,
     treeError: null,
@@ -99,6 +110,51 @@ describe('FileExplorer views', () => {
       expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
       expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
       expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+    } finally {
+      restoreVirtualLayout();
+    }
+  });
+
+  it('renders exactly the two approved Workspace rails and clears them in Project View', () => {
+    const restoreVirtualLayout = installVirtualLayout(400);
+    try {
+      seed('frontend', { selectedPath: nestedDockerfile.path });
+      render(<FileExplorer />);
+
+      const workspaceTree = screen.getByRole('tree');
+      const workspaceRow = screen.getByRole('treeitem', { name: 'Dockerfile' });
+      const ownedWorkspaceRow = screen.getByRole('treeitem', { name: 'App.tsx' });
+      const nestedWorkspaceRow = screen.getByRole('treeitem', { name: 'main.go' });
+      expect(workspaceTree).toHaveClass('workspaceTree');
+      expect(workspaceTree.style.getPropertyValue('--tree-accent')).toBe('var(--accent-blue)');
+      expect(ownedWorkspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
+        'var(--accent-blue)'
+      );
+      expect(nestedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe(
+        'var(--accent-blue)'
+      );
+      expect(nestedWorkspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
+        'var(--accent-cyan)'
+      );
+      expect(workspaceRow).toHaveClass('ownershipRail');
+      expect(workspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
+        'var(--accent-purple)'
+      );
+      expect(workspaceRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+      expect(workspaceRow).toHaveAttribute('aria-selected', 'true');
+
+      act(() => {
+        useIDEStore.setState({ activeWorkspaceId: 'project', lastFocusedWorkspaceId: null });
+      });
+
+      const projectTree = screen.getByRole('tree');
+      const projectRow = screen.getByRole('treeitem', { name: 'Dockerfile' });
+      expect(projectTree).not.toHaveClass('workspaceTree');
+      expect(projectTree.style.getPropertyValue('--tree-accent')).toBe('');
+      expect(projectRow).not.toHaveClass('ownershipRail');
+      expect(projectRow.style.getPropertyValue('--ownership-accent')).toBe('');
+      expect(projectRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+      expect(projectRow.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
     } finally {
       restoreVirtualLayout();
     }

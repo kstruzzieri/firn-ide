@@ -20,25 +20,30 @@
 }
 
 /*
- * Region tint: faint accent wash + a 3px left rail. The rail is a square
- * pseudo-element (not box-shadow/border) so it ignores the row's border-radius
- * and stays perfectly straight; because a region is a contiguous run of rows,
- * the per-row rails butt together into one continuous vertical rail that groups
- * the region (Project View = multi-color per region; Workspace View = single
- * accent across the tree).
+ * Region tint: faint accent wash + a square 3px pseudo-element rail. Project
+ * View uses the region accent directly. Workspace View reuses the same
+ * pseudo-element for the subordinate ownership segments beside the tree rail.
  */
 .row.tinted {
   background-color: color-mix(in srgb, var(--region-accent) 6%, transparent);
 }
 
-.row.tinted::before {
+.row:is(.tinted, .ownershipRail)::before {
   content: '';
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
   width: 3px;
+}
+
+.row.tinted::before {
   background: var(--region-accent);
+}
+
+.row.ownershipRail::before {
+  background: var(--ownership-accent);
+  opacity: 0.35;
 }
 
 .row.tinted:hover {
