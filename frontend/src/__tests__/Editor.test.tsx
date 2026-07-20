@@ -11,7 +11,17 @@ jest.mock('../../wailsjs/runtime/runtime', () => ({
   WindowSetTitle: mockWindowSetTitle,
 }));
 
+// The real CodeMirrorEditor drags the full CM6 + LSP extension graph into
+// jsdom; the suppression tests below only need the Editor shell to mount.
+jest.mock('../components/Editor/CodeMirrorEditor', () => {
+  const mockReact = require('react');
+  return {
+    CodeMirrorEditor: () => mockReact.createElement('div', { 'data-testid': 'codemirror-mock' }),
+  };
+});
+
 import { Editor } from '../components/Editor';
+import * as platform from '../utils/platform';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -101,19 +111,23 @@ describe('Editor Welcome Screen', () => {
   });
 
   it('suppresses the browser native find dialog when no files are open', () => {
-    render(<Editor />);
+    const isMacSpy = jest.spyOn(platform, 'isMac').mockReturnValue(true);
+    try {
+      render(<Editor />);
 
-    const event = new KeyboardEvent('keydown', {
-      key: 'f',
-      ctrlKey: true,
-      metaKey: true,
-      bubbles: true,
-      cancelable: true,
-    });
+      const event = new KeyboardEvent('keydown', {
+        key: 'f',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
 
-    window.dispatchEvent(event);
+      window.dispatchEvent(event);
 
-    expect(event.defaultPrevented).toBe(true);
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      isMacSpy.mockRestore();
+    }
   });
 
   it('leaves Cmd+Shift+F untouched so it can be claimed by project search', () => {
@@ -145,5 +159,82 @@ describe('Editor Welcome Screen', () => {
     window.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('keeps suppressing native find when files are open but the editor is unfocused', () => {
+    useIDEStore.setState({
+      openFiles: [
+        {
+          id: 'file-1',
+          name: 'a.ts',
+          path: '/ws/a.ts',
+          language: 'typescript',
+          encoding: 'utf-8',
+          lineEndings: 'lf',
+          content: '',
+          isModified: false,
+        },
+      ],
+      activeFileId: 'file-1',
+    });
+
+    const isMacSpy = jest.spyOn(platform, 'isMac').mockReturnValue(false);
+    try {
+      render(<Editor />);
+
+      const event = new KeyboardEvent('keydown', {
+        key: 'f',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+
+      window.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      isMacSpy.mockRestore();
+    }
+  });
+
+  it('suppresses plain Cmd+F on macOS', () => {
+    const isMacSpy = jest.spyOn(platform, 'isMac').mockReturnValue(true);
+    try {
+      render(<Editor />);
+
+      const event = new KeyboardEvent('keydown', {
+        key: 'f',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+
+      window.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      isMacSpy.mockRestore();
+    }
+  });
+
+  it('does not swallow Ctrl+Cmd+F, the macOS toggle-fullscreen shortcut', () => {
+    const isMacSpy = jest.spyOn(platform, 'isMac').mockReturnValue(true);
+    try {
+      render(<Editor />);
+
+      const event = new KeyboardEvent('keydown', {
+        key: 'f',
+        ctrlKey: true,
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+
+      window.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      isMacSpy.mockRestore();
+    }
   });
 });
