@@ -14,6 +14,7 @@ const mkRow = (over: Partial<FlatRow> & { key: string }): FlatRow => ({
   isSelected: false,
   regionAccent: null,
   fileAccent: null,
+  railAccent: null,
   setSize: 1,
   posInSet: 1,
   name: over.key,

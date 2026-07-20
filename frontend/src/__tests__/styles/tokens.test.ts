@@ -183,3 +183,14 @@ it.each(['.tabTarget:focus-visible', '.tabClose:focus-visible'])(
     expect(rule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
   }
 );
+
+it('keeps the workspace ownership rail adjacent, subordinate, and ahead of selection', () => {
+  expect(rule(treeRowCss, '.row.workspaceRail')).toMatch(/margin-left:\s*6px/);
+
+  const rail = rule(treeRowCss, '.row.workspaceRail::before');
+  expect(rail).toMatch(/left:\s*-3px/);
+  expect(rail).toMatch(/width:\s*3px/);
+  expect(rail).toMatch(/background:\s*var\(--rail-accent\)/);
+  expect(rail).toMatch(/opacity:\s*0\.35/);
+  expect(treeRowCss).not.toMatch(/\.row\.workspaceRail::after/);
+});

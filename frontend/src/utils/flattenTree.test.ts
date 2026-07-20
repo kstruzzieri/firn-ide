@@ -108,6 +108,26 @@ describe('flattenVisibleTree', () => {
     expect(row.fileAccent).toBe('purple');
   });
 
+  it('precomputes the workspace rail from file, ownership, then active accents', () => {
+    const app = file('/repo/frontend/App.tsx', 'App.tsx');
+    const dockerfile = file('/repo/frontend/Dockerfile', 'Dockerfile');
+    const readme = file('/repo/README.md', 'README.md');
+    const rows = flattenVisibleTree({
+      ...base,
+      roots: [dir('/repo/frontend', 'frontend', [app, dockerfile]), readme],
+      expandedPaths: new Set(['/repo/frontend']),
+      getRegionAccent: () => 'purple',
+      getFileAccent: getInfraFileAccent,
+      getOwnershipAccent: (entry: FileEntry) =>
+        entry.path.startsWith('/repo/frontend') ? 'blue' : null,
+    });
+    const railAccent = (path: string) => rows.find((row) => row.key === path)?.railAccent;
+
+    expect(railAccent(app.path)).toBe('blue');
+    expect(railAccent(dockerfile.path)).toBe('purple');
+    expect(railAccent(readme.path)).toBe('purple');
+  });
+
   it('marks the selected entry', () => {
     const roots = [file('/repo/a.ts', 'a.ts'), file('/repo/b.ts', 'b.ts')];
     const rows = flattenVisibleTree({

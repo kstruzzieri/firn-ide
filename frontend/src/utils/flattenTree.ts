@@ -20,6 +20,8 @@ export interface FlatRow {
   regionAccent: WorkspaceAccent | null;
   /** Fixed file-type accent, independent of regionAccent. */
   fileAccent: WorkspaceAccent | null;
+  /** Workspace-View segmented ownership/file rail. */
+  railAccent: WorkspaceAccent | null;
   /** Sibling-group size for aria-setsize. */
   setSize: number;
   /** 1-based index within the sibling group for aria-posinset. */
@@ -43,6 +45,7 @@ export interface FlattenOptions {
   selectedPath: string | null;
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
   getFileAccent?: (entry: FileEntry) => WorkspaceAccent | null;
+  getOwnershipAccent?: (entry: FileEntry) => WorkspaceAccent | null;
   isRootExpanded: boolean;
   rootLabel: string;
   rootPath: string;
@@ -61,6 +64,7 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
     selectedPath,
     getRegionAccent,
     getFileAccent,
+    getOwnershipAccent,
     isRootExpanded,
     rootLabel,
     rootPath,
@@ -77,6 +81,7 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
       isSelected: false,
       regionAccent: null,
       fileAccent: null,
+      railAccent: null,
       setSize: 1,
       posInSet: 1,
       name: rootLabel,
@@ -93,6 +98,8 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
       const isDir = entry.isDir;
       const isExpanded = isDir && expandedPaths.has(entry.path);
       const canExpand = isDir && (entry.children === undefined || entry.children.length > 0);
+      const regionAccent = getRegionAccent?.(entry) ?? null;
+      const fileAccent = getFileAccent?.(entry) ?? null;
       rows.push({
         kind: 'entry',
         key: entry.path,
@@ -101,8 +108,11 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
         isDir,
         isExpanded,
         isSelected: selectedPath === entry.path,
-        regionAccent: getRegionAccent?.(entry) ?? null,
-        fileAccent: getFileAccent?.(entry) ?? null,
+        regionAccent,
+        fileAccent,
+        railAccent: getOwnershipAccent
+          ? (fileAccent ?? getOwnershipAccent(entry) ?? regionAccent)
+          : null,
         setSize,
         posInSet: index + 1,
         name: entry.name,

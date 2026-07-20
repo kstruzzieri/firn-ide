@@ -99,6 +99,12 @@ describe('FileExplorer views', () => {
       expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
       expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
       expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+      expect(row.style.getPropertyValue('--rail-accent')).toBe(
+        activeId === 'frontend' ? 'var(--accent-purple)' : ''
+      );
+      expect(screen.getByRole('tree').style.boxShadow).toBe(
+        activeId === 'frontend' ? 'inset 3px 0 0 var(--accent-blue)' : ''
+      );
     } finally {
       restoreVirtualLayout();
     }

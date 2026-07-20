@@ -32,6 +32,8 @@ export interface FileTreePresentation {
    * Workspace View → uniform resolver returning the active workspace accent.
    */
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
+  /** Workspace-View row ownership, separate from the active-workspace wash. */
+  getOwnershipAccent?: (entry: FileEntry) => WorkspaceAccent | null;
   /** Fixed Docker/Terraform accent, independent of the workspace region tint. */
   getFileAccent: (entry: FileEntry) => WorkspaceAccent | null;
   /**
@@ -70,10 +72,11 @@ export function useFileTreePresentation(): FileTreePresentation {
   const repoRoot = repo?.path ?? '';
   const repoName = repo?.name ?? '';
 
-  const getRegionAccent = useMemo(
-    () => (mode === 'project' ? createRegionAccentResolver(repoRoot, workspaces) : undefined),
-    [mode, repoRoot, workspaces]
+  const ownershipAccentResolver = useMemo(
+    () => createRegionAccentResolver(repoRoot, workspaces),
+    [repoRoot, workspaces]
   );
+  const getRegionAccent = mode === 'project' ? ownershipAccentResolver : undefined;
 
   return useMemo<FileTreePresentation>(() => {
     const base = {
@@ -109,6 +112,7 @@ export function useFileTreePresentation(): FileTreePresentation {
         roots: tree,
         scopedError: false,
         getRegionAccent: workspaceResolver,
+        getOwnershipAccent: treeAccent ? ownershipAccentResolver : undefined,
         treeAccent,
       };
     }
@@ -125,7 +129,17 @@ export function useFileTreePresentation(): FileTreePresentation {
       scopedError: scoped === null || scopedUnloaded,
       rootUnreadable,
       getRegionAccent: workspaceResolver,
+      getOwnershipAccent: treeAccent ? ownershipAccentResolver : undefined,
       treeAccent,
     };
-  }, [mode, canFocusWorkspace, repoName, repoRoot, tree, active, getRegionAccent]);
+  }, [
+    mode,
+    canFocusWorkspace,
+    repoName,
+    repoRoot,
+    tree,
+    active,
+    getRegionAccent,
+    ownershipAccentResolver,
+  ]);
 }

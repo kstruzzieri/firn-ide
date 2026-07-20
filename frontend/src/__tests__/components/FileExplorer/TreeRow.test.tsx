@@ -10,6 +10,7 @@ const baseProps = {
   canExpand: false,
   unreadable: false,
   fileAccent: null,
+  railAccent: null,
   onToggle: noop,
   onSelect: noop,
   onOpen: noop,
@@ -185,6 +186,36 @@ describe('TreeRow', () => {
     expect(row).toHaveAttribute('aria-selected', 'true');
     expect(row).toHaveAttribute('data-git', 'modified');
     expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
+  });
+
+  it('keeps the workspace rail outside selection and clears it when a row is recycled', () => {
+    const props = {
+      ...baseProps,
+      kind: 'entry' as const,
+      path: '/repo/frontend/App.tsx',
+      name: 'App.tsx',
+      depth: 2,
+      level: 3,
+      isDir: false,
+      isExpanded: false,
+      isSelected: true,
+      isActive: true,
+      regionAccent: 'purple' as const,
+      railAccent: 'blue' as const,
+      setSize: 1,
+      posInSet: 1,
+    };
+    const { rerender } = render(<TreeRow {...props} />);
+
+    const row = screen.getByRole('treeitem', { name: 'App.tsx' });
+    expect(row.className).toContain('workspaceRail');
+    expect(row.style.getPropertyValue('--rail-accent')).toBe('var(--accent-blue)');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row.className).toContain('active');
+
+    rerender(<TreeRow {...props} railAccent={null} />);
+    expect(row.className).not.toContain('workspaceRail');
+    expect(row.style.getPropertyValue('--rail-accent')).toBe('');
   });
 
   it('renders unreadable visually and in the tree item name without changing row state', () => {

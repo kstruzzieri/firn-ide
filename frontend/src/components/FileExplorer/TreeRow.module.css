@@ -24,8 +24,8 @@
  * pseudo-element (not box-shadow/border) so it ignores the row's border-radius
  * and stays perfectly straight; because a region is a contiguous run of rows,
  * the per-row rails butt together into one continuous vertical rail that groups
- * the region (Project View = multi-color per region; Workspace View = single
- * accent across the tree).
+ * the region in Project View. Workspace View overrides this pseudo-element
+ * below with its segmented ownership rail.
  */
 .row.tinted {
   background-color: color-mix(in srgb, var(--region-accent) 6%, transparent);
@@ -39,6 +39,22 @@
   bottom: 0;
   width: 3px;
   background: var(--region-accent);
+}
+
+/* Workspace View reserves two 3px rails before the row and its selection outline. */
+.row.workspaceRail {
+  margin-left: 6px;
+}
+
+.row.workspaceRail::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--rail-accent);
+  opacity: 0.35;
 }
 
 .row.tinted:hover {

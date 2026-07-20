@@ -78,6 +78,25 @@ describe('useFileTreePresentation', () => {
     expect(result.current.getFileAccent(nestedDockerfile)).toBe('purple');
   });
 
+  it('workspace mode exposes row ownership without changing the active-workspace wash', () => {
+    useIDEStore.setState({
+      workspace: { name: 'repo', path: root },
+      workspaces: [
+        defs[0],
+        { id: 'docker', name: 'Docker', relDir: '', type: 'docker', accent: 'purple' },
+        defs[1],
+      ] as workspace.WorkspaceDef[],
+      activeWorkspaceId: 'docker',
+      lastFocusedWorkspaceId: 'docker',
+      directoryTree: tree,
+    });
+
+    const { result } = renderHook(() => useFileTreePresentation());
+
+    expect(result.current.getRegionAccent?.(tree[1])).toBe('purple');
+    expect(result.current.getOwnershipAccent?.(tree[1])).toBe('blue');
+  });
+
   it('workspace mode scopes to the children and washes the tree in the workspace accent', () => {
     seed('go');
     const { result } = renderHook(() => useFileTreePresentation());

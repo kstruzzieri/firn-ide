@@ -48,6 +48,7 @@ export function FileExplorer() {
     rootUnreadable,
     getRegionAccent,
     getFileAccent,
+    getOwnershipAccent,
     treeAccent,
   } = presentation;
   const gitStatusByPath = useGitStatusByPath();
@@ -175,6 +176,7 @@ export function FileExplorer() {
         selectedPath,
         getRegionAccent,
         getFileAccent,
+        getOwnershipAccent,
         isRootExpanded,
         rootLabel,
         rootPath,
@@ -185,6 +187,7 @@ export function FileExplorer() {
       selectedPath,
       getRegionAccent,
       getFileAccent,
+      getOwnershipAccent,
       isRootExpanded,
       rootLabel,
       rootPath,
@@ -328,6 +331,7 @@ export function FileExplorer() {
                   isSelected={row.isSelected}
                   regionAccent={row.regionAccent}
                   fileAccent={row.fileAccent}
+                  railAccent={row.railAccent ?? treeAccent ?? null}
                   setSize={row.setSize}
                   posInSet={row.posInSet}
                   rootPath={row.rootPath}
