@@ -444,7 +444,7 @@ function ConflictBanner({
               type="button"
               className={styles.conflictOpen}
               onClick={() => void ensureEditorFileOpen(f.absPath)}
-              aria-label={`Open ${fileName(f.change.path)}`}
+              aria-label={`Open ${f.change.path}`}
             >
               {f.change.path}
             </button>

@@ -113,7 +113,7 @@ func (s *Service) Stage(ctx context.Context, dir string, paths []string) error {
 	if err := validateRepoRelPaths(paths); err != nil {
 		return err
 	}
-	_, err := s.runAtRoot(ctx, dir, append([]string{"add", "--"}, paths...)...)
+	_, err := s.runAtRoot(ctx, dir, append([]string{literalPathspecs, "add", "--"}, paths...)...)
 	return err
 }
 

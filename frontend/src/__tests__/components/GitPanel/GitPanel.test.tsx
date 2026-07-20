@@ -591,6 +591,37 @@ describe('GitPanel conflicts and errors', () => {
 
     expect(screen.getByTestId('git-error')).toHaveTextContent('hook rejected: lint failed');
   });
+
+  it('does not expose Resolve before the merge editor surface exists', () => {
+    seed([file('clash.go', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+
+    expect(screen.queryByRole('button', { name: /resolve clash\.go/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps the plain Open action', async () => {
+    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
+    act(() => {
+      useIDEStore.setState({ openFiles: [] });
+    });
+    seed([file('clash.go', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /open clash\.go/i }));
+    await act(async () => {});
+
+    expect(ReadFile).toHaveBeenCalledWith('/repo/clash.go');
+  });
+
+  it('distinguishes duplicate conflict basenames by repository path', () => {
+    seed([file('frontend/index.ts', 'U', 'U', true), file('backend/index.ts', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: 'Open frontend/index.ts' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open backend/index.ts' })).toBeInTheDocument();
+  });
 });
 
 describe('GitPanel branch and sync controls', () => {
