@@ -430,6 +430,7 @@ function ConflictBanner({
   raw: string | null;
 }) {
   const [showRaw, setShowRaw] = useState(false);
+  const fileQueue = conflicts.map((file) => file.change.path);
 
   return (
     <div className={styles.conflictBanner} data-testid="conflict-banner" role="alert">
@@ -440,6 +441,16 @@ function ConflictBanner({
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
           <li key={f.change.path}>
+            <button
+              type="button"
+              className={styles.conflictResolve}
+              onClick={() =>
+                void useGitStore.getState().openMergeResolution(f.change.path, fileQueue)
+              }
+              aria-label={`Resolve ${f.change.path}`}
+            >
+              Resolve {f.change.path}
+            </button>
             <button
               type="button"
               className={styles.conflictOpen}

@@ -10,6 +10,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
@@ -28,6 +29,7 @@ import { formatShortcut, isMac } from '../../utils/platform';
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { GitDiffView } from './GitDiffView';
+import { MergeResolutionView } from './MergeResolutionView';
 import { useGitStore } from '../../stores/gitStore';
 import { useGitBaseline } from '../../hooks/useGitBaseline';
 import { getLanguageName } from './codemirror';
@@ -48,6 +50,8 @@ export function Editor() {
   );
   const diffSession = useGitStore((state) => state.diffSession);
   const diffFocused = useGitStore((state) => state.diffFocused);
+  const mergeSession = useGitStore((state) => state.mergeSession);
+  const mergeFocused = useGitStore((state) => state.mergeFocused);
   const gitBaseline = useGitBaseline(activeFile?.path);
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
@@ -59,6 +63,7 @@ export function Editor() {
   const cursorPositions = useIDEStore((state) => state.cursorPositions);
   const editorRef = useRef<HTMLDivElement>(null);
   const restoreFocusAfterCloseRef = useRef(false);
+  const [mergeFinalizing, setMergeFinalizing] = useState(false);
 
   // Handle content changes from the editor
   const handleContentChange = useCallback(
@@ -128,14 +133,19 @@ export function Editor() {
   useEffect(() => {
     if (prevActiveFileIdRef.current === activeFileId) return;
     prevActiveFileIdRef.current = activeFileId;
-    if (activeFileId) useGitStore.getState().setDiffFocused(false);
+    if (activeFileId) {
+      useGitStore.getState().setEditorFocus('file');
+    }
+    return undefined;
   }, [activeFileId]);
 
   // Show the diff when it's focused, or when there's simply no file to show
   // instead (e.g. the file opened from a diff was closed, leaving only the
   // diff tab) — otherwise the panel would render blank.
-  const showDiff = !!diffSession && (diffFocused || !activeFile);
+  const showDiff = !!diffSession && (diffFocused || (!activeFile && !mergeSession));
+  const showMerge = !!mergeSession && !showDiff && (mergeFocused || !activeFile);
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
+  const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
   useEffect(() => {
     if (!restoreFocusAfterCloseRef.current) return undefined;
@@ -153,7 +163,7 @@ export function Editor() {
     }, 0);
 
     return () => window.clearTimeout(timeout);
-  }, [activeFileId, diffFocused, diffSession, openFiles]);
+  }, [activeFileId, diffFocused, diffSession, mergeSession, openFiles]);
 
   // Re-fetch the diff each time it becomes visible so it reflects edits made in
   // the editor while it was in the background (the working-tree side re-reads
@@ -167,7 +177,7 @@ export function Editor() {
   }, [showDiff]);
 
   // Welcome screen when no files are open (and no diff preview tab)
-  if (openFiles.length === 0 && !diffSession) {
+  if (openFiles.length === 0 && !diffSession && !mergeSession) {
     // Filter out the currently open workspace from recent list
     const recentProjects = recentWorkspaces.filter((w) => w.path !== workspace?.path);
 
@@ -224,12 +234,12 @@ export function Editor() {
         {openFiles.map((file) => {
           // A focused diff tab owns the active state, so the file tab it was
           // opened from doesn't also read as active.
-          const isActive = file.id === activeFile?.id && !showDiff;
+          const isActive = file.id === activeFile?.id && !showDiff && !showMerge;
           const languageName = getLanguageName(file.name);
           const owner = resolveWorkspace(file.path);
 
           const activateFileTab = () => {
-            useGitStore.getState().setDiffFocused(false);
+            useGitStore.getState().setEditorFocus('file');
             setActiveFile(file.id);
           };
 
@@ -276,7 +286,7 @@ export function Editor() {
             className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
             style={tabAccentStyle(diffOwner)}
             title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
-            onClick={() => useGitStore.getState().setDiffFocused(true)}
+            onClick={() => useGitStore.getState().setEditorFocus('diff')}
           >
             <div
               id="tab-git-diff"
@@ -286,7 +296,9 @@ export function Editor() {
               aria-selected={showDiff}
               aria-controls="editor-tabpanel"
               onKeyDown={(event) =>
-                handleTabKeyDown(event, () => useGitStore.getState().setDiffFocused(true))
+                handleTabKeyDown(event, () => {
+                  useGitStore.getState().setEditorFocus('diff');
+                })
               }
             >
               <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
@@ -306,6 +318,45 @@ export function Editor() {
             </button>
           </div>
         )}
+        {mergeSession && (
+          <div
+            className={`${styles.tab} ${mergeOwner ? styles.workspaceTab : ''} ${showMerge ? styles.active : ''}`}
+            style={tabAccentStyle(mergeOwner)}
+            title={mergeSession.path}
+            onClick={() => useGitStore.getState().setEditorFocus('merge')}
+          >
+            <div
+              id="tab-merge-resolution"
+              className={styles.tabTarget}
+              role="tab"
+              tabIndex={showMerge ? 0 : -1}
+              aria-selected={showMerge}
+              aria-controls="editor-tabpanel"
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, () => {
+                  useGitStore.getState().setEditorFocus('merge');
+                })
+              }
+            >
+              <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
+              <span className={styles.tabName}>{diffTabName(mergeSession.path)} (merge)</span>
+            </div>
+            <button
+              className={styles.tabClose}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (mergeFinalizing) return;
+                restoreFocusAfterCloseRef.current = true;
+                useGitStore.getState().closeMergeResolution();
+              }}
+              aria-label="Close merge resolution"
+              type="button"
+              disabled={mergeFinalizing}
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Editor content */}
@@ -315,7 +366,13 @@ export function Editor() {
         role="tabpanel"
         tabIndex={0}
         aria-labelledby={
-          showDiff ? 'tab-git-diff' : activeFile ? editorTabId(activeFile.id) : undefined
+          showMerge
+            ? 'tab-merge-resolution'
+            : showDiff
+              ? 'tab-git-diff'
+              : activeFile
+                ? editorTabId(activeFile.id)
+                : undefined
         }
       >
         {/* Both surfaces stay mounted and are toggled with CSS so switching
@@ -327,8 +384,20 @@ export function Editor() {
             <GitDiffView session={diffSession} visible={showDiff} />
           </div>
         )}
+        {mergeSession && (
+          <div className={styles.pane} style={{ display: showMerge ? undefined : 'none' }}>
+            <MergeResolutionView
+              session={mergeSession}
+              visible={showMerge}
+              onFinalizingChange={setMergeFinalizing}
+            />
+          </div>
+        )}
         {activeFile && (
-          <div className={styles.editorContent} style={{ display: showDiff ? 'none' : undefined }}>
+          <div
+            className={styles.editorContent}
+            style={{ display: showDiff || showMerge ? 'none' : undefined }}
+          >
             <CodeMirrorEditor
               fileId={activeFile.id}
               filename={activeFile.name}

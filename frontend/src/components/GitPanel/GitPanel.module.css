@@ -317,6 +317,27 @@
   padding: 1px 0;
 }
 
+.conflictResolve {
+  margin-right: 8px;
+  border: 1px solid var(--status-error);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--status-error);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 5px;
+}
+
+.conflictResolve:hover {
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+}
+
+.conflictResolve:focus-visible,
+.conflictOpen:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .rawOutput {
   margin: 4px 0 0;
   padding: 6px;

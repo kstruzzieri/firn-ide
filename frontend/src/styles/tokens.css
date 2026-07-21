@@ -45,6 +45,12 @@
   --accent-dim: rgba(56, 189, 248, 0.12);
   --accent-glow: rgba(56, 189, 248, 0.25);
 
+  /* Merge decision semantics stay stable when workspace accents change. */
+  --side-cur: #38bdf8;
+  --side-inc: #22c55e;
+  --side-both: #2dd4bf;
+  --side-man: #a855f7;
+
   /* Terminal — Glacier Glow (fixed, workspace-agnostic)
      Near-black void with glacier blue luminescence */
   --term-bg: #040406;

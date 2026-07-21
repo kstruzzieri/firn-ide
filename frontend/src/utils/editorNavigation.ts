@@ -7,6 +7,7 @@
  */
 
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
+import { useGitStore } from '../stores/gitStore';
 import { ReadFile } from '../../wailsjs/go/main/App';
 import { createEditorFile } from './editorFile';
 import { flushWorkingTreeEdit } from './fileWrites';
@@ -43,6 +44,7 @@ export async function ensureEditorFileOpen(
   if (existing) {
     if (!shouldApplyNavigation(options)) return null;
     useIDEStore.getState().setActiveFile(existing.id);
+    useGitStore.getState().setEditorFocus('file');
     return existing;
   }
 
@@ -60,6 +62,7 @@ export async function ensureEditorFileOpen(
 
     const file = createEditorFile(localPath, content);
     useIDEStore.getState().openFile(file);
+    useGitStore.getState().setEditorFocus('file');
     return file;
   } catch (err) {
     if (!shouldApplyNavigation(options)) return null;

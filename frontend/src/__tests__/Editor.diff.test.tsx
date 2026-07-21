@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, act, createEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useIDEStore } from '../stores/ideStore';
-import { useGitStore, type DiffSession } from '../stores/gitStore';
+import { useGitStore, type DiffSession, type MergeSession } from '../stores/gitStore';
 import type { workspace } from '../../wailsjs/go/models';
 
 jest.mock('../../wailsjs/go/main/App', () => ({
@@ -37,6 +37,24 @@ jest.mock('../components/Editor/GitDiffView', () => ({
 jest.mock('../components/Editor/CodeMirrorEditor', () => ({
   CodeMirrorEditor: () => <div data-testid="cm-editor" />,
 }));
+jest.mock('../components/Editor/MergeResolutionView', () => ({
+  MergeResolutionView: ({
+    session,
+    visible,
+    onFinalizingChange,
+  }: {
+    session: MergeSession;
+    visible: boolean;
+    onFinalizingChange?: (finalizing: boolean) => void;
+  }) => (
+    <div data-testid="merge-resolution-view" data-visible={visible}>
+      {session.path}
+      <button type="button" onClick={() => onFinalizingChange?.(true)}>
+        Start deferred finalize
+      </button>
+    </div>
+  ),
+}));
 
 import { Editor } from '../components/Editor';
 
@@ -50,6 +68,53 @@ const session: DiffSession = {
   truncated: false,
   hunks: [],
 };
+
+const mergeSession = {
+  kind: 'sides',
+  path: 'clash.go',
+  absPath: '/repo/clash.go',
+  repoRoot: '/repo',
+  labels: {
+    operation: 'merge',
+    ours: { label: 'current', hash: 'abc', subject: '' },
+    theirs: { label: 'incoming', hash: 'def', subject: '' },
+  },
+  fileQueue: ['clash.go'],
+  requestRevision: 1,
+  epoch: 1,
+  fileWriteRevision: 1,
+  stages: { path: 'clash.go', binary: true },
+} as unknown as MergeSession;
+
+const textMergeSession = {
+  kind: 'text',
+  path: 'clash.go',
+  absPath: '/repo/clash.go',
+  repoRoot: '/repo',
+  labels: mergeSession.labels,
+  fileQueue: ['clash.go'],
+  requestRevision: 1,
+  epoch: 1,
+  fileWriteRevision: 1,
+  content: '<<<<<<< current\nleft\n=======\nright\n>>>>>>> incoming\n',
+  encoding: 'utf-8',
+  lineEndings: 'lf',
+  regions: [
+    {
+      index: 0,
+      startLine: 1,
+      endLine: 5,
+      ours: ['left'],
+      base: [],
+      theirs: ['right'],
+      hasBase: false,
+      oursLabel: 'current',
+      theirLabel: 'incoming',
+    },
+  ],
+  decisions: {},
+  readOnly: false,
+} as unknown as MergeSession;
 
 function openFile(id: string, name: string) {
   return {
@@ -74,7 +139,95 @@ beforeEach(() => {
     activeFileId: null,
     recentWorkspaces: [],
   });
-  useGitStore.setState({ diffSession: null, diffFocused: false });
+  useGitStore.setState({
+    diffSession: null,
+    diffFocused: false,
+    mergeSession: null,
+    mergeFocused: false,
+  });
+});
+
+describe('Editor merge-resolution tab', () => {
+  it('keeps the merge surface mounted while another tab is selected and closes without writing', () => {
+    const closeMergeResolution = jest.fn();
+    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ mergeSession, mergeFocused: true, closeMergeResolution });
+
+    render(<Editor />);
+
+    const mergeTab = screen.getByRole('tab', { name: /clash\.go.*merge/i });
+    expect(mergeTab).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab', { name: /other\.ts/i }));
+    expect(screen.getByTestId('merge-resolution-view')).toHaveAttribute('data-visible', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close merge resolution' }));
+    expect(closeMergeResolution).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables merge close while its surface reports a deferred finalize', () => {
+    const closeMergeResolution = jest.fn();
+    useGitStore.setState({ mergeSession, mergeFocused: true, closeMergeResolution });
+
+    render(<Editor />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start deferred finalize' }));
+    const close = screen.getByRole('button', { name: 'Close merge resolution' });
+    expect(close).toBeDisabled();
+    fireEvent.click(close);
+    expect(closeMergeResolution).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicitly focused diff selected when a merge session is installed', () => {
+    useGitStore.setState({
+      diffSession: session,
+      diffFocused: true,
+      mergeSession,
+      mergeFocused: false,
+    });
+
+    render(<Editor />);
+
+    expect(useGitStore.getState().diffFocused).toBe(true);
+    expect(screen.getByRole('tab', { name: /a\.ts.*diff/i })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+  });
+
+  it.each([
+    ['file', false, false, /other\.ts/i],
+    ['diff', true, false, /a\.ts.*diff/i],
+    ['merge', false, true, /clash\.go.*merge/i],
+  ])(
+    'does not steal the focused %s surface during a failed-stage baseline rebase',
+    (_focus, diffFocused, mergeFocused, selectedTab) => {
+      useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+      useGitStore.setState({
+        diffSession: session,
+        diffFocused,
+        mergeSession: textMergeSession,
+        mergeFocused,
+      });
+      render(<Editor />);
+
+      act(() => {
+        useGitStore.setState({
+          mergeSession: {
+            ...textMergeSession,
+            content: (textMergeSession as { content: string }).content + '\nrebased baseline',
+            fileWriteRevision: 2,
+          } as MergeSession,
+        });
+      });
+
+      expect(useGitStore.getState().diffFocused).toBe(diffFocused);
+      expect(useGitStore.getState().mergeFocused).toBe(mergeFocused);
+      expect(screen.getByRole('tab', { name: selectedTab })).toHaveAttribute(
+        'aria-selected',
+        'true'
+      );
+    }
+  );
 });
 
 describe('Editor git diff tab', () => {

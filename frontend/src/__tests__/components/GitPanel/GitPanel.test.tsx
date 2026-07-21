@@ -16,6 +16,11 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   ReadFile: jest.fn(),
 }));
 
+const mockEnsureEditorFileOpen = jest.fn();
+jest.mock('../../../utils/editorNavigation', () => ({
+  ensureEditorFileOpen: (...args: unknown[]) => mockEnsureEditorFileOpen(...args),
+}));
+
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { GitPanel } from '../../../components/GitPanel';
 import { useGitStore } from '../../../stores/gitStore';
@@ -328,7 +333,6 @@ describe('GitPanel diff open', () => {
   });
 
   it('clicking a conflict row opens the file itself, not a diff', async () => {
-    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
     seed([file('clash.go', 'U', 'U', true)]);
 
     render(<GitPanel />);
@@ -337,6 +341,7 @@ describe('GitPanel diff open', () => {
     );
     await act(async () => {});
 
+    expect(mockEnsureEditorFileOpen).toHaveBeenCalledWith('/repo/clash.go');
     expect(useGitStore.getState().diffSession).toBeNull();
     expect(GitFileAtRev).not.toHaveBeenCalled();
   });
@@ -592,26 +597,25 @@ describe('GitPanel conflicts and errors', () => {
     expect(screen.getByTestId('git-error')).toHaveTextContent('hook rejected: lint failed');
   });
 
-  it('does not expose Resolve before the merge editor surface exists', () => {
-    seed([file('clash.go', 'U', 'U', true)]);
+  it('opens the selected conflict with the panel-scoped conflict queue', () => {
+    const openMergeResolution = jest.fn();
+    seed([file('clash.go', 'U', 'U', true), file('next.go', 'U', 'U', true)]);
+    useGitStore.setState({ openMergeResolution });
 
     render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve clash.go' }));
 
-    expect(screen.queryByRole('button', { name: /resolve clash\.go/i })).not.toBeInTheDocument();
+    expect(openMergeResolution).toHaveBeenCalledWith('clash.go', ['clash.go', 'next.go']);
   });
 
-  it('keeps the plain Open action', async () => {
-    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
-    act(() => {
-      useIDEStore.setState({ openFiles: [] });
-    });
+  it('delegates ConflictBanner Open to the shared editor navigation utility', async () => {
     seed([file('clash.go', 'U', 'U', true)]);
 
     render(<GitPanel />);
-    fireEvent.click(screen.getByRole('button', { name: /open clash\.go/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open clash.go' }));
     await act(async () => {});
 
-    expect(ReadFile).toHaveBeenCalledWith('/repo/clash.go');
+    expect(mockEnsureEditorFileOpen).toHaveBeenCalledWith('/repo/clash.go');
   });
 
   it('distinguishes duplicate conflict basenames by repository path', () => {
