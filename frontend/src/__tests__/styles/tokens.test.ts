@@ -93,6 +93,18 @@ it('uses one full-strength outer rail and one adjacent 50% ownership rail withou
   expect(treeRowCss).not.toMatch(/\.row\.ownershipRail::after/);
 });
 
+it('raises the Workspace row wash without changing the Project row wash', () => {
+  expect(rule(treeRowCss, '.row.tinted')).toMatch(/var\(--region-accent\) 6%/);
+  expect(rule(treeRowCss, '.row.tinted:hover')).toMatch(/var\(--region-accent\) 12%/);
+  expect(rule(treeRowCss, ".row.tinted[aria-selected='true']")).toMatch(
+    /var\(--region-accent\) 20%/
+  );
+  expect(rule(treeRowCss, '.row.tinted.ownershipRail')).toMatch(/var\(--region-accent\) 16%/);
+  expect(rule(treeRowCss, ".row.tinted.ownershipRail:not([aria-selected='true']):hover")).toMatch(
+    /var\(--region-accent\) 20%/
+  );
+});
+
 it.each([
   'surface-base',
   'surface-frame',

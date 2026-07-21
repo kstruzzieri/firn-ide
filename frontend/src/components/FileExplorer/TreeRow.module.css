@@ -50,11 +50,19 @@
   background-color: color-mix(in srgb, var(--region-accent) 12%, transparent);
 }
 
+.row.tinted.ownershipRail {
+  background-color: color-mix(in srgb, var(--region-accent) 16%, transparent);
+}
+
+.row.tinted.ownershipRail:not([aria-selected='true']):hover {
+  background-color: color-mix(in srgb, var(--region-accent) 20%, transparent);
+}
+
 /*
  * Selected row inherits its own region/workspace accent instead of the global
  * --accent-dim (which tracks the active workspace). This keeps selection color
  * consistent across views: in Project View a selected file shows its region's
- * workspace color; in Workspace View --region-accent is the active workspace
+ * workspace color; in Workspace View it shows the row's owning workspace
  * accent, so it matches the wash. Declared after :hover so selection wins on a
  * hovered+selected row; higher specificity than the generic selected rule below
  * so it overrides --accent-dim for tinted rows. Untinted loose files (no region)
