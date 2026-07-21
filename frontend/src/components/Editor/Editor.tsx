@@ -89,19 +89,19 @@ export function Editor() {
     [activeFile, setScrollPosition]
   );
 
-  // When no editor is mounted (welcome screen or empty workspace), suppress
-  // the browser's native Cmd+F / Ctrl+F find dialog so users do not see a
-  // browser chrome that cannot search workspace files. The CodeMirror search
-  // panel handles Cmd+F itself when an editor is focused, so this listener is
-  // only registered while there are no open files. Cmd+Shift+F is left
+  // Suppress the webview's native Cmd+F / Ctrl+F find dialog whenever nothing
+  // else claimed the shortcut. When an editor is focused, CodeMirror handles
+  // Mod-f and calls preventDefault before this window-level listener runs, so
+  // the guard below leaves it alone. Without this, focusing the file tree or
+  // welcome screen and pressing Cmd+F surfaces a browser find bar that cannot
+  // search workspace files (WebView2 ships one built in). Cmd+Shift+F is left
   // untouched because it is reserved for the project Search panel.
-  const hasOpenFiles = openFiles.length > 0;
   useEffect(() => {
-    if (hasOpenFiles) return undefined;
-
-    const handleNoFileFind = (event: KeyboardEvent) => {
+    const handleNativeFindSuppression = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.shiftKey || event.altKey) return;
+      // Ctrl+Cmd+F is the macOS toggle-fullscreen shortcut; never swallow it.
+      if (isMac() && event.ctrlKey) return;
 
       const key = event.key.toLowerCase();
       if (key !== 'f') return;
@@ -113,9 +113,9 @@ export function Editor() {
       event.preventDefault();
     };
 
-    window.addEventListener('keydown', handleNoFileFind);
-    return () => window.removeEventListener('keydown', handleNoFileFind);
-  }, [hasOpenFiles]);
+    window.addEventListener('keydown', handleNativeFindSuppression);
+    return () => window.removeEventListener('keydown', handleNativeFindSuppression);
+  }, []);
 
   // Opening or switching to a real file supersedes the diff preview: the diff
   // is a transient tab, so yield focus to the file the user just opened
