@@ -43,7 +43,7 @@
 
 .row.ownershipRail::before {
   background: var(--ownership-accent);
-  opacity: 0.35;
+  opacity: 0.5;
 }
 
 .row.tinted:hover {

@@ -82,13 +82,13 @@ function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]
     : token(focusVariable);
 }
 
-it('uses one full-strength outer rail and one adjacent 35% ownership rail without shadows', () => {
+it('uses one full-strength outer rail and one adjacent 50% ownership rail without shadows', () => {
   const outerRail = rule(fileExplorerCss, '.workspaceTree');
   const ownershipRail = rule(treeRowCss, '.row.ownershipRail::before');
 
   expect(outerRail).toMatch(/border-left:\s*3px solid var\(--tree-accent\)/);
   expect(ownershipRail).toMatch(/background:\s*var\(--ownership-accent\)/);
-  expect(ownershipRail).toMatch(/opacity:\s*0\.35/);
+  expect(ownershipRail).toMatch(/opacity:\s*0\.5/);
   expect(`${outerRail}\n${ownershipRail}`).not.toMatch(/(?:box-shadow|filter):/);
   expect(treeRowCss).not.toMatch(/\.row\.ownershipRail::after/);
 });
