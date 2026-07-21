@@ -187,6 +187,36 @@ describe('TreeRow', () => {
     expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
   });
 
+  it('clears the workspace ownership rail when a virtual row is recycled', () => {
+    const props = {
+      ...baseProps,
+      kind: 'entry' as const,
+      path: '/repo/frontend/App.tsx',
+      name: 'App.tsx',
+      depth: 2,
+      level: 3,
+      isDir: false,
+      isExpanded: false,
+      isSelected: true,
+      isActive: true,
+      regionAccent: 'blue' as const,
+      ownershipAccent: 'cyan' as const,
+      setSize: 1,
+      posInSet: 1,
+    };
+    const { rerender } = render(<TreeRow {...props} />);
+
+    const row = screen.getByRole('treeitem', { name: 'App.tsx' });
+    expect(row.className).toContain('ownershipRail');
+    expect(row.style.getPropertyValue('--ownership-accent')).toBe('var(--accent-cyan)');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row.className).toContain('active');
+
+    rerender(<TreeRow {...props} ownershipAccent={null} />);
+    expect(row.className).not.toContain('ownershipRail');
+    expect(row.style.getPropertyValue('--ownership-accent')).toBe('');
+  });
+
   it('renders unreadable visually and in the tree item name without changing row state', () => {
     render(
       <TreeRow
