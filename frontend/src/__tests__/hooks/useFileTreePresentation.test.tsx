@@ -78,16 +78,16 @@ describe('useFileTreePresentation', () => {
     expect(result.current.getFileAccent(nestedDockerfile)).toBe('purple');
   });
 
-  it('workspace mode scopes to the children and washes the tree in the workspace accent', () => {
+  it('workspace mode scopes to the children while row washes follow workspace ownership', () => {
     seed('go');
     const { result } = renderHook(() => useFileTreePresentation());
     expect(result.current.mode).toBe('workspace');
     expect(result.current.rootLabel).toBe('Go');
     expect(result.current.roots.map((e) => e.name)).toEqual(['main.go']);
-    // Uniform wash: every entry resolves to the active workspace's accent.
+    // Active scope stays cyan, while each row resolves its owning workspace.
     expect(result.current.treeAccent).toBe('cyan');
-    expect(result.current.getRegionAccent?.(tree[0])).toBe('cyan');
-    expect(result.current.getRegionAccent?.(tree[1])).toBe('cyan');
+    expect(result.current.getRegionAccent?.(tree[0])).toBeNull();
+    expect(result.current.getRegionAccent?.(tree[1])).toBe('blue');
     expect(result.current.scopedError).toBe(false);
   });
 
@@ -118,12 +118,13 @@ describe('useFileTreePresentation', () => {
     expect(result.current.scopedError).toBe(false);
   });
 
-  it('root workspace (relDir "") scopes to the whole tree', () => {
+  it('root workspace keeps its outer accent while nested row washes follow ownership', () => {
     useIDEStore.setState({
       workspace: { name: 'repo', path: root },
       workspaces: [
         { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
         { id: 'root:go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
+        { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
       ] as workspace.WorkspaceDef[],
       activeWorkspaceId: 'root:go',
       lastFocusedWorkspaceId: 'root:go',
@@ -131,6 +132,10 @@ describe('useFileTreePresentation', () => {
     });
     const { result } = renderHook(() => useFileTreePresentation());
     expect(result.current.roots).toHaveLength(3);
+    expect(result.current.treeAccent).toBe('cyan');
+    expect(result.current.getRegionAccent?.(tree[0])).toBe('cyan');
+    expect(result.current.getRegionAccent?.(tree[1])).toBe('blue');
+    expect(result.current.getOwnershipAccent?.(tree[1])).toBe('blue');
     expect(result.current.scopedError).toBe(false);
   });
 

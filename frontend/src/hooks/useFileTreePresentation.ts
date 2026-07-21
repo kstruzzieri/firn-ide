@@ -105,10 +105,8 @@ export function useFileTreePresentation(): FileTreePresentation {
 
     const relDir = active?.relDir ?? '';
     const workspaceLabel = active?.name ?? repoName;
-    // Workspace View washes the whole scoped tree in the active workspace's
-    // accent (uniform), reinforcing which workspace the files belong to.
+    // The outer rail carries the active scope; row washes follow ownership.
     const treeAccent = (active?.accent as WorkspaceAccent) || undefined;
-    const workspaceResolver = treeAccent ? () => treeAccent : undefined;
 
     if (relDir === '') {
       return {
@@ -117,7 +115,7 @@ export function useFileTreePresentation(): FileTreePresentation {
         rootPath: repoRoot,
         roots: tree,
         scopedError: false,
-        getRegionAccent: workspaceResolver,
+        getRegionAccent: getOwnershipAccent,
         getOwnershipAccent,
         treeAccent,
       };
@@ -134,7 +132,7 @@ export function useFileTreePresentation(): FileTreePresentation {
       roots: scopedIsExact ? (scoped.children ?? []) : [],
       scopedError: scoped === null || scopedUnloaded,
       rootUnreadable,
-      getRegionAccent: workspaceResolver,
+      getRegionAccent: getOwnershipAccent,
       getOwnershipAccent,
       treeAccent,
     };

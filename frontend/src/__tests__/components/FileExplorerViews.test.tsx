@@ -130,8 +130,11 @@ describe('FileExplorer views', () => {
       expect(ownedWorkspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
         'var(--accent-blue)'
       );
-      expect(nestedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe(
+      expect(ownedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe(
         'var(--accent-blue)'
+      );
+      expect(nestedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe(
+        'var(--accent-cyan)'
       );
       expect(nestedWorkspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
         'var(--accent-cyan)'
