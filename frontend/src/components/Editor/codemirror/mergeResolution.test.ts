@@ -1,4 +1,5 @@
 import { redo } from '@codemirror/commands';
+import { searchPanelOpen } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { runScopeHandlers } from '@codemirror/view';
 
@@ -179,6 +180,34 @@ describe('merge resolution helpers', () => {
 
 describe('merge resolution editor', () => {
   afterEach(() => document.body.replaceChildren());
+
+  it('opens the configured top in-file search panel from the standard Mod-f keymap', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+
+    expect(searchPanelOpen(editor.view.state)).toBe(false);
+    expect(
+      runScopeHandlers(
+        editor.view,
+        new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }),
+        'editor'
+      )
+    ).toBe(true);
+    expect(searchPanelOpen(editor.view.state)).toBe(true);
+    expect(editor.view.dom.querySelector('.cm-panels-top .cm-search')).not.toBeNull();
+    editor.destroy();
+  });
+
+  it('applies the requested syntax theme and reconfigures it in place', () => {
+    const editor = createMergeResolutionEditor(document.body, session(), {
+      syntaxThemeId: 'glacier',
+    });
+    const glacierClasses = editor.view.themeClasses;
+
+    editor.setTheme('abyssal');
+
+    expect(editor.view.themeClasses).not.toBe(glacierClasses);
+    editor.destroy();
+  });
 
   it('replaces the active marker block, advances, and restores text plus decisions through history', () => {
     const editor = createMergeResolutionEditor(document.body, session());

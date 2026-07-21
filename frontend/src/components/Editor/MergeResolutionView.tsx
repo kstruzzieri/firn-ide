@@ -10,6 +10,7 @@ import {
   type MergeSession,
   type TextMergeSession,
 } from '../../stores/gitStore';
+import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import styles from './MergeResolutionView.module.css';
 
 function initialState(session: TextMergeSession): MergeResolutionState {
@@ -73,6 +74,10 @@ function TextResolutionView({
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
   const decisionsRef = useRef(session.decisions);
+  const themeId = useEditorSyntaxTheme();
+  const themeIdRef = useRef(themeId);
+  const appliedThemeIdRef = useRef(themeId);
+  themeIdRef.current = themeId;
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
   const [finalizing, setFinalizing] = useState(false);
   sessionRef.current = session;
@@ -81,6 +86,7 @@ function TextResolutionView({
     if (!hostRef.current) return undefined;
     const initialSession = sessionRef.current;
     const editor = createMergeResolutionEditor(hostRef.current, initialSession, {
+      syntaxThemeId: themeIdRef.current,
       onStateChange: (next) => {
         const previous = decisionsRef.current;
         const actions = useGitStore.getState();
@@ -95,6 +101,7 @@ function TextResolutionView({
       },
     });
     editorRef.current = editor;
+    appliedThemeIdRef.current = themeIdRef.current;
     const initialEditorState = editor.getState();
     decisionsRef.current = initialEditorState.decisions;
     setResolutionState(initialEditorState);
@@ -103,6 +110,12 @@ function TextResolutionView({
       editorRef.current = null;
     };
   }, [session.labels, session.regions]);
+
+  useEffect(() => {
+    if (appliedThemeIdRef.current === themeId) return;
+    editorRef.current?.setTheme(themeId);
+    appliedThemeIdRef.current = themeId;
+  }, [themeId]);
 
   useEffect(() => {
     if (visible) editorRef.current?.view.requestMeasure();

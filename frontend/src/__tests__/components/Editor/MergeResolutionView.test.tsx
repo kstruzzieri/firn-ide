@@ -16,14 +16,16 @@ const controller = {
   next: jest.fn(() => true),
   activate: jest.fn(() => true),
   setFrozen: jest.fn(),
+  setTheme: jest.fn(),
   destroy: jest.fn(),
 } as unknown as MergeResolutionEditor;
+let syntaxThemeId = 'glacier';
 let onStateChange: ((state: MergeResolutionState) => void) | undefined;
 const createMergeResolutionEditor = jest.fn(
   (
     _host: HTMLElement,
     _session: unknown,
-    options: { onStateChange?: (state: MergeResolutionState) => void }
+    options: { onStateChange?: (state: MergeResolutionState) => void; syntaxThemeId?: string }
   ) => {
     onStateChange = options.onStateChange;
     return controller;
@@ -46,6 +48,9 @@ jest.mock('../../../stores/gitStore', () => ({
   useGitStore: {
     getState: () => ({ recordDecision, selectMergeSide, mergeFinalizeAndStage }),
   },
+}));
+jest.mock('../../../stores/ideStore', () => ({
+  useEditorSyntaxTheme: () => syntaxThemeId,
 }));
 
 import { MergeResolutionView } from '../../../components/Editor/MergeResolutionView';
@@ -103,6 +108,7 @@ const sidesSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  syntaxThemeId = 'glacier';
   onStateChange = undefined;
 });
 
@@ -145,6 +151,24 @@ describe('MergeResolutionView', () => {
     expect(mergeFinalizeAndStage).toHaveBeenCalledWith('resolved result', {
       suppressQueueAdvance: true,
     });
+  });
+
+  it('applies the active syntax theme and updates it without remounting the editor', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+
+    expect(createMergeResolutionEditor).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      textSession,
+      expect.objectContaining({ syntaxThemeId: 'glacier' })
+    );
+    expect(createMergeResolutionEditor).toHaveBeenCalledTimes(1);
+
+    jest.mocked(controller.setTheme).mockClear();
+    syntaxThemeId = 'abyssal';
+    rerender(<MergeResolutionView session={textSession} visible />);
+
+    expect(controller.setTheme).toHaveBeenCalledWith('abyssal');
+    expect(createMergeResolutionEditor).toHaveBeenCalledTimes(1);
   });
 
   it.each([

@@ -1,5 +1,6 @@
 import {
   ChangeDesc,
+  Compartment,
   EditorState,
   RangeSet,
   RangeValue,
@@ -23,7 +24,9 @@ import { lintKeymap } from '@codemirror/lint';
 import { Decoration, EditorView, keymap, WidgetType } from '@codemirror/view';
 import type { git } from '../../../../wailsjs/go/models';
 import type { MergeDecision, TextMergeSession } from '../../../stores/gitStore';
-import { inFileSearchKeymap } from './search';
+import { DEFAULT_SYNTAX_THEME_ID, type SyntaxThemeId } from './palettes';
+import { inFileSearchExtensions, inFileSearchKeymap } from './search';
+import { buildTheme } from './theme';
 
 export type MergeChoice = Exclude<MergeDecision, 'M'>;
 export type MergeOrder = 'current-first' | 'incoming-first';
@@ -505,6 +508,7 @@ export interface MergeResolutionEditor {
   undo: () => boolean;
   redo: () => boolean;
   setFrozen: (frozen: boolean) => void;
+  setTheme: (themeId: SyntaxThemeId) => void;
   next: (direction?: MergeDirection) => boolean;
   activate: (index: number) => boolean;
   destroy: () => void;
@@ -514,15 +518,22 @@ export interface MergeResolutionEditor {
 export function createMergeResolutionEditor(
   parent: HTMLElement,
   session: TextMergeSession,
-  options: { extensions?: Extension[]; onStateChange?: (state: MergeResolutionState) => void } = {}
+  options: {
+    extensions?: Extension[];
+    onStateChange?: (state: MergeResolutionState) => void;
+    syntaxThemeId?: SyntaxThemeId;
+  } = {}
 ): MergeResolutionEditor {
   const support = resolutionExtension(session, options.onStateChange);
+  const theme = new Compartment();
   const view = new EditorView({
     parent,
     state: EditorState.create({
       doc: normalizeDocument(session.content),
       extensions: [
+        theme.of(buildTheme(options.syntaxThemeId ?? DEFAULT_SYNTAX_THEME_ID)),
         history(),
+        ...inFileSearchExtensions(),
         ...support.extension,
         keymap.of([
           {
@@ -565,6 +576,7 @@ export function createMergeResolutionEditor(
       return changed;
     },
     setFrozen: (frozen) => view.dispatch({ effects: setMergeFrozen.of(frozen) }),
+    setTheme: (themeId) => view.dispatch({ effects: theme.reconfigure(buildTheme(themeId)) }),
     next: (direction = 1) => navigate(view, support.field, session.regions.length, direction),
     activate: (index) => activateRegion(view, support.field, index),
     destroy: () => view.destroy(),
