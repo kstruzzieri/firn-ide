@@ -8,6 +8,10 @@
   height: 100%;
   min-height: 0;
   font-family: var(--font-ui);
+  /* Sticky file-header height. Pins the header's min-height AND the scroller's
+     scroll-padding-top to one value so keyboard focus can never tuck a row
+     under the pinned header if the header's padding/font later changes. */
+  --search-header-h: 27px;
 }
 
 /* Header row: input + clear button + options toggles */
@@ -149,8 +153,9 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  /* Keyboard focus lands below the pinned sticky header. */
-  scroll-padding-top: 27px;
+  /* Keyboard focus lands below the pinned sticky header (shared with the
+     header's min-height so the two can't drift apart). */
+  scroll-padding-top: var(--search-header-h);
 }
 
 .resultsList {
@@ -172,6 +177,8 @@
   align-items: center;
   gap: 4px;
   width: 100%;
+  /* min-height shared with .resultsScroll scroll-padding-top (see --search-header-h). */
+  min-height: var(--search-header-h);
   padding: 4px 10px 4px 6px;
   border-top: none;
   color: var(--text-primary);
