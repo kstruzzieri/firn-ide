@@ -1,6 +1,7 @@
 import {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -220,6 +221,7 @@ export function SearchPanel() {
   const toggleFileExpanded = useSearchStore((s) => s.toggleFileExpanded);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const [focusedItemIndex, setFocusedItemIndex] = useState<number | null>(null);
 
@@ -271,6 +273,7 @@ export function SearchPanel() {
   }, [flatItems, focusedItemIndex]);
 
   const focusItem = useCallback((index: number) => {
+    if (index === 0 && resultsScrollRef.current) resultsScrollRef.current.scrollTop = 0;
     setFocusedItemIndex(index);
     const el = itemRefs.current.get(index);
     el?.focus();
@@ -479,6 +482,7 @@ export function SearchPanel() {
       <PanelBody
         uiState={uiState}
         flatItems={flatItems}
+        resultsScrollRef={resultsScrollRef}
         focusedItemIndex={focusedItemIndex}
         // Default the keyboard-tabbable position to item 0 when no row is
         // focused, so a Tab-only user can reach the result list via Tab
@@ -499,6 +503,7 @@ export function SearchPanel() {
 interface PanelBodyProps {
   uiState: SearchUIState;
   flatItems: FlatItem[];
+  resultsScrollRef: RefObject<HTMLDivElement | null>;
   focusedItemIndex: number | null;
   tabbableIndex: number;
   setItemRef: (index: number) => (el: HTMLButtonElement | null) => void;
@@ -511,6 +516,7 @@ interface PanelBodyProps {
 function PanelBody({
   uiState,
   flatItems,
+  resultsScrollRef,
   focusedItemIndex,
   tabbableIndex,
   setItemRef,
@@ -603,6 +609,7 @@ function PanelBody({
             )}
           </div>
           <div
+            ref={resultsScrollRef}
             className={styles.resultsScroll}
             aria-label="Search results"
             onKeyDown={onListKeyDown}

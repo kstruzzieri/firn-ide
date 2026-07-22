@@ -479,6 +479,39 @@ describe('SearchPanel — keyboard navigation', () => {
     expect(document.activeElement).toBe(firstResult);
   });
 
+  it('Home scrolls to the first sticky header before focusing it', () => {
+    const secondFile = makeFile('b.ts', [
+      { line: 3, column: 1, text: 'foo', submatches: [{ start: 0, end: 3 }] },
+    ]);
+    setUIState({
+      query: 'foo',
+      uiState: {
+        kind: 'results',
+        files: [file, secondFile],
+        totalFiles: 2,
+        totalLines: 3,
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 10,
+      },
+      expandedFiles: new Set([file.path, secondFile.path]),
+    });
+    render(<SearchPanel />);
+
+    const results = screen.getByLabelText('Search results');
+    results.scrollTop = 100;
+    const secondHeader = screen.getByRole('button', { name: /b\.ts \(1 match\)/ });
+    act(() => {
+      secondHeader.focus();
+    });
+    fireEvent.keyDown(secondHeader, { key: 'Home' });
+
+    expect(results.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: /a\.ts \(2 matches\)/ })
+    );
+  });
+
   it('ArrowUp on the first item returns focus to the input', () => {
     setupResults();
     render(<SearchPanel />);
