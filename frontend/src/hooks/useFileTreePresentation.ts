@@ -10,6 +10,7 @@ import {
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
 import {
   createRegionAccentResolver,
+  createWorkspacePathResolver,
   getInfraFileAccent,
   relativePathFromRoot,
 } from '../utils/workspaceRegions';
@@ -34,6 +35,8 @@ export interface FileTreePresentation {
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
   /** Fixed Docker/Terraform accent, independent of the workspace region tint. */
   getFileAccent: (entry: FileEntry) => WorkspaceAccent | null;
+  /** Workspace View only: per-row workspace ownership accent. */
+  getOwnershipAccent?: (entry: FileEntry) => WorkspaceAccent | null;
   /**
    * Active workspace accent, used for the Workspace-View left rail. Undefined in
    * Project View (regions are multi-color) and when the workspace has no accent.
@@ -74,6 +77,12 @@ export function useFileTreePresentation(): FileTreePresentation {
     () => (mode === 'project' ? createRegionAccentResolver(repoRoot, workspaces) : undefined),
     [mode, repoRoot, workspaces]
   );
+  const getOwnershipAccent = useMemo(() => {
+    if (mode !== 'workspace') return undefined;
+    const resolveWorkspace = createWorkspacePathResolver(repoRoot, workspaces);
+    return (entry: FileEntry): WorkspaceAccent | null =>
+      (resolveWorkspace(entry.path)?.accent as WorkspaceAccent) || null;
+  }, [mode, repoRoot, workspaces]);
 
   return useMemo<FileTreePresentation>(() => {
     const base = {
@@ -96,10 +105,8 @@ export function useFileTreePresentation(): FileTreePresentation {
 
     const relDir = active?.relDir ?? '';
     const workspaceLabel = active?.name ?? repoName;
-    // Workspace View washes the whole scoped tree in the active workspace's
-    // accent (uniform), reinforcing which workspace the files belong to.
+    // The outer rail carries the active scope; row washes follow ownership.
     const treeAccent = (active?.accent as WorkspaceAccent) || undefined;
-    const workspaceResolver = treeAccent ? () => treeAccent : undefined;
 
     if (relDir === '') {
       return {
@@ -108,7 +115,8 @@ export function useFileTreePresentation(): FileTreePresentation {
         rootPath: repoRoot,
         roots: tree,
         scopedError: false,
-        getRegionAccent: workspaceResolver,
+        getRegionAccent: getOwnershipAccent,
+        getOwnershipAccent,
         treeAccent,
       };
     }
@@ -124,8 +132,18 @@ export function useFileTreePresentation(): FileTreePresentation {
       roots: scopedIsExact ? (scoped.children ?? []) : [],
       scopedError: scoped === null || scopedUnloaded,
       rootUnreadable,
-      getRegionAccent: workspaceResolver,
+      getRegionAccent: getOwnershipAccent,
+      getOwnershipAccent,
       treeAccent,
     };
-  }, [mode, canFocusWorkspace, repoName, repoRoot, tree, active, getRegionAccent]);
+  }, [
+    mode,
+    canFocusWorkspace,
+    repoName,
+    repoRoot,
+    tree,
+    active,
+    getRegionAccent,
+    getOwnershipAccent,
+  ]);
 }

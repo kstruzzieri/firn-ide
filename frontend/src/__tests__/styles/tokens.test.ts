@@ -10,6 +10,10 @@ const treeRowCss = readFileSync(
   resolve(__dirname, '../../components/FileExplorer/TreeRow.module.css'),
   'utf8'
 );
+const fileExplorerCss = readFileSync(
+  resolve(__dirname, '../../components/FileExplorer/FileExplorer.module.css'),
+  'utf8'
+);
 const editorCss = readFileSync(
   resolve(__dirname, '../../components/Editor/Editor.module.css'),
   'utf8'
@@ -77,6 +81,29 @@ function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]
     ? token(`accent-${accent}`)
     : token(focusVariable);
 }
+
+it('uses one full-strength outer rail and one adjacent 50% ownership rail without shadows', () => {
+  const outerRail = rule(fileExplorerCss, '.workspaceTree');
+  const ownershipRail = rule(treeRowCss, '.row.ownershipRail::before');
+
+  expect(outerRail).toMatch(/border-left:\s*3px solid var\(--tree-accent\)/);
+  expect(ownershipRail).toMatch(/background:\s*var\(--ownership-accent\)/);
+  expect(ownershipRail).toMatch(/opacity:\s*0\.5/);
+  expect(`${outerRail}\n${ownershipRail}`).not.toMatch(/(?:box-shadow|filter):/);
+  expect(treeRowCss).not.toMatch(/\.row\.ownershipRail::after/);
+});
+
+it('raises the Workspace row wash without changing the Project row wash', () => {
+  expect(rule(treeRowCss, '.row.tinted')).toMatch(/var\(--region-accent\) 6%/);
+  expect(rule(treeRowCss, '.row.tinted:hover')).toMatch(/var\(--region-accent\) 12%/);
+  expect(rule(treeRowCss, ".row.tinted[aria-selected='true']")).toMatch(
+    /var\(--region-accent\) 20%/
+  );
+  expect(rule(treeRowCss, '.row.tinted.ownershipRail')).toMatch(/var\(--region-accent\) 16%/);
+  expect(rule(treeRowCss, ".row.tinted.ownershipRail:not([aria-selected='true']):hover")).toMatch(
+    /var\(--region-accent\) 20%/
+  );
+});
 
 it.each([
   'surface-base',
