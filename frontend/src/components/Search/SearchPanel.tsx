@@ -155,11 +155,15 @@ function FileGroupHeader({ item, focused, tabbable, itemRef, onToggle, onFocus }
             right-anchored (so we ellipsize the start, keeping the deepest
             segment visible), but the slashes are bidi-neutral and could
             otherwise re-order on systems with mixed scripts. <bdi> +
-            unicode-bidi: isolate keeps slash order stable. */}
+            unicode-bidi: isolate keeps slash order stable. The dir="ltr"
+            attribute must live on a CHILD of the rtl-styled element, not the
+            element itself: author CSS `direction` overrides the attribute's
+            presentational hint, so pinning both on one node lets the CSS win
+            and re-orders mixed-script segments anyway. */}
         {dir && (
-          <bdi className={styles.fileDir} dir="ltr">
-            {dir}
-          </bdi>
+          <span className={styles.fileDir}>
+            <bdi dir="ltr">{dir}</bdi>
+          </span>
         )}
       </span>
       <span className={styles.matchCount} aria-hidden="true">

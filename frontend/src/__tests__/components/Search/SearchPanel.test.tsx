@@ -715,4 +715,21 @@ describe('SearchPanel — match-anchored line rendering (#207)', () => {
     });
     expect(row).toHaveAttribute('title', 'const results = await SearchWorkspace(workspacePath);');
   });
+
+  it('nests the directory bdi inside the rtl-styled span (mixed-script segment order)', () => {
+    const file = makeFile('docs/حزم/catalog/notes.md', [
+      { line: 7, text: 'Search me', submatches: [{ start: 0, end: 6 }] },
+    ]);
+    renderResults([file]);
+
+    const dir = document.querySelector('.fileDir');
+    expect(dir).not.toBeNull();
+    // The rtl-styled element must NOT itself carry dir="ltr" — the isolation
+    // wrapper is a child.
+    expect(dir!.tagName).toBe('SPAN');
+    const bdi = dir!.querySelector('bdi');
+    expect(bdi).not.toBeNull();
+    expect(bdi!.getAttribute('dir')).toBe('ltr');
+    expect(bdi!.textContent).toBe('docs/حزم/catalog');
+  });
 });
