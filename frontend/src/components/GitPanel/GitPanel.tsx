@@ -440,7 +440,7 @@ function ConflictBanner({
       </div>
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
-          <li key={f.change.path}>
+          <li key={f.change.path} className={styles.conflictItem}>
             <button
               type="button"
               className={styles.conflictResolve}
@@ -449,13 +449,14 @@ function ConflictBanner({
               }
               aria-label={`Resolve ${f.change.path}`}
             >
-              Resolve {f.change.path}
+              Resolve
             </button>
             <button
               type="button"
               className={styles.conflictOpen}
               onClick={() => void ensureEditorFileOpen(f.absPath)}
               aria-label={`Open ${f.change.path}`}
+              title={f.change.path}
             >
               {f.change.path}
             </button>
