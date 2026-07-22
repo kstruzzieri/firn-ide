@@ -242,14 +242,13 @@ describe('GitDiffView', () => {
     expect(config.parent).toBe(screen.getByTestId('merge-host'));
   });
 
-  it('opens the working-tree file and yields the diff via Open File', async () => {
+  it('delegates Open File to the shared editor navigation utility', async () => {
     useGitStore.setState({ diffFocused: true });
     render(<GitDiffView session={base} />);
 
     fireEvent.click(screen.getByRole('button', { name: /open file/i }));
 
     await waitFor(() => expect(mockEnsureOpen).toHaveBeenCalledWith('/repo/src/a.ts'));
-    expect(useGitStore.getState().diffFocused).toBe(false);
   });
 
   it('destroys the merge view on unmount', () => {

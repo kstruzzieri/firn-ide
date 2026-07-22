@@ -1,5 +1,6 @@
 import { ensureEditorFileOpen, navigateToEditorLocation } from '../../utils/editorNavigation';
 import { useIDEStore } from '../../stores/ideStore';
+import { useGitStore } from '../../stores/gitStore';
 import { toNativeLocalPath } from '../../utils/lspUri';
 import { ReadFile, WriteFile } from '../../../wailsjs/go/main/App';
 import { queueWorkingTreeEdit } from '../../utils/fileWrites';
@@ -24,6 +25,7 @@ function createReadFileResult(content: string) {
 
 beforeEach(() => {
   useIDEStore.setState(useIDEStore.getInitialState());
+  useGitStore.setState({ mergeSession: null, mergeFocused: false, diffFocused: false });
   jest.clearAllMocks();
   mockWriteFile.mockResolvedValue(undefined);
 });
@@ -48,6 +50,25 @@ describe('ensureEditorFileOpen', () => {
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 
+  it('yields an active merge to an already-open file without reading it again', async () => {
+    useIDEStore.getState().openFile({
+      id: '/test/file.ts',
+      name: 'file.ts',
+      path: '/test/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+    useGitStore.setState({ mergeSession: { path: 'clash.go' } as never, mergeFocused: true });
+
+    await ensureEditorFileOpen('/test/file.ts');
+
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(useGitStore.getState().mergeFocused).toBe(false);
+  });
+
   it('reads and opens a new file', async () => {
     mockReadFile.mockResolvedValue(createReadFileResult('hello world') as never);
 
@@ -56,6 +77,15 @@ describe('ensureEditorFileOpen', () => {
     expect(file!.name).toBe('new.ts');
     expect(file!.language).toBe('TypeScript');
     expect(useIDEStore.getState().openFiles).toHaveLength(1);
+  });
+
+  it('yields an active merge after opening a new file', async () => {
+    mockReadFile.mockResolvedValue(createReadFileResult('hello world') as never);
+    useGitStore.setState({ mergeSession: { path: 'clash.go' } as never, mergeFocused: true });
+
+    await ensureEditorFileOpen('/test/new.ts');
+
+    expect(useGitStore.getState().mergeFocused).toBe(false);
   });
 
   it('flushes a pending diff edit before reading the file into an editor buffer', async () => {
@@ -127,18 +157,42 @@ describe('ensureEditorFileOpen', () => {
       lineEndings: '',
       isBinary: true,
     } as never);
+    useGitStore.setState({ mergeSession: { path: 'clash.go' } as never, mergeFocused: true });
 
     const file = await ensureEditorFileOpen('/test/image.png');
     expect(file).toBeNull();
     expect(useIDEStore.getState().toast?.type).toBe('error');
+    expect(useGitStore.getState().mergeFocused).toBe(true);
   });
 
   it('shows toast and returns null when read fails', async () => {
     mockReadFile.mockRejectedValue(new Error('File not found'));
+    useGitStore.setState({ mergeSession: { path: 'clash.go' } as never, mergeFocused: true });
 
     const file = await ensureEditorFileOpen('/test/missing.ts');
     expect(file).toBeNull();
     expect(useIDEStore.getState().toast?.message).toContain('File not found');
+    expect(useGitStore.getState().mergeFocused).toBe(true);
+  });
+
+  it('does not yield merge focus when navigation becomes stale while reading', async () => {
+    let resolveRead!: (value: ReturnType<typeof createReadFileResult>) => void;
+    mockReadFile.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }) as never
+    );
+    useGitStore.setState({ mergeSession: { path: 'clash.go' } as never, mergeFocused: true });
+    let applies = true;
+
+    const navigation = ensureEditorFileOpen('/test/stale.ts', { shouldApply: () => applies });
+    await Promise.resolve();
+    applies = false;
+    resolveRead(createReadFileResult('stale'));
+
+    expect(await navigation).toBeNull();
+    expect(useGitStore.getState().mergeFocused).toBe(true);
   });
 });
 

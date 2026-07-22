@@ -18,6 +18,10 @@ const editorCss = readFileSync(
   resolve(__dirname, '../../components/Editor/Editor.module.css'),
   'utf8'
 );
+const mergeResolutionCss = readFileSync(
+  resolve(__dirname, '../../components/Editor/MergeResolutionView.module.css'),
+  'utf8'
+);
 
 type RGB = [number, number, number];
 
@@ -31,6 +35,20 @@ const WORKSPACE_ACCENTS = [
   'amber',
   'general',
 ] as const;
+
+it.each([
+  ['side-cur', '#38bdf8'],
+  ['side-inc', '#22c55e'],
+  ['side-both', '#2dd4bf'],
+  ['side-man', '#a855f7'],
+])('defines the merge %s token', (name, value) => {
+  expect(token(name)).toBe(value);
+});
+
+it('targets the manual merge action semantically instead of by child order', () => {
+  expect(mergeResolutionCss).toContain(".cm-mergeResolution-action[data-decision='M']");
+  expect(mergeResolutionCss).not.toContain('.cm-mergeResolution-action:last-child');
+});
 
 function token(name: string): string {
   const value = css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})\\b`, 'i'))?.[1];

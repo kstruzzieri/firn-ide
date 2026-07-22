@@ -62,6 +62,23 @@ export { definitionExtensions } from './definition';
 // Document reconciliation (non-undoable external content sync)
 export { reconcileDoc } from './reconcileDoc';
 
+// Merge resolution Result-spine editor
+export {
+  changedRegionIndexes,
+  createMergeResolutionEditor,
+  markerBlockRange,
+  markerBlockRanges,
+  nextUnresolved,
+  resolutionLines,
+  type MarkerBlockRange,
+  type MappedMergeRegion,
+  type MergeChoice,
+  type MergeDirection,
+  type MergeOrder,
+  type MergeResolutionEditor,
+  type MergeResolutionState,
+} from './mergeResolution';
+
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';
 export { EditorState, type Extension } from '@codemirror/state';

@@ -44,6 +44,7 @@ import { useIDEStore } from './ideStore';
 /** Which pair of revisions a diff shows. Staged rows compare HEAD to the
  * index; unstaged (and untracked) rows compare the index to the worktree. */
 export type DiffContext = 'staged' | 'unstaged';
+export type EditorFocus = 'file' | 'diff' | 'merge';
 
 export interface DiffSide {
   label: string;
@@ -89,6 +90,11 @@ export interface DiffSession {
 
 /** How one conflict region was resolved: Current, Incoming, Both, or Manual. */
 export type MergeDecision = 'C' | 'I' | 'B' | 'M';
+
+export interface MergeFinalizeOptions {
+  /** Close a successful session without opening another queued conflict. */
+  suppressQueueAdvance?: boolean;
+}
 
 interface MergeSessionBase {
   /** Repo-relative path of the conflicted file. */
@@ -240,6 +246,8 @@ interface GitState {
   diffSource: GitFileChange | null;
   /** True when the diff tab is the visible editor surface. */
   diffFocused: boolean;
+  /** True when the merge-resolution tab is the visible editor surface. */
+  mergeFocused: boolean;
   /** The open merge-resolution session; null when none. */
   mergeSession: MergeSession | null;
 }
@@ -274,6 +282,7 @@ interface GitActions {
   refreshOpenDiff: () => Promise<void>;
   closeDiff: () => void;
   setDiffFocused: (focused: boolean) => void;
+  setEditorFocus: (focus: EditorFocus) => void;
   /** Open the merge-resolution surface for a conflicted file. Flushes the
    * file's dirty editor buffer to disk first so markers are parsed from the
    * bytes the session will display. Resolves false (with a user-facing toast
@@ -288,14 +297,15 @@ interface GitActions {
   /** Discard the session. Never writes — worktree and markers stay intact.
    * Also invalidates any in-flight open so a closed surface cannot reappear. */
   closeMergeResolution: () => void;
-  /** Write the resolved file and stage it, then advance to the next queued
-   * conflicted file. Text sessions require the resolved Result document;
+  /** Write the resolved file and stage it. By default, advance to the next
+   * queued conflicted file; callers may suppress that advance. Text sessions
+   * require the resolved Result document;
    * sides sessions apply the previously selected side via the backend
    * finalize op. Resolves true when the stage succeeded (a supersession
    * after that point only skips the queue advance); false means the file was
    * not staged — before the write that is always a clean no-op, after it the
    * error toast says what still needs doing. */
-  mergeFinalizeAndStage: (result?: string) => Promise<boolean>;
+  mergeFinalizeAndStage: (result?: string, options?: MergeFinalizeOptions) => Promise<boolean>;
 }
 
 type GitStore = GitState & GitActions;
@@ -342,6 +352,7 @@ export const useGitStore = create<GitStore>()(
       diffSession: null,
       diffSource: null,
       diffFocused: false,
+      mergeFocused: false,
       mergeSession: null,
 
       resetForWorkspace: (root) => {
@@ -364,6 +375,7 @@ export const useGitStore = create<GitStore>()(
             diffSession: null,
             diffSource: null,
             diffFocused: false,
+            mergeFocused: false,
             mergeSession: null,
             epoch: state.epoch + 1,
             statusRevision: 0,
@@ -623,6 +635,7 @@ export const useGitStore = create<GitStore>()(
               diffSource: change,
               // A refresh (focus:false) keeps whatever the user was looking at.
               diffFocused: focus ? true : state.diffFocused,
+              mergeFocused: focus ? false : state.mergeFocused,
             }),
             false,
             'git/openDiff'
@@ -669,12 +682,16 @@ export const useGitStore = create<GitStore>()(
       closeDiff: () =>
         set({ diffSession: null, diffSource: null, diffFocused: false }, false, 'git/closeDiff'),
 
-      setDiffFocused: (diffFocused) => set({ diffFocused }, false, 'git/setDiffFocused'),
+      setDiffFocused: (diffFocused) => get().setEditorFocus(diffFocused ? 'diff' : 'file'),
+
+      setEditorFocus: (focus) =>
+        set(
+          { diffFocused: focus === 'diff', mergeFocused: focus === 'merge' },
+          false,
+          'git/setEditorFocus'
+        ),
 
       openMergeResolution: async (path, fileQueue) => {
-        const { root, status, epoch } = get();
-        const repoRoot = status?.isRepo ? status.repoRoot : root;
-        if (!repoRoot) return false;
         // A finalize is mid-write: snapshotting now would capture pre-write
         // markers and install a stale session over the completed resolution.
         // (Refused BEFORE the counter bump so the running finalize's own
@@ -686,21 +703,21 @@ export const useGitStore = create<GitStore>()(
             .showToast('Finishing the previous resolution — try again in a moment', 'info');
           return false;
         }
+        const installedSession = get().mergeSession;
+        if (installedSession?.path === path) {
+          get().setEditorFocus('merge');
+          return true;
+        }
+        if (installedSession) {
+          useIDEStore.getState().showToast('Close the current merge resolution first', 'info');
+          return false;
+        }
+        const { root, status, epoch } = get();
+        const repoRoot = status?.isRepo ? status.repoRoot : root;
+        if (!repoRoot) return false;
         const requestRevision = ++mergeRequestRevision;
         const isCurrent = () => get().epoch === epoch && requestRevision === mergeRequestRevision;
         const abs = joinRepoPath(repoRoot, path);
-        // A failed open of file B must not brick an installed session for file
-        // A. A failed same-path reopen is different: its old snapshot is now
-        // untrustworthy, so clear it instead of making it finalizable again.
-        const settleInstalledSessionAfterFailure = () => {
-          const live = get().mergeSession;
-          if (!live || !isCurrent() || get().epoch !== live.epoch) return;
-          if (live.path === path) {
-            set({ mergeSession: null }, false, 'git/mergeInvalidateSession');
-            return;
-          }
-          set({ mergeSession: { ...live, requestRevision } }, false, 'git/mergeReviveSession');
-        };
 
         // Flush any unsaved editor buffer first: the snapshot must be parsed
         // from the same bytes the session displays, and git only sees disk.
@@ -712,7 +729,6 @@ export const useGitStore = create<GitStore>()(
               .getState()
               .showToast(`Could not save ${path}: ${toErrorMessage(err)}`, 'error');
           }
-          settleInstalledSessionAfterFailure();
           return false;
         }
         if (!isCurrent()) return false;
@@ -724,7 +740,6 @@ export const useGitStore = create<GitStore>()(
               .getState()
               .showToast(`${path} changed while opening its merge session — try again`, 'error');
           }
-          settleInstalledSessionAfterFailure();
           return false;
         };
 
@@ -737,7 +752,6 @@ export const useGitStore = create<GitStore>()(
           if (!fileStayedStable()) return false;
           if (!stages.base && !stages.ours && !stages.theirs) {
             useIDEStore.getState().showToast(`${path} is not conflicted`, 'info');
-            settleInstalledSessionAfterFailure();
             return false;
           }
 
@@ -757,7 +771,11 @@ export const useGitStore = create<GitStore>()(
           };
           if (stages.binary || !stages.ours || !stages.theirs) {
             set(
-              { mergeSession: { kind: 'sides', ...base, stages } },
+              {
+                mergeSession: { kind: 'sides', ...base, stages },
+                diffFocused: false,
+                mergeFocused: true,
+              },
               false,
               'git/openMergeResolution'
             );
@@ -769,7 +787,6 @@ export const useGitStore = create<GitStore>()(
           if (!fileStayedStable()) return false;
           if (!snap.regions || snap.regions.length === 0) {
             useIDEStore.getState().showToast(`No conflict markers found in ${path}`, 'info');
-            settleInstalledSessionAfterFailure();
             return false;
           }
           set(
@@ -784,6 +801,8 @@ export const useGitStore = create<GitStore>()(
                 decisions: {},
                 readOnly: !isWritableFormat(snap.encoding, snap.lineEndings),
               },
+              diffFocused: false,
+              mergeFocused: true,
             },
             false,
             'git/openMergeResolution'
@@ -795,7 +814,6 @@ export const useGitStore = create<GitStore>()(
               .getState()
               .showToast(`Merge resolution failed: ${toErrorMessage(err)}`, 'error');
           }
-          settleInstalledSessionAfterFailure();
           return false;
         }
       },
@@ -831,10 +849,10 @@ export const useGitStore = create<GitStore>()(
         // Invalidate any in-flight open too — a session installing after the
         // user closed the surface would make it reappear.
         mergeRequestRevision++;
-        set({ mergeSession: null }, false, 'git/closeMergeResolution');
+        set({ mergeSession: null, mergeFocused: false }, false, 'git/closeMergeResolution');
       },
 
-      mergeFinalizeAndStage: async (result) => {
+      mergeFinalizeAndStage: async (result, options) => {
         const session = get().mergeSession;
         if (!session) return false;
         // Single-flight: a second click while a finalize runs must not start
@@ -860,7 +878,7 @@ export const useGitStore = create<GitStore>()(
             get().mergeSession?.requestRevision === session.requestRevision
           ) {
             mergeRequestRevision++;
-            set({ mergeSession: null }, false, 'git/mergeInvalidated');
+            set({ mergeSession: null, mergeFocused: false }, false, 'git/mergeInvalidated');
           }
         };
         const invalidateChangedSession = (message: string) => {
@@ -985,6 +1003,10 @@ export const useGitStore = create<GitStore>()(
             showError(
               `Cannot finalize ${session.path}: its encoding or line endings cannot be written back losslessly.`
             );
+            return false;
+          }
+          if (session.regions.some((_, index) => session.decisions[index] === undefined)) {
+            showError(`Cannot finalize ${session.path}: unresolved conflicts remain.`);
             return false;
           }
 
@@ -1124,11 +1146,15 @@ export const useGitStore = create<GitStore>()(
           // Close the finalized session, then open the next queued conflicted
           // file, or report completion when the queue is exhausted.
           const remaining = session.fileQueue.filter((p) => p !== session.path);
-          set({ mergeSession: null }, false, 'git/mergeFinalized');
-          if (remaining.length > 0) {
+          set({ mergeSession: null, mergeFocused: false }, false, 'git/mergeFinalized');
+          if (remaining.length === 0) {
+            // Completion feedback is not an advance — the exhausted queue is
+            // reported even when the caller suppressed auto-advance.
+            if (!warningAfter) {
+              useIDEStore.getState().showToast('Conflict queue resolved', 'info');
+            }
+          } else if (!options?.suppressQueueAdvance) {
             await get().openMergeResolution(remaining[0], remaining);
-          } else if (!warningAfter) {
-            useIDEStore.getState().showToast('Conflict queue resolved', 'info');
           }
         }
         return ok;

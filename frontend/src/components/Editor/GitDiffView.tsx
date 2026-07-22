@@ -334,11 +334,7 @@ export function GitDiffView({
 
   // The working-tree side edits in place, but Open File still brings up the
   // full editor (LSP, search, its own tab) and yields the diff tab to it.
-  const openFile = async () => {
-    if (await ensureEditorFileOpen(session.absPath)) {
-      useGitStore.getState().setDiffFocused(false);
-    }
-  };
+  const openFile = () => void ensureEditorFileOpen(session.absPath);
 
   if (session.binary) {
     return (
