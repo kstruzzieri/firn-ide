@@ -149,6 +149,8 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Keyboard focus lands below the pinned sticky header. */
+  scroll-padding-top: 27px;
 }
 
 .resultsList {
@@ -157,13 +159,21 @@
 
 /* File group header */
 .fileHeader {
+  /* Sticky within .resultsScroll. The DOM is a flat sibling list, so each
+     passed header stays pinned at top: 0 and the next one paints over it
+     (opaque background, later DOM order wins). The visible pinned header is
+     always the group currently under the scroll position. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--surface-border-subtle);
   display: flex;
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 3px 10px 3px 6px;
-  background: transparent;
-  border: none;
+  padding: 4px 10px 4px 6px;
+  border-top: none;
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: 12px;
@@ -172,12 +182,18 @@
   transition: background var(--transition);
 }
 
+/* Divider above each group after the first (flat DOM: a header that follows
+   a result row starts a new group). */
+.resultRow + .fileHeader {
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
 .fileHeader:hover {
   background: var(--surface-hover);
 }
 
 .fileHeader:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -205,12 +221,20 @@
 }
 
 .fileName {
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 0;
   max-width: 60%;
+}
+
+/* Root-level files render no .fileDir sibling inside .filePath; without this
+   the 60% cap ellipsizes long names next to empty space. */
+.fileName:only-child {
+  max-width: none;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .fileDir {
@@ -230,15 +254,10 @@
 
 .matchCount {
   flex-shrink: 0;
-  padding: 0 5px;
-  background: var(--surface-elevated);
-  border-radius: 8px;
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
-  color: var(--text-secondary);
-  line-height: 16px;
-  min-width: 18px;
-  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Result rows (a line match) */
