@@ -349,11 +349,12 @@
 
 .match {
   background: var(--accent-dim);
-  /* text-primary, not --accent: the accent is workspace-themeable and its
-     blue/purple/gray variants fall below 4.5:1 on --accent-dim at 12px. The
-     dim accent background + 600 weight carry the highlight; the text always
-     passes AA. */
-  color: var(--text-primary);
+  /* Fixed cyan, not var(--accent): themeable accent variants (blue/purple/
+     gray) fall below 4.5:1 on these surfaces at 12px. Plain text-primary
+     passes AA but proved too subtle to pick out of dense results — the fixed
+     high-contrast hue (same token as the focus ring, ~8:1 on the panel)
+     keeps the match discernible in every workspace theme. */
+  color: var(--focus-ring);
   border-radius: 2px;
   padding: 0 1px;
   font-weight: 600;
