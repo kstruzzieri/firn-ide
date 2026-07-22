@@ -442,6 +442,14 @@
   padding: 0 0 0 38px;
 }
 
+/* Conflict rows carry no row checkbox and their section carries no select-all
+ * checkbox, so the 38px checkbox column is dead space. Indent only past the
+ * chevron (16) + gap (6) = 22px, less the row's 4px padding, to sit the file
+ * icon under the section title. */
+.rowsNoCheck {
+  padding-left: 18px;
+}
+
 .row {
   display: flex;
   align-items: center;

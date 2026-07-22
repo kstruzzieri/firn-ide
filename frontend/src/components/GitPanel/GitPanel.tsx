@@ -536,7 +536,7 @@ function Section({
         </span>
       </div>
       {!collapsed && (
-        <ul className={styles.rows}>
+        <ul className={`${styles.rows} ${rowAction === null ? styles.rowsNoCheck : ''}`}>
           {files.map((f) => (
             <ChangeRow key={`${testId}-${f.change.path}`} file={f} rowAction={rowAction} />
           ))}
