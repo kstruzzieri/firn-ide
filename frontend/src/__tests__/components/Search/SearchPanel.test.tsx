@@ -765,4 +765,22 @@ describe('SearchPanel — match-anchored line rendering (#207)', () => {
     expect(bdi!.getAttribute('dir')).toBe('ltr');
     expect(bdi!.textContent).toBe('docs/حزم/catalog');
   });
+
+  it('caps title and aria-label for very long lines (ripgrep has no column cap)', () => {
+    const longLine = `const x = '${'a'.repeat(500)}'; // Search target`;
+    const start = longLine.indexOf('Search');
+    const file = makeFile('a.ts', [
+      { line: 1, text: longLine, submatches: [{ start, end: start + 6 }] },
+    ]);
+    renderResults([file]);
+
+    const row = document.querySelector('.resultRow') as HTMLButtonElement;
+    // 300 chars + ellipsis, not the full 500+ char line.
+    expect(row.title).toHaveLength(301);
+    expect(row.title.endsWith('…')).toBe(true);
+    expect(row.title.startsWith("const x = '")).toBe(true);
+    const label = row.getAttribute('aria-label')!;
+    expect(label.startsWith('Line 1 in a.ts: ')).toBe(true);
+    expect(label.length).toBeLessThan(340);
+  });
 });

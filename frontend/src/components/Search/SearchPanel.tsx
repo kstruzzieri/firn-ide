@@ -183,8 +183,15 @@ interface ResultRowProps {
   onFocus: () => void;
 }
 
+// ripgrep runs without --max-columns (parser.go buffers up to 16MB/line), so a
+// match in a minified file can be megabytes long. The tooltip and accessible
+// name carry no value past a few hundred characters — cap them so we don't
+// attach multi-MB strings to every row (the visual row already ellipsizes).
+const ROW_LABEL_MAX = 300;
+
 function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: ResultRowProps) {
-  const lineText = item.match.text.trim();
+  const trimmed = item.match.text.trim();
+  const lineText = trimmed.length > ROW_LABEL_MAX ? `${trimmed.slice(0, ROW_LABEL_MAX)}…` : trimmed;
   return (
     <button
       ref={itemRef}
