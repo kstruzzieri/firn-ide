@@ -39,7 +39,7 @@ function makeFile(
       line: m.line,
       column: m.column ?? 1,
       text: m.text,
-      submatches: m.submatches ?? [{ start: 0, end: m.text.length }],
+      submatches: m.submatches ?? [{ start: 0, end: new TextEncoder().encode(m.text).length }],
     })),
   };
 }
@@ -588,5 +588,115 @@ describe('SearchPanel — keyboard navigation', () => {
     const input = screen.getByLabelText('Search query');
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(useSearchStore.getState().query).toBe('');
+  });
+});
+
+describe('SearchPanel — match-anchored line rendering (#207)', () => {
+  function renderResults(files: FileResult[]) {
+    setUIState({
+      query: 'Search',
+      uiState: {
+        kind: 'results',
+        files,
+        totalFiles: files.length,
+        totalLines: files.reduce((n, f) => n + f.matches.length, 0),
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 12,
+      },
+      expandedFiles: new Set(files.map((f) => f.path)),
+    });
+    return render(<SearchPanel />);
+  }
+
+  it('renders leading context as an rtl-safe bdi with an LRM terminator', () => {
+    // "Search" at byte offset 16 in an ASCII line (byte == char here).
+    const file = makeFile('a.ts', [
+      { line: 178, text: 'export function SearchPanel() {', submatches: [{ start: 16, end: 22 }] },
+    ]);
+    renderResults([file]);
+
+    const lead = document.querySelector('.contextLead');
+    expect(lead).not.toBeNull();
+    expect(lead).toHaveClass('context');
+    const bdi = lead!.querySelector('bdi');
+    expect(bdi).not.toBeNull();
+    expect(bdi!.getAttribute('dir')).toBe('ltr');
+    // LRM keeps the trailing space inside the rtl line box.
+    expect(bdi!.textContent).toBe('export function ‎');
+  });
+
+  it('renders trailing context as a plain .context span without lead class', () => {
+    const file = makeFile('a.ts', [
+      { line: 178, text: 'export function SearchPanel() {', submatches: [{ start: 16, end: 22 }] },
+    ]);
+    renderResults([file]);
+
+    const contexts = document.querySelectorAll('.context:not(.contextLead)');
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].textContent).toBe('Panel() {');
+    expect(document.querySelector('mark')!.textContent).toBe('Search');
+  });
+
+  it('trims leading indentation from the leading context segment (render only)', () => {
+    // 6 spaces + `aria-label="` = offset 18 for "Search".
+    const file = makeFile('a.ts', [
+      {
+        line: 573,
+        text: '      aria-label="Search results"',
+        submatches: [{ start: 18, end: 24 }],
+      },
+    ]);
+    renderResults([file]);
+
+    const bdi = document.querySelector('.contextLead bdi');
+    // No LRM: it is only appended when the lead ends in preserved whitespace.
+    expect(bdi!.textContent).toBe('aria-label="');
+  });
+
+  it('omits the leading segment entirely when it is whitespace-only', () => {
+    const file = makeFile('a.ts', [
+      { line: 9, text: '   Search everywhere', submatches: [{ start: 3, end: 9 }] },
+    ]);
+    renderResults([file]);
+
+    expect(document.querySelector('.contextLead')).toBeNull();
+    const lineText = document.querySelector('.lineText')!;
+    expect((lineText.firstElementChild as HTMLElement).tagName).toBe('MARK');
+  });
+
+  it('handles multiple submatches: only the first segment is the lead', () => {
+    // "Search"/"search" at byte offsets 12 and 34 in the line below (ASCII: byte == char).
+    const file = makeFile('a.ts', [
+      {
+        line: 12,
+        text: 'import { useSearchStore } from "./searchStore";',
+        submatches: [
+          { start: 12, end: 18 },
+          { start: 34, end: 40 },
+        ],
+      },
+    ]);
+    renderResults([file]);
+
+    expect(document.querySelectorAll('mark')).toHaveLength(2);
+    expect(document.querySelectorAll('.contextLead')).toHaveLength(1);
+    // Middle + trailing context spans are plain .context.
+    expect(document.querySelectorAll('.context:not(.contextLead)')).toHaveLength(2);
+  });
+
+  it('splits by byte offsets, not UTF-16 indices, for non-ASCII prefixes', () => {
+    // Emoji (4 bytes) + CJK (3) + decomposed e-acute (1+2) + space (1) = 11 bytes,
+    // but only 6 UTF-16 code units — the offsets diverge, exercising the byte path.
+    const prefix = '🙂漢é ';
+    const start = new TextEncoder().encode(prefix).length;
+    const file = makeFile('a.ts', [
+      { line: 3, text: `${prefix}Search done`, submatches: [{ start, end: start + 6 }] },
+    ]);
+    renderResults([file]);
+
+    expect(document.querySelector('mark')!.textContent).toBe('Search');
+    // Lead ends in a preserved space, so the LRM terminator is appended.
+    expect(document.querySelector('.contextLead bdi')!.textContent).toBe(`${prefix}‎`);
   });
 });

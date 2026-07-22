@@ -71,6 +71,15 @@ interface MatchLineProps {
   match: LineMatch;
 }
 
+// U+200E (left-to-right mark). The leading-context span is laid out with
+// direction: rtl so it ellipsizes on the LEFT (keeping the text nearest the
+// match visible — same trick as .fileDir). A trailing space would otherwise
+// "hang" outside the rtl line box and vanish; terminating the run with an LRM
+// keeps it inside. Appended only when the lead ends in preserved whitespace,
+// so DOM text otherwise matches the source line exactly (post-trim).
+// See .contextLead in SearchPanel.module.css.
+const LRM = '‎';
+
 function MatchLine({ match }: MatchLineProps) {
   const segments = useMemo(
     () => splitLineByByteRanges(match.text, match.submatches),
@@ -78,15 +87,34 @@ function MatchLine({ match }: MatchLineProps) {
   );
   return (
     <span className={styles.lineText}>
-      {segments.map((seg, i) =>
-        seg.isMatch ? (
-          <mark key={i} className={styles.match}>
+      {segments.map((seg, i) => {
+        if (seg.isMatch) {
+          return (
+            <mark key={i} className={styles.match}>
+              {seg.text}
+            </mark>
+          );
+        }
+        if (i === 0) {
+          // Render-only indent trim: navigation offsets always derive from the
+          // untrimmed match.text (see activateMatch), so no range math shifts.
+          const lead = seg.text.replace(/^[\t ]+/, '');
+          if (lead === '') return null;
+          return (
+            <span key={i} className={`${styles.context} ${styles.contextLead}`}>
+              <bdi dir="ltr">
+                {lead}
+                {/[ \t]$/.test(lead) ? LRM : null}
+              </bdi>
+            </span>
+          );
+        }
+        return (
+          <span key={i} className={styles.context}>
             {seg.text}
-          </mark>
-        ) : (
-          <span key={i}>{seg.text}</span>
-        )
-      )}
+          </span>
+        );
+      })}
     </span>
   );
 }
