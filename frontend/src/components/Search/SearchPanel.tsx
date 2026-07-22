@@ -179,6 +179,7 @@ interface ResultRowProps {
 }
 
 function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: ResultRowProps) {
+  const lineText = item.match.text.trim();
   return (
     <button
       ref={itemRef}
@@ -187,7 +188,8 @@ function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: Re
       onClick={onActivate}
       onFocus={onFocus}
       tabIndex={tabbable ? 0 : -1}
-      aria-label={`Line ${item.match.line} in ${item.file.relativePath}`}
+      aria-label={`Line ${item.match.line} in ${item.file.relativePath}: ${lineText}`}
+      title={lineText}
     >
       <span className={styles.lineNumber} aria-hidden="true">
         {item.match.line}

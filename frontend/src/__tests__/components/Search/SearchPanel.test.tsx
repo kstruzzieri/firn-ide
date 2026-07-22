@@ -405,7 +405,7 @@ describe('SearchPanel — results rendering', () => {
     setResults();
     render(<SearchPanel />);
     const input = screen.getByLabelText('Search query');
-    const lastRow = screen.getByRole('button', { name: 'Line 4 in Bar.ts' });
+    const lastRow = screen.getByRole('button', { name: /^Line 4 in Bar\.ts:/ });
 
     act(() => {
       lastRow.focus();
@@ -475,7 +475,7 @@ describe('SearchPanel — keyboard navigation', () => {
     const fileHeader = screen.getByRole('button', { name: /a\.ts \(2 matches\)/ });
     fireEvent.keyDown(fileHeader, { key: 'ArrowDown' });
 
-    const firstResult = screen.getByRole('button', { name: 'Line 1 in a.ts' });
+    const firstResult = screen.getByRole('button', { name: /^Line 1 in a\.ts:/ });
     expect(document.activeElement).toBe(firstResult);
   });
 
@@ -493,7 +493,7 @@ describe('SearchPanel — keyboard navigation', () => {
   it('Enter on a result row navigates', async () => {
     setupResults();
     render(<SearchPanel />);
-    const firstResult = screen.getByRole('button', { name: 'Line 1 in a.ts' });
+    const firstResult = screen.getByRole('button', { name: /^Line 1 in a\.ts:/ });
     // act() flushes onFocus state update so focusedItemIndex is set before
     // the keyDown handler reads it.
     act(() => {
@@ -524,7 +524,7 @@ describe('SearchPanel — keyboard navigation', () => {
   it('ArrowLeft on a match row moves focus to the parent file header', () => {
     setupResults();
     render(<SearchPanel />);
-    const firstResult = screen.getByRole('button', { name: 'Line 1 in a.ts' });
+    const firstResult = screen.getByRole('button', { name: /^Line 1 in a\.ts:/ });
     act(() => {
       firstResult.focus();
     });
@@ -698,5 +698,21 @@ describe('SearchPanel — match-anchored line rendering (#207)', () => {
     expect(document.querySelector('mark')!.textContent).toBe('Search');
     // Lead ends in a preserved space, so the LRM terminator is appended.
     expect(document.querySelector('.contextLead bdi')!.textContent).toBe(`${prefix}‎`);
+  });
+
+  it('exposes the full line via title and includes it in the aria-label', () => {
+    const file = makeFile('a.ts', [
+      {
+        line: 87,
+        text: '      const results = await SearchWorkspace(workspacePath);',
+        submatches: [{ start: 28, end: 34 }],
+      },
+    ]);
+    renderResults([file]);
+
+    const row = screen.getByRole('button', {
+      name: 'Line 87 in a.ts: const results = await SearchWorkspace(workspacePath);',
+    });
+    expect(row).toHaveAttribute('title', 'const results = await SearchWorkspace(workspacePath);');
   });
 });
