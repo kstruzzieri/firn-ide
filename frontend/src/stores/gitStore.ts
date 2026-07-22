@@ -1147,12 +1147,14 @@ export const useGitStore = create<GitStore>()(
           // file, or report completion when the queue is exhausted.
           const remaining = session.fileQueue.filter((p) => p !== session.path);
           set({ mergeSession: null, mergeFocused: false }, false, 'git/mergeFinalized');
-          if (!options?.suppressQueueAdvance) {
-            if (remaining.length > 0) {
-              await get().openMergeResolution(remaining[0], remaining);
-            } else if (!warningAfter) {
+          if (remaining.length === 0) {
+            // Completion feedback is not an advance — the exhausted queue is
+            // reported even when the caller suppressed auto-advance.
+            if (!warningAfter) {
               useIDEStore.getState().showToast('Conflict queue resolved', 'info');
             }
+          } else if (!options?.suppressQueueAdvance) {
+            await get().openMergeResolution(remaining[0], remaining);
           }
         }
         return ok;

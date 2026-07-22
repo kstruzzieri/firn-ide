@@ -683,6 +683,19 @@ describe('mergeFinalizeAndStage', () => {
     expect(mockStages).toHaveBeenCalledTimes(1);
   });
 
+  it('reports queue completion when the last file finalizes without advancing', async () => {
+    await openTextSession();
+    resolveTextSessionForFinalize();
+
+    const ok = await useGitStore
+      .getState()
+      .mergeFinalizeAndStage(RESOLVED, { suppressQueueAdvance: true });
+
+    expect(ok).toBe(true);
+    expect(useGitStore.getState().mergeSession).toBeNull();
+    expect(useIDEStore.getState().toast?.message).toBe('Conflict queue resolved');
+  });
+
   it('aborts before staging when the workspace switches mid-write', async () => {
     await openTextSession();
     resolveTextSessionForFinalize();
