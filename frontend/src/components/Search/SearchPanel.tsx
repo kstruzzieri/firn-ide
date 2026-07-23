@@ -2,18 +2,27 @@ import {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
   RefObject,
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import type { LanguageSupport } from '@codemirror/language';
 import { ChevronDownIcon, ChevronRightIcon } from '../icons';
 import { useIDEStore } from '../../stores/ideStore';
 import { useSearchStore } from '../../stores/searchStore';
 import type { FileResult, LineMatch, SearchUIState } from '../../types/search';
-import { byteColumnToCharColumn, splitLineByByteRanges } from '../../utils/searchRanges';
+import { byteColumnToCharColumn } from '../../utils/searchRanges';
+import {
+  buildLineRenderModel,
+  parseLineTokens,
+  syntaxPaletteVars,
+  type LineRenderPart,
+} from '../../utils/searchTokens';
 import { navigateToEditorLocation } from '../../utils/editorNavigation';
+import { useSearchSyntaxSupports } from '../../hooks/useSearchSyntaxSupports';
 import styles from './SearchPanel.module.css';
 
 // Search durations span microseconds (cached) to multi-second (cold ripgrep
@@ -70,6 +79,7 @@ function splitFilePath(relativePath: string): { name: string; dir: string } {
 
 interface MatchLineProps {
   match: LineMatch;
+  support: LanguageSupport | null;
 }
 
 // U+200E (left-to-right mark). The leading-context span is laid out with
@@ -81,44 +91,54 @@ interface MatchLineProps {
 // See .contextLead in SearchPanel.module.css.
 const LRM = '‎';
 
-function MatchLine({ match }: MatchLineProps) {
-  const segments = useMemo(
-    () => splitLineByByteRanges(match.text, match.submatches),
-    [match.text, match.submatches]
-  );
+// Token pieces render as inner spans carrying only the raw tok-<role> class
+// (colored by the scoped :global CSS in the module stylesheet); plain gaps render
+// as bare text nodes so uncolored runs add no extra elements.
+const MatchLine = memo(function MatchLine({ match, support }: MatchLineProps) {
+  const parts = useMemo<LineRenderPart[]>(() => {
+    const tokens = support ? parseLineTokens(match.text, support) : null;
+    return buildLineRenderModel(match.text, match.submatches, tokens ?? []);
+  }, [match.text, match.submatches, support]);
+
   return (
     <span className={styles.lineText}>
-      {segments.map((seg, i) => {
-        if (seg.isMatch) {
+      {parts.map((part, i) => {
+        if (part.kind === 'match') {
           return (
             <mark key={i} className={styles.match}>
-              {seg.text}
+              {part.text}
             </mark>
           );
         }
-        if (i === 0) {
-          // Render-only indent trim: navigation offsets always derive from the
-          // untrimmed match.text (see activateMatch), so no range math shifts.
-          const lead = seg.text.replace(/^[\t ]+/, '');
-          if (lead === '') return null;
+        const children = part.pieces.map((piece, j) =>
+          piece.className ? (
+            <span key={j} className={piece.className}>
+              {piece.text}
+            </span>
+          ) : (
+            piece.text
+          )
+        );
+        if (part.isLead) {
+          const leadText = part.pieces.map((p) => p.text).join('');
           return (
             <span key={i} className={`${styles.context} ${styles.contextLead}`}>
               <bdi dir="ltr">
-                {lead}
-                {/[ \t]$/.test(lead) ? LRM : null}
+                {children}
+                {/[ \t]$/.test(leadText) ? LRM : null}
               </bdi>
             </span>
           );
         }
         return (
           <span key={i} className={styles.context}>
-            {seg.text}
+            {children}
           </span>
         );
       })}
     </span>
   );
-}
+});
 
 interface FileGroupProps {
   item: FileItem;
@@ -181,6 +201,7 @@ interface ResultRowProps {
   itemRef: (el: HTMLButtonElement | null) => void;
   onActivate: () => void;
   onFocus: () => void;
+  support: LanguageSupport | null;
 }
 
 // ripgrep runs without --max-columns (parser.go buffers up to 16MB/line), so a
@@ -189,7 +210,15 @@ interface ResultRowProps {
 // attach multi-MB strings to every row (the visual row already ellipsizes).
 const ROW_LABEL_MAX = 300;
 
-function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: ResultRowProps) {
+function ResultRow({
+  item,
+  focused,
+  tabbable,
+  itemRef,
+  onActivate,
+  onFocus,
+  support,
+}: ResultRowProps) {
   const trimmed = item.match.text.trim();
   const lineText = trimmed.length > ROW_LABEL_MAX ? `${trimmed.slice(0, ROW_LABEL_MAX)}…` : trimmed;
   return (
@@ -206,7 +235,7 @@ function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: Re
       <span className={styles.lineNumber} aria-hidden="true">
         {item.match.line}
       </span>
-      <MatchLine match={item.match} />
+      <MatchLine match={item.match} support={support} />
     </button>
   );
 }
@@ -248,6 +277,24 @@ export function SearchPanel() {
     if (uiState.kind !== 'results') return [];
     return buildFlatItems(uiState.files, expandedFiles);
   }, [uiState, expandedFiles]);
+
+  const editorSyntaxTheme = useIDEStore((s) => s.editorSyntaxTheme);
+  const paletteVars = useMemo(() => syntaxPaletteVars(editorSyntaxTheme), [editorSyntaxTheme]);
+
+  // Distinct relativePaths of currently visible (expanded) match rows.
+  const visibleFilenames = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of flatItems) {
+      if (item.kind === 'match' && !seen.has(item.file.relativePath)) {
+        seen.add(item.file.relativePath);
+        out.push(item.file.relativePath);
+      }
+    }
+    return out;
+  }, [flatItems]);
+
+  const supports = useSearchSyntaxSupports(visibleFilenames);
 
   // Restore keyboard focus when results refresh.
   //
@@ -422,7 +469,12 @@ export function SearchPanel() {
   const isInvalidRegex = uiState.kind === 'invalid-regex';
 
   return (
-    <div className={styles.container} role="region" aria-label="Workspace search">
+    <div
+      className={styles.container}
+      role="region"
+      aria-label="Workspace search"
+      style={paletteVars}
+    >
       <div className={styles.controls}>
         <div className={styles.inputWrapper}>
           <input
@@ -502,6 +554,7 @@ export function SearchPanel() {
         onToggleFile={toggleFileExpanded}
         onActivateMatch={activateMatch}
         onItemFocus={setFocusedItemIndex}
+        supports={supports}
       />
     </div>
   );
@@ -518,9 +571,10 @@ interface PanelBodyProps {
   onToggleFile: (path: string) => void;
   onActivateMatch: (file: FileResult, match: LineMatch) => void;
   onItemFocus: (index: number) => void;
+  supports: ReadonlyMap<string, LanguageSupport>;
 }
 
-function PanelBody({
+const PanelBody = memo(function PanelBody({
   uiState,
   flatItems,
   resultsScrollRef,
@@ -531,6 +585,7 @@ function PanelBody({
   onToggleFile,
   onActivateMatch,
   onItemFocus,
+  supports,
 }: PanelBodyProps) {
   switch (uiState.kind) {
     case 'no-workspace':
@@ -642,6 +697,7 @@ function PanelBody({
                     itemRef={setItemRef(item.index)}
                     onActivate={() => onActivateMatch(item.file, item.match)}
                     onFocus={() => onItemFocus(item.index)}
+                    support={supports.get(item.file.relativePath) ?? null}
                   />
                 )
               )}
@@ -651,4 +707,4 @@ function PanelBody({
       );
     }
   }
-}
+});

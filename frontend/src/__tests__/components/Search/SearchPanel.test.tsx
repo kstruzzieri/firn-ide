@@ -1,7 +1,14 @@
+import { javascript } from '@codemirror/lang-javascript';
+
+jest.mock('../../../hooks/useSearchSyntaxSupports', () => ({
+  useSearchSyntaxSupports: jest.fn(() => new Map()),
+}));
+
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { SearchPanel } from '../../../components/Search';
 import { useIDEStore } from '../../../stores/ideStore';
 import { useSearchStore } from '../../../stores/searchStore';
+import { useSearchSyntaxSupports } from '../../../hooks/useSearchSyntaxSupports';
 import type { FileResult, SearchUIState } from '../../../types/search';
 
 const mockNavigate = jest.fn();
@@ -782,5 +789,109 @@ describe('SearchPanel — match-anchored line rendering (#207)', () => {
     const label = row.getAttribute('aria-label')!;
     expect(label.startsWith('Line 1 in a.ts: ')).toBe(true);
     expect(label.length).toBeLessThan(340);
+  });
+});
+
+describe('SearchPanel — dimmed syntax tokens (#215)', () => {
+  const tsSupport = javascript({ typescript: true });
+
+  function setResultsFor(file: FileResult) {
+    setUIState({
+      query: 'foo',
+      uiState: {
+        kind: 'results',
+        files: [file],
+        totalFiles: 1,
+        totalLines: file.matches.length,
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 10,
+      },
+      expandedFiles: new Set([file.path]),
+    });
+  }
+
+  it('renders monochrome (no tok- spans) while support is unloaded', () => {
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(new Map());
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    setResultsFor(file);
+    render(<SearchPanel />);
+    expect(document.querySelector('[class*="tok-"]')).toBeNull();
+    expect(document.querySelector('mark')!.textContent).toBe('foo');
+    expect(document.querySelector('.contextLead')).not.toBeNull();
+  });
+
+  it('renders nested token spans in context once support resolves, mark unchanged', () => {
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(
+      new Map([[file.relativePath, tsSupport]])
+    );
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const keyword = document.querySelector('.tok-keyword');
+    expect(keyword).not.toBeNull();
+    expect(keyword!.textContent).toBe('const');
+    const marks = document.querySelectorAll('mark');
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe('foo');
+    expect(marks[0].querySelector('[class*="tok-"]')).toBeNull();
+  });
+
+  it('keeps one .context box per outer segment (no extra flex items)', () => {
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(
+      new Map([[file.relativePath, tsSupport]])
+    );
+    setResultsFor(file);
+    render(<SearchPanel />);
+    expect(document.querySelectorAll('.context')).toHaveLength(2);
+    expect(document.querySelector('.contextLead bdi')).not.toBeNull();
+  });
+
+  it('preserves the leading bdi + LRM terminator around token spans', () => {
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'export function SearchPanel() {', submatches: [{ start: 16, end: 22 }] },
+    ]);
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(
+      new Map([[file.relativePath, tsSupport]])
+    );
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const bdi = document.querySelector('.contextLead bdi')!;
+    expect(bdi.textContent).toBe('export function ‎');
+  });
+
+  it('sets --syntax-* custom properties on the search container from the active theme', () => {
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(new Map());
+    act(() => {
+      useIDEStore.setState({ editorSyntaxTheme: 'reef' });
+    });
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const container = screen.getByRole('region', { name: 'Workspace search' });
+    expect(container.style.getPropertyValue('--syntax-keyword')).toBe('#FF6B9D');
+  });
+
+  it('passes only distinct visible filenames to the loader hook', () => {
+    const spy = useSearchSyntaxSupports as jest.Mock;
+    spy.mockClear();
+    spy.mockReturnValue(new Map());
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'foo one', submatches: [{ start: 0, end: 3 }] },
+      { line: 2, text: 'foo two', submatches: [{ start: 0, end: 3 }] },
+    ]);
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const lastArg = spy.mock.calls[spy.mock.calls.length - 1][0] as string[];
+    expect(lastArg).toEqual(['a.ts']);
   });
 });
