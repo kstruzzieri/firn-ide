@@ -1,6 +1,7 @@
 import {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -71,6 +72,15 @@ interface MatchLineProps {
   match: LineMatch;
 }
 
+// U+200E (left-to-right mark). The leading-context span is laid out with
+// direction: rtl so it ellipsizes on the LEFT (keeping the text nearest the
+// match visible — same trick as .fileDir). A trailing space would otherwise
+// "hang" outside the rtl line box and vanish; terminating the run with an LRM
+// keeps it inside. Appended only when the lead ends in preserved whitespace,
+// so DOM text otherwise matches the source line exactly (post-trim).
+// See .contextLead in SearchPanel.module.css.
+const LRM = '‎';
+
 function MatchLine({ match }: MatchLineProps) {
   const segments = useMemo(
     () => splitLineByByteRanges(match.text, match.submatches),
@@ -78,15 +88,34 @@ function MatchLine({ match }: MatchLineProps) {
   );
   return (
     <span className={styles.lineText}>
-      {segments.map((seg, i) =>
-        seg.isMatch ? (
-          <mark key={i} className={styles.match}>
+      {segments.map((seg, i) => {
+        if (seg.isMatch) {
+          return (
+            <mark key={i} className={styles.match}>
+              {seg.text}
+            </mark>
+          );
+        }
+        if (i === 0) {
+          // Render-only indent trim: navigation offsets always derive from the
+          // untrimmed match.text (see activateMatch), so no range math shifts.
+          const lead = seg.text.replace(/^[\t ]+/, '');
+          if (lead === '') return null;
+          return (
+            <span key={i} className={`${styles.context} ${styles.contextLead}`}>
+              <bdi dir="ltr">
+                {lead}
+                {/[ \t]$/.test(lead) ? LRM : null}
+              </bdi>
+            </span>
+          );
+        }
+        return (
+          <span key={i} className={styles.context}>
             {seg.text}
-          </mark>
-        ) : (
-          <span key={i}>{seg.text}</span>
-        )
-      )}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -127,11 +156,15 @@ function FileGroupHeader({ item, focused, tabbable, itemRef, onToggle, onFocus }
             right-anchored (so we ellipsize the start, keeping the deepest
             segment visible), but the slashes are bidi-neutral and could
             otherwise re-order on systems with mixed scripts. <bdi> +
-            unicode-bidi: isolate keeps slash order stable. */}
+            unicode-bidi: isolate keeps slash order stable. The dir="ltr"
+            attribute must live on a CHILD of the rtl-styled element, not the
+            element itself: author CSS `direction` overrides the attribute's
+            presentational hint, so pinning both on one node lets the CSS win
+            and re-orders mixed-script segments anyway. */}
         {dir && (
-          <bdi className={styles.fileDir} dir="ltr">
-            {dir}
-          </bdi>
+          <span className={styles.fileDir}>
+            <bdi dir="ltr">{dir}</bdi>
+          </span>
         )}
       </span>
       <span className={styles.matchCount} aria-hidden="true">
@@ -150,7 +183,15 @@ interface ResultRowProps {
   onFocus: () => void;
 }
 
+// ripgrep runs without --max-columns (parser.go buffers up to 16MB/line), so a
+// match in a minified file can be megabytes long. The tooltip and accessible
+// name carry no value past a few hundred characters — cap them so we don't
+// attach multi-MB strings to every row (the visual row already ellipsizes).
+const ROW_LABEL_MAX = 300;
+
 function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: ResultRowProps) {
+  const trimmed = item.match.text.trim();
+  const lineText = trimmed.length > ROW_LABEL_MAX ? `${trimmed.slice(0, ROW_LABEL_MAX)}…` : trimmed;
   return (
     <button
       ref={itemRef}
@@ -159,7 +200,8 @@ function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: Re
       onClick={onActivate}
       onFocus={onFocus}
       tabIndex={tabbable ? 0 : -1}
-      aria-label={`Line ${item.match.line} in ${item.file.relativePath}`}
+      aria-label={`Line ${item.match.line} in ${item.file.relativePath}: ${lineText}`}
+      title={lineText}
     >
       <span className={styles.lineNumber} aria-hidden="true">
         {item.match.line}
@@ -186,6 +228,7 @@ export function SearchPanel() {
   const toggleFileExpanded = useSearchStore((s) => s.toggleFileExpanded);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const [focusedItemIndex, setFocusedItemIndex] = useState<number | null>(null);
 
@@ -237,6 +280,7 @@ export function SearchPanel() {
   }, [flatItems, focusedItemIndex]);
 
   const focusItem = useCallback((index: number) => {
+    if (index === 0 && resultsScrollRef.current) resultsScrollRef.current.scrollTop = 0;
     setFocusedItemIndex(index);
     const el = itemRefs.current.get(index);
     el?.focus();
@@ -445,6 +489,7 @@ export function SearchPanel() {
       <PanelBody
         uiState={uiState}
         flatItems={flatItems}
+        resultsScrollRef={resultsScrollRef}
         focusedItemIndex={focusedItemIndex}
         // Default the keyboard-tabbable position to item 0 when no row is
         // focused, so a Tab-only user can reach the result list via Tab
@@ -465,6 +510,7 @@ export function SearchPanel() {
 interface PanelBodyProps {
   uiState: SearchUIState;
   flatItems: FlatItem[];
+  resultsScrollRef: RefObject<HTMLDivElement | null>;
   focusedItemIndex: number | null;
   tabbableIndex: number;
   setItemRef: (index: number) => (el: HTMLButtonElement | null) => void;
@@ -477,6 +523,7 @@ interface PanelBodyProps {
 function PanelBody({
   uiState,
   flatItems,
+  resultsScrollRef,
   focusedItemIndex,
   tabbableIndex,
   setItemRef,
@@ -569,6 +616,7 @@ function PanelBody({
             )}
           </div>
           <div
+            ref={resultsScrollRef}
             className={styles.resultsScroll}
             aria-label="Search results"
             onKeyDown={onListKeyDown}
