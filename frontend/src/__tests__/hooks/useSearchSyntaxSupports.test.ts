@@ -31,7 +31,9 @@ describe('useSearchSyntaxSupports', () => {
   });
 
   it('returns an empty map on first render (monochrome first commit)', () => {
-    load.mockResolvedValue(fakeSupport('TypeScript'));
+    // Never resolves: this test only asserts the synchronous first-render value,
+    // so we avoid a post-test setState (and its act() warning).
+    load.mockImplementation(() => new Promise<never>(() => {}));
     const { result } = renderHook(({ f }) => useSearchSyntaxSupports(f), {
       initialProps: { f: ['a.ts'] },
     });
