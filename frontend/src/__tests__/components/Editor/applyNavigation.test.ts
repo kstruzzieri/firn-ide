@@ -16,7 +16,7 @@ import type { EditorNavigationRequest } from '../../../stores/ideStore';
 interface NavDispatchSpec {
   selection?: { anchor: number };
   scrollIntoView?: boolean;
-  effects?: unknown;
+  effects?: { value: { y: string } };
 }
 
 /**
@@ -100,7 +100,7 @@ describe('applyNavigation', () => {
     const second = view.dispatch.mock.calls[1][0] as NavDispatchSpec;
     // The deferred dispatch carries a scrollIntoView effect, not a selection change.
     expect(second.selection).toBeUndefined();
-    expect(second.effects).toBeDefined();
+    expect(second.effects?.value.y).toBe('nearest');
   });
 
   it('skips the deferred re-scroll if the selection has moved on (stale nav guard)', () => {
@@ -109,6 +109,16 @@ describe('applyNavigation', () => {
     applyNavigation(view as never, nav(8));
     // Simulate a rapid file switch / follow-up navigation before the frame runs.
     view.state.selection = { main: { head: 999 } };
+    flushRaf();
+
+    expect(view.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the deferred re-scroll if the document has changed', () => {
+    const view = makeFakeView(DOC);
+
+    applyNavigation(view as never, nav(8));
+    view.state.doc = makeFakeView(DOC).state.doc;
     flushRaf();
 
     expect(view.dispatch).toHaveBeenCalledTimes(1);

@@ -9,9 +9,10 @@ import type { EditorNavigationRequest } from '../../stores/ideStore';
  * component file only exports React components (fast-refresh friendly).
  */
 export function applyNavigation(view: EditorView, nav: EditorNavigationRequest): void {
-  const lineNum = Math.min(nav.line, view.state.doc.lines);
+  const doc = view.state.doc;
+  const lineNum = Math.min(nav.line, doc.lines);
   if (lineNum <= 0) return;
-  const line = view.state.doc.line(lineNum);
+  const line = doc.line(lineNum);
   const col = Math.min((nav.column ?? 1) - 1, line.length);
   const pos = line.from + col;
 
@@ -29,13 +30,13 @@ export function applyNavigation(view: EditorView, nav: EditorNavigationRequest):
   // scroll on the next animation frame — by then the new document is laid out,
   // so the target line's real offset is known. rAF runs outside CodeMirror's
   // update cycle, where dispatching is safe (unlike requestMeasure callbacks).
-  // Guards: bail if the view was torn down, if the doc no longer reaches the
-  // line, or if a rapid file switch / follow-up navigation has moved the
-  // selection off pos — so we never yank a view the user has moved on to.
+  // Guards: bail if the view was torn down, if a rapid file switch replaced the
+  // document, or if follow-up navigation moved the selection off pos — so we
+  // never yank a view the user has moved on to.
   requestAnimationFrame(() => {
     if (!view.dom.isConnected) return;
-    if (view.state.doc.lines < lineNum) return;
+    if (view.state.doc !== doc) return;
     if (view.state.selection.main.head !== pos) return;
-    view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+    view.dispatch({ effects: EditorView.scrollIntoView(pos) });
   });
 }
