@@ -10,6 +10,8 @@ import {
   type LineRenderPart,
 } from '../../utils/searchTokens';
 import type { TokenRange } from '../../utils/searchTokens';
+import { syntaxPaletteVars } from '../../utils/searchTokens';
+import { getSyntaxPalette } from '../../components/Editor/codemirror/palettes';
 
 const tsSupport = javascript({ typescript: true });
 
@@ -225,5 +227,28 @@ describe('buildLineRenderModel', () => {
     // The trimmed-to-empty lead contributes no part: the match is first.
     expect(parts[0].kind).toBe('match');
     expect(parts[0].kind === 'match' && parts[0].text).toBe('foo');
+  });
+});
+
+describe('syntaxPaletteVars', () => {
+  it('emits one --syntax-<role> var per emitted role, and nothing else', () => {
+    const vars = syntaxPaletteVars('glacier');
+    const keys = Object.keys(vars);
+    expect(keys.sort()).toEqual(SEARCH_TOKEN_ROLES.map((r) => `--syntax-${r}`).sort());
+    expect(keys).not.toContain('--syntax-background');
+    expect(keys).not.toContain('--syntax-param');
+  });
+
+  it('reads colors from the requested palette', () => {
+    const palette = getSyntaxPalette('reef');
+    const vars = syntaxPaletteVars('reef') as Record<string, string>;
+    expect(vars['--syntax-keyword']).toBe(palette.keyword);
+    expect(vars['--syntax-string']).toBe(palette.string);
+  });
+
+  it('falls back to the default palette for an unknown id', () => {
+    const fallback = getSyntaxPalette('abyssal');
+    const vars = syntaxPaletteVars('nope' as never) as Record<string, string>;
+    expect(vars['--syntax-keyword']).toBe(fallback.keyword);
   });
 });

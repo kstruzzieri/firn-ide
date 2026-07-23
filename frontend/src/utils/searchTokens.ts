@@ -1,7 +1,9 @@
 import { tags as t, tagHighlighter, highlightTree, type Highlighter } from '@lezer/highlight';
 import type { LanguageSupport } from '@codemirror/language';
+import type { CSSProperties } from 'react';
 import type { MatchRange } from '../types/search';
 import { splitLineByByteRanges } from './searchRanges';
+import { getSyntaxPalette, type SyntaxThemeId } from '../components/Editor/codemirror/palettes';
 
 /**
  * Curated syntax roles the search panel colors. These are exactly the
@@ -230,4 +232,20 @@ export function buildLineRenderModel(
   });
 
   return parts;
+}
+
+/**
+ * Inline custom-property style for the search container. React's CSSProperties
+ * has no arbitrary custom-property index signature, so the return type is an
+ * explicit intersection over the emitted roles only.
+ */
+export type SearchSyntaxStyle = CSSProperties & Record<`--syntax-${SearchTokenRole}`, string>;
+
+export function syntaxPaletteVars(id: SyntaxThemeId): SearchSyntaxStyle {
+  const palette = getSyntaxPalette(id);
+  const style = {} as SearchSyntaxStyle;
+  for (const role of SEARCH_TOKEN_ROLES) {
+    style[`--syntax-${role}`] = palette[role];
+  }
+  return style;
 }
