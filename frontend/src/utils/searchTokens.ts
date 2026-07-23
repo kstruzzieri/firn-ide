@@ -199,15 +199,10 @@ export function buildLineRenderModel(
     const pieces: RenderPiece[] = [];
     let pos = renderStart;
 
-    // Advance past tokens that end at or before the render start.
-    while (tokenIndex < tokens.length && tokens[tokenIndex].to <= pos) tokenIndex++;
-
-    let scan = tokenIndex;
     while (pos < segEnd) {
-      // Skip tokens fully behind the cursor without permanently consuming ones
-      // that may extend past this segment into the next context run.
-      while (scan < tokens.length && tokens[scan].to <= pos) scan++;
-      const token = scan < tokens.length ? tokens[scan] : null;
+      // Skip tokens that end at or before the cursor.
+      while (tokenIndex < tokens.length && tokens[tokenIndex].to <= pos) tokenIndex++;
+      const token = tokenIndex < tokens.length ? tokens[tokenIndex] : null;
       if (!token || token.from >= segEnd) {
         // No token overlaps the rest of this segment: emit a plain tail.
         pieces.push({ text: text.slice(pos, segEnd), className: null });
@@ -221,12 +216,12 @@ export function buildLineRenderModel(
       const end = Math.min(token.to, segEnd);
       pieces.push({ text: text.slice(pos, end), className: token.className });
       pos = end;
-      if (token.to <= segEnd) scan++;
+      // Consume the token only if it ends within this segment; a token that
+      // straddles into the next segment (or past a match) stays at tokenIndex so
+      // it can still color the following context. Match segments never advance
+      // tokenIndex, which is what lets a straddling token color both sides.
+      if (token.to <= segEnd) tokenIndex++;
     }
-
-    // Permanently consume tokens that end within this segment; keep a straddling
-    // token available for the following context segment.
-    while (tokenIndex < tokens.length && tokens[tokenIndex].to <= segEnd) tokenIndex++;
 
     // A lead that trimmed to nothing (whitespace-only) contributes no part, so
     // MatchLine renders the match as the first child (matches #207 behavior).

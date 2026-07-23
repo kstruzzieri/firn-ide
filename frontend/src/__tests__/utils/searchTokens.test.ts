@@ -218,4 +218,12 @@ describe('buildLineRenderModel', () => {
     expect(renderedText(parts)).toBe(text);
     expect(parts.filter((p) => p.kind === 'match')).toHaveLength(2);
   });
+
+  it('emits no lead part when the leading context is whitespace-only', () => {
+    const text = '   foo'; // 3 spaces then the match
+    const parts = buildLineRenderModel(text, [{ start: 3, end: 6 }], []);
+    // The trimmed-to-empty lead contributes no part: the match is first.
+    expect(parts[0].kind).toBe('match');
+    expect(parts[0].kind === 'match' && parts[0].text).toBe('foo');
+  });
 });
