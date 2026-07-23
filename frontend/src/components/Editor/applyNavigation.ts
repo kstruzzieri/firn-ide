@@ -22,21 +22,65 @@ export function applyNavigation(view: EditorView, nav: EditorNavigationRequest):
   });
   view.focus();
 
-  // When the target file was just opened, its EditorState was swapped into the
-  // shared view in this same commit and the new document has not been measured
-  // yet. CodeMirror resolves `scrollIntoView: true` on its next measure against
-  // estimated line geometry, so a match far down the file is left off-screen
-  // (the cursor lands correctly, but the viewport doesn't move). Re-assert the
-  // scroll on the next animation frame — by then the new document is laid out,
-  // so the target line's real offset is known. rAF runs outside CodeMirror's
-  // update cycle, where dispatching is safe (unlike requestMeasure callbacks).
-  // Guards: bail if the view was torn down, if a rapid file switch replaced the
-  // document, or if follow-up navigation moved the selection off pos — so we
-  // never yank a view the user has moved on to.
+  scheduleScrollAssert(view, pos, doc, MAX_SCROLL_ASSERT_FRAMES);
+}
+
+/**
+ * How many animation frames the scroll may be re-asserted for. A jump far into
+ * a large document needs more than one: CodeMirror only measures the lines it
+ * has rendered and estimates the rest, so the first scroll lands on an estimate,
+ * and only once that new region is rendered and measured does the real offset
+ * become known. Each frame narrows the error, so a handful of frames converges
+ * even for a line thousands of rows down. Bounded so a target that can never be
+ * reached (or a user who scrolls away) cannot spin.
+ */
+const MAX_SCROLL_ASSERT_FRAMES = 8;
+
+/** True when `pos` is rendered and lies fully inside the scroller's viewport. */
+function isPosInView(view: EditorView, pos: number): boolean {
+  try {
+    const coords = view.coordsAtPos(pos);
+    if (!coords) return false;
+    const box = view.scrollDOM.getBoundingClientRect();
+    return coords.top >= box.top && coords.bottom <= box.bottom;
+  } catch {
+    // Unmeasured view (or a test double without geometry): treat as not yet in
+    // view so the scroll is asserted rather than skipped.
+    return false;
+  }
+}
+
+/**
+ * Re-assert the scroll until the target line is genuinely on screen.
+ *
+ * `scrollIntoView: true` on the initial dispatch resolves against whatever
+ * geometry CodeMirror has at its next measure. Right after a file switch the new
+ * document is unmeasured, so a distant target resolves against estimated line
+ * heights and the viewport lands short — the cursor is correct but the line is
+ * off-screen. Re-asserting on each frame lets the estimate converge as newly
+ * rendered lines get measured, and we stop as soon as the line is actually
+ * visible.
+ *
+ * Guards: bail if the view was torn down, if a file switch replaced the
+ * document, or if follow-up navigation moved the selection off `pos`, so we
+ * never yank a view the user has moved on to.
+ */
+function scheduleScrollAssert(
+  view: EditorView,
+  pos: number,
+  doc: EditorView['state']['doc'],
+  attemptsLeft: number
+): void {
   requestAnimationFrame(() => {
     if (!view.dom.isConnected) return;
     if (view.state.doc !== doc) return;
     if (view.state.selection.main.head !== pos) return;
+    if (isPosInView(view, pos)) return;
+
     view.dispatch({ effects: EditorView.scrollIntoView(pos) });
+
+    if (attemptsLeft > 1) {
+      scheduleScrollAssert(view, pos, doc, attemptsLeft - 1);
+    }
   });
 }
