@@ -1,4 +1,5 @@
-import { tags as t, tagHighlighter, type Highlighter } from '@lezer/highlight';
+import { tags as t, tagHighlighter, highlightTree, type Highlighter } from '@lezer/highlight';
+import type { LanguageSupport } from '@codemirror/language';
 
 /**
  * Curated syntax roles the search panel colors. These are exactly the
@@ -93,3 +94,50 @@ export const searchTokenHighlighter: Highlighter = tagHighlighter([
   { tag: t.attributeName, class: 'tok-attribute' },
   { tag: t.regexp, class: 'tok-regexp' },
 ]);
+
+/** A colored token range in UTF-16 char offsets, in document order. */
+export interface TokenRange {
+  from: number;
+  to: number;
+  className: string;
+}
+
+/**
+ * Cosmetic-work ceilings. Highlighting a one-line preview is never worth
+ * blocking the UI: lines longer than this many chars skip parsing entirely, and
+ * lines producing more than this many styled ranges fall back to plain context
+ * rather than a partially colored row. Both are generous versus the ~100-char
+ * visible preview.
+ *
+ * ponytail: full-line parse with a plain fallback; ranged parsing around visible
+ * matches is the upgrade path if pathological lines ever need coloring.
+ */
+export const MAX_SEARCH_HIGHLIGHT_CHARS = 4_096;
+export const MAX_SEARCH_TOKEN_RANGES = 512;
+
+/**
+ * Parse a single line with the given already-loaded language support and return
+ * its colored token ranges, or null when highlighting is skipped (over a
+ * ceiling, or the parser/highlighter throws). Lezer offsets and JS string
+ * slicing are both UTF-16, so no byte conversion happens here.
+ */
+export function parseLineTokens(text: string, support: LanguageSupport): TokenRange[] | null {
+  if (text.length > MAX_SEARCH_HIGHLIGHT_CHARS) return null;
+  try {
+    const tree = support.language.parser.parse(text);
+    const ranges: TokenRange[] = [];
+    let overflowed = false;
+    highlightTree(tree, searchTokenHighlighter, (from, to, classes) => {
+      if (overflowed) return;
+      if (ranges.length >= MAX_SEARCH_TOKEN_RANGES) {
+        overflowed = true;
+        return;
+      }
+      ranges.push({ from, to, className: classes });
+    });
+    return overflowed ? null : ranges;
+  } catch (error) {
+    console.error('Search token highlight failed:', error);
+    return null;
+  }
+}

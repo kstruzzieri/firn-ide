@@ -1,5 +1,14 @@
 import { tags as t } from '@lezer/highlight';
-import { searchTokenHighlighter, SEARCH_TOKEN_ROLES } from '../../utils/searchTokens';
+import { javascript } from '@codemirror/lang-javascript';
+import {
+  searchTokenHighlighter,
+  SEARCH_TOKEN_ROLES,
+  parseLineTokens,
+  MAX_SEARCH_HIGHLIGHT_CHARS,
+  MAX_SEARCH_TOKEN_RANGES,
+} from '../../utils/searchTokens';
+
+const tsSupport = javascript({ typescript: true });
 
 describe('searchTokenHighlighter', () => {
   it('maps representative tags to tok-<role> classes', () => {
@@ -50,5 +59,44 @@ describe('searchTokenHighlighter', () => {
         'variable',
       ].sort()
     );
+  });
+});
+
+describe('parseLineTokens', () => {
+  it('returns ordered role ranges for a TypeScript line', () => {
+    const line = 'const answer = 42;';
+    const tokens = parseLineTokens(line, tsSupport);
+    expect(tokens).not.toBeNull();
+    for (let i = 1; i < tokens!.length; i++) {
+      expect(tokens![i].from).toBeGreaterThanOrEqual(tokens![i - 1].to);
+    }
+    const classes = tokens!.map((r) => r.className);
+    expect(classes).toContain('tok-keyword'); // const
+    expect(classes).toContain('tok-number'); // 42
+    expect(tokens!.every((r) => r.className.length > 0)).toBe(true);
+  });
+
+  it('skips parsing lines longer than the character ceiling', () => {
+    const line = 'a'.repeat(MAX_SEARCH_HIGHLIGHT_CHARS + 1);
+    expect(parseLineTokens(line, tsSupport)).toBeNull();
+  });
+
+  it('falls back to null when a line exceeds the token-range ceiling', () => {
+    const line = 'a+'.repeat(MAX_SEARCH_TOKEN_RANGES + 10);
+    expect(line.length).toBeLessThanOrEqual(MAX_SEARCH_HIGHLIGHT_CHARS);
+    expect(parseLineTokens(line, tsSupport)).toBeNull();
+  });
+
+  it('returns null when the parser throws', () => {
+    const broken = {
+      language: {
+        parser: {
+          parse() {
+            throw new Error('boom');
+          },
+        },
+      },
+    } as unknown as typeof tsSupport;
+    expect(parseLineTokens('anything', broken)).toBeNull();
   });
 });
