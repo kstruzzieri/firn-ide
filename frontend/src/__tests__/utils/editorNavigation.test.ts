@@ -261,4 +261,41 @@ describe('navigateToEditorLocation', () => {
 
     expect(rev2).toBeGreaterThan(rev1);
   });
+
+  it('registers the navigation before activating an already-open tab (background-tab scroll fix)', async () => {
+    useIDEStore.getState().openFile({
+      id: '/test/file.ts',
+      name: 'file.ts',
+      path: '/test/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+    // The editor's file-switch effect restores a background tab's cached scroll
+    // on activation and only skips it when a navigation is already pending. So
+    // the navigation MUST be registered before the tab is activated — capture
+    // what was pending at the moment setActiveFile ran.
+    let pendingFileAtActivation: string | null | undefined = 'not-called';
+    const original = useIDEStore.getState().setActiveFile;
+    const spy = jest
+      .spyOn(useIDEStore.getState(), 'setActiveFile')
+      .mockImplementation((id: string | null) => {
+        pendingFileAtActivation = useIDEStore.getState().pendingEditorNavigation?.fileId ?? null;
+        return original(id);
+      });
+
+    await navigateToEditorLocation('/test/file.ts', 5, 3);
+
+    expect(pendingFileAtActivation).toBe('/test/file.ts');
+    expect(useIDEStore.getState().pendingEditorNavigation).toMatchObject({
+      fileId: '/test/file.ts',
+      line: 5,
+      column: 3,
+    });
+
+    spy.mockRestore();
+  });
 });

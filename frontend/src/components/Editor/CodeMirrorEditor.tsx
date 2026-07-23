@@ -240,7 +240,12 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       // file switches but the target line stays off-screen. Skip the scroll
       // restore in that case and let the navigation effect scroll to the target,
       // exactly as it does for a freshly-opened file.
-      if (useIDEStore.getState().pendingEditorNavigation?.fileId !== fileId) {
+      // navigateToEditorLocation registers a pending navigation before it
+      // activates an already-open tab, so this is set in time to suppress the
+      // restore for a search-result jump.
+      const navPendingForThisFile =
+        useIDEStore.getState().pendingEditorNavigation?.fileId === fileId;
+      if (!navPendingForThisFile) {
         view.scrollDOM.scrollTop = cached.scrollTop;
       }
       // Restored state already carries selection/scroll; suppress initial apply.

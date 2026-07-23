@@ -83,9 +83,30 @@ export async function navigateToEditorLocation(
   column: number,
   options?: EditorNavigationOptions
 ): Promise<void> {
+  // Register the navigation BEFORE the tab is activated when the file is already
+  // open. Activating a tab runs the editor's file-switch effect, which restores
+  // a background tab's remembered scroll position; if the navigation is already
+  // pending when that runs, the editor skips the scroll restore and lets this
+  // jump own the viewport. Setting it only afterwards (which a not-yet-open file
+  // must do, since its id doesn't exist until it opens) loses the jump for an
+  // already-open background tab — the file switches but the target line stays
+  // off-screen. A not-yet-open file has no cached scroll, so ordering is moot
+  // there and the post-open request below covers it.
+  const localPath = toNativeLocalPath(path);
+  const existing = useIDEStore
+    .getState()
+    .openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
+  if (existing && shouldApplyNavigation(options)) {
+    useIDEStore.getState().requestEditorNavigation(existing.id, line, column);
+  }
+
   const file = await ensureEditorFileOpen(path, options);
   if (!file) return;
   if (!shouldApplyNavigation(options)) return;
 
-  useIDEStore.getState().requestEditorNavigation(file.id, line, column);
+  // Freshly opened file (or a re-request after an interrupted open): the id was
+  // not known before activation, so request the jump now.
+  if (!existing) {
+    useIDEStore.getState().requestEditorNavigation(file.id, line, column);
+  }
 }
