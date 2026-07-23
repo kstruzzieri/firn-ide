@@ -1,5 +1,7 @@
 import { tags as t, tagHighlighter, highlightTree, type Highlighter } from '@lezer/highlight';
 import type { LanguageSupport } from '@codemirror/language';
+import type { MatchRange } from '../types/search';
+import { splitLineByByteRanges } from './searchRanges';
 
 /**
  * Curated syntax roles the search panel colors. These are exactly the
@@ -140,4 +142,97 @@ export function parseLineTokens(text: string, support: LanguageSupport): TokenRa
     console.error('Search token highlight failed:', error);
     return null;
   }
+}
+
+/** One inner run of a context segment: raw text plus an optional tok-<role> class. */
+export interface RenderPiece {
+  text: string;
+  className: string | null;
+}
+
+export type LineRenderPart =
+  | { kind: 'match'; text: string }
+  | { kind: 'context'; isLead: boolean; pieces: RenderPiece[] };
+
+const LEADING_INDENT = /^[\t ]+/;
+
+/**
+ * Merge #207's outer match/context segments with lezer token ranges in one
+ * linear pass. Match segments stay a single unchanged run so their <mark> is
+ * untouched; context segments are subdivided at token boundaries. Token ranges
+ * that cross into a match color the context on either side but never the match.
+ *
+ * `tokens` must be ordered and non-overlapping (as produced by parseLineTokens);
+ * pass [] to get the pre-#215 monochrome structure. All offsets are UTF-16.
+ */
+export function buildLineRenderModel(
+  text: string,
+  submatches: readonly MatchRange[],
+  tokens: readonly TokenRange[]
+): LineRenderPart[] {
+  const segments = splitLineByByteRanges(text, submatches);
+  const parts: LineRenderPart[] = [];
+  let cursor = 0; // absolute UTF-16 offset at the start of the current segment
+  let tokenIndex = 0; // monotonic index into `tokens`
+
+  segments.forEach((segment, segmentIndex) => {
+    const segStart = cursor;
+    const segEnd = cursor + segment.text.length;
+    cursor = segEnd;
+
+    if (segment.isMatch) {
+      parts.push({ kind: 'match', text: segment.text });
+      // Do not advance tokenIndex here: a token straddling the match must still
+      // be available to color the context that follows it.
+      return;
+    }
+
+    const isLead = segmentIndex === 0;
+    // Render-only indent trim (identical to #207 MatchLine): advance the render
+    // start past leading whitespace so token offsets stay aligned to `text`.
+    let renderStart = segStart;
+    if (isLead) {
+      const indent = LEADING_INDENT.exec(segment.text)?.[0]?.length ?? 0;
+      renderStart = segStart + indent;
+    }
+
+    const pieces: RenderPiece[] = [];
+    let pos = renderStart;
+
+    // Advance past tokens that end at or before the render start.
+    while (tokenIndex < tokens.length && tokens[tokenIndex].to <= pos) tokenIndex++;
+
+    let scan = tokenIndex;
+    while (pos < segEnd) {
+      // Skip tokens fully behind the cursor without permanently consuming ones
+      // that may extend past this segment into the next context run.
+      while (scan < tokens.length && tokens[scan].to <= pos) scan++;
+      const token = scan < tokens.length ? tokens[scan] : null;
+      if (!token || token.from >= segEnd) {
+        // No token overlaps the rest of this segment: emit a plain tail.
+        pieces.push({ text: text.slice(pos, segEnd), className: null });
+        pos = segEnd;
+        break;
+      }
+      if (token.from > pos) {
+        pieces.push({ text: text.slice(pos, token.from), className: null });
+        pos = token.from;
+      }
+      const end = Math.min(token.to, segEnd);
+      pieces.push({ text: text.slice(pos, end), className: token.className });
+      pos = end;
+      if (token.to <= segEnd) scan++;
+    }
+
+    // Permanently consume tokens that end within this segment; keep a straddling
+    // token available for the following context segment.
+    while (tokenIndex < tokens.length && tokens[tokenIndex].to <= segEnd) tokenIndex++;
+
+    // A lead that trimmed to nothing (whitespace-only) contributes no part, so
+    // MatchLine renders the match as the first child (matches #207 behavior).
+    if (pieces.length === 0) return;
+    parts.push({ kind: 'context', isLead, pieces });
+  });
+
+  return parts;
 }

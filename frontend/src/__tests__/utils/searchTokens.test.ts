@@ -6,7 +6,10 @@ import {
   parseLineTokens,
   MAX_SEARCH_HIGHLIGHT_CHARS,
   MAX_SEARCH_TOKEN_RANGES,
+  buildLineRenderModel,
+  type LineRenderPart,
 } from '../../utils/searchTokens';
+import type { TokenRange } from '../../utils/searchTokens';
 
 const tsSupport = javascript({ typescript: true });
 
@@ -98,5 +101,121 @@ describe('parseLineTokens', () => {
       },
     } as unknown as typeof tsSupport;
     expect(parseLineTokens('anything', broken)).toBeNull();
+  });
+});
+
+// Convenience: reconstruct the visible text a model would render (excluding the
+// render-only indent trim), to prove no characters are lost or reordered.
+function renderedText(parts: LineRenderPart[]): string {
+  return parts
+    .map((p) => (p.kind === 'match' ? p.text : p.pieces.map((pc) => pc.text).join('')))
+    .join('');
+}
+
+// All classed (colored) pieces across the whole model, in order.
+function classedPieces(parts: LineRenderPart[]): { text: string; className: string }[] {
+  return parts
+    .flatMap((p) => (p.kind === 'context' ? p.pieces : []))
+    .filter((pc): pc is { text: string; className: string } => pc.className !== null);
+}
+
+describe('buildLineRenderModel', () => {
+  it('with no tokens reproduces #207 segments (one lead + trailing context, whole mark)', () => {
+    const text = '  const foo = bar;';
+    const submatches = [{ start: 8, end: 11 }]; // "foo"
+    const parts = buildLineRenderModel(text, submatches, []);
+    expect(parts.map((p) => p.kind)).toEqual(['context', 'match', 'context']);
+    const lead = parts[0];
+    expect(lead.kind === 'context' && lead.isLead).toBe(true);
+    expect(lead.kind === 'context' && lead.pieces.map((p) => p.text).join('')).toBe('const ');
+    expect(parts[1].kind === 'match' && parts[1].text).toBe('foo');
+  });
+
+  it('clips a straddling token to color context on both sides of a match, never the mark', () => {
+    const text = 'a foo b'; // a[0] (sp)[1] f[2]o[3]o[4] (sp)[5] b[6]
+    const submatches = [{ start: 2, end: 5 }]; // "foo"
+    const tokens: TokenRange[] = [{ from: 0, to: 7, className: 'tok-variable' }];
+    const parts = buildLineRenderModel(text, submatches, tokens);
+    const marks = parts.filter((p) => p.kind === 'match');
+    expect(marks).toHaveLength(1);
+    expect(marks[0].kind === 'match' && marks[0].text).toBe('foo');
+    expect(classedPieces(parts)).toEqual([
+      { text: 'a ', className: 'tok-variable' },
+      { text: ' b', className: 'tok-variable' },
+    ]);
+    expect(renderedText(parts)).toBe(text);
+  });
+
+  it('preserves per-token coloring across two matches', () => {
+    const text = 'k a m b n'; // k[0] a[2] m[4] b[6] n[8]
+    const submatches = [
+      { start: 2, end: 3 }, // a
+      { start: 6, end: 7 }, // b
+    ];
+    const tokens: TokenRange[] = [
+      { from: 0, to: 1, className: 'tok-keyword' },
+      { from: 4, to: 5, className: 'tok-type' },
+      { from: 8, to: 9, className: 'tok-variable' },
+    ];
+    const parts = buildLineRenderModel(text, submatches, tokens);
+    expect(parts.filter((p) => p.kind === 'match')).toHaveLength(2);
+    expect(classedPieces(parts)).toEqual([
+      { text: 'k', className: 'tok-keyword' },
+      { text: 'm', className: 'tok-type' },
+      { text: 'n', className: 'tok-variable' },
+    ]);
+    expect(renderedText(parts)).toBe(text);
+  });
+
+  it('keeps UTF-16 boundaries for CJK, surrogate-pair emoji, and combining marks', () => {
+    const text = '🙂漢é const';
+    const constIdx = text.indexOf('const');
+    const submatches: { start: number; end: number }[] = [];
+    const tokens: TokenRange[] = [{ from: constIdx, to: constIdx + 5, className: 'tok-keyword' }];
+    const parts = buildLineRenderModel(text, submatches, tokens);
+    expect(renderedText(parts)).toBe(text);
+    const keywordPiece = classedPieces(parts).find((pc) => pc.className === 'tok-keyword');
+    expect(keywordPiece?.text).toBe('const');
+  });
+
+  it('aligns UTF-8 byte submatches with UTF-16 Lezer token offsets jointly', () => {
+    const text = '🙂 const x';
+    const enc = new TextEncoder();
+    const matchStart = enc.encode('🙂 const ').length; // byte offset of "x"
+    const submatches = [{ start: matchStart, end: matchStart + 1 }];
+    const kw = text.indexOf('const');
+    const tokens: TokenRange[] = [{ from: kw, to: kw + 5, className: 'tok-keyword' }];
+    const parts = buildLineRenderModel(text, submatches, tokens);
+    const match = parts.find((p) => p.kind === 'match')!;
+    expect(match.kind === 'match' && match.text).toBe('x');
+    expect(classedPieces(parts).find((p) => p.className === 'tok-keyword')?.text).toBe('const');
+    expect(renderedText(parts)).toBe(text);
+  });
+
+  it('drops leading-whitespace pieces from the lead even when prose follows', () => {
+    const text = '    return foo;';
+    const submatches = [{ start: 11, end: 14 }]; // "foo"
+    const tokens: TokenRange[] = [{ from: 4, to: 10, className: 'tok-keyword' }]; // "return"
+    const parts = buildLineRenderModel(text, submatches, tokens);
+    const lead = parts[0];
+    expect(lead.kind).toBe('context');
+    const leadText = lead.kind === 'context' ? lead.pieces.map((p) => p.text).join('') : '';
+    expect(leadText).toBe('return ');
+  });
+
+  it('walks many alternating tokens and matches in a single pass, preserving order', () => {
+    const text = 'a b c d e';
+    const submatches = [
+      { start: 0, end: 1 }, // a
+      { start: 4, end: 5 }, // c
+    ];
+    const tokens: TokenRange[] = [
+      { from: 2, to: 3, className: 'tok-variable' },
+      { from: 6, to: 7, className: 'tok-variable' },
+      { from: 8, to: 9, className: 'tok-variable' },
+    ];
+    const parts = buildLineRenderModel(text, submatches, tokens);
+    expect(renderedText(parts)).toBe(text);
+    expect(parts.filter((p) => p.kind === 'match')).toHaveLength(2);
   });
 });
