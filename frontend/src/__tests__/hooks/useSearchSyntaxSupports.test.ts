@@ -1,4 +1,4 @@
-import * as React from 'react';
+import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { LanguageSupport } from '@codemirror/language';
 import { useSearchSyntaxSupports } from '../../hooks/useSearchSyntaxSupports';
