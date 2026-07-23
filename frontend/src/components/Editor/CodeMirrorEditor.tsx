@@ -28,7 +28,8 @@ import {
   updateEditorDiagnostics,
   setGitBaseline,
 } from './codemirror';
-import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
+import { useIDEStore } from '../../stores/ideStore';
+import { applyNavigation } from './applyNavigation';
 import { useLSPStore, findServerStatusForFile } from '../../stores/lspStore';
 import type { LSPServerStatus } from '../../stores/lspStore';
 import { LSPSetupCard } from './LSPSetupCard';
@@ -462,17 +463,3 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 });
 
 CodeMirrorEditor.displayName = 'CodeMirrorEditor';
-
-function applyNavigation(view: EditorView, nav: EditorNavigationRequest): void {
-  const lineNum = Math.min(nav.line, view.state.doc.lines);
-  if (lineNum <= 0) return;
-  const line = view.state.doc.line(lineNum);
-  const col = Math.min((nav.column ?? 1) - 1, line.length);
-  const pos = line.from + col;
-
-  view.dispatch({
-    selection: { anchor: pos },
-    scrollIntoView: true,
-  });
-  view.focus();
-}
