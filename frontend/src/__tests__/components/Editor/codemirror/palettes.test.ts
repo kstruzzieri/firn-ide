@@ -119,3 +119,53 @@ describe('syntax palette registry', () => {
     );
   });
 });
+
+describe('search result token contrast', () => {
+  // Emitted search roles (mirror SEARCH_TOKEN_ROLES in utils/searchTokens.ts).
+  const SEARCH_ROLES: (keyof SyntaxPalette)[] = [
+    'keyword',
+    'string',
+    'number',
+    'comment',
+    'function',
+    'type',
+    'variable',
+    'property',
+    'operator',
+    'punctuation',
+    'constant',
+    'tag',
+    'attribute',
+    'regexp',
+    'escape',
+    'decorator',
+  ];
+  // From styles/tokens.css (single dark chrome theme).
+  const SECONDARY = parseHex('#94a3b8');
+  const SURFACES = { panel: parseHex('#0f172a'), hover: parseHex('#1e293b') };
+  const WEIGHTS = { normal: 0.4, focus: 0.55 };
+
+  // color-mix(in srgb, token W, --text-secondary) — gamma-encoded channel lerp.
+  function mix(token: RGB, weight: number): RGB {
+    return token.map((c, i) => c * weight + SECONDARY[i] * (1 - weight)) as RGB;
+  }
+
+  it('keeps every emitted role at or above 4.5:1 for all themes, weights, and surfaces', () => {
+    const failures: string[] = [];
+    for (const theme of SYNTAX_THEMES) {
+      for (const role of SEARCH_ROLES) {
+        const token = parseHex(theme.palette[role]);
+        for (const [wName, w] of Object.entries(WEIGHTS)) {
+          const color = mix(token, w);
+          for (const [sName, surface] of Object.entries(SURFACES)) {
+            const ratio = contrast(color, surface);
+            if (ratio < 4.5) {
+              failures.push(`${theme.id}/${role}/${wName}/${sName}=${ratio.toFixed(2)}`);
+            }
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+});
