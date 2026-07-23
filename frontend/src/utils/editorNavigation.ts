@@ -22,6 +22,15 @@ function shouldApplyNavigation(options?: EditorNavigationOptions): boolean {
 }
 
 /**
+ * The already-open editor file for `localPath`, if any. Single source of truth
+ * for "is this file open?" so the open flow and the navigation flow can never
+ * disagree about what counts as the same file.
+ */
+function findOpenFile(localPath: string): EditorFile | undefined {
+  return useIDEStore.getState().openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
+}
+
+/**
  * Opens a file in the editor if it isn't already open, and activates its tab.
  * Returns the EditorFile on success, or null if the file could not be read.
  */
@@ -38,9 +47,7 @@ export async function ensureEditorFileOpen(
   }
 
   // Already open — just activate and return
-  const existing = useIDEStore
-    .getState()
-    .openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
+  const existing = findOpenFile(localPath);
   if (existing) {
     if (!shouldApplyNavigation(options)) return null;
     useIDEStore.getState().setActiveFile(existing.id);
@@ -92,20 +99,30 @@ export async function navigateToEditorLocation(
   // already-open background tab — the file switches but the target line stays
   // off-screen. A not-yet-open file has no cached scroll, so ordering is moot
   // there and the post-open request below covers it.
-  const localPath = toNativeLocalPath(path);
-  const existing = useIDEStore
-    .getState()
-    .openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
+  const existing = findOpenFile(toNativeLocalPath(path));
+  let preRegisteredRevision: number | null = null;
   if (existing && shouldApplyNavigation(options)) {
     useIDEStore.getState().requestEditorNavigation(existing.id, line, column);
+    preRegisteredRevision = useIDEStore.getState().pendingEditorNavigation?.revision ?? null;
   }
 
   const file = await ensureEditorFileOpen(path, options);
-  if (!file) return;
-  if (!shouldApplyNavigation(options)) return;
+  if (!file || !shouldApplyNavigation(options)) {
+    // The open/activate did not happen (a failed working-tree flush, or the user
+    // switched workspaces mid-flight). Retract the navigation we registered up
+    // front, otherwise it lingers in the store and would later hijack the
+    // viewport the next time that tab is activated for an unrelated reason —
+    // and, in the workspace-switch case, would point into the old workspace.
+    // clearPendingEditorNavigation is a no-op unless the id AND revision still
+    // match, so a newer navigation is never clobbered.
+    if (existing && preRegisteredRevision !== null) {
+      useIDEStore.getState().clearPendingEditorNavigation(existing.id, preRegisteredRevision);
+    }
+    return;
+  }
 
-  // Freshly opened file (or a re-request after an interrupted open): the id was
-  // not known before activation, so request the jump now.
+  // Freshly opened file: its id did not exist before activation, so request the
+  // jump now. (An already-open file was pre-registered above.)
   if (!existing) {
     useIDEStore.getState().requestEditorNavigation(file.id, line, column);
   }

@@ -262,6 +262,38 @@ describe('navigateToEditorLocation', () => {
     expect(rev2).toBeGreaterThan(rev1);
   });
 
+  // The navigation is registered up front (before the tab is activated) so the
+  // editor can suppress the cached-scroll restore. If the activation then does
+  // not happen, that pre-registration must be retracted — otherwise it lingers
+  // and hijacks the viewport the next time the tab is activated for an unrelated
+  // reason, and in the workspace-switch case it points into the old workspace.
+  it('retracts the pre-registered navigation when the workspace changes mid-flight', async () => {
+    useIDEStore.setState({ workspace: { name: 'Workspace A', path: '/workspace-a' } });
+    useIDEStore.getState().openFile({
+      id: '/workspace-a/file.ts',
+      name: 'file.ts',
+      path: '/workspace-a/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+    const navigation = navigateToEditorLocation('/workspace-a/file.ts', 5, 3, {
+      shouldApply: () => useIDEStore.getState().workspace?.path === '/workspace-a',
+    });
+
+    // Registered synchronously, before the activation is awaited.
+    expect(useIDEStore.getState().pendingEditorNavigation?.fileId).toBe('/workspace-a/file.ts');
+
+    // The user switches workspaces while the pre-open flush is in flight.
+    useIDEStore.setState({ workspace: { name: 'Workspace B', path: '/workspace-b' } });
+    await navigation;
+
+    expect(useIDEStore.getState().pendingEditorNavigation).toBeNull();
+  });
+
   it('registers the navigation before activating an already-open tab (background-tab scroll fix)', async () => {
     useIDEStore.getState().openFile({
       id: '/test/file.ts',

@@ -176,6 +176,33 @@ describe('applyNavigation', () => {
     expect(reasserts).toBe(3);
   });
 
+  // Line wrapping is enabled, and search results routinely match long lines, so
+  // a wrapped match can be taller than the viewport. Requiring the WHOLE line to
+  // fit would be unsatisfiable there and burn every retry frame; the line's start
+  // being on screen is what "scrolled to it" means.
+  it('treats a wrapped line taller than the viewport as in view', () => {
+    const view = makeFakeView(DOC);
+    let reasserts = 0;
+    const extended = view as ReturnType<typeof makeFakeView> & {
+      coordsAtPos: () => { top: number; bottom: number };
+      scrollDOM: { getBoundingClientRect: () => { top: number; bottom: number } };
+    };
+    extended.scrollDOM = { getBoundingClientRect: () => ({ top: 90, bottom: 704 }) };
+    // Starts just inside the viewport, wraps far past its bottom edge.
+    extended.coordsAtPos = () => ({ top: 200, bottom: 5000 });
+    const inner = view.dispatch;
+    view.dispatch = jest.fn((spec: NavDispatchSpec) => {
+      if (spec.effects) reasserts += 1;
+      return inner(spec);
+    }) as typeof view.dispatch;
+
+    applyNavigation(view as never, nav(12));
+    flushRaf();
+    flushRaf();
+
+    expect(reasserts).toBe(0);
+  });
+
   it('stops re-asserting after a bounded number of frames when it never converges', () => {
     const view = makeFakeView(DOC);
     let reasserts = 0;

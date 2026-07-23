@@ -36,13 +36,21 @@ export function applyNavigation(view: EditorView, nav: EditorNavigationRequest):
  */
 const MAX_SCROLL_ASSERT_FRAMES = 8;
 
-/** True when `pos` is rendered and lies fully inside the scroller's viewport. */
+/**
+ * True when `pos` is rendered and its line starts inside the scroller viewport.
+ *
+ * Deliberately tests only the TOP edge. Line wrapping is enabled, so a long
+ * match (search results routinely hit long lines) can wrap taller than the
+ * viewport in a narrow editor; requiring the whole line to fit would then be
+ * unsatisfiable and burn every retry frame on a target that is already as
+ * visible as it can be. "Scrolled to the line" means its start is on screen.
+ */
 function isPosInView(view: EditorView, pos: number): boolean {
   try {
     const coords = view.coordsAtPos(pos);
     if (!coords) return false;
     const box = view.scrollDOM.getBoundingClientRect();
-    return coords.top >= box.top && coords.bottom <= box.bottom;
+    return coords.top >= box.top && coords.top <= box.bottom;
   } catch {
     // Unmeasured view (or a test double without geometry): treat as not yet in
     // view so the scroll is asserted rather than skipped.
