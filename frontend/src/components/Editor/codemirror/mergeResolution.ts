@@ -280,18 +280,62 @@ class MergeResolutionWidget extends WidgetType {
 
     const actions = document.createElement('div');
     actions.className = 'cm-mergeResolution-actions';
+    // Preview is ephemeral view state: append/remove a ghost <pre> directly in the
+    // card DOM, never a transaction — so the decoration facet never recomputes and the
+    // focused button is never rebuilt. A real state change produces a fresh card with
+    // no ghost, clearing preview automatically.
+    let ghost: HTMLElement | null = null;
+    const renderGhost = (choice: MergeChoice | null) => {
+      if (choice === null) {
+        ghost?.remove();
+        ghost = null;
+      } else {
+        if (!ghost) {
+          ghost = document.createElement('pre');
+          ghost.className = 'cm-mergeResolution-ghost';
+          ghost.setAttribute('aria-hidden', 'true');
+          root.appendChild(ghost);
+        }
+        // Same function applyResolution uses — preview can never disagree with apply.
+        ghost.textContent = resolutionLines(this.region, choice, this.order).join('\n');
+      }
+      // Not a transaction, so tell CodeMirror to re-measure the block's height.
+      view.requestMeasure();
+    };
     const button = (label: string, choice: MergeChoice | 'M') => {
       const element = document.createElement('button');
       element.type = 'button';
       element.className = 'cm-mergeResolution-action';
       element.dataset.decision = choice;
       element.textContent = label;
-      element.disabled = this.readOnly || this.frozen;
+      element.disabled = this.frozen;
+      element.setAttribute('aria-disabled', String(this.readOnly || this.frozen));
       element.addEventListener('click', (event) => {
         event.preventDefault();
         if (this.readOnly || this.frozen) return;
         this.act(view, this.index, choice);
       });
+      if (choice !== 'M' && !this.frozen) {
+        let hovered = false;
+        let focused = false;
+        const sync = () => renderGhost(hovered || focused ? choice : null);
+        element.addEventListener('pointerenter', () => {
+          hovered = true;
+          sync();
+        });
+        element.addEventListener('pointerleave', () => {
+          hovered = false;
+          sync();
+        });
+        element.addEventListener('focus', () => {
+          focused = true;
+          sync();
+        });
+        element.addEventListener('blur', () => {
+          focused = false;
+          sync();
+        });
+      }
       actions.appendChild(element);
     };
     button('Take Current', 'C');

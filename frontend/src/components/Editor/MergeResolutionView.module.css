@@ -252,6 +252,22 @@
   text-align: left;
 }
 
+.editorHost :global(.cm-mergeResolution-ghost) {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--surface-border-subtle);
+  border-radius: 0;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-family: inherit;
+  white-space: pre-wrap;
+}
+
+.editorHost :global(.cm-mergeResolution-action[aria-disabled='true']) {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .statusRow {
   border-top: 1px solid var(--surface-border-subtle);
   border-bottom: 0;

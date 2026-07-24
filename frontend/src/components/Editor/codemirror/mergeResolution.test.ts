@@ -1291,4 +1291,128 @@ describe('merge resolution editor', () => {
     expect(editor.getState().decisions[0]).toBe('C');
     editor.destroy();
   });
+
+  it('previews the prospective result on hover without touching the document', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    const before = editor.view.state.doc.toString();
+    const both = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="B"]'
+    ) as HTMLButtonElement;
+
+    both.dispatchEvent(new Event('pointerenter'));
+
+    const ghost = editor.view.dom.querySelector('.cm-mergeResolution-ghost');
+    expect(ghost?.textContent).toBe('current line\nincoming line');
+    expect(editor.view.state.doc.toString()).toBe(before);
+    expect(editor.getState().decisions[0]).toBeUndefined();
+
+    both.dispatchEvent(new Event('pointerleave'));
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')).toBeNull();
+    editor.destroy();
+  });
+
+  it('keeps the focused button in the DOM and focused while previewing on focus', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    const both = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="B"]'
+    ) as HTMLButtonElement;
+
+    both.focus();
+    both.dispatchEvent(new Event('focus'));
+
+    // The ghost appears...
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')?.textContent).toBe(
+      'current line\nincoming line'
+    );
+    // ...and the SAME button node is still in the DOM and still focused — proving the
+    // card widget was not rebuilt out from under the focus.
+    expect(both.isConnected).toBe(true);
+    expect(document.activeElement).toBe(both);
+    editor.destroy();
+  });
+
+  it('follows the order toggle in the ghost', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    (editor.view.dom.querySelector('.cm-mergeResolution-order') as HTMLButtonElement).click();
+    const both = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="B"]'
+    ) as HTMLButtonElement;
+
+    both.dispatchEvent(new Event('pointerenter'));
+
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')?.textContent).toBe(
+      'incoming line\ncurrent line'
+    );
+    editor.destroy();
+  });
+
+  it('keeps preview while either hover or focus is still active on the button', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    const both = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="B"]'
+    ) as HTMLButtonElement;
+    const ghost = () => editor.view.dom.querySelector('.cm-mergeResolution-ghost');
+
+    both.dispatchEvent(new Event('focus'));
+    both.dispatchEvent(new Event('pointerenter'));
+    both.dispatchEvent(new Event('pointerleave'));
+    expect(ghost()).not.toBeNull(); // still focused
+
+    both.dispatchEvent(new Event('blur'));
+    expect(ghost()).toBeNull(); // neither hovered nor focused
+
+    both.dispatchEvent(new Event('pointerenter'));
+    both.dispatchEvent(new Event('focus'));
+    both.dispatchEvent(new Event('blur'));
+    expect(ghost()).not.toBeNull(); // still hovered
+    editor.destroy();
+  });
+
+  it('keeps preview available on a read-only session', () => {
+    const editor = createMergeResolutionEditor(document.body, session({ readOnly: true }));
+    const current = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="C"]'
+    ) as HTMLButtonElement;
+
+    expect(current.disabled).toBe(false);
+    expect(current.getAttribute('aria-disabled')).toBe('true');
+
+    current.dispatchEvent(new Event('pointerenter'));
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')?.textContent).toBe(
+      'current line'
+    );
+
+    current.click();
+    expect(editor.getState().decisions[0]).toBeUndefined();
+    editor.destroy();
+  });
+
+  it('does not preview and stays natively disabled while frozen', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    editor.setFrozen(true);
+    const both = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="B"]'
+    ) as HTMLButtonElement;
+
+    expect(both.disabled).toBe(true);
+    both.dispatchEvent(new Event('pointerenter'));
+    both.dispatchEvent(new Event('focus'));
+
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')).toBeNull();
+    editor.destroy();
+  });
+
+  it('clears preview when a decision lands', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    const current = editor.view.dom.querySelector(
+      '.cm-mergeResolution-action[data-decision="C"]'
+    ) as HTMLButtonElement;
+    current.dispatchEvent(new Event('pointerenter'));
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')).not.toBeNull();
+
+    current.click();
+
+    expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')).toBeNull();
+    editor.destroy();
+  });
 });
