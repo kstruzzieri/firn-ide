@@ -370,6 +370,116 @@
   white-space: pre;
 }
 
+/* ── #215 Dimmed syntax tokens ───────────────────────────────────────────────
+   Context tokens are colored from the active syntax palette (exposed as
+   --syntax-* custom properties on the container by SearchPanel) and blended
+   toward the context gray so the match stays the most salient element. The
+   weight variable is bumped on the persistent roving .focused cue so keyboard
+   focus remains legible while the row owns the active result. Raw palette
+   colors would fail WCAG AA at full saturation on these surfaces (see the
+   palettes contrast guard).
+
+   The tok-* classes are raw global strings emitted by the search highlighter,
+   scoped here beneath the hashed .context class. color-mix is already used
+   across the app; where unsupported, the declaration is ignored and the span
+   inherits the .context gray for a free monochrome fallback. */
+.resultRow {
+  --search-token-weight: 40%;
+}
+
+.resultRow.focused {
+  --search-token-weight: 55%;
+}
+
+.context :global(.tok-keyword) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-keyword) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-string) {
+  color: color-mix(in srgb, var(--syntax-string) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-number) {
+  color: color-mix(in srgb, var(--syntax-number) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-comment) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-comment) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-function) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-function) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-type) {
+  color: color-mix(in srgb, var(--syntax-type) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-variable) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-variable) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-property) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-property) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-operator) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-operator) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-punctuation) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-punctuation) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-constant) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-constant) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-tag) {
+  color: color-mix(in srgb, var(--syntax-tag) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-attribute) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-attribute) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-regexp) {
+  color: color-mix(in srgb, var(--syntax-regexp) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-escape) {
+  color: color-mix(in srgb, var(--syntax-escape) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-decorator) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-decorator) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+
 /* Empty / error states */
 .statePanel {
   display: flex;
