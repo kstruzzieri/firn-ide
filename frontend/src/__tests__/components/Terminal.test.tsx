@@ -167,8 +167,8 @@ describe('Terminal component', () => {
 
     render(<Terminal />);
 
-    expect(screen.getAllByText('Build · r1').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Build · r2').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Build (previous)').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Build').length).toBeGreaterThan(0);
     expect(screen.queryByTitle('All Profiles Timeline')).not.toBeInTheDocument();
   });
 

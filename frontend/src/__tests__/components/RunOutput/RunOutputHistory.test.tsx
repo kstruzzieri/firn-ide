@@ -119,8 +119,8 @@ it('renders retained ordinary tabs in indexed order with profile and opaque run 
   render(<RunOutputTabs />);
 
   const labels = screen.getAllByRole('button').map((button) => button.textContent);
-  expect(labels).toEqual(['Build · r1', 'Build · r2', 'Test · r3', 'All']);
-  fireEvent.click(screen.getByRole('button', { name: 'Build · r1' }));
+  expect(labels).toEqual(['Build (previous)', 'Build', 'Test', 'All']);
+  fireEvent.click(screen.getByRole('button', { name: 'Build (previous)' }));
   expect(useIDEStore.getState().activeRunOutputId).toBe('r1');
 });
 
@@ -138,7 +138,9 @@ it('does not apply another profile lifecycle state to a colliding historical run
 
   render(<RunOutputTabs />);
 
-  const historicalDot = screen.getByRole('button', { name: 'Build · p2' }).querySelector('span');
+  const historicalDot = screen
+    .getByRole('button', { name: 'Build (previous)' })
+    .querySelector('span');
   expect(historicalDot).toHaveClass('dotSuccess');
   expect(historicalDot).not.toHaveClass('dotStopping');
 });

@@ -25,6 +25,7 @@ import {
   type WorkspaceGroup,
 } from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
+import type { RunOutput } from '../../types/runOutput';
 import styles from './RunProfiles.module.css';
 
 // Accents that have a defined --accent-{name} token; anything else falls back to
@@ -149,11 +150,26 @@ export function RunProfiles() {
   );
 
   const renderCard = (profile: RunProfile, section: SectionGroup['key']) => {
-    const runOutput = runOutputs[latestRunInstanceIdByProfile[profile.id]];
+    const ordinaryOutput = runOutputs[latestRunInstanceIdByProfile[profile.id]];
     const compoundRun =
       runCompounds[compoundIdByRunInstance[latestRunInstanceIdByProfile[profile.id]]];
+    // A compound never produces an ordinary RunOutput (its output lives in
+    // stepOutputs), so synthesize the card-facing view from the aggregate run.
+    // The aggregate carries no entries — matching the pre-Phase-2A card — but it
+    // does carry state + exitCode, which the card needs for the failed/stop UI.
+    const runOutput: RunOutput | undefined =
+      ordinaryOutput ??
+      (compoundRun
+        ? {
+            profileId: profile.id,
+            runInstanceId: compoundRun.runInstanceId,
+            state: compoundRun.state,
+            exitCode: compoundRun.exitCode ?? 0,
+            entries: [],
+          }
+        : undefined);
     const vs = getVisualState(profile.id, currentRunState(profile.id), stoppingIds, restartingIds);
-    const isDormant = !runOutput && !compoundRun && !runHistory[profile.id]?.length;
+    const isDormant = !runOutput && !runHistory[profile.id]?.length;
     const isDuplicate = (nameCounts.get(profile.name) ?? 0) > 1;
 
     return (

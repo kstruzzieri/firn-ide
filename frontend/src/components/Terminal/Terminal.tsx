@@ -523,7 +523,13 @@ export function Terminal() {
                 ? (runProfiles.find((profile) => profile.id === output.profileId)?.name ??
                   output.profileId)
                 : undefined;
-              const label = output ? `${profileName} · ${id}` : (compound?.name ?? id);
+              // Keep the backend-internal runInstanceId out of the visible label
+              // (it stays on the title attr); mark the retained predecessor.
+              const label = output
+                ? latestRunInstanceIdByProfile[output.profileId] === id
+                  ? profileName
+                  : `${profileName} (previous)`
+                : (compound?.name ?? id);
 
               return (
                 <button

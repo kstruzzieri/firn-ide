@@ -275,6 +275,6 @@ describe('RunOutputTabs compound tabs', () => {
 
     expect(screen.queryByText('All')).not.toBeInTheDocument();
     expect(screen.getAllByText('CI')).toHaveLength(1);
-    expect(screen.getByText('p1 · ordinary')).toBeInTheDocument();
+    expect(screen.getByText('p1')).toBeInTheDocument();
   });
 });

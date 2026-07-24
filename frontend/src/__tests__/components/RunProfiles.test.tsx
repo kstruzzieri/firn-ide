@@ -173,6 +173,41 @@ describe('RunProfiles panel header counter', () => {
 
     expect(screen.getByText(/1 running/i)).toBeInTheDocument();
   });
+
+  it('renders a failed compound card exit code from its aggregate run', () => {
+    const compoundProfile: RunProfile = {
+      id: 'ci',
+      name: 'CI',
+      type: 'compound',
+      source: 'user',
+      steps: [pinnedProfile.id],
+      workspaceId: WS,
+      workspaceName: 'Frontend',
+    };
+    useIDEStore.setState({
+      runProfiles: [compoundProfile],
+      runProfileState: { ci: { adopted: true } },
+      latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+      runCompounds: {
+        ci: {
+          runInstanceId: 'agg-r1',
+          compoundId: 'ci',
+          name: 'CI',
+          state: 'failed',
+          exitCode: 3,
+          currentStep: 0,
+          steps: [],
+          stepOutputs: {},
+        },
+      },
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+      runHistory: { ci: [{ state: 'failed', duration: 1000, timestamp: 2000 }] },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText('exit 3')).toBeInTheDocument();
+  });
 });
 
 // Profiles for project view: two workspaces, one with a detected profile.

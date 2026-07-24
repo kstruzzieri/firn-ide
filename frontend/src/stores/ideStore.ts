@@ -12,10 +12,11 @@ import type {
   OutputEntry,
   RunHistoryEntry,
   RunOutput,
+  RunState,
   RunStatusEvent,
   RunOutputViewMode,
 } from '../types/runOutput';
-import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
+import { MAX_OUTPUT_ENTRIES, MAX_RETAINED_RUNS, ALL_PROFILES_ID } from '../types/runOutput';
 import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
 import { parseFileReferences } from '../utils/parseFileReferences';
 import { pathsReferToSameFile } from '../utils/lspUri';
@@ -179,6 +180,10 @@ interface IDEState {
   // Run Output
   runOutputs: Record<string, RunOutput>;
   runInstanceIdsByProfile: Record<string, string[]>;
+  // Explicit current-execution pointer per profile. May point at an id already
+  // removed from runOutputs — that dangling value is the deliberate "cleared
+  // tab" tombstone that keeps late events from resurrecting a run or falling
+  // back to a predecessor (see clearRunOutput / appendRunOutput guards).
   latestRunInstanceIdByProfile: Record<string, string>;
   runCompounds: Record<string, CompoundRun>;
   compoundIdByRunInstance: Record<string, string>; // aggregate runInstanceId -> compoundId
@@ -423,7 +428,7 @@ function capOutputEntries(entries: OutputEntry[]): OutputEntry[] {
   return retained;
 }
 
-const isTerminalRunState = (state: string): boolean =>
+const isTerminalRunState = (state: RunState | undefined): boolean =>
   state === 'stopped' || state === 'failed' || state === 'success';
 
 function retainRunOutput(
@@ -437,8 +442,8 @@ function retainRunOutput(
   const indexedIds = previousIds.includes(output.runInstanceId)
     ? previousIds
     : [...previousIds, output.runInstanceId];
-  const retainedIds = indexedIds.slice(-2);
-  const prunedIds = indexedIds.slice(0, -2);
+  const retainedIds = indexedIds.slice(-MAX_RETAINED_RUNS);
+  const prunedIds = indexedIds.slice(0, -MAX_RETAINED_RUNS);
   const runOutputs = { ...state.runOutputs, [output.runInstanceId]: output };
   for (const runInstanceId of prunedIds) {
     delete runOutputs[runInstanceId];
@@ -1184,15 +1189,18 @@ export const useIDEStore = create<IDEStore>()(
                     runInstanceId,
                     name: profileName ?? profileId,
                     state: 'running',
+                    exitCode,
                     currentStep: 0,
                     steps: [],
                     stepOutputs: {},
                   },
                 };
               } else if (compound?.runInstanceId === runInstanceId) {
+                // The aggregate run:status is the only carrier of a compound's
+                // exit code (run:compound snapshots omit it), so capture it here.
                 runCompounds = {
                   ...runCompounds,
-                  [profileId]: { ...compound, state: newState },
+                  [profileId]: { ...compound, state: newState, exitCode },
                 };
               }
             }
@@ -1300,10 +1308,14 @@ export const useIDEStore = create<IDEStore>()(
               Object.keys(preserved)[0] ??
               Object.values(preservedCompounds)[0]?.runInstanceId ??
               null;
+            const activeCompoundId =
+              state.activeRunOutputId != null
+                ? state.compoundIdByRunInstance[state.activeRunOutputId]
+                : undefined;
             const activeStillValid =
               state.activeRunOutputId != null &&
               (preserved[state.activeRunOutputId] != null ||
-                state.compoundIdByRunInstance[state.activeRunOutputId] in preservedCompounds);
+                (activeCompoundId != null && preservedCompounds[activeCompoundId] != null));
             const preservedIndex: Record<string, string> = {};
             for (const [id, compound] of Object.entries(preservedCompounds)) {
               if (compound.runInstanceId) preservedIndex[compound.runInstanceId] = id;

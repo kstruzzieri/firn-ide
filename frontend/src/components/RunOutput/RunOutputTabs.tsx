@@ -26,12 +26,15 @@ export function RunOutputTabs() {
   ).length;
   if (tabIds.length === 0) return null;
 
+  // Label by profile name, disambiguating the retained predecessor as "(previous)".
+  // The raw runInstanceId is a backend-internal counter, so it stays out of the
+  // visible label (it remains on the tab title for debugging).
   const getTabLabel = (id: string) => {
     const output = runOutputs[id];
     if (output) {
       const name =
         profiles.find((profile) => profile.id === output.profileId)?.name ?? output.profileId;
-      return `${name} · ${id}`;
+      return latestRunInstanceIdByProfile[output.profileId] === id ? name : `${name} (previous)`;
     }
     const compoundId = compoundIdByRunInstance[id];
     return runCompounds[compoundId]?.name ?? id;
@@ -59,6 +62,7 @@ export function RunOutputTabs() {
             key={id}
             className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
             onClick={() => setActiveRunOutput(id)}
+            title={output ? id : (compoundId ?? id)}
           >
             <span className={`${styles.tabDot} ${styles[`dot${capitalize(vs)}`] ?? ''}`} />
             <span className={isActive ? (styles[`name${capitalize(vs)}`] ?? '') : ''}>

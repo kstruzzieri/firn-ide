@@ -4,6 +4,9 @@ export const ALL_PROFILES_ID = '__all__';
 /** Max entries per retained ordinary execution or compound step before FIFO truncation */
 export const MAX_OUTPUT_ENTRIES = 10_000;
 
+/** Retained ordinary executions per profile (current + predecessor for Diff) */
+export const MAX_RETAINED_RUNS = 2;
+
 /** Raw event payload from backend (chunk-oriented, may split/merge lines) */
 export interface OutputChunk {
   runInstanceId: string;
@@ -95,6 +98,8 @@ export interface CompoundRun {
   runInstanceId: string;
   name: string;
   state: RunState;
+  /** Aggregate exit code; meaningful once `state` is terminal (from run:status). */
+  exitCode?: number;
   currentStep: number;
   etaMs?: number;
   steps: CompoundStep[];

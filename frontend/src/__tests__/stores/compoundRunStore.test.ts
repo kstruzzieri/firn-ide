@@ -517,6 +517,17 @@ describe('compoundRunStore - Phase 2A regressions', () => {
     expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBe('r10');
   });
 
+  it('captures the aggregate exit code onto the compound run on a terminal status', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'failed', 1100));
+
+    const compound = useIDEStore.getState().runCompounds[COMPOUND_ID];
+    expect(compound.state).toBe('failed');
+    expect(compound.exitCode).toBe(1);
+  });
+
   it('rejects delayed running status and snapshot after a newer rerun completes', () => {
     const store = useIDEStore.getState();
     store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
