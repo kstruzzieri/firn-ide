@@ -169,7 +169,19 @@ export function Terminal() {
   const activeRunOutputId = useActiveRunOutputId();
   const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
   const setViewMode = useIDEStore((s) => s.setRunOutputViewMode);
-  const outputIds = Object.keys(runOutputs);
+  const runProfiles = useIDEStore((s) => s.runProfiles);
+  const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runCompounds = useIDEStore((s) => s.runCompounds);
+  const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
+  const ordinaryOutputIds = Object.values(runInstanceIdsByProfile)
+    .flat()
+    .filter((id) => runOutputs[id]);
+  const compoundOutputIds = Object.values(runCompounds).map((run) => run.runInstanceId);
+  const outputIds = [...ordinaryOutputIds, ...compoundOutputIds];
+  const latestOrdinaryIds = Object.values(latestRunInstanceIdByProfile).filter(
+    (id) => runOutputs[id]
+  );
 
   const isCreatingRef = useRef(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -467,7 +479,7 @@ export function Terminal() {
         {activeTab === 'output' && outputIds.length > 0 && (
           <>
             <div className={styles.divider} />
-            {outputIds.length >= 2 && (
+            {latestOrdinaryIds.length >= 2 && (
               <button
                 type="button"
                 className={`${styles.sessionTab} ${activeRunOutputId === ALL_PROFILES_ID ? styles.active : ''}`}
@@ -494,17 +506,24 @@ export function Terminal() {
             )}
             {outputIds.map((id) => {
               const output = runOutputs[id];
+              const compoundId = compoundIdByRunInstance[id];
+              const compound = compoundId ? runCompounds[compoundId] : undefined;
               const isActive = id === activeRunOutputId;
               const stateClass =
-                output.state === 'running'
+                (output?.state ?? compound?.state) === 'running'
                   ? styles.stateRunning
-                  : output.state === 'success'
+                  : (output?.state ?? compound?.state) === 'success'
                     ? styles.stateSuccess
-                    : output.state === 'failed'
+                    : (output?.state ?? compound?.state) === 'failed'
                       ? styles.stateFailed
-                      : output.state === 'stopped'
+                      : (output?.state ?? compound?.state) === 'stopped'
                         ? styles.stateStopped
                         : '';
+              const profileName = output
+                ? (runProfiles.find((profile) => profile.id === output.profileId)?.name ??
+                  output.profileId)
+                : undefined;
+              const label = output ? `${profileName} · ${id}` : (compound?.name ?? id);
 
               return (
                 <button
@@ -517,10 +536,10 @@ export function Terminal() {
                       setViewMode('merged');
                     }
                   }}
-                  title={id}
+                  title={output ? id : compoundId}
                 >
                   <span className={`${styles.stateDot} ${stateClass}`} />
-                  <span className={styles.sessionTabLabel}>{id}</span>
+                  <span className={styles.sessionTabLabel}>{label}</span>
                 </button>
               );
             })}

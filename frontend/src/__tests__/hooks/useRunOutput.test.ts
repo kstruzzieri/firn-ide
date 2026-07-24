@@ -16,6 +16,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   useIDEStore.setState({
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
     activeRunOutputId: null,
     runOutputViewMode: 'merged',
     runOutputAutoScroll: true,
@@ -48,9 +50,15 @@ describe('useRunOutputListener', () => {
     const statusCallback = mockEventsOn.mock.calls.find(([event]) => event === 'run:status')?.[1];
 
     expect(statusCallback).toBeDefined();
-    statusCallback!({ profileId: 'test-1', state: 'running', exitCode: 0 });
+    statusCallback!({
+      runInstanceId: 'r1',
+      profileId: 'test-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+    });
 
-    expect(useIDEStore.getState().activeRunOutputId).toBe('test-1');
+    expect(useIDEStore.getState().activeRunOutputId).toBe('r1');
   });
 
   it('should subscribe to run:compound and route to handleCompoundRun', () => {
@@ -67,6 +75,7 @@ describe('useRunOutputListener', () => {
     expect(compoundCallback).toBeDefined();
 
     const event = {
+      runInstanceId: 'agg-r1',
       compoundId: 'ci',
       name: 'CI',
       state: 'running',

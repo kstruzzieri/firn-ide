@@ -18,6 +18,9 @@ export function RunProfileSelector() {
   const [isOpen, setIsOpen] = useState(false);
   const profiles = useIDEStore((s) => s.runProfiles);
   const runOutputs = useIDEStore((s) => s.runOutputs);
+  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runCompounds = useIDEStore((s) => s.runCompounds);
+  const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
   const setSelectedProfile = useIDEStore((s) => s.setSelectedProfile);
@@ -84,7 +87,11 @@ export function RunProfileSelector() {
       );
   };
   const renderRow = (p: RunProfile) => {
-    const rvs = getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds);
+    const runInstanceId = latestRunInstanceIdByProfile[p.id];
+    const outputState =
+      runOutputs[runInstanceId]?.state ??
+      runCompounds[compoundIdByRunInstance[runInstanceId]]?.state;
+    const rvs = getVisualState(p.id, outputState, stoppingIds, restartingIds);
     const variants = (p.envVariants ?? []).filter((v) => v.name);
     const rowActionLabel =
       rvs === 'running'
@@ -168,7 +175,13 @@ export function RunProfileSelector() {
   };
 
   const vs = target
-    ? getVisualState(target.id, runOutputs[target.id]?.state, stoppingIds, restartingIds)
+    ? getVisualState(
+        target.id,
+        runOutputs[latestRunInstanceIdByProfile[target.id]]?.state ??
+          runCompounds[compoundIdByRunInstance[latestRunInstanceIdByProfile[target.id]]]?.state,
+        stoppingIds,
+        restartingIds
+      )
     : 'idle';
 
   const onAction = () => {

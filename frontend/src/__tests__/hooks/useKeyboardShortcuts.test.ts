@@ -402,6 +402,8 @@ describe('Cmd/Ctrl+R run target', () => {
       runProfiles: [{ id: 'p1', name: 'dev', type: 'single', source: 'user', workspaceId: 'ws1' }],
       runProfileState: {},
       runOutputs: {},
+      runInstanceIdsByProfile: {},
+      latestRunInstanceIdByProfile: {},
       hiddenProfileIds: [],
       stoppingProfileIds: [],
       restartingProfileIds: [],
@@ -421,7 +423,19 @@ describe('Cmd/Ctrl+R run target', () => {
   });
 
   test('restarts the target when running', () => {
-    useIDEStore.setState({ runOutputs: { p1: { state: 'running' } } as never });
+    useIDEStore.setState({
+      runOutputs: {
+        r1: {
+          runInstanceId: 'r1',
+          profileId: 'p1',
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+        },
+      },
+      runInstanceIdsByProfile: { p1: ['r1'] },
+      latestRunInstanceIdByProfile: { p1: 'r1' },
+    });
     renderShortcuts();
     act(() => {
       window.dispatchEvent(runShortcutEvent());

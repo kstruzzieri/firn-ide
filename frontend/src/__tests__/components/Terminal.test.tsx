@@ -28,6 +28,10 @@ describe('Terminal component', () => {
       terminalSessions: [],
       activeTerminalSessionId: null,
       runOutputs: {},
+      runInstanceIdsByProfile: {},
+      latestRunInstanceIdByProfile: {},
+      runCompounds: {},
+      compoundIdByRunInstance: {},
       activeRunOutputId: null,
       toast: null,
     });
@@ -134,6 +138,38 @@ describe('Terminal component', () => {
       'aria-labelledby',
       within(tablist).getByRole('tab', { name: 'Terminal' }).id
     );
+  });
+
+  it('renders retained output tabs without treating two runs of one profile as All Profiles', () => {
+    useIDEStore.setState({
+      activeTerminalTab: 'output',
+      runProfiles: [{ id: 'p1', name: 'Build', type: 'single', source: 'user' }],
+      runOutputs: {
+        r1: {
+          runInstanceId: 'r1',
+          profileId: 'p1',
+          state: 'success',
+          exitCode: 0,
+          entries: [],
+        },
+        r2: {
+          runInstanceId: 'r2',
+          profileId: 'p1',
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+        },
+      },
+      runInstanceIdsByProfile: { p1: ['r1', 'r2'] },
+      latestRunInstanceIdByProfile: { p1: 'r2' },
+      activeRunOutputId: 'r2',
+    });
+
+    render(<Terminal />);
+
+    expect(screen.getAllByText('Build · r1').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Build · r2').length).toBeGreaterThan(0);
+    expect(screen.queryByTitle('All Profiles Timeline')).not.toBeInTheDocument();
   });
 
   it('keeps session tabs in a separate manual-activation tablist', () => {
