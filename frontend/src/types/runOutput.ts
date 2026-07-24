@@ -1,7 +1,7 @@
 /** Sentinel value for the "All Profiles" virtual tab in Timeline view */
 export const ALL_PROFILES_ID = '__all__';
 
-/** Max entries per profile before FIFO truncation */
+/** Max entries per retained ordinary execution or compound step before FIFO truncation */
 export const MAX_OUTPUT_ENTRIES = 10_000;
 
 /** Raw event payload from backend (chunk-oriented, may split/merge lines) */
@@ -49,12 +49,9 @@ export interface RunOutput {
   profileId: string;
   runInstanceId: string;
   workingDir?: string;
-  previousWorkingDir?: string;
   state: RunState;
   exitCode: number;
-  runCount: number;
   entries: OutputEntry[];
-  previousEntries: OutputEntry[];
 }
 
 export interface FoldedRegion {

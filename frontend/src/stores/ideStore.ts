@@ -178,6 +178,8 @@ interface IDEState {
 
   // Run Output
   runOutputs: Record<string, RunOutput>;
+  runInstanceIdsByProfile: Record<string, string[]>;
+  latestRunInstanceIdByProfile: Record<string, string>;
   runCompounds: Record<string, CompoundRun>;
   compoundIdByRunInstance: Record<string, string>; // aggregate runInstanceId -> compoundId
   activeRunOutputId: string | null;
@@ -285,7 +287,7 @@ interface IDEActions {
   // Run Output actions
   appendRunOutput: (chunk: OutputChunk) => void;
   handleRunStatus: (status: RunStatusEvent) => void;
-  clearRunOutput: (profileId: string) => void;
+  clearRunOutput: (runInstanceId: string) => void;
   clearAllRunOutputs: () => void;
   handleCompoundRun: (event: CompoundRunEvent) => void;
   appendCompoundRunOutput: (compoundId: string, stepIdx: number, chunk: OutputChunk) => void;
@@ -332,25 +334,24 @@ interface IDEActions {
 
 type IDEStore = IDEState & IDEActions;
 
-// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable)
-// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable).
+// Line assemblers are per-run-instance, stored outside Zustand (mutable, not serializable).
 // Each assembler's emit callback is swappable so appendRunOutput can collect lines
 // into a local array per chunk, then commit once to the store.
 const lineAssemblers = new Map<string, LineAssembler>();
 const assemblerCallbacks = new Map<string, (entry: OutputEntry) => void>();
 
 function getOrCreateAssembler(
-  profileId: string,
+  runInstanceId: string,
   emitFn: (entry: OutputEntry) => void
 ): LineAssembler {
-  assemblerCallbacks.set(profileId, emitFn);
-  let assembler = lineAssemblers.get(profileId);
+  assemblerCallbacks.set(runInstanceId, emitFn);
+  let assembler = lineAssemblers.get(runInstanceId);
   if (!assembler) {
     assembler = new LineAssembler((entry) => {
-      const cb = assemblerCallbacks.get(profileId);
+      const cb = assemblerCallbacks.get(runInstanceId);
       if (cb) cb(entry);
     });
-    lineAssemblers.set(profileId, assembler);
+    lineAssemblers.set(runInstanceId, assembler);
   }
   return assembler;
 }
@@ -361,6 +362,14 @@ function getOrCreateAssembler(
 // backend key encoding.
 function compoundStepAssemblerKey(compoundId: string, stepIdx: number): string {
   return JSON.stringify([compoundId, stepIdx]);
+}
+
+function clearCompoundStepAssemblers(compoundId: string, steps: CompoundRun['steps']): void {
+  for (const step of steps) {
+    const key = compoundStepAssemblerKey(compoundId, step.idx);
+    lineAssemblers.delete(key);
+    assemblerCallbacks.delete(key);
+  }
 }
 
 // Push a chunk through the assembler for `key` and return the complete lines it
@@ -392,16 +401,63 @@ function getProfileWorkingDirSnapshot(
   return state.runProfiles.find((profile) => profile.id === profileId)?.workingDir;
 }
 
-function createRunOutput(profileId: string, workingDir?: string): RunOutput {
+function createRunOutput(profileId: string, runInstanceId: string, workingDir?: string): RunOutput {
   return {
     profileId,
-    runInstanceId: '',
+    runInstanceId,
     workingDir,
     state: 'idle',
     exitCode: 0,
-    runCount: 0,
     entries: [],
-    previousEntries: [],
+  };
+}
+
+function capOutputEntries(entries: OutputEntry[]): OutputEntry[] {
+  if (entries.length <= MAX_OUTPUT_ENTRIES) return entries;
+  const retained = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
+  retained.unshift({
+    stream: 'stdout',
+    text: '[truncated — oldest output removed]',
+    timestamp: retained[0]?.timestamp ?? Date.now(),
+  });
+  return retained;
+}
+
+const isTerminalRunState = (state: string): boolean =>
+  state === 'stopped' || state === 'failed' || state === 'success';
+
+function retainRunOutput(
+  state: Pick<
+    IDEState,
+    'runOutputs' | 'runInstanceIdsByProfile' | 'latestRunInstanceIdByProfile' | 'activeRunOutputId'
+  >,
+  output: RunOutput
+) {
+  const previousIds = state.runInstanceIdsByProfile[output.profileId] ?? [];
+  const indexedIds = previousIds.includes(output.runInstanceId)
+    ? previousIds
+    : [...previousIds, output.runInstanceId];
+  const retainedIds = indexedIds.slice(-2);
+  const prunedIds = indexedIds.slice(0, -2);
+  const runOutputs = { ...state.runOutputs, [output.runInstanceId]: output };
+  for (const runInstanceId of prunedIds) {
+    delete runOutputs[runInstanceId];
+    lineAssemblers.delete(runInstanceId);
+    assemblerCallbacks.delete(runInstanceId);
+  }
+  return {
+    runOutputs,
+    runInstanceIdsByProfile: {
+      ...state.runInstanceIdsByProfile,
+      [output.profileId]: retainedIds,
+    },
+    latestRunInstanceIdByProfile: {
+      ...state.latestRunInstanceIdByProfile,
+      [output.profileId]: output.runInstanceId,
+    },
+    activeRunOutputId: prunedIds.includes(state.activeRunOutputId ?? '')
+      ? output.runInstanceId
+      : state.activeRunOutputId,
   };
 }
 
@@ -430,6 +486,8 @@ export const useIDEStore = create<IDEStore>()(
       profilesError: null,
       selectedProfileId: null,
       runOutputs: {},
+      runInstanceIdsByProfile: {},
+      latestRunInstanceIdByProfile: {},
       runCompounds: {},
       compoundIdByRunInstance: {},
       activeRunOutputId: null,
@@ -866,75 +924,61 @@ export const useIDEStore = create<IDEStore>()(
           return;
         }
 
-        const existing = useIDEStore.getState().runOutputs[chunk.profileId];
+        const snapshot = get();
+        const latestRunInstanceId = snapshot.latestRunInstanceIdByProfile[chunk.profileId];
+        const latestRunStartedAt = snapshot.runStartTimestamps[chunk.profileId];
+        const existing = snapshot.runOutputs[chunk.runInstanceId];
 
-        // Mismatched instance: stale only if the existing buffer is still running.
-        if (
-          existing &&
-          existing.runInstanceId !== chunk.runInstanceId &&
-          existing.state === 'running'
-        ) {
+        if (latestRunInstanceId && latestRunInstanceId !== chunk.runInstanceId) {
+          // A retained instance is historical, never a new run. An unknown id is
+          // accepted as output-before-status only after the current run is terminal
+          // and when its backend timestamp is newer than that run's start.
+          if (
+            existing ||
+            snapshot.runOutputs[latestRunInstanceId]?.state === 'running' ||
+            (latestRunStartedAt != null && chunk.timestamp <= latestRunStartedAt)
+          ) {
+            return;
+          }
+        } else if (latestRunInstanceId === chunk.runInstanceId && !existing) {
+          // Clearing the newest terminal tab leaves the explicit current pointer
+          // behind so late events cannot recreate it or fall back to a predecessor.
           return;
         }
 
-        // No buffer, or a terminal buffer with a different id (a rerun whose
-        // output beat its running status) → provision/rotate a fresh buffer.
-        if (!existing || existing.runInstanceId !== chunk.runInstanceId) {
+        if (!existing) {
           set(
             (state) => {
-              const prev = state.runOutputs[chunk.profileId];
               const wd = getProfileWorkingDirSnapshot(state, chunk.profileId);
-              let provisioned: RunOutput;
-              if (prev) {
-                let prevEntries = prev.entries;
-                if (prevEntries.length > MAX_OUTPUT_ENTRIES) {
-                  prevEntries = prevEntries.slice(prevEntries.length - MAX_OUTPUT_ENTRIES);
-                }
-                provisioned = {
-                  ...prev,
-                  runInstanceId: chunk.runInstanceId,
-                  entries: [],
-                  previousEntries: prevEntries,
-                  previousWorkingDir: prev.workingDir,
-                  workingDir: wd,
-                };
-              } else {
-                provisioned = {
-                  ...createRunOutput(chunk.profileId, wd),
-                  runInstanceId: chunk.runInstanceId,
-                };
-              }
-              // Reset assembler so old carry-over does not leak into the new run.
-              lineAssemblers.delete(chunk.profileId);
-              assemblerCallbacks.delete(chunk.profileId);
-              return { runOutputs: { ...state.runOutputs, [chunk.profileId]: provisioned } };
+              return retainRunOutput(
+                state,
+                createRunOutput(chunk.profileId, chunk.runInstanceId, wd)
+              );
             },
             false,
             'appendRunOutput:provision'
           );
         }
 
-        const pendingEntries: OutputEntry[] = [];
-        const assembler = getOrCreateAssembler(chunk.profileId, (entry) =>
-          pendingEntries.push(entry)
-        );
-        assembler.push(chunk.stream, chunk.data, chunk.timestamp);
+        const pendingEntries = collectChunkEntries(chunk.runInstanceId, chunk);
         if (pendingEntries.length === 0) return;
 
         set(
           (state) => {
-            const ex = state.runOutputs[chunk.profileId];
-            if (!ex) return state;
-            let entries = [...ex.entries, ...pendingEntries];
-            if (entries.length > MAX_OUTPUT_ENTRIES) {
-              entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
-              entries.unshift({
-                stream: 'stdout',
-                text: '[truncated — oldest output removed]',
-                timestamp: entries[0]?.timestamp ?? Date.now(),
-              });
+            const ex = state.runOutputs[chunk.runInstanceId];
+            if (
+              !ex ||
+              state.latestRunInstanceIdByProfile[chunk.profileId] !== chunk.runInstanceId
+            ) {
+              return state;
             }
-            return { runOutputs: { ...state.runOutputs, [chunk.profileId]: { ...ex, entries } } };
+            const entries = capOutputEntries([...ex.entries, ...pendingEntries]);
+            return {
+              runOutputs: {
+                ...state.runOutputs,
+                [chunk.runInstanceId]: { ...ex, entries },
+              },
+            };
           },
           false,
           'appendRunOutput'
@@ -946,80 +990,108 @@ export const useIDEStore = create<IDEStore>()(
         const timestamp = status.timestamp ?? Date.now();
         if (parentRunInstanceId) return; // steps flow only via run:compound
 
-        const existingBefore = get().runOutputs[profileId];
-        // Stale guard: a mismatched non-running status is always stale once a
-        // newer buffer exists. A mismatched running status is only accepted when
-        // the existing buffer is terminal, which is how reruns rotate.
-        if (
-          existingBefore &&
-          existingBefore.runInstanceId !== runInstanceId &&
-          (newState !== 'running' || existingBefore.state === 'running')
-        ) {
-          return;
-        }
+        const snapshot = get();
+        const isCompoundAggregate =
+          snapshot.runProfiles.some(
+            (profile) => profile.id === profileId && profile.type === 'compound'
+          ) || snapshot.compoundIdByRunInstance[runInstanceId] != null;
+        const latestRunInstanceId = snapshot.latestRunInstanceIdByProfile[profileId];
+        const latestRunStartedAt = snapshot.runStartTimestamps[profileId];
+        const existingBefore = snapshot.runOutputs[runInstanceId];
 
-        // Flush the assembler on terminal states (only reached for the live run).
-        const flushedEntries: OutputEntry[] = [];
-        if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
-          const assembler = lineAssemblers.get(profileId);
-          if (assembler) {
-            assemblerCallbacks.set(profileId, (entry) => flushedEntries.push(entry));
-            assembler.flush();
-            lineAssemblers.delete(profileId);
-            assemblerCallbacks.delete(profileId);
+        if (isCompoundAggregate) {
+          const currentCompound = snapshot.runCompounds[profileId];
+          const indexedCompoundId = snapshot.compoundIdByRunInstance[runInstanceId];
+          if (!latestRunInstanceId) {
+            if (newState !== 'running' || indexedCompoundId != null) return;
+          } else if (latestRunInstanceId === runInstanceId) {
+            if (
+              indexedCompoundId !== profileId ||
+              currentCompound?.runInstanceId !== runInstanceId ||
+              isTerminalRunState(currentCompound.state) ||
+              (newState === 'running' && currentCompound.state === 'running')
+            ) {
+              return;
+            }
+          } else {
+            const latestCompoundId = snapshot.compoundIdByRunInstance[latestRunInstanceId];
+            const hasTerminalCurrent =
+              latestCompoundId === profileId &&
+              currentCompound?.runInstanceId === latestRunInstanceId &&
+              isTerminalRunState(currentCompound.state);
+            const hasClearedTombstone = latestCompoundId == null && currentCompound == null;
+            if (
+              newState !== 'running' ||
+              indexedCompoundId != null ||
+              (!hasTerminalCurrent && !hasClearedTombstone) ||
+              status.timestamp == null ||
+              latestRunStartedAt == null ||
+              status.timestamp <= latestRunStartedAt
+            ) {
+              return;
+            }
           }
         }
+
+        if (!isCompoundAggregate) {
+          if (!latestRunInstanceId) {
+            if (isTerminalRunState(newState) && !existingBefore) return;
+          } else {
+            if (latestRunInstanceId === runInstanceId && !existingBefore) return;
+            if (
+              latestRunInstanceId === runInstanceId &&
+              existingBefore &&
+              (isTerminalRunState(existingBefore.state) ||
+                (newState === 'running' && existingBefore.state === 'running'))
+            ) {
+              return;
+            }
+            if (
+              latestRunInstanceId !== runInstanceId &&
+              (existingBefore ||
+                newState !== 'running' ||
+                status.timestamp == null ||
+                snapshot.runOutputs[latestRunInstanceId]?.state === 'running' ||
+                (latestRunStartedAt != null && status.timestamp <= latestRunStartedAt))
+            ) {
+              return;
+            }
+          }
+        }
+
+        const rotatesCompound =
+          isCompoundAggregate &&
+          latestRunInstanceId != null &&
+          latestRunInstanceId !== runInstanceId;
+        const priorCompound = snapshot.runCompounds[profileId];
+        if (rotatesCompound && priorCompound) {
+          clearCompoundStepAssemblers(profileId, priorCompound.steps);
+        }
+
+        const flushedEntries =
+          !isCompoundAggregate && isTerminalRunState(newState) ? flushAssembler(runInstanceId) : [];
 
         set(
           (state) => {
             const runWorkingDir = getProfileWorkingDirSnapshot(state, profileId);
-            const existing = state.runOutputs[profileId] ?? {
-              ...createRunOutput(profileId, runWorkingDir),
-              runInstanceId,
-            };
-
-            const mergedEntries =
-              flushedEntries.length > 0
-                ? [...existing.entries, ...flushedEntries]
-                : existing.entries;
-
-            const updated = {
-              ...existing,
-              runInstanceId,
-              state: newState,
-              exitCode,
-              entries: mergedEntries,
-            };
-
-            if (newState === 'running') {
-              const previousWorkingDir = existing.workingDir;
-              updated.workingDir = runWorkingDir;
-              updated.runCount = existing.runCount + 1;
-              // Rotate when this running event is a different instance than what
-              // the buffer currently holds (covers reruns; '' = never-run buffer).
-              const isRotation =
-                existing.runInstanceId !== '' && existing.runInstanceId !== runInstanceId;
-              if (isRotation) {
-                let prev = existing.entries;
-                if (prev.length > MAX_OUTPUT_ENTRIES)
-                  prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
-                updated.previousEntries = prev;
-                updated.previousWorkingDir = previousWorkingDir;
-                updated.entries = [];
-                lineAssemblers.delete(profileId);
-                assemblerCallbacks.delete(profileId);
-              }
-              // No unconditional previousWorkingDir clear: a fresh first run
-              // already has it undefined, and when appendRunOutput provisioned
-              // this rerun's buffer (output arrived before this running status,
-              // so isRotation is false) it already set previousWorkingDir from
-              // the prior run — clearing here would clobber that.
-            }
+            const existing = state.runOutputs[runInstanceId];
+            const updated: RunOutput | undefined = isCompoundAggregate
+              ? undefined
+              : {
+                  ...(existing ?? createRunOutput(profileId, runInstanceId, runWorkingDir)),
+                  state: newState,
+                  exitCode,
+                  workingDir:
+                    newState === 'running'
+                      ? runWorkingDir
+                      : (existing?.workingDir ?? runWorkingDir),
+                  entries: capOutputEntries([...(existing?.entries ?? []), ...flushedEntries]),
+                };
 
             // --- Lifecycle flags ---
             let { stoppingProfileIds, restartingProfileIds } = state;
 
-            if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
+            if (isTerminalRunState(newState)) {
               stoppingProfileIds = stoppingProfileIds.filter((id) => id !== profileId);
               restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
             } else if (newState === 'running') {
@@ -1028,12 +1100,7 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Stop request timestamp ---
             let { stopRequestTimestamps } = state;
-            if (
-              newState === 'stopped' ||
-              newState === 'failed' ||
-              newState === 'success' ||
-              newState === 'running'
-            ) {
+            if (isTerminalRunState(newState) || newState === 'running') {
               if (stopRequestTimestamps[profileId] != null) {
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
                 const { [profileId]: _removed, ...rest } = stopRequestTimestamps;
@@ -1049,10 +1116,7 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Run history ---
             let { runHistory } = state;
-            if (
-              (newState === 'stopped' || newState === 'failed' || newState === 'success') &&
-              state.runStartTimestamps[profileId]
-            ) {
+            if (isTerminalRunState(newState) && state.runStartTimestamps[profileId]) {
               const existingHistory = runHistory[profileId] ?? [];
               const entry: RunHistoryEntry = {
                 state: newState as RunHistoryEntry['state'],
@@ -1069,21 +1133,72 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Auto-select first running profile ---
             let { activeRunOutputId } = state;
+            const activeOutput = activeRunOutputId
+              ? state.runOutputs[activeRunOutputId]
+              : undefined;
             if (
               newState === 'running' &&
-              (!activeRunOutputId || activeRunOutputId === ALL_PROFILES_ID)
+              existingBefore?.state !== 'running' &&
+              (!activeRunOutputId ||
+                activeRunOutputId === ALL_PROFILES_ID ||
+                activeOutput?.profileId === profileId ||
+                (rotatesCompound && activeRunOutputId === latestRunInstanceId))
             ) {
-              activeRunOutputId = profileId;
+              activeRunOutputId = runInstanceId;
             }
 
+            const retainedOutput = updated ? retainRunOutput(state, updated) : undefined;
+            let { runCompounds } = state;
+            let { compoundIdByRunInstance } = state;
+            let latestRunInstanceIdByProfile =
+              retainedOutput?.latestRunInstanceIdByProfile ?? state.latestRunInstanceIdByProfile;
+            if (isCompoundAggregate) {
+              latestRunInstanceIdByProfile = {
+                ...latestRunInstanceIdByProfile,
+                [profileId]: runInstanceId,
+              };
+              const compound = state.runCompounds[profileId];
+              if (newState === 'running' && compound?.runInstanceId !== runInstanceId) {
+                const profileName = state.runProfiles.find(
+                  (profile) => profile.id === profileId
+                )?.name;
+                const index = { ...compoundIdByRunInstance };
+                if (latestRunInstanceId) delete index[latestRunInstanceId];
+                index[runInstanceId] = profileId;
+                compoundIdByRunInstance = index;
+                runCompounds = {
+                  ...runCompounds,
+                  [profileId]: {
+                    compoundId: profileId,
+                    runInstanceId,
+                    name: profileName ?? profileId,
+                    state: 'running',
+                    currentStep: 0,
+                    steps: [],
+                    stepOutputs: {},
+                  },
+                };
+              } else if (compound?.runInstanceId === runInstanceId) {
+                runCompounds = {
+                  ...runCompounds,
+                  [profileId]: { ...compound, state: newState },
+                };
+              }
+            }
             return {
-              runOutputs: { ...state.runOutputs, [profileId]: updated },
+              ...(retainedOutput ?? {}),
+              runCompounds,
+              compoundIdByRunInstance,
+              latestRunInstanceIdByProfile,
               stoppingProfileIds,
               restartingProfileIds,
               stopRequestTimestamps,
               runStartTimestamps,
               runHistory,
-              activeRunOutputId,
+              activeRunOutputId:
+                activeRunOutputId === state.activeRunOutputId
+                  ? (retainedOutput?.activeRunOutputId ?? activeRunOutputId)
+                  : activeRunOutputId,
             };
           },
           false,
@@ -1091,49 +1206,54 @@ export const useIDEStore = create<IDEStore>()(
         );
       },
 
-      clearRunOutput: (profileId) => {
-        // If this id refers to a compound run, clear its step outputs/assemblers
-        // and keep the run record (mirrors clearCompoundRunOutput).
-        if (useIDEStore.getState().runCompounds[profileId]) {
-          useIDEStore.getState().clearCompoundRunOutput(profileId);
+      clearRunOutput: (runInstanceId) => {
+        const snapshot = useIDEStore.getState();
+        const compoundId = snapshot.compoundIdByRunInstance[runInstanceId];
+        if (compoundId) {
+          snapshot.clearCompoundRunOutput(compoundId);
           return;
         }
         set(
           (state) => {
-            const existing = state.runOutputs[profileId];
+            const existing = state.runOutputs[runInstanceId];
             if (!existing) return state;
 
-            // If the profile is still running, only clear entries — preserve
-            // the RunOutput record so state/runCount stay correct for the
-            // active process. Otherwise remove the record entirely.
             if (existing.state === 'running') {
-              // Reset assembler so partial carry-over doesn't leak into fresh output
-              lineAssemblers.delete(profileId);
-              assemblerCallbacks.delete(profileId);
+              lineAssemblers.delete(runInstanceId);
+              assemblerCallbacks.delete(runInstanceId);
               return {
                 runOutputs: {
                   ...state.runOutputs,
-                  [profileId]: {
-                    ...existing,
-                    entries: [],
-                    previousEntries: [],
-                    previousWorkingDir: undefined,
-                  },
+                  [runInstanceId]: { ...existing, entries: [] },
                 },
               };
             }
 
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { [profileId]: _discarded, ...rest } = state.runOutputs;
-            lineAssemblers.delete(profileId);
-            assemblerCallbacks.delete(profileId);
-            // If the cleared profile was active, select the first remaining or null
-            let activeRunOutputId = state.activeRunOutputId;
-            if (activeRunOutputId === profileId) {
-              const remaining = Object.keys(rest);
-              activeRunOutputId = remaining.length > 0 ? remaining[0] : null;
+            const { [runInstanceId]: _discarded, ...rest } = state.runOutputs;
+            lineAssemblers.delete(runInstanceId);
+            assemblerCallbacks.delete(runInstanceId);
+            const remainingForProfile = (
+              state.runInstanceIdsByProfile[existing.profileId] ?? []
+            ).filter((id) => id !== runInstanceId);
+            const runInstanceIdsByProfile = { ...state.runInstanceIdsByProfile };
+            if (remainingForProfile.length > 0) {
+              runInstanceIdsByProfile[existing.profileId] = remainingForProfile;
+            } else {
+              delete runInstanceIdsByProfile[existing.profileId];
             }
-            return { runOutputs: rest, activeRunOutputId };
+            let activeRunOutputId = state.activeRunOutputId;
+            if (activeRunOutputId === runInstanceId) {
+              const remainingOrdinary = Object.values(runInstanceIdsByProfile)
+                .flat()
+                .filter((id) => rest[id]);
+              const remainingCompounds = Object.values(state.runCompounds).map(
+                (compound) => compound.runInstanceId
+              );
+              activeRunOutputId =
+                remainingForProfile.at(-1) ?? remainingOrdinary[0] ?? remainingCompounds[0] ?? null;
+            }
+            return { runOutputs: rest, runInstanceIdsByProfile, activeRunOutputId };
           },
           false,
           'clearRunOutput'
@@ -1145,17 +1265,10 @@ export const useIDEStore = create<IDEStore>()(
         assemblerCallbacks.clear();
         set(
           (state) => {
-            // Preserve RunOutput records for still-running profiles so their
-            // state/runCount stays correct. Only clear their entries.
             const preserved: Record<string, RunOutput> = {};
             for (const [id, output] of Object.entries(state.runOutputs)) {
               if (output.state === 'running') {
-                preserved[id] = {
-                  ...output,
-                  entries: [],
-                  previousEntries: [],
-                  previousWorkingDir: undefined,
-                };
+                preserved[id] = { ...output, entries: [] };
               }
             }
             // Preserve still-running compounds (entries cleared). Dropping them
@@ -1167,17 +1280,26 @@ export const useIDEStore = create<IDEStore>()(
                 preservedCompounds[id] = { ...compound, stepOutputs: {} };
               }
             }
-            const firstId = Object.keys(preserved)[0] ?? Object.keys(preservedCompounds)[0] ?? null;
+            const preservedRunIdsByProfile: Record<string, string[]> = {};
+            for (const [profileId, ids] of Object.entries(state.runInstanceIdsByProfile)) {
+              const runningIds = ids.filter((id) => preserved[id]);
+              if (runningIds.length > 0) preservedRunIdsByProfile[profileId] = runningIds;
+            }
+            const firstId =
+              Object.keys(preserved)[0] ??
+              Object.values(preservedCompounds)[0]?.runInstanceId ??
+              null;
             const activeStillValid =
               state.activeRunOutputId != null &&
               (preserved[state.activeRunOutputId] != null ||
-                preservedCompounds[state.activeRunOutputId] != null);
+                state.compoundIdByRunInstance[state.activeRunOutputId] in preservedCompounds);
             const preservedIndex: Record<string, string> = {};
             for (const [id, compound] of Object.entries(preservedCompounds)) {
               if (compound.runInstanceId) preservedIndex[compound.runInstanceId] = id;
             }
             return {
               runOutputs: preserved,
+              runInstanceIdsByProfile: preservedRunIdsByProfile,
               runCompounds: preservedCompounds,
               compoundIdByRunInstance: preservedIndex,
               activeRunOutputId: activeStillValid ? state.activeRunOutputId : firstId,
@@ -1199,12 +1321,15 @@ export const useIDEStore = create<IDEStore>()(
           steps,
         } = event;
 
-        // Snapshot the previous run so we can preserve outputs and detect
-        // step transitions that became terminal this event.
-        const prevRun = useIDEStore.getState().runCompounds[compoundId];
-        // Stale guard: a different-instance event while the current run is still
-        // running is a late snapshot from a superseded run — drop before flushing.
-        if (prevRun && prevRun.runInstanceId !== runInstanceId && prevRun.state === 'running') {
+        // Aggregate status is emitted before each snapshot and authorizes the RID.
+        const snapshot = useIDEStore.getState();
+        const prevRun = snapshot.runCompounds[compoundId];
+        if (
+          snapshot.latestRunInstanceIdByProfile[compoundId] !== runInstanceId ||
+          snapshot.compoundIdByRunInstance[runInstanceId] !== compoundId ||
+          prevRun?.runInstanceId !== runInstanceId ||
+          (aggregateState === 'running' && isTerminalRunState(prevRun.state))
+        ) {
           return;
         }
         const prevStepStates = new Map<number, string>();
@@ -1248,11 +1373,7 @@ export const useIDEStore = create<IDEStore>()(
             // Merge flushed carry-over into the corresponding step outputs.
             for (const [stepIdx, flushed] of flushedByStep) {
               const current = preservedOutputs[stepIdx] ?? [];
-              let merged = [...current, ...flushed];
-              if (merged.length > MAX_OUTPUT_ENTRIES) {
-                merged = merged.slice(merged.length - MAX_OUTPUT_ENTRIES);
-              }
-              preservedOutputs[stepIdx] = merged;
+              preservedOutputs[stepIdx] = capOutputEntries([...current, ...flushed]);
             }
 
             // --- Selected step ---
@@ -1355,10 +1476,24 @@ export const useIDEStore = create<IDEStore>()(
             }
             index[runInstanceId] = compoundId;
 
+            let activeRunOutputId = state.activeRunOutputId;
+            if (
+              activeRunOutputId === prevRun?.runInstanceId ||
+              (aggregateState === 'running' &&
+                (!activeRunOutputId || activeRunOutputId === ALL_PROFILES_ID))
+            ) {
+              activeRunOutputId = runInstanceId;
+            }
+
             return {
               runCompounds: { ...state.runCompounds, [compoundId]: newRun },
               compoundIdByRunInstance: index,
+              latestRunInstanceIdByProfile: {
+                ...state.latestRunInstanceIdByProfile,
+                [compoundId]: runInstanceId,
+              },
               runHistory,
+              activeRunOutputId,
             };
           },
           false,
@@ -1407,11 +1542,7 @@ export const useIDEStore = create<IDEStore>()(
       clearCompoundRunOutput: (compoundId) => {
         const existing = useIDEStore.getState().runCompounds[compoundId];
         if (existing) {
-          for (const step of existing.steps) {
-            const key = compoundStepAssemblerKey(compoundId, step.idx);
-            lineAssemblers.delete(key);
-            assemblerCallbacks.delete(key);
-          }
+          clearCompoundStepAssemblers(compoundId, existing.steps);
         }
         set(
           (state) => {
@@ -1545,11 +1676,18 @@ export const useIDEStore = create<IDEStore>()(
 
       focusProfileOutput: (profileId) =>
         set(
-          () => ({
-            activeRunOutputId: profileId,
-            activeTerminalTab: 'output' as TerminalTab,
-            isBottomPanelCollapsed: false,
-          }),
+          (state) => {
+            const latestRunInstanceId = state.latestRunInstanceIdByProfile[profileId];
+            const compoundRunInstanceId = state.compoundIdByRunInstance[latestRunInstanceId]
+              ? latestRunInstanceId
+              : undefined;
+            return {
+              activeRunOutputId:
+                state.runInstanceIdsByProfile[profileId]?.at(-1) ?? compoundRunInstanceId ?? null,
+              activeTerminalTab: 'output' as TerminalTab,
+              isBottomPanelCollapsed: false,
+            };
+          },
           false,
           'focusProfileOutput'
         ),
@@ -1561,19 +1699,19 @@ export const useIDEStore = create<IDEStore>()(
         // Atomic single set: clear output entries + lifecycle state together
         set(
           (state) => {
-            // Preserve RunOutput records for still-running profiles (same logic as clearAllRunOutputs)
             const preserved: Record<string, RunOutput> = {};
             for (const [id, output] of Object.entries(state.runOutputs)) {
               if (output.state === 'running') {
-                preserved[id] = {
-                  ...output,
-                  entries: [],
-                  previousEntries: [],
-                  previousWorkingDir: undefined,
-                };
+                preserved[id] = { ...output, entries: [] };
               }
             }
             const firstId = Object.keys(preserved)[0] ?? null;
+            const runInstanceIdsByProfile: Record<string, string[]> = {};
+            const latestRunInstanceIdByProfile: Record<string, string> = {};
+            for (const output of Object.values(preserved)) {
+              runInstanceIdsByProfile[output.profileId] = [output.runInstanceId];
+              latestRunInstanceIdByProfile[output.profileId] = output.runInstanceId;
+            }
             // Unlike clearAllRunOutputs (which preserves still-running compounds
             // and rebuilds compoundIdByRunInstance for them), a workspace switch
             // discards all compound UI state: the backend LoadRunProfiles path
@@ -1581,6 +1719,8 @@ export const useIDEStore = create<IDEStore>()(
             // index here is deliberate — there is nothing live left to route to.
             return {
               runOutputs: preserved,
+              runInstanceIdsByProfile,
+              latestRunInstanceIdByProfile,
               runCompounds: {},
               compoundIdByRunInstance: {},
               activeRunOutputId: firstId,
@@ -1791,7 +1931,8 @@ export const useActiveRunOutput = () =>
 export const useActiveCompoundRun = () =>
   useIDEStore((state) => {
     const id = state.activeRunOutputId;
-    return id ? (state.runCompounds[id] ?? null) : null;
+    const compoundId = id ? state.compoundIdByRunInstance[id] : undefined;
+    return compoundId ? (state.runCompounds[compoundId] ?? null) : null;
   });
 export const useRunOutputViewMode = () => useIDEStore((state) => state.runOutputViewMode);
 export const useRunOutputAutoScroll = () => useIDEStore((state) => state.runOutputAutoScroll);

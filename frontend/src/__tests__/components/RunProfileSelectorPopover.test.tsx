@@ -22,6 +22,8 @@ beforeEach(() => {
     ],
     runProfileState: {},
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
     hiddenProfileIds: [],
     stoppingProfileIds: [],
     restartingProfileIds: [],
@@ -63,16 +65,16 @@ test('inline run button runs that row immediately', () => {
 test('inline action stops a running row', () => {
   useIDEStore.setState({
     runOutputs: {
-      p2: {
+      r1: {
         runInstanceId: 'r1',
         profileId: 'p2',
         state: 'running',
         exitCode: 0,
-        runCount: 1,
         entries: [],
-        previousEntries: [],
       },
     },
+    runInstanceIdsByProfile: { p2: ['r1'] },
+    latestRunInstanceIdByProfile: { p2: 'r1' },
   });
   open();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Stop test/i }));
@@ -82,16 +84,16 @@ test('inline action stops a running row', () => {
 test('inline action restarts a failed row', () => {
   useIDEStore.setState({
     runOutputs: {
-      p2: {
+      r1: {
         runInstanceId: 'r1',
         profileId: 'p2',
         state: 'failed',
         exitCode: 1,
-        runCount: 1,
         entries: [],
-        previousEntries: [],
       },
     },
+    runInstanceIdsByProfile: { p2: ['r1'] },
+    latestRunInstanceIdByProfile: { p2: 'r1' },
   });
   open();
   fireEvent.click(

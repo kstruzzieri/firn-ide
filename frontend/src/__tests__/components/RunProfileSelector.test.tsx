@@ -18,6 +18,10 @@ beforeEach(() => {
     runProfiles: [{ id: 'p1', name: 'dev', type: 'single', source: 'user', workspaceId: 'ws1' }],
     runProfileState: {},
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
+    runCompounds: {},
+    compoundIdByRunInstance: {},
     hiddenProfileIds: [],
     stoppingProfileIds: [],
     restartingProfileIds: [],
@@ -44,4 +48,55 @@ test('with no profiles, shows disabled No profile state', () => {
   render(<RunProfileSelector />);
   expect(screen.getByText(/No profile/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /No run profile selected/i })).toBeDisabled();
+});
+
+test('derives the header action from the explicit latest run instance', () => {
+  useIDEStore.setState({
+    runOutputs: {
+      r1: {
+        runInstanceId: 'r1',
+        profileId: 'p1',
+        state: 'success',
+        exitCode: 0,
+        entries: [],
+      },
+      r2: {
+        runInstanceId: 'r2',
+        profileId: 'p1',
+        state: 'running',
+        exitCode: 0,
+        entries: [],
+      },
+    },
+    runInstanceIdsByProfile: { p1: ['r1', 'r2'] },
+    latestRunInstanceIdByProfile: { p1: 'r2' },
+  });
+
+  render(<RunProfileSelector />);
+
+  expect(screen.getByRole('button', { name: /Stop selected profile: dev/i })).toBeEnabled();
+});
+
+test('derives a compound header action through its aggregate run instance', () => {
+  useIDEStore.setState({
+    runProfiles: [{ id: 'ci', name: 'CI', type: 'compound', source: 'user', steps: ['p1'] }],
+    selectedProfileId: 'ci',
+    latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+    runCompounds: {
+      ci: {
+        runInstanceId: 'agg-r1',
+        compoundId: 'ci',
+        name: 'CI',
+        state: 'running',
+        currentStep: 0,
+        steps: [],
+        stepOutputs: {},
+      },
+    },
+    compoundIdByRunInstance: { 'agg-r1': 'ci' },
+  });
+
+  render(<RunProfileSelector />);
+
+  expect(screen.getByRole('button', { name: /Stop selected profile: CI/i })).toBeEnabled();
 });

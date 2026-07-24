@@ -73,9 +73,7 @@ function makeRunOutput(profileId: string, state: RunOutput['state']): RunOutput 
     profileId,
     state,
     exitCode: 0,
-    runCount: 1,
     entries: [],
-    previousEntries: [],
   };
 }
 
@@ -86,6 +84,10 @@ beforeEach(() => {
     runProfileState: profileState,
     activeWorkspaceId: WS, // workspace view
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
+    runCompounds: {},
+    compoundIdByRunInstance: {},
     runHistory: {},
     runStartTimestamps: {},
     hiddenProfileIds: [],
@@ -114,13 +116,62 @@ describe('RunProfiles panel grouping (workspace view)', () => {
 describe('RunProfiles panel header counter', () => {
   it('shows running and total counts scoped to the active workspace', () => {
     useIDEStore.setState({
-      runOutputs: { [pinnedProfile.id]: makeRunOutput(pinnedProfile.id, 'running') },
+      runOutputs: { r1: makeRunOutput(pinnedProfile.id, 'running') },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['r1'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'r1' },
     });
 
     render(<RunProfiles />);
 
     expect(screen.getByText(/1 running/i)).toBeInTheDocument();
     expect(screen.getByText(/\d+ total/i)).toBeInTheDocument();
+  });
+
+  it('counts running state from the explicit latest run instance', () => {
+    useIDEStore.setState({
+      runOutputs: {
+        old: makeRunOutput(pinnedProfile.id, 'success'),
+        live: { ...makeRunOutput(pinnedProfile.id, 'running'), runInstanceId: 'live' },
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['old', 'live'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'live' },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+  });
+
+  it('counts a compound through its aggregate run instance without an ordinary output', () => {
+    const compoundProfile: RunProfile = {
+      id: 'ci',
+      name: 'CI',
+      type: 'compound',
+      source: 'user',
+      steps: [pinnedProfile.id],
+      workspaceId: WS,
+      workspaceName: 'Frontend',
+    };
+    useIDEStore.setState({
+      runProfiles: [compoundProfile],
+      latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+      runCompounds: {
+        ci: {
+          runInstanceId: 'agg-r1',
+          compoundId: 'ci',
+          name: 'CI',
+          state: 'running',
+          currentStep: 0,
+          steps: [],
+          stepOutputs: {},
+        },
+      },
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
   });
 });
 
