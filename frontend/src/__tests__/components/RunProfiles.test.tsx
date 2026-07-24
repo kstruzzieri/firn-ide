@@ -208,6 +208,44 @@ describe('RunProfiles panel header counter', () => {
 
     expect(screen.getByText('exit 3')).toBeInTheDocument();
   });
+
+  it('shows the stopping UI (not "Restarting") when a live compound is stopped', () => {
+    const compoundProfile: RunProfile = {
+      id: 'ci',
+      name: 'CI',
+      type: 'compound',
+      source: 'user',
+      steps: [pinnedProfile.id],
+      workspaceId: WS,
+      workspaceName: 'Frontend',
+    };
+    useIDEStore.setState({
+      runProfiles: [compoundProfile],
+      runProfileState: { ci: { adopted: true } },
+      latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+      runCompounds: {
+        ci: {
+          runInstanceId: 'agg-r1',
+          compoundId: 'ci',
+          name: 'CI',
+          state: 'running',
+          currentStep: 0,
+          steps: [],
+          stepOutputs: {},
+        },
+      },
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+      stoppingProfileIds: ['ci'],
+      stopRequestTimestamps: { ci: 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    // The real-stop path keys off the compound's live 'running' state, which is
+    // only visible to the card because the aggregate run is synthesized into a
+    // RunOutput. A regression would fall back to the restart indicator.
+    expect(screen.queryByText(/Restarting/i)).not.toBeInTheDocument();
+  });
 });
 
 // Profiles for project view: two workspaces, one with a detected profile.
