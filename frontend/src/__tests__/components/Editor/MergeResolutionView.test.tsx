@@ -15,6 +15,7 @@ const controller = {
   redo: jest.fn(() => true),
   next: jest.fn(() => true),
   activate: jest.fn(() => true),
+  reopen: jest.fn(() => true),
   setFrozen: jest.fn(),
   setTheme: jest.fn(),
   destroy: jest.fn(),
@@ -32,6 +33,7 @@ const createMergeResolutionEditor = jest.fn(
   }
 );
 const recordDecision = jest.fn();
+const reopenDecision = jest.fn();
 const selectMergeSide = jest.fn();
 const mergeFinalizeAndStage = jest.fn(() => Promise.resolve(true));
 
@@ -46,7 +48,7 @@ jest.mock('../../../components/Editor/codemirror', () => ({
 }));
 jest.mock('../../../stores/gitStore', () => ({
   useGitStore: {
-    getState: () => ({ recordDecision, selectMergeSide, mergeFinalizeAndStage }),
+    getState: () => ({ recordDecision, reopenDecision, selectMergeSide, mergeFinalizeAndStage }),
   },
 }));
 jest.mock('../../../stores/ideStore', () => ({
@@ -381,5 +383,43 @@ describe('MergeResolutionView', () => {
 
     expect(screen.getByText(/UTF-16LE.*CRLF.*losslessly/i)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Write & stage' })).toBeDisabled();
+  });
+});
+
+describe('MergeResolutionView rail reopen', () => {
+  it('reopens a resolved conflict from the rail and surfaces a jump-back button', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: Current' }));
+    expect(controller.reopen).toHaveBeenCalledWith(0);
+
+    // The real editor would fire onStateChange after the reopen transaction; here
+    // we drive it explicitly to the reopened state.
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+    expect(
+      screen.getByRole('button', { name: 'Conflict 1 reopened — go to it' })
+    ).toBeInTheDocument();
+  });
+
+  it('jump-back activates the reopened conflict and then hides itself', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: Current' }));
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1 reopened — go to it' }));
+    expect(controller.activate).toHaveBeenCalledWith(0);
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+  });
+
+  it('activating an unresolved rail entry does not reopen or surface the jump button', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: unresolved' }));
+
+    expect(controller.activate).toHaveBeenCalledWith(0);
+    expect(controller.reopen).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
   });
 });

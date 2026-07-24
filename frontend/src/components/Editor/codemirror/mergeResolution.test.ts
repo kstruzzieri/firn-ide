@@ -1084,4 +1084,211 @@ describe('merge resolution editor', () => {
     expect(editor.undo()).toBe(true);
     editor.destroy();
   });
+
+  it('reopens a resolved region with the original marker bytes and leaves the caret at EOF', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    const before = editor.view.state.doc.toString();
+    const takeCurrent = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Take Current'
+    ) as HTMLButtonElement;
+    takeCurrent.click();
+
+    expect(editor.getState().decisions[0]).toBe('C');
+    // Park the caret at end-of-document, ABOVE which region 0 will grow on reopen.
+    editor.view.dispatch({ selection: { anchor: editor.view.state.doc.length } });
+
+    expect(editor.reopen(0)).toBe(true);
+
+    expect(editor.view.state.doc.toString()).toBe(before);
+    expect(editor.getState().decisions[0]).toBeUndefined();
+    // The numeric offset must NOT be asserted equal — CodeMirror maps the caret
+    // forward through the larger re-inserted block. What must hold is that the
+    // caret still sits logically at EOF and never jumped up to the reopened region.
+    expect(editor.view.state.selection.main.head).toBe(editor.view.state.doc.length);
+    editor.destroy();
+  });
+
+  it('activates, selects, and focuses the reopened region when asked', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+
+    expect(editor.reopen(0, { activate: true })).toBe(true);
+
+    expect(editor.getState().activeIndex).toBe(0);
+    expect(editor.view.state.selection.main.head).toBe(editor.view.state.doc.line(2).from);
+    expect(editor.view.hasFocus).toBe(true);
+    editor.destroy();
+  });
+
+  it('reopens adjacent empty resolutions without corrupting each other', () => {
+    // Two adjacent regions both resolved to the empty side collapse to points at
+    // the same offset. Reopening one must re-insert ONLY that region's block and
+    // leave the sibling's decision and range intact — the setMergeDecision effect
+    // bypasses the ambiguous-shared-insertion transaction filter, so reopen must
+    // pin ranges explicitly rather than rely on RangeSet.map.
+    const twoEmpty = session({
+      content: [
+        '<<<<<<< current',
+        '=======',
+        'first incoming',
+        '>>>>>>> incoming',
+        '<<<<<<< current',
+        '=======',
+        'second incoming',
+        '>>>>>>> incoming',
+        '',
+      ].join('\n'),
+      regions: [
+        { ...session().regions[0], startLine: 1, endLine: 4, ours: [], theirs: ['first incoming'] },
+        {
+          ...session().regions[1],
+          startLine: 5,
+          endLine: 8,
+          ours: [],
+          theirs: ['second incoming'],
+        },
+      ] as TextMergeSession['regions'],
+    });
+    const editor = createMergeResolutionEditor(document.body, twoEmpty);
+    const original = editor.view.state.doc.toString();
+
+    // Resolve both to the empty CURRENT side → both blocks vanish.
+    editor.activate(0);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+    editor.activate(1);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+    expect(editor.getState().decisions).toEqual({ 0: 'C', 1: 'C' });
+
+    expect(editor.reopen(0)).toBe(true);
+
+    expect(editor.getState().decisions[0]).toBeUndefined();
+    expect(editor.getState().decisions[1]).toBe('C');
+    // Region 1 stays resolved-empty; only region 0's block is back.
+    expect(editor.view.state.doc.toString()).toContain('first incoming');
+    expect(editor.view.state.doc.toString()).not.toContain('second incoming');
+
+    expect(editor.reopen(1)).toBe(true);
+    expect(editor.getState().decisions).toEqual({});
+    expect(editor.view.state.doc.toString()).toBe(original);
+    editor.destroy();
+  });
+
+  it('restores adjacent empty resolutions correctly when reopened in reverse order', () => {
+    const twoEmpty = session({
+      content: [
+        '<<<<<<< current',
+        '=======',
+        'first incoming',
+        '>>>>>>> incoming',
+        '<<<<<<< current',
+        '=======',
+        'second incoming',
+        '>>>>>>> incoming',
+        '',
+      ].join('\n'),
+      regions: [
+        { ...session().regions[0], startLine: 1, endLine: 4, ours: [], theirs: ['first incoming'] },
+        {
+          ...session().regions[1],
+          startLine: 5,
+          endLine: 8,
+          ours: [],
+          theirs: ['second incoming'],
+        },
+      ] as TextMergeSession['regions'],
+    });
+    const editor = createMergeResolutionEditor(document.body, twoEmpty);
+    const original = editor.view.state.doc.toString();
+    editor.activate(0);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+    editor.activate(1);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+
+    // Reverse order: reopen the LATER region first, then the earlier one.
+    expect(editor.reopen(1)).toBe(true);
+    expect(editor.reopen(0)).toBe(true);
+
+    // Blocks must come back in document order (first, then second), not reversed.
+    expect(editor.view.state.doc.toString()).toBe(original);
+    editor.destroy();
+  });
+
+  it('reopens a region after a manual edit, restoring its original block and sparing siblings', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+    expect(editor.getState().decisions[0]).toBe('C');
+
+    // Manually edit region 0's resolved text — the extender retags it 'M'.
+    const region0 = editor.view.state.doc.line(2); // 'current line' after resolution
+    editor.view.dispatch({
+      changes: { from: region0.from, to: region0.to, insert: 'hand edited' },
+    });
+    expect(editor.getState().decisions[0]).toBe('M');
+
+    expect(editor.reopen(0)).toBe(true);
+
+    expect(editor.getState().decisions[0]).toBeUndefined();
+    // Region 0's ORIGINAL marker block is back, region 1 is untouched and still unresolved.
+    expect(editor.view.state.doc.toString()).toContain('<<<<<<< current\ncurrent line');
+    expect(editor.view.state.doc.toString()).not.toContain('hand edited');
+    expect(editor.getState().decisions[1]).toBeUndefined();
+    editor.destroy();
+  });
+
+  it('refuses to reopen an unresolved region or while frozen', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    expect(editor.reopen(0)).toBe(false);
+
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+    editor.setFrozen(true);
+
+    expect(editor.reopen(0)).toBe(false);
+    expect(editor.getState().decisions[0]).toBe('C');
+    editor.destroy();
+  });
+
+  it('undoes a reopen back to the resolved text and decision', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+    const resolved = editor.view.state.doc.toString();
+
+    editor.reopen(0);
+    expect(editor.undo()).toBe(true);
+
+    expect(editor.view.state.doc.toString()).toBe(resolved);
+    expect(editor.getState().decisions[0]).toBe('C');
+    editor.destroy();
+  });
 });

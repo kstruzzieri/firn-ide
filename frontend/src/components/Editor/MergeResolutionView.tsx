@@ -80,6 +80,7 @@ function TextResolutionView({
   themeIdRef.current = themeId;
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
   const [finalizing, setFinalizing] = useState(false);
+  const [reopened, setReopened] = useState<number | null>(null);
   sessionRef.current = session;
 
   useEffect(() => {
@@ -161,6 +162,19 @@ function TextResolutionView({
           </span>
         )}
         <div className={styles.headerActions}>
+          {reopened !== null && resolutionState.decisions[reopened] === undefined && (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => {
+                editorRef.current?.activate(reopened);
+                setReopened(null);
+              }}
+              disabled={finalizing}
+            >
+              Conflict {reopened + 1} reopened — go to it
+            </button>
+          )}
           <button
             type="button"
             className={styles.secondaryButton}
@@ -190,7 +204,15 @@ function TextResolutionView({
                 className={`${styles.railItem} ${decisionClass(decision)} ${resolutionState.activeIndex === index ? styles.active : ''}`}
                 aria-current={resolutionState.activeIndex === index ? 'true' : undefined}
                 aria-label={`Conflict ${index + 1}: ${decisionLabel(decision)}`}
-                onClick={() => editorRef.current?.activate(index)}
+                onClick={() => {
+                  const editor = editorRef.current;
+                  if (!editor) return;
+                  if (resolutionState.decisions[index] === undefined) {
+                    editor.activate(index);
+                    return;
+                  }
+                  if (editor.reopen(index)) setReopened(index);
+                }}
                 disabled={finalizing}
               >
                 {decision ?? index + 1}

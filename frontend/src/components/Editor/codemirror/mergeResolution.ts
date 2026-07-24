@@ -369,9 +369,10 @@ function transactionChanges(tr: {
 function resolutionExtension(
   session: TextMergeSession,
   onStateChange?: (state: MergeResolutionState) => void
-): { extension: Extension[]; field: StateField<ResolutionFieldState> } {
+): { extension: Extension[]; field: StateField<ResolutionFieldState>; originalBlocks: string[] } {
   const document = normalizeDocument(session.content);
   const markerRanges = markerBlockRanges(document, session.regions);
+  const originalBlocks = markerRanges.map(({ from, to }) => document.slice(from, to));
   const regionRanges = session.regions.map((region, index) => {
     const range = markerRanges[index];
     const trailingNewline = document[range.to] === '\n';
@@ -444,6 +445,7 @@ function resolutionExtension(
 
   return {
     field,
+    originalBlocks,
     extension: [
       field,
       EditorState.transactionFilter.of((tr) => {
@@ -511,6 +513,7 @@ export interface MergeResolutionEditor {
   setTheme: (themeId: SyntaxThemeId) => void;
   next: (direction?: MergeDirection) => boolean;
   activate: (index: number) => boolean;
+  reopen: (index: number, options?: { activate?: boolean }) => boolean;
   destroy: () => void;
 }
 
@@ -579,6 +582,8 @@ export function createMergeResolutionEditor(
     setTheme: (themeId) => view.dispatch({ effects: theme.reconfigure(buildTheme(themeId)) }),
     next: (direction = 1) => navigate(view, support.field, session.regions.length, direction),
     activate: (index) => activateRegion(view, support.field, index),
+    reopen: (index, options) =>
+      reopenRegion(view, support.field, support.originalBlocks, index, options?.activate === true),
     destroy: () => view.destroy(),
   };
 }
@@ -639,6 +644,62 @@ function applyResolution(
   });
   view.focus();
   if (choice !== 'M' && activeIndex !== null) activateRegion(view, field, activeIndex);
+  return true;
+}
+
+/** Re-inserts a resolved region's original marker block, exactly as parsed. */
+function reopenRegion(
+  view: EditorView,
+  field: StateField<ResolutionFieldState>,
+  originalBlocks: readonly string[],
+  index: number,
+  activate: boolean
+): boolean {
+  const state = view.state.field(field);
+  if (state.frozen) return false;
+  if (state.decisions[index] === undefined) return false;
+  const snapshot = rangesIn(state);
+  const range = snapshot.find((item) => item.index === index);
+  const block = originalBlocks[index];
+  if (!range || block === undefined) return false;
+
+  const insert = `${block}${range.trailingNewline ? '\n' : ''}`;
+  const delta = insert.length - (range.to - range.from);
+  // Rebuild the range snapshot deterministically by ORIGINAL REGION ORDER (index),
+  // never by coordinate comparison. Regions parse in document order, so index order
+  // IS document order; a lower-index region is before the reopened block, a higher
+  // one is after. This is what makes co-located collapsed regions (two empty
+  // resolutions at the same offset) resolve correctly and REVERSIBLY — a coordinate
+  // test like `item.from >= range.to` would move the earlier sibling the wrong way
+  // and corrupt reverse-order reopen. rangeSetFromSnapshot sorts, so the array need
+  // not be pre-sorted.
+  const pinned: MappedMergeRegion[] = snapshot.map((item) => {
+    if (item.index === index) {
+      return {
+        index,
+        from: range.from,
+        to: range.from + insert.length,
+        trailingNewline: range.trailingNewline,
+      };
+    }
+    if (item.index > index) {
+      return { ...item, from: item.from + delta, to: item.to + delta };
+    }
+    // item.index < index: strictly before the reopened block in document order.
+    return item;
+  });
+
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert },
+    effects: [
+      setMergeDecision.of({ index, decision: undefined }),
+      restoreMergeRanges.of(pinned),
+      ...(activate ? [setMergeActive.of(index)] : []),
+    ],
+    annotations: isolateHistory.of('full'),
+    ...(activate ? { selection: { anchor: range.from }, scrollIntoView: true } : {}),
+  });
+  if (activate) view.focus();
   return true;
 }
 
