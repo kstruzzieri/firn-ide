@@ -374,9 +374,10 @@
    Context tokens are colored from the active syntax palette (exposed as
    --syntax-* custom properties on the container by SearchPanel) and blended
    toward the context gray so the match stays the most salient element. The
-   weight variable is bumped only on real DOM focus of a row, never on the
-   persistent roving .focused cue — raw palette colors would fail WCAG AA at
-   full saturation on these surfaces (see the palettes contrast guard).
+   weight variable is bumped on the persistent roving .focused cue so keyboard
+   focus remains legible while the row owns the active result. Raw palette
+   colors would fail WCAG AA at full saturation on these surfaces (see the
+   palettes contrast guard).
 
    The tok-* classes are raw global strings emitted by the search highlighter,
    scoped here beneath the hashed .context class. color-mix is already used
@@ -386,7 +387,7 @@
   --search-token-weight: 40%;
 }
 
-.resultRow:focus {
+.resultRow.focused {
   --search-token-weight: 55%;
 }
 

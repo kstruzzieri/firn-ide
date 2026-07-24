@@ -69,6 +69,63 @@ describe('useSearchSyntaxSupports', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
+  it('retains resolved support while a newly visible language is pending', async () => {
+    const ts = fakeSupport('TypeScript');
+    const python = fakeSupport('Python');
+    let resolvePython: (support: LanguageSupport) => void = () => {};
+    load.mockImplementation((filename: string) =>
+      filename.endsWith('.py')
+        ? new Promise((resolve) => {
+            resolvePython = resolve;
+          })
+        : Promise.resolve(ts)
+    );
+    const { result, rerender } = renderHook(({ f }) => useSearchSyntaxSupports(f), {
+      initialProps: { f: ['a.ts'] },
+    });
+    await waitFor(() => expect(result.current.get('a.ts')).toBe(ts));
+
+    rerender({ f: ['a.ts', 'a.py'] });
+
+    expect(result.current.get('a.ts')).toBe(ts);
+    expect(result.current.get('a.py')).toBeUndefined();
+    await act(async () => {
+      resolvePython(python);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.get('a.py')).toBe(python));
+  });
+
+  it('publishes each language independently as its load resolves', async () => {
+    const ts = fakeSupport('TypeScript');
+    const python = fakeSupport('Python');
+    let resolveTypeScript: (support: LanguageSupport) => void = () => {};
+    let resolvePython: (support: LanguageSupport) => void = () => {};
+    load.mockImplementation(
+      (filename: string) =>
+        new Promise((resolve) => {
+          if (filename.endsWith('.py')) resolvePython = resolve;
+          else resolveTypeScript = resolve;
+        })
+    );
+    const { result } = renderHook(({ f }) => useSearchSyntaxSupports(f), {
+      initialProps: { f: ['a.ts', 'a.py'] },
+    });
+
+    await act(async () => {
+      resolveTypeScript(ts);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.get('a.ts')).toBe(ts));
+    expect(result.current.get('a.py')).toBeUndefined();
+    await act(async () => {
+      resolvePython(python);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.get('a.py')).toBe(python));
+  });
+
   it('omits unsupported and failed languages, and can retry on a later input', async () => {
     // The real loadLanguageSupport CATCHES failures and resolves null (it never
     // rejects — see languages.ts:82), so the failure case is a null resolution.

@@ -16,6 +16,10 @@ const themeSource = readFileSync(
   resolve(__dirname, '../../../../components/Editor/codemirror/theme.ts'),
   'utf8'
 );
+const searchPanelSource = readFileSync(
+  resolve(__dirname, '../../../../components/Search/SearchPanel.module.css'),
+  'utf8'
+);
 
 // Derive role keys from a live palette so a new SyntaxPalette field is auto-covered.
 const ROLES = Object.keys(SYNTAX_THEMES[0].palette) as (keyof SyntaxPalette)[];
@@ -48,6 +52,16 @@ function contrast(a: RGB, b: RGB): number {
   const l1 = luminance(a);
   const l2 = luminance(b);
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+function searchTokenWeight(selector: string): number | null {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const blocks = searchPanelSource.matchAll(new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, 'gm'));
+  for (const block of blocks) {
+    const percent = block[1].match(/--search-token-weight:\s*([\d.]+)%/)?.[1];
+    if (percent !== undefined) return Number(percent) / 100;
+  }
+  return null;
 }
 
 describe('syntax palette registry', () => {
@@ -143,7 +157,6 @@ describe('search result token contrast', () => {
   // From styles/tokens.css (single dark chrome theme).
   const SECONDARY = parseHex('#94a3b8');
   const SURFACES = { panel: parseHex('#0f172a'), hover: parseHex('#1e293b') };
-  const WEIGHTS = { normal: 0.4, focus: 0.55 };
 
   // color-mix(in srgb, token W, --text-secondary) — gamma-encoded channel lerp.
   function mix(token: RGB, weight: number): RGB {
@@ -151,11 +164,18 @@ describe('search result token contrast', () => {
   }
 
   it('keeps every emitted role at or above 4.5:1 for all themes, weights, and surfaces', () => {
+    const normalWeight = searchTokenWeight('.resultRow');
+    const focusWeight = searchTokenWeight('.resultRow.focused');
+    expect({ normal: normalWeight, focus: focusWeight }).toEqual({ normal: 0.4, focus: 0.55 });
+    if (normalWeight === null || focusWeight === null) {
+      throw new Error('Missing search token weight declaration');
+    }
+    const weights = { normal: normalWeight, focus: focusWeight };
     const failures: string[] = [];
     for (const theme of SYNTAX_THEMES) {
       for (const role of SEARCH_ROLES) {
         const token = parseHex(theme.palette[role]);
-        for (const [wName, w] of Object.entries(WEIGHTS)) {
+        for (const [wName, w] of Object.entries(weights)) {
           const color = mix(token, w);
           for (const [sName, surface] of Object.entries(SURFACES)) {
             const ratio = contrast(color, surface);

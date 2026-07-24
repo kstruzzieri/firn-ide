@@ -1,5 +1,6 @@
 import { tags as t } from '@lezer/highlight';
 import { javascript } from '@codemirror/lang-javascript';
+import { markdown } from '@codemirror/lang-markdown';
 import {
   searchTokenHighlighter,
   SEARCH_TOKEN_ROLES,
@@ -79,6 +80,15 @@ describe('parseLineTokens', () => {
     expect(classes).toContain('tok-keyword'); // const
     expect(classes).toContain('tok-number'); // 42
     expect(tokens!.every((r) => r.className.length > 0)).toBe(true);
+  });
+
+  it('maps Markdown heading text to the function role', () => {
+    const line = '# Firn search';
+    const headingStart = line.indexOf('Firn');
+    const tokens = parseLineTokens(line, markdown());
+    const heading = tokens?.find((token) => token.from <= headingStart && token.to === line.length);
+
+    expect(heading?.className.split(' ')).toContain('tok-function');
   });
 
   it('skips parsing lines longer than the character ceiling', () => {

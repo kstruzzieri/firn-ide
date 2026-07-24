@@ -10,6 +10,7 @@ import { useIDEStore } from '../../../stores/ideStore';
 import { useSearchStore } from '../../../stores/searchStore';
 import { useSearchSyntaxSupports } from '../../../hooks/useSearchSyntaxSupports';
 import type { FileResult, SearchUIState } from '../../../types/search';
+import { MAX_SEARCH_HIGHLIGHTED_ROWS } from '../../../utils/searchTokens';
 
 const mockNavigate = jest.fn();
 jest.mock('../../../utils/editorNavigation', () => ({
@@ -891,6 +892,55 @@ describe('SearchPanel — dimmed syntax tokens (#215)', () => {
     ]);
     setResultsFor(file);
     render(<SearchPanel />);
+    const lastArg = spy.mock.calls[spy.mock.calls.length - 1][0] as string[];
+    expect(lastArg).toEqual(['a.ts']);
+  });
+
+  it('bounds syntax highlighting to the first 50 expanded matches', () => {
+    const spy = useSearchSyntaxSupports as jest.Mock;
+    expect(MAX_SEARCH_HIGHLIGHTED_ROWS).toBe(50);
+    const highlightedMatches = Array.from({ length: MAX_SEARCH_HIGHLIGHTED_ROWS }, (_, index) => ({
+      line: index + 1,
+      text: 'const foo = 1;',
+      submatches: [{ start: 6, end: 9 }],
+    }));
+    const fileA = makeFile('a.ts', highlightedMatches);
+    const fileB = makeFile('b.ts', [
+      {
+        line: MAX_SEARCH_HIGHLIGHTED_ROWS + 1,
+        text: 'const foo = 1;',
+        submatches: [{ start: 6, end: 9 }],
+      },
+    ]);
+    spy.mockReturnValue(
+      new Map([
+        [fileA.relativePath, tsSupport],
+        [fileB.relativePath, tsSupport],
+      ])
+    );
+    setUIState({
+      query: 'foo',
+      uiState: {
+        kind: 'results',
+        files: [fileA, fileB],
+        totalFiles: 2,
+        totalLines: MAX_SEARCH_HIGHLIGHTED_ROWS + 1,
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 10,
+      },
+      expandedFiles: new Set([fileA.path, fileB.path]),
+    });
+
+    render(<SearchPanel />);
+
+    const rows = screen.getAllByRole('button', { name: /^Line \d+ in/ });
+    expect(rows).toHaveLength(MAX_SEARCH_HIGHLIGHTED_ROWS + 1);
+    expect(document.querySelectorAll('mark')).toHaveLength(MAX_SEARCH_HIGHLIGHTED_ROWS + 1);
+    for (const row of rows.slice(0, MAX_SEARCH_HIGHLIGHTED_ROWS)) {
+      expect(row.querySelector('.tok-keyword')).not.toBeNull();
+    }
+    expect(rows[MAX_SEARCH_HIGHLIGHTED_ROWS].querySelector('[class*="tok-"]')).toBeNull();
     const lastArg = spy.mock.calls[spy.mock.calls.length - 1][0] as string[];
     expect(lastArg).toEqual(['a.ts']);
   });

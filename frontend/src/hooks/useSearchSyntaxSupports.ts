@@ -12,9 +12,11 @@ const EMPTY: ReadonlyMap<string, LanguageSupport> = new Map();
  * Panel-level loader: given the distinct filenames of currently visible match
  * rows, returns a filename→LanguageSupport map for the languages that have
  * loaded. Guarantees:
- *   - Empty map on the first render of each new `visibleFilenames` identity, so
- *     every new result set first commits monochrome.
+ *   - Empty map on the initial render; later inputs retain support for filenames
+ *     that remain visible while newly requested languages load.
  *   - One import per distinct language (grouped by LanguageDescription name).
+ *   - Each language publishes as soon as it resolves, independently of slower
+ *     languages in the same input.
  *   - Unsupported files, failed imports, and superseded/unmounted loads never
  *     publish support. `LanguageDescription.load()` already dedupes and clears
  *     failed promises, so no local promise cache is kept (a later input retries).
@@ -22,14 +24,20 @@ const EMPTY: ReadonlyMap<string, LanguageSupport> = new Map();
 export function useSearchSyntaxSupports(
   visibleFilenames: readonly string[]
 ): ReadonlyMap<string, LanguageSupport> {
-  // Adjust-state-on-input-change: resets to EMPTY synchronously (before commit)
-  // whenever the input array identity changes.
+  // Adjust-state-on-input-change synchronously before commit. Preserve only
+  // exact filenames that remain visible; everything else is loaded by the
+  // generation-scoped effect below.
   const [state, setState] = useState<{
     key: readonly string[];
     map: ReadonlyMap<string, LanguageSupport>;
   }>({ key: visibleFilenames, map: EMPTY });
   if (state.key !== visibleFilenames) {
-    setState({ key: visibleFilenames, map: EMPTY });
+    const retained = new Map<string, LanguageSupport>();
+    for (const filename of visibleFilenames) {
+      const support = state.map.get(filename);
+      if (support) retained.set(filename, support);
+    }
+    setState({ key: visibleFilenames, map: retained });
   }
 
   const generationRef = useRef(0);
@@ -53,24 +61,27 @@ export function useSearchSyntaxSupports(
         active = false;
       };
 
-    const tasks = [...groups.values()].map(async ({ sample, filenames }) => {
-      const support = getLoadedLanguageSupport(sample) ?? (await loadLanguageSupport(sample));
-      return { filenames, support };
-    });
+    for (const { sample, filenames } of groups.values()) {
+      void (async () => {
+        const support = getLoadedLanguageSupport(sample) ?? (await loadLanguageSupport(sample));
+        if (!support || !active || generationRef.current !== generation) return;
 
-    void Promise.all(tasks).then((results) => {
-      if (!active || generationRef.current !== generation) return;
-      const map = new Map<string, LanguageSupport>();
-      for (const { filenames, support } of results) {
-        if (!support) continue;
-        for (const filename of filenames) map.set(filename, support);
-      }
-      if (map.size === 0) return;
-      startTransition(() => {
-        if (!active || generationRef.current !== generation) return;
-        setState({ key: visibleFilenames, map });
-      });
-    });
+        startTransition(() => {
+          if (!active || generationRef.current !== generation) return;
+          setState((current) => {
+            if (current.key !== visibleFilenames) return current;
+            const map = new Map(current.map);
+            let changed = false;
+            for (const filename of filenames) {
+              if (map.get(filename) === support) continue;
+              map.set(filename, support);
+              changed = true;
+            }
+            return changed ? { key: visibleFilenames, map } : current;
+          });
+        });
+      })();
+    }
 
     return () => {
       active = false;

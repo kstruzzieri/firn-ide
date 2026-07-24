@@ -86,6 +86,10 @@ export const searchTokenHighlighter: Highlighter = tagHighlighter([
       t.function(t.variableName),
       t.definition(t.function(t.variableName)),
       t.function(t.propertyName),
+      t.heading,
+      t.heading1,
+      t.heading2,
+      t.heading3,
     ],
     class: 'tok-function',
   },
@@ -118,6 +122,13 @@ export interface TokenRange {
  */
 export const MAX_SEARCH_HIGHLIGHT_CHARS = 4_096;
 export const MAX_SEARCH_TOKEN_RANGES = 512;
+
+// Panel-level parsing budget: with the per-row range ceiling above, this caps
+// aggregate syntax work at 50 × 512 styled ranges. Search still renders every
+// result and match mark; rows after this ceiling use the monochrome fallback.
+// ponytail: viewport-aware parsing is the upgrade path if this budget proves
+// too coarse for larger result sets.
+export const MAX_SEARCH_HIGHLIGHTED_ROWS = 50;
 
 /**
  * Parse a single line with the given already-loaded language support and return

@@ -17,6 +17,7 @@ import type { FileResult, LineMatch, SearchUIState } from '../../types/search';
 import { byteColumnToCharColumn } from '../../utils/searchRanges';
 import {
   buildLineRenderModel,
+  MAX_SEARCH_HIGHLIGHTED_ROWS,
   parseLineTokens,
   syntaxPaletteVars,
   type LineRenderPart,
@@ -48,18 +49,27 @@ interface MatchItem {
   index: number;
   file: FileResult;
   match: LineMatch;
+  syntaxEligible: boolean;
 }
 
 type FlatItem = FileItem | MatchItem;
 
 function buildFlatItems(files: FileResult[], expandedFiles: Set<string>): FlatItem[] {
   const items: FlatItem[] = [];
+  let syntaxMatchCount = 0;
   for (const file of files) {
     const expanded = expandedFiles.has(file.path);
     items.push({ kind: 'file', index: items.length, file, expanded });
     if (expanded) {
       for (const match of file.matches) {
-        items.push({ kind: 'match', index: items.length, file, match });
+        items.push({
+          kind: 'match',
+          index: items.length,
+          file,
+          match,
+          syntaxEligible: syntaxMatchCount < MAX_SEARCH_HIGHLIGHTED_ROWS,
+        });
+        syntaxMatchCount++;
       }
     }
   }
@@ -286,7 +296,7 @@ export function SearchPanel() {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const item of flatItems) {
-      if (item.kind === 'match' && !seen.has(item.file.relativePath)) {
+      if (item.kind === 'match' && item.syntaxEligible && !seen.has(item.file.relativePath)) {
         seen.add(item.file.relativePath);
         out.push(item.file.relativePath);
       }
@@ -697,7 +707,9 @@ const PanelBody = memo(function PanelBody({
                     itemRef={setItemRef(item.index)}
                     onActivate={() => onActivateMatch(item.file, item.match)}
                     onFocus={() => onItemFocus(item.index)}
-                    support={supports.get(item.file.relativePath) ?? null}
+                    support={
+                      item.syntaxEligible ? (supports.get(item.file.relativePath) ?? null) : null
+                    }
                   />
                 )
               )}
