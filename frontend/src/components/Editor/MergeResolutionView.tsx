@@ -50,6 +50,39 @@ function decisionLabel(decision: MergeDecision | undefined): string {
   }
 }
 
+export function describeMergeAnnouncement(
+  previous: Record<number, MergeDecision>,
+  next: Record<number, MergeDecision>,
+  totalRegions: number
+): string | null {
+  const resolved: number[] = [];
+  const reopened: number[] = [];
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+    const index = Number(key);
+    if (previous[index] === next[index]) continue;
+    if (next[index] === undefined) reopened.push(index);
+    else resolved.push(index);
+  }
+  if (resolved.length === 0 && reopened.length === 0) return null;
+  resolved.sort((a, b) => a - b);
+  reopened.sort((a, b) => a - b);
+  const parts: string[] = [];
+  if (resolved.length === 1) {
+    parts.push(
+      `Conflict ${resolved[0] + 1} resolved: took ${decisionLabel(next[resolved[0]]).toLowerCase()}`
+    );
+  } else if (resolved.length > 1) {
+    parts.push(`Conflicts ${resolved.map((index) => index + 1).join(', ')} resolved`);
+  }
+  if (reopened.length === 1) {
+    parts.push(`Conflict ${reopened[0] + 1} reopened`);
+  } else if (reopened.length > 1) {
+    parts.push(`Conflicts ${reopened.map((index) => index + 1).join(', ')} reopened`);
+  }
+  const remaining = totalRegions - Object.keys(next).length;
+  return `${parts.join('. ')}. ${remaining} unresolved.`;
+}
+
 export function MergeResolutionView({
   session,
   visible,
@@ -92,6 +125,9 @@ function TextResolutionView({
   const [finalizing, setFinalizing] = useState(false);
   const [reopened, setReopened] = useState<number | null>(null);
   const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
+  const [announcement, setAnnouncement] = useState(
+    () => `${session.regions.length - Object.keys(session.decisions).length} conflicts unresolved.`
+  );
   sessionRef.current = session;
 
   // Reset the strip whenever the session identity changes — a new file or a fresh
@@ -165,6 +201,12 @@ function TextResolutionView({
           if (next.decisions[region] === undefined) actions.reopenDecision(region);
           else actions.recordDecision(region, next.decisions[region]);
         }
+        const message = describeMergeAnnouncement(
+          previous,
+          next.decisions,
+          sessionRef.current.regions.length
+        );
+        if (message !== null) setAnnouncement(message);
         decisionsRef.current = next.decisions;
         setResolutionState(next);
       },
@@ -328,6 +370,9 @@ function TextResolutionView({
           Write &amp; stage
         </button>
       </footer>
+      <div role="status" aria-live="polite" className={styles.srOnly}>
+        {announcement}
+      </div>
     </section>
   );
 }
