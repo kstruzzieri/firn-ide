@@ -125,9 +125,10 @@ function TextResolutionView({
   const [finalizing, setFinalizing] = useState(false);
   const [reopened, setReopened] = useState<number | null>(null);
   const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
-  const [announcement, setAnnouncement] = useState(
-    () => `${session.regions.length - Object.keys(session.decisions).length} conflicts unresolved.`
-  );
+  const [announcement, setAnnouncement] = useState(() => {
+    const remaining = session.regions.length - Object.keys(session.decisions).length;
+    return `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`;
+  });
   sessionRef.current = session;
 
   // Reset the strip whenever the session identity changes — a new file or a fresh

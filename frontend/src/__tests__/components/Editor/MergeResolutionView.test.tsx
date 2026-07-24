@@ -402,7 +402,7 @@ describe('MergeResolutionView', () => {
   it('announces decisions and reopens through the live region', () => {
     render(<MergeResolutionView session={textSession} visible />);
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('1 conflicts unresolved.');
+    expect(status).toHaveTextContent('1 conflict unresolved.');
 
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
     expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
@@ -571,6 +571,13 @@ describe('describeMergeAnnouncement', () => {
   it('describes several regions changed in one transaction deterministically', () => {
     expect(describeMergeAnnouncement({ 0: 'C', 1: 'C' }, { 0: 'M', 1: 'M' }, 2)).toBe(
       'Conflicts 1, 2 resolved. 0 unresolved.'
+    );
+  });
+
+  it('describes a mixed resolve-and-reopen transaction (the motivating multi-region case)', () => {
+    // Region 1 newly resolved to Manual, region 2 reopened, in one transaction.
+    expect(describeMergeAnnouncement({ 0: 'C', 2: 'C' }, { 0: 'C', 1: 'M' }, 4)).toBe(
+      'Conflict 2 resolved: took manual. Conflict 3 reopened. 2 unresolved.'
     );
   });
 
