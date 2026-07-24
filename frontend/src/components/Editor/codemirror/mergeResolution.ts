@@ -23,8 +23,10 @@ import { foldKeymap } from '@codemirror/language';
 import { lintKeymap } from '@codemirror/lint';
 import { Decoration, EditorView, keymap, WidgetType } from '@codemirror/view';
 import type { git } from '../../../../wailsjs/go/models';
+import type { InlineDiffSegment } from '../../../utils/lineDiff';
 import type { MergeDecision, TextMergeSession } from '../../../stores/gitStore';
 import { DEFAULT_SYNTAX_THEME_ID, type SyntaxThemeId } from './palettes';
+import { sideWordMarks, type SideWordMarks } from './mergeWordMarks';
 import { inFileSearchExtensions, inFileSearchKeymap } from './search';
 import { buildTheme } from './theme';
 
@@ -207,7 +209,12 @@ function mapRanges(
   );
 }
 
-function appendSide(parent: HTMLElement, label: string, lines: string[]): void {
+function appendSide(
+  parent: HTMLElement,
+  label: string,
+  lines: string[],
+  marks?: InlineDiffSegment[][]
+): void {
   const side = document.createElement('section');
   side.className = 'cm-mergeResolution-side';
   const heading = document.createElement('div');
@@ -215,7 +222,25 @@ function appendSide(parent: HTMLElement, label: string, lines: string[]): void {
   heading.textContent = label;
   const body = document.createElement('pre');
   body.className = 'cm-mergeResolution-lines';
-  body.textContent = lines.length === 0 ? '(deletes this block)' : lines.join('\n');
+  if (lines.length === 0) {
+    body.textContent = '(deletes this block)';
+  } else if (!marks) {
+    body.textContent = lines.join('\n');
+  } else {
+    lines.forEach((line, index) => {
+      if (index > 0) body.appendChild(document.createTextNode('\n'));
+      for (const segment of marks[index] ?? [{ text: line, type: 'same' as const }]) {
+        if (segment.type === 'same') {
+          body.appendChild(document.createTextNode(segment.text));
+          continue;
+        }
+        const mark = document.createElement('span');
+        mark.className = `cm-mergeResolution-word-${segment.type}`;
+        mark.textContent = segment.text;
+        body.appendChild(mark);
+      }
+    });
+  }
   side.append(heading, body);
   parent.appendChild(side);
 }
@@ -229,6 +254,7 @@ class MergeResolutionWidget extends WidgetType {
     private readonly labels: TextMergeSession['labels'],
     private readonly readOnly: boolean,
     private readonly frozen: boolean,
+    private readonly marks: SideWordMarks | null,
     private readonly act: (view: EditorView, index: number, choice: MergeChoice | 'M') => void,
     private readonly activate: (view: EditorView, index: number) => void
   ) {
@@ -275,8 +301,8 @@ class MergeResolutionWidget extends WidgetType {
     title.className = 'cm-mergeResolution-title';
     title.textContent = `Conflict ${this.index + 1}`;
     root.appendChild(title);
-    appendSide(root, currentLabel, this.region.ours);
-    appendSide(root, incomingLabel, this.region.theirs);
+    appendSide(root, currentLabel, this.region.ours, this.marks?.a);
+    appendSide(root, incomingLabel, this.region.theirs, this.marks?.b);
 
     const actions = document.createElement('div');
     actions.className = 'cm-mergeResolution-actions';
@@ -417,6 +443,9 @@ function resolutionExtension(
   const document = normalizeDocument(session.content);
   const markerRanges = markerBlockRanges(document, session.regions);
   const originalBlocks = markerRanges.map(({ from, to }) => document.slice(from, to));
+  const regionWordMarks = session.regions.map((region) =>
+    sideWordMarks(region.ours, region.theirs)
+  );
   const regionRanges = session.regions.map((region, index) => {
     const range = markerRanges[index];
     const trailingNewline = document[range.to] === '\n';
@@ -477,6 +506,7 @@ function resolutionExtension(
                 session.labels,
                 session.readOnly,
                 value.frozen,
+                regionWordMarks[index],
                 apply,
                 activate
               ),

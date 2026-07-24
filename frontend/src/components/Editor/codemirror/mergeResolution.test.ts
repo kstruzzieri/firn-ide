@@ -197,6 +197,33 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
+  it('renders word-level mark spans in the active card without altering side text', () => {
+    const modified = session({
+      content:
+        'before\n<<<<<<< current\nconst timeout = 100 ms\n=======\nconst timeout = 250 ms\n>>>>>>> incoming\nafter\n',
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 2,
+          endLine: 6,
+          ours: ['const timeout = 100 ms'],
+          theirs: ['const timeout = 250 ms'],
+        },
+      ] as TextMergeSession['regions'],
+    });
+    const editor = createMergeResolutionEditor(document.body, modified);
+
+    const del = document.querySelector('.cm-mergeResolution-word-del');
+    const ins = document.querySelector('.cm-mergeResolution-word-ins');
+    expect(del?.textContent).toBe('100');
+    expect(ins?.textContent).toBe('250');
+
+    const sides = Array.from(document.querySelectorAll('.cm-mergeResolution-lines'));
+    expect(sides[0].textContent).toBe('const timeout = 100 ms');
+    expect(sides[1].textContent).toBe('const timeout = 250 ms');
+    editor.destroy();
+  });
+
   it('applies the requested syntax theme and reconfigures it in place', () => {
     const editor = createMergeResolutionEditor(document.body, session(), {
       syntaxThemeId: 'glacier',

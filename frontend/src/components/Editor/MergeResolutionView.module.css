@@ -269,6 +269,16 @@
   cursor: default;
 }
 
+.editorHost :global(.cm-mergeResolution-word-del) {
+  background: color-mix(in srgb, var(--side-cur) 24%, transparent);
+  border-radius: 2px;
+}
+
+.editorHost :global(.cm-mergeResolution-word-ins) {
+  background: color-mix(in srgb, var(--side-inc) 24%, transparent);
+  border-radius: 2px;
+}
+
 .statusRow {
   border-top: 1px solid var(--surface-border-subtle);
   border-bottom: 0;
