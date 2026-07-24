@@ -106,6 +106,7 @@ function TextResolutionView({
     const initialEditorState = editor.getState();
     decisionsRef.current = initialEditorState.decisions;
     setResolutionState(initialEditorState);
+    setReopened(null);
     return () => {
       editor.destroy();
       editorRef.current = null;

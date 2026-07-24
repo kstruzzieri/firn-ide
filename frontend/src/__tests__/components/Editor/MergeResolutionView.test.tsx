@@ -422,4 +422,26 @@ describe('MergeResolutionView rail reopen', () => {
     expect(controller.reopen).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
   });
+
+  it('clears the jump affordance when the session advances to another file', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: Current' }));
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+    expect(screen.getByRole('button', { name: /go to it/i })).toBeInTheDocument();
+
+    // Advance to a different file. Fresh regions/labels identities force the
+    // editor-create effect (keyed on [session.labels, session.regions]) to rebuild;
+    // the stale jump target must not survive into the untouched next file.
+    const nextSession = {
+      ...textSession,
+      path: 'src/next.ts',
+      requestRevision: 99,
+      regions: [...(textSession as { regions: unknown[] }).regions],
+      labels: { ...(textSession as { labels: object }).labels },
+    } as MergeSession;
+    rerender(<MergeResolutionView session={nextSession} visible />);
+
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+  });
 });
