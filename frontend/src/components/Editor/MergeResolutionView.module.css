@@ -259,7 +259,8 @@
   border-radius: 0;
   background: var(--surface-elevated);
   color: var(--text-secondary);
-  font-family: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
   white-space: pre-wrap;
 }
 
