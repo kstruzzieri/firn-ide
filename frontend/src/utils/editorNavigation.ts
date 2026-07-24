@@ -6,7 +6,7 @@
  * share a single code path instead of duplicating file-open flows.
  */
 
-import { useIDEStore, type EditorFile } from '../stores/ideStore';
+import { useIDEStore, type EditorFile, type EditorNavigationRequest } from '../stores/ideStore';
 import { useGitStore } from '../stores/gitStore';
 import { ReadFile } from '../../wailsjs/go/main/App';
 import { createEditorFile } from './editorFile';
@@ -100,10 +100,10 @@ export async function navigateToEditorLocation(
   // off-screen. A not-yet-open file has no cached scroll, so ordering is moot
   // there and the post-open request below covers it.
   const existing = findOpenFile(toNativeLocalPath(path));
-  let preRegisteredRevision: number | null = null;
+  let preRegisteredNavigation: EditorNavigationRequest | null = null;
   if (existing && shouldApplyNavigation(options)) {
     useIDEStore.getState().requestEditorNavigation(existing.id, line, column);
-    preRegisteredRevision = useIDEStore.getState().pendingEditorNavigation?.revision ?? null;
+    preRegisteredNavigation = useIDEStore.getState().pendingEditorNavigation;
   }
 
   const file = await ensureEditorFileOpen(path, options);
@@ -113,10 +113,18 @@ export async function navigateToEditorLocation(
     // front, otherwise it lingers in the store and would later hijack the
     // viewport the next time that tab is activated for an unrelated reason —
     // and, in the workspace-switch case, would point into the old workspace.
-    // clearPendingEditorNavigation is a no-op unless the id AND revision still
-    // match, so a newer navigation is never clobbered.
-    if (existing && preRegisteredRevision !== null) {
-      useIDEStore.getState().clearPendingEditorNavigation(existing.id, preRegisteredRevision);
+    // Revisions can be reused after the editor consumes and clears a request,
+    // so only retract the exact request object registered by this operation.
+    if (
+      preRegisteredNavigation &&
+      useIDEStore.getState().pendingEditorNavigation === preRegisteredNavigation
+    ) {
+      useIDEStore
+        .getState()
+        .clearPendingEditorNavigation(
+          preRegisteredNavigation.fileId,
+          preRegisteredNavigation.revision
+        );
     }
     return;
   }

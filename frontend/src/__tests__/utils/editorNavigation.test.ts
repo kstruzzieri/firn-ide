@@ -294,6 +294,43 @@ describe('navigateToEditorLocation', () => {
     expect(useIDEStore.getState().pendingEditorNavigation).toBeNull();
   });
 
+  it('preserves a newer same-file navigation when retracting a stale pre-registration', async () => {
+    useIDEStore.setState({ workspace: { name: 'Workspace A', path: '/workspace-a' } });
+    useIDEStore.getState().openFile({
+      id: '/workspace-a/file.ts',
+      name: 'file.ts',
+      path: '/workspace-a/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+    const staleNavigation = navigateToEditorLocation('/workspace-a/file.ts', 5, 3, {
+      shouldApply: () => useIDEStore.getState().workspace?.path === '/workspace-a',
+    });
+    const preRegistered = useIDEStore.getState().pendingEditorNavigation!;
+
+    // Model CodeMirror consuming the first request, then a newer navigation
+    // arriving before the stale operation finishes its awaited activation.
+    useIDEStore
+      .getState()
+      .clearPendingEditorNavigation(preRegistered.fileId, preRegistered.revision);
+    useIDEStore.getState().requestEditorNavigation('/workspace-a/file.ts', 9, 7);
+    const newerNavigation = useIDEStore.getState().pendingEditorNavigation!;
+
+    // Clearing the request resets the store's local revision sequence, so the
+    // new object can reuse the exact same file/revision identity.
+    expect(newerNavigation).not.toBe(preRegistered);
+    expect(newerNavigation.revision).toBe(preRegistered.revision);
+
+    useIDEStore.setState({ workspace: { name: 'Workspace B', path: '/workspace-b' } });
+    await staleNavigation;
+
+    expect(useIDEStore.getState().pendingEditorNavigation).toBe(newerNavigation);
+  });
+
   it('registers the navigation before activating an already-open tab (background-tab scroll fix)', async () => {
     useIDEStore.getState().openFile({
       id: '/test/file.ts',

@@ -71,7 +71,8 @@ function isPosInView(view: EditorView, pos: number): boolean {
  *
  * Guards: bail if the view was torn down, if a file switch replaced the
  * document, or if follow-up navigation moved the selection off `pos`, so we
- * never yank a view the user has moved on to.
+ * never yank a view the user has moved on to. Wheel and pointer input cancel
+ * the sequence immediately so an explicit user interaction also wins.
  */
 function scheduleScrollAssert(
   view: EditorView,
@@ -79,16 +80,45 @@ function scheduleScrollAssert(
   doc: EditorView['state']['doc'],
   attemptsLeft: number
 ): void {
-  requestAnimationFrame(() => {
-    if (!view.dom.isConnected) return;
-    if (view.state.doc !== doc) return;
-    if (view.state.selection.main.head !== pos) return;
-    if (isPosInView(view, pos)) return;
+  let frameId: number | null = null;
+  let finished = false;
 
-    view.dispatch({ effects: EditorView.scrollIntoView(pos) });
-
-    if (attemptsLeft > 1) {
-      scheduleScrollAssert(view, pos, doc, attemptsLeft - 1);
+  const cleanup = () => {
+    if (finished) return;
+    finished = true;
+    if (frameId !== null) {
+      cancelAnimationFrame(frameId);
+      frameId = null;
     }
-  });
+    view.scrollDOM.removeEventListener('wheel', cleanup);
+    view.scrollDOM.removeEventListener('pointerdown', cleanup);
+  };
+
+  const schedule = (remainingAttempts: number) => {
+    frameId = requestAnimationFrame(() => {
+      if (finished) return;
+      frameId = null;
+      if (
+        !view.dom.isConnected ||
+        view.state.doc !== doc ||
+        view.state.selection.main.head !== pos ||
+        isPosInView(view, pos)
+      ) {
+        cleanup();
+        return;
+      }
+
+      view.dispatch({ effects: EditorView.scrollIntoView(pos) });
+
+      if (remainingAttempts > 1) {
+        schedule(remainingAttempts - 1);
+      } else {
+        cleanup();
+      }
+    });
+  };
+
+  view.scrollDOM.addEventListener('wheel', cleanup);
+  view.scrollDOM.addEventListener('pointerdown', cleanup);
+  schedule(attemptsLeft);
 }

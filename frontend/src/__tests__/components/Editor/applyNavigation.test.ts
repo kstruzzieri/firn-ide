@@ -28,6 +28,7 @@ function makeFakeView(text: string, connected = true) {
   const lines = text.split('\n');
   const view = {
     dom: { isConnected: connected },
+    scrollDOM: document.createElement('div'),
     focus: jest.fn(),
     dispatch: jest.fn((spec: NavDispatchSpec) => {
       if (spec.selection) {
@@ -57,20 +58,27 @@ function nav(line: number, column = 1): EditorNavigationRequest {
   return { fileId: '/f.ts', line, column, revision: 1 };
 }
 
-let rafCallbacks: FrameRequestCallback[] = [];
+let rafCallbacks = new Map<number, FrameRequestCallback>();
+let nextRafId = 1;
 
 beforeEach(() => {
   // Capture rAF callbacks so each test controls when the deferred re-scroll runs.
-  rafCallbacks = [];
+  rafCallbacks = new Map();
+  nextRafId = 1;
   global.requestAnimationFrame = jest.fn((cb: FrameRequestCallback) => {
-    rafCallbacks.push(cb);
-    return rafCallbacks.length;
+    const id = nextRafId;
+    nextRafId += 1;
+    rafCallbacks.set(id, cb);
+    return id;
+  });
+  global.cancelAnimationFrame = jest.fn((id: number) => {
+    rafCallbacks.delete(id);
   });
 });
 
 function flushRaf() {
-  const pending = rafCallbacks;
-  rafCallbacks = [];
+  const pending = [...rafCallbacks.values()];
+  rafCallbacks.clear();
   pending.forEach((cb) => cb(0));
 }
 
@@ -144,9 +152,8 @@ describe('applyNavigation', () => {
   ): ReturnType<typeof makeFakeView> {
     const extended = view as ReturnType<typeof makeFakeView> & {
       coordsAtPos: () => { top: number; bottom: number };
-      scrollDOM: { getBoundingClientRect: () => { top: number; bottom: number } };
     };
-    extended.scrollDOM = { getBoundingClientRect: () => ({ top: 90, bottom: 704 }) };
+    extended.scrollDOM.getBoundingClientRect = () => ({ top: 90, bottom: 704 }) as DOMRect;
     // Off-screen far below until the caller says it converged.
     extended.coordsAtPos = () =>
       isVisible() ? { top: 200, bottom: 210 } : { top: 15596, bottom: 15606 };
@@ -176,6 +183,26 @@ describe('applyNavigation', () => {
     expect(reasserts).toBe(3);
   });
 
+  it.each(['wheel', 'pointerdown'])('stops re-asserting after user %s input', (eventType) => {
+    const view = makeFakeView(DOC);
+    let reasserts = 0;
+    withGeometry(view, () => false);
+    const inner = view.dispatch;
+    view.dispatch = jest.fn((spec: NavDispatchSpec) => {
+      if (spec.effects) reasserts += 1;
+      return inner(spec);
+    }) as typeof view.dispatch;
+
+    applyNavigation(view as never, nav(12));
+    flushRaf();
+    expect(reasserts).toBe(1);
+
+    view.scrollDOM.dispatchEvent(new Event(eventType));
+    for (let i = 0; i < 10; i += 1) flushRaf();
+
+    expect(reasserts).toBe(1);
+  });
+
   // Line wrapping is enabled, and search results routinely match long lines, so
   // a wrapped match can be taller than the viewport. Requiring the WHOLE line to
   // fit would be unsatisfiable there and burn every retry frame; the line's start
@@ -185,9 +212,8 @@ describe('applyNavigation', () => {
     let reasserts = 0;
     const extended = view as ReturnType<typeof makeFakeView> & {
       coordsAtPos: () => { top: number; bottom: number };
-      scrollDOM: { getBoundingClientRect: () => { top: number; bottom: number } };
     };
-    extended.scrollDOM = { getBoundingClientRect: () => ({ top: 90, bottom: 704 }) };
+    extended.scrollDOM.getBoundingClientRect = () => ({ top: 90, bottom: 704 }) as DOMRect;
     // Starts just inside the viewport, wraps far past its bottom edge.
     extended.coordsAtPos = () => ({ top: 200, bottom: 5000 });
     const inner = view.dispatch;
