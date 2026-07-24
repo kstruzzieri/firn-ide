@@ -410,6 +410,27 @@ describe('MergeResolutionView', () => {
     act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
     expect(status).toHaveTextContent('Conflict 1 reopened. 1 unresolved.');
   });
+
+  it('resets the announcement to the new file summary when the session advances', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    const status = screen.getByRole('status');
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
+
+    // Advance to a different file — fresh regions/labels identities rebuild the editor.
+    const nextSession = {
+      ...textSession,
+      path: 'src/next.ts',
+      requestRevision: 99,
+      regions: [...(textSession as { regions: unknown[] }).regions],
+      labels: { ...(textSession as { labels: object }).labels },
+    } as MergeSession;
+    rerender(<MergeResolutionView session={nextSession} visible />);
+
+    // The previous file's "resolved" message must not linger; the new file's
+    // summary is announced instead.
+    expect(status).toHaveTextContent('1 conflict unresolved.');
+  });
 });
 
 describe('MergeResolutionView rail reopen', () => {

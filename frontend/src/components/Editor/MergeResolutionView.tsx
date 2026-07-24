@@ -218,6 +218,12 @@ function TextResolutionView({
     decisionsRef.current = initialEditorState.decisions;
     setResolutionState(initialEditorState);
     setReopened(null);
+    // Reset the live-region summary for the new file, matching the reopened/base
+    // resets — otherwise the previous file's last announcement lingers until the
+    // first action here.
+    const remainingOnOpen =
+      session.regions.length - Object.keys(initialEditorState.decisions).length;
+    setAnnouncement(`${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`);
     return () => {
       editor.destroy();
       editorRef.current = null;
