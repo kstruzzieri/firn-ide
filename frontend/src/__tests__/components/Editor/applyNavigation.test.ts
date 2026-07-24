@@ -28,6 +28,7 @@ function makeFakeView(text: string, connected = true) {
   const lines = text.split('\n');
   const view = {
     dom: { isConnected: connected },
+    scrollDOM: document.createElement('div'),
     focus: jest.fn(),
     dispatch: jest.fn((spec: NavDispatchSpec) => {
       if (spec.selection) {
@@ -57,20 +58,27 @@ function nav(line: number, column = 1): EditorNavigationRequest {
   return { fileId: '/f.ts', line, column, revision: 1 };
 }
 
-let rafCallbacks: FrameRequestCallback[] = [];
+let rafCallbacks = new Map<number, FrameRequestCallback>();
+let nextRafId = 1;
 
 beforeEach(() => {
   // Capture rAF callbacks so each test controls when the deferred re-scroll runs.
-  rafCallbacks = [];
+  rafCallbacks = new Map();
+  nextRafId = 1;
   global.requestAnimationFrame = jest.fn((cb: FrameRequestCallback) => {
-    rafCallbacks.push(cb);
-    return rafCallbacks.length;
+    const id = nextRafId;
+    nextRafId += 1;
+    rafCallbacks.set(id, cb);
+    return id;
+  });
+  global.cancelAnimationFrame = jest.fn((id: number) => {
+    rafCallbacks.delete(id);
   });
 });
 
 function flushRaf() {
-  const pending = rafCallbacks;
-  rafCallbacks = [];
+  const pending = [...rafCallbacks.values()];
+  rafCallbacks.clear();
   pending.forEach((cb) => cb(0));
 }
 
@@ -131,6 +139,112 @@ describe('applyNavigation', () => {
     flushRaf();
 
     expect(view.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  // A jump far into a large document resolves against ESTIMATED line heights
+  // (CodeMirror only measures what it has rendered), so the first scroll lands
+  // short and the target is still off-screen. Observed in the wild: line 1105
+  // scrolled to 4375 while the line sat ~15000px further down. The scroll must
+  // keep re-asserting, as each frame measures more, until the line is on screen.
+  function withGeometry(
+    view: ReturnType<typeof makeFakeView>,
+    isVisible: () => boolean
+  ): ReturnType<typeof makeFakeView> {
+    const extended = view as ReturnType<typeof makeFakeView> & {
+      coordsAtPos: () => { top: number; bottom: number };
+    };
+    extended.scrollDOM.getBoundingClientRect = () => ({ top: 90, bottom: 704 }) as DOMRect;
+    // Off-screen far below until the caller says it converged.
+    extended.coordsAtPos = () =>
+      isVisible() ? { top: 200, bottom: 210 } : { top: 15596, bottom: 15606 };
+    return extended;
+  }
+
+  it('keeps re-asserting the scroll until the target line is really in view', () => {
+    const view = makeFakeView(DOC);
+    let reasserts = 0;
+    withGeometry(view, () => reasserts >= 3);
+    const inner = view.dispatch;
+    view.dispatch = jest.fn((spec: NavDispatchSpec) => {
+      if (spec.effects) reasserts += 1;
+      return inner(spec);
+    }) as typeof view.dispatch;
+
+    applyNavigation(view as never, nav(12));
+
+    flushRaf(); // 1st re-assert (still off-screen)
+    expect(reasserts).toBe(1);
+    flushRaf(); // 2nd
+    expect(reasserts).toBe(2);
+    flushRaf(); // 3rd — after this the line reports visible
+    expect(reasserts).toBe(3);
+
+    flushRaf(); // converged: must NOT scroll again
+    expect(reasserts).toBe(3);
+  });
+
+  it.each(['wheel', 'pointerdown'])('stops re-asserting after user %s input', (eventType) => {
+    const view = makeFakeView(DOC);
+    let reasserts = 0;
+    withGeometry(view, () => false);
+    const inner = view.dispatch;
+    view.dispatch = jest.fn((spec: NavDispatchSpec) => {
+      if (spec.effects) reasserts += 1;
+      return inner(spec);
+    }) as typeof view.dispatch;
+
+    applyNavigation(view as never, nav(12));
+    flushRaf();
+    expect(reasserts).toBe(1);
+
+    view.scrollDOM.dispatchEvent(new Event(eventType));
+    for (let i = 0; i < 10; i += 1) flushRaf();
+
+    expect(reasserts).toBe(1);
+  });
+
+  // Line wrapping is enabled, and search results routinely match long lines, so
+  // a wrapped match can be taller than the viewport. Requiring the WHOLE line to
+  // fit would be unsatisfiable there and burn every retry frame; the line's start
+  // being on screen is what "scrolled to it" means.
+  it('treats a wrapped line taller than the viewport as in view', () => {
+    const view = makeFakeView(DOC);
+    let reasserts = 0;
+    const extended = view as ReturnType<typeof makeFakeView> & {
+      coordsAtPos: () => { top: number; bottom: number };
+    };
+    extended.scrollDOM.getBoundingClientRect = () => ({ top: 90, bottom: 704 }) as DOMRect;
+    // Starts just inside the viewport, wraps far past its bottom edge.
+    extended.coordsAtPos = () => ({ top: 200, bottom: 5000 });
+    const inner = view.dispatch;
+    view.dispatch = jest.fn((spec: NavDispatchSpec) => {
+      if (spec.effects) reasserts += 1;
+      return inner(spec);
+    }) as typeof view.dispatch;
+
+    applyNavigation(view as never, nav(12));
+    flushRaf();
+    flushRaf();
+
+    expect(reasserts).toBe(0);
+  });
+
+  it('stops re-asserting after a bounded number of frames when it never converges', () => {
+    const view = makeFakeView(DOC);
+    let reasserts = 0;
+    withGeometry(view, () => false); // never visible
+    const inner = view.dispatch;
+    view.dispatch = jest.fn((spec: NavDispatchSpec) => {
+      if (spec.effects) reasserts += 1;
+      return inner(spec);
+    }) as typeof view.dispatch;
+
+    applyNavigation(view as never, nav(12));
+    for (let i = 0; i < 25; i += 1) flushRaf();
+
+    // Bounded: never spins forever.
+    expect(reasserts).toBeGreaterThan(1);
+    expect(reasserts).toBeLessThanOrEqual(8);
   });
 
   it('clamps to the last line and ignores non-positive lines', () => {

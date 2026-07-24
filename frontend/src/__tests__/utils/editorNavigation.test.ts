@@ -261,4 +261,110 @@ describe('navigateToEditorLocation', () => {
 
     expect(rev2).toBeGreaterThan(rev1);
   });
+
+  // The navigation is registered up front (before the tab is activated) so the
+  // editor can suppress the cached-scroll restore. If the activation then does
+  // not happen, that pre-registration must be retracted — otherwise it lingers
+  // and hijacks the viewport the next time the tab is activated for an unrelated
+  // reason, and in the workspace-switch case it points into the old workspace.
+  it('retracts the pre-registered navigation when the workspace changes mid-flight', async () => {
+    useIDEStore.setState({ workspace: { name: 'Workspace A', path: '/workspace-a' } });
+    useIDEStore.getState().openFile({
+      id: '/workspace-a/file.ts',
+      name: 'file.ts',
+      path: '/workspace-a/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+    const navigation = navigateToEditorLocation('/workspace-a/file.ts', 5, 3, {
+      shouldApply: () => useIDEStore.getState().workspace?.path === '/workspace-a',
+    });
+
+    // Registered synchronously, before the activation is awaited.
+    expect(useIDEStore.getState().pendingEditorNavigation?.fileId).toBe('/workspace-a/file.ts');
+
+    // The user switches workspaces while the pre-open flush is in flight.
+    useIDEStore.setState({ workspace: { name: 'Workspace B', path: '/workspace-b' } });
+    await navigation;
+
+    expect(useIDEStore.getState().pendingEditorNavigation).toBeNull();
+  });
+
+  it('preserves a newer same-file navigation when retracting a stale pre-registration', async () => {
+    useIDEStore.setState({ workspace: { name: 'Workspace A', path: '/workspace-a' } });
+    useIDEStore.getState().openFile({
+      id: '/workspace-a/file.ts',
+      name: 'file.ts',
+      path: '/workspace-a/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+    const staleNavigation = navigateToEditorLocation('/workspace-a/file.ts', 5, 3, {
+      shouldApply: () => useIDEStore.getState().workspace?.path === '/workspace-a',
+    });
+    const preRegistered = useIDEStore.getState().pendingEditorNavigation!;
+
+    // Model CodeMirror consuming the first request, then a newer navigation
+    // arriving before the stale operation finishes its awaited activation.
+    useIDEStore
+      .getState()
+      .clearPendingEditorNavigation(preRegistered.fileId, preRegistered.revision);
+    useIDEStore.getState().requestEditorNavigation('/workspace-a/file.ts', 9, 7);
+    const newerNavigation = useIDEStore.getState().pendingEditorNavigation!;
+
+    // Clearing the request resets the store's local revision sequence, so the
+    // new object can reuse the exact same file/revision identity.
+    expect(newerNavigation).not.toBe(preRegistered);
+    expect(newerNavigation.revision).toBe(preRegistered.revision);
+
+    useIDEStore.setState({ workspace: { name: 'Workspace B', path: '/workspace-b' } });
+    await staleNavigation;
+
+    expect(useIDEStore.getState().pendingEditorNavigation).toBe(newerNavigation);
+  });
+
+  it('registers the navigation before activating an already-open tab (background-tab scroll fix)', async () => {
+    useIDEStore.getState().openFile({
+      id: '/test/file.ts',
+      name: 'file.ts',
+      path: '/test/file.ts',
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+    // The editor's file-switch effect restores a background tab's cached scroll
+    // on activation and only skips it when a navigation is already pending. So
+    // the navigation MUST be registered before the tab is activated — capture
+    // what was pending at the moment setActiveFile ran.
+    let pendingFileAtActivation: string | null | undefined = 'not-called';
+    const original = useIDEStore.getState().setActiveFile;
+    const spy = jest
+      .spyOn(useIDEStore.getState(), 'setActiveFile')
+      .mockImplementation((id: string | null) => {
+        pendingFileAtActivation = useIDEStore.getState().pendingEditorNavigation?.fileId ?? null;
+        return original(id);
+      });
+
+    await navigateToEditorLocation('/test/file.ts', 5, 3);
+
+    expect(pendingFileAtActivation).toBe('/test/file.ts');
+    expect(useIDEStore.getState().pendingEditorNavigation).toMatchObject({
+      fileId: '/test/file.ts',
+      line: 5,
+      column: 3,
+    });
+
+    spy.mockRestore();
+  });
 });

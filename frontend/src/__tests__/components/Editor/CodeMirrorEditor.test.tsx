@@ -70,25 +70,28 @@ const mockLoadLanguageSupport = jest.fn<Promise<unknown>, [string]>();
 
 jest.mock('../../../components/Editor/codemirror', () => {
   class MockEditorView {
-    state: { doc: FakeDoc };
+    state: { doc: FakeDoc; selection: { main: { head: number } } };
     scrollDOM = {
       scrollTop: 0,
       addEventListener: jest.fn(),
       removeEventListener: jest.fn(),
     };
     contentDOM = document.createElement('div');
+    // applyNavigation reads view.dom.isConnected in its deferred re-scroll guard.
+    dom = { isConnected: true };
     dispatch = jest.fn();
     destroy = jest.fn();
+    focus = jest.fn();
 
     constructor({ state, parent }: { state: { doc: FakeDoc }; parent: HTMLElement }) {
-      this.state = state;
+      this.state = { selection: { main: { head: 0 } }, ...state };
       parent.appendChild(this.contentDOM);
       // eslint-disable-next-line @typescript-eslint/no-this-alias
       lastEditorView = this;
     }
 
     setState(newState: { doc: FakeDoc }) {
-      this.state = newState;
+      this.state = { selection: { main: { head: 0 } }, ...newState };
     }
   }
 
@@ -471,6 +474,44 @@ describe('CodeMirrorEditor', () => {
     await waitFor(() =>
       expect(screen.queryByText(/no python interpreter/i)).not.toBeInTheDocument()
     );
+  });
+
+  // Regression: clicking a search result for a file that is already open in a
+  // BACKGROUND tab must scroll to the target line. The tab's cached scroll
+  // position was being restored on activation, overriding the pending
+  // navigation, so the file switched but the viewport stayed put.
+  it('lets a pending navigation drive the viewport instead of the cached scroll of a background tab', () => {
+    const A = '/p/a.ts';
+    const B = '/p/b.ts';
+    const bContent = Array.from({ length: 50 }, (_, i) => `b line ${i + 1}`).join('\n');
+    const shared = { openFileIds: [A, B] };
+    const CACHED_SCROLL = 120;
+
+    const { rerender } = render(
+      <CodeMirrorEditor fileId={A} filename="a.ts" content={'a\nb\nc'} {...shared} />
+    );
+    // Show B, scroll it, switch back to A: B is now a cached background tab @120.
+    rerender(<CodeMirrorEditor fileId={B} filename="b.ts" content={bContent} {...shared} />);
+    lastEditorView!.scrollDOM.scrollTop = CACHED_SCROLL;
+    rerender(<CodeMirrorEditor fileId={A} filename="a.ts" content={'a\nb\nc'} {...shared} />);
+
+    lastEditorView!.scrollDOM.scrollTop = 0;
+    lastEditorView!.dispatch.mockClear();
+
+    // Queue a navigation to background B, then activate B (as a search-result click does).
+    act(() => {
+      useIDEStore.getState().requestEditorNavigation(B, 40, 1);
+    });
+    rerender(<CodeMirrorEditor fileId={B} filename="b.ts" content={bContent} {...shared} />);
+
+    // The navigation still runs (moves the selection)...
+    const navDispatch = lastEditorView!.dispatch.mock.calls.find(
+      (c) => (c[0] as DispatchSpec).selection
+    );
+    expect(navDispatch).toBeDefined();
+    // ...and the cached scroll must NOT be restored on top of it, or the target
+    // line stays off-screen. The pending navigation owns the viewport.
+    expect(lastEditorView!.scrollDOM.scrollTop).not.toBe(CACHED_SCROLL);
   });
 });
 

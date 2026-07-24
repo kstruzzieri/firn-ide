@@ -234,7 +234,20 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       // The cached state baked in whatever theme was live when cached; the
       // live-theme subscription only updates the active view, so re-theme now.
       applyEditorTheme(view, useIDEStore.getState().editorSyntaxTheme);
-      view.scrollDOM.scrollTop = cached.scrollTop;
+      // A pending navigation for this file (e.g. clicking a search result for a
+      // file that is already open in a background tab) must own the viewport.
+      // Restoring the tab's remembered scroll here would override the jump — the
+      // file switches but the target line stays off-screen. Skip the scroll
+      // restore in that case and let the navigation effect scroll to the target,
+      // exactly as it does for a freshly-opened file.
+      // navigateToEditorLocation registers a pending navigation before it
+      // activates an already-open tab, so this is set in time to suppress the
+      // restore for a search-result jump.
+      const navPendingForThisFile =
+        useIDEStore.getState().pendingEditorNavigation?.fileId === fileId;
+      if (!navPendingForThisFile) {
+        view.scrollDOM.scrollTop = cached.scrollTop;
+      }
       // Restored state already carries selection/scroll; suppress initial apply.
       hasAppliedInitialCursorRef.current = true;
       hasAppliedInitialScrollRef.current = true;
