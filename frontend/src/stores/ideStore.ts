@@ -950,10 +950,17 @@ export const useIDEStore = create<IDEStore>()(
           set(
             (state) => {
               const wd = getProfileWorkingDirSnapshot(state, chunk.profileId);
-              return retainRunOutput(
+              const retained = retainRunOutput(
                 state,
                 createRunOutput(chunk.profileId, chunk.runInstanceId, wd)
               );
+              return {
+                ...retained,
+                runStartTimestamps: {
+                  ...state.runStartTimestamps,
+                  [chunk.profileId]: chunk.timestamp,
+                },
+              };
             },
             false,
             'appendRunOutput:provision'
@@ -1116,7 +1123,11 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Run history ---
             let { runHistory } = state;
-            if (isTerminalRunState(newState) && state.runStartTimestamps[profileId]) {
+            if (
+              isTerminalRunState(newState) &&
+              state.runStartTimestamps[profileId] &&
+              (isCompoundAggregate || existingBefore?.state === 'running')
+            ) {
               const existingHistory = runHistory[profileId] ?? [];
               const entry: RunHistoryEntry = {
                 state: newState as RunHistoryEntry['state'],
@@ -1218,7 +1229,7 @@ export const useIDEStore = create<IDEStore>()(
             const existing = state.runOutputs[runInstanceId];
             if (!existing) return state;
 
-            if (existing.state === 'running') {
+            if (!isTerminalRunState(existing.state)) {
               lineAssemblers.delete(runInstanceId);
               assemblerCallbacks.delete(runInstanceId);
               return {
@@ -1267,7 +1278,7 @@ export const useIDEStore = create<IDEStore>()(
           (state) => {
             const preserved: Record<string, RunOutput> = {};
             for (const [id, output] of Object.entries(state.runOutputs)) {
-              if (output.state === 'running') {
+              if (!isTerminalRunState(output.state)) {
                 preserved[id] = { ...output, entries: [] };
               }
             }
@@ -1282,8 +1293,8 @@ export const useIDEStore = create<IDEStore>()(
             }
             const preservedRunIdsByProfile: Record<string, string[]> = {};
             for (const [profileId, ids] of Object.entries(state.runInstanceIdsByProfile)) {
-              const runningIds = ids.filter((id) => preserved[id]);
-              if (runningIds.length > 0) preservedRunIdsByProfile[profileId] = runningIds;
+              const liveIds = ids.filter((id) => preserved[id]);
+              if (liveIds.length > 0) preservedRunIdsByProfile[profileId] = liveIds;
             }
             const firstId =
               Object.keys(preserved)[0] ??
@@ -1328,7 +1339,7 @@ export const useIDEStore = create<IDEStore>()(
           snapshot.latestRunInstanceIdByProfile[compoundId] !== runInstanceId ||
           snapshot.compoundIdByRunInstance[runInstanceId] !== compoundId ||
           prevRun?.runInstanceId !== runInstanceId ||
-          (aggregateState === 'running' && isTerminalRunState(prevRun.state))
+          prevRun?.state !== aggregateState
         ) {
           return;
         }

@@ -131,6 +131,7 @@ describe('ordinary run-instance output history', () => {
     const state = phase2State();
     expect(state.runOutputs.r1.state).toBe('success');
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['early']);
+    expect(state.runHistory.p1).toBeUndefined();
   });
 
   it('does not regress a terminal execution on delayed same-RID running status', () => {
@@ -275,6 +276,24 @@ describe('ordinary run-instance output history', () => {
     expect(state.runOutputs.r4.entries.map((entry) => entry.text)).toEqual(['early']);
   });
 
+  it('does not resurrect a cleared execution after newer output arrives before status', () => {
+    completeRun('r1', 'one\n', 'p1', 1000);
+    completeRun('r2', 'two\n', 'p1', 2000);
+    const store = useIDEStore.getState();
+    store.clearRunOutput('r2');
+
+    store.appendRunOutput(chunk('r3', 'new early\n', 'p1', 3001));
+    store.appendRunOutput(chunk('r2', 'stale\n', 'p1', 2001));
+    store.handleRunStatus(status('r3', 'running', 'p1', 3000));
+
+    const state = phase2State();
+    expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r3']);
+    expect(state.latestRunInstanceIdByProfile.p1).toBe('r3');
+    expect(state.runOutputs.r2).toBeUndefined();
+    expect(state.runOutputs.r3.state).toBe('running');
+    expect(state.runOutputs.r3.entries.map((entry) => entry.text)).toEqual(['new early']);
+  });
+
   it('selects a new execution when a retained run of the same profile is active', () => {
     completeRun('r1', 'one\n', 'p1', 1000);
     useIDEStore.getState().setActiveRunOutput('r1');
@@ -341,6 +360,28 @@ describe('ordinary run-instance output history', () => {
     expect(phase2State().activeRunOutputId).toBe('r1');
     expect(phase2State().latestRunInstanceIdByProfile.p1).toBe('r2');
   });
+
+  it.each(['clearRunOutput', 'clearAllRunOutputs'] as const)(
+    'keeps output-before-status execution routable through %s',
+    (clearAction) => {
+      const store = useIDEStore.getState();
+      store.appendRunOutput(chunk('r1', 'early\n', 'p1', 1001));
+
+      if (clearAction === 'clearRunOutput') {
+        store.clearRunOutput('r1');
+      } else {
+        store.clearAllRunOutputs();
+      }
+      store.handleRunStatus(status('r1', 'running', 'p1', 1000));
+      store.appendRunOutput(chunk('r1', 'later\n', 'p1', 1002));
+
+      const state = phase2State();
+      expect(state.runOutputs.r1.state).toBe('running');
+      expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['later']);
+      expect(state.runInstanceIdsByProfile.p1).toEqual(['r1']);
+      expect(state.latestRunInstanceIdByProfile.p1).toBe('r1');
+    }
+  );
 
   it('keeps the running execution routable while clearing output and workspace state', () => {
     completeRun('r1', 'old\n');

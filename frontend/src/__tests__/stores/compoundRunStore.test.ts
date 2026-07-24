@@ -676,6 +676,7 @@ describe('compoundRunStore - Phase 2A regressions', () => {
       '[truncated — oldest output removed]'
     );
 
+    store.handleRunStatus(aggregateStatus(AGG_RID, 'success', 1100));
     store.handleCompoundRun(snapshot(AGG_RID, 'success'));
 
     const entries = useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0];
@@ -745,6 +746,23 @@ describe('compoundRunStore - Phase 2A regressions', () => {
     const state = useIDEStore.getState();
     expect(state.runCompounds[COMPOUND_ID].runInstanceId).toBe('r10');
     expect(state.runCompounds[COMPOUND_ID].state).toBe('success');
+  });
+
+  it('rejects a compound snapshot whose aggregate state was not authorized by status', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    store.handleRunStatus(aggregateStatus('r10', 'failed', 1200));
+    store.handleCompoundRun(snapshot('r10', 'failed'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID].state).toBe('success');
+    expect(state.runHistory[COMPOUND_ID]).toEqual([
+      { state: 'success', duration: 100, timestamp: 1100 },
+    ]);
   });
 
   it.each(['success', 'failed', 'stopped'] as const)(

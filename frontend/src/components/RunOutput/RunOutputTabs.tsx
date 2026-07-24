@@ -43,17 +43,15 @@ export function RunOutputTabs() {
         const output = runOutputs[id];
         const compoundId = compoundIdByRunInstance[id];
         const compound = compoundId ? runCompounds[compoundId] : undefined;
-        const visualStateId = output
-          ? latestRunInstanceIdByProfile[output.profileId] === id
-            ? output.profileId
-            : id
-          : (compoundId ?? id);
-        const vs: VisualState = getVisualState(
-          visualStateId,
-          output?.state ?? compound?.state,
-          stoppingIds,
-          restartingIds
-        );
+        const vs: VisualState =
+          output && latestRunInstanceIdByProfile[output.profileId] !== id
+            ? output.state
+            : getVisualState(
+                output?.profileId ?? compoundId ?? id,
+                output?.state ?? compound?.state,
+                stoppingIds,
+                restartingIds
+              );
         const isActive = activeId === id;
         return (
           <button

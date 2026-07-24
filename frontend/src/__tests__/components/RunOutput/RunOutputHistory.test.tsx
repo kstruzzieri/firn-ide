@@ -124,6 +124,25 @@ it('renders retained ordinary tabs in indexed order with profile and opaque run 
   expect(useIDEStore.getState().activeRunOutputId).toBe('r1');
 });
 
+it('does not apply another profile lifecycle state to a colliding historical run id', () => {
+  useIDEStore.setState({
+    runOutputs: {
+      p2: output('p2', 'p1', 'old', 'old-dir'),
+      r2: output('r2', 'p1', 'new', 'new-dir'),
+    },
+    runInstanceIdsByProfile: { p1: ['p2', 'r2'] },
+    latestRunInstanceIdByProfile: { p1: 'r2' },
+    stoppingProfileIds: ['p2'],
+    activeRunOutputId: 'p2',
+  });
+
+  render(<RunOutputTabs />);
+
+  const historicalDot = screen.getByRole('button', { name: 'Build · p2' }).querySelector('span');
+  expect(historicalDot).toHaveClass('dotSuccess');
+  expect(historicalDot).not.toHaveClass('dotStopping');
+});
+
 it('does not show All for two retained runs of one profile', () => {
   useIDEStore.setState({
     runOutputs: {
