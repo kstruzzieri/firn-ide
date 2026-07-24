@@ -7,6 +7,7 @@ import {
   StateEffect,
   StateField,
   type Extension,
+  type Range,
 } from '@codemirror/state';
 import { acceptCompletion, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import {
@@ -492,26 +493,46 @@ function resolutionExtension(
     provide: (field) => [
       EditorState.readOnly.from(field, (value) => session.readOnly || value.frozen),
       EditorView.editable.from(field, (value) => !session.readOnly && !value.frozen),
-      EditorView.decorations.from(field, (value) => {
-        const decorations = rangesIn(value)
-          .filter(({ index }) => value.decisions[index] === undefined)
-          .map(({ from, to, index }) =>
-            Decoration.replace({
-              block: true,
-              widget: new MergeResolutionWidget(
-                session.regions[index],
-                index,
-                value.activeIndex === index,
-                value.order,
-                session.labels,
-                session.readOnly,
-                value.frozen,
-                regionWordMarks[index],
-                apply,
-                activate
-              ),
-            }).range(from, to)
-          );
+      EditorView.decorations.compute([field], (state) => {
+        const value = state.field(field);
+        const decorations: Range<Decoration>[] = [];
+        for (const { from, to, index } of rangesIn(value)) {
+          const decision = value.decisions[index];
+          if (decision === undefined) {
+            decorations.push(
+              Decoration.replace({
+                block: true,
+                widget: new MergeResolutionWidget(
+                  session.regions[index],
+                  index,
+                  value.activeIndex === index,
+                  value.order,
+                  session.labels,
+                  session.readOnly,
+                  value.frozen,
+                  regionWordMarks[index],
+                  apply,
+                  activate
+                ),
+              }).range(from, to)
+            );
+            continue;
+          }
+          if (from === to) continue;
+          const last = state.doc.lineAt(Math.max(from, to - 1));
+          for (
+            let line = state.doc.lineAt(from);
+            line.from <= last.from;
+            line = state.doc.line(line.number + 1)
+          ) {
+            decorations.push(
+              Decoration.line({ class: `cm-mergeResolution-provenance-${decision}` }).range(
+                line.from
+              )
+            );
+            if (line.number === state.doc.lines) break;
+          }
+        }
         return Decoration.set(decorations, true);
       }),
     ],

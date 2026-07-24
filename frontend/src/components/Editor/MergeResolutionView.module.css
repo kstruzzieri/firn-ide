@@ -279,6 +279,22 @@
   border-radius: 2px;
 }
 
+.editorHost :global(.cm-mergeResolution-provenance-C) {
+  box-shadow: inset 2px 0 0 var(--side-cur);
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-I) {
+  box-shadow: inset 2px 0 0 var(--side-inc);
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-B) {
+  box-shadow: inset 2px 0 0 var(--side-both);
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-M) {
+  box-shadow: inset 2px 0 0 var(--side-man);
+}
+
 .statusRow {
   border-top: 1px solid var(--surface-border-subtle);
   border-bottom: 0;

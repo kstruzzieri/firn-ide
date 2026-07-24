@@ -18,6 +18,7 @@ import {
   markerBlockRanges,
   nextUnresolved,
   resolutionLines,
+  type MergeResolutionEditor,
 } from './mergeResolution';
 import { createMergeResolutionEditor as createMergeResolutionEditorFromBarrel } from './index';
 import type { TextMergeSession } from '../../../stores/gitStore';
@@ -1440,6 +1441,58 @@ describe('merge resolution editor', () => {
     current.click();
 
     expect(editor.view.dom.querySelector('.cm-mergeResolution-ghost')).toBeNull();
+    editor.destroy();
+  });
+
+  const stripedLines = (editor: MergeResolutionEditor, decision: string): string[] =>
+    Array.from(editor.view.dom.querySelectorAll('.cm-line'))
+      .filter((line) => line.classList.contains(`cm-mergeResolution-provenance-${decision}`))
+      .map((line) => line.textContent);
+
+  it('stripes exactly the resolved lines, not the following line, and drops them on reopen', () => {
+    const multi = session({
+      content: 'before\n<<<<<<< current\nfirst\nsecond\n=======\nx\n>>>>>>> incoming\nafter\n',
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 2,
+          endLine: 7,
+          ours: ['first', 'second'],
+          theirs: ['x'],
+        },
+      ] as TextMergeSession['regions'],
+    });
+    const editor = createMergeResolutionEditor(document.body, multi);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+
+    // EXACTLY 'first' and 'second' are striped — never 'before' or the following 'after'.
+    expect(stripedLines(editor, 'C')).toEqual(['first', 'second']);
+
+    editor.reopen(0);
+    expect(stripedLines(editor, 'C')).toEqual([]);
+    editor.destroy();
+  });
+
+  it('stripes nothing for a resolution that deletes the block', () => {
+    const empty = session({
+      content: 'before\n<<<<<<< current\n=======\nincoming\n>>>>>>> incoming\nafter\n',
+      regions: [{ ...session().regions[0], startLine: 2, endLine: 5, ours: [] }],
+    });
+    const editor = createMergeResolutionEditor(document.body, empty);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+
+    expect(editor.getResult()).toBe('before\nafter\n');
+    expect(
+      editor.view.dom.querySelectorAll('[class*="cm-mergeResolution-provenance-"]').length
+    ).toBe(0);
     editor.destroy();
   });
 });
