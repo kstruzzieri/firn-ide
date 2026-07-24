@@ -493,7 +493,7 @@ function resolutionExtension(
     provide: (field) => [
       EditorState.readOnly.from(field, (value) => session.readOnly || value.frozen),
       EditorView.editable.from(field, (value) => !session.readOnly && !value.frozen),
-      EditorView.decorations.compute([field], (state) => {
+      EditorView.decorations.compute(['doc', field], (state) => {
         const value = state.field(field);
         const decorations: Range<Decoration>[] = [];
         for (const { from, to, index } of rangesIn(value)) {
