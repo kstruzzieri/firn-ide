@@ -1495,4 +1495,49 @@ describe('merge resolution editor', () => {
     ).toBe(0);
     editor.destroy();
   });
+
+  it('renders the base side inside the card when git recorded one', () => {
+    const withBase = session();
+    withBase.regions = [
+      { ...withBase.regions[0], base: ['ancestor line'], hasBase: true },
+      withBase.regions[1],
+    ];
+    const editor = createMergeResolutionEditor(document.body, withBase);
+
+    const labels = Array.from(document.querySelectorAll('.cm-mergeResolution-sideLabel')).map(
+      (node) => node.textContent
+    );
+
+    expect(labels).toContain('BASE — common ancestor');
+    expect(document.body.textContent).toContain('ancestor line');
+    editor.destroy();
+  });
+
+  it('renders no base side when git recorded none', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+
+    const labels = Array.from(document.querySelectorAll('.cm-mergeResolution-sideLabel')).map(
+      (node) => node.textContent
+    );
+
+    expect(labels.some((label) => label?.startsWith('BASE'))).toBe(false);
+    editor.destroy();
+  });
+
+  it('labels an empty recorded base distinctly, not as a deletion', () => {
+    const emptyBase = session();
+    emptyBase.regions = [
+      { ...emptyBase.regions[0], base: [], hasBase: true },
+      emptyBase.regions[1],
+    ];
+    const editor = createMergeResolutionEditor(document.body, emptyBase);
+
+    const labels = Array.from(document.querySelectorAll('.cm-mergeResolution-sideLabel')).map(
+      (node) => node.textContent
+    );
+    expect(labels).toContain('BASE — common ancestor');
+    // An empty base must not borrow the decision-side "(deletes this block)" copy.
+    expect(document.body.textContent).toContain('no lines in the common ancestor');
+    editor.destroy();
+  });
 });

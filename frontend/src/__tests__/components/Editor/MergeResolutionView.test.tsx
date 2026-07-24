@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
 import type { MergeSession } from '../../../stores/gitStore';
@@ -55,7 +55,18 @@ jest.mock('../../../stores/ideStore', () => ({
   useEditorSyntaxTheme: () => syntaxThemeId,
 }));
 
+// wailsjs/go/main/App.js is generated ESM this Jest config does not transform, so a
+// bare jest.mock(path) auto-load throws `Unexpected token 'export'` — use a factory.
+jest.mock('../../../../wailsjs/go/main/App', () => ({
+  GitConflictStages: jest.fn(),
+  GitFileAtRev: jest.fn(),
+}));
+
 import { MergeResolutionView } from '../../../components/Editor/MergeResolutionView';
+import { GitConflictStages, GitFileAtRev } from '../../../../wailsjs/go/main/App';
+
+const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
+const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 
 const textSession = {
   kind: 'text',
@@ -443,5 +454,90 @@ describe('MergeResolutionView rail reopen', () => {
     rerender(<MergeResolutionView session={nextSession} visible />);
 
     expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('MergeResolutionView base strip', () => {
+  it('fetches stage 1 on first expand and shows its content', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 12 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({
+      content: 'ancestor\n',
+      binary: false,
+      truncated: false,
+    } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() => expect(screen.getByText('ancestor')).toBeInTheDocument());
+    expect(mockedFileAtRev).toHaveBeenCalledWith('/repo', ':1', 'src/conflict.ts');
+  });
+
+  it('explains an absent base instead of showing an empty pane', async () => {
+    mockedStages.mockResolvedValue({ path: 'src/conflict.ts', binary: false } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No common ancestor — this file was added on both sides.')
+      ).toBeInTheDocument()
+    );
+    expect(mockedFileAtRev).not.toHaveBeenCalled();
+  });
+
+  it('explains a base blob that exists but is empty (never an empty pane)', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 0 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({ content: '', binary: false, truncated: false } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('The common ancestor version of this file was empty.')
+      ).toBeInTheDocument()
+    );
+  });
+
+  it('explains a binary base', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 99 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({ content: '', binary: true, truncated: false } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Base version is binary — nothing to show.')).toBeInTheDocument()
+    );
+  });
+
+  it('explains a truncated base', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 9_000_000 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({ content: '', binary: false, truncated: true } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Base version is too large to display.')).toBeInTheDocument()
+    );
   });
 });

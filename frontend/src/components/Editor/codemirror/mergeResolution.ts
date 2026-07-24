@@ -214,7 +214,8 @@ function appendSide(
   parent: HTMLElement,
   label: string,
   lines: string[],
-  marks?: InlineDiffSegment[][]
+  marks?: InlineDiffSegment[][],
+  emptyText = '(deletes this block)'
 ): void {
   const side = document.createElement('section');
   side.className = 'cm-mergeResolution-side';
@@ -224,7 +225,7 @@ function appendSide(
   const body = document.createElement('pre');
   body.className = 'cm-mergeResolution-lines';
   if (lines.length === 0) {
-    body.textContent = '(deletes this block)';
+    body.textContent = emptyText;
   } else if (!marks) {
     body.textContent = lines.join('\n');
   } else {
@@ -304,6 +305,15 @@ class MergeResolutionWidget extends WidgetType {
     root.appendChild(title);
     appendSide(root, currentLabel, this.region.ours, this.marks?.a);
     appendSide(root, incomingLabel, this.region.theirs, this.marks?.b);
+    if (this.region.hasBase) {
+      appendSide(
+        root,
+        'BASE — common ancestor',
+        this.region.base,
+        undefined,
+        '(no lines in the common ancestor)'
+      );
+    }
 
     const actions = document.createElement('div');
     actions.className = 'cm-mergeResolution-actions';

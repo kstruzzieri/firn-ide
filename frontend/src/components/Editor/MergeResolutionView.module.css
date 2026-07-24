@@ -381,3 +381,27 @@
     overflow-y: auto;
   }
 }
+
+.baseStrip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.baseNote {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.basePane {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  white-space: pre;
+}

@@ -11,7 +11,17 @@ import {
   type TextMergeSession,
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
+import { GitConflictStages, GitFileAtRev } from '../../../wailsjs/go/main/App';
 import styles from './MergeResolutionView.module.css';
+
+type BaseStrip =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'text'; content: string }
+  | { status: 'message'; message: string };
+
+const REGIONS_CARRY_BASE = (session: TextMergeSession) =>
+  session.regions.some((region) => region.hasBase);
 
 function initialState(session: TextMergeSession): MergeResolutionState {
   return {
@@ -81,7 +91,65 @@ function TextResolutionView({
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
   const [finalizing, setFinalizing] = useState(false);
   const [reopened, setReopened] = useState<number | null>(null);
+  const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
   sessionRef.current = session;
+
+  // Reset the strip whenever the session identity changes — a new file or a fresh
+  // openMergeResolution request must not show the previous file's base.
+  useEffect(() => {
+    setBase({ status: 'idle' });
+  }, [session.path, session.requestRevision]);
+
+  const loadBase = async () => {
+    if (base.status !== 'idle') return;
+    setBase({ status: 'loading' });
+    const { path, repoRoot, requestRevision } = sessionRef.current;
+    // Session identity is `requestRevision` (monotonic per openMergeResolution),
+    // NOT `epoch` — epoch is workspace-scoped and starts at 0, so comparing it to a
+    // session epoch would be wrong. If the prop swaps mid-fetch, sessionRef advances
+    // and we bail.
+    const isStale = () => sessionRef.current.requestRevision !== requestRevision;
+    try {
+      const stages = await GitConflictStages(repoRoot, path);
+      if (isStale()) return;
+      if (!stages.base) {
+        setBase({
+          status: 'message',
+          message: 'No common ancestor — this file was added on both sides.',
+        });
+        return;
+      }
+      const file = await GitFileAtRev(repoRoot, ':1', path);
+      if (isStale()) return;
+      if (file.binary) {
+        setBase({ status: 'message', message: 'Base version is binary — nothing to show.' });
+        return;
+      }
+      if (file.truncated) {
+        setBase({ status: 'message', message: 'Base version is too large to display.' });
+        return;
+      }
+      const content = file.content.replace(/\r\n?/g, '\n');
+      if (content === '') {
+        // A present-but-empty base blob (size 0) would otherwise render an empty
+        // <pre> — a forbidden placeholder.
+        setBase({
+          status: 'message',
+          message: 'The common ancestor version of this file was empty.',
+        });
+        return;
+      }
+      setBase({ status: 'text', content });
+    } catch (error) {
+      // A rejection from a fetch that belonged to a since-swapped session must not
+      // overwrite the new session's freshly-reset strip.
+      if (isStale()) return;
+      setBase({
+        status: 'message',
+        message: `Could not read the base version: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  };
 
   useEffect(() => {
     if (!hostRef.current) return undefined;
@@ -194,6 +262,25 @@ function TextResolutionView({
           </button>
         </div>
       </header>
+      {!REGIONS_CARRY_BASE(session) && (
+        <div className={styles.baseStrip}>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => void loadBase()}
+            aria-expanded={base.status !== 'idle'}
+          >
+            Show base (common ancestor)
+          </button>
+          {base.status === 'loading' && <span className={styles.baseNote}>Loading base…</span>}
+          {base.status === 'message' && <span className={styles.baseNote}>{base.message}</span>}
+          {base.status === 'text' && (
+            <pre className={styles.basePane} aria-label="Base version, read-only">
+              {base.content}
+            </pre>
+          )}
+        </div>
+      )}
       <div className={styles.body}>
         <nav className={styles.rail} aria-label="Conflicts">
           {session.regions.map((_, index) => {
