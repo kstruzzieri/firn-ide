@@ -186,6 +186,9 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Per-file undo/redo history preserved across tab switches
 - [x] File explorer with tree navigation — virtualized rows with lazy per-directory loading on expand
 - [x] Hybrid workspace tree rails — active-scope and per-file ownership shown as two distinct rails in Workspace view
+
+  <img src="docs/screenshots/workspace-hybrid-active-file-rails.png" alt="File tree comparison: per-file tint only versus the hybrid view, which adds an active-workspace rail alongside per-file ownership rails" width="800">
+
 - [x] Unreadable directories stay visible, labeled, and retryable in place
 - [x] Workspace accent color system (7 theme variants)
 - [x] Command palette (`Cmd/Ctrl+Shift+P`) over a shared late-bound command registry with deterministic fuzzy matching
