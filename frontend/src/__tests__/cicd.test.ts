@@ -11,6 +11,30 @@ import { resolve } from 'path';
 const rootDir = resolve(__dirname, '../../..');
 const workflowsDir = resolve(rootDir, '.github/workflows');
 
+function workflowSteps(content: string): string[][] {
+  const lines = content.split(/\r?\n/);
+  const steps: string[][] = [];
+
+  for (let start = 0; start < lines.length; start += 1) {
+    const stepStart = lines[start].match(/^(\s*)-\s+(?:name|uses|run):/);
+    if (!stepStart) continue;
+
+    const indent = stepStart[1].length;
+    let end = start + 1;
+    while (end < lines.length) {
+      const nextStep = lines[end].match(/^(\s*)-\s+/);
+      const nextContent = lines[end].match(/^(\s*)\S/);
+      if (nextStep?.[1].length === indent || (nextContent && nextContent[1].length < indent)) break;
+      end += 1;
+    }
+
+    steps.push(lines.slice(start, end));
+    start = end - 1;
+  }
+
+  return steps;
+}
+
 describe('CI Workflow', () => {
   it('should have test.yml workflow', () => {
     expect(existsSync(resolve(workflowsDir, 'test.yml'))).toBe(true);
@@ -28,39 +52,54 @@ describe('CI Workflow', () => {
     const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
     const goVersion = goMod.match(/^go\s+(\d+\.\d+)/m)?.[1];
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
-
-    // Each setup-go step must state where its Go version comes from. Prefer
-    // `go-version-file: go.mod` so the module stays the single source of truth;
-    // a literal `go-version` is only acceptable if it matches the module.
-    const steps = workflowFiles.flatMap((file) => {
-      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
-      return content
-        .split(/uses:\s*actions\/setup-go@/)
-        .slice(1)
-        .map((segment) => {
-          const body = segment.split(/^\s*- /m)[0];
-          return {
-            file,
-            versionFile: body.match(/go-version-file:\s*['"]?([^'"\s]+)/)?.[1],
-            version: body.match(/go-version:\s*['"]?([^'"\s]+)/)?.[1],
-          };
-        });
-    });
+    const expectedSetupGoSteps: Record<string, number> = {
+      'build.yml': 1,
+      'lint.yml': 1,
+      'release.yml': 3,
+      'test.yml': 1,
+    };
 
     expect(goVersion).toBeDefined();
-    expect(steps.length).toBeGreaterThan(0);
 
-    for (const step of steps) {
-      // setup-go gives a literal `go-version` precedence over `go-version-file`,
-      // so a stray literal beside the file reference would silently override the
-      // module in CI; forbid the combination instead of trusting the file entry.
-      const source =
-        step.versionFile && step.version
-          ? `conflicting go-version (${step.version}) and go-version-file (${step.versionFile})`
-          : (step.versionFile ?? step.version);
-      expect(`${step.file}: ${source ?? 'no Go version configured'}`).toBe(
-        `${step.file}: ${step.versionFile && !step.version ? 'go.mod' : goVersion}`
+    for (const file of workflowFiles) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      const setupGoSteps = workflowSteps(content).filter((step) =>
+        step.some((line) =>
+          /^\s*(?:-\s*)?uses:\s*['"]?actions\/setup-go@[^'"\s]+['"]?\s*$/.test(line)
+        )
       );
+      const expectedCount = expectedSetupGoSteps[file] ?? 0;
+
+      expect({ file, setupGoSteps: setupGoSteps.length }).toEqual({
+        file,
+        setupGoSteps: expectedCount,
+      });
+
+      for (const step of setupGoSteps) {
+        const withIndex = step.findIndex((line) => /^\s*with:\s*$/.test(line));
+        const withIndent = withIndex >= 0 ? step[withIndex].match(/^(\s*)/)?.[1].length : undefined;
+        const afterWith = withIndex >= 0 ? step.slice(withIndex + 1) : [];
+        const inputEnd =
+          withIndent === undefined
+            ? 0
+            : afterWith.findIndex((line) => {
+                if (!line.trim() || line.trimStart().startsWith('#')) return false;
+                return (line.match(/^(\s*)/)?.[1].length ?? 0) <= withIndent;
+              });
+        const inputs = afterWith.slice(0, inputEnd < 0 ? undefined : inputEnd);
+
+        expect({
+          file,
+          versionFiles: inputs.filter((line) =>
+            /^\s*go-version-file:\s*['"]?go\.mod['"]?\s*$/.test(line)
+          ).length,
+          literalVersions: inputs.filter((line) => /^\s*go-version:\s*/.test(line)).length,
+        }).toEqual({
+          file,
+          versionFiles: 1,
+          literalVersions: 0,
+        });
+      }
     }
   });
 
