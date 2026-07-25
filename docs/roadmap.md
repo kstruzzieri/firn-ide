@@ -43,17 +43,16 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 
 ## Current Repository Review and Prioritized Roadmap
 
-> **Authoritative snapshot:** 2026-07-25 (America/New_York), `develop` at `3674417`. This section supersedes the archived delivery narrative below for current prioritization.
+This section supersedes the archived delivery narrative below for current prioritization.
 
 ### Repository health
 
-- `develop` and `origin/develop` both point at `3674417`; GitHub has **17 open issues and no open pull requests**.
 - `v0.11.0` is live from `main` at `4707c59`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
 - No planned stabilization sprint follows the release. Cut `v0.11.1` only for observed regressions; otherwise continue the parallel product tracks below.
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
 - Release documentation and install examples now target `v0.11.0`.
-- #225 raises the module to **Go 1.25** and switches every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs remain pinned to the module's v2.11.0; cross-platform PR verification remains a future release-engineering improvement.
+- PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs remain pinned to the module's v2.11.0; cross-platform PR verification remains a future release-engineering improvement.
 - #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
 - The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — rather than any observed regression. Treat those as scoped enhancements, not defects.
 
@@ -90,44 +89,42 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 5. Close the #44 tracker as housekeeping; the implementation shipped in PR #206.
 6. Keep #148/#196 benchmark-gated and #41 unscheduled as a standalone rewrite.
 
-### Ticket priority, model, and reasoning assignment
+### Ticket priority and disposition
 
-The owner prioritizes work quality over latency or cost. Active ticket handoffs therefore default to `gpt-5.6-sol` with **Extra High** reasoning; narrow prompts and review gates control scope instead of selecting a smaller model.
-
-| Priority | Ticket | Recommended disposition | Model | Reasoning |
-|----------|--------|-------------------------|-------|-----------|
-| Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. | `gpt-5.6-terra` | Light |
-| Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; final fixes merged in PR #183 and the issue is closed as completed. | `gpt-5.6-sol` | High |
-| Closed | #34 Button types | Closed via PR #190 on 2026-07-13; explicit literal types on all production buttons plus an AST regression guard. | `gpt-5.6-sol` | Extra High |
-| Closed | #149 Nested `.gitignore` | Closed via PR #192 on 2026-07-14; recursive and shallow readers share nested Git-compatible rule evaluation. | `gpt-5.6-sol` | Extra High |
-| Closed | #142 Workspace-colored tabs | Closed via PR #191 on 2026-07-13; tabs resolve the owning workspace independently of the active workspace. | `gpt-5.6-sol` | Extra High |
-| Closed | #194 Git environment isolation | Closed via PR #197 on 2026-07-14; linked-worktree Git commands scrub repository-local environment. | `gpt-5.6-sol` | Extra High |
-| Closed | #43 WCAG AA | Closed via PR #201 on 2026-07-15; automated contrast, keyboard, focus, and ID-reference evidence landed. | `gpt-5.6-sol` | Extra High |
-| Closed | #39 Dynamic languages | Closed after PR #200; lazy CodeMirror loading cut initial static-JS gzip size by 26.24% and added a bundle gate. | `gpt-5.6-sol` | Extra High |
-| Closed | #143 Infra file accents | Closed after PR #199; Docker/Terraform identity now layers over workspace presentation. | `gpt-5.6-sol` | Extra High |
-| Closed | #195 Unreadable directories | Closed via PR #203; unreadable nodes remain visible and retry in place. | `gpt-5.6-sol` | Extra High |
-| Closed | #204 Loading skeleton | Closed via PR #205; uncached workspace loading no longer flashes a false empty state. | `gpt-5.6-sol` | Extra High |
-| Closed | #202 Hybrid workspace rails | Closed via PR #211; the two-rail Workspace view ships without changing Project view or adding a third visual channel. | `gpt-5.6-sol` | Extra High |
-| Closed | #207 Search result hierarchy | Closed via PR #214; match-anchored rows and file/directory hierarchy stay readable in a narrow panel. | `gpt-5.6-sol` | Extra High |
-| Closed | #215 Dimmed syntax tokens | Closed via PR #217; match context carries dimmed language tokens while the match stays the brightest element. | `gpt-5.6-sol` | Extra High |
-| Closed | Editor nav scroll (PRs #216/#218) | Fixed directly in PRs #216/#218; line navigation scrolls correctly for freshly opened and already-open background tabs. | `gpt-5.6-sol` | Extra High |
-| Delivered / tracker open | #44 Command Palette | PR #206 satisfies the issue requirements; verify and close the tracker without more implementation. | `gpt-5.6-sol` | High |
-| Delivered | #225 Go 1.25 toolchain | Module and every CI job resolve Go from `go-version-file: 'go.mod'`; close the tracker when this change merges. | `gpt-5.6-sol` | High |
-| P0 | #164 Phase 3 merge confidence | Build the confidence layer on the shipped Phase 2 editor, then Phase 4 multi-file hardening in the same lane. | `gpt-5.6-sol` | Extra High |
-| P1 | #146 Run identity Phase 2B | Phase 2A retained tabs shipped; take same-profile parallelism next, then persistence (2C) and execution plans (2D). | `gpt-5.6-sol` | Extra High |
-| P1 | #45 Context menus | Reuse #44 commands now that #202 has released the File Explorer seams. | `gpt-5.6-sol` | Extra High |
-| P2 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract after the merge editor stabilizes. | `gpt-5.6-sol` | Extra High |
-| P2 | #220 Auto-merged region hints | Indicate what Git already merged so reviewers can distinguish it from unresolved regions. | `gpt-5.6-sol` | Extra High |
-| P2 | #219 Key-hold resolution preview | Preview a side without committing the decision; must not mutate the Result document. | `gpt-5.6-sol` | Extra High |
-| P2 | #221 Multi-file conflict rail | Extend the conflict rail across files in the Git panel; keep per-file finalize guards intact. | `gpt-5.6-sol` | Extra High |
-| P2 | #222 Newline metadata | Preserve per-side no-trailing-newline metadata through resolution and write. | `gpt-5.6-sol` | Extra High |
-| P2 | #223 Bulk conflict resolution | Add confirmed take-all-Current/Incoming actions; never silently overwrite manual decisions, never auto-write or stage. | `gpt-5.6-sol` | Extra High |
-| P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. | `gpt-5.6-sol` | Extra High |
-| P2 | #226 Golem chat panel | Read-only workspace chat on the embedded runtime; start only after #165. | `gpt-5.6-sol` | Extra High |
-| Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. | `gpt-5.6-sol` | Extra High |
-| Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. | `gpt-5.6-sol` | Extra High |
-| Gated | #196 Ignore-rule cache | Benchmark lazy expansion first; if needed, cache per directory with watcher-based invalidation, never polling. | `gpt-5.6-sol` | Extra High |
-| P0 | #165 `go-llm` integration | Unblocked by #225: replace the commit-message CLI shell-out with the embedded runtime. | `gpt-5.6-sol` | Extra High |
+| Priority | Ticket | Recommended disposition |
+|----------|--------|-------------------------|
+| Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. |
+| Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; final fixes merged in PR #183 and the issue is closed as completed. |
+| Closed | #34 Button types | Closed via PR #190 on 2026-07-13; explicit literal types on all production buttons plus an AST regression guard. |
+| Closed | #149 Nested `.gitignore` | Closed via PR #192 on 2026-07-14; recursive and shallow readers share nested Git-compatible rule evaluation. |
+| Closed | #142 Workspace-colored tabs | Closed via PR #191 on 2026-07-13; tabs resolve the owning workspace independently of the active workspace. |
+| Closed | #194 Git environment isolation | Closed via PR #197 on 2026-07-14; linked-worktree Git commands scrub repository-local environment. |
+| Closed | #43 WCAG AA | Closed via PR #201 on 2026-07-15; automated contrast, keyboard, focus, and ID-reference evidence landed. |
+| Closed | #39 Dynamic languages | Closed after PR #200; lazy CodeMirror loading cut initial static-JS gzip size by 26.24% and added a bundle gate. |
+| Closed | #143 Infra file accents | Closed after PR #199; Docker/Terraform identity now layers over workspace presentation. |
+| Closed | #195 Unreadable directories | Closed via PR #203; unreadable nodes remain visible and retry in place. |
+| Closed | #204 Loading skeleton | Closed via PR #205; uncached workspace loading no longer flashes a false empty state. |
+| Closed | #202 Hybrid workspace rails | Closed via PR #211; the two-rail Workspace view ships without changing Project view or adding a third visual channel. |
+| Closed | #207 Search result hierarchy | Closed via PR #214; match-anchored rows and file/directory hierarchy stay readable in a narrow panel. |
+| Closed | #215 Dimmed syntax tokens | Closed via PR #217; match context carries dimmed language tokens while the match stays the brightest element. |
+| Closed | Editor nav scroll (PRs #216/#218) | Fixed directly in PRs #216/#218; line navigation scrolls correctly for freshly opened and already-open background tabs. |
+| Delivered / tracker open | #44 Command Palette | PR #206 satisfies the issue requirements; verify and close the tracker without more implementation. |
+| Closed | #225 Go 1.25 toolchain | Module and every CI job resolve Go from `go-version-file: 'go.mod'`; shipped via PR #228. |
+| P0 | #164 Phase 3 merge confidence | Build the confidence layer on the shipped Phase 2 editor, then Phase 4 multi-file hardening in the same lane. |
+| P1 | #146 Run identity Phase 2B | Phase 2A retained tabs shipped; take same-profile parallelism next, then persistence (2C) and execution plans (2D). |
+| P1 | #45 Context menus | Reuse #44 commands now that #202 has released the File Explorer seams. |
+| P2 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract after the merge editor stabilizes. |
+| P2 | #220 Auto-merged region hints | Indicate what Git already merged so reviewers can distinguish it from unresolved regions. |
+| P2 | #219 Key-hold resolution preview | Preview a side without committing the decision; must not mutate the Result document. |
+| P2 | #221 Multi-file conflict rail | Extend the conflict rail across files in the Git panel; keep per-file finalize guards intact. |
+| P2 | #222 Newline metadata | Preserve per-side no-trailing-newline metadata through resolution and write. |
+| P2 | #223 Bulk conflict resolution | Add confirmed take-all-Current/Incoming actions; never silently overwrite manual decisions, never auto-write or stage. |
+| P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
+| P2 | #226 Golem chat panel | Read-only workspace chat on the embedded runtime; start only after #165. |
+| Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |
+| Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. |
+| Gated | #196 Ignore-rule cache | Benchmark lazy expansion first; if needed, cache per directory with watcher-based invalidation, never polling. |
+| P0 | #165 `go-llm` integration | Unblocked by #225: replace the commit-message CLI shell-out with the embedded runtime. |
 
 ### #112 manual smoke pass and closure gate
 
@@ -646,11 +643,11 @@ Shipped via PR #217. Match context carries real language tokens rendered at redu
 ## Toolchain (COMPLETE)
 
 ### #225: Upgrade Firn from Go 1.23 to Go 1.25 ✅ SHIPPED
-Toolchain prerequisite for the embedded Golem consumers (#165, #226), which depend on a `go-llm` runtime that requires Go 1.25. The tracker closes when this change merges.
+Shipped via PR #228 as the toolchain prerequisite for the embedded Golem consumers (#165, #226), which depend on a `go-llm` runtime that requires Go 1.25.
 - [x] `go.mod` declares `go 1.25`
 - [x] Every Build, Test, Lint, and Release job resolves its Go version from `go-version-file: 'go.mod'` instead of a repeated literal, so future upgrades change one line
 - [x] `README.md`, `CLAUDE.md`, and this roadmap state Go 1.25+
-- [x] Historical changelog entries and archived plan documents left unchanged
+- [x] Historical changelog entries left unchanged
 - [x] Verified with `go build`, `go vet`, `go test ./...`, `golangci-lint run ./...` (pinned v2.11.4, built with go1.26.1), and the frontend suite/build/lint/format gates
 - [x] No generated Wails binding changes
 
