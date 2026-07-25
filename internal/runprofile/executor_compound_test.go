@@ -104,6 +104,31 @@ func waitForCompoundState(exec *Executor, id string, want RunState, timeout time
 	}
 }
 
+// waitForCompoundSnapshot polls the spy until a run:compound snapshot with the
+// wanted aggregate state has been recorded, returning all snapshots seen at
+// that point. finishCompound flips GetStatus/run:status terminal BEFORE it
+// emits the final snapshot (which is what carries the pending→skipped marks),
+// so tests that assert on snapshot contents must gate on the snapshot stream
+// itself rather than waitForCompoundState/waitForState.
+func waitForCompoundSnapshot(t *testing.T, spy *emitSpy, want RunState, timeout time.Duration) []compoundStatus {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		snaps := compoundSnapshots(spy)
+		if len(snaps) > 0 && snaps[len(snaps)-1].State == want {
+			return snaps
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	snaps := compoundSnapshots(spy)
+	latest := RunState("<no snapshots>")
+	if len(snaps) > 0 {
+		latest = snaps[len(snaps)-1].State
+	}
+	t.Fatalf("timed out waiting for compound snapshot with aggregate state %q (%d snapshots recorded, latest state %q)", want, len(snaps), latest)
+	return nil
+}
+
 func noopStatus(string, ...any) {}
 
 func compoundProfile(id string, steps ...string) RunProfile {
@@ -176,10 +201,7 @@ func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate failed state")
 	}
 
-	snaps := compoundSnapshots(spy)
-	if !hasCompoundState(snaps, RunStateFailed) {
-		t.Error("expected a snapshot with aggregate failed state")
-	}
+	snaps := waitForCompoundSnapshot(t, spy, RunStateFailed, 5*time.Second)
 
 	boomStep, ok := finalStep(snaps, 1)
 	if !ok {
@@ -274,7 +296,7 @@ func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate failed state")
 	}
 
-	snaps := compoundSnapshots(spy)
+	snaps := waitForCompoundSnapshot(t, spy, RunStateFailed, 5*time.Second)
 	badStep, ok := finalStep(snaps, 1)
 	if !ok {
 		t.Fatal("expected step index 1 in final snapshot")
@@ -344,7 +366,7 @@ func TestExecutor_StopCompoundMidStep(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate stopped state")
 	}
 
-	snaps := compoundSnapshots(spy)
+	snaps := waitForCompoundSnapshot(t, spy, RunStateStopped, 5*time.Second)
 	slowStep, ok := finalStep(snaps, 0)
 	if !ok {
 		t.Fatal("expected step index 0 in final snapshot")
@@ -419,7 +441,7 @@ func TestExecutor_StopSingleIDStopsCompoundStep(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate stopped state")
 	}
 
-	states := finalStepStates(compoundSnapshots(spy))
+	states := finalStepStates(waitForCompoundSnapshot(t, spy, RunStateStopped, 5*time.Second))
 	if len(states) != 2 {
 		t.Fatalf("expected 2 step states, got %d", len(states))
 	}
@@ -466,7 +488,7 @@ func TestExecutor_StopCompoundBetweenSteps(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate stopped state")
 	}
 
-	states := finalStepStates(compoundSnapshots(spy))
+	states := finalStepStates(waitForCompoundSnapshot(t, spy, RunStateStopped, 5*time.Second))
 	if len(states) != 2 {
 		t.Fatalf("expected 2 step states, got %d", len(states))
 	}
@@ -561,7 +583,7 @@ func TestExecutor_StartCompoundAllSuccess(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate success state")
 	}
 
-	snaps := compoundSnapshots(spy)
+	snaps := waitForCompoundSnapshot(t, spy, RunStateSuccess, 5*time.Second)
 	if !hasStepState(snaps, CompoundStepPending) {
 		t.Error("expected a snapshot with a pending step")
 	}
