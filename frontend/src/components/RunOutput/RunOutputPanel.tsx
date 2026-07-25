@@ -5,8 +5,8 @@ import {
   useRunOutputViewMode,
   useRunOutputAutoScroll,
   useRunOutputs,
-  useRunCompounds,
   useWorkspace,
+  useIDEStore,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
 import { RunOutputTabs } from './RunOutputTabs';
@@ -25,23 +25,28 @@ export function RunOutputPanel() {
   const viewMode = useRunOutputViewMode();
   const autoScroll = useRunOutputAutoScroll();
   const runOutputs = useRunOutputs();
-  const runCompounds = useRunCompounds();
+  const runInstanceIdsByProfile = useIDEStore((state) => state.runInstanceIdsByProfile);
+  const latestRunInstanceIdByProfile = useIDEStore((state) => state.latestRunInstanceIdByProfile);
   const workspace = useWorkspace();
   const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
 
   const workspacePath = workspace?.path;
   const activeWorkingDir = activeOutput?.workingDir;
 
-  // The global timeline is ordinary-profiles-only. A compound emits an aggregate
-  // run:status, so runOutputs[compoundId] exists (for the card badge) but carries
-  // no entries — exclude those so the timeline doesn't render empty sources.
   const timelineOutputs = useMemo(() => {
     const filtered: typeof runOutputs = {};
-    for (const [id, output] of Object.entries(runOutputs)) {
-      if (!runCompounds[id]) filtered[id] = output;
+    for (const id of Object.values(latestRunInstanceIdByProfile)) {
+      if (runOutputs[id]) filtered[id] = runOutputs[id];
     }
     return filtered;
-  }, [runOutputs, runCompounds]);
+  }, [runOutputs, latestRunInstanceIdByProfile]);
+
+  const previousOutput = useMemo(() => {
+    if (!activeOutput) return undefined;
+    const ids = runInstanceIdsByProfile[activeOutput.profileId] ?? [];
+    const index = ids.indexOf(activeOutput.runInstanceId);
+    return index > 0 ? runOutputs[ids[index - 1]] : undefined;
+  }, [activeOutput, runInstanceIdsByProfile, runOutputs]);
 
   const handleToggleFold = useCallback((foldId: string) => {
     setExpandedFolds((prev) => {
@@ -100,9 +105,9 @@ export function RunOutputPanel() {
           {viewMode === 'diff' && (
             <DiffView
               entries={activeOutput.entries}
-              previousEntries={activeOutput.previousEntries}
+              previousEntries={previousOutput?.entries ?? []}
               workingDir={activeWorkingDir}
-              previousWorkingDir={activeOutput.previousWorkingDir}
+              previousWorkingDir={previousOutput?.workingDir}
               workspacePath={workspacePath}
             />
           )}

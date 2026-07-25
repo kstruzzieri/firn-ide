@@ -33,17 +33,22 @@ export function RunOutputToolbar() {
   const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const runCompounds = useIDEStore((s) => s.runCompounds);
+  const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
+  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
   const hasActiveProfile = activeId && !isAllProfiles;
   const activeOutput = hasActiveProfile ? runOutputs[activeId] : undefined;
-  const activeCompound = activeId && !isAllProfiles ? runCompounds[activeId] : undefined;
-  const isRunning = activeOutput?.state === 'running' || activeCompound?.state === 'running';
-  // Timeline is ordinary-profiles-only: exclude compound aggregates (a compound
-  // emits an aggregate run:status, so runOutputs[compoundId] exists) so they do
-  // not inflate the count or render as empty timeline sources.
-  const outputIds = Object.keys(runOutputs).filter((id) => !runCompounds[id]);
+  const activeCompoundId =
+    activeId && !isAllProfiles ? compoundIdByRunInstance[activeId] : undefined;
+  const activeCompound = activeCompoundId ? runCompounds[activeCompoundId] : undefined;
+  const currentOutput = activeOutput
+    ? runOutputs[latestRunInstanceIdByProfile[activeOutput.profileId]]
+    : undefined;
+  const isRunning = currentOutput?.state === 'running' || activeCompound?.state === 'running';
+  const outputIds = Object.values(latestRunInstanceIdByProfile).filter((id) => runOutputs[id]);
   const canTimeline = outputIds.length >= 2;
+  const controlProfileId = activeOutput?.profileId ?? activeCompoundId;
 
   const handleViewMode = (mode: RunOutputViewMode) => {
     // Gate timeline mode: only allow with 2+ profiles
@@ -58,21 +63,24 @@ export function RunOutputToolbar() {
   };
 
   const handleRerun = () => {
-    if (hasActiveProfile) {
-      RestartRunProfile(activeId).catch((err: unknown) => showError('restart', activeId, err));
+    if (controlProfileId) {
+      RestartRunProfile(controlProfileId).catch((err: unknown) =>
+        showError('restart', controlProfileId, err)
+      );
     }
   };
 
   const handleStop = () => {
-    // activeId is the compound id for compounds, which the bindings accept directly.
-    if (activeId && isRunning) {
-      StopRunProfile(activeId).catch((err: unknown) => showError('stop', activeId, err));
+    if (controlProfileId && isRunning) {
+      StopRunProfile(controlProfileId).catch((err: unknown) =>
+        showError('stop', controlProfileId, err)
+      );
     }
   };
 
   const handleClear = () => {
     if (activeCompound) {
-      clearCompoundRunOutput(activeId as string);
+      clearCompoundRunOutput(activeCompoundId as string);
     } else if (isAllProfiles) {
       clearAllRunOutputs();
     } else if (activeId) {
@@ -106,7 +114,7 @@ export function RunOutputToolbar() {
         type="button"
         className={styles.toolbarBtn}
         onClick={handleRerun}
-        disabled={!hasActiveProfile}
+        disabled={!controlProfileId}
         title="Re-run"
         aria-label="Re-run profile"
       >

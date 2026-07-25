@@ -134,9 +134,11 @@ const selectedProfileAction = () => {
   if (!target) return null;
   const { state, id } = target;
   if (state.restartingProfileIds.includes(id)) return null;
+  const runInstanceId = state.latestRunInstanceIdByProfile[id];
+  const compoundId = state.compoundIdByRunInstance[runInstanceId];
   const visualState = getVisualState(
     id,
-    state.runOutputs[id]?.state,
+    state.runOutputs[runInstanceId]?.state ?? state.runCompounds[compoundId]?.state,
     state.stoppingProfileIds,
     state.restartingProfileIds
   );

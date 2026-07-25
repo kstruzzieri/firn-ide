@@ -12,30 +12,49 @@ export function RunOutputTabs() {
   const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
   const profiles = useIDEStore((s) => s.runProfiles);
   const runCompounds = useIDEStore((s) => s.runCompounds);
+  const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
+  const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
 
-  // Ordinary run outputs: exclude compound aggregates. A compound emits an
-  // aggregate run:status, so runOutputs[compoundId] exists for the card badge —
-  // but it must not be treated as an ordinary timeline source (its output lives
-  // in runCompounds[id].stepOutputs).
-  const ordinaryIds = Object.keys(runOutputs).filter((id) => !runCompounds[id]);
-  // Compound runs render their own tab (with compound state/name).
-  const compoundIds = Object.keys(runCompounds);
+  const ordinaryIds = Object.values(runInstanceIdsByProfile)
+    .flat()
+    .filter((id) => runOutputs[id]);
+  const compoundIds = Object.values(runCompounds).map((run) => run.runInstanceId);
   const tabIds = [...ordinaryIds, ...compoundIds];
+  const latestOrdinaryCount = Object.values(latestRunInstanceIdByProfile).filter(
+    (id) => runOutputs[id]
+  ).length;
   if (tabIds.length === 0) return null;
 
-  const getProfileName = (id: string) => {
-    return profiles.find((p) => p.id === id)?.name ?? runCompounds[id]?.name ?? id;
+  // Label by profile name, disambiguating the retained predecessor as "(previous)".
+  // The raw runInstanceId is a backend-internal counter, so it stays out of the
+  // visible label (it remains on the tab title for debugging).
+  const getTabLabel = (id: string) => {
+    const output = runOutputs[id];
+    if (output) {
+      const name =
+        profiles.find((profile) => profile.id === output.profileId)?.name ?? output.profileId;
+      return latestRunInstanceIdByProfile[output.profileId] === id ? name : `${name} (previous)`;
+    }
+    const compoundId = compoundIdByRunInstance[id];
+    return runCompounds[compoundId]?.name ?? id;
   };
 
   return (
     <div className={styles.tabBar}>
       {tabIds.map((id) => {
-        const vs: VisualState = getVisualState(
-          id,
-          runOutputs[id]?.state ?? runCompounds[id]?.state,
-          stoppingIds,
-          restartingIds
-        );
+        const output = runOutputs[id];
+        const compoundId = compoundIdByRunInstance[id];
+        const compound = compoundId ? runCompounds[compoundId] : undefined;
+        const vs: VisualState =
+          output && latestRunInstanceIdByProfile[output.profileId] !== id
+            ? output.state
+            : getVisualState(
+                output?.profileId ?? compoundId ?? id,
+                output?.state ?? compound?.state,
+                stoppingIds,
+                restartingIds
+              );
         const isActive = activeId === id;
         return (
           <button
@@ -43,17 +62,18 @@ export function RunOutputTabs() {
             key={id}
             className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
             onClick={() => setActiveRunOutput(id)}
+            title={output ? id : (compoundId ?? id)}
           >
             <span className={`${styles.tabDot} ${styles[`dot${capitalize(vs)}`] ?? ''}`} />
             <span className={isActive ? (styles[`name${capitalize(vs)}`] ?? '') : ''}>
-              {getProfileName(id)}
+              {getTabLabel(id)}
             </span>
           </button>
         );
       })}
       {/* Timeline ("All") is ordinary-profiles-only; compounds have their own
           all-steps view, so gate this tab on the ordinary outputs count. */}
-      {ordinaryIds.length >= 2 && (
+      {latestOrdinaryCount >= 2 && (
         <button
           type="button"
           className={`${styles.tab} ${activeId === ALL_PROFILES_ID ? styles.tabActive : ''} ${styles.tabAll}`}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
@@ -25,6 +25,7 @@ import {
   type WorkspaceGroup,
 } from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
+import type { RunOutput } from '../../types/runOutput';
 import styles from './RunProfiles.module.css';
 
 // Accents that have a defined --accent-{name} token; anything else falls back to
@@ -50,6 +51,9 @@ export function RunProfiles() {
   const isLoading = useIsLoadingProfiles();
   const error = useProfilesError();
   const runOutputs = useIDEStore((s) => s.runOutputs);
+  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runCompounds = useIDEStore((s) => s.runCompounds);
+  const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
   const runHistory = useIDEStore((s) => s.runHistory);
   const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
@@ -63,6 +67,16 @@ export function RunProfiles() {
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
   const effectiveTargetId = useEffectiveRunTarget();
+  const currentRunState = useCallback(
+    (profileId: string) => {
+      const runInstanceId = latestRunInstanceIdByProfile[profileId];
+      return (
+        runOutputs[runInstanceId]?.state ??
+        runCompounds[compoundIdByRunInstance[runInstanceId]]?.state
+      );
+    },
+    [runOutputs, latestRunInstanceIdByProfile, runCompounds, compoundIdByRunInstance]
+  );
 
   // Render-time "now" for the just-ran recency window. Kept out of any memo deps
   // so grouping stays pure/memoized; recomputed each render (e.g. via etaTick).
@@ -88,10 +102,9 @@ export function RunProfiles() {
   const hasRunning = useMemo(
     () =>
       visibleProfiles.some(
-        (p) =>
-          getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+        (p) => getVisualState(p.id, currentRunState(p.id), stoppingIds, restartingIds) === 'running'
       ),
-    [visibleProfiles, runOutputs, stoppingIds, restartingIds]
+    [visibleProfiles, currentRunState, stoppingIds, restartingIds]
   );
   const [etaTick, setEtaTick] = useState(0);
   useEffect(() => {
@@ -109,7 +122,7 @@ export function RunProfiles() {
       const rest: RunProfile[] = [];
 
       for (const p of profiles) {
-        const vs = getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds);
+        const vs = getVisualState(p.id, currentRunState(p.id), stoppingIds, restartingIds);
         if (vs === 'running') {
           const startTs = runStartTimestamps[p.id] ?? now;
           const elapsed = now - startTs;
@@ -126,7 +139,7 @@ export function RunProfiles() {
       return [...running.map((r) => r.profile), ...rest];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- etaTick forces re-sort when ETA estimates update
-  }, [runOutputs, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
+  }, [currentRunState, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
 
   // Apply ETA sort BEFORE grouping so running-soonest profiles bubble up within
   // their section (groupProfiles preserves input order for activated/pinned/detected).
@@ -137,13 +150,26 @@ export function RunProfiles() {
   );
 
   const renderCard = (profile: RunProfile, section: SectionGroup['key']) => {
-    const vs = getVisualState(
-      profile.id,
-      runOutputs[profile.id]?.state,
-      stoppingIds,
-      restartingIds
-    );
-    const isDormant = !runOutputs[profile.id] && !runHistory[profile.id]?.length;
+    const ordinaryOutput = runOutputs[latestRunInstanceIdByProfile[profile.id]];
+    const compoundRun =
+      runCompounds[compoundIdByRunInstance[latestRunInstanceIdByProfile[profile.id]]];
+    // A compound never produces an ordinary RunOutput (its output lives in
+    // stepOutputs), so synthesize the card-facing view from the aggregate run.
+    // The aggregate carries no entries — matching the pre-Phase-2A card — but it
+    // does carry state + exitCode, which the card needs for the failed/stop UI.
+    const runOutput: RunOutput | undefined =
+      ordinaryOutput ??
+      (compoundRun
+        ? {
+            profileId: profile.id,
+            runInstanceId: compoundRun.runInstanceId,
+            state: compoundRun.state,
+            exitCode: compoundRun.exitCode ?? 0,
+            entries: [],
+          }
+        : undefined);
+    const vs = getVisualState(profile.id, currentRunState(profile.id), stoppingIds, restartingIds);
+    const isDormant = !runOutput && !runHistory[profile.id]?.length;
     const isDuplicate = (nameCounts.get(profile.name) ?? 0) > 1;
 
     return (
@@ -151,7 +177,7 @@ export function RunProfiles() {
         key={profile.id}
         profile={profile}
         visualState={vs}
-        runOutput={runOutputs[profile.id]}
+        runOutput={runOutput}
         runHistory={runHistory[profile.id] ?? []}
         isDormant={isDormant}
         isDuplicate={isDuplicate}
@@ -199,7 +225,7 @@ export function RunProfiles() {
   // counter and the per-workspace group counter in Project View).
   const countRunning = (list: RunProfile[]): number =>
     list.filter(
-      (p) => getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds) === 'running'
+      (p) => getVisualState(p.id, currentRunState(p.id), stoppingIds, restartingIds) === 'running'
     ).length;
   const runningCount = countRunning(scopedProfiles);
   const totalCountScoped = scopedProfiles.length;

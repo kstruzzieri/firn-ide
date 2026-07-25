@@ -64,6 +64,22 @@ const commandById = (id: string) => {
   return command;
 };
 
+const setProfileOutputState = (state: 'idle' | 'running' | 'success' | 'failed' | 'stopped') => {
+  useIDEStore.setState({
+    runOutputs: {
+      r1: {
+        runInstanceId: 'r1',
+        profileId: 'p1',
+        state,
+        exitCode: 0,
+        entries: [],
+      },
+    },
+    runInstanceIdsByProfile: { p1: ['r1'] },
+    latestRunInstanceIdByProfile: { p1: 'r1' },
+  });
+};
+
 test('creates the approved command registry with stable metadata', () => {
   const openFolder = jest.fn();
   const commands = createCommands(openFolder);
@@ -190,8 +206,8 @@ test('resolves run targets at invocation time and ignores stopping or restarting
 
   useIDEStore.setState({
     selectedProfileId: 'p1',
-    runOutputs: { p1: { state: 'running' } } as never,
   });
+  setProfileOutputState('running');
   restart.run();
   expect(mockRestartProfile).toHaveBeenCalledWith('p1');
 
@@ -220,11 +236,11 @@ test('re-evaluates mutually exclusive run and restart availability from late-bou
   });
 
   for (const state of ['idle', 'success', 'failed', 'stopped']) {
-    useIDEStore.setState({ runOutputs: { p1: { state } } as never });
+    setProfileOutputState(state as 'idle' | 'success' | 'failed' | 'stopped');
     expect(availableActions()).toEqual(['run-selected-profile']);
   }
 
-  useIDEStore.setState({ runOutputs: { p1: { state: 'running' } } as never });
+  setProfileOutputState('running');
   expect(availableActions()).toEqual(['restart-selected-profile']);
 
   useIDEStore.setState({ stoppingProfileIds: ['p1'] });
@@ -232,4 +248,56 @@ test('re-evaluates mutually exclusive run and restart availability from late-bou
 
   useIDEStore.setState({ stoppingProfileIds: [], restartingProfileIds: ['p1'] });
   expect(availableActions()).toEqual([]);
+});
+
+test('derives selected-profile command state from the explicit latest run instance', () => {
+  useIDEStore.setState({
+    runProfiles: [{ id: 'p1', name: 'test', type: 'single', source: 'user', workspaceId: 'ws' }],
+    activeWorkspaceId: 'ws',
+    selectedProfileId: 'p1',
+    runOutputs: {
+      r1: {
+        runInstanceId: 'r1',
+        profileId: 'p1',
+        state: 'success',
+        exitCode: 0,
+        entries: [],
+      },
+      r2: {
+        runInstanceId: 'r2',
+        profileId: 'p1',
+        state: 'running',
+        exitCode: 0,
+        entries: [],
+      },
+    },
+    runInstanceIdsByProfile: { p1: ['r1', 'r2'] },
+    latestRunInstanceIdByProfile: { p1: 'r2' },
+  });
+
+  expect(commandById('run-selected-profile').enabled?.()).toBe(false);
+  expect(commandById('restart-selected-profile').enabled?.()).toBe(true);
+});
+
+test('derives compound command state through the aggregate run instance', () => {
+  useIDEStore.setState({
+    runProfiles: [{ id: 'ci', name: 'CI', type: 'compound', source: 'user', steps: ['p1'] }],
+    selectedProfileId: 'ci',
+    latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+    runCompounds: {
+      ci: {
+        runInstanceId: 'agg-r1',
+        compoundId: 'ci',
+        name: 'CI',
+        state: 'running',
+        currentStep: 0,
+        steps: [],
+        stepOutputs: {},
+      },
+    },
+    compoundIdByRunInstance: { 'agg-r1': 'ci' },
+  });
+
+  expect(commandById('run-selected-profile').enabled?.()).toBe(false);
+  expect(commandById('restart-selected-profile').enabled?.()).toBe(true);
 });
