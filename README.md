@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Wails-2-DF0000?logo=wails&logoColor=white" alt="Wails">
@@ -130,7 +130,7 @@ The roadmap includes a built-in AI assistant panel with:
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Go 1.23+ (layered package structure) |
+| Backend | Go 1.25+ (layered package structure) |
 | Frontend | React 19 + Vite + TypeScript |
 | State | Zustand |
 | Editor | CodeMirror 6 |
@@ -185,7 +185,13 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] JetBrains-style autosave (debounced idle + focus loss)
 - [x] Per-file undo/redo history preserved across tab switches
 - [x] File explorer with tree navigation — virtualized rows with lazy per-directory loading on expand
+- [x] Hybrid workspace tree rails — active-scope and per-file ownership shown as two distinct rails in Workspace view
+
+  <img src="docs/screenshots/workspace-hybrid-active-file-rails.png" alt="File tree comparison: per-file tint only versus the hybrid view, which adds an active-workspace rail alongside per-file ownership rails" width="800">
+
+- [x] Unreadable directories stay visible, labeled, and retryable in place
 - [x] Workspace accent color system (7 theme variants)
+- [x] Command palette (`Cmd/Ctrl+Shift+P`) over a shared late-bound command registry with deterministic fuzzy matching
 - [x] Panel layout system with drag-to-resize and collapse/expand
 - [x] Icon system with currentColor SVGs
 - [x] Status bar (cursor position, language, git branch)
@@ -197,12 +203,15 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Diagnostics underlines, gutter markers, Problems panel, and status-bar counts
 - [x] Completion source with trigger characters, detail/docs, and snippet support
 - [x] Hover tooltips and go-to-definition (`F12`, Cmd/Ctrl-click)
+- [x] Current-file Structure view built from document symbols
 - [x] Shared registry entries for Go (`gopls`) and Python (`pyright-langserver`)
 - [x] Managed server provisioning — pinned `basedpyright`, `gopls`, `typescript-language-server`, and `rust-analyzer` installed under `~/.firn`, with interpreter wiring and offline/retry setup guidance (active workspace only; never mutates global env/PATH)
 
 **Search**
 - [x] Workspace-wide ripgrep search with regex, case, and whole-word options
 - [x] Results grouped by file with highlighted matches and keyboard navigation
+- [x] Match-anchored result rows with file/directory hierarchy that stays readable in a narrow panel
+- [x] Dimmed syntax-token highlighting in match context, so the match itself stays the brightest element
 - [x] Cmd+Shift+F opens workspace search
 - [x] Click result to open the file at the match location
 - [x] In-file find/replace through CodeMirror search (`Cmd+F`)
@@ -222,6 +231,7 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Output folding for repeated patterns
 - [x] Compound run profiles — sequential multi-step execution with per-step output and aggregate status
 - [x] First-class run execution identity — output, lifecycle, and status routed by execution-instance id
+- [x] Retained run history — the two most recent ordinary executions per profile stay selectable, with a predecessor diff
 
 **Version Control (Git)**
 - [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
@@ -230,12 +240,15 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Commit panel — per-file and section include checkboxes, stage/commit, pull/push (Publish when there is no upstream), workspace-scoped
 - [x] Gutter change bars with a peek popup — unified word-level inline diff and one-click revert-to-HEAD
 - [x] Hunk-level stage/unstage from editor and diff gutters, including intent-to-add support for untracked files
+- [x] Merge conflict resolution editor — Current / Incoming / Both / Manual decisions on a live Result spine, with a conflict rail, keyboard navigation, undo-safe region mapping, and no write or stage until every region is resolved
 
 ### Planned
 
-- [ ] Git — richer branch menu (#166) and 3-way merge UI (#164)
-- [ ] Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted history
-- [ ] AI Chat Panel
+- [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223)
+- [ ] Git — richer branch/VCS menu (#166)
+- [ ] Run execution identity Phase 2B-2D — same-profile parallelism, persisted history, execution-plan abstraction (#146)
+- [ ] Context menus (#45) and breadcrumb navigation (#46)
+- [ ] AI Chat Panel — read-only workspace chat (#226) on an embedded `go-llm` runtime (#165)
 
 ## Project Structure
 
@@ -245,7 +258,8 @@ firn-ide/
 ├── app.go                      # Wails bindings
 ├── internal/
 │   ├── filesystem/             # File read/write/watch
-│   ├── lsp/                    # LSP client, registry, transports, URI handling
+│   ├── git/                    # Status, diff, hunk staging, merge conflict data
+│   ├── lsp/                    # LSP client, registry, transports, managed provisioning
 │   ├── runprofile/             # Run profile detection, execution, management
 │   ├── search/                 # ripgrep search runner and parser
 │   ├── terminal/               # PTY session management
@@ -255,14 +269,17 @@ firn-ide/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/         # React components
-│   │   │   ├── Editor/         # CodeMirror 6 editor
+│   │   │   ├── CommandPalette/ # Command palette over the shared registry
+│   │   │   ├── Editor/         # CodeMirror 6 editor + merge resolution view
 │   │   │   ├── FileExplorer/   # File tree navigation
+│   │   │   ├── GitPanel/       # Commit/stage panel and diff surfaces
 │   │   │   ├── RunProfiles/    # Run profile cards and panels
 │   │   │   ├── RunOutput/      # Output display (merged, lanes, diff, timeline)
 │   │   │   ├── Search/         # Workspace-wide search
+│   │   │   ├── Structure/      # Current-file symbol outline
 │   │   │   ├── Terminal/       # xterm.js terminal
 │   │   │   └── layout/         # Panel system, sidebar, header
-│   │   ├── stores/             # Zustand state management
+│   │   ├── stores/             # Zustand state (ide, git, lsp, search)
 │   │   ├── hooks/              # Custom React hooks
 │   │   ├── utils/              # Shared utilities
 │   │   └── types/              # TypeScript type definitions
@@ -277,7 +294,7 @@ firn-ide/
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.25+
 - Node.js 18+
 - Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0`
 
@@ -319,13 +336,16 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.11.0` is live. Wave 1 now runs as three independent tracks:
+`v0.11.0` is live. Accessibility (#43), dynamic language loading (#39), the command palette (#44), hybrid tree rails (#202), search-result hierarchy (#207/#215), the merge-resolution editor MVP (#164 phases 0-2), and the Go 1.25 toolchain upgrade (#225) have all shipped since the release.
 
-1. Quality and accessibility: explicit button types (#34) shipped in PR #190; next, audit and re-scope the remaining WCAG AA work (#43).
-2. Filesystem and performance: nested `.gitignore` correctness (#149), then dynamic CodeMirror language loading (#39); lazy watcher registration (#148) stays benchmark-gated.
-3. Workspace visual identity: owning-workspace editor-tab accents (#142), then infrastructure file accents (#143).
+Active tracks:
 
-Next product work is the command palette (#44), followed by context menus and breadcrumbs (#45/#46), run execution identity Phase 2 (#146), and three-way Git conflict recovery before destructive VCS operations (#164/#166). Store extraction (#41) happens only when one of those features needs it, not as a standalone rewrite.
+1. **Golem:** replace the commit-message CLI shell-out with the embedded `go-llm` runtime (#165), then the read-only workspace chat panel (#226). Both were unblocked by the #225 toolchain upgrade.
+2. **Git merge:** finish #164 phases 3-4, then work the follow-up backlog surfaced by the MVP — auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), and bulk take-Current/Incoming (#223). Destructive VCS operations (#166) come after.
+3. **Run engine:** continue run execution identity Phase 2 (#146) — 2A retained tabs shipped, so 2B parallelism, 2C persistence, and 2D execution plans remain.
+4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
+
+Watcher and ignore-rule caching (#148/#196) stay benchmark-gated. Store extraction (#41) happens only when one of the tracks above needs it, not as a standalone rewrite.
 
 ## Contributing
 

@@ -24,18 +24,44 @@ describe('CI Workflow', () => {
     expect(existsSync(resolve(workflowsDir, 'build.yml'))).toBe(true);
   });
 
-  it('should test the backend with the Go version required by go.mod', () => {
+  it('should resolve every setup-go step from the Go version required by go.mod', () => {
     const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
     const goVersion = goMod.match(/^go\s+(\d+\.\d+)/m)?.[1];
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
-    const configuredVersions = workflowFiles.flatMap((file) => {
+
+    // Each setup-go step must state where its Go version comes from. Prefer
+    // `go-version-file: go.mod` so the module stays the single source of truth;
+    // a literal `go-version` is only acceptable if it matches the module.
+    const steps = workflowFiles.flatMap((file) => {
       const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
-      return [...content.matchAll(/go-version:\s*['"]?([^'"\s]+)/g)].map((match) => match[1]);
+      return content
+        .split(/uses:\s*actions\/setup-go@/)
+        .slice(1)
+        .map((segment) => {
+          const body = segment.split(/^\s*- /m)[0];
+          return {
+            file,
+            versionFile: body.match(/go-version-file:\s*['"]?([^'"\s]+)/)?.[1],
+            version: body.match(/go-version:\s*['"]?([^'"\s]+)/)?.[1],
+          };
+        });
     });
 
     expect(goVersion).toBeDefined();
-    expect(configuredVersions.length).toBeGreaterThan(0);
-    expect(new Set(configuredVersions)).toEqual(new Set([goVersion]));
+    expect(steps.length).toBeGreaterThan(0);
+
+    for (const step of steps) {
+      // setup-go gives a literal `go-version` precedence over `go-version-file`,
+      // so a stray literal beside the file reference would silently override the
+      // module in CI; forbid the combination instead of trusting the file entry.
+      const source =
+        step.versionFile && step.version
+          ? `conflicting go-version (${step.version}) and go-version-file (${step.versionFile})`
+          : (step.versionFile ?? step.version);
+      expect(`${step.file}: ${source ?? 'no Go version configured'}`).toBe(
+        `${step.file}: ${step.versionFile && !step.version ? 'go.mod' : goVersion}`
+      );
+    }
   });
 
   it('should pin workflow Wails installs to the module version', () => {
