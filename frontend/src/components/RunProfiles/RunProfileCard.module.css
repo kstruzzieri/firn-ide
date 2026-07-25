@@ -90,6 +90,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Wrap the trailing cluster (badge, "just ran", duration, adopt) onto a second
+     line when the panel is narrow, rather than letting the card's overflow:hidden
+     clip the adopt button. */
+  flex-wrap: wrap;
+  row-gap: 4px;
   position: relative;
   z-index: 1;
 }
