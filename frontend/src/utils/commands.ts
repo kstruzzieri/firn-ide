@@ -1,4 +1,9 @@
-import { useIDEStore, type NavigationLocation } from '../stores/ideStore';
+import {
+  isLiveRunState,
+  representativeRunInstanceId,
+  useIDEStore,
+  type NavigationLocation,
+} from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { navigateToEditorLocation } from './editorNavigation';
 import { startProfile, restartProfile } from './profileActions';
@@ -105,6 +110,7 @@ export function navigateForward(): void {
 
 const selectedRunTarget = () => {
   const state = useIDEStore.getState();
+  if (state.runEventsPaused || state.isLoadingProfiles) return null;
   const id = resolveEffectiveRunTargetId({
     selectedProfileId: state.selectedProfileId,
     profiles: state.runProfiles,
@@ -134,13 +140,22 @@ const selectedProfileAction = () => {
   if (!target) return null;
   const { state, id } = target;
   if (state.restartingProfileIds.includes(id)) return null;
-  const runInstanceId = state.latestRunInstanceIdByProfile[id];
+  const runInstanceId =
+    representativeRunInstanceId(state, id) ?? state.latestRunInstanceIdByProfile[id];
   const compoundId = state.compoundIdByRunInstance[runInstanceId];
+  const ordinaryState = state.runOutputs[runInstanceId]?.state;
   const visualState = getVisualState(
     id,
-    state.runOutputs[runInstanceId]?.state ?? state.runCompounds[compoundId]?.state,
+    ordinaryState == null
+      ? state.runCompounds[compoundId]?.state
+      : isLiveRunState(ordinaryState)
+        ? 'running'
+        : ordinaryState,
     state.stoppingProfileIds,
-    state.restartingProfileIds
+    state.restartingProfileIds,
+    runInstanceId,
+    state.stoppingRunInstanceIds,
+    state.restartingRunInstanceIds
   );
   if (visualState === 'stopping') return null;
   return { target, action: visualState === 'running' ? 'restart' : 'run' } as const;

@@ -34,17 +34,21 @@ type compoundStepStatus struct {
 	StartedAt           int64             `json:"startedAt,omitempty"`
 	EndedAt             int64             `json:"endedAt,omitempty"`
 	ErrorMessage        string            `json:"errorMessage,omitempty"`
+	WorkspaceEpoch      uint64            `json:"workspaceEpoch"`
+	LaunchSeq           uint64            `json:"launchSeq"`
 }
 
 // compoundStatus is the run:compound event payload describing the full state of
 // a compound run.
 type compoundStatus struct {
-	RunInstanceID string               `json:"runInstanceId"`
-	CompoundID    string               `json:"compoundId"`
-	Name          string               `json:"name"`
-	State         RunState             `json:"state"`
-	CurrentStep   int                  `json:"currentStep"`
-	Steps         []compoundStepStatus `json:"steps"`
+	RunInstanceID  string               `json:"runInstanceId"`
+	CompoundID     string               `json:"compoundId"`
+	Name           string               `json:"name"`
+	State          RunState             `json:"state"`
+	CurrentStep    int                  `json:"currentStep"`
+	Steps          []compoundStepStatus `json:"steps"`
+	WorkspaceEpoch uint64               `json:"workspaceEpoch"`
+	LaunchSeq      uint64               `json:"launchSeq"`
 }
 
 // compoundRun tracks an in-flight compound execution. All fields are guarded by
@@ -65,12 +69,14 @@ func (cr *compoundRun) snapshot() compoundStatus {
 	steps := make([]compoundStepStatus, len(cr.steps))
 	copy(steps, cr.steps)
 	return compoundStatus{
-		RunInstanceID: cr.status.RunInstanceID,
-		CompoundID:    cr.status.ProfileID,
-		Name:          cr.name,
-		State:         cr.status.State,
-		CurrentStep:   cr.current,
-		Steps:         steps,
+		RunInstanceID:  cr.status.RunInstanceID,
+		CompoundID:     cr.status.ProfileID,
+		Name:           cr.name,
+		State:          cr.status.State,
+		CurrentStep:    cr.current,
+		Steps:          steps,
+		WorkspaceEpoch: cr.status.WorkspaceEpoch,
+		LaunchSeq:      cr.status.LaunchSeq,
 	}
 }
 
@@ -88,46 +94,74 @@ func (e *Executor) emitCompound(snap compoundStatus) {
 // This implements the all-success path. Failure and stop semantics are layered
 // on in a later task; the loop is structured so non-success leaf results break
 // out cleanly without panicking.
+//
+// This is the current-epoch convenience form of StartCompoundAtEpoch; see the
+// note on Start. Prefer StartCompoundAtEpoch outside tests.
 func (e *Executor) StartCompound(workspaceRoot string, compound RunProfile, steps []RunProfile) error {
+	return e.StartCompoundAtEpoch(e.CurrentEpoch(), workspaceRoot, compound, steps)
+}
+
+// StartCompoundAtEpoch admits a compound aggregate only for the current open
+// workspace. Individual step setup and spawn failures remain asynchronous.
+func (e *Executor) StartCompoundAtEpoch(epoch uint64, workspaceRoot string, compound RunProfile, steps []RunProfile) error {
 	if workspaceRoot == "" {
 		return fmt.Errorf("no workspace loaded")
+	}
+	if err := e.checkAdmission(epoch); err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	e.mu.Lock()
-	if active, exists := e.activeByProfile[compound.ID]; exists {
-		if _, running := e.compounds[active]; running {
-			e.mu.Unlock()
-			cancel()
-			return fmt.Errorf("compound already running: %s", compound.ID)
-		}
-		if _, running := e.processes[active]; running {
-			e.mu.Unlock()
-			cancel()
-			return fmt.Errorf("compound already running: %s", compound.ID)
-		}
-		delete(e.activeByProfile, compound.ID)
+	if err := e.checkAdmissionLocked(epoch); err != nil {
+		e.mu.Unlock()
+		cancel()
+		return err
 	}
-	delete(e.lastStatus, compound.ID)
+	e.refreshActiveProfileLocked(compound.ID)
+	if _, exists := e.activeByProfile[compound.ID]; exists {
+		e.mu.Unlock()
+		cancel()
+		return fmt.Errorf("compound already running: %s", compound.ID)
+	}
+	for _, reservation := range e.reservations {
+		if reservation.identity.ProfileID == compound.ID {
+			e.mu.Unlock()
+			cancel()
+			return fmt.Errorf("compound already running: %s", compound.ID)
+		}
+	}
 
 	aggregateID := e.nextRunInstanceIDLocked()
+	aggregateIdentity := RunIdentity{
+		RunInstanceID:  aggregateID,
+		ProfileID:      compound.ID,
+		WorkspaceEpoch: epoch,
+		LaunchSeq:      e.nextRunSeq,
+	}
 	stepStatuses := make([]compoundStepStatus, len(steps))
 	for i, step := range steps {
+		// nextRunInstanceIDLocked bumps nextRunSeq, so reading it afterwards
+		// yields this step's own launch sequence. Steps order against ordinary
+		// runs by the same monotonic counter rather than a placeholder zero.
+		stepRunInstanceID := e.nextRunInstanceIDLocked()
 		stepStatuses[i] = compoundStepStatus{
 			Idx:                 i,
-			RunInstanceID:       e.nextRunInstanceIDLocked(),
+			RunInstanceID:       stepRunInstanceID,
 			ParentRunInstanceID: aggregateID,
 			ProfileID:           step.ID,
 			Name:                step.Name,
 			State:               CompoundStepPending,
+			WorkspaceEpoch:      epoch,
+			LaunchSeq:           e.nextRunSeq,
 		}
 	}
 
 	cr := &compoundRun{
 		cancel: cancel,
 		status: RunStatus{
-			RunIdentity: RunIdentity{RunInstanceID: aggregateID, ProfileID: compound.ID},
+			RunIdentity: aggregateIdentity,
 			State:       RunStateRunning,
 		},
 		steps:   stepStatuses,
@@ -185,6 +219,8 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 			ProfileID:           steps[i].ID,
 			ParentRunInstanceID: cr.status.RunInstanceID,
 			StepIdx:             i,
+			WorkspaceEpoch:      cr.status.WorkspaceEpoch,
+			LaunchSeq:           cr.steps[i].LaunchSeq,
 		}
 		runningSnap := cr.snapshot()
 		e.mu.Unlock()
@@ -291,12 +327,10 @@ func (e *Executor) finishCompound(cr *compoundRun, state RunState, exitCode int)
 	cr.status.State = state
 	cr.status.ExitCode = exitCode
 	terminal := cr.status
-	e.lastStatus[cr.status.ProfileID] = terminal
+	e.retainTerminalStatusLocked(terminal)
 	finalSnap := cr.snapshot()
 	delete(e.compounds, cr.status.RunInstanceID)
-	if e.activeByProfile[cr.status.ProfileID] == cr.status.RunInstanceID {
-		delete(e.activeByProfile, cr.status.ProfileID)
-	}
+	e.refreshActiveProfileLocked(cr.status.ProfileID)
 	e.mu.Unlock()
 
 	e.emit(terminal)

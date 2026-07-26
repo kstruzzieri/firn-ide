@@ -13,6 +13,8 @@ export interface OutputChunk {
   profileId: string;
   parentRunInstanceId?: string;
   stepIdx: number;
+  launchSeq?: number;
+  workspaceEpoch?: number;
   stream: 'stdout' | 'stderr';
   data: string;
   timestamp: number;
@@ -43,6 +45,8 @@ export interface RunStatusEvent {
   profileId: string;
   parentRunInstanceId?: string;
   stepIdx: number;
+  launchSeq?: number;
+  workspaceEpoch?: number;
   state: RunState;
   exitCode: number;
   timestamp?: number;
@@ -51,6 +55,8 @@ export interface RunStatusEvent {
 export interface RunOutput {
   profileId: string;
   runInstanceId: string;
+  launchSeq?: number;
+  workspaceEpoch?: number;
   workingDir?: string;
   state: RunState;
   exitCode: number;
@@ -96,6 +102,8 @@ export interface CompoundStep {
 export interface CompoundRun {
   compoundId: string;
   runInstanceId: string;
+  launchSeq?: number;
+  workspaceEpoch?: number;
   name: string;
   state: RunState;
   /** Aggregate exit code; meaningful once `state` is terminal (from run:status). */
@@ -111,6 +119,8 @@ export interface CompoundRun {
 export interface CompoundRunEvent {
   runInstanceId: string;
   compoundId: string;
+  launchSeq?: number;
+  workspaceEpoch?: number;
   name: string;
   state: RunState;
   currentStep: number;

@@ -485,6 +485,11 @@
   animation: statePulse 2s ease-in-out infinite;
 }
 
+.stateStopping {
+  background: var(--status-warning);
+  animation: statePulse 1.2s ease-in-out infinite;
+}
+
 .stateSuccess {
   background: var(--status-success);
   opacity: 0.7;

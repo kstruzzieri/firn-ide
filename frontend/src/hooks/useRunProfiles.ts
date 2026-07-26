@@ -92,11 +92,16 @@ export function normalizeProfileState(raw: unknown): Record<string, RunProfileUI
 function normalizeSnapshot(raw: unknown): {
   profiles: RunProfile[];
   profileState: Record<string, RunProfileUIState>;
+  workspaceEpoch?: number;
 } {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
     profiles: normalizeRunProfiles(obj.profiles),
     profileState: normalizeProfileState(obj.profileState),
+    workspaceEpoch:
+      typeof obj.workspaceEpoch === 'number' && obj.workspaceEpoch > 0
+        ? obj.workspaceEpoch
+        : undefined,
   };
 }
 
@@ -106,11 +111,17 @@ function normalizeSnapshot(raw: unknown): {
  * @param workspacePath - The workspace path. Pass null/undefined to skip loading.
  */
 export function useRunProfilesLoader(workspacePath: string | null | undefined): void {
+  // Re-running on the nonce is the recovery path for a failed load: it is the
+  // only place runEventsPaused is cleared, so without it the run controls stay
+  // disabled until the workspace changes.
+  const reloadNonce = useIDEStore((s) => s.profilesReloadNonce);
+
   useEffect(() => {
     if (!workspacePath) {
       return;
     }
 
+    useIDEStore.getState().pauseRunEvents();
     useIDEStore.getState().resetWorkspaceRunState();
 
     let cancelled = false;
@@ -122,8 +133,8 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       .then(() => GetRunProfilesSnapshot())
       .then((snap: unknown) => {
         if (!cancelled) {
-          const { profiles, profileState } = normalizeSnapshot(snap);
-          setRunProfilesSnapshot(profiles, profileState);
+          const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(snap);
+          setRunProfilesSnapshot(profiles, profileState, workspaceEpoch);
         }
       })
       .catch((err: unknown) => {
@@ -139,8 +150,18 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     // be started separately (e.g., via useFileWatcher) for events to fire.
     const cleanup = EventsOn('runprofiles:changed', (snap: unknown) => {
       if (!cancelled) {
-        const { profiles, profileState } = normalizeSnapshot(snap);
-        setRunProfilesSnapshot(profiles, profileState);
+        const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(snap);
+        const state = useIDEStore.getState();
+        if (state.runEventsPaused) return;
+        if (workspaceEpoch == null && state.workspaceEpoch > 0) return;
+        if (
+          workspaceEpoch != null &&
+          state.workspaceEpoch > 0 &&
+          workspaceEpoch !== state.workspaceEpoch
+        ) {
+          return;
+        }
+        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch);
       }
     });
 
@@ -148,5 +169,5 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       cancelled = true;
       cleanup();
     };
-  }, [workspacePath]);
+  }, [workspacePath, reloadNonce]);
 }

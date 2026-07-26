@@ -5,21 +5,27 @@ import type { OutputChunk, CompoundRunEvent, RunStatusEvent } from '../types/run
 
 export function useRunOutputListener(): void {
   useEffect(() => {
-    const entryCounts = new Map<string, number>();
+    const entryCounts = new Map<number, Map<string, number>>();
 
     const waveformInterval = setInterval(() => {
       const store = useIDEStore.getState();
-      for (const [profileId, count] of entryCounts) {
-        store.updateWaveform(profileId, count);
+      if (!store.runEventsPaused) {
+        for (const [profileId, count] of entryCounts.get(store.workspaceEpoch) ?? []) {
+          store.updateWaveform(profileId, count);
+        }
       }
       entryCounts.clear();
     }, 500);
 
     const cleanupOutput = EventsOn('run:output', (chunk: OutputChunk) => {
-      useIDEStore.getState().appendRunOutput(chunk);
+      const store = useIDEStore.getState();
+      const accepted = store.appendRunOutput(chunk);
       // Waveform tracks ordinary profiles only; compound step output has a parent.
-      if (chunk.parentRunInstanceId == null) {
-        entryCounts.set(chunk.profileId, (entryCounts.get(chunk.profileId) ?? 0) + 1);
+      if (accepted && chunk.parentRunInstanceId == null) {
+        const workspaceEpoch = chunk.workspaceEpoch ?? store.workspaceEpoch;
+        const epochCounts = entryCounts.get(workspaceEpoch) ?? new Map<string, number>();
+        epochCounts.set(chunk.profileId, (epochCounts.get(chunk.profileId) ?? 0) + 1);
+        entryCounts.set(workspaceEpoch, epochCounts);
       }
     });
 

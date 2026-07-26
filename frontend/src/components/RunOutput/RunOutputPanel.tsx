@@ -7,6 +7,7 @@ import {
   useRunOutputs,
   useWorkspace,
   useIDEStore,
+  orderedRunIds,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
 import { RunOutputTabs } from './RunOutputTabs';
@@ -27,6 +28,7 @@ export function RunOutputPanel() {
   const runOutputs = useRunOutputs();
   const runInstanceIdsByProfile = useIDEStore((state) => state.runInstanceIdsByProfile);
   const latestRunInstanceIdByProfile = useIDEStore((state) => state.latestRunInstanceIdByProfile);
+  const runLaunchSeqByInstance = useIDEStore((state) => state.runLaunchSeqByInstance);
   const workspace = useWorkspace();
   const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
 
@@ -35,11 +37,18 @@ export function RunOutputPanel() {
 
   const timelineOutputs = useMemo(() => {
     const filtered: typeof runOutputs = {};
-    for (const id of Object.values(latestRunInstanceIdByProfile)) {
-      if (runOutputs[id]) filtered[id] = runOutputs[id];
+    const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
+    for (const profileId of Object.keys(runInstanceIdsByProfile)) {
+      const latestId = latestRunInstanceIdByProfile[profileId];
+      const id =
+        (latestId && runOutputs[latestId] ? latestId : undefined) ??
+        orderedRunIds(runIndex, profileId)
+          .filter((runId) => runOutputs[runId])
+          .at(-1);
+      if (id && runOutputs[id]) filtered[id] = runOutputs[id];
     }
     return filtered;
-  }, [runOutputs, latestRunInstanceIdByProfile]);
+  }, [runOutputs, runInstanceIdsByProfile, latestRunInstanceIdByProfile, runLaunchSeqByInstance]);
 
   const previousOutput = useMemo(() => {
     if (!activeOutput) return undefined;

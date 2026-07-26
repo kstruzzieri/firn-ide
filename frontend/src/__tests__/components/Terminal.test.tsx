@@ -172,6 +172,63 @@ describe('Terminal component', () => {
     expect(screen.queryByTitle('All Profiles Timeline')).not.toBeInTheDocument();
   });
 
+  it('renders launch-ordered live labels, RID lifecycle state, and All from retained identities', () => {
+    useIDEStore.setState({
+      activeTerminalTab: 'output',
+      runProfiles: [
+        { id: 'p1', name: 'Build', type: 'single', source: 'user' },
+        { id: 'p2', name: 'Test', type: 'single', source: 'user' },
+      ],
+      runOutputs: {
+        first: {
+          runInstanceId: 'first',
+          profileId: 'p1',
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+          launchSeq: 10,
+        },
+        second: {
+          runInstanceId: 'second',
+          profileId: 'p1',
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+          launchSeq: 20,
+        },
+        'test-live': {
+          runInstanceId: 'test-live',
+          profileId: 'p2',
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+          launchSeq: 30,
+        },
+      },
+      runInstanceIdsByProfile: { p1: ['first', 'second'], p2: ['test-live'] },
+      latestRunInstanceIdByProfile: { p1: 'second', p2: 'cleared-terminal' },
+      runLaunchSeqByInstance: { first: 10, second: 20, 'test-live': 30 },
+      stoppingProfileIds: ['p1'],
+      stoppingRunInstanceIds: ['first'],
+      activeRunOutputId: 'second',
+    });
+
+    render(<Terminal />);
+
+    expect(screen.getAllByText('Build, Run 1').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Build, Run 2').length).toBeGreaterThan(0);
+    expect(screen.getByTitle('All Profiles Timeline')).toBeInTheDocument();
+
+    const firstOuterTab = screen
+      .getAllByTitle('first')
+      .find((tab) => tab.classList.contains('sessionTab'));
+    const secondOuterTab = screen
+      .getAllByTitle('second')
+      .find((tab) => tab.classList.contains('sessionTab'));
+    expect(firstOuterTab?.querySelector('span')).toHaveClass('stateStopping');
+    expect(secondOuterTab?.querySelector('span')).toHaveClass('stateRunning');
+  });
+
   it('keeps session tabs in a separate manual-activation tablist', () => {
     useIDEStore.setState({
       terminalSessions: [

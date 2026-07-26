@@ -1,6 +1,8 @@
 import styles from './Terminal.module.css';
 import { TerminalIcon, OutputIcon, AlertCircleIcon, PlusIcon } from '../icons';
 import {
+  isLiveRunState,
+  orderedRunIds,
   useIDEStore,
   TerminalTab,
   useTerminalSessions,
@@ -26,6 +28,7 @@ import {
 import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { RunOutputPanel } from '../RunOutput';
 import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { getVisualState } from '../../utils/visualState';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -171,17 +174,23 @@ export function Terminal() {
   const setViewMode = useIDEStore((s) => s.setRunOutputViewMode);
   const runProfiles = useIDEStore((s) => s.runProfiles);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const runLaunchSeqByInstance = useIDEStore((s) => s.runLaunchSeqByInstance);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
   const runCompounds = useIDEStore((s) => s.runCompounds);
   const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
-  const ordinaryOutputIds = Object.values(runInstanceIdsByProfile)
-    .flat()
-    .filter((id) => runOutputs[id]);
+  const stoppingProfileIds = useIDEStore((s) => s.stoppingProfileIds);
+  const restartingProfileIds = useIDEStore((s) => s.restartingProfileIds);
+  const stoppingRunInstanceIds = useIDEStore((s) => s.stoppingRunInstanceIds);
+  const restartingRunInstanceIds = useIDEStore((s) => s.restartingRunInstanceIds);
+  const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
+  const ordinaryOutputIds = Object.keys(runInstanceIdsByProfile).flatMap((profileId) =>
+    orderedRunIds(runIndex, profileId).filter((id) => runOutputs[id])
+  );
   const compoundOutputIds = Object.values(runCompounds).map((run) => run.runInstanceId);
   const outputIds = [...ordinaryOutputIds, ...compoundOutputIds];
-  const latestOrdinaryIds = Object.values(latestRunInstanceIdByProfile).filter(
-    (id) => runOutputs[id]
-  );
+  const ordinaryProfileCount = Object.values(runInstanceIdsByProfile).filter((ids) =>
+    ids.some((id) => runOutputs[id])
+  ).length;
 
   const isCreatingRef = useRef(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -479,7 +488,7 @@ export function Terminal() {
         {activeTab === 'output' && outputIds.length > 0 && (
           <>
             <div className={styles.divider} />
-            {latestOrdinaryIds.length >= 2 && (
+            {ordinaryProfileCount >= 2 && (
               <button
                 type="button"
                 className={`${styles.sessionTab} ${activeRunOutputId === ALL_PROFILES_ID ? styles.active : ''}`}
@@ -509,26 +518,51 @@ export function Terminal() {
               const compoundId = compoundIdByRunInstance[id];
               const compound = compoundId ? runCompounds[compoundId] : undefined;
               const isActive = id === activeRunOutputId;
+              const visualState =
+                output && output.state !== 'running' && output.state !== 'idle'
+                  ? output.state
+                  : getVisualState(
+                      output?.profileId ?? compoundId ?? id,
+                      output && isLiveRunState(output.state)
+                        ? 'running'
+                        : (output?.state ?? compound?.state),
+                      output ? [] : stoppingProfileIds,
+                      output ? [] : restartingProfileIds,
+                      output?.runInstanceId,
+                      stoppingRunInstanceIds,
+                      restartingRunInstanceIds
+                    );
               const stateClass =
-                (output?.state ?? compound?.state) === 'running'
+                visualState === 'running'
                   ? styles.stateRunning
-                  : (output?.state ?? compound?.state) === 'success'
-                    ? styles.stateSuccess
-                    : (output?.state ?? compound?.state) === 'failed'
-                      ? styles.stateFailed
-                      : (output?.state ?? compound?.state) === 'stopped'
-                        ? styles.stateStopped
-                        : '';
+                  : visualState === 'stopping'
+                    ? styles.stateStopping
+                    : visualState === 'success'
+                      ? styles.stateSuccess
+                      : visualState === 'failed'
+                        ? styles.stateFailed
+                        : visualState === 'stopped'
+                          ? styles.stateStopped
+                          : '';
               const profileName = output
                 ? (runProfiles.find((profile) => profile.id === output.profileId)?.name ??
                   output.profileId)
                 : undefined;
-              // Keep the backend-internal runInstanceId out of the visible label
-              // (it stays on the title attr); mark the retained predecessor.
+              const profileRunIds = output
+                ? ordinaryOutputIds.filter(
+                    (runId) => runOutputs[runId]?.profileId === output.profileId
+                  )
+                : [];
+              const hasTwoLiveRuns =
+                output != null &&
+                profileRunIds.filter((runId) => isLiveRunState(runOutputs[runId]?.state)).length >
+                  1;
               const label = output
-                ? latestRunInstanceIdByProfile[output.profileId] === id
-                  ? profileName
-                  : `${profileName} (previous)`
+                ? hasTwoLiveRuns
+                  ? `${profileName}, Run ${profileRunIds.indexOf(id) + 1}`
+                  : latestRunInstanceIdByProfile[output.profileId] === id
+                    ? profileName
+                    : `${profileName} (previous)`
                 : (compound?.name ?? id);
 
               return (

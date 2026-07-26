@@ -91,7 +91,7 @@ describe('useRunOutputListener', () => {
     jest.useFakeTimers();
     try {
       const updateWaveform = jest.fn();
-      useIDEStore.setState({ updateWaveform, appendRunOutput: jest.fn() });
+      useIDEStore.setState({ updateWaveform, appendRunOutput: jest.fn(() => true) });
 
       renderHook(() => useRunOutputListener());
 
@@ -123,6 +123,101 @@ describe('useRunOutputListener', () => {
 
       expect(updateWaveform).toHaveBeenCalledWith('real', expect.any(Number));
       expect(updateWaveform).not.toHaveBeenCalledWith('build', expect.anything());
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('counts only ordinary chunks accepted by the store in the aggregate profile waveform', () => {
+    jest.useFakeTimers();
+    try {
+      const updateWaveform = jest.fn();
+      const appendRunOutput = jest
+        .fn<boolean, [unknown]>()
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true);
+      useIDEStore.setState({
+        workspaceEpoch: 7,
+        runEventsPaused: false,
+        updateWaveform,
+        appendRunOutput,
+      });
+
+      renderHook(() => useRunOutputListener());
+      const outputCallback = mockEventsOn.mock.calls.find(([event]) => event === 'run:output')?.[1];
+      expect(outputCallback).toBeDefined();
+
+      outputCallback!({
+        runInstanceId: 'r1',
+        profileId: 'p1',
+        stepIdx: 0,
+        stream: 'stdout',
+        data: 'accepted sibling one\n',
+        timestamp: 1,
+        launchSeq: 10,
+        workspaceEpoch: 7,
+      });
+      outputCallback!({
+        runInstanceId: 'old-r2',
+        profileId: 'p1',
+        stepIdx: 0,
+        stream: 'stdout',
+        data: 'rejected old epoch\n',
+        timestamp: 2,
+        launchSeq: 20,
+        workspaceEpoch: 6,
+      });
+      outputCallback!({
+        runInstanceId: 'r3',
+        profileId: 'p1',
+        stepIdx: 0,
+        stream: 'stdout',
+        data: 'accepted sibling two\n',
+        timestamp: 3,
+        launchSeq: 30,
+        workspaceEpoch: 7,
+      });
+
+      jest.advanceTimersByTime(600);
+
+      expect(updateWaveform).toHaveBeenCalledTimes(1);
+      expect(updateWaveform).toHaveBeenCalledWith('p1', 2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('drops a queued waveform bucket when the workspace epoch changes before flush', () => {
+    jest.useFakeTimers();
+    try {
+      const updateWaveform = jest.fn();
+      useIDEStore.setState({
+        workspaceEpoch: 1,
+        runEventsPaused: false,
+        updateWaveform,
+        appendRunOutput: jest.fn(() => true),
+      });
+
+      renderHook(() => useRunOutputListener());
+      const outputCallback = mockEventsOn.mock.calls.find(([event]) => event === 'run:output')?.[1];
+      expect(outputCallback).toBeDefined();
+
+      outputCallback!({
+        runInstanceId: 'old-run',
+        profileId: 'shared-profile-id',
+        stepIdx: 0,
+        stream: 'stdout',
+        data: 'accepted before switch\n',
+        timestamp: 1,
+        launchSeq: 10,
+        workspaceEpoch: 1,
+      });
+
+      useIDEStore.setState({ workspaceEpoch: 2, runEventsPaused: false });
+      jest.advanceTimersByTime(600);
+
+      expect(updateWaveform).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

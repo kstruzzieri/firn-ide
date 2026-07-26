@@ -1,14 +1,18 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile, RunProfileUIState } from '../../types/runProfile';
 import type { RunOutput } from '../../types/runOutput';
 
+const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+
 jest.mock('../../../wailsjs/go/main/App', () => ({
-  StartRunProfile: jest.fn(() => Promise.resolve()),
-  StopRunProfile: jest.fn(() => Promise.resolve()),
-  RestartRunProfile: jest.fn(() => Promise.resolve()),
+  StartRunProfile: (id: string) => mockStartProfile(id),
+  StopRunProfile: (id: string) => mockStopProfile(id),
+  RestartRunProfile: (id: string) => mockRestartProfile(id),
   PinRunProfile: jest.fn(() => Promise.resolve()),
   UnpinRunProfile: jest.fn(() => Promise.resolve()),
   SetActiveVariant: jest.fn(() => Promise.resolve()),
@@ -67,15 +71,27 @@ const profileState: Record<string, RunProfileUIState> = {
   // detectedProfile has no lastRunAt -> detected
 };
 
-function makeRunOutput(profileId: string, state: RunOutput['state']): RunOutput {
+function makeRunOutput(
+  profileId: string,
+  state: RunOutput['state'],
+  runInstanceId = 'r1',
+  launchSeq = 1,
+  text?: string
+): RunOutput {
   return {
-    runInstanceId: 'r1',
+    runInstanceId,
     profileId,
     state,
     exitCode: 0,
-    entries: [],
-  };
+    entries: text == null ? [] : [{ stream: 'stdout', text, timestamp: launchSeq }],
+    launchSeq,
+    workspaceEpoch: 1,
+  } as RunOutput;
 }
+
+const setPhase2BState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
+  useIDEStore.setState(patch);
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -140,6 +156,112 @@ describe('RunProfiles panel header counter', () => {
     render(<RunProfiles />);
 
     expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+  });
+
+  it('uses the newest live execution for a mixed live-and-failed profile card', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        live: makeRunOutput(pinnedProfile.id, 'running', 'live', 10, 'live output'),
+        failed: makeRunOutput(pinnedProfile.id, 'failed', 'failed', 11, 'failed output'),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['live', 'failed'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'failed' },
+      runLaunchSeqByInstance: { live: 10, failed: 11 },
+      runStartTimestamps: { live: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Stop Dev' }).length).toBeGreaterThan(0);
+    expect(screen.getByText('live output')).toBeInTheDocument();
+    expect(screen.queryByText('failed output')).not.toBeInTheDocument();
+  });
+
+  it('offers Run another with one live plus one terminal execution and removes it at the two-live cap', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        terminal: makeRunOutput(pinnedProfile.id, 'failed', 'terminal', 19),
+        first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['terminal', 'first'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'first' },
+      runLaunchSeqByInstance: { terminal: 19, first: 20 },
+      runStartTimestamps: { first: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    const runAnother = screen.getByRole('button', { name: 'Run another Dev' });
+    fireEvent.click(runAnother);
+    expect(mockStartProfile).toHaveBeenCalledWith(pinnedProfile.id);
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
+        },
+        runInstanceIdsByProfile: { [pinnedProfile.id]: ['first', 'second'] },
+        latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'second' },
+        runLaunchSeqByInstance: { first: 20, second: 21 },
+        runStartTimestamps: { first: Date.now() - 1000, second: Date.now() - 500 },
+      });
+    });
+
+    expect(screen.queryByRole('button', { name: 'Run another Dev' })).not.toBeInTheDocument();
+  });
+
+  it('badges the card only once a profile has more than one live execution', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        terminal: makeRunOutput(pinnedProfile.id, 'failed', 'terminal', 19),
+        first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['terminal', 'first'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'first' },
+      runLaunchSeqByInstance: { terminal: 19, first: 20 },
+      runStartTimestamps: { first: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    // A retained terminal sibling is not a concurrent run, so no badge yet.
+    expect(screen.queryByText('2 running')).not.toBeInTheDocument();
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
+        },
+        runInstanceIdsByProfile: { [pinnedProfile.id]: ['first', 'second'] },
+        latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'second' },
+        runLaunchSeqByInstance: { first: 20, second: 21 },
+        runStartTimestamps: { first: Date.now() - 1000, second: Date.now() - 500 },
+      });
+    });
+
+    // Both live: the card's status and Stop track only the newest, so the badge
+    // is what tells the user a sibling survives a Stop.
+    expect(screen.getByText('2 running')).toBeInTheDocument();
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'stopped', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'running', 'second', 21),
+        },
+      });
+    });
+
+    expect(screen.queryByText('2 running')).not.toBeInTheDocument();
   });
 
   it('counts a compound through its aggregate run instance without an ordinary output', () => {

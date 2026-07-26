@@ -1,18 +1,20 @@
 import {
+  isLiveRunState,
   useIDEStore,
   useRunOutputViewMode,
   useRunOutputAutoScroll,
   useActiveRunOutputId,
 } from '../../stores/ideStore';
-import { RestartRunProfile, StopRunProfile } from '../../../wailsjs/go/main/App';
+import {
+  restartProfile,
+  restartRunInstance,
+  startProfile,
+  stopProfile,
+  stopRunInstance,
+} from '../../utils/profileActions';
 import { ALL_PROFILES_ID } from '../../types/runOutput';
 import type { RunOutputViewMode } from '../../types/runOutput';
 import styles from './RunOutput.module.css';
-
-function showError(action: string, profileId: string, err: unknown) {
-  const message = err instanceof Error ? err.message : String(err);
-  useIDEStore.getState().showToast(`Failed to ${action} "${profileId}": ${message}`, 'error');
-}
 
 const VIEW_MODES: Array<{ id: RunOutputViewMode; label: string }> = [
   { id: 'merged', label: 'Merged' },
@@ -34,7 +36,15 @@ export function RunOutputToolbar() {
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const runCompounds = useIDEStore((s) => s.runCompounds);
   const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
-  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const runProfiles = useIDEStore((s) => s.runProfiles);
+  const runControlsDisabled = useIDEStore((s) => s.runEventsPaused || s.isLoadingProfiles);
+  // Toast copy is user-facing, so resolve the display name rather than leaking
+  // the profile id into "Failed to stop ...".
+  const displayName = (profileId: string): string =>
+    runProfiles.find((profile) => profile.id === profileId)?.name ??
+    runCompounds[profileId]?.name ??
+    profileId;
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
   const hasActiveProfile = activeId && !isAllProfiles;
@@ -42,11 +52,11 @@ export function RunOutputToolbar() {
   const activeCompoundId =
     activeId && !isAllProfiles ? compoundIdByRunInstance[activeId] : undefined;
   const activeCompound = activeCompoundId ? runCompounds[activeCompoundId] : undefined;
-  const currentOutput = activeOutput
-    ? runOutputs[latestRunInstanceIdByProfile[activeOutput.profileId]]
-    : undefined;
-  const isRunning = currentOutput?.state === 'running' || activeCompound?.state === 'running';
-  const outputIds = Object.values(latestRunInstanceIdByProfile).filter((id) => runOutputs[id]);
+  const isActiveOutputLive = isLiveRunState(activeOutput?.state);
+  const isRunning = isActiveOutputLive || activeCompound?.state === 'running';
+  const outputIds = Object.values(runInstanceIdsByProfile)
+    .map((ids) => ids.filter((id) => runOutputs[id]).at(-1))
+    .filter((id): id is string => id != null);
   const canTimeline = outputIds.length >= 2;
   const controlProfileId = activeOutput?.profileId ?? activeCompoundId;
 
@@ -63,18 +73,24 @@ export function RunOutputToolbar() {
   };
 
   const handleRerun = () => {
-    if (controlProfileId) {
-      RestartRunProfile(controlProfileId).catch((err: unknown) =>
-        showError('restart', controlProfileId, err)
-      );
+    if (runControlsDisabled) return;
+    if (activeOutput) {
+      if (isActiveOutputLive) {
+        restartRunInstance(activeOutput.runInstanceId, displayName(activeOutput.profileId));
+      } else {
+        startProfile(activeOutput.profileId, displayName(activeOutput.profileId));
+      }
+    } else if (controlProfileId) {
+      restartProfile(controlProfileId, displayName(controlProfileId));
     }
   };
 
   const handleStop = () => {
-    if (controlProfileId && isRunning) {
-      StopRunProfile(controlProfileId).catch((err: unknown) =>
-        showError('stop', controlProfileId, err)
-      );
+    if (runControlsDisabled) return;
+    if (activeOutput && isActiveOutputLive) {
+      stopRunInstance(activeOutput.runInstanceId, displayName(activeOutput.profileId));
+    } else if (controlProfileId && activeCompound?.state === 'running') {
+      stopProfile(controlProfileId, displayName(controlProfileId));
     }
   };
 
@@ -114,7 +130,7 @@ export function RunOutputToolbar() {
         type="button"
         className={styles.toolbarBtn}
         onClick={handleRerun}
-        disabled={!controlProfileId}
+        disabled={runControlsDisabled || !controlProfileId}
         title="Re-run"
         aria-label="Re-run profile"
       >
@@ -135,7 +151,7 @@ export function RunOutputToolbar() {
         type="button"
         className={`${styles.toolbarBtn} ${styles.danger}`}
         onClick={handleStop}
-        disabled={!isRunning}
+        disabled={runControlsDisabled || !isRunning}
         title="Stop"
         aria-label="Stop profile"
       >

@@ -52,6 +52,9 @@ interface RunProfileCardProps {
   section?: ProfileSection;
   isFreshestRun?: boolean;
   isSelectedTarget?: boolean;
+  canRunAnother?: boolean;
+  /** Live ordinary executions for this profile. Only >1 is rendered. */
+  liveRunCount?: number;
 }
 
 function getStateClass(visualState: VisualState): string {
@@ -111,13 +114,20 @@ export function RunProfileCard({
   section,
   isFreshestRun,
   isSelectedTarget,
+  canRunAnother,
+  liveRunCount = 0,
 }: RunProfileCardProps) {
   const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
   const openRunProfileForm = useIDEStore((s) => s.openRunProfileForm);
 
-  const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
-  const stopRequestTs = useIDEStore((s) => s.stopRequestTimestamps[profile.id]);
+  const startTs = useIDEStore(
+    (s) => s.runStartTimestamps[runOutput?.runInstanceId ?? ''] ?? s.runStartTimestamps[profile.id]
+  );
+  const stopRequestTs = useIDEStore(
+    (s) =>
+      s.stopRequestTimestamps[runOutput?.runInstanceId ?? ''] ?? s.stopRequestTimestamps[profile.id]
+  );
 
   const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
   const computedElapsed = useElapsedTimer(isRunningOrStopping ? startTs : undefined);
@@ -330,8 +340,25 @@ export function RunProfileCard({
           <span className={styles.targetDot} aria-hidden="true" />
         </button>
         {renderActionButton()}
+        {canRunAnother && (
+          <button
+            type="button"
+            className={`${styles.actionBtn} ${styles.actionBtnPlay}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleStart();
+            }}
+            aria-label={`Run another ${profile.name}`}
+          >
+            <PlayIcon aria-hidden="true" />
+          </button>
+        )}
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />
+        {/* With concurrent executions the card's status reflects the newest run
+            only, and its Stop targets that run alone. Without this the surviving
+            sibling makes a successful Stop look like it did nothing. */}
+        {liveRunCount > 1 && <span className={styles.runCountChip}>{liveRunCount} running</span>}
         {isFreshestRun && <span className={styles.justRanChip}>just ran</span>}
         {durationLabel && <span className={styles.duration}>{durationLabel}</span>}
         {(section === 'recent' || section === 'detected') && (

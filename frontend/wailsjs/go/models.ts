@@ -860,6 +860,7 @@ export namespace runprofile {
 	export class RunProfilesSnapshot {
 	    profiles: RunProfile[];
 	    profileState: Record<string, ProfileUIState>;
+	    workspaceEpoch: number;
 
 	    static createFrom(source: any = {}) {
 	        return new RunProfilesSnapshot(source);
@@ -869,6 +870,7 @@ export namespace runprofile {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.profiles = this.convertValues(source["profiles"], RunProfile);
 	        this.profileState = this.convertValues(source["profileState"], ProfileUIState, true);
+	        this.workspaceEpoch = source["workspaceEpoch"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -894,6 +896,8 @@ export namespace runprofile {
 	    profileId: string;
 	    parentRunInstanceId?: string;
 	    stepIdx: number;
+	    workspaceEpoch: number;
+	    launchSeq: number;
 	    state: string;
 	    exitCode: number;
 	    pid?: number;
@@ -909,6 +913,8 @@ export namespace runprofile {
 	        this.profileId = source["profileId"];
 	        this.parentRunInstanceId = source["parentRunInstanceId"];
 	        this.stepIdx = source["stepIdx"];
+	        this.workspaceEpoch = source["workspaceEpoch"];
+	        this.launchSeq = source["launchSeq"];
 	        this.state = source["state"];
 	        this.exitCode = source["exitCode"];
 	        this.pid = source["pid"];
