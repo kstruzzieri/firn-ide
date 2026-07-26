@@ -52,6 +52,7 @@ export function RunProfiles() {
   const profiles = useRunProfiles();
   const isLoading = useIsLoadingProfiles();
   const error = useProfilesError();
+  const reloadRunProfiles = useIDEStore((s) => s.reloadRunProfiles);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
@@ -345,6 +346,9 @@ export function RunProfiles() {
           ) : error ? (
             <div className={styles.empty}>
               <p className={styles.errorText}>{error}</p>
+              <button type="button" className={styles.createButton} onClick={reloadRunProfiles}>
+                Retry
+              </button>
             </div>
           ) : isViewEmpty ? (
             <RunProfilesEmpty />

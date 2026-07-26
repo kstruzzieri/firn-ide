@@ -2,6 +2,7 @@ import styles from './Terminal.module.css';
 import { TerminalIcon, OutputIcon, AlertCircleIcon, PlusIcon } from '../icons';
 import {
   isLiveRunState,
+  orderedRunIds,
   useIDEStore,
   TerminalTab,
   useTerminalSessions,
@@ -181,14 +182,9 @@ export function Terminal() {
   const restartingProfileIds = useIDEStore((s) => s.restartingProfileIds);
   const stoppingRunInstanceIds = useIDEStore((s) => s.stoppingRunInstanceIds);
   const restartingRunInstanceIds = useIDEStore((s) => s.restartingRunInstanceIds);
-  const ordinaryOutputIds = Object.values(runInstanceIdsByProfile).flatMap((ids) =>
-    [...ids]
-      .filter((id) => runOutputs[id])
-      .sort(
-        (a, b) =>
-          (runLaunchSeqByInstance[a] ?? runOutputs[a]?.launchSeq ?? 0) -
-          (runLaunchSeqByInstance[b] ?? runOutputs[b]?.launchSeq ?? 0)
-      )
+  const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
+  const ordinaryOutputIds = Object.keys(runInstanceIdsByProfile).flatMap((profileId) =>
+    orderedRunIds(runIndex, profileId).filter((id) => runOutputs[id])
   );
   const compoundOutputIds = Object.values(runCompounds).map((run) => run.runInstanceId);
   const outputIds = [...ordinaryOutputIds, ...compoundOutputIds];

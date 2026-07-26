@@ -37,7 +37,14 @@ export function RunOutputToolbar() {
   const runCompounds = useIDEStore((s) => s.runCompounds);
   const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const runProfiles = useIDEStore((s) => s.runProfiles);
   const runControlsDisabled = useIDEStore((s) => s.runEventsPaused || s.isLoadingProfiles);
+  // Toast copy is user-facing, so resolve the display name rather than leaking
+  // the profile id into "Failed to stop ...".
+  const displayName = (profileId: string): string =>
+    runProfiles.find((profile) => profile.id === profileId)?.name ??
+    runCompounds[profileId]?.name ??
+    profileId;
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
   const hasActiveProfile = activeId && !isAllProfiles;
@@ -69,21 +76,21 @@ export function RunOutputToolbar() {
     if (runControlsDisabled) return;
     if (activeOutput) {
       if (isActiveOutputLive) {
-        restartRunInstance(activeOutput.runInstanceId, activeOutput.profileId);
+        restartRunInstance(activeOutput.runInstanceId, displayName(activeOutput.profileId));
       } else {
-        startProfile(activeOutput.profileId, activeOutput.profileId);
+        startProfile(activeOutput.profileId, displayName(activeOutput.profileId));
       }
     } else if (controlProfileId) {
-      restartProfile(controlProfileId, controlProfileId);
+      restartProfile(controlProfileId, displayName(controlProfileId));
     }
   };
 
   const handleStop = () => {
     if (runControlsDisabled) return;
     if (activeOutput && isActiveOutputLive) {
-      stopRunInstance(activeOutput.runInstanceId, activeOutput.profileId);
+      stopRunInstance(activeOutput.runInstanceId, displayName(activeOutput.profileId));
     } else if (controlProfileId && activeCompound?.state === 'running') {
-      stopProfile(controlProfileId, controlProfileId);
+      stopProfile(controlProfileId, displayName(controlProfileId));
     }
   };
 

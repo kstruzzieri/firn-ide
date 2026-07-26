@@ -2,6 +2,7 @@ package runprofile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,11 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrRunInstanceNotRunning reports that an exact-target control referenced a run
+// instance that is no longer live. Exact controls surface it; profile-level
+// controls may treat it as "nothing to replace" and start fresh instead.
+var ErrRunInstanceNotRunning = errors.New("run instance not running")
 
 // RunState represents the lifecycle state of a profile execution.
 type RunState string
@@ -114,6 +120,12 @@ func NewExecutor(emitFn StatusFunc, outputFn OutputFunc) *Executor {
 
 // Start begins executing a run profile. Profile resolution (ID → RunProfile)
 // happens at the app.go binding level. The executor receives the resolved profile.
+//
+// This is the current-epoch convenience form of StartAtEpoch. Production callers
+// go through StartAtEpoch with the epoch they resolved alongside the profile, so
+// that a workspace switch between resolution and launch is rejected; reading the
+// epoch here instead means a concurrent BeginDrain is only caught by the
+// re-check inside StartAtEpoch. Prefer StartAtEpoch outside tests.
 func (e *Executor) Start(workspaceRoot string, profile RunProfile) error {
 	return e.StartAtEpoch(e.CurrentEpoch(), workspaceRoot, profile)
 }
@@ -390,7 +402,7 @@ func (e *Executor) reserveReplacement(epoch uint64, profile RunProfile, replaced
 	}
 	replaced := e.processes[replacedRunInstanceID]
 	if replaced == nil {
-		return nil, fmt.Errorf("run instance not running: %s", replacedRunInstanceID)
+		return nil, fmt.Errorf("%w: %s", ErrRunInstanceNotRunning, replacedRunInstanceID)
 	}
 	if replaced.identity.ParentRunInstanceID != "" {
 		return nil, fmt.Errorf("exact restart requires an ordinary run: %s", replacedRunInstanceID)
@@ -431,12 +443,25 @@ func (e *Executor) finishReservation(reservation *launchReservation) {
 	close(reservation.done)
 }
 
+// reapInvalidatedProcess kills and reaps a process that was spawned but whose
+// admission was invalidated before promotion. The reap is bounded: this runs on
+// the path that closes reservation.done, which StopAll blocks on, so a kill that
+// does not land (taskkill failure on Windows, an already-reparented group) must
+// not wedge a workspace switch. A stuck Wait is left to its own goroutine.
 func (e *Executor) reapInvalidatedProcess(prepared *preparedProcess) {
 	if prepared.cmd.Process != nil {
 		_ = forceKillProcessGroup(prepared.cmd.Process.Pid)
 	}
 	prepared.closePipes()
-	_ = prepared.cmd.Wait()
+	reaped := make(chan struct{})
+	go func() {
+		_ = prepared.cmd.Wait()
+		close(reaped)
+	}()
+	select {
+	case <-reaped:
+	case <-time.After(stopGracePeriod):
+	}
 }
 
 func (e *Executor) setCommandStartHook(hook func(*exec.Cmd) error) {

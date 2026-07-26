@@ -173,6 +173,8 @@ interface IDEState {
   runProfileForm: FormState;
   isLoadingProfiles: boolean;
   profilesError: string | null;
+  /** Bumped to re-run the run-profile loader after a failed load. */
+  profilesReloadNonce: number;
   // Header selector: session-only single Cmd+R target. Not persisted; the
   // effective target re-resolves from recency on launch (see resolveEffectiveRunTarget).
   selectedProfileId: string | null;
@@ -292,6 +294,7 @@ interface IDEActions {
   unadoptProfileLocal: (id: string) => void;
   setProfilesLoading: (loading: boolean) => void;
   setProfilesError: (error: string | null) => void;
+  reloadRunProfiles: () => void;
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
   openRunProfileForm: (state: Exclude<FormState, null>) => void;
@@ -462,7 +465,34 @@ type RunIndexState = Pick<
   'runOutputs' | 'runInstanceIdsByProfile' | 'runLaunchSeqByInstance'
 >;
 
-function orderedRunIds(state: RunIndexState, profileId: string): string[] {
+// The run indexes a workspace switch or a failed load must drop together. Kept
+// as one helper so a newly added index cannot be cleared in one caller and
+// missed in the other.
+function emptyWorkspaceRunState() {
+  return {
+    selectedProfileId: null,
+    runOutputs: {},
+    runInstanceIdsByProfile: {},
+    runLaunchSeqByInstance: {},
+    discardedRunLaunchSeqsByProfile: {},
+    discardedThroughLaunchSeqByProfile: {},
+    latestRunInstanceIdByProfile: {},
+    runCompounds: {},
+    compoundIdByRunInstance: {},
+    activeRunOutputId: null,
+    stoppingProfileIds: [],
+    restartingProfileIds: [],
+    stoppingRunInstanceIds: [],
+    restartingRunInstanceIds: [],
+    runHistory: {},
+    waveformData: {},
+    runStartTimestamps: {},
+    stopRequestTimestamps: {},
+  } satisfies Partial<IDEState>;
+}
+
+/** Run instance ids for a profile, oldest launch first. */
+export function orderedRunIds(state: RunIndexState, profileId: string): string[] {
   return [...(state.runInstanceIdsByProfile[profileId] ?? [])].sort(
     (a, b) =>
       (state.runLaunchSeqByInstance[a] ?? state.runOutputs[a]?.launchSeq ?? 0) -
@@ -673,6 +703,7 @@ export const useIDEStore = create<IDEStore>()(
       runProfileForm: null,
       isLoadingProfiles: false,
       profilesError: null,
+      profilesReloadNonce: 0,
       selectedProfileId: null,
       runOutputs: {},
       runInstanceIdsByProfile: {},
@@ -1044,28 +1075,7 @@ export const useIDEStore = create<IDEStore>()(
             workspaceEpoch:
               workspaceEpoch != null && workspaceEpoch > 0 ? workspaceEpoch : state.workspaceEpoch,
             runEventsPaused: false,
-            ...(state.runEventsPaused
-              ? {
-                  selectedProfileId: null,
-                  runOutputs: {},
-                  runInstanceIdsByProfile: {},
-                  runLaunchSeqByInstance: {},
-                  discardedRunLaunchSeqsByProfile: {},
-                  discardedThroughLaunchSeqByProfile: {},
-                  latestRunInstanceIdByProfile: {},
-                  runCompounds: {},
-                  compoundIdByRunInstance: {},
-                  activeRunOutputId: null,
-                  stoppingProfileIds: [],
-                  restartingProfileIds: [],
-                  stoppingRunInstanceIds: [],
-                  restartingRunInstanceIds: [],
-                  runHistory: {},
-                  waveformData: {},
-                  runStartTimestamps: {},
-                  stopRequestTimestamps: {},
-                }
-              : {}),
+            ...(state.runEventsPaused ? emptyWorkspaceRunState() : {}),
           }),
           false,
           'setRunProfilesSnapshot'
@@ -1113,32 +1123,22 @@ export const useIDEStore = create<IDEStore>()(
             profilesError,
             isLoadingProfiles: false,
             ...(state.runEventsPaused
-              ? {
-                  runProfiles: [],
-                  runProfileState: {},
-                  selectedProfileId: null,
-                  runOutputs: {},
-                  runInstanceIdsByProfile: {},
-                  runLaunchSeqByInstance: {},
-                  discardedRunLaunchSeqsByProfile: {},
-                  discardedThroughLaunchSeqByProfile: {},
-                  latestRunInstanceIdByProfile: {},
-                  runCompounds: {},
-                  compoundIdByRunInstance: {},
-                  activeRunOutputId: null,
-                  stoppingProfileIds: [],
-                  restartingProfileIds: [],
-                  stoppingRunInstanceIds: [],
-                  restartingRunInstanceIds: [],
-                  runHistory: {},
-                  waveformData: {},
-                  runStartTimestamps: {},
-                  stopRequestTimestamps: {},
-                }
+              ? { runProfiles: [], runProfileState: {}, ...emptyWorkspaceRunState() }
               : {}),
           }),
           false,
           'setProfilesError'
+        ),
+
+      // Bumping the nonce re-runs useRunProfilesLoader, which is the only path
+      // that clears runEventsPaused. Without it a failed load leaves the run
+      // controls disabled until the user switches workspaces, because the
+      // runprofiles:changed handler also bails while events are paused.
+      reloadRunProfiles: () =>
+        set(
+          (state) => ({ profilesReloadNonce: state.profilesReloadNonce + 1 }),
+          false,
+          'reloadRunProfiles'
         ),
 
       openRunProfileForm: (state) => set({ runProfileForm: state }, false, 'openRunProfileForm'),

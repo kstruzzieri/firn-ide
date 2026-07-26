@@ -111,6 +111,11 @@ function normalizeSnapshot(raw: unknown): {
  * @param workspacePath - The workspace path. Pass null/undefined to skip loading.
  */
 export function useRunProfilesLoader(workspacePath: string | null | undefined): void {
+  // Re-running on the nonce is the recovery path for a failed load: it is the
+  // only place runEventsPaused is cleared, so without it the run controls stay
+  // disabled until the workspace changes.
+  const reloadNonce = useIDEStore((s) => s.profilesReloadNonce);
+
   useEffect(() => {
     if (!workspacePath) {
       return;
@@ -164,5 +169,5 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       cancelled = true;
       cleanup();
     };
-  }, [workspacePath]);
+  }, [workspacePath, reloadNonce]);
 }

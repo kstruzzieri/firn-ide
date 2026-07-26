@@ -94,6 +94,9 @@ func (e *Executor) emitCompound(snap compoundStatus) {
 // This implements the all-success path. Failure and stop semantics are layered
 // on in a later task; the loop is structured so non-success leaf results break
 // out cleanly without panicking.
+//
+// This is the current-epoch convenience form of StartCompoundAtEpoch; see the
+// note on Start. Prefer StartCompoundAtEpoch outside tests.
 func (e *Executor) StartCompound(workspaceRoot string, compound RunProfile, steps []RunProfile) error {
 	return e.StartCompoundAtEpoch(e.CurrentEpoch(), workspaceRoot, compound, steps)
 }
@@ -139,15 +142,19 @@ func (e *Executor) StartCompoundAtEpoch(epoch uint64, workspaceRoot string, comp
 	}
 	stepStatuses := make([]compoundStepStatus, len(steps))
 	for i, step := range steps {
+		// nextRunInstanceIDLocked bumps nextRunSeq, so reading it afterwards
+		// yields this step's own launch sequence. Steps order against ordinary
+		// runs by the same monotonic counter rather than a placeholder zero.
+		stepRunInstanceID := e.nextRunInstanceIDLocked()
 		stepStatuses[i] = compoundStepStatus{
 			Idx:                 i,
-			RunInstanceID:       e.nextRunInstanceIDLocked(),
+			RunInstanceID:       stepRunInstanceID,
 			ParentRunInstanceID: aggregateID,
 			ProfileID:           step.ID,
 			Name:                step.Name,
 			State:               CompoundStepPending,
 			WorkspaceEpoch:      epoch,
-			LaunchSeq:           0,
+			LaunchSeq:           e.nextRunSeq,
 		}
 	}
 
@@ -213,7 +220,7 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 			ParentRunInstanceID: cr.status.RunInstanceID,
 			StepIdx:             i,
 			WorkspaceEpoch:      cr.status.WorkspaceEpoch,
-			LaunchSeq:           0,
+			LaunchSeq:           cr.steps[i].LaunchSeq,
 		}
 		runningSnap := cr.snapshot()
 		e.mu.Unlock()

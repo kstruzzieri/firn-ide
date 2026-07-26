@@ -1,5 +1,6 @@
 import {
   isLiveRunState,
+  orderedRunIds,
   useIDEStore,
   useRunOutputs,
   useActiveRunOutputId,
@@ -24,14 +25,9 @@ export function RunOutputTabs() {
   const runLaunchSeqByInstance = useIDEStore((s) => s.runLaunchSeqByInstance);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
 
-  const ordinaryIds = Object.values(runInstanceIdsByProfile).flatMap((ids) =>
-    [...ids]
-      .filter((id) => runOutputs[id])
-      .sort(
-        (a, b) =>
-          (runLaunchSeqByInstance[a] ?? runOutputs[a]?.launchSeq ?? 0) -
-          (runLaunchSeqByInstance[b] ?? runOutputs[b]?.launchSeq ?? 0)
-      )
+  const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
+  const ordinaryIds = Object.keys(runInstanceIdsByProfile).flatMap((profileId) =>
+    orderedRunIds(runIndex, profileId).filter((id) => runOutputs[id])
   );
   const compoundIds = Object.values(runCompounds).map((run) => run.runInstanceId);
   const tabIds = [...ordinaryIds, ...compoundIds];
@@ -48,11 +44,11 @@ export function RunOutputTabs() {
     if (output) {
       const name =
         profiles.find((profile) => profile.id === output.profileId)?.name ?? output.profileId;
-      const profileIds = ordinaryIds.filter(
+      const profileRunIds = ordinaryIds.filter(
         (runId) => runOutputs[runId]?.profileId === output.profileId
       );
-      if (profileIds.filter((runId) => isLiveRunState(runOutputs[runId]?.state)).length > 1) {
-        return `${name}, Run ${profileIds.indexOf(id) + 1}`;
+      if (profileRunIds.filter((runId) => isLiveRunState(runOutputs[runId]?.state)).length > 1) {
+        return `${name}, Run ${profileRunIds.indexOf(id) + 1}`;
       }
       return latestRunInstanceIdByProfile[output.profileId] === id ? name : `${name} (previous)`;
     }

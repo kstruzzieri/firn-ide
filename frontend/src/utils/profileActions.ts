@@ -24,6 +24,9 @@ export function startProfile(id: string, name: string): void {
 export function stopProfile(id: string, name: string): void {
   if (!runControlsEnabled()) return;
   const store = useIDEStore.getState();
+  // Profile-level stop deliberately targets only the newest live execution; a
+  // sibling is stopped from its own output tab via stopRunInstance. See the
+  // executor's Stop contract and the RunProfileSelector targeting tests.
   const runInstanceId = representativeRunInstanceId(store, id);
   store.setProfileStopping(id);
   if (runInstanceId) store.setRunStopping(runInstanceId);
@@ -77,8 +80,12 @@ export function stopRunInstance(runInstanceId: string, profileName: string): voi
 export function restartRunInstance(runInstanceId: string, profileName: string): void {
   if (!runControlsEnabled()) return;
   useIDEStore.getState().setRunRestarting(runInstanceId);
-  restartRunInstanceBinding(runInstanceId).catch((err: unknown) => {
-    useIDEStore.getState().clearRunRestarting(runInstanceId);
-    useIDEStore.getState().showToast(`Failed to restart "${profileName}": ${msg(err)}`, 'error');
-  });
+  restartRunInstanceBinding(runInstanceId)
+    // The replaced instance's terminal run:status clears this too, but resolving
+    // the binding is the only signal available when that status never lands.
+    .then(() => useIDEStore.getState().clearRunRestarting(runInstanceId))
+    .catch((err: unknown) => {
+      useIDEStore.getState().clearRunRestarting(runInstanceId);
+      useIDEStore.getState().showToast(`Failed to restart "${profileName}": ${msg(err)}`, 'error');
+    });
 }

@@ -396,4 +396,32 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().workspaceEpoch).toBe(2);
     expect(useIDEStore.getState().runEventsPaused).toBe(true);
   });
+
+  it('recovers from a failed load when the retry nonce is bumped', async () => {
+    mockLoadRunProfiles.mockRejectedValueOnce(new Error('workspace unavailable'));
+
+    renderHook(() => useRunProfilesLoader('/workspace-a'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // A failed load leaves run events paused, which also makes the
+    // runprofiles:changed handler bail — so without a retry the run controls
+    // stay disabled until the workspace path itself changes.
+    expect(useIDEStore.getState().profilesError).toContain('workspace unavailable');
+    expect(useIDEStore.getState().runEventsPaused).toBe(true);
+
+    act(() => {
+      useIDEStore.getState().reloadRunProfiles();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useIDEStore.getState().profilesError).toBeNull();
+    expect(useIDEStore.getState().runEventsPaused).toBe(false);
+    expect(useIDEStore.getState().runProfiles).toEqual(sampleProfiles);
+  });
 });

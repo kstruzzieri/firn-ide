@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"firn/internal/filesystem"
 	"firn/internal/git"
 	"firn/internal/lsp"
@@ -744,6 +745,12 @@ func (a *App) RestartRunProfile(profileID string) error {
 		status := a.executor.GetStatus(profileID)
 		if status.State == runprofile.RunStateRunning {
 			err = a.executor.RestartAtEpoch(epoch, workspaceRoot, profile, status.RunInstanceID)
+			if errors.Is(err, runprofile.ErrRunInstanceNotRunning) {
+				// The run reached a terminal state between GetStatus and the
+				// replacement reservation. Profile-level restart still means
+				// "make this profile run", so start fresh instead of failing.
+				err = a.executor.StartAtEpoch(epoch, workspaceRoot, profile)
+			}
 		} else {
 			err = a.executor.StartAtEpoch(epoch, workspaceRoot, profile)
 		}

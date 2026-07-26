@@ -7,6 +7,7 @@ import {
   useRunOutputs,
   useWorkspace,
   useIDEStore,
+  orderedRunIds,
 } from '../../stores/ideStore';
 import { RunOutputToolbar } from './RunOutputToolbar';
 import { RunOutputTabs } from './RunOutputTabs';
@@ -36,17 +37,13 @@ export function RunOutputPanel() {
 
   const timelineOutputs = useMemo(() => {
     const filtered: typeof runOutputs = {};
-    for (const [profileId, ids] of Object.entries(runInstanceIdsByProfile)) {
+    const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
+    for (const profileId of Object.keys(runInstanceIdsByProfile)) {
       const latestId = latestRunInstanceIdByProfile[profileId];
       const id =
         (latestId && runOutputs[latestId] ? latestId : undefined) ??
-        [...ids]
+        orderedRunIds(runIndex, profileId)
           .filter((runId) => runOutputs[runId])
-          .sort(
-            (a, b) =>
-              (runLaunchSeqByInstance[a] ?? runOutputs[a]?.launchSeq ?? 0) -
-              (runLaunchSeqByInstance[b] ?? runOutputs[b]?.launchSeq ?? 0)
-          )
           .at(-1);
       if (id && runOutputs[id]) filtered[id] = runOutputs[id];
     }
