@@ -27,6 +27,7 @@ export function RunOutputPanel() {
   const runOutputs = useRunOutputs();
   const runInstanceIdsByProfile = useIDEStore((state) => state.runInstanceIdsByProfile);
   const latestRunInstanceIdByProfile = useIDEStore((state) => state.latestRunInstanceIdByProfile);
+  const runLaunchSeqByInstance = useIDEStore((state) => state.runLaunchSeqByInstance);
   const workspace = useWorkspace();
   const [expandedFolds, setExpandedFolds] = useState<Set<string>>(new Set());
 
@@ -35,11 +36,22 @@ export function RunOutputPanel() {
 
   const timelineOutputs = useMemo(() => {
     const filtered: typeof runOutputs = {};
-    for (const id of Object.values(latestRunInstanceIdByProfile)) {
-      if (runOutputs[id]) filtered[id] = runOutputs[id];
+    for (const [profileId, ids] of Object.entries(runInstanceIdsByProfile)) {
+      const latestId = latestRunInstanceIdByProfile[profileId];
+      const id =
+        (latestId && runOutputs[latestId] ? latestId : undefined) ??
+        [...ids]
+          .filter((runId) => runOutputs[runId])
+          .sort(
+            (a, b) =>
+              (runLaunchSeqByInstance[a] ?? runOutputs[a]?.launchSeq ?? 0) -
+              (runLaunchSeqByInstance[b] ?? runOutputs[b]?.launchSeq ?? 0)
+          )
+          .at(-1);
+      if (id && runOutputs[id]) filtered[id] = runOutputs[id];
     }
     return filtered;
-  }, [runOutputs, latestRunInstanceIdByProfile]);
+  }, [runOutputs, runInstanceIdsByProfile, latestRunInstanceIdByProfile, runLaunchSeqByInstance]);
 
   const previousOutput = useMemo(() => {
     if (!activeOutput) return undefined;

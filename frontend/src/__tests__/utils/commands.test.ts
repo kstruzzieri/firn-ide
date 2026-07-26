@@ -235,10 +235,13 @@ test('re-evaluates mutually exclusive run and restart availability from late-bou
     selectedProfileId: 'p1',
   });
 
-  for (const state of ['idle', 'success', 'failed', 'stopped']) {
-    setProfileOutputState(state as 'idle' | 'success' | 'failed' | 'stopped');
+  for (const state of ['success', 'failed', 'stopped']) {
+    setProfileOutputState(state as 'success' | 'failed' | 'stopped');
     expect(availableActions()).toEqual(['run-selected-profile']);
   }
+
+  setProfileOutputState('idle');
+  expect(availableActions()).toEqual(['restart-selected-profile']);
 
   setProfileOutputState('running');
   expect(availableActions()).toEqual(['restart-selected-profile']);
@@ -248,6 +251,27 @@ test('re-evaluates mutually exclusive run and restart availability from late-bou
 
   useIDEStore.setState({ stoppingProfileIds: [], restartingProfileIds: ['p1'] });
   expect(availableActions()).toEqual([]);
+});
+
+test('hides and blocks run commands while workspace event admission is paused', () => {
+  const commands = createCommands(jest.fn());
+  useIDEStore.setState({
+    runProfiles: [{ id: 'p1', name: 'test', type: 'single', source: 'user', workspaceId: 'ws' }],
+    activeWorkspaceId: 'ws',
+    selectedProfileId: 'p1',
+    runEventsPaused: true,
+    isLoadingProfiles: true,
+  });
+
+  const run = commands.find((item) => item.id === 'run-selected-profile');
+  const restart = commands.find((item) => item.id === 'restart-selected-profile');
+  expect(run?.enabled?.()).toBe(false);
+  expect(restart?.enabled?.()).toBe(false);
+
+  run?.run();
+  restart?.run();
+  expect(mockStartProfile).not.toHaveBeenCalled();
+  expect(mockRestartProfile).not.toHaveBeenCalled();
 });
 
 test('derives selected-profile command state from the explicit latest run instance', () => {

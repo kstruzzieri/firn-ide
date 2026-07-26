@@ -34,6 +34,7 @@ type App struct {
 	profileMu            sync.RWMutex
 	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
+	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
 	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
 	emitFn         func(event string, data ...any)
 	executor       *runprofile.Executor
@@ -45,6 +46,7 @@ type App struct {
 	gitMsgGen      *git.MessageGenerator
 	closeMu        sync.Mutex
 	isClosing      bool
+	runShutdown    bool
 	closeReady     chan struct{}
 }
 
@@ -159,6 +161,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	closeReady := a.closeReady
 	a.closeMu.Unlock()
 
+	a.beginRunShutdown()
 	runtime.EventsEmit(a.ctx, "app:beforeclose")
 
 	// Cancel any in-flight workspace searches before the runner/LSP shutdown
@@ -210,6 +213,15 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	}()
 
 	return true
+}
+
+func (a *App) beginRunShutdown() {
+	a.closeMu.Lock()
+	a.runShutdown = true
+	a.closeMu.Unlock()
+	if a.executor != nil {
+		a.executor.BeginDrain()
+	}
 }
 
 // GetWorkspaceInfo returns information about the current workspace.
@@ -277,7 +289,7 @@ func (a *App) StartWatching(path string) error {
 		changed := a.profileManager.HandleFileChange(event.Path)
 		var snap runprofile.RunProfilesSnapshot
 		if changed {
-			snap = a.profileManager.Snapshot()
+			snap = a.runProfilesSnapshot(a.profileManager)
 		}
 		a.profileMu.RUnlock()
 
@@ -378,26 +390,56 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 	a.profileMu.Lock()
 	defer a.profileMu.Unlock()
 
-	// Stop running profiles and clear stale terminal statuses when switching workspaces
-	if a.profileWorkspaceRoot != "" && a.profileWorkspaceRoot != workspacePath && a.executor != nil {
+	switchingWorkspace := a.profileManager == nil || a.profileWorkspaceRoot != workspacePath
+	var epoch uint64
+	if a.executor != nil {
+		if switchingWorkspace {
+			// Admission closes before shutdown begins. Advancing the epoch alone is
+			// not enough: a launch for the new epoch must not enter mid-drain.
+			epoch = a.executor.BeginDrain()
+		} else {
+			epoch = a.executor.CurrentEpoch()
+		}
+	}
+
+	if switchingWorkspace && a.executor != nil {
 		if ok := a.executor.StopAll(4 * time.Second); !ok {
 			return fmt.Errorf("failed to stop running profiles before switching workspace")
 		}
 		a.executor.ClearTerminalStatuses()
 	}
 
-	if a.profileManager == nil || a.profileWorkspaceRoot != workspacePath {
-		a.profileManager = runprofile.NewProjectManager(a.osFS, workspacePath)
+	manager := a.profileManager
+	if switchingWorkspace {
+		manager = runprofile.NewProjectManager(a.osFS, workspacePath)
 	}
-	a.profileWorkspaceRoot = workspacePath
 
-	if err := a.profileManager.Load(); err != nil {
+	load := manager.Load
+	if a.loadRunProfilesFn != nil {
+		load = func() error { return a.loadRunProfilesFn(manager) }
+	}
+	if err := load(); err != nil {
 		return err
+	}
+	if switchingWorkspace {
+		a.profileManager = manager
+		a.profileWorkspaceRoot = workspacePath
+	}
+	if a.executor != nil {
+		a.closeMu.Lock()
+		var endDrainErr error
+		if !a.runShutdown {
+			endDrainErr = a.executor.EndDrain(epoch)
+		}
+		a.closeMu.Unlock()
+		if endDrainErr != nil {
+			return endDrainErr
+		}
 	}
 	// Surface non-fatal load issues (unreadable workspace store, migration that
 	// could not be written back) instead of swallowing them. A degraded load
 	// still yields a usable profile list.
-	for _, w := range a.profileManager.Warnings() {
+	for _, w := range manager.Warnings() {
 		runtime.LogWarningf(a.ctx, "run profiles: %s", w)
 	}
 	return nil
@@ -422,9 +464,13 @@ func (a *App) GetRunProfilesSnapshot() runprofile.RunProfilesSnapshot {
 	a.profileMu.RLock()
 	defer a.profileMu.RUnlock()
 	if a.profileManager == nil {
-		return runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}}
+		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}}
+		if a.executor != nil {
+			snap.WorkspaceEpoch = a.executor.CurrentEpoch()
+		}
+		return snap
 	}
-	return a.profileManager.Snapshot()
+	return a.runProfilesSnapshot(a.profileManager)
 }
 
 // AdoptRunProfile adds a profile to its workspace working set and emits an update.
@@ -448,6 +494,14 @@ func (a *App) emit(event string, data ...any) {
 	runtime.EventsEmit(a.ctx, event, data...)
 }
 
+func (a *App) runProfilesSnapshot(manager *runprofile.ProjectRunProfileManager) runprofile.RunProfilesSnapshot {
+	snap := manager.Snapshot()
+	if a.executor != nil {
+		snap.WorkspaceEpoch = a.executor.CurrentEpoch()
+	}
+	return snap
+}
+
 // mutateAndEmitProfiles runs a manager mutation under the app read lock, then emits the full snapshot on success. Centralizes the lock/emit dance shared by pin/unpin/variant/adopt/unadopt.
 func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager) error) error {
 	a.profileMu.RLock()
@@ -459,7 +513,7 @@ func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager
 		a.profileMu.RUnlock()
 		return err
 	}
-	snap := a.profileManager.Snapshot()
+	snap := a.runProfilesSnapshot(a.profileManager)
 	a.profileMu.RUnlock()
 	a.emit("runprofiles:changed", snap)
 	return nil
@@ -479,7 +533,7 @@ func (a *App) SaveRunProfile(profile runprofile.RunProfile) (runprofile.Validati
 	var snap runprofile.RunProfilesSnapshot
 	shouldEmit := err == nil && result.Valid
 	if shouldEmit {
-		snap = a.profileManager.Snapshot()
+		snap = a.runProfilesSnapshot(a.profileManager)
 	}
 	a.profileMu.RUnlock()
 	if shouldEmit {
@@ -499,7 +553,7 @@ func (a *App) DeleteRunProfile(id string) error {
 	err := a.profileManager.DeleteProfile(id)
 	var snap runprofile.RunProfilesSnapshot
 	if err == nil {
-		snap = a.profileManager.Snapshot()
+		snap = a.runProfilesSnapshot(a.profileManager)
 	}
 	a.profileMu.RUnlock()
 	if err == nil {
@@ -586,58 +640,61 @@ func (a *App) StartRunProfile(profileID string) error {
 	if a.executor == nil {
 		return fmt.Errorf("application not initialized")
 	}
+	launchedAt := nowMillis()
+	profile, profiles, workspaceRoot, epoch, err := a.resolveRunProfile(profileID)
+	if err != nil {
+		return err
+	}
+	if err := a.startRunProfileAtEpoch(epoch, workspaceRoot, profile, profiles); err != nil {
+		return err
+	}
+	a.recordRunProfile(profileID, launchedAt)
+	return nil
+}
+
+func (a *App) resolveRunProfile(profileID string) (runprofile.RunProfile, []runprofile.RunProfile, string, uint64, error) {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+	if a.profileManager == nil {
+		return runprofile.RunProfile{}, nil, "", 0, fmt.Errorf("no workspace loaded")
+	}
+	profiles := a.profileManager.GetAllProfiles()
+	for _, profile := range profiles {
+		if profile.ID == profileID {
+			return profile, profiles, a.profileWorkspaceRoot, a.executor.CurrentEpoch(), nil
+		}
+	}
+	return runprofile.RunProfile{}, nil, "", 0, fmt.Errorf("profile not found: %s", profileID)
+}
+
+func (a *App) startRunProfileAtEpoch(epoch uint64, workspaceRoot string, profile runprofile.RunProfile, profiles []runprofile.RunProfile) error {
+	if profile.Type != runprofile.ProfileTypeCompound {
+		return a.executor.StartAtEpoch(epoch, workspaceRoot, profile)
+	}
+	steps, err := runprofile.ResolveSteps(profile, profiles)
+	if err != nil {
+		return err
+	}
+	return a.executor.StartCompoundAtEpoch(epoch, workspaceRoot, profile, steps)
+}
+
+func (a *App) recordRunProfile(profileID string, launchedAt int64) {
 	a.profileMu.RLock()
 	if a.profileManager == nil {
 		a.profileMu.RUnlock()
-		return fmt.Errorf("no workspace loaded")
+		return
 	}
-	workspaceRoot := a.profileWorkspaceRoot
-	profiles := a.profileManager.GetAllProfiles()
+	err := a.profileManager.RecordRun(profileID, launchedAt)
+	var snap runprofile.RunProfilesSnapshot
+	if err == nil {
+		snap = a.runProfilesSnapshot(a.profileManager)
+	}
 	a.profileMu.RUnlock()
-
-	var profile *runprofile.RunProfile
-	for i := range profiles {
-		if profiles[i].ID == profileID {
-			profile = &profiles[i]
-			break
-		}
+	if err != nil {
+		runtime.LogWarningf(a.ctx, "could not record run recency for %s: %v", profileID, err)
+		return
 	}
-	if profile == nil {
-		return fmt.Errorf("profile not found: %s", profileID)
-	}
-
-	var startErr error
-	if profile.Type == runprofile.ProfileTypeCompound {
-		steps, err := runprofile.ResolveSteps(*profile, profiles)
-		if err != nil {
-			return err
-		}
-		startErr = a.executor.StartCompound(workspaceRoot, *profile, steps)
-	} else {
-		startErr = a.executor.Start(workspaceRoot, *profile)
-	}
-
-	if startErr == nil {
-		// Stamp run recency (best-effort; must not fail the run).
-		a.profileMu.RLock()
-		mgr := a.profileManager
-		var snap runprofile.RunProfilesSnapshot
-		emit := false
-		if mgr != nil {
-			if err := mgr.RecordRun(profileID, nowMillis()); err == nil {
-				snap = mgr.Snapshot()
-				emit = true
-			} else {
-				runtime.LogWarningf(a.ctx, "could not record run recency for %s: %v", profileID, err)
-			}
-		}
-		a.profileMu.RUnlock()
-		if emit {
-			runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
-		}
-	}
-
-	return startErr
+	a.emit("runprofiles:changed", snap)
 }
 
 // StopRunProfile stops a running profile (SIGTERM → 3s → SIGKILL).
@@ -653,14 +710,94 @@ func (a *App) StopRunProfile(profileID string) error {
 	return a.executor.Stop(profileID)
 }
 
+// StopRunInstance stops exactly one ordinary execution. Unknown or already
+// terminal run IDs are idempotent no-ops.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) StopRunInstance(runInstanceID string) error {
+	if a.executor == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	return a.executor.StopRunInstance(runInstanceID)
+}
+
 // RestartRunProfile stops then starts a profile.
 // If the profile is not currently running, it just starts it.
-// Stop errors are ignored because the only failure mode is "not running",
-// which means we can safely proceed to Start.
+// Stop, drain, and workspace-epoch errors are propagated; a failed stop or
+// invalid admission never starts a replacement.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) RestartRunProfile(profileID string) error {
-	_ = a.StopRunProfile(profileID)
-	return a.StartRunProfile(profileID)
+	if a.executor == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	launchedAt := nowMillis()
+	profile, profiles, workspaceRoot, epoch, err := a.resolveRunProfile(profileID)
+	if err != nil {
+		return err
+	}
+	if profile.Type == runprofile.ProfileTypeCompound {
+		steps, resolveErr := runprofile.ResolveSteps(profile, profiles)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		err = a.executor.RestartCompoundAtEpoch(epoch, workspaceRoot, profile, steps)
+	} else {
+		status := a.executor.GetStatus(profileID)
+		if status.State == runprofile.RunStateRunning {
+			err = a.executor.RestartAtEpoch(epoch, workspaceRoot, profile, status.RunInstanceID)
+		} else {
+			err = a.executor.StartAtEpoch(epoch, workspaceRoot, profile)
+		}
+	}
+	if err == nil {
+		a.recordRunProfile(profileID, launchedAt)
+	}
+	return err
+}
+
+// RestartRunInstance replaces exactly one selected ordinary execution while
+// leaving same-profile siblings untouched.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) RestartRunInstance(runInstanceID string) error {
+	if a.executor == nil {
+		return fmt.Errorf("application not initialized")
+	}
+	launchedAt := nowMillis()
+
+	a.profileMu.RLock()
+	if a.profileManager == nil {
+		a.profileMu.RUnlock()
+		return fmt.Errorf("no workspace loaded")
+	}
+	profileID, ok := a.executor.ProfileIDForRunInstance(runInstanceID)
+	if !ok {
+		a.profileMu.RUnlock()
+		return fmt.Errorf("run instance not found: %s", runInstanceID)
+	}
+	profiles := a.profileManager.GetAllProfiles()
+	workspaceRoot := a.profileWorkspaceRoot
+	epoch := a.executor.CurrentEpoch()
+	a.profileMu.RUnlock()
+
+	var profile runprofile.RunProfile
+	found := false
+	for _, candidate := range profiles {
+		if candidate.ID == profileID {
+			profile = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("profile not found: %s", profileID)
+	}
+	if profile.Type == runprofile.ProfileTypeCompound {
+		return fmt.Errorf("exact restart requires an ordinary run: %s", runInstanceID)
+	}
+	if err := a.executor.RestartAtEpoch(epoch, workspaceRoot, profile, runInstanceID); err != nil {
+		return err
+	}
+	a.recordRunProfile(profileID, launchedAt)
+	return nil
 }
 
 // GetRunStatus returns the current run status of a profile. A compound

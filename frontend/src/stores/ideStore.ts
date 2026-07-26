@@ -180,6 +180,11 @@ interface IDEState {
   // Run Output
   runOutputs: Record<string, RunOutput>;
   runInstanceIdsByProfile: Record<string, string[]>;
+  runLaunchSeqByInstance: Record<string, number>;
+  discardedRunLaunchSeqsByProfile: Record<string, number[]>;
+  discardedThroughLaunchSeqByProfile: Record<string, number>;
+  workspaceEpoch: number;
+  runEventsPaused: boolean;
   // Explicit current-execution pointer per profile. May point at an id already
   // removed from runOutputs — that dangling value is the deliberate "cleared
   // tab" tombstone that keeps late events from resurrecting a run or falling
@@ -194,6 +199,8 @@ interface IDEState {
   // Process lifecycle UI
   stoppingProfileIds: string[];
   restartingProfileIds: string[];
+  stoppingRunInstanceIds: string[];
+  restartingRunInstanceIds: string[];
   runHistory: Record<string, RunHistoryEntry[]>;
   waveformData: Record<string, number[]>;
   hiddenProfileIds: string[];
@@ -277,7 +284,8 @@ interface IDEActions {
   // Run Profile actions
   setRunProfilesSnapshot: (
     profiles: RunProfile[],
-    profileState: Record<string, RunProfileUIState>
+    profileState: Record<string, RunProfileUIState>,
+    workspaceEpoch?: number
   ) => void;
   setSelectedProfile: (id: string | null) => void;
   adoptProfileLocal: (id: string) => void;
@@ -290,7 +298,7 @@ interface IDEActions {
   closeRunProfileForm: () => void;
 
   // Run Output actions
-  appendRunOutput: (chunk: OutputChunk) => void;
+  appendRunOutput: (chunk: OutputChunk) => boolean;
   handleRunStatus: (status: RunStatusEvent) => void;
   clearRunOutput: (runInstanceId: string) => void;
   clearAllRunOutputs: () => void;
@@ -306,11 +314,16 @@ interface IDEActions {
   clearProfileStopping: (profileId: string) => void;
   setProfileRestarting: (profileId: string) => void;
   clearProfileRestarting: (profileId: string) => void;
+  setRunStopping: (runInstanceId: string) => void;
+  clearRunStopping: (runInstanceId: string) => void;
+  setRunRestarting: (runInstanceId: string) => void;
+  clearRunRestarting: (runInstanceId: string) => void;
   appendRunHistory: (profileId: string, entry: RunHistoryEntry) => void;
   updateWaveform: (profileId: string, entryCount: number) => void;
   hideProfile: (id: string) => void;
   unhideProfile: (id: string) => void;
   focusProfileOutput: (profileId: string) => void;
+  pauseRunEvents: () => void;
   resetWorkspaceRunState: () => void;
 
   // Per-file view state actions
@@ -406,10 +419,18 @@ function getProfileWorkingDirSnapshot(
   return state.runProfiles.find((profile) => profile.id === profileId)?.workingDir;
 }
 
-function createRunOutput(profileId: string, runInstanceId: string, workingDir?: string): RunOutput {
+function createRunOutput(
+  profileId: string,
+  runInstanceId: string,
+  launchSeq: number,
+  workspaceEpoch: number,
+  workingDir?: string
+): RunOutput {
   return {
     profileId,
     runInstanceId,
+    launchSeq,
+    workspaceEpoch,
     workingDir,
     state: 'idle',
     exitCode: 0,
@@ -431,10 +452,136 @@ function capOutputEntries(entries: OutputEntry[]): OutputEntry[] {
 const isTerminalRunState = (state: RunState | undefined): boolean =>
   state === 'stopped' || state === 'failed' || state === 'success';
 
+export const isLiveRunState = (state: RunState | undefined): boolean =>
+  state === 'idle' || state === 'running';
+
+const MAX_DISCARDED_RUN_SEQS = 50;
+
+type RunIndexState = Pick<
+  IDEState,
+  'runOutputs' | 'runInstanceIdsByProfile' | 'runLaunchSeqByInstance'
+>;
+
+function orderedRunIds(state: RunIndexState, profileId: string): string[] {
+  return [...(state.runInstanceIdsByProfile[profileId] ?? [])].sort(
+    (a, b) =>
+      (state.runLaunchSeqByInstance[a] ?? state.runOutputs[a]?.launchSeq ?? 0) -
+      (state.runLaunchSeqByInstance[b] ?? state.runOutputs[b]?.launchSeq ?? 0)
+  );
+}
+
+export function newestLiveRunInstanceId(
+  state: RunIndexState,
+  profileId: string
+): string | undefined {
+  return orderedRunIds(state, profileId)
+    .reverse()
+    .find((id) => isLiveRunState(state.runOutputs[id]?.state));
+}
+
+export function representativeRunInstanceId(
+  state: RunIndexState,
+  profileId: string
+): string | undefined {
+  return newestLiveRunInstanceId(state, profileId) ?? orderedRunIds(state, profileId).at(-1);
+}
+
+function nextLaunchSeq(state: Pick<IDEState, 'runLaunchSeqByInstance'>): number {
+  return Math.max(0, ...Object.values(state.runLaunchSeqByInstance)) + 1;
+}
+
+function eventLaunchSeq(
+  state: Pick<IDEState, 'runLaunchSeqByInstance'>,
+  runInstanceId: string,
+  launchSeq: number | undefined
+): number {
+  return state.runLaunchSeqByInstance[runInstanceId] ?? launchSeq ?? nextLaunchSeq(state);
+}
+
+function acceptsRunEvent(
+  state: Pick<
+    IDEState,
+    | 'workspaceEpoch'
+    | 'runEventsPaused'
+    | 'runOutputs'
+    | 'runInstanceIdsByProfile'
+    | 'runLaunchSeqByInstance'
+    | 'discardedRunLaunchSeqsByProfile'
+    | 'discardedThroughLaunchSeqByProfile'
+    | 'compoundIdByRunInstance'
+  >,
+  event: {
+    runInstanceId: string;
+    profileId: string;
+    launchSeq?: number;
+    workspaceEpoch?: number;
+  }
+): boolean {
+  if (state.runEventsPaused) return false;
+  if (event.workspaceEpoch != null && event.workspaceEpoch !== state.workspaceEpoch) return false;
+
+  const retained =
+    state.runOutputs[event.runInstanceId] != null ||
+    state.runInstanceIdsByProfile[event.profileId]?.includes(event.runInstanceId) === true ||
+    state.compoundIdByRunInstance[event.runInstanceId] != null;
+  const knownSeq = state.runLaunchSeqByInstance[event.runInstanceId];
+  if (retained) {
+    return event.launchSeq == null || knownSeq == null || event.launchSeq === knownSeq;
+  }
+
+  const launchSeq = event.launchSeq ?? knownSeq;
+  if (launchSeq == null) return true;
+  if (state.discardedRunLaunchSeqsByProfile[event.profileId]?.includes(launchSeq)) return false;
+  return launchSeq > (state.discardedThroughLaunchSeqByProfile[event.profileId] ?? 0);
+}
+
+function discardRunSeqs(
+  state: Pick<
+    IDEState,
+    | 'runLaunchSeqByInstance'
+    | 'discardedRunLaunchSeqsByProfile'
+    | 'discardedThroughLaunchSeqByProfile'
+  >,
+  profileId: string,
+  runInstanceIds: string[]
+) {
+  const additions = runInstanceIds
+    .map((id) => state.runLaunchSeqByInstance[id])
+    .filter((seq): seq is number => seq != null);
+  if (additions.length === 0) {
+    return {
+      discardedRunLaunchSeqsByProfile: state.discardedRunLaunchSeqsByProfile,
+      discardedThroughLaunchSeqByProfile: state.discardedThroughLaunchSeqByProfile,
+    };
+  }
+
+  const seqs = [
+    ...new Set([...(state.discardedRunLaunchSeqsByProfile[profileId] ?? []), ...additions]),
+  ].sort((a, b) => a - b);
+  const compacted = seqs.slice(-MAX_DISCARDED_RUN_SEQS);
+  const removed = seqs.slice(0, -MAX_DISCARDED_RUN_SEQS);
+  return {
+    discardedRunLaunchSeqsByProfile: {
+      ...state.discardedRunLaunchSeqsByProfile,
+      [profileId]: compacted,
+    },
+    discardedThroughLaunchSeqByProfile: {
+      ...state.discardedThroughLaunchSeqByProfile,
+      [profileId]: Math.max(state.discardedThroughLaunchSeqByProfile[profileId] ?? 0, ...removed),
+    },
+  };
+}
+
 function retainRunOutput(
   state: Pick<
     IDEState,
-    'runOutputs' | 'runInstanceIdsByProfile' | 'latestRunInstanceIdByProfile' | 'activeRunOutputId'
+    | 'runOutputs'
+    | 'runInstanceIdsByProfile'
+    | 'runLaunchSeqByInstance'
+    | 'discardedRunLaunchSeqsByProfile'
+    | 'discardedThroughLaunchSeqByProfile'
+    | 'latestRunInstanceIdByProfile'
+    | 'activeRunOutputId'
   >,
   output: RunOutput
 ) {
@@ -442,23 +589,60 @@ function retainRunOutput(
   const indexedIds = previousIds.includes(output.runInstanceId)
     ? previousIds
     : [...previousIds, output.runInstanceId];
-  const retainedIds = indexedIds.slice(-MAX_RETAINED_RUNS);
-  const prunedIds = indexedIds.slice(0, -MAX_RETAINED_RUNS);
   const runOutputs = { ...state.runOutputs, [output.runInstanceId]: output };
+  const runLaunchSeqByInstance = {
+    ...state.runLaunchSeqByInstance,
+    [output.runInstanceId]: output.launchSeq ?? 0,
+  };
+  const orderedIds = [...indexedIds].sort(
+    (a, b) => (runLaunchSeqByInstance[a] ?? 0) - (runLaunchSeqByInstance[b] ?? 0)
+  );
+  const prunedIds: string[] = [];
+  while (orderedIds.length > MAX_RETAINED_RUNS) {
+    const terminalIndex = orderedIds.findIndex((id) => isTerminalRunState(runOutputs[id]?.state));
+    prunedIds.push(...orderedIds.splice(terminalIndex >= 0 ? terminalIndex : 0, 1));
+  }
+  const retainedIds = orderedIds;
   for (const runInstanceId of prunedIds) {
     delete runOutputs[runInstanceId];
     lineAssemblers.delete(runInstanceId);
     assemblerCallbacks.delete(runInstanceId);
   }
+  const discarded = discardRunSeqs(
+    {
+      runLaunchSeqByInstance,
+      discardedRunLaunchSeqsByProfile: state.discardedRunLaunchSeqsByProfile,
+      discardedThroughLaunchSeqByProfile: state.discardedThroughLaunchSeqByProfile,
+    },
+    output.profileId,
+    prunedIds
+  );
+  const previousLatest = state.latestRunInstanceIdByProfile[output.profileId];
+  const previousLatestSeq =
+    (previousLatest == null ? undefined : runLaunchSeqByInstance[previousLatest]) ??
+    Math.max(
+      state.discardedThroughLaunchSeqByProfile[output.profileId] ?? 0,
+      ...(state.discardedRunLaunchSeqsByProfile[output.profileId] ?? [])
+    );
+  const latestRunInstanceId =
+    previousLatest == null ||
+    (runLaunchSeqByInstance[output.runInstanceId] ?? 0) >= previousLatestSeq
+      ? output.runInstanceId
+      : previousLatest;
+  for (const runInstanceId of prunedIds) {
+    delete runLaunchSeqByInstance[runInstanceId];
+  }
   return {
     runOutputs,
+    runLaunchSeqByInstance,
+    ...discarded,
     runInstanceIdsByProfile: {
       ...state.runInstanceIdsByProfile,
       [output.profileId]: retainedIds,
     },
     latestRunInstanceIdByProfile: {
       ...state.latestRunInstanceIdByProfile,
-      [output.profileId]: output.runInstanceId,
+      [output.profileId]: latestRunInstanceId,
     },
     activeRunOutputId: prunedIds.includes(state.activeRunOutputId ?? '')
       ? output.runInstanceId
@@ -492,6 +676,11 @@ export const useIDEStore = create<IDEStore>()(
       selectedProfileId: null,
       runOutputs: {},
       runInstanceIdsByProfile: {},
+      runLaunchSeqByInstance: {},
+      discardedRunLaunchSeqsByProfile: {},
+      discardedThroughLaunchSeqByProfile: {},
+      workspaceEpoch: 0,
+      runEventsPaused: false,
       latestRunInstanceIdByProfile: {},
       runCompounds: {},
       compoundIdByRunInstance: {},
@@ -500,6 +689,8 @@ export const useIDEStore = create<IDEStore>()(
       runOutputAutoScroll: true,
       stoppingProfileIds: [],
       restartingProfileIds: [],
+      stoppingRunInstanceIds: [],
+      restartingRunInstanceIds: [],
       runHistory: {},
       waveformData: {},
       hiddenProfileIds: [],
@@ -843,9 +1034,39 @@ export const useIDEStore = create<IDEStore>()(
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Run Profile actions
-      setRunProfilesSnapshot: (runProfiles, runProfileState) =>
+      setRunProfilesSnapshot: (runProfiles, runProfileState, workspaceEpoch) =>
         set(
-          { runProfiles, runProfileState, profilesError: null, isLoadingProfiles: false },
+          (state) => ({
+            runProfiles,
+            runProfileState,
+            profilesError: null,
+            isLoadingProfiles: false,
+            workspaceEpoch:
+              workspaceEpoch != null && workspaceEpoch > 0 ? workspaceEpoch : state.workspaceEpoch,
+            runEventsPaused: false,
+            ...(state.runEventsPaused
+              ? {
+                  selectedProfileId: null,
+                  runOutputs: {},
+                  runInstanceIdsByProfile: {},
+                  runLaunchSeqByInstance: {},
+                  discardedRunLaunchSeqsByProfile: {},
+                  discardedThroughLaunchSeqByProfile: {},
+                  latestRunInstanceIdByProfile: {},
+                  runCompounds: {},
+                  compoundIdByRunInstance: {},
+                  activeRunOutputId: null,
+                  stoppingProfileIds: [],
+                  restartingProfileIds: [],
+                  stoppingRunInstanceIds: [],
+                  restartingRunInstanceIds: [],
+                  runHistory: {},
+                  waveformData: {},
+                  runStartTimestamps: {},
+                  stopRequestTimestamps: {},
+                }
+              : {}),
+          }),
           false,
           'setRunProfilesSnapshot'
         ),
@@ -887,7 +1108,38 @@ export const useIDEStore = create<IDEStore>()(
         set({ isLoadingProfiles }, false, 'setProfilesLoading'),
 
       setProfilesError: (profilesError) =>
-        set({ profilesError, isLoadingProfiles: false }, false, 'setProfilesError'),
+        set(
+          (state) => ({
+            profilesError,
+            isLoadingProfiles: false,
+            ...(state.runEventsPaused
+              ? {
+                  runProfiles: [],
+                  runProfileState: {},
+                  selectedProfileId: null,
+                  runOutputs: {},
+                  runInstanceIdsByProfile: {},
+                  runLaunchSeqByInstance: {},
+                  discardedRunLaunchSeqsByProfile: {},
+                  discardedThroughLaunchSeqByProfile: {},
+                  latestRunInstanceIdByProfile: {},
+                  runCompounds: {},
+                  compoundIdByRunInstance: {},
+                  activeRunOutputId: null,
+                  stoppingProfileIds: [],
+                  restartingProfileIds: [],
+                  stoppingRunInstanceIds: [],
+                  restartingRunInstanceIds: [],
+                  runHistory: {},
+                  waveformData: {},
+                  runStartTimestamps: {},
+                  stopRequestTimestamps: {},
+                }
+              : {}),
+          }),
+          false,
+          'setProfilesError'
+        ),
 
       openRunProfileForm: (state) => set({ runProfileForm: state }, false, 'openRunProfileForm'),
       closeRunProfileForm: () => set({ runProfileForm: null }, false, 'closeRunProfileForm'),
@@ -918,37 +1170,49 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
-        // Compound step output → routed by explicit fields into runCompounds.
-        if (chunk.parentRunInstanceId) {
-          const state = useIDEStore.getState();
-          const compoundId = state.compoundIdByRunInstance[chunk.parentRunInstanceId];
-          if (!compoundId) return; // orphan parent → drop
-          const run = state.runCompounds[compoundId];
-          if (!run || run.runInstanceId !== chunk.parentRunInstanceId) return; // stale → drop
-          state.appendCompoundRunOutput(compoundId, chunk.stepIdx, chunk);
-          return;
+        const snapshot = get();
+        if (
+          snapshot.runEventsPaused ||
+          (chunk.workspaceEpoch != null && chunk.workspaceEpoch !== snapshot.workspaceEpoch)
+        ) {
+          return false;
         }
 
-        const snapshot = get();
+        // Compound step output → routed by explicit fields into runCompounds.
+        if (chunk.parentRunInstanceId) {
+          const compoundId = snapshot.compoundIdByRunInstance[chunk.parentRunInstanceId];
+          if (!compoundId) return false;
+          const run = snapshot.runCompounds[compoundId];
+          if (!run || run.runInstanceId !== chunk.parentRunInstanceId) return false;
+          snapshot.appendCompoundRunOutput(compoundId, chunk.stepIdx, chunk);
+          return true;
+        }
+
+        if (!acceptsRunEvent(snapshot, chunk)) return false;
+
+        const launchSeq = eventLaunchSeq(snapshot, chunk.runInstanceId, chunk.launchSeq);
         const latestRunInstanceId = snapshot.latestRunInstanceIdByProfile[chunk.profileId];
-        const latestRunStartedAt = snapshot.runStartTimestamps[chunk.profileId];
         const existing = snapshot.runOutputs[chunk.runInstanceId];
 
-        if (latestRunInstanceId && latestRunInstanceId !== chunk.runInstanceId) {
-          // A retained instance is historical, never a new run. An unknown id is
-          // accepted as output-before-status only after the current run is terminal
-          // and when its backend timestamp is newer than that run's start.
+        if (latestRunInstanceId === chunk.runInstanceId && !existing) return false;
+        if (chunk.launchSeq == null && latestRunInstanceId !== chunk.runInstanceId) {
+          const latestRunStartedAt = snapshot.runStartTimestamps[latestRunInstanceId];
           if (
             existing ||
             snapshot.runOutputs[latestRunInstanceId]?.state === 'running' ||
             (latestRunStartedAt != null && chunk.timestamp <= latestRunStartedAt)
           ) {
-            return;
+            return false;
           }
-        } else if (latestRunInstanceId === chunk.runInstanceId && !existing) {
-          // Clearing the newest terminal tab leaves the explicit current pointer
-          // behind so late events cannot recreate it or fall back to a predecessor.
-          return;
+        }
+        if (existing && isTerminalRunState(existing.state)) return false;
+        if (
+          !existing &&
+          (snapshot.runInstanceIdsByProfile[chunk.profileId] ?? []).filter((id) =>
+            isLiveRunState(snapshot.runOutputs[id]?.state)
+          ).length >= MAX_RETAINED_RUNS
+        ) {
+          return false;
         }
 
         if (!existing) {
@@ -957,12 +1221,19 @@ export const useIDEStore = create<IDEStore>()(
               const wd = getProfileWorkingDirSnapshot(state, chunk.profileId);
               const retained = retainRunOutput(
                 state,
-                createRunOutput(chunk.profileId, chunk.runInstanceId, wd)
+                createRunOutput(
+                  chunk.profileId,
+                  chunk.runInstanceId,
+                  launchSeq,
+                  chunk.workspaceEpoch ?? state.workspaceEpoch,
+                  wd
+                )
               );
               return {
                 ...retained,
                 runStartTimestamps: {
                   ...state.runStartTimestamps,
+                  [chunk.runInstanceId]: chunk.timestamp,
                   [chunk.profileId]: chunk.timestamp,
                 },
               };
@@ -973,17 +1244,12 @@ export const useIDEStore = create<IDEStore>()(
         }
 
         const pendingEntries = collectChunkEntries(chunk.runInstanceId, chunk);
-        if (pendingEntries.length === 0) return;
+        if (pendingEntries.length === 0) return true;
 
         set(
           (state) => {
             const ex = state.runOutputs[chunk.runInstanceId];
-            if (
-              !ex ||
-              state.latestRunInstanceIdByProfile[chunk.profileId] !== chunk.runInstanceId
-            ) {
-              return state;
-            }
+            if (!ex || isTerminalRunState(ex.state)) return state;
             const entries = capOutputEntries([...ex.entries, ...pendingEntries]);
             return {
               runOutputs: {
@@ -995,6 +1261,7 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'appendRunOutput'
         );
+        return true;
       },
 
       handleRunStatus: (status) => {
@@ -1003,6 +1270,8 @@ export const useIDEStore = create<IDEStore>()(
         if (parentRunInstanceId) return; // steps flow only via run:compound
 
         const snapshot = get();
+        if (!acceptsRunEvent(snapshot, status)) return;
+        const launchSeq = eventLaunchSeq(snapshot, runInstanceId, status.launchSeq);
         const isCompoundAggregate =
           snapshot.runProfiles.some(
             (profile) => profile.id === profileId && profile.type === 'compound'
@@ -1032,20 +1301,41 @@ export const useIDEStore = create<IDEStore>()(
               currentCompound?.runInstanceId === latestRunInstanceId &&
               isTerminalRunState(currentCompound.state);
             const hasClearedTombstone = latestCompoundId == null && currentCompound == null;
+            const latestLaunchSeq =
+              snapshot.runLaunchSeqByInstance[latestRunInstanceId] ?? currentCompound?.launchSeq;
+            const isNewerLaunch =
+              status.launchSeq != null
+                ? latestLaunchSeq != null && status.launchSeq > latestLaunchSeq
+                : status.timestamp != null &&
+                  latestRunStartedAt != null &&
+                  status.timestamp > latestRunStartedAt;
             if (
               newState !== 'running' ||
               indexedCompoundId != null ||
               (!hasTerminalCurrent && !hasClearedTombstone) ||
-              status.timestamp == null ||
-              latestRunStartedAt == null ||
-              status.timestamp <= latestRunStartedAt
+              !isNewerLaunch
             ) {
               return;
             }
           }
         }
 
-        if (!isCompoundAggregate) {
+        if (!isCompoundAggregate && status.launchSeq != null) {
+          if (
+            existingBefore &&
+            (isTerminalRunState(existingBefore.state) ||
+              (newState === 'running' && existingBefore.state === 'running'))
+          ) {
+            return;
+          }
+          if (!existingBefore) {
+            if (newState !== 'running') return;
+            const liveCount = (snapshot.runInstanceIdsByProfile[profileId] ?? []).filter((id) =>
+              isLiveRunState(snapshot.runOutputs[id]?.state)
+            ).length;
+            if (liveCount >= MAX_RETAINED_RUNS) return;
+          }
+        } else if (!isCompoundAggregate) {
           if (!latestRunInstanceId) {
             if (isTerminalRunState(newState) && !existingBefore) return;
           } else {
@@ -1090,7 +1380,14 @@ export const useIDEStore = create<IDEStore>()(
             const updated: RunOutput | undefined = isCompoundAggregate
               ? undefined
               : {
-                  ...(existing ?? createRunOutput(profileId, runInstanceId, runWorkingDir)),
+                  ...(existing ??
+                    createRunOutput(
+                      profileId,
+                      runInstanceId,
+                      launchSeq,
+                      status.workspaceEpoch ?? state.workspaceEpoch,
+                      runWorkingDir
+                    )),
                   state: newState,
                   exitCode,
                   workingDir:
@@ -1102,41 +1399,85 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Lifecycle flags ---
             let { stoppingProfileIds, restartingProfileIds } = state;
+            let { stoppingRunInstanceIds, restartingRunInstanceIds } = state;
 
             if (isTerminalRunState(newState)) {
-              stoppingProfileIds = stoppingProfileIds.filter((id) => id !== profileId);
-              restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              stoppingRunInstanceIds = stoppingRunInstanceIds.filter((id) => id !== runInstanceId);
+              restartingRunInstanceIds = restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              );
+              const hasStoppingSibling = stoppingRunInstanceIds.some(
+                (id) => state.runOutputs[id]?.profileId === profileId
+              );
+              const hasRestartingSibling = restartingRunInstanceIds.some(
+                (id) => state.runOutputs[id]?.profileId === profileId
+              );
+              if (!hasStoppingSibling) {
+                stoppingProfileIds = stoppingProfileIds.filter((id) => id !== profileId);
+              }
+              if (!hasRestartingSibling) {
+                restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              }
             } else if (newState === 'running') {
-              restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              restartingRunInstanceIds = restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              );
+              if (
+                !restartingRunInstanceIds.some(
+                  (id) => state.runOutputs[id]?.profileId === profileId
+                )
+              ) {
+                restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              }
             }
 
             // --- Stop request timestamp ---
             let { stopRequestTimestamps } = state;
             if (isTerminalRunState(newState) || newState === 'running') {
-              if (stopRequestTimestamps[profileId] != null) {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { [runInstanceId]: _removedRun, ...withoutRun } = stopRequestTimestamps;
+              stopRequestTimestamps = withoutRun;
+              if (
+                !stoppingProfileIds.includes(profileId) &&
+                !restartingProfileIds.includes(profileId)
+              ) {
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                const { [profileId]: _removed, ...rest } = stopRequestTimestamps;
-                stopRequestTimestamps = rest;
+                const { [profileId]: _removedProfile, ...withoutProfile } = stopRequestTimestamps;
+                stopRequestTimestamps = withoutProfile;
               }
             }
 
             // --- Start timestamp ---
             let { runStartTimestamps } = state;
             if (newState === 'running') {
-              runStartTimestamps = { ...runStartTimestamps, [profileId]: timestamp };
+              const representative = representativeRunInstanceId(state, profileId);
+              const representativeSeq =
+                representative == null ? -1 : (state.runLaunchSeqByInstance[representative] ?? -1);
+              runStartTimestamps = {
+                ...runStartTimestamps,
+                [runInstanceId]: timestamp,
+                ...(launchSeq >= representativeSeq ? { [profileId]: timestamp } : {}),
+              };
+            } else if (isTerminalRunState(newState)) {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { [runInstanceId]: _removed, ...rest } = runStartTimestamps;
+              runStartTimestamps = rest;
             }
 
             // --- Run history ---
             let { runHistory } = state;
             if (
               isTerminalRunState(newState) &&
-              state.runStartTimestamps[profileId] &&
+              (state.runStartTimestamps[runInstanceId] ?? state.runStartTimestamps[profileId]) !=
+                null &&
               (isCompoundAggregate || existingBefore?.state === 'running')
             ) {
+              const startedAt =
+                state.runStartTimestamps[runInstanceId] ?? state.runStartTimestamps[profileId];
               const existingHistory = runHistory[profileId] ?? [];
               const entry: RunHistoryEntry = {
                 state: newState as RunHistoryEntry['state'],
-                duration: timestamp - state.runStartTimestamps[profileId],
+                duration: timestamp - startedAt,
                 timestamp,
               };
               const updatedHistory = [...existingHistory, entry];
@@ -1166,9 +1507,18 @@ export const useIDEStore = create<IDEStore>()(
             const retainedOutput = updated ? retainRunOutput(state, updated) : undefined;
             let { runCompounds } = state;
             let { compoundIdByRunInstance } = state;
+            let runLaunchSeqByInstance =
+              retainedOutput?.runLaunchSeqByInstance ?? state.runLaunchSeqByInstance;
             let latestRunInstanceIdByProfile =
               retainedOutput?.latestRunInstanceIdByProfile ?? state.latestRunInstanceIdByProfile;
             if (isCompoundAggregate) {
+              runLaunchSeqByInstance = {
+                ...runLaunchSeqByInstance,
+                [runInstanceId]: launchSeq,
+              };
+              if (rotatesCompound && latestRunInstanceId) {
+                delete runLaunchSeqByInstance[latestRunInstanceId];
+              }
               latestRunInstanceIdByProfile = {
                 ...latestRunInstanceIdByProfile,
                 [profileId]: runInstanceId,
@@ -1187,6 +1537,8 @@ export const useIDEStore = create<IDEStore>()(
                   [profileId]: {
                     compoundId: profileId,
                     runInstanceId,
+                    launchSeq,
+                    workspaceEpoch: status.workspaceEpoch ?? state.workspaceEpoch,
                     name: profileName ?? profileId,
                     state: 'running',
                     exitCode,
@@ -1208,9 +1560,12 @@ export const useIDEStore = create<IDEStore>()(
               ...(retainedOutput ?? {}),
               runCompounds,
               compoundIdByRunInstance,
+              runLaunchSeqByInstance,
               latestRunInstanceIdByProfile,
               stoppingProfileIds,
               restartingProfileIds,
+              stoppingRunInstanceIds,
+              restartingRunInstanceIds,
               stopRequestTimestamps,
               runStartTimestamps,
               runHistory,
@@ -1272,7 +1627,22 @@ export const useIDEStore = create<IDEStore>()(
               activeRunOutputId =
                 remainingForProfile.at(-1) ?? remainingOrdinary[0] ?? remainingCompounds[0] ?? null;
             }
-            return { runOutputs: rest, runInstanceIdsByProfile, activeRunOutputId };
+            const discarded = discardRunSeqs(state, existing.profileId, [runInstanceId]);
+            const runLaunchSeqByInstance = { ...state.runLaunchSeqByInstance };
+            delete runLaunchSeqByInstance[runInstanceId];
+            return {
+              runOutputs: rest,
+              runLaunchSeqByInstance,
+              runInstanceIdsByProfile,
+              activeRunOutputId,
+              ...discarded,
+              stoppingRunInstanceIds: state.stoppingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+              restartingRunInstanceIds: state.restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+            };
           },
           false,
           'clearRunOutput'
@@ -1320,11 +1690,57 @@ export const useIDEStore = create<IDEStore>()(
             for (const [id, compound] of Object.entries(preservedCompounds)) {
               if (compound.runInstanceId) preservedIndex[compound.runInstanceId] = id;
             }
+            let discardedRunLaunchSeqsByProfile = state.discardedRunLaunchSeqsByProfile;
+            let discardedThroughLaunchSeqByProfile = state.discardedThroughLaunchSeqByProfile;
+            for (const [profileId, ids] of Object.entries(state.runInstanceIdsByProfile)) {
+              const terminalIds = ids.filter((id) =>
+                isTerminalRunState(state.runOutputs[id]?.state)
+              );
+              const discarded = discardRunSeqs(
+                {
+                  runLaunchSeqByInstance: state.runLaunchSeqByInstance,
+                  discardedRunLaunchSeqsByProfile,
+                  discardedThroughLaunchSeqByProfile,
+                },
+                profileId,
+                terminalIds
+              );
+              discardedRunLaunchSeqsByProfile = discarded.discardedRunLaunchSeqsByProfile;
+              discardedThroughLaunchSeqByProfile = discarded.discardedThroughLaunchSeqByProfile;
+            }
+            const sequenceIds = new Set([
+              ...Object.keys(preserved),
+              ...Object.values(preservedCompounds).map((compound) => compound.runInstanceId),
+              ...Object.entries(state.runCompounds)
+                .filter(
+                  ([profileId, compound]) =>
+                    isTerminalRunState(compound.state) &&
+                    state.latestRunInstanceIdByProfile[profileId] === compound.runInstanceId
+                )
+                .map(([, compound]) => compound.runInstanceId),
+            ]);
+            const runLaunchSeqByInstance = Object.fromEntries(
+              [...sequenceIds].map((id) => [
+                id,
+                state.runLaunchSeqByInstance[id] ??
+                  Object.values(state.runCompounds).find(
+                    (compound) => compound.runInstanceId === id
+                  )?.launchSeq ??
+                  0,
+              ])
+            );
             return {
               runOutputs: preserved,
+              runLaunchSeqByInstance,
               runInstanceIdsByProfile: preservedRunIdsByProfile,
+              discardedRunLaunchSeqsByProfile,
+              discardedThroughLaunchSeqByProfile,
               runCompounds: preservedCompounds,
               compoundIdByRunInstance: preservedIndex,
+              stoppingRunInstanceIds: state.stoppingRunInstanceIds.filter((id) => preserved[id]),
+              restartingRunInstanceIds: state.restartingRunInstanceIds.filter(
+                (id) => preserved[id]
+              ),
               activeRunOutputId: activeStillValid ? state.activeRunOutputId : firstId,
             };
           },
@@ -1346,6 +1762,12 @@ export const useIDEStore = create<IDEStore>()(
 
         // Aggregate status is emitted before each snapshot and authorizes the RID.
         const snapshot = useIDEStore.getState();
+        if (
+          snapshot.runEventsPaused ||
+          (event.workspaceEpoch != null && event.workspaceEpoch !== snapshot.workspaceEpoch)
+        ) {
+          return;
+        }
         const prevRun = snapshot.runCompounds[compoundId];
         if (
           snapshot.latestRunInstanceIdByProfile[compoundId] !== runInstanceId ||
@@ -1481,6 +1903,8 @@ export const useIDEStore = create<IDEStore>()(
             const newRun: CompoundRun = {
               compoundId,
               runInstanceId,
+              launchSeq: event.launchSeq ?? existing?.launchSeq,
+              workspaceEpoch: event.workspaceEpoch ?? existing?.workspaceEpoch,
               name,
               state: aggregateState,
               currentStep,
@@ -1654,6 +2078,68 @@ export const useIDEStore = create<IDEStore>()(
           'clearProfileRestarting'
         ),
 
+      setRunStopping: (runInstanceId) =>
+        set(
+          (state) => ({
+            stoppingRunInstanceIds: state.stoppingRunInstanceIds.includes(runInstanceId)
+              ? state.stoppingRunInstanceIds
+              : [...state.stoppingRunInstanceIds, runInstanceId],
+            stopRequestTimestamps:
+              state.stopRequestTimestamps[runInstanceId] != null
+                ? state.stopRequestTimestamps
+                : { ...state.stopRequestTimestamps, [runInstanceId]: Date.now() },
+          }),
+          false,
+          'setRunStopping'
+        ),
+
+      clearRunStopping: (runInstanceId) =>
+        set(
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [runInstanceId]: _removed, ...restTimestamps } = state.stopRequestTimestamps;
+            return {
+              stoppingRunInstanceIds: state.stoppingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+              stopRequestTimestamps: restTimestamps,
+            };
+          },
+          false,
+          'clearRunStopping'
+        ),
+
+      setRunRestarting: (runInstanceId) =>
+        set(
+          (state) => ({
+            restartingRunInstanceIds: state.restartingRunInstanceIds.includes(runInstanceId)
+              ? state.restartingRunInstanceIds
+              : [...state.restartingRunInstanceIds, runInstanceId],
+            stopRequestTimestamps:
+              state.stopRequestTimestamps[runInstanceId] != null
+                ? state.stopRequestTimestamps
+                : { ...state.stopRequestTimestamps, [runInstanceId]: Date.now() },
+          }),
+          false,
+          'setRunRestarting'
+        ),
+
+      clearRunRestarting: (runInstanceId) =>
+        set(
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [runInstanceId]: _removed, ...restTimestamps } = state.stopRequestTimestamps;
+            return {
+              restartingRunInstanceIds: state.restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+              stopRequestTimestamps: restTimestamps,
+            };
+          },
+          false,
+          'clearRunRestarting'
+        ),
+
       appendRunHistory: (profileId, entry) =>
         set(
           (state) => {
@@ -1706,7 +2192,7 @@ export const useIDEStore = create<IDEStore>()(
               : undefined;
             return {
               activeRunOutputId:
-                state.runInstanceIdsByProfile[profileId]?.at(-1) ?? compoundRunInstanceId ?? null,
+                representativeRunInstanceId(state, profileId) ?? compoundRunInstanceId ?? null,
               activeTerminalTab: 'output' as TerminalTab,
               isBottomPanelCollapsed: false,
             };
@@ -1714,6 +2200,8 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'focusProfileOutput'
         ),
+
+      pauseRunEvents: () => set({ runEventsPaused: true }, false, 'pauseRunEvents'),
 
       resetWorkspaceRunState: () => {
         // Clear line assemblers (same as clearAllRunOutputs does)
@@ -1732,8 +2220,23 @@ export const useIDEStore = create<IDEStore>()(
             const runInstanceIdsByProfile: Record<string, string[]> = {};
             const latestRunInstanceIdByProfile: Record<string, string> = {};
             for (const output of Object.values(preserved)) {
-              runInstanceIdsByProfile[output.profileId] = [output.runInstanceId];
-              latestRunInstanceIdByProfile[output.profileId] = output.runInstanceId;
+              runInstanceIdsByProfile[output.profileId] = [
+                ...(runInstanceIdsByProfile[output.profileId] ?? []),
+                output.runInstanceId,
+              ];
+            }
+            for (const profileId of Object.keys(runInstanceIdsByProfile)) {
+              runInstanceIdsByProfile[profileId] = orderedRunIds(
+                {
+                  runOutputs: preserved,
+                  runInstanceIdsByProfile,
+                  runLaunchSeqByInstance: state.runLaunchSeqByInstance,
+                },
+                profileId
+              );
+              latestRunInstanceIdByProfile[profileId] = runInstanceIdsByProfile[profileId].at(
+                -1
+              ) as string;
             }
             // Unlike clearAllRunOutputs (which preserves still-running compounds
             // and rebuilds compoundIdByRunInstance for them), a workspace switch
@@ -1744,11 +2247,21 @@ export const useIDEStore = create<IDEStore>()(
               runOutputs: preserved,
               runInstanceIdsByProfile,
               latestRunInstanceIdByProfile,
+              runLaunchSeqByInstance: Object.fromEntries(
+                Object.keys(preserved).map((id) => [
+                  id,
+                  state.runLaunchSeqByInstance[id] ?? preserved[id].launchSeq ?? 0,
+                ])
+              ),
+              discardedRunLaunchSeqsByProfile: {},
+              discardedThroughLaunchSeqByProfile: {},
               runCompounds: {},
               compoundIdByRunInstance: {},
               activeRunOutputId: firstId,
               stoppingProfileIds: [],
               restartingProfileIds: [],
+              stoppingRunInstanceIds: [],
+              restartingRunInstanceIds: [],
               runHistory: {},
               waveformData: {},
               hiddenProfileIds: [],

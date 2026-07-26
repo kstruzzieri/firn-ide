@@ -26,7 +26,8 @@ const status = (
   runInstanceId: string,
   state: RunState,
   profileId = 'p1',
-  timestamp = Date.now()
+  timestamp = Date.now(),
+  launchSeq?: number
 ): RunStatusEvent => ({
   runInstanceId,
   profileId,
@@ -34,13 +35,15 @@ const status = (
   state,
   exitCode: state === 'failed' ? 1 : 0,
   timestamp,
+  launchSeq,
 });
 
 const chunk = (
   runInstanceId: string,
   data: string,
   profileId = 'p1',
-  timestamp = Date.now()
+  timestamp = Date.now(),
+  launchSeq?: number
 ): OutputChunk => ({
   runInstanceId,
   profileId,
@@ -48,23 +51,28 @@ const chunk = (
   stream: 'stdout',
   data,
   timestamp,
+  launchSeq,
 });
 
 const phase2State = (): Phase2AState => useIDEStore.getState() as Phase2AState;
 
 let nextStartedAt = 1000;
+let nextLaunchSeq = 1;
 
 const completeRun = (runInstanceId: string, data: string, profileId = 'p1', startedAt?: number) => {
   const start = startedAt ?? nextStartedAt;
   if (startedAt == null) nextStartedAt += 1000;
+  const launchSeq = nextLaunchSeq++;
   const store = useIDEStore.getState();
-  store.handleRunStatus(status(runInstanceId, 'running', profileId, start));
-  store.appendRunOutput(chunk(runInstanceId, data, profileId, start + 1));
-  store.handleRunStatus(status(runInstanceId, 'success', profileId, start + 2));
+  store.handleRunStatus(status(runInstanceId, 'running', profileId, start, launchSeq));
+  store.appendRunOutput(chunk(runInstanceId, data, profileId, start + 1, launchSeq));
+  store.handleRunStatus(status(runInstanceId, 'success', profileId, start + 2, launchSeq));
+  return launchSeq;
 };
 
 beforeEach(() => {
   nextStartedAt = 1000;
+  nextLaunchSeq = 1;
   useIDEStore.setState({
     ...useIDEStore.getInitialState(),
     runProfiles: [
@@ -220,12 +228,12 @@ describe('ordinary run-instance output history', () => {
   });
 
   it('rejects late output and status from a retained predecessor after the newest run completes', () => {
-    completeRun('r1', 'old\n');
+    const r1LaunchSeq = completeRun('r1', 'old\n');
     completeRun('r2', 'new\n');
 
     const store = useIDEStore.getState();
-    store.appendRunOutput(chunk('r1', 'late\n'));
-    store.handleRunStatus(status('r1', 'failed'));
+    store.appendRunOutput(chunk('r1', 'late\n', 'p1', 1003, r1LaunchSeq));
+    store.handleRunStatus(status('r1', 'failed', 'p1', 1004, r1LaunchSeq));
 
     const state = phase2State();
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r2');
@@ -235,11 +243,11 @@ describe('ordinary run-instance output history', () => {
   });
 
   it('rejects late output from a pruned execution after the newest run completes', () => {
-    completeRun('r1', 'one\n', 'p1', 1000);
+    const r1LaunchSeq = completeRun('r1', 'one\n', 'p1', 1000);
     completeRun('r2', 'two\n', 'p1', 2000);
     completeRun('r3', 'three\n', 'p1', 3000);
 
-    useIDEStore.getState().appendRunOutput(chunk('r1', 'late\n', 'p1', 1001));
+    useIDEStore.getState().appendRunOutput(chunk('r1', 'late\n', 'p1', 1001, r1LaunchSeq));
 
     const state = phase2State();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r2', 'r3']);
@@ -248,13 +256,13 @@ describe('ordinary run-instance output history', () => {
   });
 
   it('rejects late running and terminal status from a pruned execution', () => {
-    completeRun('r1', 'one\n', 'p1', 1000);
+    const r1LaunchSeq = completeRun('r1', 'one\n', 'p1', 1000);
     completeRun('r2', 'two\n', 'p1', 2000);
     completeRun('r3', 'three\n', 'p1', 3000);
 
     const store = useIDEStore.getState();
-    store.handleRunStatus(status('r1', 'running', 'p1', 1000));
-    store.handleRunStatus(status('r1', 'failed', 'p1', 1002));
+    store.handleRunStatus(status('r1', 'running', 'p1', 1000, r1LaunchSeq));
+    store.handleRunStatus(status('r1', 'failed', 'p1', 1002, r1LaunchSeq));
 
     const state = phase2State();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r2', 'r3']);
@@ -323,6 +331,17 @@ describe('ordinary run-instance output history', () => {
     useIDEStore.getState().handleRunStatus(status('r2', 'running', 'p1', 2000));
 
     expect(phase2State().activeRunOutputId).toBe('other-r1');
+  });
+
+  it('focuses the newest live sibling before a newer terminal sibling', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(status('r1', 'running', 'p1', 1000, 1));
+    store.handleRunStatus(status('r2', 'running', 'p1', 2000, 2));
+    store.handleRunStatus(status('r2', 'success', 'p1', 2001, 2));
+
+    store.focusProfileOutput('p1');
+
+    expect(phase2State().activeRunOutputId).toBe('r1');
   });
 
   it('keeps only two executions and selects the newest when a selected tab is pruned', () => {

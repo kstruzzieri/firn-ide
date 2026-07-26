@@ -52,6 +52,7 @@ interface RunProfileCardProps {
   section?: ProfileSection;
   isFreshestRun?: boolean;
   isSelectedTarget?: boolean;
+  canRunAnother?: boolean;
 }
 
 function getStateClass(visualState: VisualState): string {
@@ -111,13 +112,19 @@ export function RunProfileCard({
   section,
   isFreshestRun,
   isSelectedTarget,
+  canRunAnother,
 }: RunProfileCardProps) {
   const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
   const openRunProfileForm = useIDEStore((s) => s.openRunProfileForm);
 
-  const startTs = useIDEStore((s) => s.runStartTimestamps[profile.id]);
-  const stopRequestTs = useIDEStore((s) => s.stopRequestTimestamps[profile.id]);
+  const startTs = useIDEStore(
+    (s) => s.runStartTimestamps[runOutput?.runInstanceId ?? ''] ?? s.runStartTimestamps[profile.id]
+  );
+  const stopRequestTs = useIDEStore(
+    (s) =>
+      s.stopRequestTimestamps[runOutput?.runInstanceId ?? ''] ?? s.stopRequestTimestamps[profile.id]
+  );
 
   const isRunningOrStopping = visualState === 'running' || visualState === 'stopping';
   const computedElapsed = useElapsedTimer(isRunningOrStopping ? startTs : undefined);
@@ -330,6 +337,19 @@ export function RunProfileCard({
           <span className={styles.targetDot} aria-hidden="true" />
         </button>
         {renderActionButton()}
+        {canRunAnother && (
+          <button
+            type="button"
+            className={`${styles.actionBtn} ${styles.actionBtnPlay}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleStart();
+            }}
+            aria-label={`Run another ${profile.name}`}
+          >
+            <PlayIcon aria-hidden="true" />
+          </button>
+        )}
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />
         {isFreshestRun && <span className={styles.justRanChip}>just ran</span>}

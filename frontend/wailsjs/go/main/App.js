@@ -222,6 +222,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function RestartRunInstance(arg1) {
+  return window['go']['main']['App']['RestartRunInstance'](arg1);
+}
+
 export function RestartRunProfile(arg1) {
   return window['go']['main']['App']['RestartRunProfile'](arg1);
 }
@@ -252,6 +256,10 @@ export function StartRunProfile(arg1) {
 
 export function StartWatching(arg1) {
   return window['go']['main']['App']['StartWatching'](arg1);
+}
+
+export function StopRunInstance(arg1) {
+  return window['go']['main']['App']['StopRunInstance'](arg1);
 }
 
 export function StopRunProfile(arg1) {

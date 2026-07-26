@@ -14,6 +14,8 @@ import {
   useTreeViewMode,
   useActiveWorkspaceId,
   useWorkspaces,
+  isLiveRunState,
+  representativeRunInstanceId,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
 import { estimateRemaining } from '../../utils/estimateCompletion';
@@ -52,12 +54,16 @@ export function RunProfiles() {
   const error = useProfilesError();
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const runLaunchSeqByInstance = useIDEStore((s) => s.runLaunchSeqByInstance);
   const runCompounds = useIDEStore((s) => s.runCompounds);
   const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
   const runHistory = useIDEStore((s) => s.runHistory);
   const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
+  const stoppingRunIds = useIDEStore((s) => s.stoppingRunInstanceIds);
+  const restartingRunIds = useIDEStore((s) => s.restartingRunInstanceIds);
   const runStartTimestamps = useIDEStore((s) => s.runStartTimestamps);
   const focusProfileOutput = useIDEStore((s) => s.focusProfileOutput);
   const runProfileState = useRunProfileState();
@@ -67,15 +73,48 @@ export function RunProfiles() {
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
   const effectiveTargetId = useEffectiveRunTarget();
-  const currentRunState = useCallback(
+  const currentRun = useCallback(
     (profileId: string) => {
-      const runInstanceId = latestRunInstanceIdByProfile[profileId];
-      return (
-        runOutputs[runInstanceId]?.state ??
-        runCompounds[compoundIdByRunInstance[runInstanceId]]?.state
+      const ordinaryRunInstanceId = representativeRunInstanceId(
+        { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance },
+        profileId
+      );
+      const aggregateRunInstanceId = latestRunInstanceIdByProfile[profileId];
+      const runInstanceId = ordinaryRunInstanceId ?? aggregateRunInstanceId;
+      const ordinaryState = runOutputs[ordinaryRunInstanceId ?? '']?.state;
+      return {
+        runInstanceId,
+        state:
+          ordinaryState == null
+            ? runCompounds[compoundIdByRunInstance[aggregateRunInstanceId]]?.state
+            : isLiveRunState(ordinaryState)
+              ? 'running'
+              : ordinaryState,
+      };
+    },
+    [
+      runOutputs,
+      runInstanceIdsByProfile,
+      runLaunchSeqByInstance,
+      latestRunInstanceIdByProfile,
+      runCompounds,
+      compoundIdByRunInstance,
+    ]
+  );
+  const currentVisualState = useCallback(
+    (profileId: string) => {
+      const execution = currentRun(profileId);
+      return getVisualState(
+        profileId,
+        execution.state,
+        stoppingIds,
+        restartingIds,
+        execution.runInstanceId,
+        stoppingRunIds,
+        restartingRunIds
       );
     },
-    [runOutputs, latestRunInstanceIdByProfile, runCompounds, compoundIdByRunInstance]
+    [currentRun, stoppingIds, restartingIds, stoppingRunIds, restartingRunIds]
   );
 
   // Render-time "now" for the just-ran recency window. Kept out of any memo deps
@@ -100,11 +139,8 @@ export function RunProfiles() {
   // Periodic tick to refresh ETA sort order while profiles are running.
   // Without this, Date.now() in the sort memo stales until a store change.
   const hasRunning = useMemo(
-    () =>
-      visibleProfiles.some(
-        (p) => getVisualState(p.id, currentRunState(p.id), stoppingIds, restartingIds) === 'running'
-      ),
-    [visibleProfiles, currentRunState, stoppingIds, restartingIds]
+    () => visibleProfiles.some((p) => currentVisualState(p.id) === 'running'),
+    [visibleProfiles, currentVisualState]
   );
   const [etaTick, setEtaTick] = useState(0);
   useEffect(() => {
@@ -122,9 +158,13 @@ export function RunProfiles() {
       const rest: RunProfile[] = [];
 
       for (const p of profiles) {
-        const vs = getVisualState(p.id, currentRunState(p.id), stoppingIds, restartingIds);
+        const vs = currentVisualState(p.id);
         if (vs === 'running') {
-          const startTs = runStartTimestamps[p.id] ?? now;
+          const runInstanceId = currentRun(p.id).runInstanceId;
+          const startTs =
+            (runInstanceId ? runStartTimestamps[runInstanceId] : undefined) ??
+            runStartTimestamps[p.id] ??
+            now;
           const elapsed = now - startTs;
           const history = runHistory[p.id] ?? [];
           const eta = estimateRemaining(history, elapsed);
@@ -139,7 +179,7 @@ export function RunProfiles() {
       return [...running.map((r) => r.profile), ...rest];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- etaTick forces re-sort when ETA estimates update
-  }, [currentRunState, stoppingIds, restartingIds, runHistory, runStartTimestamps, etaTick]);
+  }, [currentRun, currentVisualState, runHistory, runStartTimestamps, etaTick]);
 
   // Apply ETA sort BEFORE grouping so running-soonest profiles bubble up within
   // their section (groupProfiles preserves input order for activated/pinned/detected).
@@ -150,7 +190,10 @@ export function RunProfiles() {
   );
 
   const renderCard = (profile: RunProfile, section: SectionGroup['key']) => {
-    const ordinaryOutput = runOutputs[latestRunInstanceIdByProfile[profile.id]];
+    const execution = currentRun(profile.id);
+    const ordinaryOutput = execution.runInstanceId
+      ? runOutputs[execution.runInstanceId]
+      : undefined;
     const compoundRun =
       runCompounds[compoundIdByRunInstance[latestRunInstanceIdByProfile[profile.id]]];
     // A compound never produces an ordinary RunOutput (its output lives in
@@ -168,7 +211,7 @@ export function RunProfiles() {
             entries: [],
           }
         : undefined);
-    const vs = getVisualState(profile.id, currentRunState(profile.id), stoppingIds, restartingIds);
+    const vs = currentVisualState(profile.id);
     const isDormant = !runOutput && !runHistory[profile.id]?.length;
     const isDuplicate = (nameCounts.get(profile.name) ?? 0) > 1;
 
@@ -183,6 +226,12 @@ export function RunProfiles() {
         isDuplicate={isDuplicate}
         section={section}
         isSelectedTarget={effectiveTargetId === profile.id}
+        canRunAnother={
+          profile.type === 'single' &&
+          (runInstanceIdsByProfile[profile.id] ?? []).filter((id) =>
+            isLiveRunState(runOutputs[id]?.state)
+          ).length === 1
+        }
         isFreshestRun={
           grouped.freshestRunId === profile.id &&
           isJustRan(runProfileState[profile.id]?.lastRunAt, nowMs)
@@ -224,9 +273,7 @@ export function RunProfiles() {
   // Running count for an arbitrary profile list (used for both the global header
   // counter and the per-workspace group counter in Project View).
   const countRunning = (list: RunProfile[]): number =>
-    list.filter(
-      (p) => getVisualState(p.id, currentRunState(p.id), stoppingIds, restartingIds) === 'running'
-    ).length;
+    list.filter((p) => currentVisualState(p.id) === 'running').length;
   const runningCount = countRunning(scopedProfiles);
   const totalCountScoped = scopedProfiles.length;
 

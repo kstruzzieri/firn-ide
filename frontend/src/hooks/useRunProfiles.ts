@@ -92,11 +92,16 @@ export function normalizeProfileState(raw: unknown): Record<string, RunProfileUI
 function normalizeSnapshot(raw: unknown): {
   profiles: RunProfile[];
   profileState: Record<string, RunProfileUIState>;
+  workspaceEpoch?: number;
 } {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
     profiles: normalizeRunProfiles(obj.profiles),
     profileState: normalizeProfileState(obj.profileState),
+    workspaceEpoch:
+      typeof obj.workspaceEpoch === 'number' && obj.workspaceEpoch > 0
+        ? obj.workspaceEpoch
+        : undefined,
   };
 }
 
@@ -111,6 +116,7 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       return;
     }
 
+    useIDEStore.getState().pauseRunEvents();
     useIDEStore.getState().resetWorkspaceRunState();
 
     let cancelled = false;
@@ -122,8 +128,8 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
       .then(() => GetRunProfilesSnapshot())
       .then((snap: unknown) => {
         if (!cancelled) {
-          const { profiles, profileState } = normalizeSnapshot(snap);
-          setRunProfilesSnapshot(profiles, profileState);
+          const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(snap);
+          setRunProfilesSnapshot(profiles, profileState, workspaceEpoch);
         }
       })
       .catch((err: unknown) => {
@@ -139,8 +145,18 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     // be started separately (e.g., via useFileWatcher) for events to fire.
     const cleanup = EventsOn('runprofiles:changed', (snap: unknown) => {
       if (!cancelled) {
-        const { profiles, profileState } = normalizeSnapshot(snap);
-        setRunProfilesSnapshot(profiles, profileState);
+        const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(snap);
+        const state = useIDEStore.getState();
+        if (state.runEventsPaused) return;
+        if (workspaceEpoch == null && state.workspaceEpoch > 0) return;
+        if (
+          workspaceEpoch != null &&
+          state.workspaceEpoch > 0 &&
+          workspaceEpoch !== state.workspaceEpoch
+        ) {
+          return;
+        }
+        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch);
       }
     });
 

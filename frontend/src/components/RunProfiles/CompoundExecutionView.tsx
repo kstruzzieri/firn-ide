@@ -10,7 +10,7 @@ import { SourceTimelineView } from '../RunOutput/SourceTimelineView';
 import type { TimelineSource } from '../RunOutput/SourceTimelineView';
 import { resolveFileReferencePath } from '../../utils/parseFileReferences';
 import { useIDEStore, useWorkspace, useRunOutputAutoScroll } from '../../stores/ideStore';
-import { StopRunProfile } from '../../../wailsjs/go/main/App';
+import { stopProfile } from '../../utils/profileActions';
 import type { CompoundRun, CompoundStep, CompoundStepState } from '../../types/runOutput';
 import styles from './CompoundExecutionView.module.css';
 
@@ -96,7 +96,7 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
   const workspace = useWorkspace();
   const workspacePath = workspace?.path;
   const autoScroll = useRunOutputAutoScroll();
-  const showToast = useIDEStore((s) => s.showToast);
+  const runControlsDisabled = useIDEStore((s) => s.runEventsPaused || s.isLoadingProfiles);
   const requestEditorNavigation = useIDEStore((s) => s.requestEditorNavigation);
   const defaultSelectedStepIdx = initialSelectedStepIdx(compound);
   const currentInitialViewState = useMemo(
@@ -178,10 +178,7 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
   );
 
   const handleStop = () => {
-    StopRunProfile(compound.compoundId).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      showToast(`Failed to stop "${compound.name}": ${message}`, 'error');
-    });
+    stopProfile(compound.compoundId, compound.name);
   };
 
   const handleJumpToFailure = () => {
@@ -236,6 +233,7 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
               type="button"
               className={`${styles.actionButton} ${styles.stopButton}`}
               onClick={handleStop}
+              disabled={runControlsDisabled}
               aria-label={`Stop ${compound.name}`}
             >
               Stop
