@@ -53,6 +53,8 @@ interface RunProfileCardProps {
   isFreshestRun?: boolean;
   isSelectedTarget?: boolean;
   canRunAnother?: boolean;
+  /** Live ordinary executions for this profile. Only >1 is rendered. */
+  liveRunCount?: number;
 }
 
 function getStateClass(visualState: VisualState): string {
@@ -113,6 +115,7 @@ export function RunProfileCard({
   isFreshestRun,
   isSelectedTarget,
   canRunAnother,
+  liveRunCount = 0,
 }: RunProfileCardProps) {
   const addOrUpdateProfile = useIDEStore((s) => s.addOrUpdateProfile);
   const showToast = useIDEStore((s) => s.showToast);
@@ -352,6 +355,10 @@ export function RunProfileCard({
         )}
         <span className={styles.name}>{profile.name}</span>
         <StatusBadge visualState={visualState} profile={profile} runHistory={runHistory} />
+        {/* With concurrent executions the card's status reflects the newest run
+            only, and its Stop targets that run alone. Without this the surviving
+            sibling makes a successful Stop look like it did nothing. */}
+        {liveRunCount > 1 && <span className={styles.runCountChip}>{liveRunCount} running</span>}
         {isFreshestRun && <span className={styles.justRanChip}>just ran</span>}
         {durationLabel && <span className={styles.duration}>{durationLabel}</span>}
         {(section === 'recent' || section === 'detected') && (

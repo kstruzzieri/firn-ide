@@ -215,6 +215,11 @@ export function RunProfiles() {
     const vs = currentVisualState(profile.id);
     const isDormant = !runOutput && !runHistory[profile.id]?.length;
     const isDuplicate = (nameCounts.get(profile.name) ?? 0) > 1;
+    // Drives both the "Run another" affordance (room for one more) and the
+    // concurrency badge (more than one live), so it is counted once.
+    const liveRunCount = (runInstanceIdsByProfile[profile.id] ?? []).filter((id) =>
+      isLiveRunState(runOutputs[id]?.state)
+    ).length;
 
     return (
       <RunProfileCard
@@ -227,12 +232,8 @@ export function RunProfiles() {
         isDuplicate={isDuplicate}
         section={section}
         isSelectedTarget={effectiveTargetId === profile.id}
-        canRunAnother={
-          profile.type === 'single' &&
-          (runInstanceIdsByProfile[profile.id] ?? []).filter((id) =>
-            isLiveRunState(runOutputs[id]?.state)
-          ).length === 1
-        }
+        canRunAnother={profile.type === 'single' && liveRunCount === 1}
+        liveRunCount={liveRunCount}
         isFreshestRun={
           grouped.freshestRunId === profile.id &&
           isJustRan(runProfileState[profile.id]?.lastRunAt, nowMs)

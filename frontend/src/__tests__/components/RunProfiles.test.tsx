@@ -216,6 +216,54 @@ describe('RunProfiles panel header counter', () => {
     expect(screen.queryByRole('button', { name: 'Run another Dev' })).not.toBeInTheDocument();
   });
 
+  it('badges the card only once a profile has more than one live execution', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        terminal: makeRunOutput(pinnedProfile.id, 'failed', 'terminal', 19),
+        first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['terminal', 'first'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'first' },
+      runLaunchSeqByInstance: { terminal: 19, first: 20 },
+      runStartTimestamps: { first: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    // A retained terminal sibling is not a concurrent run, so no badge yet.
+    expect(screen.queryByText('2 running')).not.toBeInTheDocument();
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
+        },
+        runInstanceIdsByProfile: { [pinnedProfile.id]: ['first', 'second'] },
+        latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'second' },
+        runLaunchSeqByInstance: { first: 20, second: 21 },
+        runStartTimestamps: { first: Date.now() - 1000, second: Date.now() - 500 },
+      });
+    });
+
+    // Both live: the card's status and Stop track only the newest, so the badge
+    // is what tells the user a sibling survives a Stop.
+    expect(screen.getByText('2 running')).toBeInTheDocument();
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'stopped', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'running', 'second', 21),
+        },
+      });
+    });
+
+    expect(screen.queryByText('2 running')).not.toBeInTheDocument();
+  });
+
   it('counts a compound through its aggregate run instance without an ordinary output', () => {
     const compoundProfile: RunProfile = {
       id: 'ci',
