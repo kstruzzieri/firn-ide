@@ -5,6 +5,7 @@ package runprofile
 import (
 	"errors"
 	"os/exec"
+	"sync"
 	"testing"
 	"time"
 )
@@ -42,6 +43,83 @@ func TestExecutorPhase2B_RestartOfVanishedInstanceReportsNotRunningSentinel(t *t
 	err = exec.RestartAtEpoch(exec.CurrentEpoch(), root, profile, "never-existed")
 	if !errors.Is(err, ErrRunInstanceNotRunning) {
 		t.Fatalf("restart of unknown instance err = %v, want wrapped %v", err, ErrRunInstanceNotRunning)
+	}
+}
+
+// Restarting both live siblings must succeed: each replacement shares the slot
+// of the instance it replaces, so the settled state is still two runs. Counting
+// a pending replacement on top of its own original made the second restart hit
+// the cap and fail with "profile already running".
+func TestExecutorPhase2B_BothSiblingsCanRestartConcurrently(t *testing.T) {
+	spy := &emitSpy{}
+	exec := NewExecutor(spy.emit, nil)
+	profile := newTestProfile("target", "sleep 30")
+	root := t.TempDir()
+	t.Cleanup(func() { exec.StopAll(4 * time.Second) }) //nolint:errcheck
+
+	for i := 0; i < 2; i++ {
+		if err := exec.Start(root, profile); err != nil {
+			t.Fatalf("Start %d: %v", i, err)
+		}
+	}
+	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+
+	epoch := exec.CurrentEpoch()
+	errs := make(chan error, len(ids))
+	var wg sync.WaitGroup
+	for _, runInstanceID := range ids {
+		wg.Add(1)
+		go func(rid string) {
+			defer wg.Done()
+			errs <- exec.RestartAtEpoch(epoch, root, profile, rid)
+		}(runInstanceID)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent sibling restart: %v", err)
+		}
+	}
+
+	// Both replacements are live, and the cap still holds against a third launch.
+	restarted := phase2BRunningIDs(t, spy, profile.ID, 4)
+	for _, prior := range ids {
+		for _, id := range restarted[2:] {
+			if id == prior {
+				t.Fatalf("restart reused prior run instance %q", prior)
+			}
+		}
+	}
+	if err := exec.StartAtEpoch(epoch, root, profile); err == nil {
+		t.Fatal("third concurrent run admitted after both siblings restarted")
+	}
+}
+
+// Once a replaced instance has exited, its pending replacement owns the slot
+// outright — otherwise the shared-slot rule would let a third run in.
+func TestExecutorPhase2B_ReplacementClaimsSlotAfterOriginalExits(t *testing.T) {
+	spy := &emitSpy{}
+	exec := NewExecutor(spy.emit, nil)
+	profile := newTestProfile("target", "sleep 30")
+	root := t.TempDir()
+	t.Cleanup(func() { exec.StopAll(4 * time.Second) }) //nolint:errcheck
+
+	for i := 0; i < 2; i++ {
+		if err := exec.Start(root, profile); err != nil {
+			t.Fatalf("Start %d: %v", i, err)
+		}
+	}
+	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+
+	epoch := exec.CurrentEpoch()
+	if err := exec.RestartAtEpoch(epoch, root, profile, ids[0]); err != nil {
+		t.Fatalf("restart oldest sibling: %v", err)
+	}
+	phase2BRunningIDs(t, spy, profile.ID, 3)
+
+	if err := exec.StartAtEpoch(epoch, root, profile); err == nil {
+		t.Fatal("third run admitted while both slots were occupied")
 	}
 }
 

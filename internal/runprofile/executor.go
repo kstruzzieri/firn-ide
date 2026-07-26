@@ -355,6 +355,11 @@ func (e *Executor) reserveProcessCapacityLocked(identity RunIdentity, replacedRu
 	}
 
 	ordinary := 0
+	// Live instances counted below. A pending replacement for one of them shares
+	// that instance's slot rather than claiming a second one — an exact restart
+	// stops its target before promoting the replacement, so the pair can never be
+	// running at the same time.
+	countedProcesses := make(map[string]bool, len(e.processes))
 	for runInstanceID, rp := range e.processes {
 		if runInstanceID == replacedRunInstanceID {
 			continue
@@ -366,6 +371,7 @@ func (e *Executor) reserveProcessCapacityLocked(identity RunIdentity, replacedRu
 			return fmt.Errorf("profile already running: %s", identity.ProfileID)
 		}
 		ordinary++
+		countedProcesses[runInstanceID] = true
 	}
 	for _, reservation := range e.reservations {
 		if reservation.identity.ProfileID != identity.ProfileID {
@@ -373,6 +379,14 @@ func (e *Executor) reserveProcessCapacityLocked(identity RunIdentity, replacedRu
 		}
 		if identity.ParentRunInstanceID != "" || reservation.identity.ParentRunInstanceID != "" {
 			return fmt.Errorf("profile already running: %s", identity.ProfileID)
+		}
+		// Without this, restarting both live siblings concurrently fails: the
+		// second restart counts the first restart's reservation on top of the
+		// original it is replacing and hits the cap, even though the settled
+		// state is still two runs. Once the replaced instance has exited it is
+		// no longer counted above, so the reservation claims the slot itself.
+		if reservation.replacesRunInstanceID != "" && countedProcesses[reservation.replacesRunInstanceID] {
+			continue
 		}
 		ordinary++
 	}
