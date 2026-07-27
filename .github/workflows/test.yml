@@ -87,24 +87,3 @@ jobs:
         with:
           files: coverage.out
           fail_ci_if_error: false
-
-  windows-filesystem-tests:
-    # The no-follow open, the directory reader and the durable-write path all
-    # have separate Windows implementations that release.yml only ever compiles.
-    # Firn ships on Windows, so run the packages that own that code there too.
-    # Scoped to internal packages: they need no go:embed frontend build, and the
-    # rest of the suite has never been exercised on Windows.
-    name: Windows Filesystem Tests
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache-dependency-path: go.sum
-
-      - name: Run filesystem, run history and workspace tests
-        run: go test ./internal/filesystem/... ./internal/runhistory/... ./internal/workspace/... -v

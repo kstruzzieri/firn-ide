@@ -403,6 +403,9 @@ func TestStorePhase2C_RejectsNonCanonicalHistoryIDEncodings(t *testing.T) {
 // server, and MkdirAll leaves an existing directory's mode alone. A 0755 parent
 // leaves the whole 0700 archive tree traversable by other local accounts.
 func TestStorePhase2C_TightensAPreexistingLooseFirnTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
+	}
 	home := t.TempDir()
 	firnDir := filepath.Join(home, ".firn")
 	if err := os.MkdirAll(filepath.Join(firnDir, "run-history"), 0o755); err != nil {

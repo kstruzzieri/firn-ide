@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,7 +47,7 @@ type syncRecorder struct {
 
 func (s *syncRecorder) WriteFileSync(path string, data []byte, perm fs.FileMode) error {
 	s.order = append(s.order, "write-sync")
-	return s.FileSystem.WriteFile(path, data, perm)
+	return s.WriteFile(path, data, perm)
 }
 
 func (s *syncRecorder) SyncDir(string) error {
@@ -117,6 +118,9 @@ func TestOSWriteFileSyncRefusesAnExistingPath(t *testing.T) {
 }
 
 func TestEnsureDirPermTightensAPreexistingLooseDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "firn")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -135,6 +139,9 @@ func TestEnsureDirPermTightensAPreexistingLooseDirectory(t *testing.T) {
 }
 
 func TestEnsureDirPermRejectsANonDirectoryAndToleratesAMock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
+	}
 	root := t.TempDir()
 	file := filepath.Join(root, "notadir")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
