@@ -1,0 +1,68 @@
+package workspace
+
+import (
+	"firn/internal/filesystem"
+	"io/fs"
+	"strings"
+	"testing"
+)
+
+func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *testing.T) {
+	var writes []string
+	var writeModes []fs.FileMode
+	var renames [][2]string
+	var mkdirModes []fs.FileMode
+	mockFS := &filesystem.Mock{
+		MkdirAllFunc: func(_ string, mode fs.FileMode) error {
+			mkdirModes = append(mkdirModes, mode)
+			return nil
+		},
+		WriteFileFunc: func(path string, _ []byte, mode fs.FileMode) error {
+			writes = append(writes, path)
+			writeModes = append(writeModes, mode)
+			return nil
+		},
+		RenameFunc: func(oldPath, newPath string) error {
+			renames = append(renames, [2]string{oldPath, newPath})
+			return nil
+		},
+	}
+	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	state := testState("/repo", "Repo")
+
+	if err := store.Save(state); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	if err := store.Save(state); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+
+	finalPath := "/home/user/.firn/workspaces/" + pathToID("/repo") + ".json"
+	if len(renames) != 2 {
+		t.Fatalf("atomic rename count = %d, want 2; writes = %v", len(renames), writes)
+	}
+	if len(mkdirModes) != 2 {
+		t.Fatalf("MkdirAll count = %d, want 2", len(mkdirModes))
+	}
+	for i, mode := range mkdirModes {
+		if mode.Perm() != 0o700 {
+			t.Fatalf("MkdirAll %d mode = %o, want 0700", i, mode.Perm())
+		}
+	}
+	if renames[0][1] != finalPath || renames[1][1] != finalPath {
+		t.Fatalf("rename destinations = %v, want %q", renames, finalPath)
+	}
+	if renames[0][0] == renames[1][0] ||
+		!strings.HasPrefix(renames[0][0], finalPath+".") ||
+		!strings.HasPrefix(renames[1][0], finalPath+".") {
+		t.Fatalf("temp paths are not unique siblings of %q: %v", finalPath, renames)
+	}
+	for i, path := range writes {
+		if path == finalPath {
+			t.Fatalf("write %d targeted final path directly", i)
+		}
+		if writeModes[i].Perm() != 0o600 {
+			t.Fatalf("write %d mode = %o, want 0600", i, writeModes[i].Perm())
+		}
+	}
+}

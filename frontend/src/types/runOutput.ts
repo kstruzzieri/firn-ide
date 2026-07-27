@@ -50,6 +50,7 @@ export interface RunStatusEvent {
   state: RunState;
   exitCode: number;
   timestamp?: number;
+  reason?: string;
 }
 
 export interface RunOutput {
@@ -125,4 +126,5 @@ export interface CompoundRunEvent {
   state: RunState;
   currentStep: number;
   steps: CompoundStep[];
+  reason?: string;
 }

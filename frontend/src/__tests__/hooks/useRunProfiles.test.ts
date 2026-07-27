@@ -1,14 +1,16 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
 
 // Mock Wails App bindings
 const mockLoadRunProfiles = jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined);
 const mockGetRunProfilesSnapshot = jest.fn().mockResolvedValue({ profiles: [], profileState: {} });
+const mockGetRunHistorySnapshot = jest.fn().mockResolvedValue({ version: 1, summaries: [] });
 const mockStartRunProfile = jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined);
 jest.mock('../../../wailsjs/go/main/App', () => ({
   LoadRunProfiles: mockLoadRunProfiles,
   GetRunProfilesSnapshot: mockGetRunProfilesSnapshot,
+  GetRunHistorySnapshot: mockGetRunHistorySnapshot,
   StartRunProfile: mockStartRunProfile,
   StopRunProfile: jest.fn().mockResolvedValue(undefined),
   RestartRunProfile: jest.fn().mockResolvedValue(undefined),
@@ -78,11 +80,7 @@ describe('useRunProfilesLoader', () => {
     // Should set loading
     expect(useIDEStore.getState().isLoadingProfiles).toBe(true);
 
-    // Wait for promises
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().isLoadingProfiles).toBe(false));
 
     expect(mockLoadRunProfiles).toHaveBeenCalledWith('/workspace');
     expect(mockGetRunProfilesSnapshot).toHaveBeenCalled();
@@ -111,10 +109,7 @@ describe('useRunProfilesLoader', () => {
 
     renderHook(() => useRunProfilesLoader('/workspace'));
 
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().profilesError).toBe('Permission denied'));
 
     expect(useIDEStore.getState().profilesError).toBe('Permission denied');
     expect(useIDEStore.getState().isLoadingProfiles).toBe(false);
@@ -142,13 +137,12 @@ describe('useRunProfilesLoader', () => {
       runEventsPaused: true,
     });
     expect(mockStartRunProfile).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockLoadRunProfiles).toHaveBeenCalledWith('/next-workspace'));
 
     await act(async () => {
       resolveLoad();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
     });
+    await waitFor(() => expect(useIDEStore.getState().runEventsPaused).toBe(false));
 
     startProfile(sampleProfiles[0].id, sampleProfiles[0].name);
     expect(mockStartRunProfile).toHaveBeenCalledWith(sampleProfiles[0].id);
@@ -192,10 +186,7 @@ describe('useRunProfilesLoader', () => {
       initialProps: { path: '/broken' },
     });
 
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().profilesError).toBe('workspace unavailable'));
 
     let state = useIDEStore.getState();
     expect(state.profilesError).toBe('workspace unavailable');
@@ -214,10 +205,7 @@ describe('useRunProfilesLoader', () => {
     });
 
     rerender({ path: '/retry' });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().runEventsPaused).toBe(false));
 
     state = useIDEStore.getState();
     expect(state.profilesError).toBeNull();
@@ -241,7 +229,7 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().runOutputs['retry-run']?.state).toBe('running');
   });
 
-  it('should discard stale load when workspace changes', async () => {
+  it('should finish a stale load before dispatching and hydrating the next workspace', async () => {
     // First render with workspace A — make it resolve slowly
     let resolveA: () => void = () => {};
     mockLoadRunProfiles.mockImplementationOnce(
@@ -255,6 +243,7 @@ describe('useRunProfilesLoader', () => {
       ({ path }: { path: string | null }) => useRunProfilesLoader(path),
       { initialProps: { path: '/workspace-a' } }
     );
+    await waitFor(() => expect(mockLoadRunProfiles).toHaveBeenCalledWith('/workspace-a'));
 
     // Switch to workspace B before A resolves
     const profilesB: RunProfile[] = [
@@ -264,27 +253,16 @@ describe('useRunProfilesLoader', () => {
     mockGetRunProfilesSnapshot.mockResolvedValueOnce({ profiles: profilesB, profileState: {} });
 
     rerender({ path: '/workspace-b' });
+    await act(async () => Promise.resolve());
+    try {
+      expect(mockLoadRunProfiles).not.toHaveBeenCalledWith('/workspace-b');
+      expect(useIDEStore.getState().runProfiles).toEqual([]);
+    } finally {
+      await act(async () => resolveA());
+    }
 
-    // Let workspace B resolve
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(useIDEStore.getState().runProfiles).toEqual(profilesB);
-
-    // Now let workspace A resolve — it should be discarded
-    mockGetRunProfilesSnapshot.mockResolvedValueOnce({
-      profiles: sampleProfiles,
-      profileState: {},
-    });
-    resolveA();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // Store should still have workspace B's profiles
+    await waitFor(() => expect(useIDEStore.getState().runProfiles).toEqual(profilesB));
+    expect(mockLoadRunProfiles.mock.calls).toEqual([['/workspace-a'], ['/workspace-b']]);
     expect(useIDEStore.getState().runProfiles).toEqual(profilesB);
   });
 
@@ -308,10 +286,9 @@ describe('useRunProfilesLoader', () => {
 
     renderHook(() => useRunProfilesLoader('/workspace'));
 
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() =>
+      expect(useIDEStore.getState().runProfiles[0]?.workspaceId).toBe('frontend')
+    );
 
     const profiles = useIDEStore.getState().runProfiles;
     expect(profiles[0]?.workspaceId).toBe('frontend');
@@ -345,10 +322,7 @@ describe('useRunProfilesLoader', () => {
       },
     ];
 
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().runEventsPaused).toBe(false));
 
     act(() => {
       eventCallback({ profiles: updatedProfiles, profileState: {}, workspaceEpoch: 1 });
@@ -370,10 +344,7 @@ describe('useRunProfilesLoader', () => {
     });
 
     renderHook(() => useRunProfilesLoader('/workspace'));
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().workspaceEpoch).toBe(2));
 
     const staleProfiles: RunProfile[] = [
       {
@@ -401,10 +372,9 @@ describe('useRunProfilesLoader', () => {
     mockLoadRunProfiles.mockRejectedValueOnce(new Error('workspace unavailable'));
 
     renderHook(() => useRunProfilesLoader('/workspace-a'));
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() =>
+      expect(useIDEStore.getState().profilesError).toContain('workspace unavailable')
+    );
 
     // A failed load leaves run events paused, which also makes the
     // runprofiles:changed handler bail — so without a retry the run controls
@@ -415,10 +385,7 @@ describe('useRunProfilesLoader', () => {
     act(() => {
       useIDEStore.getState().reloadRunProfiles();
     });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(useIDEStore.getState().runEventsPaused).toBe(false));
 
     expect(useIDEStore.getState().profilesError).toBeNull();
     expect(useIDEStore.getState().runEventsPaused).toBe(false);

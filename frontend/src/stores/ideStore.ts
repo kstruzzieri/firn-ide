@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import type { filesystem, workspace } from '../../wailsjs/go/models';
+import type { filesystem, runhistory, workspace } from '../../wailsjs/go/models';
 import type { RunProfile, RunProfileUIState } from '../types/runProfile';
 import type { FormState } from '../utils/runProfileForm';
 import { LineAssembler } from '../utils/lineAssembler';
@@ -204,6 +204,8 @@ interface IDEState {
   stoppingRunInstanceIds: string[];
   restartingRunInstanceIds: string[];
   runHistory: Record<string, RunHistoryEntry[]>;
+  runHistorySummaries: Record<string, runhistory.Summary>;
+  runHistoryRecords: Record<string, runhistory.Summary | runhistory.Record>;
   waveformData: Record<string, number[]>;
   hiddenProfileIds: string[];
   runStartTimestamps: Record<string, number>;
@@ -287,7 +289,8 @@ interface IDEActions {
   setRunProfilesSnapshot: (
     profiles: RunProfile[],
     profileState: Record<string, RunProfileUIState>,
-    workspaceEpoch?: number
+    workspaceEpoch?: number,
+    historySnapshot?: runhistory.Snapshot
   ) => void;
   setSelectedProfile: (id: string | null) => void;
   adoptProfileLocal: (id: string) => void;
@@ -485,6 +488,8 @@ function emptyWorkspaceRunState() {
     stoppingRunInstanceIds: [],
     restartingRunInstanceIds: [],
     runHistory: {},
+    runHistorySummaries: {},
+    runHistoryRecords: {},
     waveformData: {},
     runStartTimestamps: {},
     stopRequestTimestamps: {},
@@ -680,6 +685,184 @@ function retainRunOutput(
   };
 }
 
+function selectionProfileId(
+  state: Pick<
+    IDEState,
+    'runOutputs' | 'runHistorySummaries' | 'runHistoryRecords' | 'compoundIdByRunInstance'
+  >,
+  selection: string | null
+): string | undefined {
+  if (!selection || selection === ALL_PROFILES_ID) return undefined;
+  if (selection.startsWith('history:')) {
+    const historyId = selection.slice('history:'.length);
+    return (
+      state.runHistorySummaries[historyId]?.profileId ??
+      state.runHistoryRecords[historyId]?.profileId
+    );
+  }
+  return state.runOutputs[selection]?.profileId ?? state.compoundIdByRunInstance[selection];
+}
+
+const MAX_RUN_HISTORY_SUMMARIES = 50;
+const MAX_RICH_RUN_HISTORY_RECORDS = 5;
+
+export function compareRunHistorySummaries(a: runhistory.Summary, b: runhistory.Summary): number {
+  return a.completedAt - b.completedAt || a.historyId.localeCompare(b.historyId);
+}
+
+export function archivedRunLabel(
+  summary: runhistory.Summary,
+  sortedSummaries: runhistory.Summary[],
+  profileName: string
+): string {
+  const profileSummaries = sortedSummaries.filter(
+    (candidate) => candidate.profileId === summary.profileId
+  );
+  if (profileSummaries.length < 2) return `${profileName} (saved)`;
+  return `${profileName} (saved ${profileSummaries.indexOf(summary) + 1} of ${profileSummaries.length})`;
+}
+
+function runHistorySummary(value: runhistory.Summary | runhistory.Record): runhistory.Summary {
+  return {
+    historyId: value.historyId,
+    kind: value.kind,
+    profileId: value.profileId,
+    profileName: value.profileName,
+    state: value.state,
+    exitCode: value.exitCode,
+    startedAt: value.startedAt,
+    completedAt: value.completedAt,
+    outputAvailable: value.outputAvailable,
+  };
+}
+
+export function mergeRunHistoryArchiveMaps(
+  state: Pick<IDEState, 'runHistorySummaries' | 'runHistoryRecords'>,
+  incoming: Array<runhistory.Summary | runhistory.Record>
+): Pick<IDEState, 'runHistorySummaries' | 'runHistoryRecords'> {
+  const runHistorySummaries = { ...state.runHistorySummaries };
+  const runHistoryRecords = { ...state.runHistoryRecords };
+  const incomingRecordIds: string[] = [];
+  for (const value of incoming) {
+    const summary = runHistorySummary(value);
+    if (!summary.historyId) continue;
+    runHistorySummaries[summary.historyId] = summary;
+    if (!summary.outputAvailable || summary.kind !== 'ordinary') {
+      delete runHistoryRecords[summary.historyId];
+    } else if ('version' in value && value.version === 1) {
+      runHistoryRecords[summary.historyId] = value;
+      incomingRecordIds.push(summary.historyId);
+    } else if (!runHistoryRecords[summary.historyId]) {
+      runHistoryRecords[summary.historyId] = summary;
+    }
+  }
+
+  const summariesByProfile = new Map<string, runhistory.Summary[]>();
+  for (const summary of Object.values(runHistorySummaries)) {
+    const summaries = summariesByProfile.get(summary.profileId) ?? [];
+    summaries.push(summary);
+    summariesByProfile.set(summary.profileId, summaries);
+  }
+  const retainedSummaryIds = new Set<string>();
+  for (const summaries of summariesByProfile.values()) {
+    for (const summary of summaries
+      .sort(compareRunHistorySummaries)
+      .slice(-MAX_RUN_HISTORY_SUMMARIES)) {
+      retainedSummaryIds.add(summary.historyId);
+    }
+  }
+  for (const historyId of Object.keys(runHistorySummaries)) {
+    if (!retainedSummaryIds.has(historyId)) {
+      delete runHistorySummaries[historyId];
+      delete runHistoryRecords[historyId];
+    }
+  }
+
+  const richByProfile = new Map<string, runhistory.Summary[]>();
+  for (const historyId of Object.keys(runHistoryRecords)) {
+    const summary = runHistorySummaries[historyId];
+    if (!summary?.outputAvailable || summary.kind !== 'ordinary') {
+      delete runHistoryRecords[historyId];
+      continue;
+    }
+    const summaries = richByProfile.get(summary.profileId) ?? [];
+    summaries.push(summary);
+    richByProfile.set(summary.profileId, summaries);
+  }
+  for (const summaries of richByProfile.values()) {
+    const retained = new Set<string>();
+    const profileId = summaries[0]?.profileId;
+    for (const historyId of [
+      ...incomingRecordIds.filter(
+        (historyId) => runHistorySummaries[historyId]?.profileId === profileId
+      ),
+      ...summaries
+        .sort(compareRunHistorySummaries)
+        .reverse()
+        .map((summary) => summary.historyId),
+    ]) {
+      if (retained.size === MAX_RICH_RUN_HISTORY_RECORDS) break;
+      retained.add(historyId);
+    }
+    for (const summary of summaries) {
+      if (!retained.has(summary.historyId)) delete runHistoryRecords[summary.historyId];
+    }
+  }
+
+  return { runHistorySummaries, runHistoryRecords };
+}
+
+function mergeRunHistorySnapshot(
+  state: Pick<IDEState, 'runHistory' | 'runHistorySummaries' | 'runHistoryRecords'>,
+  snapshot: runhistory.Snapshot
+): Pick<IDEState, 'runHistory' | 'runHistorySummaries' | 'runHistoryRecords'> {
+  const runHistory = Object.fromEntries(
+    Object.entries(state.runHistory).map(([profileId, entries]) => [profileId, [...entries]])
+  );
+  const existingSummaryIds = new Set(Object.keys(state.runHistorySummaries));
+  const seen = new Set<string>();
+  const summaries = (snapshot.summaries ?? [])
+    .map((summary, index) => ({ summary, index }))
+    .sort((a, b) => a.summary.completedAt - b.summary.completedAt || a.index - b.index);
+  const archives = mergeRunHistoryArchiveMaps(
+    state,
+    summaries.map(({ summary }) => summary)
+  );
+
+  for (const { summary } of summaries) {
+    if (!summary.historyId || seen.has(summary.historyId)) continue;
+    seen.add(summary.historyId);
+
+    if (
+      existingSummaryIds.has(summary.historyId) ||
+      !archives.runHistorySummaries[summary.historyId]
+    ) {
+      continue;
+    }
+    if (summary.state !== 'success' && summary.state !== 'failed' && summary.state !== 'stopped') {
+      continue;
+    }
+
+    const entries = runHistory[summary.profileId] ?? [];
+    entries.push({
+      state: summary.state,
+      duration: Math.max(0, summary.completedAt - summary.startedAt),
+      timestamp: summary.completedAt,
+    });
+    runHistory[summary.profileId] = entries;
+  }
+
+  for (const [profileId, entries] of Object.entries(runHistory)) {
+    runHistory[profileId] = entries
+      .map((entry, index) => ({ entry, index }))
+      .sort((a, b) => a.entry.timestamp - b.entry.timestamp || a.index - b.index)
+      .slice(-50)
+      .map(({ entry }) => entry);
+  }
+
+  return { runHistory, ...archives };
+}
+
 export const useIDEStore = create<IDEStore>()(
   devtools(
     (set, get) => ({
@@ -723,6 +906,8 @@ export const useIDEStore = create<IDEStore>()(
       stoppingRunInstanceIds: [],
       restartingRunInstanceIds: [],
       runHistory: {},
+      runHistorySummaries: {},
+      runHistoryRecords: {},
       waveformData: {},
       hiddenProfileIds: [],
       runStartTimestamps: {},
@@ -1065,18 +1250,29 @@ export const useIDEStore = create<IDEStore>()(
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Run Profile actions
-      setRunProfilesSnapshot: (runProfiles, runProfileState, workspaceEpoch) =>
+      setRunProfilesSnapshot: (runProfiles, runProfileState, workspaceEpoch, historySnapshot) =>
         set(
-          (state) => ({
-            runProfiles,
-            runProfileState,
-            profilesError: null,
-            isLoadingProfiles: false,
-            workspaceEpoch:
-              workspaceEpoch != null && workspaceEpoch > 0 ? workspaceEpoch : state.workspaceEpoch,
-            runEventsPaused: false,
-            ...(state.runEventsPaused ? emptyWorkspaceRunState() : {}),
-          }),
+          (state) => {
+            const reset = state.runEventsPaused ? emptyWorkspaceRunState() : {};
+            const historyState = {
+              runHistory: state.runEventsPaused ? {} : state.runHistory,
+              runHistorySummaries: state.runEventsPaused ? {} : state.runHistorySummaries,
+              runHistoryRecords: state.runEventsPaused ? {} : state.runHistoryRecords,
+            };
+            return {
+              runProfiles,
+              runProfileState,
+              profilesError: null,
+              isLoadingProfiles: false,
+              workspaceEpoch:
+                workspaceEpoch != null && workspaceEpoch > 0
+                  ? workspaceEpoch
+                  : state.workspaceEpoch,
+              runEventsPaused: false,
+              ...reset,
+              ...(historySnapshot ? mergeRunHistorySnapshot(historyState, historySnapshot) : {}),
+            };
+          },
           false,
           'setRunProfilesSnapshot'
         ),
@@ -1490,15 +1686,13 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Auto-select first running profile ---
             let { activeRunOutputId } = state;
-            const activeOutput = activeRunOutputId
-              ? state.runOutputs[activeRunOutputId]
-              : undefined;
+            const activeProfileId = selectionProfileId(state, activeRunOutputId);
             if (
               newState === 'running' &&
               existingBefore?.state !== 'running' &&
               (!activeRunOutputId ||
                 activeRunOutputId === ALL_PROFILES_ID ||
-                activeOutput?.profileId === profileId ||
+                activeProfileId === profileId ||
                 (rotatesCompound && activeRunOutputId === latestRunInstanceId))
             ) {
               activeRunOutputId = runInstanceId;
@@ -1924,10 +2118,13 @@ export const useIDEStore = create<IDEStore>()(
             index[runInstanceId] = compoundId;
 
             let activeRunOutputId = state.activeRunOutputId;
+            const activeProfileId = selectionProfileId(state, activeRunOutputId);
             if (
               activeRunOutputId === prevRun?.runInstanceId ||
               (aggregateState === 'running' &&
-                (!activeRunOutputId || activeRunOutputId === ALL_PROFILES_ID))
+                (!activeRunOutputId ||
+                  activeRunOutputId === ALL_PROFILES_ID ||
+                  activeProfileId === compoundId))
             ) {
               activeRunOutputId = runInstanceId;
             }
@@ -2007,7 +2204,20 @@ export const useIDEStore = create<IDEStore>()(
         );
       },
 
-      setActiveRunOutput: (id) => set({ activeRunOutputId: id }, false, 'setActiveRunOutput'),
+      setActiveRunOutput: (id) =>
+        set(
+          (state) => ({
+            activeRunOutputId: id,
+            runOutputViewMode:
+              id === ALL_PROFILES_ID
+                ? 'timeline'
+                : state.runOutputViewMode === 'timeline'
+                  ? 'merged'
+                  : state.runOutputViewMode,
+          }),
+          false,
+          'setActiveRunOutput'
+        ),
 
       setRunOutputViewMode: (mode) =>
         set({ runOutputViewMode: mode }, false, 'setRunOutputViewMode'),
@@ -2204,72 +2414,15 @@ export const useIDEStore = create<IDEStore>()(
       pauseRunEvents: () => set({ runEventsPaused: true }, false, 'pauseRunEvents'),
 
       resetWorkspaceRunState: () => {
-        // Clear line assemblers (same as clearAllRunOutputs does)
         lineAssemblers.clear();
         assemblerCallbacks.clear();
-        // Atomic single set: clear output entries + lifecycle state together
         set(
-          (state) => {
-            const preserved: Record<string, RunOutput> = {};
-            for (const [id, output] of Object.entries(state.runOutputs)) {
-              if (output.state === 'running') {
-                preserved[id] = { ...output, entries: [] };
-              }
-            }
-            const firstId = Object.keys(preserved)[0] ?? null;
-            const runInstanceIdsByProfile: Record<string, string[]> = {};
-            const latestRunInstanceIdByProfile: Record<string, string> = {};
-            for (const output of Object.values(preserved)) {
-              runInstanceIdsByProfile[output.profileId] = [
-                ...(runInstanceIdsByProfile[output.profileId] ?? []),
-                output.runInstanceId,
-              ];
-            }
-            for (const profileId of Object.keys(runInstanceIdsByProfile)) {
-              runInstanceIdsByProfile[profileId] = orderedRunIds(
-                {
-                  runOutputs: preserved,
-                  runInstanceIdsByProfile,
-                  runLaunchSeqByInstance: state.runLaunchSeqByInstance,
-                },
-                profileId
-              );
-              latestRunInstanceIdByProfile[profileId] = runInstanceIdsByProfile[profileId].at(
-                -1
-              ) as string;
-            }
-            // Unlike clearAllRunOutputs (which preserves still-running compounds
-            // and rebuilds compoundIdByRunInstance for them), a workspace switch
-            // discards all compound UI state: the backend LoadRunProfiles path
-            // runs StopAll right after this, terminating every run. Clearing the
-            // index here is deliberate — there is nothing live left to route to.
-            return {
-              runOutputs: preserved,
-              runInstanceIdsByProfile,
-              latestRunInstanceIdByProfile,
-              runLaunchSeqByInstance: Object.fromEntries(
-                Object.keys(preserved).map((id) => [
-                  id,
-                  state.runLaunchSeqByInstance[id] ?? preserved[id].launchSeq ?? 0,
-                ])
-              ),
-              discardedRunLaunchSeqsByProfile: {},
-              discardedThroughLaunchSeqByProfile: {},
-              runCompounds: {},
-              compoundIdByRunInstance: {},
-              activeRunOutputId: firstId,
-              stoppingProfileIds: [],
-              restartingProfileIds: [],
-              stoppingRunInstanceIds: [],
-              restartingRunInstanceIds: [],
-              runHistory: {},
-              waveformData: {},
-              hiddenProfileIds: [],
-              runProfileForm: null,
-              runStartTimestamps: {},
-              stopRequestTimestamps: {},
-              runProfileState: {},
-            };
+          {
+            ...emptyWorkspaceRunState(),
+            runProfiles: [],
+            runProfileState: {},
+            hiddenProfileIds: [],
+            runProfileForm: null,
           },
           false,
           'resetWorkspaceRunState'

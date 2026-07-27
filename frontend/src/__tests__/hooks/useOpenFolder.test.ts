@@ -192,6 +192,83 @@ describe('openWorkspaceByPath', () => {
     expect(state.workspace?.name).toBe('new-project');
   });
 
+  it('hard-clears old workspace run state before publishing the new workspace', () => {
+    useIDEStore.setState({
+      workspace: { name: 'old', path: '/old' },
+      runProfiles: [
+        {
+          id: 'build',
+          name: 'Build',
+          type: 'single',
+          source: 'user',
+          command: 'go build ./...',
+          workingDir: '/old/build',
+        },
+      ],
+      runProfileState: { build: { adopted: true, lastRunAt: 1 } },
+      hiddenProfileIds: ['build'],
+      runProfileForm: { mode: 'create' },
+      selectedProfileId: 'build',
+      runOutputs: {
+        oldRun: {
+          runInstanceId: 'oldRun',
+          profileId: 'build',
+          workingDir: '/old/build',
+          state: 'running',
+          exitCode: 0,
+          entries: [{ stream: 'stdout', text: 'old output', timestamp: 1 }],
+        },
+      },
+      runInstanceIdsByProfile: { build: ['oldRun'] },
+      latestRunInstanceIdByProfile: { build: 'oldRun' },
+      runHistorySummaries: {
+        oldHistory: {
+          historyId: 'oldHistory',
+          kind: 'ordinary',
+          profileId: 'build',
+          profileName: 'Build',
+          state: 'success',
+          exitCode: 0,
+          startedAt: 1,
+          completedAt: 2,
+          outputAvailable: true,
+        },
+      },
+      runHistoryRecords: {
+        oldHistory: {
+          historyId: 'oldHistory',
+          kind: 'ordinary',
+          profileId: 'build',
+          profileName: 'Build',
+          state: 'success',
+          exitCode: 0,
+          startedAt: 1,
+          completedAt: 2,
+          outputAvailable: true,
+        },
+      },
+      activeRunOutputId: 'oldRun',
+    });
+
+    openWorkspaceByPath('/new');
+
+    expect(useIDEStore.getState()).toMatchObject({
+      workspace: { name: 'new', path: '/new' },
+      runEventsPaused: true,
+      runOutputs: {},
+      runInstanceIdsByProfile: {},
+      latestRunInstanceIdByProfile: {},
+      runHistorySummaries: {},
+      runHistoryRecords: {},
+      activeRunOutputId: null,
+      selectedProfileId: null,
+      runProfiles: [],
+      runProfileState: {},
+      hiddenProfileIds: [],
+      runProfileForm: null,
+    });
+  });
+
   it('should show a cached directory tree immediately when available', () => {
     const cachedTree = [
       filesystem.FileEntry.createFrom({

@@ -5,12 +5,14 @@ import { useIDEStore } from '../../stores/ideStore';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
+const mockGetRunHistoryRecord = jest.fn();
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
   CreateTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
   WriteTerminal: jest.fn(),
   CloseTerminal: (...args: unknown[]) => mockCloseTerminal(...args),
   ResizeTerminal: jest.fn(),
+  GetRunHistoryRecord: (...args: unknown[]) => mockGetRunHistoryRecord(...args),
 }));
 
 jest.mock('../../../wailsjs/runtime', () => ({
@@ -21,8 +23,22 @@ describe('Terminal component', () => {
   beforeEach(() => {
     mockCreateTerminal.mockReset();
     mockCloseTerminal.mockReset();
+    mockGetRunHistoryRecord.mockReset();
     mockCloseTerminal.mockResolvedValue(undefined);
     mockCreateTerminal.mockResolvedValueOnce('term-1').mockResolvedValueOnce('term-2');
+    mockGetRunHistoryRecord.mockResolvedValue({
+      version: 1,
+      historyId: '018f0000-0000-7000-8000-000000000001',
+      kind: 'ordinary',
+      profileId: 'p1',
+      profileName: 'Build',
+      state: 'success',
+      exitCode: 0,
+      startedAt: 1,
+      completedAt: 2,
+      outputAvailable: true,
+      entries: [],
+    });
     useIDEStore.setState({
       activeTerminalTab: 'terminal',
       terminalSessions: [],
@@ -170,6 +186,154 @@ describe('Terminal component', () => {
     expect(screen.getAllByText('Build (previous)').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Build').length).toBeGreaterThan(0);
     expect(screen.queryByTitle('All Profiles Timeline')).not.toBeInTheDocument();
+  });
+
+  it('keeps archive-only output navigable from the outer Output tab row', async () => {
+    const historyId = '018f0000-0000-7000-8000-000000000001';
+    const archived = {
+      historyId,
+      kind: 'ordinary',
+      profileId: 'p1',
+      profileName: 'Build',
+      state: 'success',
+      exitCode: 0,
+      startedAt: 1,
+      completedAt: 2,
+      outputAvailable: true,
+    };
+    useIDEStore.setState({
+      activeTerminalTab: 'output',
+      runProfiles: [{ id: 'p1', name: 'Build', type: 'single', source: 'user' }],
+      runOutputs: {},
+      runInstanceIdsByProfile: {},
+      runHistorySummaries: { [historyId]: archived },
+      runHistoryRecords: { [historyId]: archived },
+      activeRunOutputId: null,
+    });
+
+    render(<Terminal />);
+
+    const archiveTab = screen
+      .getAllByRole('button', { name: 'Build (saved)' })
+      .find((tab) => tab.classList.contains('sessionTab'));
+    expect(archiveTab).toBeInTheDocument();
+    fireEvent.click(archiveTab as HTMLElement);
+    expect(useIDEStore.getState().activeRunOutputId).toBe(`history:${historyId}`);
+    await waitFor(() => expect(mockGetRunHistoryRecord).toHaveBeenCalledWith(historyId));
+  });
+
+  it('gives one live run and one saved archive unique names in both output tab rows', () => {
+    const historyId = '018f0000-0000-7000-8000-000000000010';
+    const archived = {
+      historyId,
+      kind: 'ordinary',
+      profileId: 'p1',
+      profileName: 'Build',
+      state: 'success',
+      exitCode: 0,
+      startedAt: 1,
+      completedAt: 2,
+      outputAvailable: true,
+    };
+    useIDEStore.setState({
+      activeTerminalTab: 'output',
+      runProfiles: [{ id: 'p1', name: 'Build', type: 'single', source: 'user' }],
+      runOutputs: {
+        live: {
+          runInstanceId: 'live',
+          profileId: 'p1',
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+        },
+      },
+      runInstanceIdsByProfile: { p1: ['live'] },
+      latestRunInstanceIdByProfile: { p1: 'live' },
+      runHistorySummaries: { [historyId]: archived },
+      runHistoryRecords: { [historyId]: archived },
+      activeRunOutputId: 'live',
+    });
+
+    render(<Terminal />);
+
+    expect(screen.getAllByRole('button', { name: 'Build' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Build (saved)' })).toHaveLength(2);
+  });
+
+  it('gives two saved archives unique ordinal names in both output tab rows', () => {
+    const olderId = '018f0000-0000-7000-8000-000000000011';
+    const newerId = '018f0000-0000-7000-8000-000000000012';
+    const older = {
+      historyId: olderId,
+      kind: 'ordinary',
+      profileId: 'p1',
+      profileName: 'Build',
+      state: 'success',
+      exitCode: 0,
+      startedAt: 1,
+      completedAt: 2,
+      outputAvailable: true,
+    };
+    const newer = { ...older, historyId: newerId, startedAt: 3, completedAt: 4 };
+    useIDEStore.setState({
+      activeTerminalTab: 'output',
+      runProfiles: [{ id: 'p1', name: 'Build', type: 'single', source: 'user' }],
+      runOutputs: {},
+      runInstanceIdsByProfile: {},
+      runHistorySummaries: { [newerId]: newer, [olderId]: older },
+      runHistoryRecords: { [newerId]: newer, [olderId]: older },
+      activeRunOutputId: null,
+    });
+
+    render(<Terminal />);
+
+    const olderTabs = screen.getAllByRole('button', { name: 'Build (saved 1 of 2)' });
+    const newerTabs = screen.getAllByRole('button', { name: 'Build (saved 2 of 2)' });
+    expect(olderTabs).toHaveLength(2);
+    expect(newerTabs).toHaveLength(2);
+    for (const tab of [...olderTabs, ...newerTabs]) {
+      expect(tab).not.toHaveAttribute('title', expect.stringContaining('018f'));
+    }
+  });
+
+  it('shows outer All for distinct ordinary profiles across live and archive namespaces', () => {
+    const historyId = '018f0000-0000-7000-8000-000000000002';
+    const archived = {
+      historyId,
+      kind: 'ordinary',
+      profileId: 'p2',
+      profileName: 'Test',
+      state: 'success',
+      exitCode: 0,
+      startedAt: 1,
+      completedAt: 2,
+      outputAvailable: true,
+    };
+    useIDEStore.setState({
+      activeTerminalTab: 'output',
+      runProfiles: [
+        { id: 'p1', name: 'Build', type: 'single', source: 'user' },
+        { id: 'p2', name: 'Test', type: 'single', source: 'user' },
+      ],
+      runOutputs: {
+        live: {
+          runInstanceId: 'live',
+          profileId: 'p1',
+          state: 'success',
+          exitCode: 0,
+          entries: [],
+        },
+      },
+      runInstanceIdsByProfile: { p1: ['live'] },
+      latestRunInstanceIdByProfile: { p1: 'live' },
+      runHistorySummaries: { [historyId]: archived },
+      runHistoryRecords: { [historyId]: archived },
+      activeRunOutputId: 'live',
+    });
+
+    render(<Terminal />);
+
+    expect(screen.getByTitle('All Profiles Timeline')).toBeInTheDocument();
   });
 
   it('renders launch-ordered live labels, RID lifecycle state, and All from retained identities', () => {

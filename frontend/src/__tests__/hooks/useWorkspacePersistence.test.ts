@@ -43,6 +43,7 @@ jest.mock('../../hooks/useEnsurePathLoaded', () => ({
 }));
 
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
+import { trackRunHistoryClear } from '../../hooks/useRunOutput';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -193,6 +194,60 @@ describe('useWorkspacePersistence', () => {
       consoleError.mockRestore();
     }
   });
+
+  it('acknowledges close when the best-effort history drain rejects', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const drainRunHistoryQueue = jest.fn(() => Promise.reject(new Error('history disk full')));
+    const phase2CHook = useWorkspacePersistence as unknown as (
+      flushPendingEdits?: () => Promise<void>,
+      drainHistory?: () => Promise<void>
+    ) => void;
+    try {
+      renderHook(() => phase2CHook(undefined, drainRunHistoryQueue));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+
+      await waitFor(() => expect(drainRunHistoryQueue).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'waits for a tracked record clear to %s before acknowledging close',
+    async (outcome) => {
+      let resolveClear!: () => void;
+      let rejectClear!: (reason: Error) => void;
+      const clear = new Promise<void>((resolve, reject) => {
+        resolveClear = resolve;
+        rejectClear = reject;
+      });
+      trackRunHistoryClear(clear);
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+      await act(async () => {
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+      });
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+      act(() => {
+        if (outcome === 'resolve') {
+          resolveClear();
+        } else {
+          rejectClear(new Error('redaction failed'));
+        }
+      });
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    }
+  );
 
   it('restores a cached explorer tree immediately from saved workspace state', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({

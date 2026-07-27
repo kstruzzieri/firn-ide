@@ -2,8 +2,11 @@
 package filesystem
 
 import (
+	"errors"
 	"io/fs"
 )
+
+var ErrUnsafePath = errors.New("unsafe filesystem path")
 
 // FileSystem defines the interface for file system operations.
 // This allows for easy mocking in tests.
@@ -28,4 +31,16 @@ type FileSystem interface {
 
 	// Rename atomically renames (moves) oldpath to newpath, replacing newpath if it exists.
 	Rename(oldpath, newpath string) error
+}
+
+type lstatFileSystem interface {
+	Lstat(path string) (fs.FileInfo, error)
+}
+
+// Lstat returns metadata without following the final path component when supported.
+func Lstat(fsys FileSystem, path string) (fs.FileInfo, error) {
+	if lstatFS, ok := fsys.(lstatFileSystem); ok {
+		return lstatFS.Lstat(path)
+	}
+	return fsys.Stat(path)
 }

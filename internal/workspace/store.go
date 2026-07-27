@@ -37,6 +37,9 @@ func (s *Store) Save(state State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if strings.TrimSpace(s.baseDir) == "" {
+		return fmt.Errorf("home directory unavailable: workspace storage is disabled")
+	}
 	if state.WorkspacePath == "" {
 		return fmt.Errorf("workspace path must not be empty")
 	}
@@ -54,7 +57,7 @@ func (s *Store) Save(state State) error {
 		state.Explorer.TreeSnapshot = []filesystem.FileEntry{}
 	}
 
-	if err := s.fs.MkdirAll(s.baseDir, 0o755); err != nil {
+	if err := s.fs.MkdirAll(s.baseDir, 0o700); err != nil {
 		return fmt.Errorf("creating workspaces directory: %w", err)
 	}
 
@@ -69,7 +72,7 @@ func (s *Store) Save(state State) error {
 	}
 
 	path := filepath.Join(s.baseDir, pathToID(state.WorkspacePath)+".json")
-	if err := s.fs.WriteFile(path, data, fs.FileMode(0o644)); err != nil {
+	if err := filesystem.WriteFileAtomic(s.fs, path, data, fs.FileMode(0o600)); err != nil {
 		return fmt.Errorf("writing workspace state file: %w", err)
 	}
 
@@ -82,6 +85,9 @@ func (s *Store) Load(workspacePath string) (*State, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if strings.TrimSpace(s.baseDir) == "" {
+		return nil, fmt.Errorf("home directory unavailable: workspace storage is disabled")
+	}
 	path := filepath.Join(s.baseDir, pathToID(workspacePath)+".json")
 	data, err := s.fs.ReadFile(path)
 	if err != nil {
@@ -109,6 +115,9 @@ func (s *Store) ListRecent(limit int) ([]Summary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if strings.TrimSpace(s.baseDir) == "" {
+		return nil, fmt.Errorf("home directory unavailable: workspace storage is disabled")
+	}
 	entries, err := s.fs.ReadDir(s.baseDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

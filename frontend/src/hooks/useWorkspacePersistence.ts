@@ -13,6 +13,7 @@ import { pathsReferToSameFile } from '../utils/lspUri';
 import { relativePathFromRoot } from '../utils/workspaceRegions';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
 import { ensurePathLoaded } from './useEnsurePathLoaded';
+import { drainRunHistoryForClose } from './useRunOutput';
 
 const SAVE_DEBOUNCE_MS = 2000;
 
@@ -300,7 +301,10 @@ function restoreActiveWorkspaceId(activeWorkspaceId: string): void {
  * - Restore on workspace switch (with correct flush of old workspace)
  * - Immediate flush on visibility change, blur, and app close
  */
-export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
+export function useWorkspacePersistence(
+  beforeClose?: () => Promise<void>,
+  drainHistory: () => Promise<void> = drainRunHistoryForClose
+) {
   const workspace = useIDEStore((state) => state.workspace);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -484,6 +488,11 @@ export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
         await Promise.all([
           flushSave(undefined, { includeTreeSnapshot: true }),
           beforeClose?.() ?? Promise.resolve(),
+          Promise.resolve()
+            .then(() => drainHistory())
+            .catch((err) => {
+              console.error('Failed to drain run history before close:', err);
+            }),
         ]);
       } catch (err) {
         console.error('Failed to flush editor state before close:', err);
@@ -500,7 +509,7 @@ export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
       void handleBeforeClose();
     });
     return cancel;
-  }, [beforeClose, flushSave]);
+  }, [beforeClose, drainHistory, flushSave]);
 
   // Cleanup timer on unmount
   useEffect(() => {

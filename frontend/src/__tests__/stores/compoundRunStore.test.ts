@@ -93,6 +93,8 @@ function deliverCompoundSnapshot(event: CompoundRunEvent, timestamp = 1000): voi
 }
 
 beforeEach(() => {
+  // Clear cross-test line assemblers before installing this test's workspace.
+  useIDEStore.getState().resetWorkspaceRunState();
   useIDEStore.setState({
     runProfiles: [
       { id: COMPOUND_ID, name: 'CI', type: 'compound', source: 'user', steps: ['build'] },
@@ -109,10 +111,8 @@ beforeEach(() => {
     runStartTimestamps: {},
     stopRequestTimestamps: {},
     activeRunOutputId: null,
+    runEventsPaused: false,
   });
-  // Drop any leftover assemblers from prior tests by reusing the reset action,
-  // then re-clear runCompounds (resetWorkspaceRunState clears assemblers globally).
-  useIDEStore.getState().resetWorkspaceRunState();
 });
 
 describe('compoundRunStore - handleCompoundRun', () => {

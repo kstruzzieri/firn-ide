@@ -1,4 +1,6 @@
 import {
+  archivedRunLabel,
+  compareRunHistorySummaries,
   isLiveRunState,
   orderedRunIds,
   useIDEStore,
@@ -24,22 +26,35 @@ export function RunOutputTabs() {
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
   const runLaunchSeqByInstance = useIDEStore((s) => s.runLaunchSeqByInstance);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runHistorySummaries = useIDEStore((s) => s.runHistorySummaries);
 
   const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
   const ordinaryIds = Object.keys(runInstanceIdsByProfile).flatMap((profileId) =>
     orderedRunIds(runIndex, profileId).filter((id) => runOutputs[id])
   );
   const compoundIds = Object.values(runCompounds).map((run) => run.runInstanceId);
-  const tabIds = [...ordinaryIds, ...compoundIds];
-  const latestOrdinaryCount = Object.values(runInstanceIdsByProfile).filter((ids) =>
-    ids.some((id) => runOutputs[id])
-  ).length;
+  const archiveSummaries = Object.values(runHistorySummaries)
+    .filter((summary) => summary.kind === 'ordinary' && summary.outputAvailable)
+    .sort(compareRunHistorySummaries);
+  const archiveIds = archiveSummaries.map((summary) => `history:${summary.historyId}`);
+  const tabIds = [...ordinaryIds, ...archiveIds, ...compoundIds];
+  const ordinaryProfileIds = new Set(Object.values(runOutputs).map((output) => output.profileId));
+  for (const summary of archiveSummaries) ordinaryProfileIds.add(summary.profileId);
   if (tabIds.length === 0) return null;
 
   // Label by profile name, disambiguating the retained predecessor as "(previous)".
   // The raw runInstanceId is a backend-internal counter, so it stays out of the
   // visible label (it remains on the tab title for debugging).
   const getTabLabel = (id: string) => {
+    if (id.startsWith('history:')) {
+      const summary = runHistorySummaries[id.slice('history:'.length)];
+      const name =
+        profiles.find((profile) => profile.id === summary?.profileId)?.name ??
+        summary?.profileName ??
+        summary?.profileId ??
+        id;
+      return summary ? archivedRunLabel(summary, archiveSummaries, name) : name;
+    }
     const output = runOutputs[id];
     if (output) {
       const name =
@@ -60,10 +75,14 @@ export function RunOutputTabs() {
     <div className={styles.tabBar}>
       {tabIds.map((id) => {
         const output = runOutputs[id];
+        const historySummary = id.startsWith('history:')
+          ? runHistorySummaries[id.slice('history:'.length)]
+          : undefined;
         const compoundId = compoundIdByRunInstance[id];
         const compound = compoundId ? runCompounds[compoundId] : undefined;
-        const vs: VisualState =
-          output && output.state !== 'running' && output.state !== 'idle'
+        const vs: VisualState = historySummary
+          ? (historySummary.state as VisualState)
+          : output && output.state !== 'running' && output.state !== 'idle'
             ? output.state
             : getVisualState(
                 output?.profileId ?? compoundId ?? id,
@@ -77,24 +96,23 @@ export function RunOutputTabs() {
                 restartingRunIds
               );
         const isActive = activeId === id;
+        const label = getTabLabel(id);
         return (
           <button
             type="button"
             key={id}
             className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
             onClick={() => setActiveRunOutput(id)}
-            title={output ? id : (compoundId ?? id)}
+            title={historySummary ? label : id}
           >
             <span className={`${styles.tabDot} ${styles[`dot${capitalize(vs)}`] ?? ''}`} />
-            <span className={isActive ? (styles[`name${capitalize(vs)}`] ?? '') : ''}>
-              {getTabLabel(id)}
-            </span>
+            <span className={isActive ? (styles[`name${capitalize(vs)}`] ?? '') : ''}>{label}</span>
           </button>
         );
       })}
       {/* Timeline ("All") is ordinary-profiles-only; compounds have their own
           all-steps view, so gate this tab on the ordinary outputs count. */}
-      {latestOrdinaryCount >= 2 && (
+      {ordinaryProfileIds.size >= 2 && (
         <button
           type="button"
           className={`${styles.tab} ${activeId === ALL_PROFILES_ID ? styles.tabActive : ''} ${styles.tabAll}`}

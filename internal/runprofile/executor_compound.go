@@ -49,6 +49,7 @@ type compoundStatus struct {
 	Steps          []compoundStepStatus `json:"steps"`
 	WorkspaceEpoch uint64               `json:"workspaceEpoch"`
 	LaunchSeq      uint64               `json:"launchSeq"`
+	Reason         string               `json:"reason,omitempty"`
 }
 
 // compoundRun tracks an in-flight compound execution. All fields are guarded by
@@ -77,6 +78,7 @@ func (cr *compoundRun) snapshot() compoundStatus {
 		Steps:          steps,
 		WorkspaceEpoch: cr.status.WorkspaceEpoch,
 		LaunchSeq:      cr.status.LaunchSeq,
+		Reason:         cr.status.Reason,
 	}
 }
 

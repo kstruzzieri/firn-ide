@@ -6,8 +6,20 @@ export function AdoptRunProfile(arg1) {
   return window['go']['main']['App']['AdoptRunProfile'](arg1);
 }
 
+export function AppendRunHistoryRecord(arg1) {
+  return window['go']['main']['App']['AppendRunHistoryRecord'](arg1);
+}
+
 export function CancelSearch(arg1) {
   return window['go']['main']['App']['CancelSearch'](arg1);
+}
+
+export function ClearAllRunHistory() {
+  return window['go']['main']['App']['ClearAllRunHistory']();
+}
+
+export function ClearRunHistoryRecord(arg1) {
+  return window['go']['main']['App']['ClearRunHistoryRecord'](arg1);
 }
 
 export function CloseTerminal(arg1) {
@@ -40,6 +52,14 @@ export function GetAllRunProfiles() {
 
 export function GetLSPStatus() {
   return window['go']['main']['App']['GetLSPStatus']();
+}
+
+export function GetRunHistoryRecord(arg1) {
+  return window['go']['main']['App']['GetRunHistoryRecord'](arg1);
+}
+
+export function GetRunHistorySnapshot() {
+  return window['go']['main']['App']['GetRunHistorySnapshot']();
 }
 
 export function GetRunProfilesSnapshot() {
