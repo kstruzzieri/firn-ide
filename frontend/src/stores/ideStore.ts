@@ -117,6 +117,11 @@ function createDefaultWorkspaceSessionState() {
     dirtyPaths: new Set<string>(),
     selectedPath: null as string | null,
     isRootExpanded: true,
+    // Cleared here rather than in resetWorkspaceRunState: the workspace switch
+    // flush serializes the outgoing workspace synchronously, and that runs
+    // after openWorkspaceByPath but before this restore reset. Clearing any
+    // earlier would persist an empty list under the workspace being left.
+    hiddenProfileIds: [] as string[],
     pendingEditorNavigation: null as EditorNavigationRequest | null,
     navigationHistory: [] as NavigationLocation[],
     navigationForward: [] as NavigationLocation[],
@@ -909,7 +914,6 @@ export const useIDEStore = create<IDEStore>()(
       runHistorySummaries: {},
       runHistoryRecords: {},
       waveformData: {},
-      hiddenProfileIds: [],
       runStartTimestamps: {},
       stopRequestTimestamps: {},
       isRestoringWorkspace: false,
@@ -2413,6 +2417,11 @@ export const useIDEStore = create<IDEStore>()(
 
       pauseRunEvents: () => set({ runEventsPaused: true }, false, 'pauseRunEvents'),
 
+      // Clears transient run state for the workspace being left. Deliberately
+      // leaves hiddenProfileIds alone: this runs before the workspace-switch
+      // flush captures the outgoing state, so clearing it here would persist an
+      // empty list under the old workspace. resetWorkspaceSession clears it
+      // later, once the outgoing snapshot has been taken.
       resetWorkspaceRunState: () => {
         lineAssemblers.clear();
         assemblerCallbacks.clear();
@@ -2421,7 +2430,6 @@ export const useIDEStore = create<IDEStore>()(
             ...emptyWorkspaceRunState(),
             runProfiles: [],
             runProfileState: {},
-            hiddenProfileIds: [],
             runProfileForm: null,
           },
           false,

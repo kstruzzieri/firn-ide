@@ -264,9 +264,16 @@ describe('openWorkspaceByPath', () => {
       selectedProfileId: null,
       runProfiles: [],
       runProfileState: {},
-      hiddenProfileIds: [],
       runProfileForm: null,
     });
+
+    // hiddenProfileIds is persisted state, not transient run state. The
+    // workspace-switch flush serializes the outgoing workspace after this
+    // point, so clearing it here would save an empty list under /old.
+    // resetWorkspaceSession clears it once that snapshot has been taken.
+    expect(useIDEStore.getState().hiddenProfileIds).toEqual(['build']);
+    useIDEStore.getState().resetWorkspaceSession();
+    expect(useIDEStore.getState().hiddenProfileIds).toEqual([]);
   });
 
   it('should show a cached directory tree immediately when available', () => {

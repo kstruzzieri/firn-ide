@@ -319,3 +319,63 @@ func TestAppPhase2C_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing
 		t.Fatalf("Snapshot(B) = %#v, err = %v; late A record was misattributed", snapshot, snapshotErr)
 	}
 }
+
+func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing.T) {
+	app := NewApp()
+	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
+	app.emitFn = func(string, ...any) {}
+	workspacePath := t.TempDir()
+	if err := app.LoadRunProfiles(workspacePath); err != nil {
+		t.Fatalf("LoadRunProfiles: %v", err)
+	}
+	app.runHistoryStore = runhistory.NewStore(filesystem.NewOS(), t.TempDir())
+	acceptedEpoch := app.executor.CurrentEpoch()
+
+	// Closing advances the epoch to shut admission, but the frontend's
+	// best-effort drain runs afterwards and still carries records the frontend
+	// accepted before the close. They belong to the same workspace.
+	app.beginRunShutdown()
+	if drained := app.executor.CurrentEpoch(); drained == acceptedEpoch {
+		t.Fatalf("beginRunShutdown did not advance the epoch (still %d)", drained)
+	}
+
+	summary, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, acceptedEpoch))
+	if err != nil {
+		t.Fatalf("queued pre-shutdown record was dropped by the close drain: %v", err)
+	}
+	if summary.HistoryID == "" {
+		t.Fatalf("summary = %#v, want a durable history ID", summary)
+	}
+	snapshot, snapshotErr := app.runHistoryStore.Snapshot(workspacePath)
+	if snapshotErr != nil || len(snapshot.Summaries) != 1 {
+		t.Fatalf("Snapshot = %#v, err = %v; want the drained record persisted", snapshot, snapshotErr)
+	}
+}
+
+func TestAppPhase2C_ShutdownDrainStillRejectsOtherWorkspaceEpochs(t *testing.T) {
+	app := NewApp()
+	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
+	app.emitFn = func(string, ...any) {}
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	if err := app.LoadRunProfiles(workspaceA); err != nil {
+		t.Fatalf("LoadRunProfiles(A): %v", err)
+	}
+	epochA := app.executor.CurrentEpoch()
+	if err := app.LoadRunProfiles(workspaceB); err != nil {
+		t.Fatalf("LoadRunProfiles(B): %v", err)
+	}
+	app.runHistoryStore = runhistory.NewStore(filesystem.NewOS(), t.TempDir())
+	app.beginRunShutdown()
+
+	// Shutdown widens acceptance by exactly the epoch it superseded, never by
+	// an epoch belonging to a workspace the user already left.
+	_, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, epochA))
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "epoch") {
+		t.Fatalf("shutdown-time AppendRunHistoryRecord error = %v, want epoch mismatch", err)
+	}
+	snapshot, snapshotErr := app.runHistoryStore.Snapshot(workspaceB)
+	if snapshotErr != nil || len(snapshot.Summaries) != 0 {
+		t.Fatalf("Snapshot(B) = %#v, err = %v; workspace A record was misattributed", snapshot, snapshotErr)
+	}
+}
