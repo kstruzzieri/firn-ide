@@ -320,6 +320,26 @@ func TestAppPhase2C_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing
 	}
 }
 
+func TestAppPhase2C_BeginRunShutdownDoesNotWaitForProfileLoadLock(t *testing.T) {
+	app := NewApp()
+	app.executor = runprofile.NewExecutor(nil, nil)
+	app.profileMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		app.beginRunShutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		app.profileMu.Unlock()
+	case <-time.After(500 * time.Millisecond):
+		app.profileMu.Unlock()
+		<-done
+		t.Fatal("beginRunShutdown waited for the profile load lock")
+	}
+}
+
 func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
@@ -349,6 +369,38 @@ func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing
 	snapshot, snapshotErr := app.runHistoryStore.Snapshot(workspacePath)
 	if snapshotErr != nil || len(snapshot.Summaries) != 1 {
 		t.Fatalf("Snapshot = %#v, err = %v; want the drained record persisted", snapshot, snapshotErr)
+	}
+}
+
+func TestAppPhase2C_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorkspace(t *testing.T) {
+	app := NewApp()
+	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
+	app.emitFn = func(string, ...any) {}
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+	if err := app.LoadRunProfiles(workspaceA); err != nil {
+		t.Fatalf("LoadRunProfiles(A): %v", err)
+	}
+	epochA := app.executor.CurrentEpoch()
+	app.runHistoryStore = runhistory.NewStore(filesystem.NewOS(), t.TempDir())
+
+	app.beginRunShutdown()
+	if err := app.LoadRunProfiles(workspaceB); err != nil {
+		t.Fatalf("LoadRunProfiles(B) after shutdown: %v", err)
+	}
+	saved, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, epochA))
+	if err != nil {
+		t.Fatalf("queued pre-shutdown AppendRunHistoryRecord: %v", err)
+	}
+
+	snapshotA, err := app.runHistoryStore.Snapshot(workspaceA)
+	if err != nil || len(snapshotA.Summaries) != 1 ||
+		snapshotA.Summaries[0].HistoryID != saved.HistoryID {
+		t.Fatalf("Snapshot(A) = %#v, err = %v; want queued record %q", snapshotA, err, saved.HistoryID)
+	}
+	snapshotB, err := app.runHistoryStore.Snapshot(workspaceB)
+	if err != nil || len(snapshotB.Summaries) != 0 {
+		t.Fatalf("Snapshot(B) = %#v, err = %v; want no workspace A record", snapshotB, err)
 	}
 }
 

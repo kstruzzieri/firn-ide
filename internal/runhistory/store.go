@@ -1043,6 +1043,9 @@ func buildRecord(input RecordInput) (Record, []byte, error) {
 			remaining -= len(encoded) + 1
 		}
 	}
+	if err := validateRecord(record, maxEntries); err != nil {
+		return Record{}, nil, err
+	}
 	data, err := json.Marshal(record)
 	if err != nil {
 		return Record{}, nil, fmt.Errorf("marshaling run history record: %w", err)

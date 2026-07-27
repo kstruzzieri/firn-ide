@@ -50,10 +50,16 @@ type App struct {
 	closeMu         sync.Mutex
 	isClosing       bool
 	runShutdown     bool
-	// shutdownHistoryEpoch is the workspace epoch as it stood immediately
-	// before the shutdown drain advanced it. Guarded by closeMu.
-	shutdownHistoryEpoch uint64
-	closeReady           chan struct{}
+	// activeHistoryWorkspace and activeHistoryEpoch mirror the successfully
+	// loaded profile workspace for shutdown capture. Guarded by closeMu.
+	activeHistoryWorkspace string
+	activeHistoryEpoch     uint64
+	// shutdownHistoryWorkspace and shutdownHistoryEpoch identify the workspace
+	// as it stood immediately before the shutdown drain advanced it. Guarded by
+	// closeMu.
+	shutdownHistoryWorkspace string
+	shutdownHistoryEpoch     uint64
+	closeReady               chan struct{}
 }
 
 // NewApp creates and returns a new App instance.
@@ -229,28 +235,28 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 // beginRunShutdown closes run admission for shutdown. BeginDrainWithReason
 // advances the workspace epoch, so the epoch in flight when the close began is
 // captured first: the frontend's best-effort drain runs after this and still
-// carries records stamped with it. The workspace itself does not change during
-// shutdown, so accepting that one superseded epoch is not a widening of
-// workspace identity. See acceptsShutdownHistoryEpoch.
+// carries records stamped with it. The path and epoch are captured together so
+// a later compatible workspace load cannot redirect those records.
 func (a *App) beginRunShutdown() {
 	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
 	a.runShutdown = true
-	if a.executor != nil {
-		a.shutdownHistoryEpoch = a.executor.CurrentEpoch()
-	}
-	a.closeMu.Unlock()
+	a.shutdownHistoryWorkspace = a.activeHistoryWorkspace
+	a.shutdownHistoryEpoch = a.activeHistoryEpoch
 	if a.executor != nil {
 		a.executor.BeginDrainWithReason("shutdown")
 	}
 }
 
-// acceptsShutdownHistoryEpoch reports whether epoch is the workspace epoch that
-// beginRunShutdown superseded. Only true while closing, and only for that one
-// epoch, so a record from a genuinely different workspace is still rejected.
-func (a *App) acceptsShutdownHistoryEpoch(epoch uint64) bool {
+// shutdownHistoryWorkspaceFor reports the workspace paired with the epoch that
+// beginRunShutdown superseded. Only that immutable pair remains writable.
+func (a *App) shutdownHistoryWorkspaceFor(epoch uint64) (string, bool) {
 	a.closeMu.Lock()
 	defer a.closeMu.Unlock()
-	return a.runShutdown && a.shutdownHistoryEpoch != 0 && epoch == a.shutdownHistoryEpoch
+	return a.shutdownHistoryWorkspace, a.runShutdown &&
+		a.shutdownHistoryWorkspace != "" &&
+		a.shutdownHistoryEpoch != 0 &&
+		epoch == a.shutdownHistoryEpoch
 }
 
 // GetWorkspaceInfo returns information about the current workspace.
@@ -450,20 +456,23 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 	if err := load(); err != nil {
 		return err
 	}
+
+	a.closeMu.Lock()
 	if switchingWorkspace {
 		a.profileManager = manager
 		a.profileWorkspaceRoot = workspacePath
 	}
+	a.activeHistoryWorkspace = a.profileWorkspaceRoot
+	a.activeHistoryEpoch = epoch
+	var endDrainErr error
 	if a.executor != nil {
-		a.closeMu.Lock()
-		var endDrainErr error
 		if !a.runShutdown {
 			endDrainErr = a.executor.EndDrain(epoch)
 		}
-		a.closeMu.Unlock()
-		if endDrainErr != nil {
-			return endDrainErr
-		}
+	}
+	a.closeMu.Unlock()
+	if endDrainErr != nil {
+		return endDrainErr
 	}
 	// Surface non-fatal load issues (unreadable workspace store, migration that
 	// could not be written back) instead of swallowing them. A degraded load
@@ -678,13 +687,16 @@ func (a *App) AppendRunHistoryRecord(record runhistory.RecordInput) (runhistory.
 	if err != nil {
 		return runhistory.Summary{}, err
 	}
-	if record.WorkspaceEpoch != 0 && record.WorkspaceEpoch != workspaceEpoch &&
-		!a.acceptsShutdownHistoryEpoch(record.WorkspaceEpoch) {
-		return runhistory.Summary{}, fmt.Errorf(
-			"run history workspace epoch mismatch: got %d, current %d",
-			record.WorkspaceEpoch,
-			workspaceEpoch,
-		)
+	if record.WorkspaceEpoch != 0 && record.WorkspaceEpoch != workspaceEpoch {
+		if shutdownWorkspace, ok := a.shutdownHistoryWorkspaceFor(record.WorkspaceEpoch); ok {
+			workspacePath = shutdownWorkspace
+		} else {
+			return runhistory.Summary{}, fmt.Errorf(
+				"run history workspace epoch mismatch: got %d, current %d",
+				record.WorkspaceEpoch,
+				workspaceEpoch,
+			)
+		}
 	}
 	return a.runHistoryStore.Append(workspacePath, record)
 }

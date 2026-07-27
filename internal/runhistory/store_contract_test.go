@@ -167,6 +167,32 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 	}
 }
 
+func TestStorePhase2C_AppendRejectsInvalidBoundedRecordBeforePublishing(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(filesystem.NewOS(), home)
+	input := phase2COrdinaryInput("build", 1_500, "must not persist\n")
+	input.State = ""
+
+	if _, err := store.Append("/repo", input); err == nil {
+		t.Error("Append accepted an invalid persisted record")
+	}
+	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	if _, err := os.Stat(workspaceDir); err == nil {
+		if files := phase2CRecordFiles(t, workspaceDir); len(files) != 0 {
+			t.Errorf("Append published %d canonical record files, want 0", len(files))
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat run history workspace: %v", err)
+	}
+	snapshot, err := store.Snapshot("/repo")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.Summaries) != 0 || snapshot.Warning != "" {
+		t.Fatalf("Snapshot = %#v; invalid input must remain unpublished without a corrupt warning", snapshot)
+	}
+}
+
 func TestStorePhase2C_ReconcilesStaleIndexAndUsesStableSameMillisecondOrder(t *testing.T) {
 	home := t.TempDir()
 	first := NewStore(filesystem.NewOS(), home)
