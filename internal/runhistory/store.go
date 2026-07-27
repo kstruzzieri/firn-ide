@@ -219,6 +219,11 @@ func (s *Store) Append(workspacePath string, input RecordInput) (Summary, error)
 	if err := s.writeFileAtomicLocked(dir, path, data); err != nil {
 		return Summary{}, fmt.Errorf("writing run history record: %w", err)
 	}
+	// Past the atomic rename the record is durable, so the two post-write
+	// failure paths below report success only when the rollback could NOT undo
+	// it: an unremovable file is still on disk and the next load will surface
+	// it, and telling the frontend otherwise would drop output it could show.
+	// A successful rollback means nothing was published, so that is an error.
 	info, err := s.regularFileInfo(path)
 	if err != nil {
 		if rollbackErr := s.removeOwnedFileLocked(dir, path); rollbackErr == nil {

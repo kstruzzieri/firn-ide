@@ -711,8 +711,13 @@ function selectionProfileId(
 const MAX_RUN_HISTORY_SUMMARIES = 50;
 const MAX_RICH_RUN_HISTORY_RECORDS = 5;
 
+// Mirrors the Go store's ordering exactly: completion time, then history ID by
+// code-unit order. Plain `<` rather than localeCompare so both sides agree on
+// same-millisecond ties without depending on the runtime's collation.
 export function compareRunHistorySummaries(a: runhistory.Summary, b: runhistory.Summary): number {
-  return a.completedAt - b.completedAt || a.historyId.localeCompare(b.historyId);
+  if (a.completedAt !== b.completedAt) return a.completedAt - b.completedAt;
+  if (a.historyId === b.historyId) return 0;
+  return a.historyId < b.historyId ? -1 : 1;
 }
 
 export function archivedRunLabel(

@@ -296,7 +296,7 @@ describe('Terminal component', () => {
     }
   });
 
-  it('shows outer All for distinct ordinary profiles across live and archive namespaces', () => {
+  it('shows outer All for distinct ordinary profiles across live and archive namespaces', async () => {
     const historyId = '018f0000-0000-7000-8000-000000000002';
     const archived = {
       historyId,
@@ -334,6 +334,16 @@ describe('Terminal component', () => {
     render(<Terminal />);
 
     expect(screen.getByTitle('All Profiles Timeline')).toBeInTheDocument();
+
+    // Only timeline mode renders the All Profiles comparison; every other view
+    // mode resolves __all__ to no active output and falls through to the empty
+    // state. setActiveRunOutput owns that coupling, so selecting the tab from
+    // any other mode must land in timeline.
+    useIDEStore.setState({ runOutputViewMode: 'merged' });
+    await userEvent.click(screen.getByTitle('All Profiles Timeline'));
+
+    expect(useIDEStore.getState().activeRunOutputId).toBe('__all__');
+    expect(useIDEStore.getState().runOutputViewMode).toBe('timeline');
   });
 
   it('renders launch-ordered live labels, RID lifecycle state, and All from retained identities', () => {
