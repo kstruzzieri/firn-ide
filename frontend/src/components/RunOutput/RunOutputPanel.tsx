@@ -14,7 +14,7 @@ import {
   useIDEStore,
   orderedRunIds,
 } from '../../stores/ideStore';
-import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import type { RunOutput } from '../../types/runOutput';
 import { RunOutputToolbar } from './RunOutputToolbar';
 import { RunOutputTabs } from './RunOutputTabs';
@@ -27,7 +27,6 @@ import { TimelineView } from './TimelineView';
 import { CompoundExecutionView } from '../RunProfiles/CompoundExecutionView';
 import styles from './RunOutput.module.css';
 
-const HISTORY_PREFIX = 'history:';
 const pendingHistoryReads = new Map<string, Promise<runhistory.Record>>();
 
 interface HistoryReadState {
@@ -45,10 +44,6 @@ function historyReadKey(
   return `${workspacePath ?? ''}\0${workspaceEpoch}\0${historyId}`;
 }
 
-function historyIdFromSelection(selection: string | null): string | undefined {
-  return selection?.startsWith(HISTORY_PREFIX) ? selection.slice(HISTORY_PREFIX.length) : undefined;
-}
-
 function isRichHistoryRecord(
   value: runhistory.Summary | runhistory.Record | undefined
 ): value is runhistory.Record {
@@ -57,12 +52,13 @@ function isRichHistoryRecord(
 
 function projectHistoryRecord(value: runhistory.Record): RunOutput {
   return {
-    runInstanceId: `${HISTORY_PREFIX}${value.historyId}`,
+    runInstanceId: historySelectionId(value.historyId),
     profileId: value.profileId,
     state: value.state as RunOutput['state'],
     exitCode: value.exitCode,
     workingDir: value.workingDir,
     entries: (value.entries ?? []) as RunOutput['entries'],
+    truncated: value.truncated,
   };
 }
 
@@ -89,25 +85,28 @@ function requestHistoryRecord(
   const workspaceEpoch = captured.workspaceEpoch;
   const key = historyReadKey(workspacePath, workspaceEpoch, summary.historyId);
   updateReadState(key, { status: 'loading' });
-  let request = pendingHistoryReads.get(key);
-  if (!request) {
-    request = GetRunHistoryRecord(summary.historyId).then((value) => {
-      if (
-        value.version !== 1 ||
-        value.historyId !== summary.historyId ||
-        value.kind !== 'ordinary' ||
-        !value.outputAvailable
-      ) {
-        throw new Error(`Invalid run history record ${summary.historyId}`);
-      }
-      return value;
-    });
-    pendingHistoryReads.set(key, request);
-    void request.then(
-      () => pendingHistoryReads.delete(key),
-      () => pendingHistoryReads.delete(key)
-    );
-  }
+  // One observer per in-flight read. The timeline effect re-runs whenever any
+  // sibling record resolves, so re-entrant calls for a still-pending key would
+  // otherwise stack a second reaction on the same promise and report the same
+  // failure once per re-run.
+  if (pendingHistoryReads.has(key)) return;
+
+  // outputAvailable=false is not corruption: the store redacts a record when it
+  // ages past the per-profile rich limit or the workspace byte target, and the
+  // summary the frontend holds only refreshes on workspace load. Treat it as the
+  // authoritative tombstone and let it flow through to the merge, which drops the
+  // record and flips the summary. Only a genuinely malformed record throws.
+  const request = GetRunHistoryRecord(summary.historyId).then((value) => {
+    if (value.version !== 1 || value.historyId !== summary.historyId || value.kind !== 'ordinary') {
+      throw new Error(`Invalid run history record ${summary.historyId}`);
+    }
+    return value;
+  });
+  pendingHistoryReads.set(key, request);
+  void request.then(
+    () => pendingHistoryReads.delete(key),
+    () => pendingHistoryReads.delete(key)
+  );
 
   void request
     .then((record) => {
@@ -124,6 +123,7 @@ function requestHistoryRecord(
         return;
       }
       let applied = false;
+      const selection = historySelectionId(summary.historyId);
       useIDEStore.setState((state) => {
         if (
           state.workspace?.path !== workspacePath ||
@@ -134,9 +134,23 @@ function requestHistoryRecord(
           return state;
         }
         applied = true;
-        return mergeRunHistoryArchiveMaps(state, [record]);
+        const merged = mergeRunHistoryArchiveMaps(state, [record]);
+        // A tombstoned record loses its tab, so release the selection with it
+        // rather than stranding the panel on a tab that no longer renders.
+        if (record.outputAvailable || state.activeRunOutputId !== selection) return merged;
+        return { ...merged, activeRunOutputId: null };
       });
-      if (applied) updateReadState(key);
+      if (applied) {
+        updateReadState(key);
+        if (!record.outputAvailable) {
+          useIDEStore
+            .getState()
+            .showToast(
+              'Saved output for this run was cleared to stay within the history limit.',
+              'info'
+            );
+        }
+      }
     })
     .catch((err: unknown) => {
       const current = useIDEStore.getState();
@@ -231,7 +245,7 @@ export function RunOutputPanel() {
     ) {
       return;
     }
-    const selection = `${HISTORY_PREFIX}${selectedHistorySummary.historyId}`;
+    const selection = historySelectionId(selectedHistorySummary.historyId);
     requestHistoryRecord(
       selectedHistorySummary,
       (state) => state.activeRunOutputId === selection,
@@ -269,7 +283,7 @@ export function RunOutputPanel() {
     ) {
       return;
     }
-    const selection = `${HISTORY_PREFIX}${selectedHistorySummary.historyId}`;
+    const selection = historySelectionId(selectedHistorySummary.historyId);
     requestHistoryRecord(
       archivePredecessor,
       (state) => {
@@ -364,7 +378,7 @@ export function RunOutputPanel() {
     for (const summary of archiveTimelineSummaries) {
       const value = runHistoryRecords[summary.historyId];
       if (isRichHistoryRecord(value)) {
-        filtered[`${HISTORY_PREFIX}${summary.historyId}`] = projectHistoryRecord(value);
+        filtered[historySelectionId(summary.historyId)] = projectHistoryRecord(value);
       }
     }
     return filtered;
@@ -394,6 +408,23 @@ export function RunOutputPanel() {
     selectedHistoryId != null &&
     archivePredecessor?.outputAvailable === true &&
     !archivePredecessorRecord;
+
+  // A partial log must say so. In Diff it matters most: comparing a truncated
+  // run against a complete one manufactures differences near the truncated end.
+  const truncationNotice = useMemo(() => {
+    const current = activeOutput?.truncated === true;
+    const previous = viewMode === 'diff' && previousOutput?.truncated === true;
+    if (!current && !previous) return undefined;
+    if (viewMode !== 'diff') {
+      return 'Output was dropped to fit the saved-output limit — this log is partial.';
+    }
+    if (current && previous) {
+      return 'Both runs are partial, so differences near the start of the output may not be real.';
+    }
+    return current
+      ? 'This run is partial, so differences near the start of the output may not be real.'
+      : 'The previous run is partial, so differences near the start of the output may not be real.';
+  }, [activeOutput?.truncated, previousOutput?.truncated, viewMode]);
 
   const handleToggleFold = useCallback((foldId: string) => {
     setExpandedFolds((prev) => {
@@ -443,6 +474,11 @@ export function RunOutputPanel() {
         />
       ) : activeOutput ? (
         <>
+          {truncationNotice && (
+            <div className={styles.truncationNotice} role="status">
+              {truncationNotice}
+            </div>
+          )}
           {viewMode === 'merged' && (
             <MergedView
               entries={activeOutput.entries}

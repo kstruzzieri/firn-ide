@@ -835,3 +835,192 @@ it('disables archive clear while profiles are loading or run events are paused',
   expect(mockClearRunHistoryRecord).not.toHaveBeenCalled();
   expect(mockClearAllRunHistory).not.toHaveBeenCalled();
 });
+
+it('reports a failed All-timeline archive read once across sibling-driven effect re-runs', async () => {
+  const showToast = jest.fn();
+  const build = summary(olderId, 'build', 100);
+  const test = summary(middleId, 'test', 200);
+  const failing = summary(newestId, 'lint', 300);
+  setPhase2CState({
+    activeRunOutputId: ALL_PROFILES_ID,
+    runOutputViewMode: 'timeline',
+    runProfiles: [
+      { id: 'build', name: 'Build', type: 'single', source: 'user', command: 'x' },
+      { id: 'test', name: 'Test', type: 'single', source: 'user', command: 'x' },
+      { id: 'lint', name: 'Lint', type: 'single', source: 'user', command: 'x' },
+    ],
+    runHistorySummaries: {
+      [build.historyId]: build,
+      [test.historyId]: test,
+      [failing.historyId]: failing,
+    },
+    showToast,
+  });
+
+  const pending = {
+    [build.historyId]: deferred<runhistory.Record>(),
+    [test.historyId]: deferred<runhistory.Record>(),
+    [failing.historyId]: deferred<runhistory.Record>(),
+  };
+  mockGetRunHistoryRecord.mockImplementation((id) => pending[id].promise);
+
+  render(<RunOutputPanel />);
+  await waitFor(() => expect(mockGetRunHistoryRecord).toHaveBeenCalledTimes(3));
+
+  // Each sibling that resolves re-runs the timeline effect while `failing` is
+  // still in flight; the re-entrant request must not add a second reaction.
+  for (const resolved of [build, test]) {
+    await act(async () => {
+      pending[resolved.historyId].resolve(record(resolved, 'done', '/repo'));
+      await Promise.resolve();
+    });
+  }
+
+  await act(async () => {
+    pending[failing.historyId].reject(new Error('disk gone'));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(mockGetRunHistoryRecord).toHaveBeenCalledTimes(3);
+  expect(showToast.mock.calls).toEqual([['Failed to load run output: disk gone', 'error']]);
+});
+
+it('leaves timeline mode onto the newest archived run when no live output exists', () => {
+  const oldest = summary(olderId, 'build', 100);
+  const newest = summary(middleId, 'test', 200);
+  setPhase2CState({
+    activeRunOutputId: ALL_PROFILES_ID,
+    runOutputViewMode: 'timeline',
+    runHistorySummaries: { [oldest.historyId]: oldest, [newest.historyId]: newest },
+  });
+
+  render(<RunOutputToolbar />);
+  fireEvent.click(screen.getByText('Merged'));
+
+  expect(useIDEStore.getState().activeRunOutputId).toBe(`history:${newest.historyId}`);
+  expect(useIDEStore.getState().runOutputViewMode).toBe('merged');
+});
+
+it('adopts a retention tombstone instead of reporting the redacted record as invalid', async () => {
+  const showToast = jest.fn();
+  // Stale belief: the store redacted this record for budget after the last
+  // snapshot, so the frontend summary still advertises readable output.
+  const stale = summary(olderId, 'build', 100);
+  setPhase2CState({
+    activeRunOutputId: `history:${stale.historyId}`,
+    runOutputViewMode: 'merged',
+    runHistorySummaries: { [stale.historyId]: stale },
+    showToast,
+  });
+  mockGetRunHistoryRecord.mockResolvedValue(
+    new runhistory.Record({ version: 1, ...stale, outputAvailable: false })
+  );
+
+  render(<RunOutputPanel />);
+  await waitFor(() => expect(mockGetRunHistoryRecord).toHaveBeenCalledWith(stale.historyId));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  const state = useIDEStore.getState();
+  expect(state.runHistorySummaries[stale.historyId].outputAvailable).toBe(false);
+  expect(state.runHistoryRecords[stale.historyId]).toBeUndefined();
+  expect(state.activeRunOutputId).toBeNull();
+  expect(showToast.mock.calls).toEqual([
+    ['Saved output for this run was cleared to stay within the history limit.', 'info'],
+  ]);
+  expect(screen.queryByText(/Could not load run output/)).not.toBeInTheDocument();
+});
+
+it('still reports a structurally malformed archived record as an error', async () => {
+  const showToast = jest.fn();
+  const archived = summary(olderId, 'build', 100);
+  setPhase2CState({
+    activeRunOutputId: `history:${archived.historyId}`,
+    runOutputViewMode: 'merged',
+    runHistorySummaries: { [archived.historyId]: archived },
+    showToast,
+  });
+  mockGetRunHistoryRecord.mockResolvedValue(
+    new runhistory.Record({ version: 1, ...archived, historyId: middleId })
+  );
+
+  render(<RunOutputPanel />);
+  await waitFor(() => expect(mockGetRunHistoryRecord).toHaveBeenCalledWith(archived.historyId));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(showToast).toHaveBeenCalledWith(
+    `Failed to load run output: Invalid run history record ${archived.historyId}`,
+    'error'
+  );
+  expect(useIDEStore.getState().runHistorySummaries[archived.historyId].outputAvailable).toBe(true);
+});
+
+it('warns that an archived run is partial, and says so in Diff terms', async () => {
+  const archived = summary(olderId, 'build', 100);
+  setPhase2CState({
+    activeRunOutputId: `history:${archived.historyId}`,
+    runOutputViewMode: 'merged',
+    runHistorySummaries: { [archived.historyId]: archived },
+  });
+  mockGetRunHistoryRecord.mockResolvedValue(
+    new runhistory.Record({
+      version: 1,
+      ...archived,
+      truncated: true,
+      workingDir: '/repo',
+      entries: [{ stream: 'stdout', text: 'tail', timestamp: 100 }],
+    })
+  );
+
+  render(<RunOutputPanel />);
+  await waitFor(() => expect(screen.getByText(/this log is partial/i)).toBeInTheDocument());
+
+  // In Diff the consequence is different: the missing head invents differences.
+  act(() => {
+    useIDEStore.getState().setRunOutputViewMode('diff');
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByText(/differences near the start of the output may not be real/i)
+    ).toBeInTheDocument()
+  );
+});
+
+it('does not warn about a complete archived run', async () => {
+  const archived = summary(olderId, 'build', 100);
+  setPhase2CState({
+    activeRunOutputId: `history:${archived.historyId}`,
+    runOutputViewMode: 'merged',
+    runHistorySummaries: { [archived.historyId]: archived },
+  });
+  mockGetRunHistoryRecord.mockResolvedValue(record(archived, 'complete', '/repo'));
+
+  render(<RunOutputPanel />);
+  await waitFor(() => expect(mockGetRunHistoryRecord).toHaveBeenCalled());
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(screen.queryByText(/partial/i)).not.toBeInTheDocument();
+});
+
+it('numbers archive tabs by history id rather than object identity', () => {
+  const first = summary(olderId, 'build', 100);
+  const second = summary(middleId, 'build', 200);
+  setPhase2CState({
+    runHistorySummaries: { [first.historyId]: first, [second.historyId]: second },
+  });
+
+  render(<RunOutputTabs />);
+  // A summary rebuilt by the merge is equal but not identical; indexOf would
+  // have labelled it "saved 0 of 2".
+  expect(screen.getByText('Build (saved 1 of 2)')).toBeInTheDocument();
+  expect(screen.getByText('Build (saved 2 of 2)')).toBeInTheDocument();
+  expect(screen.queryByText(/saved 0 of/)).not.toBeInTheDocument();
+});

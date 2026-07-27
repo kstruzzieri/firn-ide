@@ -8,7 +8,7 @@ import {
   useActiveRunOutputId,
 } from '../../stores/ideStore';
 import { getVisualState } from '../../utils/visualState';
-import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import type { VisualState } from '../../types/runOutput';
 import styles from './RunOutputTabs.module.css';
 
@@ -36,7 +36,7 @@ export function RunOutputTabs() {
   const archiveSummaries = Object.values(runHistorySummaries)
     .filter((summary) => summary.kind === 'ordinary' && summary.outputAvailable)
     .sort(compareRunHistorySummaries);
-  const archiveIds = archiveSummaries.map((summary) => `history:${summary.historyId}`);
+  const archiveIds = archiveSummaries.map((summary) => historySelectionId(summary.historyId));
   const tabIds = [...ordinaryIds, ...archiveIds, ...compoundIds];
   const ordinaryProfileIds = new Set(Object.values(runOutputs).map((output) => output.profileId));
   for (const summary of archiveSummaries) ordinaryProfileIds.add(summary.profileId);
@@ -46,8 +46,9 @@ export function RunOutputTabs() {
   // The raw runInstanceId is a backend-internal counter, so it stays out of the
   // visible label (it remains on the tab title for debugging).
   const getTabLabel = (id: string) => {
-    if (id.startsWith('history:')) {
-      const summary = runHistorySummaries[id.slice('history:'.length)];
+    const labelHistoryId = historyIdFromSelection(id);
+    if (labelHistoryId) {
+      const summary = runHistorySummaries[labelHistoryId];
       const name =
         profiles.find((profile) => profile.id === summary?.profileId)?.name ??
         summary?.profileName ??
@@ -75,9 +76,8 @@ export function RunOutputTabs() {
     <div className={styles.tabBar}>
       {tabIds.map((id) => {
         const output = runOutputs[id];
-        const historySummary = id.startsWith('history:')
-          ? runHistorySummaries[id.slice('history:'.length)]
-          : undefined;
+        const historyId = historyIdFromSelection(id);
+        const historySummary = historyId ? runHistorySummaries[historyId] : undefined;
         const compoundId = compoundIdByRunInstance[id];
         const compound = compoundId ? runCompounds[compoundId] : undefined;
         const vs: VisualState = historySummary
@@ -103,7 +103,7 @@ export function RunOutputTabs() {
             key={id}
             className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
             onClick={() => setActiveRunOutput(id)}
-            title={historySummary ? label : id}
+            title={historySummary ? label : output ? id : (compoundId ?? id)}
           >
             <span className={`${styles.tabDot} ${styles[`dot${capitalize(vs)}`] ?? ''}`} />
             <span className={isActive ? (styles[`name${capitalize(vs)}`] ?? '') : ''}>{label}</span>

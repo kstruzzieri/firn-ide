@@ -59,6 +59,10 @@ type RecordInput struct {
 	WorkspaceEpoch uint64        `json:"workspaceEpoch,omitempty"`
 	WorkingDir     string        `json:"workingDir,omitempty"`
 	Entries        []OutputEntry `json:"entries,omitempty"`
+	// Truncated reports that the caller already dropped output to fit the record
+	// budget. The store ORs its own truncation into it, so the stored flag covers
+	// losses on both sides of the binding.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type Summary struct {
@@ -71,6 +75,11 @@ type Summary struct {
 	StartedAt       int64      `json:"startedAt"`
 	CompletedAt     int64      `json:"completedAt"`
 	OutputAvailable bool       `json:"outputAvailable"`
+	// Truncated marks a record whose saved output is a prefix of what the run
+	// actually produced. It rides on the summary (not just the record) so the
+	// index carries it and the UI can warn before loading, which matters most for
+	// Diff: comparing a truncated run against a complete one invents differences.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type Record struct {
@@ -184,8 +193,8 @@ func (s *Store) Append(workspacePath string, input RecordInput) (Summary, error)
 		return Summary{}, err
 	}
 	if !exists {
-		if err := s.fs.MkdirAll(dir, 0o700); err != nil {
-			return Summary{}, fmt.Errorf("creating run history directory: %w", err)
+		if err := s.createArchiveDirLocked(dir); err != nil {
+			return Summary{}, err
 		}
 	}
 	if exists, err := s.validateArchiveDir(dir); err != nil {
@@ -212,7 +221,12 @@ func (s *Store) Append(workspacePath string, input RecordInput) (Summary, error)
 	})
 	if reconciled.anomalyBytes > 0 &&
 		managedBytes(prospective, s.indexByteLimit)+reconciled.anomalyBytes > workspaceByteTarget {
-		return Summary{}, fmt.Errorf("run history workspace target is blocked by unreadable owned artifacts")
+		// Usually a temp file left by a crash mid-write. Those are reclaimed once
+		// they age past staleTempAge, so say so rather than reading as permanent.
+		return Summary{}, fmt.Errorf(
+			"run history is holding %d bytes of unreadable saved runs and cannot save more; "+
+				"leftovers from an interrupted write are cleaned up automatically within %s",
+			reconciled.anomalyBytes, staleTempAge)
 	}
 
 	path := recordPath(dir, record.HistoryID)
@@ -660,6 +674,8 @@ func decodeRecord(data []byte, entryLimit int) (Record, error) {
 			err = decoder.Decode(&record.CompletedAt)
 		case "outputAvailable":
 			err = decoder.Decode(&record.OutputAvailable)
+		case "truncated":
+			err = decoder.Decode(&record.Truncated)
 		case "workingDir":
 			err = decoder.Decode(&record.WorkingDir)
 		case "entries":
@@ -941,6 +957,8 @@ func (s *Store) redactLocked(dir string, record storedRecord, force bool) (store
 	record.OutputAvailable = false
 	record.WorkingDir = ""
 	record.Entries = nil
+	// No output left to be a prefix of, so the flag would only mislead the UI.
+	record.Truncated = false
 	data, err := json.Marshal(record.Record)
 	if err != nil {
 		return record, fmt.Errorf("marshaling redacted run history record: %w", err)
@@ -1015,6 +1033,9 @@ func buildRecord(input RecordInput) (Record, []byte, error) {
 		},
 	}
 	if input.Kind == RecordKindOrdinary {
+		// The caller truncates against the same budget before crossing the
+		// binding; carry its verdict so the flag covers losses on both sides.
+		record.Truncated = input.Truncated
 		record.WorkingDir = boundedString(input.WorkingDir, 32<<10)
 		empty, err := json.Marshal(record)
 		if err != nil {
@@ -1024,6 +1045,7 @@ func buildRecord(input RecordInput) (Record, []byte, error) {
 		limit := len(input.Entries)
 		if limit > maxEntries {
 			limit = maxEntries
+			record.Truncated = true
 		}
 		for i := 0; i < limit && remaining > 128; i++ {
 			entry := input.Entries[i]
@@ -1032,15 +1054,24 @@ func buildRecord(input RecordInput) (Record, []byte, error) {
 			// marshal, so an arbitrarily large OutputEntry cannot force an
 			// equally large temporary serialized record allocation.
 			entry.Text = boundedString(entry.Text, (remaining-128)/6)
+			if entry.Text != input.Entries[i].Text {
+				record.Truncated = true
+			}
 			encoded, err := json.Marshal(entry)
 			if err != nil {
 				return Record{}, nil, fmt.Errorf("marshaling run history output entry: %w", err)
 			}
 			if len(encoded)+1 > remaining {
+				record.Truncated = true
 				break
 			}
 			record.Entries = append(record.Entries, entry)
 			remaining -= len(encoded) + 1
+		}
+		// A budget too tight to hold every entry drops the tail silently
+		// otherwise; the loop above only flags the entry it stopped on.
+		if len(record.Entries) < len(input.Entries) {
+			record.Truncated = true
 		}
 	}
 	if err := validateRecord(record, maxEntries); err != nil {
@@ -1095,9 +1126,15 @@ func validRecordKind(kind RecordKind) bool {
 		kind == RecordKindCompoundStep
 }
 
+// validateHistoryID accepts only the canonical hyphenated form uuid.NewV7
+// produces. uuid.Parse also accepts the "urn:uuid:", braced, and unhyphenated
+// encodings, and each of those names a *different* file under recordPath, so
+// admitting them would let one logical ID address several paths and would put
+// ':' and '{}' into managed filenames (a ':' names an NTFS alternate data
+// stream on Windows).
 func validateHistoryID(historyID string) error {
 	id, err := uuid.Parse(historyID)
-	if err != nil || id.Version() != 7 {
+	if err != nil || id.Version() != 7 || id.String() != historyID {
 		return fmt.Errorf("invalid run history ID %q", historyID)
 	}
 	return nil
@@ -1143,6 +1180,26 @@ func removeIfExists(fsys filesystem.FileSystem, path string) error {
 		return nil
 	}
 	return err
+}
+
+// createArchiveDirLocked creates the archive path one component at a time so
+// every level Firn owns ends up at 0700. MkdirAll leaves an existing directory's
+// mode alone, and ~/.firn predates run history on any install that already ran a
+// managed language server, so it is commonly still 0755 — which would leave the
+// whole archive tree traversable by other local accounts.
+func (s *Store) createArchiveDirLocked(dir string) error {
+	historyDir := filepath.Join(s.firnDir, "run-history")
+	owned := []string{s.firnDir, historyDir}
+	if parent := filepath.Dir(dir); parent != historyDir {
+		owned = append(owned, parent)
+	}
+	owned = append(owned, dir)
+	for _, path := range owned {
+		if err := filesystem.EnsureDirPerm(s.fs, path, 0o700); err != nil {
+			return fmt.Errorf("creating run history directory: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) validateArchiveDir(dir string) (bool, error) {

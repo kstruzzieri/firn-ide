@@ -12,8 +12,10 @@ func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *te
 	var writeModes []fs.FileMode
 	var renames [][2]string
 	var mkdirModes []fs.FileMode
+	var mkdirPaths []string
 	mockFS := &filesystem.Mock{
-		MkdirAllFunc: func(_ string, mode fs.FileMode) error {
+		MkdirAllFunc: func(path string, mode fs.FileMode) error {
+			mkdirPaths = append(mkdirPaths, path)
 			mkdirModes = append(mkdirModes, mode)
 			return nil
 		},
@@ -41,13 +43,20 @@ func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *te
 	if len(renames) != 2 {
 		t.Fatalf("atomic rename count = %d, want 2; writes = %v", len(renames), writes)
 	}
-	if len(mkdirModes) != 2 {
-		t.Fatalf("MkdirAll count = %d, want 2", len(mkdirModes))
+	// Two directories per Save: ~/.firn and ~/.firn/workspaces. The parent is
+	// covered because MkdirAll leaves an existing directory's mode alone, so an
+	// install that already created ~/.firn at 0755 would keep a world-traversable
+	// parent over the 0600 state files.
+	if len(mkdirModes) != 4 {
+		t.Fatalf("MkdirAll count = %d, want 4", len(mkdirModes))
 	}
 	for i, mode := range mkdirModes {
 		if mode.Perm() != 0o700 {
 			t.Fatalf("MkdirAll %d mode = %o, want 0700", i, mode.Perm())
 		}
+	}
+	if mkdirPaths[0] != "/home/user/.firn" || mkdirPaths[1] != "/home/user/.firn/workspaces" {
+		t.Fatalf("MkdirAll paths = %v, want the .firn parent before the workspaces dir", mkdirPaths)
 	}
 	if renames[0][1] != finalPath || renames[1][1] != finalPath {
 		t.Fatalf("rename destinations = %v, want %q", renames, finalPath)

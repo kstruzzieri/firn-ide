@@ -842,3 +842,87 @@ it('orders Clear All after accepted appends and lets later appends continue afte
   expect(order).toEqual(['append-1', 'clear', 'append-2']);
   expect(mockAppendRunHistoryRecord).toHaveBeenCalledTimes(2);
 });
+
+it('marks the persisted record when the budget drops output, and leaves a fitting run unmarked', async () => {
+  const hugeLine = '界'.repeat(3_600_000);
+  const baseOutput = {
+    runInstanceId: 'r1',
+    profileId: 'build',
+    launchSeq: 1,
+    workspaceEpoch: 7,
+    workingDir: '/repo',
+    state: 'running' as const,
+    exitCode: 0,
+  };
+  const index = {
+    runInstanceIdsByProfile: { build: ['r1'] },
+    latestRunInstanceIdByProfile: { build: 'r1' },
+    runLaunchSeqByInstance: { r1: 1 },
+    runStartTimestamps: { r1: 100 },
+  };
+
+  useIDEStore.setState({
+    runOutputs: {
+      r1: { ...baseOutput, entries: [{ stream: 'stdout', text: hugeLine, timestamp: 1 }] },
+    },
+    ...index,
+  });
+  let hook = renderHook(() => useRunOutputListener());
+  act(() => {
+    callbacks.get('run:status')?.(status('r1', 'success'));
+  });
+  await waitFor(() => expect(mockAppendRunHistoryRecord).toHaveBeenCalledTimes(1));
+  expect((mockAppendRunHistoryRecord.mock.calls[0][0] as { truncated?: boolean }).truncated).toBe(
+    true
+  );
+  hook.unmount();
+
+  mockAppendRunHistoryRecord.mockClear();
+  useIDEStore.setState({
+    runOutputs: {
+      r1: { ...baseOutput, entries: [{ stream: 'stdout', text: 'short', timestamp: 1 }] },
+    },
+    ...index,
+  });
+  hook = renderHook(() => useRunOutputListener());
+  act(() => {
+    callbacks.get('run:status')?.(status('r1', 'success'));
+  });
+  await waitFor(() => expect(mockAppendRunHistoryRecord).toHaveBeenCalledTimes(1));
+  expect((mockAppendRunHistoryRecord.mock.calls[0][0] as { truncated?: boolean }).truncated).toBe(
+    false
+  );
+  hook.unmount();
+});
+
+it('carries a live-capped buffer through as truncated even when the record fits', async () => {
+  useIDEStore.setState({
+    runOutputs: {
+      r1: {
+        runInstanceId: 'r1',
+        profileId: 'build',
+        launchSeq: 1,
+        workspaceEpoch: 7,
+        workingDir: '/repo',
+        state: 'running',
+        exitCode: 0,
+        entries: [{ stream: 'stdout', text: 'tail', timestamp: 1 }],
+        // The live buffer already dropped older entries at MAX_OUTPUT_ENTRIES.
+        truncated: true,
+      },
+    },
+    runInstanceIdsByProfile: { build: ['r1'] },
+    latestRunInstanceIdByProfile: { build: 'r1' },
+    runLaunchSeqByInstance: { r1: 1 },
+    runStartTimestamps: { r1: 100 },
+  });
+  const { unmount } = renderHook(() => useRunOutputListener());
+  act(() => {
+    callbacks.get('run:status')?.(status('r1', 'success'));
+  });
+  await waitFor(() => expect(mockAppendRunHistoryRecord).toHaveBeenCalledTimes(1));
+  expect((mockAppendRunHistoryRecord.mock.calls[0][0] as { truncated?: boolean }).truncated).toBe(
+    true
+  );
+  unmount();
+});

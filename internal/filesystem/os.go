@@ -94,6 +94,35 @@ func (o *OS) WriteFile(path string, data []byte, perm fs.FileMode) error {
 	return os.WriteFile(path, data, perm)
 }
 
+// WriteFileSync writes data and flushes it to stable storage before returning,
+// so a following rename cannot publish a directory entry whose blocks are still
+// only in the page cache. O_EXCL refuses to reuse an existing path: callers pass
+// a freshly randomized temp name, so a collision means something else owns it.
+func (o *OS) WriteFileSync(path string, data []byte, perm fs.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+// SyncDir flushes a directory's entries so a completed rename survives a crash.
+func (o *OS) SyncDir(path string) error {
+	return syncDir(path)
+}
+
+func (o *OS) Chmod(path string, mode fs.FileMode) error {
+	return os.Chmod(path, mode)
+}
+
 func (o *OS) Stat(path string) (fs.FileInfo, error) {
 	return os.Stat(path)
 }

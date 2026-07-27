@@ -16,7 +16,12 @@ import type {
   RunStatusEvent,
   RunOutputViewMode,
 } from '../types/runOutput';
-import { MAX_OUTPUT_ENTRIES, MAX_RETAINED_RUNS, ALL_PROFILES_ID } from '../types/runOutput';
+import {
+  MAX_OUTPUT_ENTRIES,
+  MAX_RETAINED_RUNS,
+  ALL_PROFILES_ID,
+  historyIdFromSelection,
+} from '../types/runOutput';
 import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
 import { parseFileReferences } from '../utils/parseFileReferences';
 import { pathsReferToSameFile } from '../utils/lspUri';
@@ -449,6 +454,18 @@ function createRunOutput(
   };
 }
 
+// Caps the merged buffer and reports whether the cap actually dropped anything,
+// so a run whose oldest output was discarded archives as partial.
+function cappedRunEntries(
+  existing: OutputEntry[],
+  incoming: OutputEntry[],
+  wasTruncated: boolean | undefined
+): { entries: OutputEntry[]; truncated: boolean } {
+  const combined = [...existing, ...incoming];
+  const entries = capOutputEntries(combined);
+  return { entries, truncated: wasTruncated === true || entries.length < combined.length };
+}
+
 function capOutputEntries(entries: OutputEntry[]): OutputEntry[] {
   if (entries.length <= MAX_OUTPUT_ENTRIES) return entries;
   const retained = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
@@ -698,8 +715,8 @@ function selectionProfileId(
   selection: string | null
 ): string | undefined {
   if (!selection || selection === ALL_PROFILES_ID) return undefined;
-  if (selection.startsWith('history:')) {
-    const historyId = selection.slice('history:'.length);
+  const historyId = historyIdFromSelection(selection);
+  if (historyId != null) {
     return (
       state.runHistorySummaries[historyId]?.profileId ??
       state.runHistoryRecords[historyId]?.profileId
@@ -729,7 +746,13 @@ export function archivedRunLabel(
     (candidate) => candidate.profileId === summary.profileId
   );
   if (profileSummaries.length < 2) return `${profileName} (saved)`;
-  return `${profileName} (saved ${profileSummaries.indexOf(summary) + 1} of ${profileSummaries.length})`;
+  // Match by id, not object identity: a summary rebuilt by the merge compares
+  // unequal to the one in the list and would silently label "saved 0 of N".
+  const position = profileSummaries.findIndex(
+    (candidate) => candidate.historyId === summary.historyId
+  );
+  if (position < 0) return `${profileName} (saved)`;
+  return `${profileName} (saved ${position + 1} of ${profileSummaries.length})`;
 }
 
 function runHistorySummary(value: runhistory.Summary | runhistory.Record): runhistory.Summary {
@@ -743,6 +766,7 @@ function runHistorySummary(value: runhistory.Summary | runhistory.Record): runhi
     startedAt: value.startedAt,
     completedAt: value.completedAt,
     outputAvailable: value.outputAvailable,
+    truncated: value.truncated,
   };
 }
 
@@ -1455,11 +1479,16 @@ export const useIDEStore = create<IDEStore>()(
           (state) => {
             const ex = state.runOutputs[chunk.runInstanceId];
             if (!ex || isTerminalRunState(ex.state)) return state;
-            const entries = capOutputEntries([...ex.entries, ...pendingEntries]);
+            const combined = [...ex.entries, ...pendingEntries];
+            const entries = capOutputEntries(combined);
             return {
               runOutputs: {
                 ...state.runOutputs,
-                [chunk.runInstanceId]: { ...ex, entries },
+                [chunk.runInstanceId]: {
+                  ...ex,
+                  entries,
+                  truncated: ex.truncated || entries.length < combined.length,
+                },
               },
             };
           },
@@ -1599,7 +1628,7 @@ export const useIDEStore = create<IDEStore>()(
                     newState === 'running'
                       ? runWorkingDir
                       : (existing?.workingDir ?? runWorkingDir),
-                  entries: capOutputEntries([...(existing?.entries ?? []), ...flushedEntries]),
+                  ...cappedRunEntries(existing?.entries ?? [], flushedEntries, existing?.truncated),
                 };
 
             // --- Lifecycle flags ---

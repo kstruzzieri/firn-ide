@@ -16,7 +16,7 @@ import {
   stopProfile,
   stopRunInstance,
 } from '../../utils/profileActions';
-import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import type { RunOutputViewMode } from '../../types/runOutput';
 import styles from './RunOutput.module.css';
 
@@ -64,9 +64,7 @@ export function RunOutputToolbar() {
     profileId;
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
-  const activeHistoryId = activeId?.startsWith('history:')
-    ? activeId.slice('history:'.length)
-    : undefined;
+  const activeHistoryId = historyIdFromSelection(activeId);
   const activeHistorySummary = activeHistoryId ? runHistorySummaries[activeHistoryId] : undefined;
   const hasActiveProfile = activeId && !isAllProfiles;
   const activeOutput = hasActiveProfile ? runOutputs[activeId] : undefined;
@@ -86,7 +84,9 @@ export function RunOutputToolbar() {
   );
   for (const summary of archiveSummaries) ordinaryProfileIds.add(summary.profileId);
   const canTimeline = ordinaryProfileIds.size >= 2;
-  const firstOutputId = outputIds[0] ?? archiveSummaries[0]?.historyId;
+  // archiveSummaries is oldest-first, so land on the newest saved run — the same
+  // recency outputIds already applies per profile via .at(-1).
+  const firstOutputId = outputIds[0] ?? archiveSummaries.at(-1)?.historyId;
   const currentHistoryProfile = activeHistorySummary
     ? runProfiles.find((profile) => profile.id === activeHistorySummary.profileId)
     : undefined;
@@ -101,7 +101,7 @@ export function RunOutputToolbar() {
     } else if (isAllProfiles) {
       if (firstOutputId) {
         setActiveRunOutput(
-          outputIds.includes(firstOutputId) ? firstOutputId : `history:${firstOutputId}`
+          outputIds.includes(firstOutputId) ? firstOutputId : historySelectionId(firstOutputId)
         );
       }
     }
@@ -171,7 +171,7 @@ export function RunOutputToolbar() {
                 },
                 runHistoryRecords,
                 activeRunOutputId:
-                  state.activeRunOutputId === `history:${activeHistoryId}`
+                  state.activeRunOutputId === historySelectionId(activeHistoryId)
                     ? null
                     : state.activeRunOutputId,
               };

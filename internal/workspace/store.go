@@ -57,7 +57,16 @@ func (s *Store) Save(state State) error {
 		state.Explorer.TreeSnapshot = []filesystem.FileEntry{}
 	}
 
-	if err := s.fs.MkdirAll(s.baseDir, 0o700); err != nil {
+	// Tighten ~/.firn as well as ~/.firn/workspaces. MkdirAll leaves an existing
+	// directory's mode alone, so installs created before these paths moved to
+	// 0700 would keep 0755 — and a 0755 parent leaves the 0600 state files
+	// readable-by-path for every other local account.
+	if parent := filepath.Dir(s.baseDir); parent != "" && parent != s.baseDir {
+		if err := filesystem.EnsureDirPerm(s.fs, parent, 0o700); err != nil {
+			return fmt.Errorf("creating workspaces directory: %w", err)
+		}
+	}
+	if err := filesystem.EnsureDirPerm(s.fs, s.baseDir, 0o700); err != nil {
 		return fmt.Errorf("creating workspaces directory: %w", err)
 	}
 

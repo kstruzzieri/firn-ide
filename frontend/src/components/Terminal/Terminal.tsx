@@ -29,7 +29,7 @@ import {
 } from 'react';
 import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { RunOutputPanel } from '../RunOutput';
-import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import { getVisualState } from '../../utils/visualState';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -192,7 +192,7 @@ export function Terminal() {
   const archiveSummaries = Object.values(runHistorySummaries)
     .filter((summary) => summary.kind === 'ordinary' && summary.outputAvailable)
     .sort(compareRunHistorySummaries);
-  const archiveOutputIds = archiveSummaries.map((summary) => `history:${summary.historyId}`);
+  const archiveOutputIds = archiveSummaries.map((summary) => historySelectionId(summary.historyId));
   const outputIds = [...ordinaryOutputIds, ...archiveOutputIds, ...compoundOutputIds];
   const ordinaryProfileIds = new Set(Object.values(runOutputs).map((output) => output.profileId));
   for (const summary of archiveSummaries) ordinaryProfileIds.add(summary.profileId);
@@ -517,9 +517,8 @@ export function Terminal() {
             )}
             {outputIds.map((id) => {
               const output = runOutputs[id];
-              const historySummary = id.startsWith('history:')
-                ? runHistorySummaries[id.slice('history:'.length)]
-                : undefined;
+              const historyId = historyIdFromSelection(id);
+              const historySummary = historyId ? runHistorySummaries[historyId] : undefined;
               const compoundId = compoundIdByRunInstance[id];
               const compound = compoundId ? runCompounds[compoundId] : undefined;
               const isActive = id === activeRunOutputId;
@@ -586,7 +585,7 @@ export function Terminal() {
                   key={id}
                   className={`${styles.sessionTab} ${isActive ? styles.active : ''}`}
                   onClick={() => setActiveRunOutput(id)}
-                  title={historySummary ? label : id}
+                  title={historySummary ? label : output ? id : (compoundId ?? id)}
                 >
                   <span className={`${styles.stateDot} ${stateClass}`} />
                   <span className={styles.sessionTabLabel}>{label}</span>

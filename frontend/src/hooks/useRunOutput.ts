@@ -134,15 +134,19 @@ function boundedUTF8String(value: string, maxBytes: number): string {
   return end === value.length ? value : value.slice(0, end);
 }
 
+// Reports what was actually persisted alongside whether anything was dropped, so
+// the archived record can be marked. Without the flag a partial log renders as a
+// complete one and Diff invents a tail difference against a full run.
 function persistenceEntries(
   entries: OutputEntry[],
   envelope: Record<string, unknown>
-): OutputEntry[] {
+): { entries: OutputEntry[]; truncated: boolean } {
   let remaining =
     HISTORY_MAX_RECORD_BYTES -
     HISTORY_RECORD_RESERVE_BYTES -
     utf8Encoder.encode(JSON.stringify({ ...envelope, entries: [] })).byteLength;
   const persisted: OutputEntry[] = [];
+  let truncated = false;
 
   for (let i = 0; i < entries.length && i < HISTORY_MAX_ENTRIES; i++) {
     const source = entries[i];
@@ -159,12 +163,14 @@ function persistenceEntries(
       ...fixed,
       text: boundedUTF8String(source.text, textUnits),
     };
+    if (entry.text !== source.text) truncated = true;
     const entryBytes = utf8Encoder.encode(JSON.stringify(entry)).byteLength + 1;
     if (entryBytes > remaining) break;
     persisted.push(entry);
     remaining -= entryBytes;
   }
-  return persisted;
+  // Covers both the budget breaking out early and the HISTORY_MAX_ENTRIES cap.
+  return { entries: persisted, truncated: truncated || persisted.length < entries.length };
 }
 
 function ordinaryHistoryRecord(
@@ -189,9 +195,14 @@ function ordinaryHistoryRecord(
     ...(workingDir ? { workingDir: boundedUTF8String(workingDir, 32 << 10) } : {}),
   };
 
+  const persisted = persistenceEntries(output.entries, values);
   return new runhistory.RecordInput({
     ...values,
-    entries: persistenceEntries(output.entries, values),
+    entries: persisted.entries,
+    // The store ORs its own truncation into this, so the stored flag covers
+    // output dropped on either side of the binding. The live buffer is itself
+    // capped at MAX_OUTPUT_ENTRIES, so a run past that cap is already partial.
+    truncated: persisted.truncated || output.truncated === true,
   });
 }
 

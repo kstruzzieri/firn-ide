@@ -56,7 +56,9 @@ describe('CI Workflow', () => {
       'build.yml': 1,
       'lint.yml': 1,
       'release.yml': 3,
-      'test.yml': 1,
+      // backend-tests plus windows-filesystem-tests, which exercises the
+      // platform-specific filesystem code on the OS that actually runs it.
+      'test.yml': 2,
     };
 
     expect(goVersion).toBeDefined();

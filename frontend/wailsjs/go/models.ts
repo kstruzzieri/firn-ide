@@ -794,6 +794,7 @@ export namespace runhistory {
 	    startedAt: number;
 	    completedAt: number;
 	    outputAvailable: boolean;
+	    truncated?: boolean;
 	    workingDir?: string;
 	    entries?: OutputEntry[];
 
@@ -813,6 +814,7 @@ export namespace runhistory {
 	        this.startedAt = source["startedAt"];
 	        this.completedAt = source["completedAt"];
 	        this.outputAvailable = source["outputAvailable"];
+	        this.truncated = source["truncated"];
 	        this.workingDir = source["workingDir"];
 	        this.entries = this.convertValues(source["entries"], OutputEntry);
 	    }
@@ -846,6 +848,7 @@ export namespace runhistory {
 	    workspaceEpoch?: number;
 	    workingDir?: string;
 	    entries?: OutputEntry[];
+	    truncated?: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new RecordInput(source);
@@ -863,6 +866,7 @@ export namespace runhistory {
 	        this.workspaceEpoch = source["workspaceEpoch"];
 	        this.workingDir = source["workingDir"];
 	        this.entries = this.convertValues(source["entries"], OutputEntry);
+	        this.truncated = source["truncated"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -893,6 +897,7 @@ export namespace runhistory {
 	    startedAt: number;
 	    completedAt: number;
 	    outputAvailable: boolean;
+	    truncated?: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
@@ -909,6 +914,7 @@ export namespace runhistory {
 	        this.startedAt = source["startedAt"];
 	        this.completedAt = source["completedAt"];
 	        this.outputAvailable = source["outputAvailable"];
+	        this.truncated = source["truncated"];
 	    }
 	}
 	export class Snapshot {

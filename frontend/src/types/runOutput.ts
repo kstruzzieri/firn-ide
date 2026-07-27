@@ -1,6 +1,23 @@
 /** Sentinel value for the "All Profiles" virtual tab in Timeline view */
 export const ALL_PROFILES_ID = '__all__';
 
+/**
+ * Namespace marker separating an archived run selection from a live
+ * runInstanceId. `activeRunOutputId` holds both, so every reader has to agree on
+ * one spelling of the prefix.
+ */
+export const HISTORY_PREFIX = 'history:';
+
+/** Selection id for an archived run, as stored in `activeRunOutputId`. */
+export function historySelectionId(historyId: string): string {
+  return `${HISTORY_PREFIX}${historyId}`;
+}
+
+/** The archived run a selection names, or undefined for a live/virtual tab. */
+export function historyIdFromSelection(selection: string | null | undefined): string | undefined {
+  return selection?.startsWith(HISTORY_PREFIX) ? selection.slice(HISTORY_PREFIX.length) : undefined;
+}
+
 /** Max entries per retained ordinary execution or compound step before FIFO truncation */
 export const MAX_OUTPUT_ENTRIES = 10_000;
 
@@ -62,6 +79,12 @@ export interface RunOutput {
   state: RunState;
   exitCode: number;
   entries: OutputEntry[];
+  /**
+   * The live buffer dropped older entries at MAX_OUTPUT_ENTRIES, so `entries` is
+   * a suffix of what the run produced. Carried into the archived record so a
+   * partial log is never presented (or diffed) as a complete one.
+   */
+  truncated?: boolean;
 }
 
 export interface FoldedRegion {

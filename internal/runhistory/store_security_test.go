@@ -353,3 +353,169 @@ func TestStorePhase2C_DecoderRejectsInvalidDurableSchemas(t *testing.T) {
 		})
 	}
 }
+
+// uuid.Parse also accepts the "urn:uuid:", braced, and unhyphenated encodings of
+// a v7 UUID. Each names a different file under recordPath, and ':' opens an NTFS
+// alternate data stream on Windows, so only the canonical form is a valid ID.
+func TestStorePhase2C_RejectsNonCanonicalHistoryIDEncodings(t *testing.T) {
+	// Hex letters in every group so the uppercase encoding is a distinct string.
+	canonical := "019abcde-0000-7000-8abc-0000000000ff"
+	if err := validateHistoryID(canonical); err != nil {
+		t.Fatalf("canonical ID must stay valid: %v", err)
+	}
+	for _, historyID := range []string{
+		"urn:uuid:" + canonical,
+		"{" + canonical + "}",
+		strings.ReplaceAll(canonical, "-", ""),
+		strings.ToUpper(canonical),
+	} {
+		if err := validateHistoryID(historyID); err == nil {
+			t.Errorf("validateHistoryID(%q) = nil, want error (resolves to %q)",
+				historyID, recordPath("dir", historyID))
+		}
+		if _, ok := canonicalHistoryID(historyID + ".json"); ok {
+			t.Errorf("canonicalHistoryID(%q.json) accepted a non-canonical managed name", historyID)
+		}
+	}
+
+	dir := t.TempDir()
+	store := NewStore(filesystem.NewOS(), dir)
+	workspace := filepath.Join(dir, "ws")
+	summary, err := store.Append(workspace, RecordInput{
+		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
+		Entries: []OutputEntry{{Stream: "stdout", Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := store.GetRecord(workspace, "urn:uuid:"+summary.HistoryID); err == nil {
+		t.Fatal("GetRecord accepted a urn:uuid: encoding of a stored record")
+	}
+	if err := store.ClearRecord(workspace, "{"+summary.HistoryID+"}"); err == nil {
+		t.Fatal("ClearRecord accepted a braced encoding of a stored record")
+	}
+	if _, err := store.GetRecord(workspace, summary.HistoryID); err != nil {
+		t.Fatalf("canonical GetRecord must still succeed: %v", err)
+	}
+}
+
+// ~/.firn predates run history on any install that ran a managed language
+// server, and MkdirAll leaves an existing directory's mode alone. A 0755 parent
+// leaves the whole 0700 archive tree traversable by other local accounts.
+func TestStorePhase2C_TightensAPreexistingLooseFirnTree(t *testing.T) {
+	home := t.TempDir()
+	firnDir := filepath.Join(home, ".firn")
+	if err := os.MkdirAll(filepath.Join(firnDir, "run-history"), 0o755); err != nil {
+		t.Fatalf("seed legacy 0755 tree: %v", err)
+	}
+
+	store := NewStore(filesystem.NewOS(), firnDir)
+	if _, err := store.Append("/repo", RecordInput{
+		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	for _, dir := range []string{firnDir, filepath.Join(firnDir, "run-history")} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			t.Fatalf("Lstat %s: %v", dir, err)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Errorf("%s mode = %o, want 0700", dir, info.Mode().Perm())
+		}
+	}
+}
+
+// Output dropped to fit the record budget must be marked, or the archived run
+// renders as complete and Diff invents a tail difference against a full run.
+func TestStorePhase2C_MarksTruncatedOutput(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(filesystem.NewOS(), home)
+
+	small, err := store.Append("/repo", RecordInput{
+		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
+		Entries: []OutputEntry{{Stream: "stdout", Text: "short"}},
+	})
+	if err != nil {
+		t.Fatalf("Append small: %v", err)
+	}
+	if small.Truncated {
+		t.Error("a record that fits must not be marked truncated")
+	}
+
+	// One entry per megabyte, well past the 10 MiB record ceiling.
+	oversized := make([]OutputEntry, 32)
+	for i := range oversized {
+		oversized[i] = OutputEntry{Stream: "stdout", Text: strings.Repeat("x", 1<<20)}
+	}
+	big, err := store.Append("/repo", RecordInput{
+		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
+		Entries: oversized,
+	})
+	if err != nil {
+		t.Fatalf("Append oversized: %v", err)
+	}
+	if !big.Truncated {
+		t.Fatal("dropped output was not marked truncated")
+	}
+
+	// The flag must survive the round trip, and reconciliation must read it back
+	// off the index rather than losing it.
+	record, err := store.GetRecord("/repo", big.HistoryID)
+	if err != nil {
+		t.Fatalf("GetRecord: %v", err)
+	}
+	if !record.Truncated {
+		t.Fatal("round trip lost the truncation flag")
+	}
+	// The budget sheds text before it sheds whole entries, so compare bytes
+	// rather than entry counts.
+	var savedBytes, sourceBytes int
+	for _, entry := range record.Entries {
+		savedBytes += len(entry.Text)
+	}
+	for _, entry := range oversized {
+		sourceBytes += len(entry.Text)
+	}
+	if savedBytes >= sourceBytes {
+		t.Fatalf("nothing was actually dropped: saved %d of %d bytes", savedBytes, sourceBytes)
+	}
+	snapshot, err := store.Snapshot("/repo")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, summary := range snapshot.Summaries {
+		if summary.HistoryID == big.HistoryID && !summary.Truncated {
+			t.Fatal("index summary lost the truncation flag")
+		}
+	}
+}
+
+// A caller that already dropped output before crossing the binding reports it,
+// and redaction clears a flag that no longer describes anything.
+func TestStorePhase2C_CarriesCallerTruncationAndClearsItOnRedaction(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(filesystem.NewOS(), home)
+	saved, err := store.Append("/repo", RecordInput{
+		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
+		Entries: []OutputEntry{{Stream: "stdout", Text: "kept"}}, Truncated: true,
+	})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if !saved.Truncated {
+		t.Fatal("caller-reported truncation was dropped")
+	}
+	if err := store.ClearRecord("/repo", saved.HistoryID); err != nil {
+		t.Fatalf("ClearRecord: %v", err)
+	}
+	record, err := store.GetRecord("/repo", saved.HistoryID)
+	if err != nil {
+		t.Fatalf("GetRecord: %v", err)
+	}
+	if record.OutputAvailable || record.Truncated {
+		t.Fatalf("redacted record kept output state: available=%v truncated=%v",
+			record.OutputAvailable, record.Truncated)
+	}
+}
