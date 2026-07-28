@@ -765,6 +765,195 @@ export namespace main {
 
 }
 
+export namespace runhistory {
+
+	export class OutputEntry {
+	    stream: string;
+	    text: string;
+	    timestamp: number;
+
+	    static createFrom(source: any = {}) {
+	        return new OutputEntry(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stream = source["stream"];
+	        this.text = source["text"];
+	        this.timestamp = source["timestamp"];
+	    }
+	}
+	export class Record {
+	    version: number;
+	    historyId: string;
+	    kind: string;
+	    profileId: string;
+	    profileName: string;
+	    state: string;
+	    exitCode: number;
+	    startedAt: number;
+	    completedAt: number;
+	    outputAvailable: boolean;
+	    truncated?: boolean;
+	    workingDir?: string;
+	    entries?: OutputEntry[];
+
+	    static createFrom(source: any = {}) {
+	        return new Record(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.historyId = source["historyId"];
+	        this.kind = source["kind"];
+	        this.profileId = source["profileId"];
+	        this.profileName = source["profileName"];
+	        this.state = source["state"];
+	        this.exitCode = source["exitCode"];
+	        this.startedAt = source["startedAt"];
+	        this.completedAt = source["completedAt"];
+	        this.outputAvailable = source["outputAvailable"];
+	        this.truncated = source["truncated"];
+	        this.workingDir = source["workingDir"];
+	        this.entries = this.convertValues(source["entries"], OutputEntry);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RecordInput {
+	    kind: string;
+	    profileId: string;
+	    profileName: string;
+	    state: string;
+	    exitCode: number;
+	    startedAt: number;
+	    completedAt: number;
+	    workspaceEpoch?: number;
+	    workingDir?: string;
+	    entries?: OutputEntry[];
+	    truncated?: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new RecordInput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.profileId = source["profileId"];
+	        this.profileName = source["profileName"];
+	        this.state = source["state"];
+	        this.exitCode = source["exitCode"];
+	        this.startedAt = source["startedAt"];
+	        this.completedAt = source["completedAt"];
+	        this.workspaceEpoch = source["workspaceEpoch"];
+	        this.workingDir = source["workingDir"];
+	        this.entries = this.convertValues(source["entries"], OutputEntry);
+	        this.truncated = source["truncated"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Summary {
+	    historyId: string;
+	    kind: string;
+	    profileId: string;
+	    profileName: string;
+	    state: string;
+	    exitCode: number;
+	    startedAt: number;
+	    completedAt: number;
+	    outputAvailable: boolean;
+	    truncated?: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new Summary(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.historyId = source["historyId"];
+	        this.kind = source["kind"];
+	        this.profileId = source["profileId"];
+	        this.profileName = source["profileName"];
+	        this.state = source["state"];
+	        this.exitCode = source["exitCode"];
+	        this.startedAt = source["startedAt"];
+	        this.completedAt = source["completedAt"];
+	        this.outputAvailable = source["outputAvailable"];
+	        this.truncated = source["truncated"];
+	    }
+	}
+	export class Snapshot {
+	    version: number;
+	    summaries: Summary[];
+	    warning?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Snapshot(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.summaries = this.convertValues(source["summaries"], Summary);
+	        this.warning = source["warning"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace runprofile {
 
 	export class EnvVariant {
@@ -902,6 +1091,7 @@ export namespace runprofile {
 	    exitCode: number;
 	    pid?: number;
 	    timestamp: number;
+	    reason?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new RunStatus(source);
@@ -919,6 +1109,7 @@ export namespace runprofile {
 	        this.exitCode = source["exitCode"];
 	        this.pid = source["pid"];
 	        this.timestamp = source["timestamp"];
+	        this.reason = source["reason"];
 	    }
 	}
 	export class ValidationError {

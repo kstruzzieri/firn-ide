@@ -26,6 +26,8 @@ export function openWorkspaceByPath(folderPath: string) {
   const cachedTree = getCachedWorkspaceTree(folderPath);
 
   try {
+    store.pauseRunEvents();
+    store.resetWorkspaceRunState();
     // Switch workspace and tree state in one store update so the explorer can
     // immediately render a cached tree for the target workspace, while still
     // avoiding any brief stale-tree flash from the previous workspace.

@@ -25,6 +25,19 @@ func newMockFS() *filesystem.Mock {
 			files[path] = data
 			return nil
 		},
+		RemoveFunc: func(path string) error {
+			delete(files, path)
+			return nil
+		},
+		RenameFunc: func(oldPath, newPath string) error {
+			data, ok := files[oldPath]
+			if !ok {
+				return fs.ErrNotExist
+			}
+			files[newPath] = data
+			delete(files, oldPath)
+			return nil
+		},
 		MkdirAllFunc: func(path string, perm fs.FileMode) error {
 			dirs[path] = true
 			return nil

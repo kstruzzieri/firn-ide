@@ -580,10 +580,18 @@ describe('lifecycleStore - resetWorkspaceRunState', () => {
     expect(useIDEStore.getState().waveformData).toEqual({});
   });
 
-  it('should clear hiddenProfileIds', () => {
-    const { hideProfile, resetWorkspaceRunState } = useIDEStore.getState();
+  it('should preserve hiddenProfileIds until the outgoing workspace is saved', () => {
+    const { hideProfile, resetWorkspaceRunState, resetWorkspaceSession } = useIDEStore.getState();
     hideProfile('profile-1');
+
+    // resetWorkspaceRunState runs before the workspace-switch flush captures
+    // the outgoing workspace, so it must leave persisted preferences alone.
     resetWorkspaceRunState();
+    expect(useIDEStore.getState().hiddenProfileIds).toEqual(['profile-1']);
+
+    // resetWorkspaceSession runs during the incoming workspace's restore,
+    // after that snapshot has been taken.
+    resetWorkspaceSession();
     expect(useIDEStore.getState().hiddenProfileIds).toEqual([]);
   });
 

@@ -1,4 +1,8 @@
+import { useRef, useState } from 'react';
+import { ClearRunHistoryRecord } from '../../../wailsjs/go/main/App';
+import { enqueueClearAllRunHistory, trackRunHistoryClear } from '../../hooks/useRunOutput';
 import {
+  compareRunHistorySummaries,
   isLiveRunState,
   useIDEStore,
   useRunOutputViewMode,
@@ -12,7 +16,7 @@ import {
   stopProfile,
   stopRunInstance,
 } from '../../utils/profileActions';
-import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import type { RunOutputViewMode } from '../../types/runOutput';
 import styles from './RunOutput.module.css';
 
@@ -22,6 +26,11 @@ const VIEW_MODES: Array<{ id: RunOutputViewMode; label: string }> = [
   { id: 'diff', label: 'Diff' },
   { id: 'timeline', label: 'Timeline' },
 ];
+
+interface ClearOperation {
+  workspacePath: string | undefined;
+  workspaceEpoch: number;
+}
 
 export function RunOutputToolbar() {
   const viewMode = useRunOutputViewMode();
@@ -38,7 +47,15 @@ export function RunOutputToolbar() {
   const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
   const runProfiles = useIDEStore((s) => s.runProfiles);
+  const runHistorySummaries = useIDEStore((s) => s.runHistorySummaries);
+  const workspace = useIDEStore((s) => s.workspace);
+  const workspaceEpoch = useIDEStore((s) => s.workspaceEpoch);
   const runControlsDisabled = useIDEStore((s) => s.runEventsPaused || s.isLoadingProfiles);
+  const [clearOperation, setClearOperation] = useState<ClearOperation | null>(null);
+  const clearOperationRef = useRef<ClearOperation | null>(null);
+  const clearPending =
+    clearOperation?.workspacePath === workspace?.path &&
+    clearOperation?.workspaceEpoch === workspaceEpoch;
   // Toast copy is user-facing, so resolve the display name rather than leaking
   // the profile id into "Failed to stop ...".
   const displayName = (profileId: string): string =>
@@ -47,6 +64,8 @@ export function RunOutputToolbar() {
     profileId;
 
   const isAllProfiles = activeId === ALL_PROFILES_ID;
+  const activeHistoryId = historyIdFromSelection(activeId);
+  const activeHistorySummary = activeHistoryId ? runHistorySummaries[activeHistoryId] : undefined;
   const hasActiveProfile = activeId && !isAllProfiles;
   const activeOutput = hasActiveProfile ? runOutputs[activeId] : undefined;
   const activeCompoundId =
@@ -57,8 +76,21 @@ export function RunOutputToolbar() {
   const outputIds = Object.values(runInstanceIdsByProfile)
     .map((ids) => ids.filter((id) => runOutputs[id]).at(-1))
     .filter((id): id is string => id != null);
-  const canTimeline = outputIds.length >= 2;
-  const controlProfileId = activeOutput?.profileId ?? activeCompoundId;
+  const archiveSummaries = Object.values(runHistorySummaries)
+    .filter((summary) => summary.kind === 'ordinary' && summary.outputAvailable)
+    .sort(compareRunHistorySummaries);
+  const ordinaryProfileIds = new Set(
+    outputIds.map((id) => runOutputs[id]?.profileId).filter((id): id is string => id != null)
+  );
+  for (const summary of archiveSummaries) ordinaryProfileIds.add(summary.profileId);
+  const canTimeline = ordinaryProfileIds.size >= 2;
+  // archiveSummaries is oldest-first, so land on the newest saved run — the same
+  // recency outputIds already applies per profile via .at(-1).
+  const firstOutputId = outputIds[0] ?? archiveSummaries.at(-1)?.historyId;
+  const currentHistoryProfile = activeHistorySummary
+    ? runProfiles.find((profile) => profile.id === activeHistorySummary.profileId)
+    : undefined;
+  const controlProfileId = activeOutput?.profileId ?? activeCompoundId ?? currentHistoryProfile?.id;
 
   const handleViewMode = (mode: RunOutputViewMode) => {
     // Gate timeline mode: only allow with 2+ profiles
@@ -67,14 +99,21 @@ export function RunOutputToolbar() {
     if (mode === 'timeline') {
       setActiveRunOutput(ALL_PROFILES_ID);
     } else if (isAllProfiles) {
-      const firstId = outputIds[0];
-      if (firstId) setActiveRunOutput(firstId);
+      if (firstOutputId) {
+        setActiveRunOutput(
+          outputIds.includes(firstOutputId) ? firstOutputId : historySelectionId(firstOutputId)
+        );
+      }
     }
   };
 
   const handleRerun = () => {
     if (runControlsDisabled) return;
-    if (activeOutput) {
+    if (activeHistorySummary) {
+      if (currentHistoryProfile) {
+        startProfile(currentHistoryProfile.id, currentHistoryProfile.name);
+      }
+    } else if (activeOutput) {
       if (isActiveOutputLive) {
         restartRunInstance(activeOutput.runInstanceId, displayName(activeOutput.profileId));
       } else {
@@ -94,11 +133,108 @@ export function RunOutputToolbar() {
     }
   };
 
+  const beginClear = (): ClearOperation => {
+    const operation = { workspacePath: workspace?.path, workspaceEpoch };
+    clearOperationRef.current = operation;
+    setClearOperation(operation);
+    return operation;
+  };
+
+  const finishClear = (operation: ClearOperation) => {
+    if (clearOperationRef.current !== operation) return;
+    clearOperationRef.current = null;
+    setClearOperation((current) => (current === operation ? null : current));
+  };
+
   const handleClear = () => {
+    if (runControlsDisabled || clearPending) return;
+    if (activeHistoryId && activeHistorySummary?.outputAvailable) {
+      const operation = beginClear();
+      void trackRunHistoryClear(
+        ClearRunHistoryRecord(activeHistoryId)
+          .then(() => {
+            useIDEStore.setState((state) => {
+              if (
+                state.workspace?.path !== operation.workspacePath ||
+                state.workspaceEpoch !== operation.workspaceEpoch
+              ) {
+                return state;
+              }
+              const summary = state.runHistorySummaries[activeHistoryId];
+              if (!summary) return state;
+              const runHistoryRecords = { ...state.runHistoryRecords };
+              delete runHistoryRecords[activeHistoryId];
+              return {
+                runHistorySummaries: {
+                  ...state.runHistorySummaries,
+                  [activeHistoryId]: { ...summary, outputAvailable: false },
+                },
+                runHistoryRecords,
+                activeRunOutputId:
+                  state.activeRunOutputId === historySelectionId(activeHistoryId)
+                    ? null
+                    : state.activeRunOutputId,
+              };
+            });
+          })
+          .catch((err: unknown) => {
+            const state = useIDEStore.getState();
+            if (
+              state.workspace?.path === operation.workspacePath &&
+              state.workspaceEpoch === operation.workspaceEpoch
+            ) {
+              state.showToast(
+                `Failed to clear output: ${err instanceof Error ? err.message : String(err)}`,
+                'error'
+              );
+            }
+          })
+          .finally(() => finishClear(operation))
+      );
+      return;
+    }
+    if (isAllProfiles) {
+      const operation = beginClear();
+      clearAllRunOutputs();
+      void trackRunHistoryClear(
+        enqueueClearAllRunHistory()
+          .then(() => {
+            useIDEStore.setState((state) => {
+              if (
+                state.workspace?.path !== operation.workspacePath ||
+                state.workspaceEpoch !== operation.workspaceEpoch
+              ) {
+                return state;
+              }
+              return {
+                runHistorySummaries: Object.fromEntries(
+                  Object.entries(state.runHistorySummaries).map(([historyId, summary]) => [
+                    historyId,
+                    { ...summary, outputAvailable: false },
+                  ])
+                ),
+                runHistoryRecords: {},
+              };
+            });
+          })
+          .catch((err: unknown) => {
+            const state = useIDEStore.getState();
+            if (
+              state.workspace?.path === operation.workspacePath &&
+              state.workspaceEpoch === operation.workspaceEpoch
+            ) {
+              state.showToast(
+                `Failed to clear output: ${err instanceof Error ? err.message : String(err)}`,
+                'error'
+              );
+            }
+          })
+          .finally(() => finishClear(operation))
+      );
+      return;
+    }
     if (activeCompound) {
       clearCompoundRunOutput(activeCompoundId as string);
-    } else if (isAllProfiles) {
-      clearAllRunOutputs();
     } else if (activeId) {
       clearRunOutput(activeId);
     }
@@ -171,7 +307,7 @@ export function RunOutputToolbar() {
         type="button"
         className={styles.toolbarBtn}
         onClick={handleClear}
-        disabled={!activeId}
+        disabled={runControlsDisabled || clearPending || !activeId}
         title="Clear output"
         aria-label="Clear output"
       >

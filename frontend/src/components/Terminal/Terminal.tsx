@@ -1,6 +1,8 @@
 import styles from './Terminal.module.css';
 import { TerminalIcon, OutputIcon, AlertCircleIcon, PlusIcon } from '../icons';
 import {
+  archivedRunLabel,
+  compareRunHistorySummaries,
   isLiveRunState,
   orderedRunIds,
   useIDEStore,
@@ -27,7 +29,7 @@ import {
 } from 'react';
 import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { RunOutputPanel } from '../RunOutput';
-import { ALL_PROFILES_ID } from '../../types/runOutput';
+import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import { getVisualState } from '../../utils/visualState';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -171,7 +173,6 @@ export function Terminal() {
   const runOutputs = useRunOutputs();
   const activeRunOutputId = useActiveRunOutputId();
   const setActiveRunOutput = useIDEStore((s) => s.setActiveRunOutput);
-  const setViewMode = useIDEStore((s) => s.setRunOutputViewMode);
   const runProfiles = useIDEStore((s) => s.runProfiles);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
   const runLaunchSeqByInstance = useIDEStore((s) => s.runLaunchSeqByInstance);
@@ -182,15 +183,19 @@ export function Terminal() {
   const restartingProfileIds = useIDEStore((s) => s.restartingProfileIds);
   const stoppingRunInstanceIds = useIDEStore((s) => s.stoppingRunInstanceIds);
   const restartingRunInstanceIds = useIDEStore((s) => s.restartingRunInstanceIds);
+  const runHistorySummaries = useIDEStore((s) => s.runHistorySummaries);
   const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
   const ordinaryOutputIds = Object.keys(runInstanceIdsByProfile).flatMap((profileId) =>
     orderedRunIds(runIndex, profileId).filter((id) => runOutputs[id])
   );
   const compoundOutputIds = Object.values(runCompounds).map((run) => run.runInstanceId);
-  const outputIds = [...ordinaryOutputIds, ...compoundOutputIds];
-  const ordinaryProfileCount = Object.values(runInstanceIdsByProfile).filter((ids) =>
-    ids.some((id) => runOutputs[id])
-  ).length;
+  const archiveSummaries = Object.values(runHistorySummaries)
+    .filter((summary) => summary.kind === 'ordinary' && summary.outputAvailable)
+    .sort(compareRunHistorySummaries);
+  const archiveOutputIds = archiveSummaries.map((summary) => historySelectionId(summary.historyId));
+  const outputIds = [...ordinaryOutputIds, ...archiveOutputIds, ...compoundOutputIds];
+  const ordinaryProfileIds = new Set(Object.values(runOutputs).map((output) => output.profileId));
+  for (const summary of archiveSummaries) ordinaryProfileIds.add(summary.profileId);
 
   const isCreatingRef = useRef(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -488,14 +493,11 @@ export function Terminal() {
         {activeTab === 'output' && outputIds.length > 0 && (
           <>
             <div className={styles.divider} />
-            {ordinaryProfileCount >= 2 && (
+            {ordinaryProfileIds.size >= 2 && (
               <button
                 type="button"
                 className={`${styles.sessionTab} ${activeRunOutputId === ALL_PROFILES_ID ? styles.active : ''}`}
-                onClick={() => {
-                  setActiveRunOutput(ALL_PROFILES_ID);
-                  setViewMode('timeline');
-                }}
+                onClick={() => setActiveRunOutput(ALL_PROFILES_ID)}
                 title="All Profiles Timeline"
               >
                 <svg
@@ -515,11 +517,14 @@ export function Terminal() {
             )}
             {outputIds.map((id) => {
               const output = runOutputs[id];
+              const historyId = historyIdFromSelection(id);
+              const historySummary = historyId ? runHistorySummaries[historyId] : undefined;
               const compoundId = compoundIdByRunInstance[id];
               const compound = compoundId ? runCompounds[compoundId] : undefined;
               const isActive = id === activeRunOutputId;
-              const visualState =
-                output && output.state !== 'running' && output.state !== 'idle'
+              const visualState = historySummary
+                ? historySummary.state
+                : output && output.state !== 'running' && output.state !== 'idle'
                   ? output.state
                   : getVisualState(
                       output?.profileId ?? compoundId ?? id,
@@ -548,6 +553,15 @@ export function Terminal() {
                 ? (runProfiles.find((profile) => profile.id === output.profileId)?.name ??
                   output.profileId)
                 : undefined;
+              const historyName = historySummary
+                ? (runProfiles.find((profile) => profile.id === historySummary.profileId)?.name ??
+                  historySummary.profileName ??
+                  historySummary.profileId)
+                : undefined;
+              const archiveLabel =
+                historySummary && historyName
+                  ? archivedRunLabel(historySummary, archiveSummaries, historyName)
+                  : historyName;
               const profileRunIds = output
                 ? ordinaryOutputIds.filter(
                     (runId) => runOutputs[runId]?.profileId === output.profileId
@@ -563,20 +577,15 @@ export function Terminal() {
                   : latestRunInstanceIdByProfile[output.profileId] === id
                     ? profileName
                     : `${profileName} (previous)`
-                : (compound?.name ?? id);
+                : (archiveLabel ?? compound?.name ?? id);
 
               return (
                 <button
                   type="button"
                   key={id}
                   className={`${styles.sessionTab} ${isActive ? styles.active : ''}`}
-                  onClick={() => {
-                    setActiveRunOutput(id);
-                    if (useIDEStore.getState().runOutputViewMode === 'timeline') {
-                      setViewMode('merged');
-                    }
-                  }}
-                  title={output ? id : compoundId}
+                  onClick={() => setActiveRunOutput(id)}
+                  title={historySummary ? label : output ? id : (compoundId ?? id)}
                 >
                   <span className={`${styles.stateDot} ${stateClass}`} />
                   <span className={styles.sessionTabLabel}>{label}</span>

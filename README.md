@@ -228,7 +228,9 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Output folding for repeated patterns
 - [x] Compound run profiles — sequential multi-step execution with per-step output and aggregate status
 - [x] First-class run execution identity — output, lifecycle, and status routed by execution-instance id
-- [x] Retained run history — the two most recent ordinary executions per profile stay selectable, with a predecessor diff
+- [x] Retained run history — same-profile parallel runs plus persisted terminal ordinary/compound summaries and lazy ordinary output from `internal/runhistory`
+- [x] Bounded history retention — 50 summaries and 5 rich ordinary records per profile, 10 MiB per record, and a 20 MiB workspace target
+- [x] Explicit durability boundary — terminal events enqueue history; close drains appends for up to 300 ms, waits for explicit redactions, and still withholds acknowledgement when editor flush fails
 
 **Version Control (Git)**
 - [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
@@ -243,7 +245,7 @@ The roadmap includes a built-in AI assistant panel with:
 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223)
 - [ ] Git — richer branch/VCS menu (#166)
-- [ ] Run execution identity Phase 2B-2D — same-profile parallelism, persisted history, execution-plan abstraction (#146)
+- [ ] Run execution identity Phase 2D — execution-plan abstraction (#146)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
 - [ ] AI Chat Panel — read-only workspace chat (#226) on an embedded `go-llm` runtime (#165)
 
@@ -258,6 +260,7 @@ firn-ide/
 │   ├── git/                    # Status, diff, hunk staging, merge conflict data
 │   ├── lsp/                    # LSP client, registry, transports, managed provisioning
 │   ├── runprofile/             # Run profile detection, execution, management
+│   ├── runhistory/             # Bounded persisted terminal run history
 │   ├── search/                 # ripgrep search runner and parser
 │   ├── terminal/               # PTY session management
 │   ├── watcher/                # FS event watcher
@@ -339,7 +342,7 @@ Active tracks:
 
 1. **Golem:** replace the commit-message CLI shell-out with the embedded `go-llm` runtime (#165), then the read-only workspace chat panel (#226). Both were unblocked by the #225 toolchain upgrade.
 2. **Git merge:** finish #164 phases 3-4, then work the follow-up backlog surfaced by the MVP — auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), and bulk take-Current/Incoming (#223). Destructive VCS operations (#166) come after.
-3. **Run engine:** continue run execution identity Phase 2 (#146) — 2A retained tabs shipped, so 2B parallelism, 2C persistence, and 2D execution plans remain.
+3. **Run engine:** continue run execution identity Phase 2 (#146) — 2A retained tabs shipped, 2B parallelism shipped via #232, and the current pull request delivers 2C persistence. Only 2D execution plans remain deferred.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
 
 Watcher and ignore-rule caching (#148/#196) stay benchmark-gated. Store extraction (#41) happens only when one of the tracks above needs it, not as a standalone rewrite.

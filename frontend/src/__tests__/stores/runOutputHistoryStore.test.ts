@@ -402,7 +402,7 @@ describe('ordinary run-instance output history', () => {
     }
   );
 
-  it('keeps the running execution routable while clearing output and workspace state', () => {
+  it('hard-clears running execution state on workspace reset', () => {
     completeRun('r1', 'old\n');
     const store = useIDEStore.getState();
     store.handleRunStatus(status('r2', 'running'));
@@ -412,11 +412,10 @@ describe('ordinary run-instance output history', () => {
 
     const state = phase2State();
     expect(state.runOutputs.r1).toBeUndefined();
-    expect(state.runOutputs.r2.state).toBe('running');
-    expect(state.runOutputs.r2.entries).toEqual([]);
-    expect(state.runInstanceIdsByProfile).toEqual({ p1: ['r2'] });
-    expect(state.latestRunInstanceIdByProfile).toEqual({ p1: 'r2' });
-    expect(state.activeRunOutputId).toBe('r2');
+    expect(state.runOutputs.r2).toBeUndefined();
+    expect(state.runInstanceIdsByProfile).toEqual({});
+    expect(state.latestRunInstanceIdByProfile).toEqual({});
+    expect(state.activeRunOutputId).toBeNull();
     expect(state.runCompounds).toEqual({});
   });
 

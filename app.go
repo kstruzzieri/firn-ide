@@ -7,6 +7,7 @@ import (
 	"firn/internal/git"
 	"firn/internal/lsp"
 	"firn/internal/lsp/provision"
+	"firn/internal/runhistory"
 	"firn/internal/runprofile"
 	"firn/internal/search"
 	"firn/internal/terminal"
@@ -37,18 +38,28 @@ type App struct {
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
 	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
-	emitFn         func(event string, data ...any)
-	executor       *runprofile.Executor
-	osFS           filesystem.FileSystem
-	workspaceStore *workspace.Store
-	lspManager     *lsp.Manager
-	searchManager  *search.Manager
-	gitService     *git.Service
-	gitMsgGen      *git.MessageGenerator
-	closeMu        sync.Mutex
-	isClosing      bool
-	runShutdown    bool
-	closeReady     chan struct{}
+	emitFn          func(event string, data ...any)
+	executor        *runprofile.Executor
+	osFS            filesystem.FileSystem
+	workspaceStore  *workspace.Store
+	runHistoryStore *runhistory.Store
+	lspManager      *lsp.Manager
+	searchManager   *search.Manager
+	gitService      *git.Service
+	gitMsgGen       *git.MessageGenerator
+	closeMu         sync.Mutex
+	isClosing       bool
+	runShutdown     bool
+	// activeHistoryWorkspace and activeHistoryEpoch mirror the successfully
+	// loaded profile workspace for shutdown capture. Guarded by closeMu.
+	activeHistoryWorkspace string
+	activeHistoryEpoch     uint64
+	// shutdownHistoryWorkspace and shutdownHistoryEpoch identify the workspace
+	// as it stood immediately before the shutdown drain advanced it. Guarded by
+	// closeMu.
+	shutdownHistoryWorkspace string
+	shutdownHistoryEpoch     uint64
+	closeReady               chan struct{}
 }
 
 // NewApp creates and returns a new App instance.
@@ -61,20 +72,25 @@ func NewApp() *App {
 	}
 	fw, _ := watcher.NewFSNotifyWatcher(watcherConfig)
 
-	homeDir, _ := os.UserHomeDir()
-	workspaceBaseDir := filepath.Join(homeDir, ".firn", "workspaces")
+	firnDir := ""
+	workspaceBaseDir := ""
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		firnDir = filepath.Join(homeDir, ".firn")
+		workspaceBaseDir = filepath.Join(firnDir, "workspaces")
+	}
 
 	return &App{
-		dirReader:      filesystem.NewDirectoryReader(osFS),
-		fileReader:     filesystem.NewFileReader(osFS),
-		fileWriter:     filesystem.NewFileWriter(osFS),
-		fileWatcher:    fw,
-		termManager:    terminal.NewManager(),
-		osFS:           osFS,
-		workspaceStore: workspace.NewStore(osFS, workspaceBaseDir),
-		searchManager:  search.NewManager(),
-		gitService:     git.NewService(),
-		gitMsgGen:      git.NewMessageGenerator(),
+		dirReader:       filesystem.NewDirectoryReader(osFS),
+		fileReader:      filesystem.NewFileReader(osFS),
+		fileWriter:      filesystem.NewFileWriter(osFS),
+		fileWatcher:     fw,
+		termManager:     terminal.NewManager(),
+		osFS:            osFS,
+		workspaceStore:  workspace.NewStore(osFS, workspaceBaseDir),
+		runHistoryStore: runhistory.NewStore(osFS, firnDir),
+		searchManager:   search.NewManager(),
+		gitService:      git.NewService(),
+		gitMsgGen:       git.NewMessageGenerator(),
 	}
 }
 
@@ -178,7 +194,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 		runnerDone := make(chan struct{})
 		go func() {
 			if a.executor != nil {
-				_ = a.executor.StopAll(1500 * time.Millisecond)
+				_ = a.executor.StopAllWithReason(1500*time.Millisecond, "shutdown")
 			}
 			close(runnerDone)
 		}()
@@ -216,13 +232,31 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	return true
 }
 
+// beginRunShutdown closes run admission for shutdown. BeginDrainWithReason
+// advances the workspace epoch, so the epoch in flight when the close began is
+// captured first: the frontend's best-effort drain runs after this and still
+// carries records stamped with it. The path and epoch are captured together so
+// a later compatible workspace load cannot redirect those records.
 func (a *App) beginRunShutdown() {
 	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
 	a.runShutdown = true
-	a.closeMu.Unlock()
+	a.shutdownHistoryWorkspace = a.activeHistoryWorkspace
+	a.shutdownHistoryEpoch = a.activeHistoryEpoch
 	if a.executor != nil {
-		a.executor.BeginDrain()
+		a.executor.BeginDrainWithReason("shutdown")
 	}
+}
+
+// shutdownHistoryWorkspaceFor reports the workspace paired with the epoch that
+// beginRunShutdown superseded. Only that immutable pair remains writable.
+func (a *App) shutdownHistoryWorkspaceFor(epoch uint64) (string, bool) {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+	return a.shutdownHistoryWorkspace, a.runShutdown &&
+		a.shutdownHistoryWorkspace != "" &&
+		a.shutdownHistoryEpoch != 0 &&
+		epoch == a.shutdownHistoryEpoch
 }
 
 // GetWorkspaceInfo returns information about the current workspace.
@@ -397,14 +431,14 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 		if switchingWorkspace {
 			// Admission closes before shutdown begins. Advancing the epoch alone is
 			// not enough: a launch for the new epoch must not enter mid-drain.
-			epoch = a.executor.BeginDrain()
+			epoch = a.executor.BeginDrainWithReason("workspace-switch")
 		} else {
 			epoch = a.executor.CurrentEpoch()
 		}
 	}
 
 	if switchingWorkspace && a.executor != nil {
-		if ok := a.executor.StopAll(4 * time.Second); !ok {
+		if ok := a.executor.StopAllWithReason(4*time.Second, "workspace-switch"); !ok {
 			return fmt.Errorf("failed to stop running profiles before switching workspace")
 		}
 		a.executor.ClearTerminalStatuses()
@@ -422,20 +456,23 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 	if err := load(); err != nil {
 		return err
 	}
+
+	a.closeMu.Lock()
 	if switchingWorkspace {
 		a.profileManager = manager
 		a.profileWorkspaceRoot = workspacePath
 	}
+	a.activeHistoryWorkspace = a.profileWorkspaceRoot
+	a.activeHistoryEpoch = epoch
+	var endDrainErr error
 	if a.executor != nil {
-		a.closeMu.Lock()
-		var endDrainErr error
 		if !a.runShutdown {
 			endDrainErr = a.executor.EndDrain(epoch)
 		}
-		a.closeMu.Unlock()
-		if endDrainErr != nil {
-			return endDrainErr
-		}
+	}
+	a.closeMu.Unlock()
+	if endDrainErr != nil {
+		return endDrainErr
 	}
 	// Surface non-fatal load issues (unreadable workspace store, migration that
 	// could not be written back) instead of swallowing them. A degraded load
@@ -627,6 +664,81 @@ func (a *App) LoadWorkspaceState(workspacePath string) (*workspace.State, error)
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ListRecentWorkspaces() ([]workspace.Summary, error) {
 	return a.workspaceStore.ListRecent(0)
+}
+
+// GetRunHistorySnapshot returns the active workspace's persisted run summaries.
+func (a *App) GetRunHistorySnapshot() (runhistory.Snapshot, error) {
+	workspacePath, err := a.activeRunHistoryWorkspace()
+	if err != nil {
+		return runhistory.Snapshot{}, err
+	}
+	return a.runHistoryStore.Snapshot(workspacePath)
+}
+
+// AppendRunHistoryRecord persists a terminal run for the active workspace.
+func (a *App) AppendRunHistoryRecord(record runhistory.RecordInput) (runhistory.Summary, error) {
+	a.profileMu.RLock()
+	workspacePath, err := a.activeRunHistoryWorkspaceLocked()
+	var workspaceEpoch uint64
+	if a.executor != nil {
+		workspaceEpoch = a.executor.CurrentEpoch()
+	}
+	a.profileMu.RUnlock()
+	if err != nil {
+		return runhistory.Summary{}, err
+	}
+	if record.WorkspaceEpoch != 0 && record.WorkspaceEpoch != workspaceEpoch {
+		if shutdownWorkspace, ok := a.shutdownHistoryWorkspaceFor(record.WorkspaceEpoch); ok {
+			workspacePath = shutdownWorkspace
+		} else {
+			return runhistory.Summary{}, fmt.Errorf(
+				"run history workspace epoch mismatch: got %d, current %d",
+				record.WorkspaceEpoch,
+				workspaceEpoch,
+			)
+		}
+	}
+	return a.runHistoryStore.Append(workspacePath, record)
+}
+
+// GetRunHistoryRecord lazily loads one rich record from the active workspace.
+func (a *App) GetRunHistoryRecord(historyID string) (runhistory.Record, error) {
+	workspacePath, err := a.activeRunHistoryWorkspace()
+	if err != nil {
+		return runhistory.Record{}, err
+	}
+	return a.runHistoryStore.GetRecord(workspacePath, historyID)
+}
+
+// ClearRunHistoryRecord durably redacts one active-workspace record.
+func (a *App) ClearRunHistoryRecord(historyID string) error {
+	workspacePath, err := a.activeRunHistoryWorkspace()
+	if err != nil {
+		return err
+	}
+	return a.runHistoryStore.ClearRecord(workspacePath, historyID)
+}
+
+// ClearAllRunHistory durably redacts all active-workspace records.
+func (a *App) ClearAllRunHistory() error {
+	workspacePath, err := a.activeRunHistoryWorkspace()
+	if err != nil {
+		return err
+	}
+	return a.runHistoryStore.ClearAll(workspacePath)
+}
+
+func (a *App) activeRunHistoryWorkspaceLocked() (string, error) {
+	if a.profileWorkspaceRoot == "" {
+		return "", fmt.Errorf("no active workspace")
+	}
+	return a.profileWorkspaceRoot, nil
+}
+
+func (a *App) activeRunHistoryWorkspace() (string, error) {
+	a.profileMu.RLock()
+	defer a.profileMu.RUnlock()
+	return a.activeRunHistoryWorkspaceLocked()
 }
 
 // DetectWorkspaces scans the repo at repoPath for focused workspaces.

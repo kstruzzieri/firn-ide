@@ -32,6 +32,7 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
     }
     return jest.fn();
   }),
+  WindowSetTitle: jest.fn(),
 }));
 
 const mockEnsurePathLoaded = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
@@ -43,6 +44,8 @@ jest.mock('../../hooks/useEnsurePathLoaded', () => ({
 }));
 
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
+import { trackRunHistoryClear } from '../../hooks/useRunOutput';
+import { openWorkspaceByPath } from '../../utils/workspace';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -193,6 +196,60 @@ describe('useWorkspacePersistence', () => {
       consoleError.mockRestore();
     }
   });
+
+  it('acknowledges close when the best-effort history drain rejects', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const drainRunHistoryQueue = jest.fn(() => Promise.reject(new Error('history disk full')));
+    const phase2CHook = useWorkspacePersistence as unknown as (
+      flushPendingEdits?: () => Promise<void>,
+      drainHistory?: () => Promise<void>
+    ) => void;
+    try {
+      renderHook(() => phase2CHook(undefined, drainRunHistoryQueue));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+
+      await waitFor(() => expect(drainRunHistoryQueue).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'waits for a tracked record clear to %s before acknowledging close',
+    async (outcome) => {
+      let resolveClear!: () => void;
+      let rejectClear!: (reason: Error) => void;
+      const clear = new Promise<void>((resolve, reject) => {
+        resolveClear = resolve;
+        rejectClear = reject;
+      });
+      trackRunHistoryClear(clear);
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+      await act(async () => {
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+      });
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+      act(() => {
+        if (outcome === 'resolve') {
+          resolveClear();
+        } else {
+          rejectClear(new Error('redaction failed'));
+        }
+      });
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    }
+  );
 
   it('restores a cached explorer tree immediately from saved workspace state', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({
@@ -443,6 +500,44 @@ describe('useWorkspacePersistence', () => {
 
     // A's persisted snapshot must be A's tree, never B's live tree.
     expect(savedForA?.explorer.treeSnapshot).toEqual([treeA]);
+  });
+
+  it('saves the outgoing hidden profiles when openWorkspaceByPath resets run state', async () => {
+    useIDEStore.setState({ workspace: { name: 'A', path: '/workspace/A' } });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    // Hide two profiles while A is the active workspace.
+    act(() => {
+      useIDEStore.getState().hideProfile('lint');
+      useIDEStore.getState().hideProfile('e2e');
+    });
+    mockSaveWorkspaceState.mockClear();
+
+    // openWorkspaceByPath clears transient run state before publishing the new
+    // workspace identity. The switch-flush of A runs afterwards, so it must
+    // still see A's hidden profiles rather than an already-emptied list.
+    act(() => {
+      openWorkspaceByPath('/workspace/B');
+    });
+
+    await waitFor(() =>
+      expect(
+        mockSaveWorkspaceState.mock.calls.some(
+          (c) => (c[0] as { workspacePath: string }).workspacePath === '/workspace/A'
+        )
+      ).toBe(true)
+    );
+
+    const savedForA = mockSaveWorkspaceState.mock.calls
+      .map((c) => c[0] as { workspacePath: string; hiddenProfileIds?: string[] })
+      .find((s) => s.workspacePath === '/workspace/A');
+    expect(savedForA?.hiddenProfileIds).toEqual(['lint', 'e2e']);
+
+    // B starts with no inherited hidden profiles once its restore has run.
+    await waitFor(() => expect(useIDEStore.getState().hiddenProfileIds).toEqual([]));
   });
 
   it('ignores a treeSnapshot whose entries are not under the workspace root', async () => {

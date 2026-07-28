@@ -1,8 +1,13 @@
 import { useEffect } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { LoadRunProfiles, GetRunProfilesSnapshot } from '../../wailsjs/go/main/App';
-import type { runprofile } from '../../wailsjs/go/models';
+import {
+  GetRunHistorySnapshot,
+  GetRunProfilesSnapshot,
+  LoadRunProfiles,
+} from '../../wailsjs/go/main/App';
+import type { runhistory, runprofile } from '../../wailsjs/go/models';
 import { useIDEStore } from '../stores/ideStore';
+import { drainRunHistoryQueue, waitForRunHistoryClears } from './useRunOutput';
 import type {
   ProfileSource,
   ProfileTag,
@@ -14,6 +19,7 @@ import type {
 const VALID_PROFILE_TYPES: ReadonlySet<string> = new Set(['single', 'compound']);
 const VALID_PROFILE_SOURCES: ReadonlySet<string> = new Set(['user', 'detected']);
 const VALID_PROFILE_TAGS: ReadonlySet<string> = new Set(['build', 'test', 'dev', 'deploy', 'lint']);
+let runProfilesLoadTail: Promise<void> = Promise.resolve();
 
 function asProfileType(value: unknown): ProfileType {
   return VALID_PROFILE_TYPES.has(value as string) ? (value as ProfileType) : 'single';
@@ -122,27 +128,56 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     }
 
     useIDEStore.getState().pauseRunEvents();
-    useIDEStore.getState().resetWorkspaceRunState();
 
     let cancelled = false;
     const { setProfilesLoading, setRunProfilesSnapshot, setProfilesError } = useIDEStore.getState();
 
     setProfilesLoading(true);
 
-    LoadRunProfiles(workspacePath)
-      .then(() => GetRunProfilesSnapshot())
-      .then((snap: unknown) => {
-        if (!cancelled) {
-          const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(snap);
-          setRunProfilesSnapshot(profiles, profileState, workspaceEpoch);
+    const workflow = runProfilesLoadTail.then(async () => {
+      if (cancelled) return;
+      try {
+        await drainRunHistoryQueue();
+        if (cancelled) return;
+        await waitForRunHistoryClears();
+        if (cancelled) return;
+
+        useIDEStore.getState().resetWorkspaceRunState();
+        await LoadRunProfiles(workspacePath);
+        if (cancelled) return;
+
+        const [profileSnapshot, historyResult] = await Promise.all([
+          GetRunProfilesSnapshot(),
+          GetRunHistorySnapshot().then(
+            (value) => ({ status: 'fulfilled' as const, value }),
+            (reason: unknown) => ({ status: 'rejected' as const, reason })
+          ),
+        ]);
+        if (cancelled) return;
+
+        const history =
+          historyResult.status === 'fulfilled'
+            ? (historyResult.value as runhistory.Snapshot)
+            : undefined;
+        const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(profileSnapshot);
+        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch, history);
+        if (historyResult.status === 'rejected') {
+          const message =
+            historyResult.reason instanceof Error
+              ? historyResult.reason.message
+              : String(historyResult.reason);
+          useIDEStore.getState().showToast(`Run history unavailable: ${message}`, 'info');
+        } else if (history?.warning) {
+          useIDEStore.getState().showToast(history.warning, 'info');
         }
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (!cancelled) {
           const message = err instanceof Error ? err.message : String(err);
           setProfilesError(message);
         }
-      });
+      }
+    });
+    runProfilesLoadTail = workflow.catch(() => undefined);
 
     // Subscribe to reactive profile updates from the backend file watcher.
     // These events are emitted by the StartWatching callback in app.go when

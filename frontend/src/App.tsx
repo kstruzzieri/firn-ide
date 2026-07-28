@@ -18,6 +18,7 @@ import { useAutosave } from './hooks/useAutosave';
 import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
+import { drainRunHistoryForClose } from './hooks/useRunOutput';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
@@ -40,7 +41,7 @@ function App() {
   const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useAutosave();
-  useWorkspacePersistence(flushAllFileEdits);
+  useWorkspacePersistence(flushAllFileEdits, drainRunHistoryForClose);
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();

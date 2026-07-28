@@ -38,6 +38,7 @@ type RunStatus struct {
 	ExitCode  int      `json:"exitCode"`
 	Pid       int      `json:"pid,omitempty"`
 	Timestamp int64    `json:"timestamp"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 // OutputChunk is the run:output event payload. It embeds RunIdentity so output
@@ -139,14 +140,31 @@ func (e *Executor) CurrentEpoch() uint64 {
 
 // BeginDrain atomically advances workspace identity and closes admission.
 func (e *Executor) BeginDrain() uint64 {
+	return e.BeginDrainWithReason("")
+}
+
+// BeginDrainWithReason closes admission and tags every live top-level status
+// in the same critical section, so a drain-boundary completion keeps its
+// administrative reason.
+func (e *Executor) BeginDrainWithReason(reason string) uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.workspaceEpoch++
 	e.draining = true
+	e.setAdministrativeReasonLocked(reason)
 	for _, reservation := range e.reservations {
 		reservation.invalid = true
 	}
 	return e.workspaceEpoch
+}
+
+func (e *Executor) setAdministrativeReasonLocked(reason string) {
+	for _, rp := range e.processes {
+		rp.status.Reason = reason
+	}
+	for _, cr := range e.compounds {
+		cr.status.Reason = reason
+	}
 }
 
 // EndDrain reopens admission for the successfully loaded workspace.
@@ -761,6 +779,12 @@ func (e *Executor) signalStop(rp *runningProcess) {
 // cancelled so the next step cannot start, and StopAll waits on every compound
 // done channel in addition to every process done channel.
 func (e *Executor) StopAll(timeout time.Duration) bool {
+	return e.StopAllWithReason(timeout, "")
+}
+
+// StopAllWithReason stops all running profiles and attaches an administrative
+// reason to their terminal aggregate statuses.
+func (e *Executor) StopAllWithReason(timeout time.Duration, reason string) bool {
 	e.mu.Lock()
 	if len(e.processes) == 0 && len(e.compounds) == 0 && len(e.reservations) == 0 {
 		e.mu.Unlock()
@@ -792,6 +816,7 @@ func (e *Executor) StopAll(timeout time.Duration) bool {
 		reservationDone = append(reservationDone, reservation.done)
 	}
 
+	e.setAdministrativeReasonLocked(reason)
 	// Mark all processes as stopped
 	for _, ent := range entries {
 		ent.rp.stopped = true
