@@ -412,7 +412,8 @@ func (e *Executor) reserveProcessCapacityLocked(identity RunIdentity, replacedRu
 		if compound.status.ProfileID == identity.ProfileID {
 			return fmt.Errorf("profile already running: %s", identity.ProfileID)
 		}
-		for _, step := range compound.steps {
+		for _, node := range compound.plan {
+			step := node.step
 			if step.ProfileID == identity.ProfileID &&
 				step.State == CompoundStepRunning &&
 				step.RunInstanceID != identity.RunInstanceID {
@@ -638,8 +639,8 @@ func (e *Executor) stopCompoundRunInstance(runInstanceID string) error {
 		return nil
 	}
 	var leaf *runningProcess
-	if cr.current >= 0 && cr.current < len(cr.steps) {
-		leaf = e.processes[cr.steps[cr.current].RunInstanceID]
+	if cr.current >= 0 && cr.current < len(cr.plan) {
+		leaf = e.processes[cr.plan[cr.current].step.RunInstanceID]
 	}
 	cancel := cr.cancel
 	done := cr.done

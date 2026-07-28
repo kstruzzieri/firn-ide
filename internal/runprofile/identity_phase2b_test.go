@@ -63,7 +63,7 @@ func TestCompoundSnapshotCarriesAggregateOrderingAndStepEpoch(t *testing.T) {
 
 	run := &compoundRun{
 		status:  RunStatus{RunIdentity: aggregate, State: RunStateRunning},
-		steps:   []compoundStepStatus{step},
+		plan:    []executionNode{{step: step}},
 		current: 0,
 		name:    "CI",
 	}

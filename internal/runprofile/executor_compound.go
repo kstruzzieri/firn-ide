@@ -52,12 +52,20 @@ type compoundStatus struct {
 	Reason         string               `json:"reason,omitempty"`
 }
 
-// compoundRun tracks an in-flight compound execution. All fields are guarded by
-// Executor.mu.
+type executionNode struct {
+	// profile is a deep-copied launch snapshot and is immutable after admission.
+	profile RunProfile
+	// step carries this occurrence's identity and lifecycle state. Executor.mu
+	// guards every read and write.
+	step compoundStepStatus
+}
+
+// compoundRun tracks an in-flight compound execution. Mutable fields are
+// guarded by Executor.mu; executionNode.profile remains immutable.
 type compoundRun struct {
 	cancel  context.CancelFunc
 	status  RunStatus
-	steps   []compoundStepStatus
+	plan    []executionNode
 	current int
 	name    string
 	done    chan struct{}
@@ -67,8 +75,10 @@ type compoundRun struct {
 // The caller MUST hold Executor.mu. The steps slice is deep-copied so the
 // emitted payload is never mutated by subsequent step transitions.
 func (cr *compoundRun) snapshot() compoundStatus {
-	steps := make([]compoundStepStatus, len(cr.steps))
-	copy(steps, cr.steps)
+	steps := make([]compoundStepStatus, len(cr.plan))
+	for i := range cr.plan {
+		steps[i] = cr.plan[i].step
+	}
 	return compoundStatus{
 		RunInstanceID:  cr.status.RunInstanceID,
 		CompoundID:     cr.status.ProfileID,
@@ -142,21 +152,27 @@ func (e *Executor) StartCompoundAtEpoch(epoch uint64, workspaceRoot string, comp
 		WorkspaceEpoch: epoch,
 		LaunchSeq:      e.nextRunSeq,
 	}
-	stepStatuses := make([]compoundStepStatus, len(steps))
+	// Snapshot definitions now, but preflight each node only when scheduled:
+	// earlier steps may intentionally create a later cwd or environment file.
+	plan := make([]executionNode, len(steps))
 	for i, step := range steps {
+		profile := deepCopyProfile(step)
 		// nextRunInstanceIDLocked bumps nextRunSeq, so reading it afterwards
 		// yields this step's own launch sequence. Steps order against ordinary
 		// runs by the same monotonic counter rather than a placeholder zero.
 		stepRunInstanceID := e.nextRunInstanceIDLocked()
-		stepStatuses[i] = compoundStepStatus{
-			Idx:                 i,
-			RunInstanceID:       stepRunInstanceID,
-			ParentRunInstanceID: aggregateID,
-			ProfileID:           step.ID,
-			Name:                step.Name,
-			State:               CompoundStepPending,
-			WorkspaceEpoch:      epoch,
-			LaunchSeq:           e.nextRunSeq,
+		plan[i] = executionNode{
+			profile: profile,
+			step: compoundStepStatus{
+				Idx:                 i,
+				RunInstanceID:       stepRunInstanceID,
+				ParentRunInstanceID: aggregateID,
+				ProfileID:           profile.ID,
+				Name:                profile.Name,
+				State:               CompoundStepPending,
+				WorkspaceEpoch:      epoch,
+				LaunchSeq:           e.nextRunSeq,
+			},
 		}
 	}
 
@@ -166,7 +182,7 @@ func (e *Executor) StartCompoundAtEpoch(epoch uint64, workspaceRoot string, comp
 			RunIdentity: aggregateIdentity,
 			State:       RunStateRunning,
 		},
-		steps:   stepStatuses,
+		plan:    plan,
 		current: 0,
 		name:    compound.Name,
 		done:    make(chan struct{}),
@@ -181,7 +197,7 @@ func (e *Executor) StartCompoundAtEpoch(epoch uint64, workspaceRoot string, comp
 	e.emit(running)
 	e.emitCompound(initialSnap)
 
-	go e.runCompound(ctx, workspaceRoot, compound, steps, cr)
+	go e.runCompound(ctx, workspaceRoot, cr)
 	return nil
 }
 
@@ -195,11 +211,11 @@ func (e *Executor) StartCompoundAtEpoch(epoch uint64, workspaceRoot string, comp
 //   - failed  → the failing step's exit code; 1 for setup/spawn errors
 //   - stopped → the stopped leaf's exit code if available, otherwise sentinel
 //     -1 (between-steps cancel with no leaf → -1)
-func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compound RunProfile, steps []RunProfile, cr *compoundRun) {
+func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, cr *compoundRun) {
 	state := RunStateSuccess
 	exitCode := 0
 
-	for i := range steps {
+	for i := range cr.plan {
 		// Cancellation observed before this step starts. The step at index i is
 		// still pending, so it and all later steps are marked skipped by
 		// finishCompound. No leaf exists yet → sentinel exit code -1.
@@ -213,31 +229,34 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 		// from the preassigned status (both reads are guarded fields) in the same
 		// locked section.
 		e.mu.Lock()
+		node := &cr.plan[i]
 		cr.current = i
-		cr.steps[i].State = CompoundStepRunning
-		cr.steps[i].StartedAt = time.Now().UnixMilli()
+		node.step.State = CompoundStepRunning
+		node.step.StartedAt = time.Now().UnixMilli()
+		profile := node.profile
 		stepIdentity := RunIdentity{
-			RunInstanceID:       cr.steps[i].RunInstanceID,
-			ProfileID:           steps[i].ID,
+			RunInstanceID:       node.step.RunInstanceID,
+			ProfileID:           profile.ID,
 			ParentRunInstanceID: cr.status.RunInstanceID,
 			StepIdx:             i,
 			WorkspaceEpoch:      cr.status.WorkspaceEpoch,
-			LaunchSeq:           cr.steps[i].LaunchSeq,
+			LaunchSeq:           node.step.LaunchSeq,
 		}
 		runningSnap := cr.snapshot()
 		e.mu.Unlock()
 		e.emitCompound(runningSnap)
 
-		rp, err := e.startProcess(stepIdentity, steps[i], workspaceRoot)
+		rp, err := e.startProcess(stepIdentity, profile, workspaceRoot)
 		if err != nil {
 			// Setup/spawn failure: record the error on the step, surface it as a
 			// stderr chunk for this step's output lane, and fail the aggregate.
 			e.mu.Lock()
-			cr.steps[i].State = CompoundStepFailed
-			cr.steps[i].ExitCode = 1
-			cr.steps[i].EndedAt = time.Now().UnixMilli()
-			cr.steps[i].DurationMs = cr.steps[i].EndedAt - cr.steps[i].StartedAt
-			cr.steps[i].ErrorMessage = err.Error()
+			step := &cr.plan[i].step
+			step.State = CompoundStepFailed
+			step.ExitCode = 1
+			step.EndedAt = time.Now().UnixMilli()
+			step.DurationMs = step.EndedAt - step.StartedAt
+			step.ErrorMessage = err.Error()
 			failSnap := cr.snapshot()
 			e.mu.Unlock()
 
@@ -256,7 +275,7 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 		// (not the workspace root). startProcess has resolved it; emit an updated
 		// running snapshot before waitProcess begins draining output.
 		e.mu.Lock()
-		cr.steps[i].WorkingDir = rp.workingDir
+		cr.plan[i].step.WorkingDir = rp.workingDir
 		runningDirSnap := cr.snapshot()
 		e.mu.Unlock()
 		e.emitCompound(runningDirSnap)
@@ -278,11 +297,12 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 			// step state, emit, and break with the matching aggregate.
 			e.mu.Lock()
 			now := time.Now().UnixMilli()
-			cr.steps[i].State = leafStepState(res.state)
-			cr.steps[i].ExitCode = res.exitCode
-			cr.steps[i].WorkingDir = res.workingDir
-			cr.steps[i].EndedAt = now
-			cr.steps[i].DurationMs = now - cr.steps[i].StartedAt
+			step := &cr.plan[i].step
+			step.State = leafStepState(res.state)
+			step.ExitCode = res.exitCode
+			step.WorkingDir = res.workingDir
+			step.EndedAt = now
+			step.DurationMs = now - step.StartedAt
 			brokeSnap := cr.snapshot()
 			e.mu.Unlock()
 			e.emitCompound(brokeSnap)
@@ -302,11 +322,12 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 		// Transition: step → success.
 		e.mu.Lock()
 		now := time.Now().UnixMilli()
-		cr.steps[i].State = CompoundStepSuccess
-		cr.steps[i].ExitCode = res.exitCode
-		cr.steps[i].WorkingDir = res.workingDir
-		cr.steps[i].EndedAt = now
-		cr.steps[i].DurationMs = now - cr.steps[i].StartedAt
+		step := &cr.plan[i].step
+		step.State = CompoundStepSuccess
+		step.ExitCode = res.exitCode
+		step.WorkingDir = res.workingDir
+		step.EndedAt = now
+		step.DurationMs = now - step.StartedAt
 		successSnap := cr.snapshot()
 		e.mu.Unlock()
 		e.emitCompound(successSnap)
@@ -321,9 +342,9 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, compou
 // terminal aggregate + final compound snapshot are emitted.
 func (e *Executor) finishCompound(cr *compoundRun, state RunState, exitCode int) {
 	e.mu.Lock()
-	for i := range cr.steps {
-		if cr.steps[i].State == CompoundStepPending {
-			cr.steps[i].State = CompoundStepSkipped
+	for i := range cr.plan {
+		if cr.plan[i].step.State == CompoundStepPending {
+			cr.plan[i].step.State = CompoundStepSkipped
 		}
 	}
 	cr.status.State = state
