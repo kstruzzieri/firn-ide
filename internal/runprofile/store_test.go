@@ -466,6 +466,22 @@ func TestStoreGetAllReturnsCopyDeepFields(t *testing.T) {
 	}
 }
 
+func assertNoUnhandledProfileReferenceKinds(t *testing.T, path string, typ reflect.Type) {
+	t.Helper()
+
+	switch typ.Kind() {
+	case reflect.Struct:
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			assertNoUnhandledProfileReferenceKinds(t, path+"."+field.Name, field.Type)
+		}
+	case reflect.Array:
+		assertNoUnhandledProfileReferenceKinds(t, path+"[]", typ.Elem())
+	case reflect.Map, reflect.Slice, reflect.Pointer, reflect.Interface, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		t.Fatalf("%s contains unhandled reference kind %s", path, typ.Kind())
+	}
+}
+
 func TestDeepCopyProfileCoversAllReferenceFields(t *testing.T) {
 	original := RunProfile{
 		Env:         map[string]string{"KEY": "original"},
@@ -482,18 +498,26 @@ func TestDeepCopyProfileCoversAllReferenceFields(t *testing.T) {
 
 	for i := 0; i < originalValue.NumField(); i++ {
 		field := originalValue.Field(i)
+		fieldType := originalValue.Type().Field(i)
+		path := "RunProfile." + fieldType.Name
 		switch field.Kind() {
 		case reflect.Map, reflect.Slice, reflect.Pointer:
 			if field.IsNil() {
-				t.Fatalf("RunProfile.%s is a new reference field; add it to this fixture",
-					originalValue.Type().Field(i).Name)
+				t.Fatalf("%s is a new reference field; add it to this fixture", path)
 			}
 			if field.Pointer() == copiedValue.Field(i).Pointer() {
-				t.Errorf("deepCopyProfile aliases RunProfile.%s", originalValue.Type().Field(i).Name)
+				t.Errorf("deepCopyProfile aliases %s", path)
 			}
+			if field.Kind() == reflect.Map {
+				assertNoUnhandledProfileReferenceKinds(t, path+" key", fieldType.Type.Key())
+				assertNoUnhandledProfileReferenceKinds(t, path+" value", fieldType.Type.Elem())
+			} else {
+				assertNoUnhandledProfileReferenceKinds(t, path+" element", fieldType.Type.Elem())
+			}
+		case reflect.Struct, reflect.Array:
+			assertNoUnhandledProfileReferenceKinds(t, path, fieldType.Type)
 		case reflect.Interface, reflect.Chan, reflect.Func, reflect.UnsafePointer:
-			t.Fatalf("RunProfile.%s added unsupported mutable kind %s",
-				originalValue.Type().Field(i).Name, field.Kind())
+			t.Fatalf("%s added unsupported mutable kind %s", path, field.Kind())
 		}
 	}
 
