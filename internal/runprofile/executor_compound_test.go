@@ -4,6 +4,7 @@ package runprofile
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -168,8 +169,8 @@ func waitForStepRunning(t *testing.T, e *Executor, compoundProfileID string, ste
 		rid := e.activeByProfile[compoundProfileID]
 		cr := e.compounds[rid]
 		running := false
-		if cr != nil && stepIdx >= 0 && stepIdx < len(cr.steps) && cr.steps[stepIdx].State == CompoundStepRunning {
-			leafRID := cr.steps[stepIdx].RunInstanceID
+		if cr != nil && stepIdx >= 0 && stepIdx < len(cr.plan) && cr.plan[stepIdx].step.State == CompoundStepRunning {
+			leafRID := cr.plan[stepIdx].step.RunInstanceID
 			_, leafRunning := e.processes[leafRID]
 			running = leafRunning
 		}
@@ -180,6 +181,95 @@ func waitForStepRunning(t *testing.T, e *Executor, compoundProfileID string, ste
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("compound %q step %d did not reach running state", compoundProfileID, stepIdx)
+}
+
+func TestExecutorCompoundCapturesResolvedStepSnapshotAtAdmission(t *testing.T) {
+	type preparedStep struct {
+		command string
+		env     string
+	}
+
+	executor := NewExecutor(nil, nil)
+	firstPrepared := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondPrepared := make(chan preparedStep, 1)
+	var (
+		starts      int
+		releaseOnce sync.Once
+	)
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseFirst)
+		})
+	}
+
+	executor.setCommandStartHook(func(cmd *exec.Cmd) error {
+		starts++
+		switch starts {
+		case 1:
+			close(firstPrepared)
+			<-releaseFirst
+		case 2:
+			const prefix = "FIRN_PHASE2D_SNAPSHOT="
+			value := ""
+			for _, item := range cmd.Env {
+				if strings.HasPrefix(item, prefix) {
+					value = strings.TrimPrefix(item, prefix)
+					break
+				}
+			}
+			secondPrepared <- preparedStep{
+				command: cmd.Args[len(cmd.Args)-1],
+				env:     value,
+			}
+		}
+		return cmd.Start()
+	})
+	t.Cleanup(func() {
+		release()
+		executor.StopAll(5 * time.Second)
+	})
+
+	steps := []RunProfile{
+		newTestProfile("first", "go version"),
+		{
+			ID:      "second",
+			Name:    "second",
+			Type:    ProfileTypeSingle,
+			Command: "go env GOOS",
+			Env: map[string]string{
+				"FIRN_PHASE2D_SNAPSHOT": "planned",
+			},
+		},
+	}
+	compound := compoundProfile("ci", "first", "second")
+
+	if err := executor.StartCompound(t.TempDir(), compound, steps); err != nil {
+		t.Fatalf("StartCompound: %v", err)
+	}
+	select {
+	case <-firstPrepared:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first step never reached process start")
+	}
+
+	// Keep this barrier: the same test runs under -race to verify the
+	// coordinator consumes an owned snapshot, not caller memory.
+	steps[1].Command = "go env GOARCH"
+	steps[1].Env["FIRN_PHASE2D_SNAPSHOT"] = "mutated"
+	release()
+
+	var got preparedStep
+	select {
+	case got = <-secondPrepared:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second step never reached process start")
+	}
+	waitForTerminalStatus(t, executor, compound.ID)
+
+	if got.command != "go env GOOS" || got.env != "planned" {
+		t.Fatalf("second step used caller mutation: command=%q env=%q", got.command, got.env)
+	}
 }
 
 func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {

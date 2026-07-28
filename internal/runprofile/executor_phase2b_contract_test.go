@@ -122,10 +122,10 @@ func phase2BCompoundLeafID(t *testing.T, executor *Executor, aggregateID string)
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	compound := executor.compounds[aggregateID]
-	if compound == nil || compound.current < 0 || compound.current >= len(compound.steps) {
+	if compound == nil || compound.current < 0 || compound.current >= len(compound.plan) {
 		t.Fatalf("compound %q has no current leaf", aggregateID)
 	}
-	return compound.steps[compound.current].RunInstanceID
+	return compound.plan[compound.current].step.RunInstanceID
 }
 
 func phase2BStopRunInstance(t *testing.T, exec *Executor, runInstanceID string) error {

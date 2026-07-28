@@ -5,6 +5,7 @@ import (
 	"errors"
 	"firn/internal/filesystem"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -462,6 +463,50 @@ func TestStoreGetAllReturnsCopyDeepFields(t *testing.T) {
 	}
 	if internal[0].Steps[0] != "step1" {
 		t.Errorf("GetAll() Steps should be a deep copy; internal was mutated to %q", internal[0].Steps[0])
+	}
+}
+
+func TestDeepCopyProfileCoversAllReferenceFields(t *testing.T) {
+	original := RunProfile{
+		Env:         map[string]string{"KEY": "original"},
+		EnvVariants: EnvVariants{{Name: "dev", EnvFile: ".env.dev"}},
+		Tags:        []ProfileTag{TagBuild},
+		Steps:       []string{"step1"},
+	}
+	copied := deepCopyProfile(original)
+	if !reflect.DeepEqual(original, copied) {
+		t.Fatalf("deepCopyProfile changed values:\noriginal=%#v\ncopied=%#v", original, copied)
+	}
+	originalValue := reflect.ValueOf(original)
+	copiedValue := reflect.ValueOf(copied)
+
+	for i := 0; i < originalValue.NumField(); i++ {
+		field := originalValue.Field(i)
+		switch field.Kind() {
+		case reflect.Map, reflect.Slice, reflect.Pointer:
+			if field.IsNil() {
+				t.Fatalf("RunProfile.%s is a new reference field; add it to this fixture",
+					originalValue.Type().Field(i).Name)
+			}
+			if field.Pointer() == copiedValue.Field(i).Pointer() {
+				t.Errorf("deepCopyProfile aliases RunProfile.%s", originalValue.Type().Field(i).Name)
+			}
+		case reflect.Interface, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+			t.Fatalf("RunProfile.%s added unsupported mutable kind %s",
+				originalValue.Type().Field(i).Name, field.Kind())
+		}
+	}
+
+	original.Env["KEY"] = "mutated"
+	original.EnvVariants[0].Name = "mutated"
+	original.Tags[0] = TagTest
+	original.Steps[0] = "mutated"
+
+	if copied.Env["KEY"] != "original" ||
+		copied.EnvVariants[0].Name != "dev" ||
+		copied.Tags[0] != TagBuild ||
+		copied.Steps[0] != "step1" {
+		t.Fatalf("deepCopyProfile retained caller-owned reference data: %#v", copied)
 	}
 }
 
