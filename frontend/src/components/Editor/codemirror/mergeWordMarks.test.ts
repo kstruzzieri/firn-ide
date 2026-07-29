@@ -40,6 +40,16 @@ describe('sideWordMarks', () => {
     expect(sideWordMarks(wide, [...wide])).toBeNull();
   });
 
+  it('returns null when one line has too many word tokens to diff cheaply', () => {
+    // The character cap still admits this pair, but alternating word/space runs
+    // would make the token-level Myers trace much larger than the source text.
+    const ours = 'a '.repeat(251);
+    const theirs = 'b '.repeat(251);
+
+    expect(ours.length + theirs.length).toBeLessThan(40_000);
+    expect(sideWordMarks([ours], [theirs])).toBeNull();
+  });
+
   it('returns null when the sides have too many lines, even if the lines are short', () => {
     // Char total is tiny here; the guard that matters is the LINE count, because
     // diffSequences retains up to MAX_MYERS_D (2000) sequence-sized trace snapshots.

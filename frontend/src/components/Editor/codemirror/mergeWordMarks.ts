@@ -1,4 +1,9 @@
-import { diffSequences, inlineWordDiff, type InlineDiffSegment } from '../../../utils/lineDiff';
+import {
+  diffSequences,
+  inlineWordDiff,
+  tokenizeWords,
+  type InlineDiffSegment,
+} from '../../../utils/lineDiff';
 
 /** Word marks for both sides of a conflict card, aligned to their own lines. */
 export interface SideWordMarks {
@@ -6,12 +11,13 @@ export interface SideWordMarks {
   b: InlineDiffSegment[][];
 }
 
-// Above either cap the card renders plain — word marks are a nicety, not worth a
-// stall. Both bounds matter: diffSequences is O(N*D) time AND keeps up to
-// MAX_MYERS_D trace snapshots, so a few hundred short lines is as costly as a few
-// long ones. The line cap sits below MAX_MYERS_D (2000 in lineDiff.ts).
+// Above any cap the card renders plain — word marks are a nicety, not worth a
+// stall. All bounds matter: diffSequences is O(N*D) time AND keeps up to
+// MAX_MYERS_D trace snapshots, so both many lines and one token-dense line can
+// consume far more memory than their character count suggests.
 const MAX_DIFF_CHARS = 40_000;
 const MAX_DIFF_LINES = 500;
+const MAX_DIFF_TOKENS_PER_PAIR = 1_000;
 
 function totalChars(lines: readonly string[]): number {
   return lines.reduce((sum, line) => sum + line.length, 0);
@@ -37,6 +43,12 @@ export function sideWordMarks(a: readonly string[], b: readonly string[]): SideW
       for (let offset = 0; offset < removed; offset += 1) {
         const oldLine = a[hunk.fromA + offset];
         const newLine = b[hunk.fromB + offset];
+        if (
+          tokenizeWords(oldLine).length + tokenizeWords(newLine).length >
+          MAX_DIFF_TOKENS_PER_PAIR
+        ) {
+          return null;
+        }
         const segments = inlineWordDiff(oldLine, newLine);
         marksA[hunk.fromA + offset] = segments.filter((segment) => segment.type !== 'ins');
         marksB[hunk.fromB + offset] = segments.filter((segment) => segment.type !== 'del');
