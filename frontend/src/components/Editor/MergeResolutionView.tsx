@@ -18,7 +18,8 @@ type BaseStrip =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'text'; content: string }
-  | { status: 'message'; message: string };
+  | { status: 'message'; message: string }
+  | { status: 'error'; message: string };
 
 const REGIONS_CARRY_BASE = (session: TextMergeSession) =>
   session.regions.some((region) => region.hasBase);
@@ -125,6 +126,7 @@ function TextResolutionView({
   const [finalizing, setFinalizing] = useState(false);
   const [reopened, setReopened] = useState<number | null>(null);
   const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
+  const [baseExpanded, setBaseExpanded] = useState(false);
   const [announcement, setAnnouncement] = useState(() => {
     const remaining = session.regions.length - Object.keys(session.decisions).length;
     return `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`;
@@ -135,17 +137,19 @@ function TextResolutionView({
   // openMergeResolution request must not show the previous file's base.
   useEffect(() => {
     setBase({ status: 'idle' });
+    setBaseExpanded(false);
   }, [session.path, session.requestRevision]);
 
   const loadBase = async () => {
-    if (base.status !== 'idle') return;
+    if (base.status !== 'idle' && base.status !== 'error') return;
     setBase({ status: 'loading' });
     const { path, repoRoot, requestRevision } = sessionRef.current;
     // Session identity is `requestRevision` (monotonic per openMergeResolution),
     // NOT `epoch` — epoch is workspace-scoped and starts at 0, so comparing it to a
     // session epoch would be wrong. If the prop swaps mid-fetch, sessionRef advances
     // and we bail.
-    const isStale = () => sessionRef.current.requestRevision !== requestRevision;
+    const isStale = () =>
+      sessionRef.current.path !== path || sessionRef.current.requestRevision !== requestRevision;
     try {
       const stages = await GitConflictStages(repoRoot, path);
       if (isStale()) return;
@@ -182,9 +186,10 @@ function TextResolutionView({
       // overwrite the new session's freshly-reset strip.
       if (isStale()) return;
       setBase({
-        status: 'message',
+        status: 'error',
         message: `Could not read the base version: ${error instanceof Error ? error.message : String(error)}`,
       });
+      setBaseExpanded(false);
     }
   };
 
@@ -247,6 +252,14 @@ function TextResolutionView({
   const unresolved = session.regions.length - Object.keys(resolutionState.decisions).length;
   const fileIndex = session.fileQueue.indexOf(session.path) + 1;
   const disabled = unresolved !== 0 || session.readOnly || finalizing;
+  const baseStatus =
+    base.status === 'loading'
+      ? 'Loading base…'
+      : base.status === 'text'
+        ? 'Base version loaded.'
+        : base.status === 'message' || base.status === 'error'
+          ? base.message
+          : '';
   const finalize = async () => {
     const editor = editorRef.current;
     if (!editor || disabled) return;
@@ -316,15 +329,31 @@ function TextResolutionView({
           <button
             type="button"
             className={styles.secondaryButton}
-            onClick={() => void loadBase()}
-            aria-expanded={base.status !== 'idle'}
+            onClick={() => {
+              if (baseExpanded) {
+                setBaseExpanded(false);
+                return;
+              }
+              setBaseExpanded(true);
+              void loadBase();
+            }}
+            aria-expanded={baseExpanded}
           >
-            Show base (common ancestor)
+            {baseExpanded ? 'Hide' : 'Show'} base (common ancestor)
           </button>
-          {base.status === 'loading' && <span className={styles.baseNote}>Loading base…</span>}
-          {base.status === 'message' && <span className={styles.baseNote}>{base.message}</span>}
-          {base.status === 'text' && (
-            <pre className={styles.basePane} aria-label="Base version, read-only">
+          <span
+            className={baseExpanded || base.status === 'error' ? styles.baseNote : styles.srOnly}
+            aria-live="polite"
+          >
+            {baseStatus}
+          </span>
+          {baseExpanded && base.status === 'text' && (
+            <pre
+              className={styles.basePane}
+              role="region"
+              tabIndex={0}
+              aria-label="Base version, read-only"
+            >
               {base.content}
             </pre>
           )}
@@ -340,7 +369,11 @@ function TextResolutionView({
                 type="button"
                 className={`${styles.railItem} ${decisionClass(decision)} ${resolutionState.activeIndex === index ? styles.active : ''}`}
                 aria-current={resolutionState.activeIndex === index ? 'true' : undefined}
-                aria-label={`Conflict ${index + 1}: ${decisionLabel(decision)}`}
+                aria-label={
+                  decision === undefined
+                    ? `Conflict ${index + 1}: unresolved`
+                    : `Reopen conflict ${index + 1} (currently ${decisionLabel(decision)})`
+                }
                 onClick={() => {
                   const editor = editorRef.current;
                   if (!editor) return;

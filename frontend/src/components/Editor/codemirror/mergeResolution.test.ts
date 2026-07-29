@@ -1,7 +1,7 @@
 import { redo } from '@codemirror/commands';
 import { searchPanelOpen } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
-import { runScopeHandlers } from '@codemirror/view';
+import { EditorView, runScopeHandlers } from '@codemirror/view';
 
 jest.mock('./extensions', () => ({}));
 jest.mock('./diagnostics', () => ({}));
@@ -787,7 +787,7 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
-  it('allows a non-ambiguous edit spanning two resolved regions and marks both manual', () => {
+  it('keeps a spanning manual edit but refuses to reopen either overlapping region', () => {
     const adjacentContent = [
       '<<<<<<< current',
       'first current',
@@ -835,6 +835,13 @@ describe('merge resolution editor', () => {
     expect(editor.redo()).toBe(true);
     expect(editor.getResult()).toBe('joined\ntail\n');
     expect(editor.getState().decisions).toEqual({ 0: 'M', 1: 'M' });
+
+    const result = editor.getResult();
+    const state = editor.getState();
+    expect(editor.reopen(0)).toBe(false);
+    expect(editor.reopen(1)).toBe(false);
+    expect(editor.getResult()).toBe(result);
+    expect(editor.getState()).toEqual(state);
     editor.destroy();
   });
 
@@ -1237,7 +1244,10 @@ describe('merge resolution editor', () => {
         },
       ] as TextMergeSession['regions'],
     });
-    const editor = createMergeResolutionEditor(document.body, twoEmpty);
+    const errors: unknown[] = [];
+    const editor = createMergeResolutionEditor(document.body, twoEmpty, {
+      extensions: [EditorView.exceptionSink.of((error) => errors.push(error))],
+    });
     const original = editor.view.state.doc.toString();
 
     // Resolve both to the empty CURRENT side → both blocks vanish.
@@ -1266,6 +1276,7 @@ describe('merge resolution editor', () => {
     expect(editor.reopen(1)).toBe(true);
     expect(editor.getState().decisions).toEqual({});
     expect(editor.view.state.doc.toString()).toBe(original);
+    expect(errors).toEqual([]);
     editor.destroy();
   });
 
@@ -1529,6 +1540,33 @@ describe('merge resolution editor', () => {
     expect(stripedLines(editor, 'C')).toEqual(['first', 'second']);
 
     editor.reopen(0);
+    expect(stripedLines(editor, 'C')).toEqual([]);
+    editor.destroy();
+  });
+
+  it('omits all provenance stripes when resolved content exceeds the document cap', () => {
+    const lines = Array.from({ length: 1_001 }, (_, index) => `line ${index + 1}`);
+    const large = session({
+      content: ['<<<<<<< current', ...lines, '=======', 'incoming', '>>>>>>> incoming', ''].join(
+        '\n'
+      ),
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: lines.length + 4,
+          ours: lines,
+          theirs: ['incoming'],
+        },
+      ] as TextMergeSession['regions'],
+    });
+    const editor = createMergeResolutionEditor(document.body, large);
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+
     expect(stripedLines(editor, 'C')).toEqual([]);
     editor.destroy();
   });

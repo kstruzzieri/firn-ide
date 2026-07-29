@@ -26,10 +26,13 @@ import { Decoration, EditorView, keymap, lineNumbers, WidgetType } from '@codemi
 import type { git } from '../../../../wailsjs/go/models';
 import type { InlineDiffSegment } from '../../../utils/lineDiff';
 import type { MergeDecision, TextMergeSession } from '../../../stores/gitStore';
-import { DEFAULT_SYNTAX_THEME_ID, type SyntaxThemeId } from './palettes';
+import { DEFAULT_SYNTAX_THEME_ID, getSyntaxPalette, type SyntaxThemeId } from './palettes';
 import { sideWordMarks, type SideWordMarks } from './mergeWordMarks';
 import { inFileSearchExtensions, inFileSearchKeymap } from './search';
-import { buildTheme } from './theme';
+import { buildChrome } from './theme';
+
+// ponytail: 1,000-line whole-document ceiling; use viewport-only provenance if larger merges need stripes.
+const MAX_PROVENANCE_LINES = 1_000;
 
 export type MergeChoice = Exclude<MergeDecision, 'M'>;
 export type MergeOrder = 'current-first' | 'incoming-first';
@@ -526,8 +529,19 @@ function resolutionExtension(
       EditorView.editable.from(field, (value) => !session.readOnly && !value.frozen),
       EditorView.decorations.compute(['doc', field], (state) => {
         const value = state.field(field);
+        const ranges = rangesIn(value);
+        const showProvenance =
+          ranges.reduce((lineCount, { from, to, index }) => {
+            if (value.decisions[index] === undefined || from === to) return lineCount;
+            return (
+              lineCount +
+              state.doc.lineAt(Math.max(from, to - 1)).number -
+              state.doc.lineAt(from).number +
+              1
+            );
+          }, 0) <= MAX_PROVENANCE_LINES;
         const decorations: Range<Decoration>[] = [];
-        for (const { from, to, index } of rangesIn(value)) {
+        for (const { from, to, index } of ranges) {
           const decision = value.decisions[index];
           if (decision === undefined) {
             decorations.push(
@@ -550,7 +564,7 @@ function resolutionExtension(
             );
             continue;
           }
-          if (from === to) continue;
+          if (!showProvenance || from === to) continue;
           const last = state.doc.lineAt(Math.max(from, to - 1));
           for (
             let line = state.doc.lineAt(from);
@@ -661,7 +675,7 @@ export function createMergeResolutionEditor(
     state: EditorState.create({
       doc: normalizeDocument(session.content),
       extensions: [
-        theme.of(buildTheme(options.syntaxThemeId ?? DEFAULT_SYNTAX_THEME_ID)),
+        theme.of(buildChrome(getSyntaxPalette(options.syntaxThemeId ?? DEFAULT_SYNTAX_THEME_ID))),
         // The result spine is a real document, so number it like one. Conflict cards
         // are block-replaced ranges, so their marker lines share a single gutter slot
         // until the conflict is resolved and the real result lines take their place.
@@ -710,7 +724,8 @@ export function createMergeResolutionEditor(
       return changed;
     },
     setFrozen: (frozen) => view.dispatch({ effects: setMergeFrozen.of(frozen) }),
-    setTheme: (themeId) => view.dispatch({ effects: theme.reconfigure(buildTheme(themeId)) }),
+    setTheme: (themeId) =>
+      view.dispatch({ effects: theme.reconfigure(buildChrome(getSyntaxPalette(themeId))) }),
     next: (direction = 1) => navigate(view, support.field, session.regions.length, direction),
     activate: (index) => activateRegion(view, support.field, index),
     reopen: (index, options) =>
@@ -793,6 +808,14 @@ function reopenRegion(
   const range = snapshot.find((item) => item.index === index);
   const block = originalBlocks[index];
   if (!range || block === undefined) return false;
+  if (
+    range.from < range.to &&
+    snapshot.some(
+      (item) =>
+        item.index !== index && item.from < item.to && item.from < range.to && item.to > range.from
+    )
+  )
+    return false;
 
   const insert = `${block}${range.trailingNewline ? '\n' : ''}`;
   const delta = insert.length - (range.to - range.from);

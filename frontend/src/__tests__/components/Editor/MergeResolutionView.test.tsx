@@ -124,6 +124,8 @@ const sidesSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedStages.mockReset();
+  mockedFileAtRev.mockReset();
   syntaxThemeId = 'glacier';
   onStateChange = undefined;
 });
@@ -192,17 +194,22 @@ describe('MergeResolutionView', () => {
     ['I', 'Incoming'],
     ['B', 'Both'],
     ['M', 'Manual'],
-  ] as const)('renders resolved %s rail entries with an explicit %s name', (_decision, word) => {
-    render(<MergeResolutionView session={textSession} visible />);
-    act(() =>
-      onStateChange?.({ activeIndex: 0, decisions: { 0: _decision }, order: 'current-first' })
-    );
+  ] as const)(
+    'names resolved %s rail entries as the Reopen action with their %s status',
+    (_decision, word) => {
+      render(<MergeResolutionView session={textSession} visible />);
+      act(() =>
+        onStateChange?.({ activeIndex: 0, decisions: { 0: _decision }, order: 'current-first' })
+      );
 
-    const rail = screen.getByRole('button', { name: `Conflict 1: ${word}` });
-    expect(rail).toHaveTextContent(_decision);
-    expect(rail).toHaveAttribute('aria-current', 'true');
-    expect(rail).not.toHaveAttribute('aria-pressed');
-  });
+      const rail = screen.getByRole('button', {
+        name: `Reopen conflict 1 (currently ${word})`,
+      });
+      expect(rail).toHaveTextContent(_decision);
+      expect(rail).toHaveAttribute('aria-current', 'true');
+      expect(rail).not.toHaveAttribute('aria-pressed');
+    }
+  );
 
   it('renders whole-file sides from stage presence and finalizes only a selected side', async () => {
     const { rerender } = render(<MergeResolutionView session={sidesSession} visible />);
@@ -257,7 +264,9 @@ describe('MergeResolutionView', () => {
     expect(controller.setFrozen).toHaveBeenCalledWith(true);
     const undo = screen.getByRole('button', { name: 'Undo' });
     const next = screen.getByRole('button', { name: 'Next unresolved' });
-    const rail = screen.getByRole('button', { name: 'Conflict 1: Current' });
+    const rail = screen.getByRole('button', {
+      name: 'Reopen conflict 1 (currently Current)',
+    });
     expect(undo).toBeDisabled();
     expect(next).toBeDisabled();
     expect(rail).toBeDisabled();
@@ -439,7 +448,7 @@ describe('MergeResolutionView rail reopen', () => {
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
     expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: Current' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen conflict 1 (currently Current)' }));
     expect(controller.reopen).toHaveBeenCalledWith(0);
 
     // The real editor would fire onStateChange after the reopen transaction; here
@@ -453,7 +462,7 @@ describe('MergeResolutionView rail reopen', () => {
   it('jump-back activates the reopened conflict and then hides itself', () => {
     render(<MergeResolutionView session={textSession} visible />);
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: Current' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen conflict 1 (currently Current)' }));
     act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Conflict 1 reopened — go to it' }));
@@ -473,7 +482,7 @@ describe('MergeResolutionView rail reopen', () => {
   it('clears the jump affordance when the session advances to another file', () => {
     const { rerender } = render(<MergeResolutionView session={textSession} visible />);
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: Current' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen conflict 1 (currently Current)' }));
     act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
     expect(screen.getByRole('button', { name: /go to it/i })).toBeInTheDocument();
 
@@ -494,7 +503,20 @@ describe('MergeResolutionView rail reopen', () => {
 });
 
 describe('MergeResolutionView base strip', () => {
-  it('fetches stage 1 on first expand and shows its content', async () => {
+  it('keeps a polite live region mounted and announces loading', () => {
+    mockedStages.mockReturnValue(new Promise<never>(() => undefined));
+
+    render(<MergeResolutionView session={textSession} visible />);
+    const toggle = screen.getByRole('button', { name: 'Show base (common ancestor)' });
+    const liveRegion = toggle.parentElement?.querySelector('[aria-live="polite"]');
+
+    expect(liveRegion).toBeInTheDocument();
+    expect(liveRegion).toBeEmptyDOMElement();
+    fireEvent.click(toggle);
+    expect(liveRegion).toHaveTextContent('Loading base…');
+  });
+
+  it('toggles a focusable base region and reuses successfully loaded content', async () => {
     mockedStages.mockResolvedValue({
       path: 'src/conflict.ts',
       base: { hash: 'abc', size: 12 },
@@ -507,10 +529,111 @@ describe('MergeResolutionView base strip', () => {
     } as never);
 
     render(<MergeResolutionView session={textSession} visible />);
-    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+    const show = screen.getByRole('button', { name: 'Show base (common ancestor)' });
+    expect(show).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(show);
 
-    await waitFor(() => expect(screen.getByText('ancestor')).toBeInTheDocument());
+    const hide = await screen.findByRole('button', { name: 'Hide base (common ancestor)' });
+    expect(hide).toHaveAttribute('aria-expanded', 'true');
+    const baseRegion = await screen.findByRole('region', {
+      name: 'Base version, read-only',
+    });
+    expect(baseRegion).toHaveTextContent('ancestor');
+    expect(baseRegion).toHaveAttribute('tabindex', '0');
+    baseRegion.focus();
+    expect(baseRegion).toHaveFocus();
+    expect(hide.parentElement?.querySelector('[aria-live="polite"]')).toHaveTextContent(
+      'Base version loaded.'
+    );
     expect(mockedFileAtRev).toHaveBeenCalledWith('/repo', ':1', 'src/conflict.ts');
+
+    fireEvent.click(hide);
+    expect(screen.getByRole('button', { name: 'Show base (common ancestor)' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+    expect(
+      screen.queryByRole('region', { name: 'Base version, read-only' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('ancestor');
+    expect(mockedStages).toHaveBeenCalledTimes(1);
+    expect(mockedFileAtRev).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient base error from the collapsed Show control', async () => {
+    mockedStages.mockRejectedValueOnce(new Error('network unavailable')).mockResolvedValueOnce({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 12 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({
+      content: 'ancestor\n',
+      binary: false,
+      truncated: false,
+    } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+
+    const error = await screen.findByText('Could not read the base version: network unavailable');
+    expect(error).toHaveAttribute('aria-live', 'polite');
+    const retry = screen.getByRole('button', { name: 'Show base (common ancestor)' });
+    expect(retry).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(retry);
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('ancestor');
+    expect(mockedStages).toHaveBeenCalledTimes(2);
+    expect(mockedFileAtRev).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears expanded base content when the session identity changes', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 12 },
+      binary: false,
+    } as never);
+    mockedFileAtRev
+      .mockResolvedValueOnce({
+        content: 'old ancestor\n',
+        binary: false,
+        truncated: false,
+      } as never)
+      .mockResolvedValueOnce({
+        content: 'fresh ancestor\n',
+        binary: false,
+        truncated: false,
+      } as never);
+
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('old ancestor');
+
+    rerender(
+      <MergeResolutionView
+        session={{ ...textSession, requestRevision: 2 } as MergeSession}
+        visible
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Show base (common ancestor)' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+    expect(
+      screen.queryByRole('region', { name: 'Base version, read-only' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('fresh ancestor');
   });
 
   it('explains an absent base instead of showing an empty pane', async () => {
@@ -522,7 +645,7 @@ describe('MergeResolutionView base strip', () => {
     await waitFor(() =>
       expect(
         screen.getByText('No common ancestor — this file was added on both sides.')
-      ).toBeInTheDocument()
+      ).toHaveAttribute('aria-live', 'polite')
     );
     expect(mockedFileAtRev).not.toHaveBeenCalled();
   });
