@@ -18,6 +18,8 @@ import (
 // controls may treat it as "nothing to replace" and start fresh instead.
 var ErrRunInstanceNotRunning = errors.New("run instance not running")
 
+var errRunAdmissionInvalidated = errors.New("run admission invalidated")
+
 // RunState represents the lifecycle state of a profile execution.
 type RunState string
 
@@ -206,10 +208,10 @@ func (e *Executor) checkAdmission(epoch uint64) error {
 
 func (e *Executor) checkAdmissionLocked(epoch uint64) error {
 	if epoch != e.workspaceEpoch {
-		return fmt.Errorf("workspace epoch mismatch: got %d, current %d", epoch, e.workspaceEpoch)
+		return fmt.Errorf("workspace epoch mismatch: got %d, current %d: %w", epoch, e.workspaceEpoch, errRunAdmissionInvalidated)
 	}
 	if e.draining {
-		return fmt.Errorf("run admission is paused for workspace drain")
+		return fmt.Errorf("run admission is paused for workspace drain: %w", errRunAdmissionInvalidated)
 	}
 	return nil
 }
@@ -271,7 +273,7 @@ func (e *Executor) startReservedProcess(prepared *preparedProcess, reservation *
 	if invalid {
 		prepared.closePipes()
 		e.finishReservation(reservation)
-		return nil, fmt.Errorf("run admission invalidated before process start")
+		return nil, fmt.Errorf("%w before process start", errRunAdmissionInvalidated)
 	}
 
 	if err := startCommand(prepared.cmd); err != nil {
@@ -290,7 +292,7 @@ func (e *Executor) startReservedProcess(prepared *preparedProcess, reservation *
 		e.mu.Unlock()
 		e.reapInvalidatedProcess(prepared)
 		e.finishReservation(reservation)
-		return nil, fmt.Errorf("run admission invalidated during process start")
+		return nil, fmt.Errorf("%w during process start", errRunAdmissionInvalidated)
 	}
 
 	rp := &runningProcess{

@@ -2,6 +2,7 @@ package runprofile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -248,6 +249,22 @@ func (e *Executor) runCompound(ctx context.Context, workspaceRoot string, cr *co
 
 		rp, err := e.startProcess(stepIdentity, profile, workspaceRoot)
 		if err != nil {
+			if errors.Is(err, errRunAdmissionInvalidated) {
+				e.mu.Lock()
+				step := &cr.plan[i].step
+				step.State = CompoundStepStopped
+				step.ExitCode = -1
+				step.EndedAt = time.Now().UnixMilli()
+				step.DurationMs = step.EndedAt - step.StartedAt
+				stopSnap := cr.snapshot()
+				e.mu.Unlock()
+				e.emitCompound(stopSnap)
+
+				state = RunStateStopped
+				exitCode = -1
+				break
+			}
+
 			// Setup/spawn failure: record the error on the step, surface it as a
 			// stderr chunk for this step's output lane, and fail the aggregate.
 			e.mu.Lock()
