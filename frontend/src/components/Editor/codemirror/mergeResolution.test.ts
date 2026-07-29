@@ -256,6 +256,41 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
+  it('labels the card with the live line range its block occupies', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+
+    // Conflict 1's marker block is lines 2-6 of the fixture; the gutter skips those,
+    // so the card has to say which lines the gap stands for.
+    const title = document.querySelector('.cm-mergeResolution-title');
+    expect(title?.textContent).toBe('Conflict 1 · lines 2-6');
+    editor.destroy();
+  });
+
+  it('recomputes a later card line range after an earlier conflict resolves', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    const titles = () =>
+      Array.from(document.querySelectorAll('.cm-mergeResolution-title')).map(
+        (node) => node.textContent
+      );
+    const strips = () =>
+      Array.from(document.querySelectorAll('.cm-mergeResolution-strip')).map(
+        (node) => node.textContent
+      );
+    // Conflict 2's block starts at line 8 while conflict 1 is still unresolved.
+    expect([...titles(), ...strips()].join(' ')).toContain('Conflict 2');
+
+    // Take Current on conflict 1 replaces its 5-line block with 1 line, shifting
+    // everything below up by 4. Conflict 2 becomes the active card at lines 4-8.
+    (
+      Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Take Current'
+      ) as HTMLButtonElement
+    ).click();
+
+    expect(titles()).toContain('Conflict 2 · lines 4-8');
+    editor.destroy();
+  });
+
   it('replaces the active marker block, advances, and restores text plus decisions through history', () => {
     const editor = createMergeResolutionEditor(document.body, session());
     const current = Array.from(document.querySelectorAll('button')).find(
@@ -522,8 +557,10 @@ describe('merge resolution editor', () => {
     expect(document.body.textContent).toContain('INCOMING — topic/incoming');
     const strip = document.querySelector('.cm-mergeResolution-strip') as HTMLButtonElement;
     expect(strip.textContent).toContain('CURRENT — release/current / INCOMING — topic/incoming');
+    // The strip names the lines it hides, so a screen-reader user hears which part
+    // of the file the collapsed conflict stands for.
     expect(strip).toHaveAccessibleName(
-      'Open conflict 2: CURRENT — release/current / INCOMING — topic/incoming'
+      'Open conflict 2, lines 8-12: CURRENT — release/current / INCOMING — topic/incoming'
     );
     expect(document.body.textContent).not.toContain('MERGE_HEAD');
     expect(document.body.textContent).toContain('(deletes this block)');

@@ -210,6 +210,21 @@ function mapRanges(
   );
 }
 
+/**
+ * Names the document lines a block occupies, for the card title. The gutter skips
+ * these lines (the card replaces them), so this is the only place the user can see
+ * which part of the file the card stands for. Computed from live document state, not
+ * the parse-time region coordinates, so it stays right after earlier conflicts
+ * resolve and shift everything below them.
+ */
+function describeLineRange(state: EditorState, from: number, to: number): string {
+  const first = state.doc.lineAt(from).number;
+  // `to` sits on the block's trailing newline; step back so the range does not
+  // claim the following line.
+  const last = state.doc.lineAt(Math.max(from, to - 1)).number;
+  return first === last ? `line ${first}` : `lines ${first}-${last}`;
+}
+
 function appendSide(
   parent: HTMLElement,
   label: string,
@@ -257,6 +272,9 @@ class MergeResolutionWidget extends WidgetType {
     private readonly readOnly: boolean,
     private readonly frozen: boolean,
     private readonly marks: SideWordMarks | null,
+    /** Live line range this block occupies, e.g. `lines 2-6`. The gutter skips these
+     * lines because the card replaces them, so the card itself names the gap. */
+    private readonly lineRange: string,
     private readonly act: (view: EditorView, index: number, choice: MergeChoice | 'M') => void,
     private readonly activate: (view: EditorView, index: number) => void
   ) {
@@ -269,7 +287,8 @@ class MergeResolutionWidget extends WidgetType {
       other.active === this.active &&
       other.order === this.order &&
       other.region === this.region &&
-      other.frozen === this.frozen
+      other.frozen === this.frozen &&
+      other.lineRange === this.lineRange
     );
   }
 
@@ -282,11 +301,13 @@ class MergeResolutionWidget extends WidgetType {
       root.className = 'cm-mergeResolution-strip';
       root.dataset.regionIndex = String(this.index);
       root.disabled = this.frozen;
+      // A collapsed strip replaces its block too, so it also leaves a gutter gap —
+      // name its lines for the same reason the expanded card does.
       root.setAttribute(
         'aria-label',
-        `Open conflict ${this.index + 1}: ${currentLabel} / ${incomingLabel}`
+        `Open conflict ${this.index + 1}, ${this.lineRange}: ${currentLabel} / ${incomingLabel}`
       );
-      root.textContent = `Conflict ${this.index + 1}: ${currentLabel} / ${incomingLabel}`;
+      root.textContent = `Conflict ${this.index + 1} · ${this.lineRange}: ${currentLabel} / ${incomingLabel}`;
       root.addEventListener('click', (event) => {
         event.preventDefault();
         if (this.frozen) return;
@@ -301,7 +322,7 @@ class MergeResolutionWidget extends WidgetType {
 
     const title = document.createElement('div');
     title.className = 'cm-mergeResolution-title';
-    title.textContent = `Conflict ${this.index + 1}`;
+    title.textContent = `Conflict ${this.index + 1} · ${this.lineRange}`;
     root.appendChild(title);
     appendSide(root, currentLabel, this.region.ours, this.marks?.a);
     appendSide(root, incomingLabel, this.region.theirs, this.marks?.b);
@@ -521,6 +542,7 @@ function resolutionExtension(
                   session.readOnly,
                   value.frozen,
                   regionWordMarks[index],
+                  describeLineRange(state, from, to),
                   apply,
                   activate
                 ),
