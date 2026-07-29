@@ -7,6 +7,7 @@ import {
   StateEffect,
   StateField,
   type Extension,
+  type Range,
 } from '@codemirror/state';
 import { acceptCompletion, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import {
@@ -21,12 +22,17 @@ import {
 } from '@codemirror/commands';
 import { foldKeymap } from '@codemirror/language';
 import { lintKeymap } from '@codemirror/lint';
-import { Decoration, EditorView, keymap, WidgetType } from '@codemirror/view';
+import { Decoration, EditorView, keymap, lineNumbers, WidgetType } from '@codemirror/view';
 import type { git } from '../../../../wailsjs/go/models';
+import type { InlineDiffSegment } from '../../../utils/lineDiff';
 import type { MergeDecision, TextMergeSession } from '../../../stores/gitStore';
-import { DEFAULT_SYNTAX_THEME_ID, type SyntaxThemeId } from './palettes';
+import { DEFAULT_SYNTAX_THEME_ID, getSyntaxPalette, type SyntaxThemeId } from './palettes';
+import { sideWordMarks, type SideWordMarks } from './mergeWordMarks';
 import { inFileSearchExtensions, inFileSearchKeymap } from './search';
-import { buildTheme } from './theme';
+import { buildChrome } from './theme';
+
+// ponytail: 1,000-line whole-document ceiling; use viewport-only provenance if larger merges need stripes.
+const MAX_PROVENANCE_LINES = 1_000;
 
 export type MergeChoice = Exclude<MergeDecision, 'M'>;
 export type MergeOrder = 'current-first' | 'incoming-first';
@@ -207,7 +213,28 @@ function mapRanges(
   );
 }
 
-function appendSide(parent: HTMLElement, label: string, lines: string[]): void {
+/**
+ * Names the document lines a block occupies, for the card title. The gutter skips
+ * these lines (the card replaces them), so this is the only place the user can see
+ * which part of the file the card stands for. Computed from live document state, not
+ * the parse-time region coordinates, so it stays right after earlier conflicts
+ * resolve and shift everything below them.
+ */
+function describeLineRange(state: EditorState, from: number, to: number): string {
+  const first = state.doc.lineAt(from).number;
+  // `to` sits on the block's trailing newline; step back so the range does not
+  // claim the following line.
+  const last = state.doc.lineAt(Math.max(from, to - 1)).number;
+  return first === last ? `line ${first}` : `lines ${first}-${last}`;
+}
+
+function appendSide(
+  parent: HTMLElement,
+  label: string,
+  lines: string[],
+  marks?: InlineDiffSegment[][],
+  emptyText = '(deletes this block)'
+): void {
   const side = document.createElement('section');
   side.className = 'cm-mergeResolution-side';
   const heading = document.createElement('div');
@@ -215,7 +242,25 @@ function appendSide(parent: HTMLElement, label: string, lines: string[]): void {
   heading.textContent = label;
   const body = document.createElement('pre');
   body.className = 'cm-mergeResolution-lines';
-  body.textContent = lines.length === 0 ? '(deletes this block)' : lines.join('\n');
+  if (lines.length === 0) {
+    body.textContent = emptyText;
+  } else if (!marks) {
+    body.textContent = lines.join('\n');
+  } else {
+    lines.forEach((line, index) => {
+      if (index > 0) body.appendChild(document.createTextNode('\n'));
+      for (const segment of marks[index] ?? [{ text: line, type: 'same' as const }]) {
+        if (segment.type === 'same') {
+          body.appendChild(document.createTextNode(segment.text));
+          continue;
+        }
+        const mark = document.createElement('span');
+        mark.className = `cm-mergeResolution-word-${segment.type}`;
+        mark.textContent = segment.text;
+        body.appendChild(mark);
+      }
+    });
+  }
   side.append(heading, body);
   parent.appendChild(side);
 }
@@ -229,6 +274,10 @@ class MergeResolutionWidget extends WidgetType {
     private readonly labels: TextMergeSession['labels'],
     private readonly readOnly: boolean,
     private readonly frozen: boolean,
+    private readonly marks: SideWordMarks | null,
+    /** Live line range this block occupies, e.g. `lines 2-6`. The gutter skips these
+     * lines because the card replaces them, so the card itself names the gap. */
+    private readonly lineRange: string,
     private readonly act: (view: EditorView, index: number, choice: MergeChoice | 'M') => void,
     private readonly activate: (view: EditorView, index: number) => void
   ) {
@@ -241,7 +290,8 @@ class MergeResolutionWidget extends WidgetType {
       other.active === this.active &&
       other.order === this.order &&
       other.region === this.region &&
-      other.frozen === this.frozen
+      other.frozen === this.frozen &&
+      other.lineRange === this.lineRange
     );
   }
 
@@ -254,11 +304,13 @@ class MergeResolutionWidget extends WidgetType {
       root.className = 'cm-mergeResolution-strip';
       root.dataset.regionIndex = String(this.index);
       root.disabled = this.frozen;
+      // A collapsed strip replaces its block too, so it also leaves a gutter gap —
+      // name its lines for the same reason the expanded card does.
       root.setAttribute(
         'aria-label',
-        `Open conflict ${this.index + 1}: ${currentLabel} / ${incomingLabel}`
+        `Open conflict ${this.index + 1}, ${this.lineRange}: ${currentLabel} / ${incomingLabel}`
       );
-      root.textContent = `Conflict ${this.index + 1}: ${currentLabel} / ${incomingLabel}`;
+      root.textContent = `Conflict ${this.index + 1} · ${this.lineRange}: ${currentLabel} / ${incomingLabel}`;
       root.addEventListener('click', (event) => {
         event.preventDefault();
         if (this.frozen) return;
@@ -273,25 +325,78 @@ class MergeResolutionWidget extends WidgetType {
 
     const title = document.createElement('div');
     title.className = 'cm-mergeResolution-title';
-    title.textContent = `Conflict ${this.index + 1}`;
+    title.textContent = `Conflict ${this.index + 1} · ${this.lineRange}`;
     root.appendChild(title);
-    appendSide(root, currentLabel, this.region.ours);
-    appendSide(root, incomingLabel, this.region.theirs);
+    appendSide(root, currentLabel, this.region.ours, this.marks?.a);
+    appendSide(root, incomingLabel, this.region.theirs, this.marks?.b);
+    if (this.region.hasBase) {
+      appendSide(
+        root,
+        'BASE — common ancestor',
+        this.region.base,
+        undefined,
+        '(no lines in the common ancestor)'
+      );
+    }
 
     const actions = document.createElement('div');
     actions.className = 'cm-mergeResolution-actions';
+    // Preview is ephemeral view state: append/remove a ghost <pre> directly in the
+    // card DOM, never a transaction — so the decoration facet never recomputes and the
+    // focused button is never rebuilt. A real state change produces a fresh card with
+    // no ghost, clearing preview automatically.
+    let ghost: HTMLElement | null = null;
+    const renderGhost = (choice: MergeChoice | null) => {
+      if (choice === null) {
+        ghost?.remove();
+        ghost = null;
+      } else {
+        if (!ghost) {
+          ghost = document.createElement('pre');
+          ghost.className = 'cm-mergeResolution-ghost';
+          ghost.setAttribute('aria-hidden', 'true');
+          root.appendChild(ghost);
+        }
+        // Same function applyResolution uses — preview can never disagree with apply.
+        ghost.textContent = resolutionLines(this.region, choice, this.order).join('\n');
+      }
+      // Not a transaction, so tell CodeMirror to re-measure the block's height.
+      view.requestMeasure();
+    };
     const button = (label: string, choice: MergeChoice | 'M') => {
       const element = document.createElement('button');
       element.type = 'button';
       element.className = 'cm-mergeResolution-action';
       element.dataset.decision = choice;
       element.textContent = label;
-      element.disabled = this.readOnly || this.frozen;
+      element.disabled = this.frozen;
+      element.setAttribute('aria-disabled', String(this.readOnly || this.frozen));
       element.addEventListener('click', (event) => {
         event.preventDefault();
         if (this.readOnly || this.frozen) return;
         this.act(view, this.index, choice);
       });
+      if (choice !== 'M' && !this.frozen) {
+        let hovered = false;
+        let focused = false;
+        const sync = () => renderGhost(hovered || focused ? choice : null);
+        element.addEventListener('pointerenter', () => {
+          hovered = true;
+          sync();
+        });
+        element.addEventListener('pointerleave', () => {
+          hovered = false;
+          sync();
+        });
+        element.addEventListener('focus', () => {
+          focused = true;
+          sync();
+        });
+        element.addEventListener('blur', () => {
+          focused = false;
+          sync();
+        });
+      }
       actions.appendChild(element);
     };
     button('Take Current', 'C');
@@ -369,9 +474,13 @@ function transactionChanges(tr: {
 function resolutionExtension(
   session: TextMergeSession,
   onStateChange?: (state: MergeResolutionState) => void
-): { extension: Extension[]; field: StateField<ResolutionFieldState> } {
+): { extension: Extension[]; field: StateField<ResolutionFieldState>; originalBlocks: string[] } {
   const document = normalizeDocument(session.content);
   const markerRanges = markerBlockRanges(document, session.regions);
+  const originalBlocks = markerRanges.map(({ from, to }) => document.slice(from, to));
+  const regionWordMarks = session.regions.map((region) =>
+    sideWordMarks(region.ours, region.theirs)
+  );
   const regionRanges = session.regions.map((region, index) => {
     const range = markerRanges[index];
     const trailingNewline = document[range.to] === '\n';
@@ -418,25 +527,58 @@ function resolutionExtension(
     provide: (field) => [
       EditorState.readOnly.from(field, (value) => session.readOnly || value.frozen),
       EditorView.editable.from(field, (value) => !session.readOnly && !value.frozen),
-      EditorView.decorations.from(field, (value) => {
-        const decorations = rangesIn(value)
-          .filter(({ index }) => value.decisions[index] === undefined)
-          .map(({ from, to, index }) =>
-            Decoration.replace({
-              block: true,
-              widget: new MergeResolutionWidget(
-                session.regions[index],
-                index,
-                value.activeIndex === index,
-                value.order,
-                session.labels,
-                session.readOnly,
-                value.frozen,
-                apply,
-                activate
-              ),
-            }).range(from, to)
-          );
+      EditorView.decorations.compute(['doc', field], (state) => {
+        const value = state.field(field);
+        const ranges = rangesIn(value);
+        const showProvenance =
+          ranges.reduce((lineCount, { from, to, index }) => {
+            if (value.decisions[index] === undefined || from === to) return lineCount;
+            return (
+              lineCount +
+              state.doc.lineAt(Math.max(from, to - 1)).number -
+              state.doc.lineAt(from).number +
+              1
+            );
+          }, 0) <= MAX_PROVENANCE_LINES;
+        const decorations: Range<Decoration>[] = [];
+        for (const { from, to, index } of ranges) {
+          const decision = value.decisions[index];
+          if (decision === undefined) {
+            decorations.push(
+              Decoration.replace({
+                block: true,
+                widget: new MergeResolutionWidget(
+                  session.regions[index],
+                  index,
+                  value.activeIndex === index,
+                  value.order,
+                  session.labels,
+                  session.readOnly,
+                  value.frozen,
+                  regionWordMarks[index],
+                  describeLineRange(state, from, to),
+                  apply,
+                  activate
+                ),
+              }).range(from, to)
+            );
+            continue;
+          }
+          if (!showProvenance || from === to) continue;
+          const last = state.doc.lineAt(Math.max(from, to - 1));
+          for (
+            let line = state.doc.lineAt(from);
+            line.from <= last.from;
+            line = state.doc.line(line.number + 1)
+          ) {
+            decorations.push(
+              Decoration.line({ class: `cm-mergeResolution-provenance-${decision}` }).range(
+                line.from
+              )
+            );
+            if (line.number === state.doc.lines) break;
+          }
+        }
         return Decoration.set(decorations, true);
       }),
     ],
@@ -444,6 +586,7 @@ function resolutionExtension(
 
   return {
     field,
+    originalBlocks,
     extension: [
       field,
       EditorState.transactionFilter.of((tr) => {
@@ -511,6 +654,7 @@ export interface MergeResolutionEditor {
   setTheme: (themeId: SyntaxThemeId) => void;
   next: (direction?: MergeDirection) => boolean;
   activate: (index: number) => boolean;
+  reopen: (index: number, options?: { activate?: boolean }) => boolean;
   destroy: () => void;
 }
 
@@ -531,7 +675,11 @@ export function createMergeResolutionEditor(
     state: EditorState.create({
       doc: normalizeDocument(session.content),
       extensions: [
-        theme.of(buildTheme(options.syntaxThemeId ?? DEFAULT_SYNTAX_THEME_ID)),
+        theme.of(buildChrome(getSyntaxPalette(options.syntaxThemeId ?? DEFAULT_SYNTAX_THEME_ID))),
+        // The result spine is a real document, so number it like one. Conflict cards
+        // are block-replaced ranges, so their marker lines share a single gutter slot
+        // until the conflict is resolved and the real result lines take their place.
+        lineNumbers(),
         history(),
         ...inFileSearchExtensions(),
         ...support.extension,
@@ -576,9 +724,12 @@ export function createMergeResolutionEditor(
       return changed;
     },
     setFrozen: (frozen) => view.dispatch({ effects: setMergeFrozen.of(frozen) }),
-    setTheme: (themeId) => view.dispatch({ effects: theme.reconfigure(buildTheme(themeId)) }),
+    setTheme: (themeId) =>
+      view.dispatch({ effects: theme.reconfigure(buildChrome(getSyntaxPalette(themeId))) }),
     next: (direction = 1) => navigate(view, support.field, session.regions.length, direction),
     activate: (index) => activateRegion(view, support.field, index),
+    reopen: (index, options) =>
+      reopenRegion(view, support.field, support.originalBlocks, index, options?.activate === true),
     destroy: () => view.destroy(),
   };
 }
@@ -639,6 +790,70 @@ function applyResolution(
   });
   view.focus();
   if (choice !== 'M' && activeIndex !== null) activateRegion(view, field, activeIndex);
+  return true;
+}
+
+/** Re-inserts a resolved region's original marker block, exactly as parsed. */
+function reopenRegion(
+  view: EditorView,
+  field: StateField<ResolutionFieldState>,
+  originalBlocks: readonly string[],
+  index: number,
+  activate: boolean
+): boolean {
+  const state = view.state.field(field);
+  if (state.frozen) return false;
+  if (state.decisions[index] === undefined) return false;
+  const snapshot = rangesIn(state);
+  const range = snapshot.find((item) => item.index === index);
+  const block = originalBlocks[index];
+  if (!range || block === undefined) return false;
+  if (
+    range.from < range.to &&
+    snapshot.some(
+      (item) =>
+        item.index !== index && item.from < item.to && item.from < range.to && item.to > range.from
+    )
+  )
+    return false;
+
+  const insert = `${block}${range.trailingNewline ? '\n' : ''}`;
+  const delta = insert.length - (range.to - range.from);
+  // Rebuild the range snapshot deterministically by ORIGINAL REGION ORDER (index),
+  // never by coordinate comparison. Regions parse in document order, so index order
+  // IS document order; a lower-index region is before the reopened block, a higher
+  // one is after. This is what makes co-located collapsed regions (two empty
+  // resolutions at the same offset) resolve correctly and REVERSIBLY — a coordinate
+  // test like `item.from >= range.to` would move the earlier sibling the wrong way
+  // and corrupt reverse-order reopen. rangeSetFromSnapshot sorts, so the array need
+  // not be pre-sorted.
+  const pinned: MappedMergeRegion[] = snapshot.map((item) => {
+    if (item.index === index) {
+      return {
+        index,
+        from: range.from,
+        to: range.from + insert.length,
+        trailingNewline: range.trailingNewline,
+      };
+    }
+    if (item.index > index) {
+      return { ...item, from: item.from + delta, to: item.to + delta };
+    }
+    // item.index < index: strictly before the reopened block in document order.
+    return item;
+  });
+
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert },
+    effects: [
+      setMergeDecision.of({ index, decision: undefined }),
+      restoreMergeRanges.of(pinned),
+      ...(activate ? [setMergeActive.of(index)] : []),
+    ],
+    annotations: isolateHistory.of('full'),
+    ...(activate ? { selection: { anchor: range.from }, scrollIntoView: true } : {}),
+  });
+  if (activate) view.focus();
   return true;
 }
 

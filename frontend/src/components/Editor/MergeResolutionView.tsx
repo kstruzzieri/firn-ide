@@ -11,7 +11,18 @@ import {
   type TextMergeSession,
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
+import { GitConflictStages, GitFileAtRev } from '../../../wailsjs/go/main/App';
 import styles from './MergeResolutionView.module.css';
+
+type BaseStrip =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'text'; content: string }
+  | { status: 'message'; message: string }
+  | { status: 'error'; message: string };
+
+const REGIONS_CARRY_BASE = (session: TextMergeSession) =>
+  session.regions.some((region) => region.hasBase);
 
 function initialState(session: TextMergeSession): MergeResolutionState {
   return {
@@ -38,6 +49,39 @@ function decisionLabel(decision: MergeDecision | undefined): string {
     default:
       return 'unresolved';
   }
+}
+
+export function describeMergeAnnouncement(
+  previous: Record<number, MergeDecision>,
+  next: Record<number, MergeDecision>,
+  totalRegions: number
+): string | null {
+  const resolved: number[] = [];
+  const reopened: number[] = [];
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+    const index = Number(key);
+    if (previous[index] === next[index]) continue;
+    if (next[index] === undefined) reopened.push(index);
+    else resolved.push(index);
+  }
+  if (resolved.length === 0 && reopened.length === 0) return null;
+  resolved.sort((a, b) => a - b);
+  reopened.sort((a, b) => a - b);
+  const parts: string[] = [];
+  if (resolved.length === 1) {
+    parts.push(
+      `Conflict ${resolved[0] + 1} resolved: took ${decisionLabel(next[resolved[0]]).toLowerCase()}`
+    );
+  } else if (resolved.length > 1) {
+    parts.push(`Conflicts ${resolved.map((index) => index + 1).join(', ')} resolved`);
+  }
+  if (reopened.length === 1) {
+    parts.push(`Conflict ${reopened[0] + 1} reopened`);
+  } else if (reopened.length > 1) {
+    parts.push(`Conflicts ${reopened.map((index) => index + 1).join(', ')} reopened`);
+  }
+  const remaining = totalRegions - Object.keys(next).length;
+  return `${parts.join('. ')}. ${remaining} unresolved.`;
 }
 
 export function MergeResolutionView({
@@ -80,7 +124,74 @@ function TextResolutionView({
   themeIdRef.current = themeId;
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
   const [finalizing, setFinalizing] = useState(false);
+  const [reopened, setReopened] = useState<number | null>(null);
+  const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
+  const [baseExpanded, setBaseExpanded] = useState(false);
+  const [announcement, setAnnouncement] = useState(() => {
+    const remaining = session.regions.length - Object.keys(session.decisions).length;
+    return `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`;
+  });
   sessionRef.current = session;
+
+  // Reset the strip whenever the session identity changes — a new file or a fresh
+  // openMergeResolution request must not show the previous file's base.
+  useEffect(() => {
+    setBase({ status: 'idle' });
+    setBaseExpanded(false);
+  }, [session.path, session.requestRevision]);
+
+  const loadBase = async () => {
+    if (base.status !== 'idle' && base.status !== 'error') return;
+    setBase({ status: 'loading' });
+    const { path, repoRoot, requestRevision } = sessionRef.current;
+    // Session identity is `requestRevision` (monotonic per openMergeResolution),
+    // NOT `epoch` — epoch is workspace-scoped and starts at 0, so comparing it to a
+    // session epoch would be wrong. If the prop swaps mid-fetch, sessionRef advances
+    // and we bail.
+    const isStale = () =>
+      sessionRef.current.path !== path || sessionRef.current.requestRevision !== requestRevision;
+    try {
+      const stages = await GitConflictStages(repoRoot, path);
+      if (isStale()) return;
+      if (!stages.base) {
+        setBase({
+          status: 'message',
+          message: 'No common ancestor — this file was added on both sides.',
+        });
+        return;
+      }
+      const file = await GitFileAtRev(repoRoot, ':1', path);
+      if (isStale()) return;
+      if (file.binary) {
+        setBase({ status: 'message', message: 'Base version is binary — nothing to show.' });
+        return;
+      }
+      if (file.truncated) {
+        setBase({ status: 'message', message: 'Base version is too large to display.' });
+        return;
+      }
+      const content = file.content.replace(/\r\n?/g, '\n');
+      if (content === '') {
+        // A present-but-empty base blob (size 0) would otherwise render an empty
+        // <pre> — a forbidden placeholder.
+        setBase({
+          status: 'message',
+          message: 'The common ancestor version of this file was empty.',
+        });
+        return;
+      }
+      setBase({ status: 'text', content });
+    } catch (error) {
+      // A rejection from a fetch that belonged to a since-swapped session must not
+      // overwrite the new session's freshly-reset strip.
+      if (isStale()) return;
+      setBase({
+        status: 'error',
+        message: `Could not read the base version: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      setBaseExpanded(false);
+    }
+  };
 
   useEffect(() => {
     if (!hostRef.current) return undefined;
@@ -96,6 +207,12 @@ function TextResolutionView({
           if (next.decisions[region] === undefined) actions.reopenDecision(region);
           else actions.recordDecision(region, next.decisions[region]);
         }
+        const message = describeMergeAnnouncement(
+          previous,
+          next.decisions,
+          sessionRef.current.regions.length
+        );
+        if (message !== null) setAnnouncement(message);
         decisionsRef.current = next.decisions;
         setResolutionState(next);
       },
@@ -105,6 +222,13 @@ function TextResolutionView({
     const initialEditorState = editor.getState();
     decisionsRef.current = initialEditorState.decisions;
     setResolutionState(initialEditorState);
+    setReopened(null);
+    // Reset the live-region summary for the new file, matching the reopened/base
+    // resets — otherwise the previous file's last announcement lingers until the
+    // first action here.
+    const remainingOnOpen =
+      session.regions.length - Object.keys(initialEditorState.decisions).length;
+    setAnnouncement(`${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`);
     return () => {
       editor.destroy();
       editorRef.current = null;
@@ -128,6 +252,14 @@ function TextResolutionView({
   const unresolved = session.regions.length - Object.keys(resolutionState.decisions).length;
   const fileIndex = session.fileQueue.indexOf(session.path) + 1;
   const disabled = unresolved !== 0 || session.readOnly || finalizing;
+  const baseStatus =
+    base.status === 'loading'
+      ? 'Loading base…'
+      : base.status === 'text'
+        ? 'Base version loaded.'
+        : base.status === 'message' || base.status === 'error'
+          ? base.message
+          : '';
   const finalize = async () => {
     const editor = editorRef.current;
     if (!editor || disabled) return;
@@ -161,6 +293,19 @@ function TextResolutionView({
           </span>
         )}
         <div className={styles.headerActions}>
+          {reopened !== null && resolutionState.decisions[reopened] === undefined && (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => {
+                editorRef.current?.activate(reopened);
+                setReopened(null);
+              }}
+              disabled={finalizing}
+            >
+              Conflict {reopened + 1} reopened — go to it
+            </button>
+          )}
           <button
             type="button"
             className={styles.secondaryButton}
@@ -179,6 +324,41 @@ function TextResolutionView({
           </button>
         </div>
       </header>
+      {!REGIONS_CARRY_BASE(session) && (
+        <div className={styles.baseStrip}>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => {
+              if (baseExpanded) {
+                setBaseExpanded(false);
+                return;
+              }
+              setBaseExpanded(true);
+              void loadBase();
+            }}
+            aria-expanded={baseExpanded}
+          >
+            {baseExpanded ? 'Hide' : 'Show'} base (common ancestor)
+          </button>
+          <span
+            className={baseExpanded || base.status === 'error' ? styles.baseNote : styles.srOnly}
+            aria-live="polite"
+          >
+            {baseStatus}
+          </span>
+          {baseExpanded && base.status === 'text' && (
+            <pre
+              className={styles.basePane}
+              role="region"
+              tabIndex={0}
+              aria-label="Base version, read-only"
+            >
+              {base.content}
+            </pre>
+          )}
+        </div>
+      )}
       <div className={styles.body}>
         <nav className={styles.rail} aria-label="Conflicts">
           {session.regions.map((_, index) => {
@@ -189,8 +369,20 @@ function TextResolutionView({
                 type="button"
                 className={`${styles.railItem} ${decisionClass(decision)} ${resolutionState.activeIndex === index ? styles.active : ''}`}
                 aria-current={resolutionState.activeIndex === index ? 'true' : undefined}
-                aria-label={`Conflict ${index + 1}: ${decisionLabel(decision)}`}
-                onClick={() => editorRef.current?.activate(index)}
+                aria-label={
+                  decision === undefined
+                    ? `Conflict ${index + 1}: unresolved`
+                    : `Reopen conflict ${index + 1} (currently ${decisionLabel(decision)})`
+                }
+                onClick={() => {
+                  const editor = editorRef.current;
+                  if (!editor) return;
+                  if (resolutionState.decisions[index] === undefined) {
+                    editor.activate(index);
+                    return;
+                  }
+                  if (editor.reopen(index)) setReopened(index);
+                }}
                 disabled={finalizing}
               >
                 {decision ?? index + 1}
@@ -218,6 +410,9 @@ function TextResolutionView({
           Write &amp; stage
         </button>
       </footer>
+      <div role="status" aria-live="polite" className={styles.srOnly}>
+        {announcement}
+      </div>
     </section>
   );
 }

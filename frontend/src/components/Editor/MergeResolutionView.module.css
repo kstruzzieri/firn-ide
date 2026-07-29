@@ -79,7 +79,8 @@
 .secondaryButton:focus-visible,
 .finalizeButton:focus-visible,
 .sideChoice:focus-visible,
-.railItem:focus-visible {
+.railItem:focus-visible,
+.basePane:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -252,6 +253,49 @@
   text-align: left;
 }
 
+.editorHost :global(.cm-mergeResolution-ghost) {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--surface-border-subtle);
+  border-radius: 0;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.editorHost :global(.cm-mergeResolution-action[aria-disabled='true']) {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.editorHost :global(.cm-mergeResolution-word-del) {
+  background: color-mix(in srgb, var(--side-cur) 24%, transparent);
+  border-radius: 2px;
+}
+
+.editorHost :global(.cm-mergeResolution-word-ins) {
+  background: color-mix(in srgb, var(--side-inc) 24%, transparent);
+  border-radius: 2px;
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-C) {
+  box-shadow: inset 2px 0 0 var(--side-cur);
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-I) {
+  box-shadow: inset 2px 0 0 var(--side-inc);
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-B) {
+  box-shadow: inset 2px 0 0 var(--side-both);
+}
+
+.editorHost :global(.cm-mergeResolution-provenance-M) {
+  box-shadow: inset 2px 0 0 var(--side-man);
+}
+
 .statusRow {
   border-top: 1px solid var(--surface-border-subtle);
   border-bottom: 0;
@@ -337,4 +381,40 @@
     flex-direction: column;
     overflow-y: auto;
   }
+}
+
+.baseStrip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.baseNote {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.basePane {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  white-space: pre;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

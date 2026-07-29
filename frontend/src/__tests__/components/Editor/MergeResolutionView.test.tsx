@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
 import type { MergeSession } from '../../../stores/gitStore';
@@ -15,6 +15,7 @@ const controller = {
   redo: jest.fn(() => true),
   next: jest.fn(() => true),
   activate: jest.fn(() => true),
+  reopen: jest.fn(() => true),
   setFrozen: jest.fn(),
   setTheme: jest.fn(),
   destroy: jest.fn(),
@@ -32,6 +33,7 @@ const createMergeResolutionEditor = jest.fn(
   }
 );
 const recordDecision = jest.fn();
+const reopenDecision = jest.fn();
 const selectMergeSide = jest.fn();
 const mergeFinalizeAndStage = jest.fn(() => Promise.resolve(true));
 
@@ -46,14 +48,28 @@ jest.mock('../../../components/Editor/codemirror', () => ({
 }));
 jest.mock('../../../stores/gitStore', () => ({
   useGitStore: {
-    getState: () => ({ recordDecision, selectMergeSide, mergeFinalizeAndStage }),
+    getState: () => ({ recordDecision, reopenDecision, selectMergeSide, mergeFinalizeAndStage }),
   },
 }));
 jest.mock('../../../stores/ideStore', () => ({
   useEditorSyntaxTheme: () => syntaxThemeId,
 }));
 
-import { MergeResolutionView } from '../../../components/Editor/MergeResolutionView';
+// wailsjs/go/main/App.js is generated ESM this Jest config does not transform, so a
+// bare jest.mock(path) auto-load throws `Unexpected token 'export'` — use a factory.
+jest.mock('../../../../wailsjs/go/main/App', () => ({
+  GitConflictStages: jest.fn(),
+  GitFileAtRev: jest.fn(),
+}));
+
+import {
+  MergeResolutionView,
+  describeMergeAnnouncement,
+} from '../../../components/Editor/MergeResolutionView';
+import { GitConflictStages, GitFileAtRev } from '../../../../wailsjs/go/main/App';
+
+const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
+const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 
 const textSession = {
   kind: 'text',
@@ -108,6 +124,8 @@ const sidesSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedStages.mockReset();
+  mockedFileAtRev.mockReset();
   syntaxThemeId = 'glacier';
   onStateChange = undefined;
 });
@@ -176,17 +194,22 @@ describe('MergeResolutionView', () => {
     ['I', 'Incoming'],
     ['B', 'Both'],
     ['M', 'Manual'],
-  ] as const)('renders resolved %s rail entries with an explicit %s name', (_decision, word) => {
-    render(<MergeResolutionView session={textSession} visible />);
-    act(() =>
-      onStateChange?.({ activeIndex: 0, decisions: { 0: _decision }, order: 'current-first' })
-    );
+  ] as const)(
+    'names resolved %s rail entries as the Reopen action with their %s status',
+    (_decision, word) => {
+      render(<MergeResolutionView session={textSession} visible />);
+      act(() =>
+        onStateChange?.({ activeIndex: 0, decisions: { 0: _decision }, order: 'current-first' })
+      );
 
-    const rail = screen.getByRole('button', { name: `Conflict 1: ${word}` });
-    expect(rail).toHaveTextContent(_decision);
-    expect(rail).toHaveAttribute('aria-current', 'true');
-    expect(rail).not.toHaveAttribute('aria-pressed');
-  });
+      const rail = screen.getByRole('button', {
+        name: `Reopen conflict 1 (currently ${word})`,
+      });
+      expect(rail).toHaveTextContent(_decision);
+      expect(rail).toHaveAttribute('aria-current', 'true');
+      expect(rail).not.toHaveAttribute('aria-pressed');
+    }
+  );
 
   it('renders whole-file sides from stage presence and finalizes only a selected side', async () => {
     const { rerender } = render(<MergeResolutionView session={sidesSession} visible />);
@@ -241,7 +264,9 @@ describe('MergeResolutionView', () => {
     expect(controller.setFrozen).toHaveBeenCalledWith(true);
     const undo = screen.getByRole('button', { name: 'Undo' });
     const next = screen.getByRole('button', { name: 'Next unresolved' });
-    const rail = screen.getByRole('button', { name: 'Conflict 1: Current' });
+    const rail = screen.getByRole('button', {
+      name: 'Reopen conflict 1 (currently Current)',
+    });
     expect(undo).toBeDisabled();
     expect(next).toBeDisabled();
     expect(rail).toBeDisabled();
@@ -381,5 +406,326 @@ describe('MergeResolutionView', () => {
 
     expect(screen.getByText(/UTF-16LE.*CRLF.*losslessly/i)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Write & stage' })).toBeDisabled();
+  });
+
+  it('announces decisions and reopens through the live region', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('1 conflict unresolved.');
+
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
+
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+    expect(status).toHaveTextContent('Conflict 1 reopened. 1 unresolved.');
+  });
+
+  it('resets the announcement to the new file summary when the session advances', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    const status = screen.getByRole('status');
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
+
+    // Advance to a different file — fresh regions/labels identities rebuild the editor.
+    const nextSession = {
+      ...textSession,
+      path: 'src/next.ts',
+      requestRevision: 99,
+      regions: [...(textSession as { regions: unknown[] }).regions],
+      labels: { ...(textSession as { labels: object }).labels },
+    } as MergeSession;
+    rerender(<MergeResolutionView session={nextSession} visible />);
+
+    // The previous file's "resolved" message must not linger; the new file's
+    // summary is announced instead.
+    expect(status).toHaveTextContent('1 conflict unresolved.');
+  });
+});
+
+describe('MergeResolutionView rail reopen', () => {
+  it('reopens a resolved conflict from the rail and surfaces a jump-back button', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen conflict 1 (currently Current)' }));
+    expect(controller.reopen).toHaveBeenCalledWith(0);
+
+    // The real editor would fire onStateChange after the reopen transaction; here
+    // we drive it explicitly to the reopened state.
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+    expect(
+      screen.getByRole('button', { name: 'Conflict 1 reopened — go to it' })
+    ).toBeInTheDocument();
+  });
+
+  it('jump-back activates the reopened conflict and then hides itself', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen conflict 1 (currently Current)' }));
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1 reopened — go to it' }));
+    expect(controller.activate).toHaveBeenCalledWith(0);
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+  });
+
+  it('activating an unresolved rail entry does not reopen or surface the jump button', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conflict 1: unresolved' }));
+
+    expect(controller.activate).toHaveBeenCalledWith(0);
+    expect(controller.reopen).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+  });
+
+  it('clears the jump affordance when the session advances to another file', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen conflict 1 (currently Current)' }));
+    act(() => onStateChange?.({ activeIndex: 0, decisions: {}, order: 'current-first' }));
+    expect(screen.getByRole('button', { name: /go to it/i })).toBeInTheDocument();
+
+    // Advance to a different file. Fresh regions/labels identities force the
+    // editor-create effect (keyed on [session.labels, session.regions]) to rebuild;
+    // the stale jump target must not survive into the untouched next file.
+    const nextSession = {
+      ...textSession,
+      path: 'src/next.ts',
+      requestRevision: 99,
+      regions: [...(textSession as { regions: unknown[] }).regions],
+      labels: { ...(textSession as { labels: object }).labels },
+    } as MergeSession;
+    rerender(<MergeResolutionView session={nextSession} visible />);
+
+    expect(screen.queryByRole('button', { name: /go to it/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('MergeResolutionView base strip', () => {
+  it('keeps a polite live region mounted and announces loading', () => {
+    mockedStages.mockReturnValue(new Promise<never>(() => undefined));
+
+    render(<MergeResolutionView session={textSession} visible />);
+    const toggle = screen.getByRole('button', { name: 'Show base (common ancestor)' });
+    const liveRegion = toggle.parentElement?.querySelector('[aria-live="polite"]');
+
+    expect(liveRegion).toBeInTheDocument();
+    expect(liveRegion).toBeEmptyDOMElement();
+    fireEvent.click(toggle);
+    expect(liveRegion).toHaveTextContent('Loading base…');
+  });
+
+  it('toggles a focusable base region and reuses successfully loaded content', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 12 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({
+      content: 'ancestor\n',
+      binary: false,
+      truncated: false,
+    } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    const show = screen.getByRole('button', { name: 'Show base (common ancestor)' });
+    expect(show).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(show);
+
+    const hide = await screen.findByRole('button', { name: 'Hide base (common ancestor)' });
+    expect(hide).toHaveAttribute('aria-expanded', 'true');
+    const baseRegion = await screen.findByRole('region', {
+      name: 'Base version, read-only',
+    });
+    expect(baseRegion).toHaveTextContent('ancestor');
+    expect(baseRegion).toHaveAttribute('tabindex', '0');
+    baseRegion.focus();
+    expect(baseRegion).toHaveFocus();
+    expect(hide.parentElement?.querySelector('[aria-live="polite"]')).toHaveTextContent(
+      'Base version loaded.'
+    );
+    expect(mockedFileAtRev).toHaveBeenCalledWith('/repo', ':1', 'src/conflict.ts');
+
+    fireEvent.click(hide);
+    expect(screen.getByRole('button', { name: 'Show base (common ancestor)' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+    expect(
+      screen.queryByRole('region', { name: 'Base version, read-only' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('ancestor');
+    expect(mockedStages).toHaveBeenCalledTimes(1);
+    expect(mockedFileAtRev).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient base error from the collapsed Show control', async () => {
+    mockedStages.mockRejectedValueOnce(new Error('network unavailable')).mockResolvedValueOnce({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 12 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({
+      content: 'ancestor\n',
+      binary: false,
+      truncated: false,
+    } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+
+    const error = await screen.findByText('Could not read the base version: network unavailable');
+    expect(error).toHaveAttribute('aria-live', 'polite');
+    const retry = screen.getByRole('button', { name: 'Show base (common ancestor)' });
+    expect(retry).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(retry);
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('ancestor');
+    expect(mockedStages).toHaveBeenCalledTimes(2);
+    expect(mockedFileAtRev).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears expanded base content when the session identity changes', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 12 },
+      binary: false,
+    } as never);
+    mockedFileAtRev
+      .mockResolvedValueOnce({
+        content: 'old ancestor\n',
+        binary: false,
+        truncated: false,
+      } as never)
+      .mockResolvedValueOnce({
+        content: 'fresh ancestor\n',
+        binary: false,
+        truncated: false,
+      } as never);
+
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('old ancestor');
+
+    rerender(
+      <MergeResolutionView
+        session={{ ...textSession, requestRevision: 2 } as MergeSession}
+        visible
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Show base (common ancestor)' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+    expect(
+      screen.queryByRole('region', { name: 'Base version, read-only' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show base (common ancestor)' }));
+    expect(
+      await screen.findByRole('region', { name: 'Base version, read-only' })
+    ).toHaveTextContent('fresh ancestor');
+  });
+
+  it('explains an absent base instead of showing an empty pane', async () => {
+    mockedStages.mockResolvedValue({ path: 'src/conflict.ts', binary: false } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No common ancestor — this file was added on both sides.')
+      ).toHaveAttribute('aria-live', 'polite')
+    );
+    expect(mockedFileAtRev).not.toHaveBeenCalled();
+  });
+
+  it('explains a base blob that exists but is empty (never an empty pane)', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 0 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({ content: '', binary: false, truncated: false } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('The common ancestor version of this file was empty.')
+      ).toBeInTheDocument()
+    );
+  });
+
+  it('explains a binary base', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 99 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({ content: '', binary: true, truncated: false } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Base version is binary — nothing to show.')).toBeInTheDocument()
+    );
+  });
+
+  it('explains a truncated base', async () => {
+    mockedStages.mockResolvedValue({
+      path: 'src/conflict.ts',
+      base: { hash: 'abc', size: 9_000_000 },
+      binary: false,
+    } as never);
+    mockedFileAtRev.mockResolvedValue({ content: '', binary: false, truncated: true } as never);
+
+    render(<MergeResolutionView session={textSession} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /show base/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Base version is too large to display.')).toBeInTheDocument()
+    );
+  });
+});
+
+describe('describeMergeAnnouncement', () => {
+  it('describes a single resolution with its decision and the remaining count', () => {
+    expect(describeMergeAnnouncement({}, { 0: 'C' }, 2)).toBe(
+      'Conflict 1 resolved: took current. 1 unresolved.'
+    );
+  });
+
+  it('describes a single reopen', () => {
+    expect(describeMergeAnnouncement({ 0: 'C' }, {}, 2)).toBe('Conflict 1 reopened. 2 unresolved.');
+  });
+
+  it('describes several regions changed in one transaction deterministically', () => {
+    expect(describeMergeAnnouncement({ 0: 'C', 1: 'C' }, { 0: 'M', 1: 'M' }, 2)).toBe(
+      'Conflicts 1, 2 resolved. 0 unresolved.'
+    );
+  });
+
+  it('describes a mixed resolve-and-reopen transaction (the motivating multi-region case)', () => {
+    // Region 1 newly resolved to Manual, region 2 reopened, in one transaction.
+    expect(describeMergeAnnouncement({ 0: 'C', 2: 'C' }, { 0: 'C', 1: 'M' }, 4)).toBe(
+      'Conflict 2 resolved: took manual. Conflict 3 reopened. 2 unresolved.'
+    );
+  });
+
+  it('returns null when nothing changed', () => {
+    expect(describeMergeAnnouncement({ 0: 'C' }, { 0: 'C' }, 2)).toBeNull();
   });
 });
