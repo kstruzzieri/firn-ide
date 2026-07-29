@@ -237,6 +237,25 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
+  it('numbers the result document and skips lines hidden behind a conflict card', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+
+    const gutter = editor.view.dom.querySelector('.cm-lineNumbers');
+    expect(gutter).not.toBeNull();
+    // CodeMirror prepends a hidden width-spacer element; only real numbers count.
+    const numbers = Array.from(gutter!.querySelectorAll<HTMLElement>('.cm-gutterElement'))
+      .filter((element) => element.style.visibility !== 'hidden')
+      .map((element) => element.textContent);
+
+    // Line 1 is 'before'; lines 2-6 are the first conflict's marker block, which is
+    // block-replaced by the card, so the gutter skips them rather than numbering
+    // marker text the user cannot see. Line 7 ('between') is the next real line.
+    expect(numbers).toContain('1');
+    expect(numbers).toContain('7');
+    expect(numbers).not.toContain('3');
+    editor.destroy();
+  });
+
   it('replaces the active marker block, advances, and restores text plus decisions through history', () => {
     const editor = createMergeResolutionEditor(document.body, session());
     const current = Array.from(document.querySelectorAll('button')).find(

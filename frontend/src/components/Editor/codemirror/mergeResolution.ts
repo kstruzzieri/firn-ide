@@ -22,7 +22,7 @@ import {
 } from '@codemirror/commands';
 import { foldKeymap } from '@codemirror/language';
 import { lintKeymap } from '@codemirror/lint';
-import { Decoration, EditorView, keymap, WidgetType } from '@codemirror/view';
+import { Decoration, EditorView, keymap, lineNumbers, WidgetType } from '@codemirror/view';
 import type { git } from '../../../../wailsjs/go/models';
 import type { InlineDiffSegment } from '../../../utils/lineDiff';
 import type { MergeDecision, TextMergeSession } from '../../../stores/gitStore';
@@ -640,6 +640,10 @@ export function createMergeResolutionEditor(
       doc: normalizeDocument(session.content),
       extensions: [
         theme.of(buildTheme(options.syntaxThemeId ?? DEFAULT_SYNTAX_THEME_ID)),
+        // The result spine is a real document, so number it like one. Conflict cards
+        // are block-replaced ranges, so their marker lines share a single gutter slot
+        // until the conflict is resolved and the real result lines take their place.
+        lineNumbers(),
         history(),
         ...inFileSearchExtensions(),
         ...support.extension,
