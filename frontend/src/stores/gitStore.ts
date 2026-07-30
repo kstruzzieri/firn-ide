@@ -110,7 +110,15 @@ export interface MergeFinalizeOptions {
  * blocked until a retry succeeds, because a session nobody could verify must
  * not be writable. */
 export type MergeExternalChange =
-  | { kind: 'changed'; hidden: boolean; scope: 'worktree' | 'conflict' }
+  | {
+      kind: 'changed';
+      hidden: boolean;
+      scope: 'worktree' | 'conflict';
+      /** The live version this notice describes. A later signal that finds the
+       * same version leaves an acknowledged notice hidden; a different one
+       * raises a fresh notice, because that is a change the user has not seen. */
+      observedVersion: string;
+    }
   | { kind: 'resolved-outside'; message: string }
   | { kind: 'check-failed'; message: string };
 
@@ -351,6 +359,15 @@ interface GitActions {
   /** Mark the session touched, from the editor's document-change signal.
    * Idempotent: an already-dirty session keeps its object identity. */
   markMergeDirty: () => void;
+  /** A signal that the file at absPath may have changed. Revalidates the open
+   * session when the path matches. Advisory: it can never authorize a write. */
+  notifyMergeFileChanged: (absPath: string) => Promise<void>;
+  /** Reload (or Retry): read the conflict state again at click time and, when it
+   * moved, replace the session with that fresh read — discarding decisions. */
+  applyMergeReload: () => Promise<void>;
+  /** Keep working: hide a worktree-scoped notice. NOT overwrite consent — the
+   * mismatched version stays on the session and Write and stage still asks. */
+  acknowledgeMergeExternal: () => void;
   /** Ask to close. A pristine session closes immediately; a touched one raises
    * the discard confirmation instead. Every close entry point (Esc, the merge
    * tab's X, resolved-outside) goes through here so none can bypass the guard. */
@@ -389,6 +406,11 @@ let mergeFinalizeInFlight = false;
  * yield to these: a refresh that bumped the request revision mid-click would
  * get the user's completion discarded and their click would appear dead. */
 let userDiffRequestsInFlight = 0;
+
+/** Monotonic id for merge revalidations. Only the newest read may install:
+ * two overlapping reads can finish in either order, and letting the older one
+ * land would install a session describing an older moment. */
+let mergeRevalidationGeneration = 0;
 
 /** Current openDiff request id, read by the diff view when the user types so
  * it can tell refreshes that predate the edit from ones that supersede it. */
@@ -948,6 +970,38 @@ export const useGitStore = create<GitStore>()(
         set({ mergeSession: { ...session, dirty: true } }, false, 'git/markMergeDirty');
       },
 
+      notifyMergeFileChanged: async (absPath) => {
+        const session = get().mergeSession;
+        if (!session) return;
+        if (!pathsReferToSameFile(session.absPath, absPath)) return;
+        await revalidateMergeSession(get, set);
+      },
+
+      applyMergeReload: async () => {
+        const session = get().mergeSession;
+        if (!session || session.reloadPending) return;
+        // Bind synchronously so a close or queue advance between the click and
+        // the read can drop this continuation, and so the surface freezes
+        // instead of accepting a second click.
+        set({ mergeSession: { ...session, reloadPending: true } }, false, 'git/mergeReloadStart');
+        await revalidateMergeSession(get, set, { force: true });
+      },
+
+      acknowledgeMergeExternal: () => {
+        const session = get().mergeSession;
+        const external = session?.external;
+        if (!session || external?.kind !== 'changed') return;
+        // Conflict-scoped changes stay visible: the sides themselves moved, so
+        // hiding the notice would hide the fact that Current and Incoming no
+        // longer mean what the user reviewed.
+        if (external.scope !== 'worktree' || external.hidden) return;
+        set(
+          { mergeSession: { ...session, external: { ...external, hidden: true } } },
+          false,
+          'git/acknowledgeMergeExternal'
+        );
+      },
+
       requestMergeClose: () => {
         const session = get().mergeSession;
         if (!session) return;
@@ -1290,6 +1344,286 @@ export const useGitStore = create<GitStore>()(
     { name: 'git-store' }
   )
 );
+
+type MergeSetter = (partial: Partial<GitState>, replace: false, name: string) => void;
+
+/** What a revalidation was started for. Every one of these must still hold
+ * after the await, or the read describes a session that no longer exists. */
+interface MergeRevalidationBinding {
+  generation: number;
+  absPath: string;
+  requestRevision: number;
+  epoch: number;
+}
+
+function sameStageBlob(a?: git.StageBlob, b?: git.StageBlob): boolean {
+  if (!a || !b) return !a && !b;
+  return a.hash === b.hash && a.mode === b.mode && a.size === b.size;
+}
+
+/**
+ * Exact conflict identity: the operation heads plus every stage's presence,
+ * mode, and object. Used ONLY to classify whether an external change is
+ * something the user could knowingly overwrite (worktree bytes moved) or must
+ * reload (the sides themselves moved, so Current/Incoming no longer mean what
+ * was reviewed). `sourceVersion` remains the authority for no-op and mutation
+ * decisions — this never gates a write.
+ */
+function sameConflictIdentity(session: MergeSession, state: git.ConflictState): boolean {
+  const heads = state.heads;
+  if (!heads) return false;
+  if (
+    session.labels.operation !== heads.operation ||
+    session.labels.ours.hash !== heads.ours.hash ||
+    session.labels.theirs.hash !== heads.theirs.hash
+  ) {
+    return false;
+  }
+  if (Boolean(session.stages.binary) !== Boolean(state.stages.binary)) return false;
+  return (
+    sameStageBlob(session.stages.base, state.stages.base) &&
+    sameStageBlob(session.stages.ours, state.stages.ours) &&
+    sameStageBlob(session.stages.theirs, state.stages.theirs)
+  );
+}
+
+function sameExternal(a: MergeExternalChange | undefined, b: MergeExternalChange): boolean {
+  if (!a || a.kind !== b.kind) return false;
+  if (a.kind === 'changed' && b.kind === 'changed') {
+    return a.scope === b.scope && a.hidden === b.hidden && a.observedVersion === b.observedVersion;
+  }
+  if (a.kind === 'resolved-outside' && b.kind === 'resolved-outside')
+    return a.message === b.message;
+  if (a.kind === 'check-failed' && b.kind === 'check-failed') return a.message === b.message;
+  return false;
+}
+
+/** Applies an external-change notice without touching content or decisions. */
+function setMergeExternal(
+  get: () => GitStore,
+  set: MergeSetter,
+  session: MergeSession,
+  external: MergeExternalChange
+): void {
+  // resolved-outside is terminal for the session that observed it: a later
+  // failed or partial hint must not downgrade it back to "maybe fine".
+  if (session.external?.kind === 'resolved-outside' && external.kind !== 'resolved-outside') return;
+  if (sameExternal(session.external, external)) return;
+  if (get().mergeSession !== session) return;
+  set({ mergeSession: { ...session, external } }, false, 'git/mergeExternalChange');
+}
+
+function clearMergeExternal(get: () => GitStore, set: MergeSetter, session: MergeSession): void {
+  if (!session.external) return;
+  if (get().mergeSession !== session) return;
+  const cleared: MergeSession = { ...session };
+  delete cleared.external;
+  set({ mergeSession: cleared }, false, 'git/mergeExternalCleared');
+}
+
+/** Builds the replacement session from one coherent read, keeping only the
+ * scoped queue. Decisions are deliberately NOT carried over: region indexes are
+ * positional, so transplanting them onto fresh regions is exactly the
+ * stale-coordinate corruption the whole-session swap exists to prevent. */
+function revalidatedMergeSession(
+  session: MergeSession,
+  state: git.ConflictState,
+  requestRevision: number
+): MergeSession | null {
+  if (!state.heads) return null;
+  const base = {
+    path: session.path,
+    absPath: session.absPath,
+    repoRoot: session.repoRoot,
+    labels: state.heads,
+    fileQueue: session.fileQueue,
+    requestRevision,
+    epoch: session.epoch,
+    fileWriteRevision: getFileWriteRevision(session.absPath),
+    sourceVersion: state.sourceVersion,
+    stages: state.stages,
+    dirty: false,
+    reloadPending: false,
+    closeRequested: false,
+  };
+  if (!state.snapshot) return { kind: 'sides', ...base };
+  return {
+    kind: 'text',
+    ...base,
+    content: state.snapshot.content,
+    encoding: state.snapshot.encoding,
+    lineEndings: state.snapshot.lineEndings,
+    regions: state.snapshot.regions,
+    decisions: {},
+    readOnly: !isWritableFormat(state.snapshot.encoding, state.snapshot.lineEndings),
+  };
+}
+
+function clearMergeReloadPending(
+  get: () => GitStore,
+  set: MergeSetter,
+  binding: MergeRevalidationBinding
+): void {
+  const live = get().mergeSession;
+  // Only the session that started the Reload may clear its flag; a close or a
+  // queue advance in between drops the continuation entirely.
+  if (!live || live.absPath !== binding.absPath) return;
+  if (live.requestRevision !== binding.requestRevision) return;
+  if (!live.reloadPending) return;
+  set({ mergeSession: { ...live, reloadPending: false } }, false, 'git/mergeReloadSettled');
+}
+
+/**
+ * The single reconciliation path for an open merge session.
+ *
+ * One coherent `GitConflictState` read, then exactly one of: no-op, whole-session
+ * swap, or an external-change notice. There is no regions-only update — applying
+ * fresh regions to older content would leave every marker range pointing at the
+ * wrong bytes.
+ *
+ * `force` is Reload/Retry: it reads at click time (never applying a candidate
+ * captured when a notice was raised) and may replace a touched session, which is
+ * what the user asked for.
+ */
+async function revalidateMergeSession(
+  get: () => GitStore,
+  set: MergeSetter,
+  options: { force?: boolean } = {}
+): Promise<void> {
+  const force = options.force === true;
+  const session = get().mergeSession;
+  if (!session) return;
+  // A finalize is mid-write: the backend's own version guard is authoritative
+  // there, and reading a half-written worktree would only produce noise. The
+  // refresh that follows the operation is the next signal.
+  if (mergeFinalizeInFlight) return;
+  // A user-requested Reload owns the session until it settles.
+  if (session.reloadPending && !force) return;
+
+  const binding: MergeRevalidationBinding = {
+    generation: ++mergeRevalidationGeneration,
+    absPath: session.absPath,
+    requestRevision: session.requestRevision,
+    epoch: session.epoch,
+  };
+  const live = (): MergeSession | null => {
+    const current = get().mergeSession;
+    if (!current) return null;
+    if (current.absPath !== binding.absPath) return null;
+    if (current.requestRevision !== binding.requestRevision) return null;
+    if (get().epoch !== binding.epoch) return null;
+    if (mergeRevalidationGeneration !== binding.generation) return null;
+    return current;
+  };
+
+  let state: git.ConflictState;
+  try {
+    state = await GitConflictState(session.repoRoot, session.path);
+  } catch (err) {
+    const current = live();
+    if (!current) return;
+    if (force) {
+      useIDEStore
+        .getState()
+        .showToast(`Could not reload ${current.path}: ${toErrorMessage(err)}`, 'error');
+      clearMergeReloadPending(get, set, binding);
+    }
+    // A session nobody could verify must not stay silently writable.
+    setMergeExternal(get, set, live() ?? current, {
+      kind: 'check-failed',
+      message: `Could not check ${current.path} for outside changes: ${toErrorMessage(err)}`,
+    });
+    return;
+  }
+
+  let current = live();
+  if (!current) return;
+  const finish = () => {
+    if (force) clearMergeReloadPending(get, set, binding);
+  };
+
+  if (!state.stages.base && !state.stages.ours && !state.stages.theirs) {
+    setMergeExternal(get, set, current, {
+      kind: 'resolved-outside',
+      message: `${current.path} is no longer conflicted — it was resolved outside Firn.`,
+    });
+    finish();
+    return;
+  }
+
+  if (state.sourceVersion === current.sourceVersion) {
+    // Nothing moved. This is also what makes Firn's own writes harmless: the
+    // finalize updates the session to the version its write produced, so the
+    // watcher event that write triggers lands here.
+    clearMergeExternal(get, set, current);
+    finish();
+    return;
+  }
+
+  if (state.snapshot && state.snapshot.regions.length === 0) {
+    setMergeExternal(get, set, current, {
+      kind: 'resolved-outside',
+      message: `The conflict markers in ${current.path} are gone — it was resolved outside Firn. Stage it from the Source Control panel.`,
+    });
+    finish();
+    return;
+  }
+
+  if (!state.heads) {
+    setMergeExternal(get, set, current, {
+      kind: 'check-failed',
+      message: `Could not check ${current.path} for outside changes: its merge operation is no longer readable.`,
+    });
+    finish();
+    return;
+  }
+
+  if (current.dirty && !force) {
+    const scope = sameConflictIdentity(current, state) ? 'worktree' : 'conflict';
+    const previous = current.external;
+    // The user already dismissed THIS change: leave it dismissed. A different
+    // version is a change they have not seen, so it raises the notice again.
+    const hidden =
+      previous?.kind === 'changed' &&
+      previous.hidden &&
+      previous.observedVersion === state.sourceVersion;
+    setMergeExternal(get, set, current, {
+      kind: 'changed',
+      hidden,
+      scope,
+      observedVersion: state.sourceVersion,
+    });
+    finish();
+    return;
+  }
+
+  const replacement = revalidatedMergeSession(current, state, mergeRequestRevision + 1);
+  if (!replacement) {
+    setMergeExternal(get, set, current, {
+      kind: 'check-failed',
+      message: `Could not check ${current.path} for outside changes: its merge operation is no longer readable.`,
+    });
+    finish();
+    return;
+  }
+  current = live() ?? current;
+  if (get().mergeSession !== current) {
+    finish();
+    return;
+  }
+  // One store update installs the whole replacement and claims a fresh request
+  // revision, so any finalize or open still in flight against the old snapshot
+  // is stale from this moment on.
+  mergeRequestRevision += 1;
+  set({ mergeSession: replacement }, false, 'git/mergeSessionReloaded');
+
+  if (force) {
+    // The forced read took time; anything that changed during it is unobserved.
+    // One ordinary revalidation against the freshly installed session catches
+    // it (and no-ops when nothing moved).
+    await revalidateMergeSession(get, set, {});
+  }
+}
 
 /**
  * Shared mutating-op wrapper: single-flight via opInFlight, error → lastError

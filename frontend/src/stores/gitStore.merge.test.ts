@@ -1529,3 +1529,486 @@ describe('merge queue order at open', () => {
     expect(useGitStore.getState().mergeSession?.fileQueue).toEqual(['z.txt', 'a.txt']);
   });
 });
+
+describe('merge revalidation', () => {
+  const textState = (over: Partial<git.ConflictState> = {}) => conflictState(over);
+
+  const openTextSession = async (over: Partial<git.ConflictState> = {}) => {
+    mockState.mockResolvedValue(textState(over));
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    if (!ok) throw new Error('failed to open the text session');
+  };
+  const openSidesSession = async () => {
+    mockState.mockResolvedValue(
+      conflictState({ stages: allStages({ binary: true }), snapshot: undefined })
+    );
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    if (!ok) throw new Error('failed to open the sides session');
+  };
+  const notify = () => useGitStore.getState().notifyMergeFileChanged('/repo/file.txt');
+  const session = () => useGitStore.getState().mergeSession;
+
+  it('keeps the exact session object when the source version is unchanged', async () => {
+    await openTextSession();
+    const before = session();
+
+    await notify();
+
+    expect(session()).toBe(before);
+  });
+
+  it('replaces a pristine session atomically when the version moved', async () => {
+    await openTextSession();
+    const before = session();
+    const moved = textState({
+      sourceVersion: 'v1:moved',
+      snapshot: snapshot({
+        content: '<<<<<<< HEAD\nnew ours\n=======\nnew theirs\n>>>>>>> feature\n',
+      }),
+    });
+    mockState.mockResolvedValue(moved);
+
+    await notify();
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next).not.toBe(before);
+    expect(next.content).toBe(moved.snapshot?.content);
+    expect(next.sourceVersion).toBe('v1:moved');
+    expect(next.dirty).toBe(false);
+    expect(next.decisions).toEqual({});
+    expect(next.external).toBeUndefined();
+    expect(next.requestRevision).not.toBe(before?.requestRevision);
+    expect(next.fileQueue).toEqual(['file.txt']);
+  });
+
+  it('never swaps a session that became dirty while the read was in flight', async () => {
+    await openTextSession();
+    const gate = deferred<git.ConflictState>();
+    mockState.mockReturnValue(gate.promise);
+
+    const pending = notify();
+    // The user resolves a region while the revalidation awaits git.
+    useGitStore.getState().recordDecision(0, 'C');
+    gate.resolve(
+      textState({ sourceVersion: 'v1:moved', snapshot: snapshot({ content: 'other\n' }) })
+    );
+    await pending;
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.decisions).toEqual({ 0: 'C' });
+    expect(next.content).toBe(snapshot().content);
+    expect(next.external).toEqual({
+      kind: 'changed',
+      hidden: false,
+      scope: 'worktree',
+      observedVersion: 'v1:moved',
+    });
+  });
+
+  it('lets only the newest overlapping read install', async () => {
+    await openTextSession();
+    const first = deferred<git.ConflictState>();
+    const second = deferred<git.ConflictState>();
+    mockState.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const firstRun = notify();
+    const secondRun = notify();
+    // The newer read answers first and installs; the older one is obsolete.
+    second.resolve(
+      textState({ sourceVersion: 'v1:newest', snapshot: snapshot({ content: 'newest\n' }) })
+    );
+    await secondRun;
+    first.resolve(
+      textState({ sourceVersion: 'v1:oldest', snapshot: snapshot({ content: 'oldest\n' }) })
+    );
+    await firstRun;
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.sourceVersion).toBe('v1:newest');
+    expect(next.content).toBe('newest\n');
+  });
+
+  it('drops a superseded read even when the newer one installed nothing', async () => {
+    await openTextSession();
+    const stale = deferred<git.ConflictState>();
+    mockState.mockReturnValueOnce(stale.promise);
+
+    const staleRun = notify();
+    // The newer read finds the version unchanged, so it installs nothing and
+    // never claims a new request revision. Request-revision and epoch checks
+    // therefore cannot tell the older read it is obsolete — only the
+    // revalidation generation can.
+    mockState.mockResolvedValue(textState());
+    await notify();
+
+    stale.resolve(
+      textState({ sourceVersion: 'v1:stale', snapshot: snapshot({ content: 'stale content\n' }) })
+    );
+    await staleRun;
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.sourceVersion).toBe('v1:initial');
+    expect(next.content).toBe(snapshot().content);
+  });
+
+  it('cannot apply a read that belonged to a since-closed session', async () => {
+    await openTextSession();
+    const gate = deferred<git.ConflictState>();
+    mockState.mockReturnValue(gate.promise);
+
+    const pending = notify();
+    useGitStore.getState().closeMergeResolution();
+    gate.resolve(textState({ sourceVersion: 'v1:moved' }));
+    await pending;
+
+    expect(session()).toBeNull();
+  });
+
+  it('cannot apply a read for one file to the session that replaced it', async () => {
+    await openTextSession();
+    const gate = deferred<git.ConflictState>();
+    mockState.mockReturnValue(gate.promise);
+    const pending = notify();
+
+    // The queue advanced to another file before the read came back.
+    useGitStore.getState().closeMergeResolution();
+    mockState.mockResolvedValue(conflictState({ sourceVersion: 'v1:next' }));
+    await useGitStore.getState().openMergeResolution('other.txt', ['other.txt']);
+    gate.resolve(
+      textState({ sourceVersion: 'v1:stale', snapshot: snapshot({ content: 'stale\n' }) })
+    );
+    await pending;
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.path).toBe('other.txt');
+    expect(next.sourceVersion).toBe('v1:next');
+    expect(next.content).toBe(snapshot().content);
+  });
+
+  it('reports resolved-outside when the path is no longer conflicted', async () => {
+    await openTextSession();
+    mockState.mockResolvedValue(
+      conflictState({
+        stages: allStages({ base: undefined, ours: undefined, theirs: undefined }),
+        snapshot: undefined,
+        heads: undefined,
+        sourceVersion: 'v1:resolved',
+      })
+    );
+
+    await notify();
+
+    expect(session()?.external?.kind).toBe('resolved-outside');
+  });
+
+  it('reports resolved-outside when a still-conflicted file lost its markers', async () => {
+    await openTextSession();
+    mockState.mockResolvedValue(
+      textState({
+        sourceVersion: 'v1:handresolved',
+        snapshot: snapshot({ regions: [], content: 'done\n' }),
+      })
+    );
+
+    await notify();
+
+    expect(session()?.external?.kind).toBe('resolved-outside');
+    // The user's work is untouched: this is a notice, not a swap.
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.content).toBe(snapshot().content);
+  });
+
+  it('reports check-failed when the read fails, keeping content and decisions', async () => {
+    await openTextSession();
+    useGitStore.getState().recordDecision(0, 'C');
+    mockState.mockRejectedValue(new Error('git exploded'));
+
+    await notify();
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.external?.kind).toBe('check-failed');
+    expect(next.decisions).toEqual({ 0: 'C' });
+    expect(next.content).toBe(snapshot().content);
+  });
+
+  it('a later failed read cannot downgrade resolved-outside', async () => {
+    await openTextSession();
+    mockState.mockResolvedValue(
+      conflictState({
+        stages: allStages({ base: undefined, ours: undefined, theirs: undefined }),
+        snapshot: undefined,
+        heads: undefined,
+        sourceVersion: 'v1:resolved',
+      })
+    );
+    await notify();
+    expect(session()?.external?.kind).toBe('resolved-outside');
+
+    mockState.mockRejectedValue(new Error('git exploded'));
+    await notify();
+
+    expect(session()?.external?.kind).toBe('resolved-outside');
+  });
+
+  it('clears a stale notice when the version matches again', async () => {
+    await openTextSession();
+    mockState.mockRejectedValue(new Error('transient'));
+    await notify();
+    expect(session()?.external?.kind).toBe('check-failed');
+
+    mockState.mockResolvedValue(textState());
+    await notify();
+
+    expect(session()?.external).toBeUndefined();
+  });
+
+  it('classifies an index-stage change as conflict-scoped, not worktree', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(
+      textState({
+        sourceVersion: 'v1:restaged',
+        stages: allStages({ theirs: { hash: 'other', mode: '100644', size: 12 } as git.StageBlob }),
+      })
+    );
+
+    await notify();
+
+    // Current/Incoming no longer mean what the user reviewed, so this may not
+    // be acknowledged away.
+    expect(session()?.external).toMatchObject({ kind: 'changed', scope: 'conflict' });
+    useGitStore.getState().acknowledgeMergeExternal();
+    expect(session()?.external).toMatchObject({ scope: 'conflict', hidden: false });
+  });
+
+  it('classifies an operation-head change as conflict-scoped', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(
+      textState({
+        sourceVersion: 'v1:rebased',
+        heads: {
+          operation: 'merge',
+          ours: { label: 'main', hash: 'abc123', subject: 'ours subject' },
+          theirs: { label: 'feature', hash: 'moved99', subject: 'other subject' },
+        } as git.MergeHeads,
+      })
+    );
+
+    await notify();
+
+    expect(session()?.external).toMatchObject({ kind: 'changed', scope: 'conflict' });
+  });
+
+  it('lets Keep working hide a worktree-scoped notice without changing the version', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(
+      textState({ sourceVersion: 'v1:moved', snapshot: snapshot({ content: 'outside\n' }) })
+    );
+    await notify();
+
+    useGitStore.getState().acknowledgeMergeExternal();
+
+    const acknowledged = session();
+    expect(acknowledged?.external).toMatchObject({
+      kind: 'changed',
+      hidden: true,
+      scope: 'worktree',
+    });
+    // Acknowledgement is not overwrite consent: the mismatched version stays.
+    expect(acknowledged?.sourceVersion).toBe('v1:initial');
+
+    // A later signal that finds the SAME outside change must not re-raise the
+    // notice the user already dismissed.
+    await notify();
+    expect(session()?.external).toMatchObject({ hidden: true });
+
+    // A NEW outside change does raise it again.
+    mockState.mockResolvedValue(
+      textState({
+        sourceVersion: 'v1:moved-again',
+        snapshot: snapshot({ content: 'outside twice\n' }),
+      })
+    );
+    await notify();
+    expect(session()?.external).toMatchObject({ hidden: false, observedVersion: 'v1:moved-again' });
+  });
+
+  it('treats a session whose version already matches Firn own write as a no-op', async () => {
+    await openTextSession();
+    useGitStore.getState().recordDecision(0, 'C');
+    // Stand in for Task 8's post-write baseline update: the session now holds
+    // the version Firn's own write produced, so the watcher event it triggers
+    // must not look like an outside change.
+    const live = session();
+    if (!live) throw new Error('expected a session');
+    useGitStore.setState({ mergeSession: { ...live, sourceVersion: 'v1:afterwrite' } });
+    mockState.mockResolvedValue(
+      textState({
+        sourceVersion: 'v1:afterwrite',
+        snapshot: snapshot({ regions: [], content: 'resolved\n' }),
+      })
+    );
+
+    await notify();
+
+    // Marker-free and still conflicted, but this is Firn's own resolved write
+    // awaiting a stage retry — not a resolution done outside Firn.
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.external).toBeUndefined();
+    expect(next.decisions).toEqual({ 0: 'C' });
+  });
+
+  it('skips revalidation while a finalize is in flight', async () => {
+    await openTextSession();
+    mockGitStage.mockImplementation(async () => {
+      // Mid-finalize: the backend guard is the authority here, and the
+      // worktree is half-written.
+      await notify();
+      expect(mockState).toHaveBeenCalledTimes(1); // only the open read
+    });
+    useGitStore.getState().recordDecision(0, 'C');
+    await useGitStore
+      .getState()
+      .mergeFinalizeAndStage('resolved\n', { suppressQueueAdvance: true });
+
+    expect(mockGitStage).toHaveBeenCalled();
+  });
+
+  it('a background signal cannot supersede a Reload in flight', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(textState({ sourceVersion: 'v1:moved' }));
+    await notify();
+    expect(session()?.external?.kind).toBe('changed');
+
+    const gate = deferred<git.ConflictState>();
+    mockState.mockReturnValue(gate.promise);
+    const reload = useGitStore.getState().applyMergeReload();
+    expect(session()?.reloadPending).toBe(true);
+    const callsBefore = mockState.mock.calls.length;
+
+    await notify();
+    expect(mockState.mock.calls.length).toBe(callsBefore);
+
+    gate.resolve(
+      textState({ sourceVersion: 'v1:reloaded', snapshot: snapshot({ content: 'reloaded\n' }) })
+    );
+    await reload;
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.content).toBe('reloaded\n');
+    expect(next.dirty).toBe(false);
+    expect(next.reloadPending).toBe(false);
+    expect(next.external).toBeUndefined();
+  });
+
+  it('Reload reads at click time and observes a change that landed during it', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(textState({ sourceVersion: 'v1:first-change' }));
+    await notify();
+
+    // Two reads: the forced one installs, then one ordinary follow-up catches
+    // anything that changed while the forced read was in flight.
+    mockState
+      .mockResolvedValueOnce(
+        textState({
+          sourceVersion: 'v1:second-change',
+          snapshot: snapshot({ content: 'second\n' }),
+        })
+      )
+      .mockResolvedValueOnce(
+        textState({ sourceVersion: 'v1:third-change', snapshot: snapshot({ content: 'third\n' }) })
+      );
+
+    await useGitStore.getState().applyMergeReload();
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    // The follow-up ran against the freshly installed pristine session, so it
+    // swapped again rather than raising a notice.
+    expect(next.content).toBe('third\n');
+    expect(next.sourceVersion).toBe('v1:third-change');
+  });
+
+  it('Reload reports a failed read and leaves the session usable', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(textState({ sourceVersion: 'v1:moved' }));
+    await notify();
+    mockState.mockRejectedValue(new Error('read failed'));
+
+    await useGitStore.getState().applyMergeReload();
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.reloadPending).toBe(false);
+    expect(next.external?.kind).toBe('check-failed');
+    expect(useIDEStore.getState().toast?.type).toBe('error');
+  });
+
+  it('a same-version Retry clears check-failed without rebuilding the session', async () => {
+    await openTextSession();
+    useGitStore.getState().recordDecision(0, 'C');
+    mockState.mockRejectedValue(new Error('transient'));
+    await notify();
+    expect(session()?.external?.kind).toBe('check-failed');
+    const beforeRetry = session();
+
+    mockState.mockResolvedValue(textState());
+    await useGitStore.getState().applyMergeReload();
+
+    const next = session();
+    if (next?.kind !== 'text') throw new Error('expected text session');
+    expect(next.external).toBeUndefined();
+    expect(next.decisions).toEqual({ 0: 'C' });
+    expect(next.requestRevision).toBe(beforeRetry?.requestRevision);
+  });
+
+  it('swaps a sides session when its stage identity changed', async () => {
+    await openSidesSession();
+    mockState.mockResolvedValue(
+      conflictState({
+        stages: allStages({
+          binary: true,
+          theirs: { hash: 'other', mode: '100644', size: 9 } as git.StageBlob,
+        }),
+        snapshot: undefined,
+        sourceVersion: 'v1:newblob',
+      })
+    );
+
+    await notify();
+
+    const next = session();
+    if (next?.kind !== 'sides') throw new Error('expected sides session');
+    expect(next.stages.theirs?.hash).toBe('other');
+    expect(next.selectedSide).toBeUndefined();
+    expect(next.sourceVersion).toBe('v1:newblob');
+  });
+
+  it('ignores signals for other paths and with no session', async () => {
+    await openTextSession();
+    const before = session();
+    const callsBefore = mockState.mock.calls.length;
+
+    await useGitStore.getState().notifyMergeFileChanged('/repo/other.txt');
+    expect(mockState.mock.calls.length).toBe(callsBefore);
+    expect(session()).toBe(before);
+
+    useGitStore.getState().closeMergeResolution();
+    await useGitStore.getState().notifyMergeFileChanged('/repo/file.txt');
+    expect(mockState.mock.calls.length).toBe(callsBefore);
+  });
+});
