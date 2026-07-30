@@ -1083,3 +1083,106 @@ describe('MergeResolutionView discard confirmation', () => {
     expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
   });
 });
+
+describe('MergeResolutionView escape', () => {
+  const surface = () => screen.getByLabelText(/merge resolution for/i);
+  /** A node inside the editor host, so the event has to bubble out of the
+   * editor the way a real CodeMirror keypress does. */
+  const inEditor = () => {
+    const host = surface().querySelector(`.${'editorHost'}`) ?? surface();
+    const node = document.createElement('div');
+    node.tabIndex = 0;
+    host.appendChild(node);
+    return node;
+  };
+
+  it('closes a pristine session through the guard, writing nothing', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+
+    fireEvent.keyDown(surface(), { key: 'Escape' });
+
+    expect(requestMergeClose).toHaveBeenCalledTimes(1);
+    expect(mergeFinalizeAndStage).not.toHaveBeenCalled();
+    expect(confirmMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('handles Escape raised inside the editor', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+
+    fireEvent.keyDown(inEditor(), { key: 'Escape' });
+
+    expect(requestMergeClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the store, which decides whether a touched session needs confirmation', () => {
+    render(
+      <MergeResolutionView session={{ ...textSession, dirty: true } as MergeSession} visible />
+    );
+
+    fireEvent.keyDown(surface(), { key: 'Escape' });
+
+    // The view never decides: requestMergeClose owns pristine-vs-touched.
+    expect(requestMergeClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores an Escape the editor already consumed', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+    const node = inEditor();
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    event.preventDefault();
+    node.dispatchEvent(event);
+
+    expect(requestMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('ignores an Escape that is closing an IME composition', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+
+    fireEvent.keyDown(surface(), { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(surface(), { key: 'Process', keyCode: 229 });
+
+    expect(requestMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('ignores Escape while a finalize is running', async () => {
+    let release = () => {};
+    mergeFinalizeAndStage.mockImplementation(
+      () => new Promise<boolean>((resolve) => (release = () => resolve(true)))
+    );
+    render(<MergeResolutionView session={textSession} visible />);
+    act(() =>
+      onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
+
+    fireEvent.keyDown(surface(), { key: 'Escape' });
+    expect(requestMergeClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      release();
+    });
+  });
+
+  it('ignores Escape while a reload is in flight', () => {
+    render(
+      <MergeResolutionView
+        session={{ ...textSession, reloadPending: true } as MergeSession}
+        visible
+      />
+    );
+
+    fireEvent.keyDown(surface(), { key: 'Escape' });
+
+    expect(requestMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('leaves other keys alone', () => {
+    render(<MergeResolutionView session={textSession} visible />);
+
+    fireEvent.keyDown(surface(), { key: 'Enter' });
+    fireEvent.keyDown(surface(), { key: 'F7' });
+
+    expect(requestMergeClose).not.toHaveBeenCalled();
+  });
+});

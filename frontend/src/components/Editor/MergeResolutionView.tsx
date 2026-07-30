@@ -125,11 +125,26 @@ export function MergeResolutionView({
     return () => onFinalizingChange?.(false);
   }, [onFinalizingChange]);
 
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    // CodeMirror consumed it (collapsing a selection), or the platform is
+    // ending an IME composition — key code 229 is the Windows/macOS IME
+    // placeholder, where `key` is not the physical key at all.
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // A write or a reload in flight owns the session; Escape must not race it.
+    if (finalizing || session.reloadPending) return;
+    event.preventDefault();
+    // The store decides pristine-vs-touched: closing writes nothing, so the
+    // only thing at stake is the user's in-session work.
+    useGitStore.getState().requestMergeClose();
+  };
+
   return (
     <section
       ref={sectionRef}
       className={styles.root}
       aria-label={`Merge resolution for ${session.path}`}
+      onKeyDown={handleKeyDown}
     >
       {session.kind === 'sides' ? (
         <SidesResolutionContent

@@ -147,6 +147,16 @@ export function Editor() {
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
   const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
+  // Any close of the merge surface — Escape, the tab X, the resolved-outside
+  // notice, or a confirmed discard — ends with the session becoming null. One
+  // effect observing that transition restores focus for all of them.
+  const hadMergeSessionRef = useRef(mergeSession !== null);
+  useEffect(() => {
+    const had = hadMergeSessionRef.current;
+    hadMergeSessionRef.current = mergeSession !== null;
+    if (had && mergeSession === null) restoreFocusAfterCloseRef.current = true;
+  }, [mergeSession]);
+
   useEffect(() => {
     if (!restoreFocusAfterCloseRef.current) return undefined;
 
@@ -346,8 +356,11 @@ export function Editor() {
               onClick={(event) => {
                 event.stopPropagation();
                 if (mergeFinalizing) return;
-                restoreFocusAfterCloseRef.current = true;
-                useGitStore.getState().closeMergeResolution();
+                // Same guard as Escape and the resolved-outside notice: a
+                // touched session gets the discard confirmation, and focus
+                // restoration is handled by the close effect below rather than
+                // by this handler, which view-originated closes never reach.
+                useGitStore.getState().requestMergeClose();
               }}
               aria-label="Close merge resolution"
               type="button"

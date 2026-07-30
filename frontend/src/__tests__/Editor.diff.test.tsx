@@ -148,10 +148,10 @@ beforeEach(() => {
 });
 
 describe('Editor merge-resolution tab', () => {
-  it('keeps the merge surface mounted while another tab is selected and closes without writing', () => {
-    const closeMergeResolution = jest.fn();
+  it('keeps the merge surface mounted while another tab is selected and closes through the guard', () => {
+    const requestMergeClose = jest.fn();
     useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
-    useGitStore.setState({ mergeSession, mergeFocused: true, closeMergeResolution });
+    useGitStore.setState({ mergeSession, mergeFocused: true, requestMergeClose });
 
     render(<Editor />);
 
@@ -161,12 +161,31 @@ describe('Editor merge-resolution tab', () => {
     expect(screen.getByTestId('merge-resolution-view')).toHaveAttribute('data-visible', 'false');
 
     fireEvent.click(screen.getByRole('button', { name: 'Close merge resolution' }));
-    expect(closeMergeResolution).toHaveBeenCalledTimes(1);
+    // The tab X takes the identical path as Escape: a touched session gets the
+    // discard confirmation rather than closing outright.
+    expect(requestMergeClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('never closes a merge session directly from the tab', () => {
+    const requestMergeClose = jest.fn();
+    const closeMergeResolution = jest.fn();
+    useGitStore.setState({
+      mergeSession: { ...mergeSession, dirty: true } as unknown as MergeSession,
+      mergeFocused: true,
+      requestMergeClose,
+      closeMergeResolution,
+    });
+
+    render(<Editor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Close merge resolution' }));
+
+    expect(requestMergeClose).toHaveBeenCalledTimes(1);
+    expect(closeMergeResolution).not.toHaveBeenCalled();
   });
 
   it('disables merge close while its surface reports a deferred finalize', () => {
-    const closeMergeResolution = jest.fn();
-    useGitStore.setState({ mergeSession, mergeFocused: true, closeMergeResolution });
+    const requestMergeClose = jest.fn();
+    useGitStore.setState({ mergeSession, mergeFocused: true, requestMergeClose });
 
     render(<Editor />);
 
@@ -174,7 +193,40 @@ describe('Editor merge-resolution tab', () => {
     const close = screen.getByRole('button', { name: 'Close merge resolution' });
     expect(close).toBeDisabled();
     fireEvent.click(close);
-    expect(closeMergeResolution).not.toHaveBeenCalled();
+    expect(requestMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('restores focus after a close that did not come from the tab X', async () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ mergeSession, mergeFocused: true });
+    render(<Editor />);
+
+    // A view-originated close (Escape, or the resolved-outside notice) bypasses
+    // the tab entirely, so focus restoration cannot hang off the X handler.
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false });
+    });
+
+    // Restoration is deferred until the tab state settles, so poll rather than
+    // race a fixed delay.
+    await waitFor(() => expect(screen.getByRole('tab', { name: /other\.ts/i })).toHaveFocus());
+  });
+
+  it('falls back to the main landmark when a close leaves no tabs', async () => {
+    useGitStore.setState({ mergeSession, mergeFocused: true });
+    const main = document.createElement('div');
+    main.id = 'main-content';
+    main.tabIndex = -1;
+    document.body.appendChild(main);
+    render(<Editor />);
+    expect(screen.getByRole('tab', { name: /clash\.go.*merge/i })).toBeInTheDocument();
+
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false });
+    });
+
+    await waitFor(() => expect(main).toHaveFocus());
+    main.remove();
   });
 
   it('keeps an explicitly focused diff selected when a merge session is installed', () => {

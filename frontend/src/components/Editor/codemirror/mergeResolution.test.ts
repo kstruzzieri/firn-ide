@@ -1,6 +1,6 @@
 import { redo } from '@codemirror/commands';
 import { searchPanelOpen } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, runScopeHandlers } from '@codemirror/view';
 
 jest.mock('./extensions', () => ({}));
@@ -1683,6 +1683,40 @@ describe('document-change reporting', () => {
     editor.view.dispatch({ changes: { from: 0, insert: 'x' } });
     expect(onDocumentChanged).toHaveBeenCalledTimes(2);
     expect(editor.getState().decisions[1]).toBeUndefined();
+    editor.destroy();
+  });
+});
+
+describe('escape reaches the surface', () => {
+  it('leaves an Escape with nothing to collapse uncancelled on contentDOM', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    editor.view.focus();
+
+    // The merge surface closes on Escape by listening on an ancestor, so the
+    // editor must not cancel the event when it has nothing to do with it.
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    editor.view.contentDOM.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    editor.destroy();
+  });
+
+  it('cancels an Escape that collapses a real multi-range selection', () => {
+    const editor = createMergeResolutionEditor(document.body, session());
+    editor.view.focus();
+    editor.view.dispatch({
+      selection: EditorSelection.create([EditorSelection.range(0, 3), EditorSelection.range(4, 5)]),
+    });
+
+    const handled = runScopeHandlers(
+      editor.view,
+      new KeyboardEvent('keydown', { key: 'Escape' }),
+      'editor'
+    );
+
+    // When CodeMirror DOES act on Escape it reports the key as handled, which
+    // is what makes the surface's defaultPrevented check the right guard.
+    expect(handled).toBe(true);
     editor.destroy();
   });
 });
