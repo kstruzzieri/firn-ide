@@ -28,7 +28,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 4: Run Profiles | **COMPLETE** | #16-17, #59-64 complete; #18/#71 Phase 1 (#123) + #71 P2 panel (#125) + P2 follow-ups/recency sidecar (#127) + #18 P3 header selector (#129) + lifecycle-script detection fix (#130) + #18 P4 create/edit form (#132) + UI polish (#133) + store persist rollback (#134) shipped → **#18/#71 closed**; LANES output #107 (#138) + #137 (#139) shipped; #103 run execution identity (#144) merged → epic complete |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
-| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); #169 editable diff shipped (PR #181); #164 phases 0-2 shipped via PRs #208/#209/#213, with phases 3-4, merge follow-ups #219-#223, and #165/#166 open |
+| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); #169 editable diff shipped (PR #181); #164 phases 0-3 shipped via PRs #208/#209/#213/#239, with phase 4, merge follow-ups #219-#223 and #240-#242, and #165/#166 open |
 | Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147), #149 nested `.gitignore` (#192), #39 dynamic languages (#200), and #195 unreadable-directory UX (#203) shipped; #148/#196 remain benchmark-gated |
 | Editor & LSP DX | **COMPLETE** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178, final fixes merged in PR #183, packaged native closure gate passed, and #112 closed as completed; #168 Structure view closed |
 | Workspace & Search UX | **COMPLETE** | #202 hybrid tree rails shipped (PR #211); #207 search hierarchy (PR #214) and #215 dimmed syntax tokens (PR #217) closed |
@@ -54,14 +54,14 @@ This section supersedes the archived delivery narrative below for current priori
 - Release documentation and install examples now target `v0.11.0`.
 - PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs remain pinned to the module's v2.11.0; cross-platform PR verification remains a future release-engineering improvement.
 - #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
-- The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — rather than any observed regression. Treat those as scoped enhancements, not defects.
+- The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — and the Phase 3 confidence layer added #240-#242, rather than any observed regression. Treat those as scoped enhancements, not defects.
 
 ### Latest delivery wave
 
 Six recent implementation tracks landed:
 
 1. **#44 — implemented via PR #206:** the native-dialog command palette, deterministic fuzzy matcher, late-bound command registry, and shared shortcuts shipped. The GitHub issue remains open because the PR used `Addresses #44`; close it after tracker housekeeping.
-2. **#164 — phases 0-2 merged via PRs #208/#209/#213:** backend conflict snapshots, the guarded merge-session store, and the CodeMirror Result-spine merge editor shipped. The issue correctly remains open: the confidence layer and multi-file hardening are phases 3-4.
+2. **#164 — phases 0-3 merged via PRs #208/#209/#213/#239:** backend conflict snapshots, the guarded merge-session store, the CodeMirror Result-spine merge editor, and the confidence layer (preview, word marks, provenance stripes, targeted reopen, base display, line numbers, announcements) shipped. The issue correctly remains open: multi-file hardening is phase 4.
 3. **#202 — closed via PR #211:** Workspace view now carries two distinct rails for active scope and per-file ownership without adding a third visual channel or changing Project view.
 4. **#207 / #215 — closed via PRs #214/#217:** search results gained match-anchored rows and file/directory hierarchy, then dimmed syntax-token highlighting that keeps the match the brightest element in the row.
 5. **#216 / #218 — editor navigation fixes:** navigating to a line now scrolls correctly both for a freshly opened file and for an already-open background tab.
@@ -76,13 +76,13 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | Lane | Ticket | Primary ownership | Dependency and conflict rule |
 |------|--------|-------------------|------------------------------|
 | A | #165 — embedded `go-llm` runtime | `internal/` Golem seams, `go.mod` dependency addition | Unblocked: #225 shipped the Go 1.25 toolchain. Replace the commit-message CLI shell-out first; keep the #226 chat panel out of this lane until the runtime lands. |
-| B | #164 Phase 3 — merge confidence layer | `frontend/src/components/Editor/Merge*`, merge-specific `GitPanel` seams, `gitStore` merge tests | Continue from PR #213; serialize #164 phases 3 -> 4 in this lane, then work #219-#223. Do not start #166 or #46 against the same editor/Git seams. |
+| B | #164 Phase 4 — multi-file flow and watcher hardening | `frontend/src/components/Editor/Merge*`, merge-specific `GitPanel` seams, `gitStore` merge tests | Continue from PR #239; the queue advance is still suppressed in the UI. Plan the watcher/atomic-swap work before coding — it is the one part of #164 that can lose a user's decisions. Then work #219-#223 and #240-#242. Do not start #166 or #46 against the same editor/Git seams. |
 | C | #146 Phase 2D — execution-plan abstraction | run-profile execution planning and focused lifecycle tests | Phases 2A-2C are delivered (#224, #232, and the current #146 persistence pull request). Start 2D only from a separate approved contract and isolated branch. Treat #41 only as an in-scope extraction if this lane proves it necessary. |
 | D | #45 — context menus | `FileExplorer` row/context surfaces, editor tab-bar menus, command registry entries | Unblocked: #202 released the File Explorer seams. Reuse #44's registry instead of adding a parallel action path. Keep out of the merge editor while Lane B is active. |
 
 #### Follow-on queue
 
-1. Finish #164 phases 3-4 in Lane B, then work the merge follow-up backlog: #220 auto-merged region hints, #219 key-hold preview, #221 multi-file conflict rail, #222 newline metadata, #223 bulk take-Current/Incoming.
+1. Finish #164 phase 4 in Lane B, then work the merge follow-up backlog: #220 auto-merged region hints, #219 key-hold preview, #221 multi-file conflict rail, #222 newline metadata, #223 bulk take-Current/Incoming, #240 pre-stage diagnostics check, #241 base-relative word marks, #242 collapsed conflicted-file diagnostics.
 2. Start #166 only after the merge surface stabilizes. Split it into safe/read-only branch metadata and later destructive merge/rebase/rename/delete operations.
 3. Start #46 after the #164 editor surface stabilizes; keep sibling navigation compatible with lazy directory loading.
 4. Start #226 once the #165 embedded runtime lands in Lane A.
@@ -110,7 +110,8 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | Closed | Editor nav scroll (PRs #216/#218) | Fixed directly in PRs #216/#218; line navigation scrolls correctly for freshly opened and already-open background tabs. |
 | Delivered / tracker open | #44 Command Palette | PR #206 satisfies the issue requirements; verify and close the tracker without more implementation. |
 | Closed | #225 Go 1.25 toolchain | Module and every CI job resolve Go from `go-version-file: 'go.mod'`; shipped via PR #228. |
-| P0 | #164 Phase 3 merge confidence | Build the confidence layer on the shipped Phase 2 editor, then Phase 4 multi-file hardening in the same lane. |
+| Closed | #164 Phase 3 merge confidence | Shipped via PR #239: preview, word marks, provenance stripes, targeted reopen, base display, line numbers, announcements. |
+| P0 | #164 Phase 4 multi-file hardening | Queue auto-advance (still suppressed in the UI) plus the watcher/external-change policy. The atomic single-snapshot swap is the risk: never apply a regions-only refetch to stale content. |
 | P1 | #146 Run identity Phase 2D | Phases 2A-2C are delivered; only the separately contracted execution-plan abstraction remains. |
 | P1 | #45 Context menus | Reuse #44 commands now that #202 has released the File Explorer seams. |
 | P2 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract after the merge editor stabilizes. |
@@ -119,6 +120,9 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | P2 | #221 Multi-file conflict rail | Extend the conflict rail across files in the Git panel; keep per-file finalize guards intact. |
 | P2 | #222 Newline metadata | Preserve per-side no-trailing-newline metadata through resolution and write. |
 | P2 | #223 Bulk conflict resolution | Add confirmed take-all-Current/Incoming actions; never silently overwrite manual decisions, never auto-write or stage. |
+| P2 | #240 Pre-stage diagnostics check | Once the buffer is marker-free, report whether the resolution compiles before it is staged. Needs a document handoff, not a refcounted lease. |
+| P2 | #241 Base-relative word marks | When git recorded a base, mark each side against it to show what that side changed rather than how the sides differ. |
+| P2 | #242 Conflicted-file diagnostics | Collapse per-marker errors into one actionable warning keyed on git's `UU` status; must clear the moment the file is written clean. |
 | P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
 | P2 | #226 Golem chat panel | Read-only workspace chat on the embedded runtime; start only after #165. |
 | Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |
@@ -567,14 +571,18 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Hunk-level staging in the diff viewer (#163, PR #173; hardened PR #174/#176)
 - [x] Intent-to-add (`git add -N`) track-without-staging for new files (#167, PR #177)
 
-### #164: Git - Conflict Resolution (phases 0-2 shipped)
+### #164: Git - Conflict Resolution (phases 0-3 shipped)
 - [x] **Phase 0 (PR #208)** — backend conflict snapshots: per-region Base/Current/Incoming data sourced from the real merge state.
 - [x] **Phase 1 (PR #209)** — guarded merge-session store with close-without-write, stale-session, durable-write-before-stage, and zero-unresolved guards.
 - [x] **Phase 2 (PR #213)** — CodeMirror Result-spine merge editor with Current / Incoming / Both / Manual decisions, conflict rail, keyboard navigation, undo-safe region mapping, and accessible side labels.
-- [ ] **Phase 3** — confidence layer.
-- [ ] **Phase 4** — multi-file hardening and queue auto-advance (suppressed in the Phase 2 UI).
+- [x] **Phase 3 (PR #239)** — confidence layer: exact targeted reopen (re-inserts the original marker bytes captured at session build; the header offers a jump back rather than moving the viewport), hover/focus preview of the exact resulting lines, word-level marks between the sides, provenance stripes on resolved lines, the common ancestor per region or as a lazy stage-`:1` strip, line numbers with per-card line ranges, and polite live-region announcements.
+- [ ] **Phase 4** — multi-file hardening and queue auto-advance (still suppressed via `suppressQueueAdvance: true` in the UI).
+
+Three design notes from Phase 3 worth preserving for Phase 4: store-level merge guards pair the workspace `epoch` with per-open `requestRevision`, while the component-local base-strip swap uses `requestRevision` as its prop identity; preview is deliberately DOM-only rather than a `StateEffect`, because any dispatch rebuilds the card and destroys keyboard focus; and the decorations builder declares `['doc', field]` explicitly so a future field memoization cannot silently stale the provenance stripes.
 
 Merge follow-ups surfaced by the Phase 2 MVP: #219 key-hold preview, #220 auto-merged region hints, #221 multi-file conflict rail, #222 per-side newline metadata, #223 bulk take-Current/Incoming.
+
+Further follow-ups surfaced by Phase 3: #240 pre-stage LSP diagnostics check (run once the buffer is marker-free, answering "does my resolution compile?" before staging), #241 base-relative word marks (diff each side against base when git recorded one, showing what each side *changed* rather than how they differ), #242 collapse conflicted-file diagnostics in the Problems panel (one actionable warning instead of one error per marker line).
 
 Other follow-ups: #165 go-llm library (unblocked by #225) and #166 branch menu remain open. #169 editable diff shipped via PR #181.
 

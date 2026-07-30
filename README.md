@@ -240,10 +240,11 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Gutter change bars with a peek popup — unified word-level inline diff and one-click revert-to-HEAD
 - [x] Hunk-level stage/unstage from editor and diff gutters, including intent-to-add support for untracked files
 - [x] Merge conflict resolution editor — Current / Incoming / Both / Manual decisions on a live Result spine, with a conflict rail, keyboard navigation, undo-safe region mapping, and no write or stage until every region is resolved
+- [x] Merge confidence layer — hover and focus preview of the exact lines a choice produces, word-level marks between the two sides, provenance stripes showing where each resolution landed, exact targeted reopen of any decision, the common ancestor per region or as a lazy stage-`:1` strip, line numbers with per-card line ranges, and polite screen-reader announcements
 
 ### Planned
 
-- [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223)
+- [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Run execution identity Phase 2D — execution-plan abstraction (#146)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
@@ -336,12 +337,12 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.11.0` is live. Accessibility (#43), dynamic language loading (#39), the command palette (#44), hybrid tree rails (#202), search-result hierarchy (#207/#215), the merge-resolution editor MVP (#164 phases 0-2), and the Go 1.25 toolchain upgrade (#225) have all shipped since the release.
+`v0.11.0` is live. Accessibility (#43), dynamic language loading (#39), the command palette (#44), hybrid tree rails (#202), search-result hierarchy (#207/#215), the merge-resolution editor and its confidence layer (#164 phases 0-3), and the Go 1.25 toolchain upgrade (#225) have all shipped since the release.
 
 Active tracks:
 
 1. **Golem:** replace the commit-message CLI shell-out with the embedded `go-llm` runtime (#165), then the read-only workspace chat panel (#226). Both were unblocked by the #225 toolchain upgrade.
-2. **Git merge:** finish #164 phases 3-4, then work the follow-up backlog surfaced by the MVP — auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), and bulk take-Current/Incoming (#223). Destructive VCS operations (#166) come after.
+2. **Git merge:** finish #164 phase 4 — multi-file queue advance and watcher/external-change hardening — then work the follow-up backlog: auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), and the diagnostics follow-ups surfaced by phase 3 (#240, #241, #242). Destructive VCS operations (#166) come after.
 3. **Run engine:** continue run execution identity Phase 2 (#146) — 2A retained tabs shipped, 2B parallelism shipped via #232, and the current pull request delivers 2C persistence. Only 2D execution plans remain deferred.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
 
