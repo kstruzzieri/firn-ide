@@ -2601,3 +2601,40 @@ describe('queue advance', () => {
     expect(useGitStore.getState().mergeSession).toBeNull();
   });
 });
+
+describe('delete/modify symmetry at the session boundary', () => {
+  const openSides = async (over: Partial<git.ConflictStages>) => {
+    mockState.mockResolvedValue(conflictState({ stages: allStages(over), snapshot: undefined }));
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    if (!ok) throw new Error('failed to open');
+  };
+
+  it('opens a sides session when ours is absent and stages the surviving side', async () => {
+    await openSides({ ours: undefined });
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'sides') throw new Error('expected sides session');
+    expect(session.stages.ours).toBeUndefined();
+    expect(session.stages.theirs).toBeDefined();
+
+    useGitStore.getState().selectMergeSide('theirs');
+    await useGitStore.getState().mergeFinalizeAndStage();
+
+    expect(mockGuardedApply).toHaveBeenCalledWith('/repo', 'file.txt', 'theirs', 'v1:initial');
+  });
+
+  it('opens a sides session when theirs is absent and can resolve to that deletion', async () => {
+    await openSides({ theirs: undefined });
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'sides') throw new Error('expected sides session');
+    expect(session.stages.theirs).toBeUndefined();
+    expect(session.stages.ours).toBeDefined();
+
+    // Choosing the absent side IS choosing the deletion; the backend turns that
+    // into a worktree removal plus a staged deletion.
+    useGitStore.getState().selectMergeSide('theirs');
+    await useGitStore.getState().mergeFinalizeAndStage();
+
+    expect(mockGuardedApply).toHaveBeenCalledWith('/repo', 'file.txt', 'theirs', 'v1:initial');
+    expect(mockGuardedStage).toHaveBeenCalledWith('/repo', 'file.txt', 'v1:after-apply');
+  });
+});
