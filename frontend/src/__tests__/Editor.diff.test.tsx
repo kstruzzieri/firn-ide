@@ -662,3 +662,62 @@ describe('Editor workspace tab accents', () => {
     expect(tab.parentElement?.className).toContain('workspaceTab');
   });
 });
+
+describe('Editor merge queue hand-off', () => {
+  it('does not restore fallback focus during the gap between queued files', async () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ mergeSession, mergeFocused: true });
+    render(<Editor />);
+    const fileTab = screen.getByRole('tab', { name: /other\.ts/i });
+    fileTab.blur();
+
+    // The finalized session closes and the next one is still opening.
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false, mergeAdvancePending: true });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+
+    // Focus must not bounce to the file tab mid-hand-off.
+    expect(fileTab).not.toHaveFocus();
+
+    act(() => {
+      useGitStore.setState({
+        mergeSession: { ...mergeSession, path: 'next.go' } as unknown as MergeSession,
+        mergeFocused: true,
+        mergeAdvancePending: false,
+      });
+    });
+    expect(screen.getByRole('tab', { name: /next\.go.*merge/i })).toBeInTheDocument();
+  });
+
+  it('keeps a polite announcement region mounted outside the merge view', () => {
+    useGitStore.setState({
+      mergeSession,
+      mergeFocused: true,
+      mergeQueueAnnouncement: 'Now resolving next.go. 2 conflicted files remaining.',
+    });
+    render(<Editor />);
+
+    const region = screen.getByTestId('merge-queue-announcement');
+    expect(region).toHaveAttribute('aria-live', 'polite');
+    expect(region).toHaveTextContent('Now resolving next.go. 2 conflicted files remaining.');
+  });
+
+  it('still shows the announcement while the next surface is opening', () => {
+    useGitStore.setState({
+      mergeSession: null,
+      mergeFocused: false,
+      mergeAdvancePending: true,
+      mergeQueueAnnouncement: 'Now resolving next.go. 1 conflicted file remaining.',
+    });
+    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+    render(<Editor />);
+
+    // The region does not live inside the merge view, so the gap cannot hide it.
+    expect(screen.getByTestId('merge-queue-announcement')).toHaveTextContent(
+      'Now resolving next.go. 1 conflicted file remaining.'
+    );
+  });
+});

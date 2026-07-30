@@ -107,6 +107,9 @@ export function MergeResolutionView({
   onFinalizingChange?: (finalizing: boolean) => void;
 }) {
   const [finalizing, setFinalizingState] = useState(false);
+  // The overwrite confirmation is owned here so both renderers ask the same
+  // question, and so the request survives the renderer's own re-renders.
+  const [overwriteRequest, setOverwriteRequest] = useState<{ result?: string } | null>(null);
   // The wrapper owns the surface element so one key handler covers both
   // renderers (and the editor inside them), and one discard confirmation is
   // rendered no matter which kind is open.
@@ -153,6 +156,7 @@ export function MergeResolutionView({
           setFinalizing={setFinalizing}
           focusResult={focusResult}
           focusResultRef={focusResultRef}
+          requestOverwrite={setOverwriteRequest}
         />
       ) : (
         <TextResolutionContent
@@ -163,9 +167,18 @@ export function MergeResolutionView({
           focusResult={focusResult}
           focusResultRef={focusResultRef}
           sectionRef={sectionRef}
+          requestOverwrite={setOverwriteRequest}
         />
       )}
       {session.closeRequested && <MergeDiscardDialog session={session} />}
+      {overwriteRequest && (
+        <MergeOverwriteDialog
+          session={session}
+          request={overwriteRequest}
+          onSettled={() => setOverwriteRequest(null)}
+          setFinalizing={setFinalizing}
+        />
+      )}
     </section>
   );
 }
@@ -350,6 +363,87 @@ function MergeDiscardDialog({ session }: { session: MergeSession }) {
   );
 }
 
+/**
+ * Explicit consent to overwrite a working-tree change the user has been shown.
+ *
+ * "Keep working" only hid the notice; this is the separate, destructive step,
+ * and the store re-reads the file at this moment so a version that moved again
+ * while the dialog was open is refused rather than clobbered.
+ */
+function MergeOverwriteDialog({
+  session,
+  request,
+  onSettled,
+  setFinalizing,
+}: {
+  session: MergeSession;
+  request: { result?: string };
+  onSettled: () => void;
+  setFinalizing: (finalizing: boolean) => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    invokerRef.current = active instanceof HTMLElement ? active : null;
+    if (!dialog.open) dialog.showModal();
+    // Initial focus on the non-destructive choice.
+    cancelRef.current?.focus();
+  }, []);
+
+  const close = () => {
+    const invoker = invokerRef.current;
+    onSettled();
+    if (invoker?.isConnected) invoker.focus();
+  };
+
+  const confirm = async () => {
+    setFinalizing(true);
+    try {
+      await useGitStore.getState().mergeOverwriteAndStage(request.result);
+    } finally {
+      setFinalizing(false);
+      close();
+    }
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className={styles.dialog}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="merge-overwrite-title"
+      aria-describedby="merge-overwrite-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+    >
+      <h2 id="merge-overwrite-title" className={styles.dialogTitle}>
+        Overwrite the outside change?
+      </h2>
+      <p id="merge-overwrite-description" className={styles.dialogBody}>
+        {session.path} changed outside Firn after this session opened. Writing your resolution
+        replaces those changes on disk and stages the result. If the file changes again before the
+        write lands, it will be refused instead.
+      </p>
+      <div className={styles.dialogActions}>
+        <button ref={cancelRef} type="button" className={styles.secondaryButton} onClick={close}>
+          Cancel
+        </button>
+        <button type="button" className={styles.finalizeButton} onClick={() => void confirm()}>
+          Overwrite and stage
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
 function TextResolutionContent({
   session,
   visible,
@@ -358,6 +452,7 @@ function TextResolutionContent({
   focusResult,
   focusResultRef,
   sectionRef,
+  requestOverwrite,
 }: {
   session: TextMergeSession;
   visible: boolean;
@@ -366,6 +461,7 @@ function TextResolutionContent({
   focusResult: FocusResult;
   focusResultRef: React.RefObject<FocusResult>;
   sectionRef: React.RefObject<HTMLElement | null>;
+  requestOverwrite: (request: { result?: string }) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MergeResolutionEditor | null>(null);
@@ -528,9 +624,13 @@ function TextResolutionContent({
   // A notice does not freeze editing — "Keep working" has to mean it. Only a
   // write in flight or a reload about to replace the document does.
   const blocked = finalizing || session.reloadPending;
-  // Finalizing is blocked by any external state: an unverified or outdated
-  // session must not write until Task 8's explicit overwrite consent exists.
-  const disabled = unresolved !== 0 || session.readOnly || blocked || Boolean(session.external);
+  // A worktree-only change is the one external state the user may knowingly
+  // write over, through the confirmation below. Everything else — a moved
+  // conflict, a resolution outside Firn, a failed check — stays unwritable.
+  const overwritable =
+    session.external?.kind === 'changed' && session.external.scope === 'worktree';
+  const disabled =
+    unresolved !== 0 || session.readOnly || blocked || (Boolean(session.external) && !overwritable);
   const baseStatus =
     base.status === 'loading'
       ? 'Loading base…'
@@ -542,14 +642,19 @@ function TextResolutionContent({
   const finalize = async () => {
     const editor = editorRef.current;
     if (!editor || disabled) return;
+    if (overwritable) {
+      // Ask before overwriting what someone else wrote.
+      requestOverwrite({ result: editor.getResult() });
+      return;
+    }
     editor.setFrozen(true);
     setFinalizing(true);
     try {
-      // Task 8 turns the queue advance on; until then the surface keeps the
-      // established suppression so this commit changes nothing about finalize.
-      await useGitStore
-        .getState()
-        .mergeFinalizeAndStage(editor.getResult(), { suppressQueueAdvance: true });
+      const ok = await useGitStore.getState().mergeFinalizeAndStage(editor.getResult());
+      // A successful finalize either advanced to the next queued file or
+      // exhausted the queue; when a session is still open, put the user back in
+      // the document rather than leaving focus on a disabled button.
+      if (ok && useGitStore.getState().mergeSession) focusResult();
     } finally {
       if (editorRef.current === editor) editor.setFrozen(false);
       setFinalizing(false);
@@ -699,23 +804,32 @@ function SidesResolutionContent({
   setFinalizing,
   focusResult,
   focusResultRef,
+  requestOverwrite,
 }: {
   session: SidesMergeSession;
   finalizing: boolean;
   setFinalizing: (finalizing: boolean) => void;
   focusResult: FocusResult;
   focusResultRef: React.RefObject<FocusResult>;
+  requestOverwrite: (request: { result?: string }) => void;
 }) {
   const firstSideRef = useRef<HTMLButtonElement>(null);
   focusResultRef.current = () => firstSideRef.current?.focus();
 
   const blocked = finalizing || session.reloadPending;
-  const finalizeBlocked = blocked || Boolean(session.external);
+  const overwritable =
+    session.external?.kind === 'changed' && session.external.scope === 'worktree';
+  const finalizeBlocked = blocked || (Boolean(session.external) && !overwritable);
   const finalize = async () => {
     if (!session.selectedSide || finalizeBlocked) return;
+    if (overwritable) {
+      requestOverwrite({});
+      return;
+    }
     setFinalizing(true);
     try {
-      await useGitStore.getState().mergeFinalizeAndStage(undefined, { suppressQueueAdvance: true });
+      const ok = await useGitStore.getState().mergeFinalizeAndStage();
+      if (ok && useGitStore.getState().mergeSession) focusResult();
     } finally {
       setFinalizing(false);
     }

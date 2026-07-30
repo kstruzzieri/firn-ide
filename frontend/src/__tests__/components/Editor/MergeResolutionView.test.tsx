@@ -43,6 +43,7 @@ const reopenDecision = jest.fn();
 const selectMergeSide = jest.fn();
 const mergeFinalizeAndStage = jest.fn(() => Promise.resolve(true));
 const markMergeDirty = jest.fn();
+const mergeOverwriteAndStage = jest.fn(() => Promise.resolve(true));
 const applyMergeReload = jest.fn(() => Promise.resolve());
 const acknowledgeMergeExternal = jest.fn();
 const requestMergeClose = jest.fn();
@@ -72,6 +73,7 @@ jest.mock('../../../stores/gitStore', () => ({
       selectMergeSide,
       mergeFinalizeAndStage,
       markMergeDirty,
+      mergeOverwriteAndStage,
       applyMergeReload,
       acknowledgeMergeExternal,
       requestMergeClose,
@@ -214,9 +216,8 @@ describe('MergeResolutionView', () => {
       fireEvent.click(enabledFinalize);
       await Promise.resolve();
     });
-    expect(mergeFinalizeAndStage).toHaveBeenCalledWith('resolved result', {
-      suppressQueueAdvance: true,
-    });
+    // Task 8 turned the advance on: no options argument at all.
+    expect(mergeFinalizeAndStage).toHaveBeenCalledWith('resolved result');
   });
 
   it('applies the active syntax theme and updates it without remounting the editor', () => {
@@ -285,7 +286,7 @@ describe('MergeResolutionView', () => {
       fireEvent.click(enabledFinalize);
       await Promise.resolve();
     });
-    expect(mergeFinalizeAndStage).toHaveBeenCalledWith(undefined, { suppressQueueAdvance: true });
+    expect(mergeFinalizeAndStage).toHaveBeenCalledWith();
   });
 
   it('freezes the text controller and blocks mutating controls while finalizing, then releases after failure', async () => {
@@ -421,9 +422,8 @@ describe('MergeResolutionView', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
       await Promise.resolve();
     });
-    expect(mergeFinalizeAndStage).toHaveBeenCalledWith('resolved result', {
-      suppressQueueAdvance: true,
-    });
+    // Task 8 turned the advance on: no options argument at all.
+    expect(mergeFinalizeAndStage).toHaveBeenCalledWith('resolved result');
   });
 
   it('rebuilds the Result controller for a new snapshot at the same path', () => {
@@ -1184,5 +1184,121 @@ describe('MergeResolutionView escape', () => {
     fireEvent.keyDown(surface(), { key: 'F7' });
 
     expect(requestMergeClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('MergeResolutionView overwrite consent', () => {
+  const worktreeChanged = (base: MergeSession = textSession, over: Record<string, unknown> = {}) =>
+    ({
+      ...base,
+      external: {
+        kind: 'changed',
+        hidden: false,
+        scope: 'worktree',
+        observedVersion: 'v1:moved',
+      },
+      ...over,
+    }) as unknown as MergeSession;
+  const conflictChanged = () =>
+    ({
+      ...textSession,
+      external: {
+        kind: 'changed',
+        hidden: false,
+        scope: 'conflict',
+        observedVersion: 'v1:restaged',
+      },
+    }) as unknown as MergeSession;
+  const resolveAll = () =>
+    act(() =>
+      onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
+    );
+
+  it('offers Write and stage for a worktree change, behind a destructive confirmation', async () => {
+    render(<MergeResolutionView session={worktreeChanged()} visible />);
+    resolveAll();
+
+    const write = screen.getByRole('button', { name: 'Write & stage' });
+    expect(write).toBeEnabled();
+    fireEvent.click(write);
+
+    // The click asks first: nothing is written until the user confirms.
+    expect(mergeFinalizeAndStage).not.toHaveBeenCalled();
+    expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveAttribute('aria-labelledby');
+    expect(dialog).toHaveAttribute('aria-describedby');
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveFocus();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /overwrite and stage/i }));
+    });
+    expect(mergeOverwriteAndStage).toHaveBeenCalledWith('resolved result');
+  });
+
+  it('cancelling the overwrite writes nothing and restores focus', () => {
+    render(<MergeResolutionView session={worktreeChanged()} visible />);
+    resolveAll();
+    const write = screen.getByRole('button', { name: 'Write & stage' });
+    write.focus();
+    fireEvent.click(write);
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
+    expect(mergeFinalizeAndStage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(write).toHaveFocus();
+  });
+
+  it('a native cancel on the overwrite dialog is also non-destructive', () => {
+    render(<MergeResolutionView session={worktreeChanged()} visible />);
+    resolveAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
+
+    fireEvent(screen.getByRole('alertdialog'), new Event('cancel', { cancelable: true }));
+
+    expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('never offers an overwrite for a conflict-scoped change', () => {
+    render(<MergeResolutionView session={conflictChanged()} visible />);
+    resolveAll();
+
+    expect(screen.getByRole('button', { name: 'Write & stage' })).toBeDisabled();
+  });
+
+  it('offers the overwrite on a sides session too', async () => {
+    render(
+      <MergeResolutionView
+        session={worktreeChanged(sidesSession, { selectedSide: 'ours' })}
+        visible
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /overwrite and stage/i }));
+    });
+
+    // A sides session has no document to submit, only the recorded side.
+    expect(mergeOverwriteAndStage).toHaveBeenCalledWith(undefined);
+  });
+
+  it('focuses the Result after a finalize that advanced to another file', async () => {
+    storeSession = textSession;
+    render(<MergeResolutionView session={textSession} visible />);
+    resolveAll();
+    mergeFinalizeAndStage.mockImplementation(() => {
+      storeSession = { ...textSession, path: 'src/next.ts' } as unknown as MergeSession;
+      return Promise.resolve(true);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
+    });
+
+    expect(controller.view.focus).toHaveBeenCalled();
   });
 });
