@@ -18,7 +18,11 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   GitConflictStages: jest.fn(),
   GitMergeHeads: jest.fn(),
   GitConflictSnapshot: jest.fn(),
+  GitConflictState: jest.fn(),
   GitResolveConflictSide: jest.fn(),
+  GitWriteConflictResult: jest.fn(),
+  GitStageConflictResult: jest.fn(),
+  GitApplyConflictSide: jest.fn(),
 }));
 
 import {
@@ -28,6 +32,7 @@ import {
   GitConflictStages,
   GitMergeHeads,
   GitConflictSnapshot,
+  GitConflictState,
   GitResolveConflictSide,
 } from '../../wailsjs/go/main/App';
 import type { git } from '../../wailsjs/go/models';
@@ -42,6 +47,7 @@ const mockResolveSide = GitResolveConflictSide as jest.MockedFunction<
 >;
 const mockHeads = GitMergeHeads as jest.MockedFunction<typeof GitMergeHeads>;
 const mockSnapshot = GitConflictSnapshot as jest.MockedFunction<typeof GitConflictSnapshot>;
+const mockState = GitConflictState as jest.MockedFunction<typeof GitConflictState>;
 const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
 const mockGitStatus = GitStatus as jest.MockedFunction<typeof GitStatus>;
 
@@ -110,6 +116,39 @@ const openFile = (over: Partial<EditorFile> = {}): EditorFile => ({
   ...over,
 });
 
+/** The version the fake backend currently reports. Tests that simulate an
+ * external change move it; everything else never touches it. */
+let sourceVersion = 'v1:initial';
+
+const conflictState = (over: Partial<git.ConflictState> = {}): git.ConflictState =>
+  ({
+    stages: allStages(),
+    snapshot: snapshot(),
+    heads: heads(),
+    sourceVersion,
+    ...over,
+  }) as git.ConflictState;
+
+/**
+ * Derives the one coherent read the store now performs from the same stage /
+ * heads / snapshot mocks, applying the SAME kind rules the Go backend applies
+ * (`internal/git/conflicts.go`): no stages means nothing conflicted and no
+ * heads; a binary conflict or a missing side has no text snapshot. Tests that
+ * care about a specific source version, or about a mismatch, override
+ * `mockState` directly.
+ */
+function backendDerivesStateFromMocks() {
+  mockState.mockImplementation(async (root: string, path: string) => {
+    const stages = await mockStages(root, path);
+    const conflicted = Boolean(stages.base || stages.ours || stages.theirs);
+    const wantsSides = Boolean(stages.binary || !stages.ours || !stages.theirs);
+    const state: Record<string, unknown> = { stages, sourceVersion };
+    if (conflicted) state.heads = await mockHeads(root);
+    if (conflicted && !wantsSides) state.snapshot = await mockSnapshot(root, path);
+    return state as unknown as git.ConflictState;
+  });
+}
+
 /** A promise whose resolution the test controls. */
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -126,6 +165,8 @@ beforeEach(() => {
   useIDEStore.setState({ openFiles: [], toast: null });
   mockGitStatus.mockResolvedValue(repoStatus());
   mockWriteFile.mockResolvedValue(undefined);
+  sourceVersion = 'v1:initial';
+  backendDerivesStateFromMocks();
 });
 
 describe('openMergeResolution', () => {
@@ -1327,5 +1368,164 @@ describe('closeMergeResolution invalidation', () => {
     expect(ok).toBe(false);
     expect(useGitStore.getState().mergeSession).toBeNull();
     expect(useGitStore.getState().mergeFocused).toBe(false);
+  });
+});
+
+describe('merge session dirty tracking', () => {
+  const openText = async () => {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+  };
+  const openSides = async () => {
+    mockStages.mockResolvedValue(allStages({ binary: true }));
+    mockHeads.mockResolvedValue(heads());
+    await useGitStore.getState().openMergeResolution('logo.png', ['logo.png']);
+  };
+
+  it('opens clean, carrying the backend source version', async () => {
+    mockState.mockResolvedValue(conflictState({ sourceVersion: 'v1:opened' }));
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    const session = useGitStore.getState().mergeSession;
+    expect(session?.dirty).toBe(false);
+    expect(session?.sourceVersion).toBe('v1:opened');
+    expect(session?.reloadPending).toBe(false);
+    expect(session?.closeRequested).toBe(false);
+    expect(session?.external).toBeUndefined();
+    expect(session?.stages.ours).toBeDefined();
+  });
+
+  it('markMergeDirty sticks and is idempotent', async () => {
+    await openText();
+    useGitStore.getState().markMergeDirty();
+    const first = useGitStore.getState().mergeSession;
+    expect(first?.dirty).toBe(true);
+
+    useGitStore.getState().markMergeDirty();
+    // A per-keystroke store write that cloned the session would churn every
+    // React consumer, so an already-dirty session must keep its identity.
+    expect(useGitStore.getState().mergeSession).toBe(first);
+  });
+
+  it('recording and reopening a decision both mark the session touched', async () => {
+    await openText();
+    useGitStore.getState().recordDecision(0, 'C');
+    expect(useGitStore.getState().mergeSession?.dirty).toBe(true);
+
+    // A fresh session, reopened decision only.
+    useGitStore.getState().closeMergeResolution();
+    await openText();
+    expect(useGitStore.getState().mergeSession?.dirty).toBe(false);
+    useGitStore.getState().reopenDecision(0);
+    expect(useGitStore.getState().mergeSession?.dirty).toBe(true);
+  });
+
+  it('selecting a whole-file side marks the session touched', async () => {
+    await openSides();
+    expect(useGitStore.getState().mergeSession?.dirty).toBe(false);
+    useGitStore.getState().selectMergeSide('ours');
+    expect(useGitStore.getState().mergeSession?.dirty).toBe(true);
+  });
+
+  it('markMergeDirty is a no-op with no session', () => {
+    useGitStore.getState().markMergeDirty();
+    expect(useGitStore.getState().mergeSession).toBeNull();
+  });
+});
+
+describe('merge close request', () => {
+  const openText = async () => {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+  };
+
+  it('closes a pristine session immediately without writing', async () => {
+    await openText();
+
+    useGitStore.getState().requestMergeClose();
+
+    expect(useGitStore.getState().mergeSession).toBeNull();
+    expect(useGitStore.getState().mergeFocused).toBe(false);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockGitStage).not.toHaveBeenCalled();
+  });
+
+  it('only asks when the session has been touched', async () => {
+    await openText();
+    useGitStore.getState().recordDecision(0, 'C');
+
+    useGitStore.getState().requestMergeClose();
+
+    const session = useGitStore.getState().mergeSession;
+    expect(session).not.toBeNull();
+    expect(session?.closeRequested).toBe(true);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it('cancelling the request keeps the session and every decision', async () => {
+    await openText();
+    useGitStore.getState().recordDecision(0, 'C');
+    useGitStore.getState().requestMergeClose();
+
+    useGitStore.getState().cancelMergeClose();
+
+    const session = useGitStore.getState().mergeSession;
+    if (session?.kind !== 'text') throw new Error('expected text session');
+    expect(session.closeRequested).toBe(false);
+    expect(session.decisions).toEqual({ 0: 'C' });
+  });
+
+  it('confirming discards the session without writing or staging', async () => {
+    await openText();
+    useGitStore.getState().recordDecision(0, 'C');
+    useGitStore.getState().requestMergeClose();
+
+    useGitStore.getState().confirmMergeClose();
+
+    expect(useGitStore.getState().mergeSession).toBeNull();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockGitStage).not.toHaveBeenCalled();
+    expect(mockResolveSide).not.toHaveBeenCalled();
+  });
+
+  it('a repeated request on a dirty session stays one pending request', async () => {
+    await openText();
+    useGitStore.getState().markMergeDirty();
+    useGitStore.getState().requestMergeClose();
+    const first = useGitStore.getState().mergeSession;
+
+    useGitStore.getState().requestMergeClose();
+
+    expect(useGitStore.getState().mergeSession).toBe(first);
+  });
+});
+
+describe('merge queue order at open', () => {
+  const openFrom = async (path: string, queue: string[]) => {
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+    await useGitStore.getState().openMergeResolution(path, queue);
+  };
+
+  it('rotates the panel queue so the opened path is first', async () => {
+    await openFrom('b.txt', ['a.txt', 'b.txt', 'c.txt']);
+
+    // Starting from the middle must walk the rest of the panel order and wrap
+    // once, not restart at the top.
+    expect(useGitStore.getState().mergeSession?.fileQueue).toEqual(['b.txt', 'c.txt', 'a.txt']);
+  });
+
+  it('keeps an already-first queue untouched', async () => {
+    await openFrom('a.txt', ['a.txt', 'b.txt']);
+    expect(useGitStore.getState().mergeSession?.fileQueue).toEqual(['a.txt', 'b.txt']);
+  });
+
+  it('prepends the path when the caller omitted it', async () => {
+    await openFrom('z.txt', ['a.txt']);
+    expect(useGitStore.getState().mergeSession?.fileQueue).toEqual(['z.txt', 'a.txt']);
   });
 });

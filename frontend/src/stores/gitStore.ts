@@ -16,9 +16,7 @@ import {
   GitFileAtRev,
   GitFileHunks,
   GitApplyHunk,
-  GitConflictStages,
-  GitMergeHeads,
-  GitConflictSnapshot,
+  GitConflictState,
   GitResolveConflictSide,
   ReadFile,
 } from '../../wailsjs/go/main/App';
@@ -96,6 +94,26 @@ export interface MergeFinalizeOptions {
   suppressQueueAdvance?: boolean;
 }
 
+/** Why the open merge session no longer matches the file on disk.
+ *
+ * `changed` — the source version moved. `scope: 'conflict'` means the operation
+ * heads or the index stages moved, so Current/Incoming no longer mean what the
+ * user reviewed and Reload is the only recovery; `scope: 'worktree'` means only
+ * the working-tree bytes moved, which the user may knowingly overwrite through
+ * a separate confirmation. `hidden` is set by "Keep working": it hides the
+ * notice WITHOUT becoming permission to overwrite.
+ *
+ * `resolved-outside` — the path is no longer conflicted, or its markers are
+ * gone. Terminal for the session that observed it.
+ *
+ * `check-failed` — a revalidation could not read the file. Finalize stays
+ * blocked until a retry succeeds, because a session nobody could verify must
+ * not be writable. */
+export type MergeExternalChange =
+  | { kind: 'changed'; hidden: boolean; scope: 'worktree' | 'conflict' }
+  | { kind: 'resolved-outside'; message: string }
+  | { kind: 'check-failed'; message: string };
+
 interface MergeSessionBase {
   /** Repo-relative path of the conflicted file. */
   path: string;
@@ -106,15 +124,38 @@ interface MergeSessionBase {
   repoRoot: string;
   /** Card/header labels for the two sides of the active operation. */
   labels: git.MergeHeads;
-  /** Workspace-scoped conflicted paths still to resolve, in panel order. */
+  /** Workspace-scoped conflicted paths still to resolve, rotated so this
+   * session's path is first and the panel's relative order is preserved. */
   fileQueue: string[];
   /** Monotonic id of the openMergeResolution request that built this session. */
   requestRevision: number;
   /** Store epoch captured at open; async work checks it after every await. */
   epoch: number;
   /** Per-path write generation captured with the conflict snapshot. Any later
-   * editor/diff write invalidates the session before it can overwrite data. */
+   * editor/diff write invalidates the session before it can overwrite data.
+   * This sees Firn's own writes only; `sourceVersion` is the external
+   * authority. */
   fileWriteRevision: number;
+  /** Opaque backend identity of everything this session was built from: the
+   * operation heads, every index stage, and the raw worktree bytes. Every
+   * mutation presents it, and the backend refuses when it has moved. */
+  sourceVersion: string;
+  /** Index stages for the path, on the common base so a text session can also
+   * classify a later index change. */
+  stages: git.ConflictStages;
+  /** True once the user has touched this session — any Result-document change
+   * (which includes every accepted side), a recorded or reopened decision, or a
+   * chosen whole-file side. Sticky: a session the user has touched asks before
+   * discarding, even if the edit was undone. */
+  dirty: boolean;
+  /** True while a user-requested Reload is reading; competing signals stand
+   * down and the surface freezes rather than double-submitting. */
+  reloadPending: boolean;
+  /** True when a close was requested on a touched session and the discard
+   * confirmation is showing. */
+  closeRequested: boolean;
+  /** Set when a revalidation found the session out of date with the file. */
+  external?: MergeExternalChange;
 }
 
 /** Three-way textual conflict with marker blocks: the Result-spine editor. */
@@ -137,9 +178,11 @@ export interface TextMergeSession extends MergeSessionBase {
  * have no marker block to edit. */
 export interface SidesMergeSession extends MergeSessionBase {
   kind: 'sides';
-  /** Per-stage presence (absent side = deleted on that side) + binary flags. */
-  stages: git.ConflictStages;
   selectedSide?: 'ours' | 'theirs';
+  /** Set once a side has been applied to the worktree but not yet staged, with
+   * the version that apply produced. A stage retry may reuse it; changing the
+   * selection clears it so the next finalize applies again. */
+  appliedSide?: { side: 'ours' | 'theirs'; sourceVersion: string };
 }
 
 export type MergeSession = TextMergeSession | SidesMergeSession;
@@ -203,6 +246,17 @@ function parseCommitSummary(output: string): Pick<CommitReceipt, 'branch' | 'has
 /** Trailing debounce for watcher-driven refreshes; batches event bursts
  * (branch switches, installs) into one `git status` run. */
 export const GIT_REFRESH_DEBOUNCE_MS = 300;
+
+/** Rotates the panel's conflict list so the opened path is first, preserving
+ * the panel's relative order. Starting from the middle of the list then walks
+ * the rest and wraps once, instead of jumping back to the top — and no second
+ * progress model is needed to describe where the user is. */
+function rotateMergeQueue(queue: string[], path: string): string[] {
+  const index = queue.indexOf(path);
+  if (index < 0) return [path, ...queue];
+  if (index === 0) return [...queue];
+  return [...queue.slice(index), ...queue.slice(0, index)];
+}
 
 export type GitOp =
   | 'stage'
@@ -294,8 +348,20 @@ interface GitActions {
   reopenDecision: (index: number) => void;
   /** Choose which whole-file side wins (sides sessions only). */
   selectMergeSide: (side: 'ours' | 'theirs') => void;
+  /** Mark the session touched, from the editor's document-change signal.
+   * Idempotent: an already-dirty session keeps its object identity. */
+  markMergeDirty: () => void;
+  /** Ask to close. A pristine session closes immediately; a touched one raises
+   * the discard confirmation instead. Every close entry point (Esc, the merge
+   * tab's X, resolved-outside) goes through here so none can bypass the guard. */
+  requestMergeClose: () => void;
+  /** Dismiss the discard confirmation, keeping the session and its decisions. */
+  cancelMergeClose: () => void;
+  /** Discard the session from the confirmation. Never writes. */
+  confirmMergeClose: () => void;
   /** Discard the session. Never writes — worktree and markers stay intact.
-   * Also invalidates any in-flight open so a closed surface cannot reappear. */
+   * Also invalidates any in-flight open so a closed surface cannot reappear.
+   * The final primitive: UI entry points call requestMergeClose instead. */
   closeMergeResolution: () => void;
   /** Write the resolved file and stage it. By default, advance to the next
    * queued conflicted file; callers may suppress that advance. Text sessions
@@ -744,35 +810,47 @@ export const useGitStore = create<GitStore>()(
         };
 
         try {
-          // Stage presence decides the session kind: a missing side or a
-          // binary file has no marker block to edit, so it gets a whole-file
-          // side choice instead of the Result-spine editor.
-          const stages = await GitConflictStages(repoRoot, path);
+          // ONE coherent backend read decides everything: the stages, the text
+          // snapshot (absent when the stage topology needs the whole-file side
+          // UI), the operation heads, and the source version that identifies
+          // exactly this state. Assembling a session from separate calls would
+          // let an intervening write make its parts describe different moments.
+          const state = await GitConflictState(repoRoot, path);
           if (!isCurrent()) return false;
           if (!fileStayedStable()) return false;
-          if (!stages.base && !stages.ours && !stages.theirs) {
+          if (!state.stages.base && !state.stages.ours && !state.stages.theirs) {
             useIDEStore.getState().showToast(`${path} is not conflicted`, 'info');
             return false;
           }
-
-          const labels = await GitMergeHeads(repoRoot);
-          if (!isCurrent()) return false;
-          if (!fileStayedStable()) return false;
+          if (!state.heads) {
+            useIDEStore
+              .getState()
+              .showToast(
+                `Cannot resolve ${path}: no merge, rebase, or cherry-pick in progress`,
+                'error'
+              );
+            return false;
+          }
 
           const base = {
             path,
             absPath: abs,
             repoRoot,
-            labels,
-            fileQueue,
+            labels: state.heads,
+            fileQueue: rotateMergeQueue(fileQueue, path),
             requestRevision,
             epoch,
             fileWriteRevision,
+            sourceVersion: state.sourceVersion,
+            stages: state.stages,
+            dirty: false,
+            reloadPending: false,
+            closeRequested: false,
           };
-          if (stages.binary || !stages.ours || !stages.theirs) {
+          if (!state.snapshot) {
             set(
               {
-                mergeSession: { kind: 'sides', ...base, stages },
+                mergeSession: { kind: 'sides', ...base },
                 diffFocused: false,
                 mergeFocused: true,
               },
@@ -782,9 +860,7 @@ export const useGitStore = create<GitStore>()(
             return true;
           }
 
-          const snap = await GitConflictSnapshot(repoRoot, path);
-          if (!isCurrent()) return false;
-          if (!fileStayedStable()) return false;
+          const snap = state.snapshot;
           if (!snap.regions || snap.regions.length === 0) {
             useIDEStore.getState().showToast(`No conflict markers found in ${path}`, 'info');
             return false;
@@ -825,7 +901,13 @@ export const useGitStore = create<GitStore>()(
         // completion accounting ("all regions decided" gates) silently.
         if (index < 0 || index >= session.regions.length) return;
         set(
-          { mergeSession: { ...session, decisions: { ...session.decisions, [index]: choice } } },
+          {
+            mergeSession: {
+              ...session,
+              dirty: true,
+              decisions: { ...session.decisions, [index]: choice },
+            },
+          },
           false,
           'git/recordDecision'
         );
@@ -836,13 +918,58 @@ export const useGitStore = create<GitStore>()(
         if (session?.kind !== 'text') return;
         const decisions = { ...session.decisions };
         delete decisions[index];
-        set({ mergeSession: { ...session, decisions } }, false, 'git/reopenDecision');
+        set({ mergeSession: { ...session, dirty: true, decisions } }, false, 'git/reopenDecision');
       },
 
       selectMergeSide: (side) => {
         const session = get().mergeSession;
         if (session?.kind !== 'sides') return;
-        set({ mergeSession: { ...session, selectedSide: side } }, false, 'git/selectMergeSide');
+        // A different side invalidates any already-applied one: the next
+        // finalize must apply the new choice before staging.
+        set(
+          {
+            mergeSession: {
+              ...session,
+              selectedSide: side,
+              dirty: true,
+              appliedSide: session.appliedSide?.side === side ? session.appliedSide : undefined,
+            },
+          },
+          false,
+          'git/selectMergeSide'
+        );
+      },
+
+      markMergeDirty: () => {
+        const session = get().mergeSession;
+        // Idempotent by identity: this runs on every document change, and a
+        // fresh session object per keystroke would re-render every consumer.
+        if (!session || session.dirty) return;
+        set({ mergeSession: { ...session, dirty: true } }, false, 'git/markMergeDirty');
+      },
+
+      requestMergeClose: () => {
+        const session = get().mergeSession;
+        if (!session) return;
+        // Closing never writes, so the only thing at stake is the user's
+        // in-session work. Pristine means there is none.
+        if (!session.dirty) {
+          get().closeMergeResolution();
+          return;
+        }
+        if (session.closeRequested) return;
+        set({ mergeSession: { ...session, closeRequested: true } }, false, 'git/requestMergeClose');
+      },
+
+      cancelMergeClose: () => {
+        const session = get().mergeSession;
+        if (!session?.closeRequested) return;
+        set({ mergeSession: { ...session, closeRequested: false } }, false, 'git/cancelMergeClose');
+      },
+
+      confirmMergeClose: () => {
+        if (!get().mergeSession) return;
+        get().closeMergeResolution();
       },
 
       closeMergeResolution: () => {
