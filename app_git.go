@@ -164,6 +164,49 @@ func (a *App) GitConflictStages(root, path string) (git.ConflictStages, error) {
 	return a.gitService.ConflictStages(ctx, root, path)
 }
 
+// GitConflictState returns one coherent read of a conflicted path — index
+// stages, the text snapshot when the conflict is text-mergeable, the operation
+// heads, and the opaque source version that identifies exactly that state. The
+// merge surface uses it for both open and revalidation, and passes the version
+// back to the guarded mutations below.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitConflictState(root, path string) (git.ConflictState, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.ConflictState(ctx, root, path)
+}
+
+// GitWriteConflictResult writes a resolved text result to the working tree only
+// while the file still matches expectedSourceVersion. Applied=false means the
+// file changed underneath the caller and nothing was written; the returned
+// version is the live one.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitWriteConflictResult(root, path, expectedSourceVersion, content, encoding, lineEndings string) (git.ConflictGuardResult, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.WriteConflictResult(ctx, root, path, expectedSourceVersion, content, encoding, lineEndings)
+}
+
+// GitStageConflictResult stages a conflicted path's working-tree state (content
+// or deletion) only while it still matches expectedSourceVersion. A failed
+// stage mutates nothing, so a retry can reuse the same version.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitStageConflictResult(root, path, expectedSourceVersion string) (git.ConflictGuardResult, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.StageConflictResult(ctx, root, path, expectedSourceVersion)
+}
+
+// GitApplyConflictSide applies one whole-file side to the working tree without
+// staging, only while the path still matches expectedSourceVersion. The
+// returned version is what the following GitStageConflictResult must present.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GitApplyConflictSide(root, path, side, expectedSourceVersion string) (git.ConflictGuardResult, error) {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	return a.gitService.ApplyConflictSide(ctx, root, path, side, expectedSourceVersion)
+}
+
 // GitResolveConflictSide finalizes a whole-file conflict by taking one side
 // ("ours" or "theirs"): the side's content is checked out and staged, or the
 // path is removed and its deletion staged when that side is a deletion.
