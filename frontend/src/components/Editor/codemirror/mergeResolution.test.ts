@@ -1635,3 +1635,54 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 });
+
+describe('document-change reporting', () => {
+  it('reports an edit and its undo as document changes', () => {
+    const onDocumentChanged = jest.fn();
+    const editor = createMergeResolutionEditor(document.body, session(), {
+      onDocumentChanged,
+    });
+
+    editor.view.dispatch({ changes: { from: 0, insert: '// note\n' } });
+    expect(onDocumentChanged).toHaveBeenCalledTimes(1);
+
+    editor.undo();
+    expect(onDocumentChanged).toHaveBeenCalledTimes(2);
+    editor.destroy();
+  });
+
+  it('does not report a selection-only transaction', () => {
+    const onDocumentChanged = jest.fn();
+    const editor = createMergeResolutionEditor(document.body, session(), {
+      onDocumentChanged,
+    });
+    editor.view.dispatch({ selection: { anchor: 1 } });
+    expect(onDocumentChanged).not.toHaveBeenCalled();
+    editor.destroy();
+  });
+
+  it('reports an accepted side and an edit outside every conflict region', () => {
+    const onDocumentChanged = jest.fn();
+    const editor = createMergeResolutionEditor(document.body, session(), {
+      onDocumentChanged,
+    });
+
+    // Accepting a side is a plain replace transaction: the store must learn the
+    // Result was touched from the same signal a keystroke produces.
+    expect(
+      runScopeHandlers(
+        editor.view,
+        new KeyboardEvent('keydown', { key: '1', ctrlKey: true }),
+        'editor'
+      )
+    ).toBe(true);
+    expect(onDocumentChanged).toHaveBeenCalledTimes(1);
+
+    // "before" on line 1 is outside both marker blocks, so it records no
+    // decision — the callback is the only thing that can see it.
+    editor.view.dispatch({ changes: { from: 0, insert: 'x' } });
+    expect(onDocumentChanged).toHaveBeenCalledTimes(2);
+    expect(editor.getState().decisions[1]).toBeUndefined();
+    editor.destroy();
+  });
+});
