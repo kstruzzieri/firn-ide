@@ -473,7 +473,8 @@ function transactionChanges(tr: {
 
 function resolutionExtension(
   session: TextMergeSession,
-  onStateChange?: (state: MergeResolutionState) => void
+  onStateChange?: (state: MergeResolutionState) => void,
+  onDocumentChanged?: () => void
 ): { extension: Extension[]; field: StateField<ResolutionFieldState>; originalBlocks: string[] } {
   const document = normalizeDocument(session.content);
   const markerRanges = markerBlockRanges(document, session.regions);
@@ -637,6 +638,10 @@ function resolutionExtension(
         ];
       }),
       EditorView.updateListener.of((update) => {
+        // Any accepted document change means the Result was touched — including
+        // an edit outside every conflict region, which records no decision. The
+        // store owns the sticky bit; this only reports the event.
+        if (update.docChanged) onDocumentChanged?.();
         if (update.transactions.length > 0)
           onStateChange?.(stateSnapshot(update.state.field(field)));
       }),
@@ -665,10 +670,12 @@ export function createMergeResolutionEditor(
   options: {
     extensions?: Extension[];
     onStateChange?: (state: MergeResolutionState) => void;
+    /** Called for every accepted document-changing transaction, undo included. */
+    onDocumentChanged?: () => void;
     syntaxThemeId?: SyntaxThemeId;
   } = {}
 ): MergeResolutionEditor {
-  const support = resolutionExtension(session, options.onStateChange);
+  const support = resolutionExtension(session, options.onStateChange, options.onDocumentChanged);
   const theme = new Compartment();
   const view = new EditorView({
     parent,

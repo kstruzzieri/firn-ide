@@ -52,6 +52,11 @@ export function Editor() {
   const diffFocused = useGitStore((state) => state.diffFocused);
   const mergeSession = useGitStore((state) => state.mergeSession);
   const mergeFocused = useGitStore((state) => state.mergeFocused);
+  const mergeAdvancePending = useGitStore((state) => state.mergeAdvancePending);
+  // The store owns the queue, so it owns the hand-off text too; this component
+  // only keeps the live region mounted outside the conditional merge view, so a
+  // next surface that mounts late cannot swallow the announcement.
+  const queueAnnouncement = useGitStore((state) => state.mergeQueueAnnouncement);
   const gitBaseline = useGitBaseline(activeFile?.path);
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
@@ -147,6 +152,24 @@ export function Editor() {
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
   const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
+  // Any close of the merge surface — Escape, the tab X, the resolved-outside
+  // notice, or a confirmed discard — ends with the session becoming null. One
+  // effect observing that transition restores focus for all of them. A queue
+  // hand-off also passes through null, so it is excluded: focus would bounce
+  // out of the merge surface and back for every file in the queue.
+  const hadMergeSessionRef = useRef(mergeSession !== null);
+  useEffect(() => {
+    const had = hadMergeSessionRef.current;
+    if (mergeSession !== null) {
+      hadMergeSessionRef.current = true;
+    } else if (!mergeAdvancePending) {
+      hadMergeSessionRef.current = false;
+    }
+    if (had && mergeSession === null && !mergeAdvancePending) {
+      restoreFocusAfterCloseRef.current = true;
+    }
+  }, [mergeSession, mergeAdvancePending]);
+
   useEffect(() => {
     if (!restoreFocusAfterCloseRef.current) return undefined;
 
@@ -163,7 +186,7 @@ export function Editor() {
     }, 0);
 
     return () => window.clearTimeout(timeout);
-  }, [activeFileId, diffFocused, diffSession, mergeSession, openFiles]);
+  }, [activeFileId, diffFocused, diffSession, mergeAdvancePending, mergeSession, openFiles]);
 
   // Re-fetch the diff each time it becomes visible so it reflects edits made in
   // the editor while it was in the background (the working-tree side re-reads
@@ -230,6 +253,14 @@ export function Editor() {
   return (
     <div ref={editorRef} className={styles.editor} tabIndex={-1}>
       {/* Tab bar */}
+      <div
+        data-testid="merge-queue-announcement"
+        role="status"
+        aria-live="polite"
+        className={styles.srOnly}
+      >
+        {queueAnnouncement}
+      </div>
       <div className={styles.tabBar} role="tablist" aria-label="Open files">
         {openFiles.map((file) => {
           // A focused diff tab owns the active state, so the file tab it was
@@ -346,8 +377,11 @@ export function Editor() {
               onClick={(event) => {
                 event.stopPropagation();
                 if (mergeFinalizing) return;
-                restoreFocusAfterCloseRef.current = true;
-                useGitStore.getState().closeMergeResolution();
+                // Same guard as Escape and the resolved-outside notice: a
+                // touched session gets the discard confirmation, and focus
+                // restoration is handled by the close effect below rather than
+                // by this handler, which view-originated closes never reach.
+                useGitStore.getState().requestMergeClose();
               }}
               aria-label="Close merge resolution"
               type="button"

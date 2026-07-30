@@ -18,6 +18,7 @@ import {
   type GroupedDiagnostic,
   type LSPDiagnostic,
 } from '../../stores/lspStore';
+import { useGitStore } from '../../stores/gitStore';
 import { navigateToEditorLocation } from '../../utils/editorNavigation';
 import { getDirectoryPath, getFileNameFromPath } from '../../utils/lspUri';
 import {
@@ -601,6 +602,15 @@ export function Terminal() {
         role="tabpanel"
         aria-labelledby={`terminal-panel-tab-${activeTab}`}
         tabIndex={0}
+        onBlur={(event) => {
+          // Leaving the terminal is the only signal that an embedded `git add`
+          // happened: it touches no watched file, and .git is not watched. Only
+          // while a merge session is open, and not for focus that stays inside.
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          const git = useGitStore.getState();
+          if (!git.mergeSession) return;
+          git.scheduleRefresh();
+        }}
       >
         <div
           className={styles.tabContent}

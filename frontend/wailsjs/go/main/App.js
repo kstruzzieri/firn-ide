@@ -78,6 +78,10 @@ export function GetWorkspaceInfo() {
   return window['go']['main']['App']['GetWorkspaceInfo']();
 }
 
+export function GitApplyConflictSide(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GitApplyConflictSide'](arg1, arg2, arg3, arg4);
+}
+
 export function GitApplyHunk(arg1, arg2, arg3) {
   return window['go']['main']['App']['GitApplyHunk'](arg1, arg2, arg3);
 }
@@ -104,6 +108,10 @@ export function GitConflictSnapshot(arg1, arg2) {
 
 export function GitConflictStages(arg1, arg2) {
   return window['go']['main']['App']['GitConflictStages'](arg1, arg2);
+}
+
+export function GitConflictState(arg1, arg2) {
+  return window['go']['main']['App']['GitConflictState'](arg1, arg2);
 }
 
 export function GitFileAtRev(arg1, arg2, arg3) {
@@ -142,12 +150,20 @@ export function GitStage(arg1, arg2) {
   return window['go']['main']['App']['GitStage'](arg1, arg2);
 }
 
+export function GitStageConflictResult(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitStageConflictResult'](arg1, arg2, arg3);
+}
+
 export function GitStatus(arg1) {
   return window['go']['main']['App']['GitStatus'](arg1);
 }
 
 export function GitUnstage(arg1, arg2) {
   return window['go']['main']['App']['GitUnstage'](arg1, arg2);
+}
+
+export function GitWriteConflictResult(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['GitWriteConflictResult'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function IsWatching() {

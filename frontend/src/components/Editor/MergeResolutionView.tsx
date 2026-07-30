@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createMergeResolutionEditor,
   type MergeResolutionEditor,
@@ -8,6 +8,7 @@ import {
   useGitStore,
   type MergeDecision,
   type MergeSession,
+  type SidesMergeSession,
   type TextMergeSession,
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
@@ -51,6 +52,14 @@ function decisionLabel(decision: MergeDecision | undefined): string {
   }
 }
 
+/** Remaining work is stated as a count, not an ordinal: the queue shrinks as
+ * files finalize, so "File 2 of 3" would reset to "File 1 of 2" on the next
+ * advance and read as going backwards. */
+function remainingLabel(session: MergeSession): string {
+  const remaining = session.fileQueue.length;
+  return `${remaining} conflicted file${remaining === 1 ? '' : 's'} remaining`;
+}
+
 export function describeMergeAnnouncement(
   previous: Record<number, MergeDecision>,
   next: Record<number, MergeDecision>,
@@ -84,6 +93,10 @@ export function describeMergeAnnouncement(
   return `${parts.join('. ')}. ${remaining} unresolved.`;
 }
 
+/** Where keyboard focus should land after a notice resolves: the live Result
+ * document, or the first whole-file side choice. */
+type FocusResult = () => void;
+
 export function MergeResolutionView({
   session,
   visible,
@@ -93,37 +106,373 @@ export function MergeResolutionView({
   visible: boolean;
   onFinalizingChange?: (finalizing: boolean) => void;
 }) {
-  if (session.kind === 'sides') {
-    return <SidesResolutionView session={session} onFinalizingChange={onFinalizingChange} />;
-  }
+  const [finalizing, setFinalizingState] = useState(false);
+  // The overwrite confirmation is owned here so both renderers ask the same
+  // question, and so the request survives the renderer's own re-renders.
+  const [overwriteRequest, setOverwriteRequest] = useState<{ result?: string } | null>(null);
+  // The wrapper owns the surface element so one key handler covers both
+  // renderers (and the editor inside them), and one discard confirmation is
+  // rendered no matter which kind is open.
+  const sectionRef = useRef<HTMLElement>(null);
+  const focusResultRef = useRef<FocusResult>(() => {});
+  const focusResult = useCallback(() => focusResultRef.current(), []);
+  const setFinalizing = useCallback(
+    (next: boolean) => {
+      setFinalizingState(next);
+      onFinalizingChange?.(next);
+    },
+    [onFinalizingChange]
+  );
+
+  useEffect(() => {
+    return () => onFinalizingChange?.(false);
+  }, [onFinalizingChange]);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    // CodeMirror consumed it (collapsing a selection), or the platform is
+    // ending an IME composition — key code 229 is the Windows/macOS IME
+    // placeholder, where `key` is not the physical key at all.
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // A write or a reload in flight owns the session; Escape must not race it.
+    if (finalizing || session.reloadPending) return;
+    event.preventDefault();
+    // The store decides pristine-vs-touched: closing writes nothing, so the
+    // only thing at stake is the user's in-session work.
+    useGitStore.getState().requestMergeClose();
+  };
+
   return (
-    <TextResolutionView
-      session={session}
-      visible={visible}
-      onFinalizingChange={onFinalizingChange}
-    />
+    <section
+      ref={sectionRef}
+      className={styles.root}
+      aria-label={`Merge resolution for ${session.path}`}
+      onKeyDown={handleKeyDown}
+    >
+      {session.kind === 'sides' ? (
+        <SidesResolutionContent
+          session={session}
+          finalizing={finalizing}
+          setFinalizing={setFinalizing}
+          focusResult={focusResult}
+          focusResultRef={focusResultRef}
+          requestOverwrite={setOverwriteRequest}
+        />
+      ) : (
+        <TextResolutionContent
+          session={session}
+          visible={visible}
+          finalizing={finalizing}
+          setFinalizing={setFinalizing}
+          focusResult={focusResult}
+          focusResultRef={focusResultRef}
+          sectionRef={sectionRef}
+          requestOverwrite={setOverwriteRequest}
+        />
+      )}
+      {session.closeRequested && <MergeDiscardDialog session={session} />}
+      {overwriteRequest && (
+        <MergeOverwriteDialog
+          session={session}
+          request={overwriteRequest}
+          onSettled={() => setOverwriteRequest(null)}
+          setFinalizing={setFinalizing}
+        />
+      )}
+    </section>
   );
 }
 
-function TextResolutionView({
+/**
+ * The one external-change notice, shared by both renderers.
+ *
+ * The live region holds only the message; the actions are siblings, so a screen
+ * reader announcing the change does not read the buttons as part of it.
+ */
+function MergeExternalNotice({
+  session,
+  focusResult,
+  disabled,
+}: {
+  session: MergeSession;
+  focusResult: FocusResult;
+  disabled: boolean;
+}) {
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const external = session.external;
+  if (!external) return null;
+  if (external.kind === 'changed' && external.hidden) return null;
+
+  const reload = async () => {
+    await useGitStore.getState().applyMergeReload();
+    // A notice that survived the read means the user still has something to
+    // act on, so focus stays on that action rather than jumping away.
+    if (useGitStore.getState().mergeSession?.external) {
+      actionRef.current?.focus();
+      return;
+    }
+    focusResult();
+  };
+
+  if (external.kind === 'changed') {
+    const message =
+      external.scope === 'conflict'
+        ? `The conflict in ${session.path} changed outside Firn: Current and Incoming no longer match what you reviewed. Reload to continue.`
+        : `${session.path} changed outside Firn while you were resolving it. Reload to start from the file as it is now, or keep working — writing will then ask you to confirm the overwrite.`;
+    return (
+      <div className={styles.notice}>
+        <span className={styles.noticeMessage} role="status" data-testid="merge-notice">
+          {message}
+        </span>
+        <div className={styles.noticeActions}>
+          <button
+            ref={actionRef}
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => void reload()}
+            disabled={disabled || session.reloadPending}
+          >
+            Reload (discard decisions)
+          </button>
+          {external.scope === 'worktree' && (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => {
+                useGitStore.getState().acknowledgeMergeExternal();
+                focusResult();
+              }}
+              disabled={disabled || session.reloadPending}
+            >
+              Keep working
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (external.kind === 'resolved-outside') {
+    return (
+      <div className={styles.notice}>
+        <span className={styles.noticeMessage} role="alert" data-testid="merge-notice">
+          {external.message}
+        </span>
+        <div className={styles.noticeActions}>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            // Through the same guard as every other close: a touched session
+            // still gets its discard confirmation.
+            onClick={() => useGitStore.getState().requestMergeClose()}
+            disabled={disabled}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.notice}>
+      <span className={styles.noticeMessage} role="alert" data-testid="merge-notice">
+        {external.message}
+      </span>
+      <div className={styles.noticeActions}>
+        <button
+          ref={actionRef}
+          type="button"
+          className={styles.secondaryButton}
+          onClick={() => void reload()}
+          disabled={disabled || session.reloadPending}
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The shared discard confirmation. Closing never writes, so the only thing at
+ * stake is the user's in-session work — which is exactly what this names. */
+function MergeDiscardDialog({ session }: { session: MergeSession }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    invokerRef.current = active instanceof HTMLElement ? active : null;
+    if (!dialog.open) dialog.showModal();
+    // Initial focus on the non-destructive choice.
+    keepRef.current?.focus();
+  }, []);
+
+  const restoreInvoker = () => {
+    const invoker = invokerRef.current;
+    if (invoker?.isConnected) invoker.focus();
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className={styles.dialog}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="merge-discard-title"
+      aria-describedby="merge-discard-description"
+      onCancel={(event) => {
+        // Escape inside the dialog cancels the request, never the session.
+        event.preventDefault();
+        useGitStore.getState().cancelMergeClose();
+        restoreInvoker();
+      }}
+    >
+      <h2 id="merge-discard-title" className={styles.dialogTitle}>
+        Discard your merge decisions?
+      </h2>
+      <p id="merge-discard-description" className={styles.dialogBody}>
+        Closing discards the decisions you have made for {session.path} in this session. It does not
+        change the file on disk or anything you have staged — the conflict markers stay exactly as
+        they are.
+      </p>
+      <div className={styles.dialogActions}>
+        <button
+          ref={keepRef}
+          type="button"
+          className={styles.secondaryButton}
+          onClick={() => {
+            useGitStore.getState().cancelMergeClose();
+            restoreInvoker();
+          }}
+        >
+          Keep working
+        </button>
+        <button
+          type="button"
+          className={styles.finalizeButton}
+          onClick={() => useGitStore.getState().confirmMergeClose()}
+        >
+          Discard and close
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
+/**
+ * Explicit consent to overwrite a working-tree change the user has been shown.
+ *
+ * "Keep working" only hid the notice; this is the separate, destructive step,
+ * and the store re-reads the file at this moment so a version that moved again
+ * while the dialog was open is refused rather than clobbered.
+ */
+function MergeOverwriteDialog({
+  session,
+  request,
+  onSettled,
+  setFinalizing,
+}: {
+  session: MergeSession;
+  request: { result?: string };
+  onSettled: () => void;
+  setFinalizing: (finalizing: boolean) => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    invokerRef.current = active instanceof HTMLElement ? active : null;
+    if (!dialog.open) dialog.showModal();
+    // Initial focus on the non-destructive choice.
+    cancelRef.current?.focus();
+  }, []);
+
+  const close = () => {
+    const invoker = invokerRef.current;
+    onSettled();
+    if (invoker?.isConnected) invoker.focus();
+  };
+
+  const confirm = async () => {
+    setFinalizing(true);
+    try {
+      await useGitStore.getState().mergeOverwriteAndStage(request.result);
+    } finally {
+      setFinalizing(false);
+      close();
+    }
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className={styles.dialog}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="merge-overwrite-title"
+      aria-describedby="merge-overwrite-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+    >
+      <h2 id="merge-overwrite-title" className={styles.dialogTitle}>
+        Overwrite the outside change?
+      </h2>
+      <p id="merge-overwrite-description" className={styles.dialogBody}>
+        {session.path} changed outside Firn after this session opened. Writing your resolution
+        replaces those changes on disk and stages the result. If the file changes again before the
+        write lands, it will be refused instead.
+      </p>
+      <div className={styles.dialogActions}>
+        <button ref={cancelRef} type="button" className={styles.secondaryButton} onClick={close}>
+          Cancel
+        </button>
+        <button type="button" className={styles.finalizeButton} onClick={() => void confirm()}>
+          Overwrite and stage
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
+function TextResolutionContent({
   session,
   visible,
-  onFinalizingChange,
+  finalizing,
+  setFinalizing,
+  focusResult,
+  focusResultRef,
+  sectionRef,
+  requestOverwrite,
 }: {
   session: TextMergeSession;
   visible: boolean;
-  onFinalizingChange?: (finalizing: boolean) => void;
+  finalizing: boolean;
+  setFinalizing: (finalizing: boolean) => void;
+  focusResult: FocusResult;
+  focusResultRef: React.RefObject<FocusResult>;
+  sectionRef: React.RefObject<HTMLElement | null>;
+  requestOverwrite: (request: { result?: string }) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
   const decisionsRef = useRef(session.decisions);
+  const hadSurfaceFocusRef = useRef(false);
   const themeId = useEditorSyntaxTheme();
   const themeIdRef = useRef(themeId);
   const appliedThemeIdRef = useRef(themeId);
   themeIdRef.current = themeId;
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
-  const [finalizing, setFinalizing] = useState(false);
   const [reopened, setReopened] = useState<number | null>(null);
   const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
   const [baseExpanded, setBaseExpanded] = useState(false);
@@ -132,9 +481,10 @@ function TextResolutionView({
     return `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`;
   });
   sessionRef.current = session;
+  focusResultRef.current = () => editorRef.current?.view.focus();
 
-  // Reset the strip whenever the session identity changes — a new file or a fresh
-  // openMergeResolution request must not show the previous file's base.
+  // Reset the strip whenever the session identity changes — a new file or a
+  // fresh openMergeResolution request must not show the previous file's base.
   useEffect(() => {
     setBase({ status: 'idle' });
     setBaseExpanded(false);
@@ -145,9 +495,9 @@ function TextResolutionView({
     setBase({ status: 'loading' });
     const { path, repoRoot, requestRevision } = sessionRef.current;
     // Session identity is `requestRevision` (monotonic per openMergeResolution),
-    // NOT `epoch` — epoch is workspace-scoped and starts at 0, so comparing it to a
-    // session epoch would be wrong. If the prop swaps mid-fetch, sessionRef advances
-    // and we bail.
+    // NOT `epoch` — epoch is workspace-scoped and starts at 0, so comparing it to
+    // a session epoch would be wrong. If the prop swaps mid-fetch, sessionRef
+    // advances and we bail.
     const isStale = () =>
       sessionRef.current.path !== path || sessionRef.current.requestRevision !== requestRevision;
     try {
@@ -182,8 +532,8 @@ function TextResolutionView({
       }
       setBase({ status: 'text', content });
     } catch (error) {
-      // A rejection from a fetch that belonged to a since-swapped session must not
-      // overwrite the new session's freshly-reset strip.
+      // A rejection from a fetch that belonged to a since-swapped session must
+      // not overwrite the new session's freshly-reset strip.
       if (isStale()) return;
       setBase({
         status: 'error',
@@ -193,11 +543,20 @@ function TextResolutionView({
     }
   };
 
+  // The editor is rebuilt per session identity: a revalidation installs a whole
+  // new session with a new requestRevision, and its regions are positional, so
+  // the live document from the previous snapshot can never be carried over. A
+  // baseline rebase after a successful write keeps the same revision and so
+  // keeps the live controller.
   useEffect(() => {
     if (!hostRef.current) return undefined;
+    // The surface element outlives every rebuild, so capturing it here is the
+    // same node the cleanup needs to ask about focus.
+    const surface = sectionRef.current;
     const initialSession = sessionRef.current;
     const editor = createMergeResolutionEditor(hostRef.current, initialSession, {
       syntaxThemeId: themeIdRef.current,
+      onDocumentChanged: () => useGitStore.getState().markMergeDirty(),
       onStateChange: (next) => {
         const previous = decisionsRef.current;
         const actions = useGitStore.getState();
@@ -223,17 +582,25 @@ function TextResolutionView({
     decisionsRef.current = initialEditorState.decisions;
     setResolutionState(initialEditorState);
     setReopened(null);
-    // Reset the live-region summary for the new file, matching the reopened/base
-    // resets — otherwise the previous file's last announcement lingers until the
-    // first action here.
+    // Restore focus into the rebuilt surface only if it was inside before the
+    // swap: a background reload must never steal focus from another panel.
+    if (hadSurfaceFocusRef.current) {
+      hadSurfaceFocusRef.current = false;
+      editor.view.focus();
+    }
+    // Reset the live-region summary for the new file, matching the
+    // reopened/base resets — otherwise the previous file's last announcement
+    // lingers until the first action here.
     const remainingOnOpen =
       session.regions.length - Object.keys(initialEditorState.decisions).length;
     setAnnouncement(`${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`);
     return () => {
+      hadSurfaceFocusRef.current = surface?.contains(document.activeElement) ?? false;
       editor.destroy();
       editorRef.current = null;
     };
-  }, [session.labels, session.regions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.requestRevision]);
 
   useEffect(() => {
     if (appliedThemeIdRef.current === themeId) return;
@@ -245,13 +612,25 @@ function TextResolutionView({
     if (visible) editorRef.current?.view.requestMeasure();
   }, [visible]);
 
+  // A Reload in flight freezes the document the same way a finalize does: its
+  // result is about to be replaced, so edits made now would be discarded
+  // without ever being seen.
   useEffect(() => {
-    return () => onFinalizingChange?.(false);
-  }, [onFinalizingChange]);
+    if (session.reloadPending) editorRef.current?.setFrozen(true);
+    else if (!finalizing) editorRef.current?.setFrozen(false);
+  }, [session.reloadPending, finalizing]);
 
   const unresolved = session.regions.length - Object.keys(resolutionState.decisions).length;
-  const fileIndex = session.fileQueue.indexOf(session.path) + 1;
-  const disabled = unresolved !== 0 || session.readOnly || finalizing;
+  // A notice does not freeze editing — "Keep working" has to mean it. Only a
+  // write in flight or a reload about to replace the document does.
+  const blocked = finalizing || session.reloadPending;
+  // A worktree-only change is the one external state the user may knowingly
+  // write over, through the confirmation below. Everything else — a moved
+  // conflict, a resolution outside Firn, a failed check — stays unwritable.
+  const overwritable =
+    session.external?.kind === 'changed' && session.external.scope === 'worktree';
+  const disabled =
+    unresolved !== 0 || session.readOnly || blocked || (Boolean(session.external) && !overwritable);
   const baseStatus =
     base.status === 'loading'
       ? 'Loading base…'
@@ -263,29 +642,30 @@ function TextResolutionView({
   const finalize = async () => {
     const editor = editorRef.current;
     if (!editor || disabled) return;
+    if (overwritable) {
+      // Ask before overwriting what someone else wrote.
+      requestOverwrite({ result: editor.getResult() });
+      return;
+    }
     editor.setFrozen(true);
-    onFinalizingChange?.(true);
     setFinalizing(true);
     try {
-      await useGitStore
-        .getState()
-        .mergeFinalizeAndStage(editor.getResult(), { suppressQueueAdvance: true });
+      const ok = await useGitStore.getState().mergeFinalizeAndStage(editor.getResult());
+      // A successful finalize either advanced to the next queued file or
+      // exhausted the queue; when a session is still open, put the user back in
+      // the document rather than leaving focus on a disabled button.
+      if (ok && useGitStore.getState().mergeSession) focusResult();
     } finally {
-      if (editorRef.current === editor) {
-        editor.setFrozen(false);
-        onFinalizingChange?.(false);
-        setFinalizing(false);
-      }
+      if (editorRef.current === editor) editor.setFrozen(false);
+      setFinalizing(false);
     }
   };
 
   return (
-    <section className={styles.root} aria-label={`Merge resolution for ${session.path}`}>
+    <>
       <header className={styles.header}>
         <span className={styles.path}>{session.path}</span>
-        <span className={styles.filePosition}>
-          File {fileIndex} of {session.fileQueue.length}
-        </span>
+        <span className={styles.filePosition}>{remainingLabel(session)}</span>
         <span className={styles.unresolvedCount}>{unresolved} unresolved</span>
         {session.readOnly && (
           <span className={styles.readOnlyReason}>
@@ -301,7 +681,7 @@ function TextResolutionView({
                 editorRef.current?.activate(reopened);
                 setReopened(null);
               }}
-              disabled={finalizing}
+              disabled={blocked}
             >
               Conflict {reopened + 1} reopened — go to it
             </button>
@@ -310,7 +690,7 @@ function TextResolutionView({
             type="button"
             className={styles.secondaryButton}
             onClick={() => editorRef.current?.undo()}
-            disabled={finalizing}
+            disabled={blocked}
           >
             Undo
           </button>
@@ -318,12 +698,13 @@ function TextResolutionView({
             type="button"
             className={styles.secondaryButton}
             onClick={() => editorRef.current?.next(1)}
-            disabled={finalizing}
+            disabled={blocked}
           >
             Next unresolved
           </button>
         </div>
       </header>
+      <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
       {!REGIONS_CARRY_BASE(session) && (
         <div className={styles.baseStrip}>
           <button
@@ -383,7 +764,7 @@ function TextResolutionView({
                   }
                   if (editor.reopen(index)) setReopened(index);
                 }}
-                disabled={finalizing}
+                disabled={blocked}
               >
                 {decision ?? index + 1}
               </button>
@@ -413,29 +794,43 @@ function TextResolutionView({
       <div role="status" aria-live="polite" className={styles.srOnly}>
         {announcement}
       </div>
-    </section>
+    </>
   );
 }
 
-function SidesResolutionView({
+function SidesResolutionContent({
   session,
-  onFinalizingChange,
+  finalizing,
+  setFinalizing,
+  focusResult,
+  focusResultRef,
+  requestOverwrite,
 }: {
-  session: Extract<MergeSession, { kind: 'sides' }>;
-  onFinalizingChange?: (finalizing: boolean) => void;
+  session: SidesMergeSession;
+  finalizing: boolean;
+  setFinalizing: (finalizing: boolean) => void;
+  focusResult: FocusResult;
+  focusResultRef: React.RefObject<FocusResult>;
+  requestOverwrite: (request: { result?: string }) => void;
 }) {
-  const [finalizing, setFinalizing] = useState(false);
-  useEffect(() => {
-    return () => onFinalizingChange?.(false);
-  }, [onFinalizingChange]);
+  const firstSideRef = useRef<HTMLButtonElement>(null);
+  focusResultRef.current = () => firstSideRef.current?.focus();
+
+  const blocked = finalizing || session.reloadPending;
+  const overwritable =
+    session.external?.kind === 'changed' && session.external.scope === 'worktree';
+  const finalizeBlocked = blocked || (Boolean(session.external) && !overwritable);
   const finalize = async () => {
-    if (!session.selectedSide || finalizing) return;
-    onFinalizingChange?.(true);
+    if (!session.selectedSide || finalizeBlocked) return;
+    if (overwritable) {
+      requestOverwrite({});
+      return;
+    }
     setFinalizing(true);
     try {
-      await useGitStore.getState().mergeFinalizeAndStage(undefined, { suppressQueueAdvance: true });
+      const ok = await useGitStore.getState().mergeFinalizeAndStage();
+      if (ok && useGitStore.getState().mergeSession) focusResult();
     } finally {
-      onFinalizingChange?.(false);
       setFinalizing(false);
     }
   };
@@ -446,11 +841,12 @@ function SidesResolutionView({
     const label = session.labels[key].label;
     return (
       <button
+        ref={key === 'ours' ? firstSideRef : undefined}
         type="button"
         className={`${styles.sideChoice} ${selected ? styles.sideSelected : ''} ${key === 'ours' ? styles.decisionC : styles.decisionI}`}
         aria-pressed={selected}
         onClick={() => useGitStore.getState().selectMergeSide(key)}
-        disabled={finalizing}
+        disabled={blocked}
       >
         <strong>
           {heading} — {label}
@@ -461,13 +857,12 @@ function SidesResolutionView({
   };
 
   return (
-    <section className={styles.root} aria-label={`Merge resolution for ${session.path}`}>
+    <>
       <header className={styles.header}>
         <span className={styles.path}>{session.path}</span>
-        <span className={styles.filePosition}>
-          File {session.fileQueue.indexOf(session.path) + 1} of {session.fileQueue.length}
-        </span>
+        <span className={styles.filePosition}>{remainingLabel(session)}</span>
       </header>
+      <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
       <div className={styles.sides}>
         {side('ours')}
         {side('theirs')}
@@ -477,12 +872,12 @@ function SidesResolutionView({
         <button
           type="button"
           className={styles.finalizeButton}
-          disabled={!session.selectedSide || finalizing}
+          disabled={!session.selectedSide || finalizeBlocked}
           onClick={() => void finalize()}
         >
           Write &amp; stage
         </button>
       </footer>
-    </section>
+    </>
   );
 }

@@ -96,6 +96,17 @@ function App() {
       // Any working-tree event can change git status; the store debounces.
       useGitStore.getState().scheduleRefresh();
 
+      // An open merge session is not an open editor buffer, so the reload path
+      // below never sees it. Hand it every event for a file — including both
+      // ends of a rename, since the session's path may be either — and let the
+      // store decide whether anything actually moved. The backend watcher
+      // already coalesces per path, so there is no timer here.
+      if (!event.isDir) {
+        const git = useGitStore.getState();
+        void git.notifyMergeFileChanged(event.path);
+        if (event.oldPath) void git.notifyMergeFileChanged(event.oldPath);
+      }
+
       const { openFiles } = useIDEStore.getState();
       const openFile = openFiles.find((f) => f.path === event.path);
 

@@ -2,7 +2,11 @@ package git
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"hash"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -105,6 +109,441 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 		LineEndings: fc.LineEndings,
 		Regions:     regions,
 	}, nil
+}
+
+// ConflictState is one coherent read of everything a merge-resolution session
+// depends on: which index stages exist, the text snapshot when the conflict is
+// text-mergeable, the operation heads that give Current/Incoming their meaning,
+// and an opaque SourceVersion covering all of it plus the raw working-tree
+// bytes.
+//
+// SourceVersion exists because a filesystem watcher is a hint, not an
+// authority: an event can be missed, coalesced, or arrive late, and a merge
+// session that trusted it would happily overwrite a change it never saw. Every
+// mutation therefore carries the version the user actually reviewed, and the
+// backend re-derives the version inside the same call as the mutation.
+//
+// Snapshot is nil when the stage topology calls for the whole-file side UI (a
+// binary conflict, or a delete/modify where one side has no blob) and when the
+// path is no longer conflicted at all. Heads is nil only when there are no
+// conflict stages, so "resolved outside Firn" can be detected without
+// depending on operation metadata that may already be gone.
+type ConflictState struct {
+	Stages        ConflictStages    `json:"stages"`
+	Snapshot      *ConflictSnapshot `json:"snapshot,omitempty"`
+	Heads         *MergeHeads       `json:"heads,omitempty"`
+	SourceVersion string            `json:"sourceVersion"`
+}
+
+// ConflictGuardResult reports the outcome of a guarded conflict mutation.
+// Applied=false is the ordinary "someone else changed the file" outcome and
+// mutates nothing; SourceVersion always carries the live version so the caller
+// can re-read or re-confirm. Operational failures are returned as errors
+// instead, so a caller never has to parse error text to tell a race from a
+// broken repository.
+type ConflictGuardResult struct {
+	Applied       bool   `json:"applied"`
+	SourceVersion string `json:"sourceVersion"`
+}
+
+// conflictSignature is the cheap identity of everything the source version
+// covers except the working-tree bytes themselves. Reading it before and after
+// the byte read is what makes a ConflictState coherent: if any of it moved, the
+// bytes and the metadata may describe different moments.
+type conflictSignature struct {
+	stages ConflictStages
+	heads  *MergeHeads
+	// info is nil when the working-tree path is absent, which is a legitimate
+	// state (a delete/modify side, or a file the user removed).
+	info os.FileInfo
+}
+
+// ConflictState reads the conflicted path's stages, heads, and (for a text
+// conflict) its snapshot in one coherent pass, and returns the source version
+// that identifies exactly that state.
+func (s *Service) ConflictState(ctx context.Context, dir, path string) (ConflictState, error) {
+	return s.conflictState(ctx, dir, path, true)
+}
+
+func (s *Service) conflictState(ctx context.Context, dir, path string, withSnapshot bool) (ConflictState, error) {
+	if err := validateRepoRelPaths([]string{path}); err != nil {
+		return ConflictState{}, err
+	}
+	root, err := s.repoRoot(ctx, dir)
+	if err != nil {
+		return ConflictState{}, err
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
+
+	// One retry absorbs an ordinary concurrent save. A state that keeps moving
+	// fails closed rather than returning a version that describes neither read:
+	// a version nobody can reproduce would refuse every later mutation anyway,
+	// and an incoherent one could authorize the wrong write.
+	for attempt := 0; attempt < 2; attempt++ {
+		before, err := s.conflictSignature(ctx, dir, path, abs)
+		if err != nil {
+			return ConflictState{}, err
+		}
+		state, err := s.readConflictState(ctx, dir, root, abs, path, before, withSnapshot)
+		if err != nil {
+			return ConflictState{}, err
+		}
+		after, err := s.conflictSignature(ctx, dir, path, abs)
+		if err != nil {
+			return ConflictState{}, err
+		}
+		if sameConflictSignature(before, after) {
+			return state, nil
+		}
+	}
+	return ConflictState{}, fmt.Errorf("cannot resolve %s: its conflict state kept changing while it was read", path)
+}
+
+// conflictSignature reads the index stages, the operation heads (only while the
+// path is actually conflicted), and the working-tree path's Lstat identity.
+func (s *Service) conflictSignature(ctx context.Context, dir, path, abs string) (conflictSignature, error) {
+	stages, err := s.ConflictStages(ctx, dir, path)
+	if err != nil {
+		return conflictSignature{}, err
+	}
+	sig := conflictSignature{stages: stages}
+	if conflictStagesPresent(stages) {
+		// Stages exist, so an operation must be in progress. Missing or
+		// unreadable heads means this read is not coherent, not that the
+		// conflict has no sides.
+		heads, err := s.MergeHeads(ctx, dir)
+		if err != nil {
+			return conflictSignature{}, fmt.Errorf("cannot resolve %s: %w", path, err)
+		}
+		sig.heads = &heads
+	}
+	info, err := os.Lstat(abs)
+	switch {
+	case err == nil:
+		sig.info = info
+	case os.IsNotExist(err):
+		// Absent is a real state, not a failure.
+	default:
+		return conflictSignature{}, err
+	}
+	return sig, nil
+}
+
+// readConflictState hashes the working-tree bytes and, for a text conflict,
+// decodes and parses the snapshot from those exact bytes.
+func (s *Service) readConflictState(
+	ctx context.Context,
+	dir, root, abs, path string,
+	sig conflictSignature,
+	withSnapshot bool,
+) (ConflictState, error) {
+	state := ConflictState{Stages: sig.stages, Heads: sig.heads}
+	// A text session needs both sides in the index and a mergeable (non-binary)
+	// file; anything else is resolved through the whole-file side UI.
+	wantsText := conflictStagesPresent(sig.stages) &&
+		!sig.stages.Binary && sig.stages.Ours != nil && sig.stages.Theirs != nil
+
+	worktreeDigest := ""
+	var raw []byte
+	if sig.info != nil {
+		// Containment: the fully symlink-resolved path must stay under the
+		// symlink-resolved repo root, so a crafted path through an in-repo
+		// directory symlink cannot read outside the repository.
+		if err := verifyUnderRoot(root, abs); err != nil {
+			return ConflictState{}, fmt.Errorf("cannot resolve %s: %w", path, err)
+		}
+		// Only an absent or regular path is representable: a symlink or
+		// directory in place of the conflicted file means something else owns
+		// that name, and both the snapshot and the side apply must refuse it.
+		if sig.info.Mode()&os.ModeSymlink != 0 {
+			return ConflictState{}, fmt.Errorf("cannot resolve %s: path is a symlink", path)
+		}
+		if !sig.info.Mode().IsRegular() {
+			return ConflictState{}, fmt.Errorf("cannot resolve %s: path is not a regular file", path)
+		}
+
+		var err error
+		raw, worktreeDigest, err = hashWorktreeFile(abs, sig.info.Size())
+		if err != nil {
+			return ConflictState{}, err
+		}
+	} else if wantsText && withSnapshot {
+		// The index still describes a text conflict, so degrading to the
+		// whole-file UI would silently change what the user is deciding.
+		return ConflictState{}, fmt.Errorf("cannot resolve %s: the working-tree file is missing", path)
+	}
+
+	if wantsText && withSnapshot {
+		if raw == nil {
+			return ConflictState{}, fmt.Errorf("cannot resolve %s: file is too large (%d bytes)", path, sig.info.Size())
+		}
+		snapshot, err := s.snapshotFromBytes(ctx, dir, path, raw)
+		if err != nil {
+			return ConflictState{}, err
+		}
+		state.Snapshot = &snapshot
+	}
+
+	state.SourceVersion = conflictSourceVersion(root, path, sig, worktreeDigest)
+	return state, nil
+}
+
+// snapshotFromBytes decodes and parses a conflict snapshot from the exact bytes
+// the source version was computed over, so the displayed content and the
+// guarded version can never describe different reads.
+func (s *Service) snapshotFromBytes(ctx context.Context, dir, path string, raw []byte) (ConflictSnapshot, error) {
+	fc := filesystem.NewFileReader(filesystem.NewOS()).DecodeBytes(raw)
+	if fc.IsBinary {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is binary", path)
+	}
+	regions, err := parseConflictRegions(fc.Content, s.conflictMarkerSize(ctx, dir, path))
+	if err != nil {
+		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: %w", path, err)
+	}
+	// A file whose own content contains marker-shaped lines produces a region
+	// the parser cannot distinguish from a real one; resolving it would corrupt
+	// unchanged text. See ConflictSnapshot for the full reasoning.
+	if len(regions) > 0 {
+		spurious, err := s.regionMarkersInStages(ctx, dir, path, fc.Content, fc.Encoding, regions)
+		if err != nil {
+			return ConflictSnapshot{}, err
+		}
+		if spurious {
+			return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file content contains literal conflict markers", path)
+		}
+	}
+	return ConflictSnapshot{
+		Content:     fc.Content,
+		Encoding:    fc.Encoding,
+		LineEndings: fc.LineEndings,
+		Regions:     regions,
+	}, nil
+}
+
+// hashWorktreeFile returns the file's raw bytes (only when it is within the
+// text cap) and the hex SHA-256 of those bytes. A file past the cap is streamed
+// into the hash and its bytes are dropped: a binary conflict's identity still
+// matters for the guard, but its content must never cross the Wails bridge.
+func hashWorktreeFile(abs string, size int64) ([]byte, string, error) {
+	if size <= maxDiffableBytes {
+		raw, err := os.ReadFile(abs)
+		if err != nil {
+			return nil, "", err
+		}
+		sum := sha256.Sum256(raw)
+		return raw, hex.EncodeToString(sum[:]), nil
+	}
+	file, err := os.Open(abs)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = file.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return nil, "", err
+	}
+	return nil, hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// conflictSourceVersion hashes every input that gives the conflict its meaning.
+// Each field is framed with a tag and a byte length so no combination of values
+// can be reassembled into the same input stream as a different state.
+func conflictSourceVersion(root, path string, sig conflictSignature, worktreeDigest string) string {
+	digest := sha256.New()
+	hashField(digest, "root", root)
+	hashField(digest, "path", path)
+	if sig.heads != nil {
+		hashField(digest, "operation", sig.heads.Operation)
+		hashField(digest, "ours-head", sig.heads.Ours.Hash)
+		hashField(digest, "theirs-head", sig.heads.Theirs.Hash)
+	} else {
+		hashField(digest, "no-operation", "")
+	}
+	hashField(digest, "binary-merge", strconv.FormatBool(sig.stages.Binary))
+	for _, stage := range []struct {
+		number string
+		blob   *StageBlob
+	}{{"1", sig.stages.Base}, {"2", sig.stages.Ours}, {"3", sig.stages.Theirs}} {
+		if stage.blob == nil {
+			hashField(digest, "stage-"+stage.number+"-absent", "")
+			continue
+		}
+		hashField(digest, "stage-"+stage.number,
+			stage.blob.Mode+" "+stage.blob.Hash+" "+strconv.FormatInt(stage.blob.Size, 10))
+	}
+	if sig.info == nil {
+		hashField(digest, "worktree-absent", "")
+	} else {
+		hashField(digest, "worktree-type", sig.info.Mode().Type().String())
+		hashField(digest, "worktree-perm", sig.info.Mode().Perm().String())
+		hashField(digest, "worktree-bytes", worktreeDigest)
+	}
+	return "v1:" + hex.EncodeToString(digest.Sum(nil))
+}
+
+func hashField(digest hash.Hash, tag, value string) {
+	_, _ = fmt.Fprintf(digest, "%s:%d:", tag, len(value))
+	_, _ = digest.Write([]byte(value))
+	_, _ = digest.Write([]byte{0})
+}
+
+func conflictStagesPresent(stages ConflictStages) bool {
+	return stages.Base != nil || stages.Ours != nil || stages.Theirs != nil
+}
+
+func sameConflictSignature(a, b conflictSignature) bool {
+	if !sameStageBlob(a.stages.Base, b.stages.Base) ||
+		!sameStageBlob(a.stages.Ours, b.stages.Ours) ||
+		!sameStageBlob(a.stages.Theirs, b.stages.Theirs) ||
+		a.stages.Binary != b.stages.Binary {
+		return false
+	}
+	if (a.heads == nil) != (b.heads == nil) {
+		return false
+	}
+	if a.heads != nil && (a.heads.Operation != b.heads.Operation ||
+		a.heads.Ours.Hash != b.heads.Ours.Hash ||
+		a.heads.Theirs.Hash != b.heads.Theirs.Hash) {
+		return false
+	}
+	if (a.info == nil) != (b.info == nil) {
+		return false
+	}
+	if a.info == nil {
+		return true
+	}
+	// Identity as well as size/mtime: a file replaced by a symlink or a
+	// same-length rewrite within the timestamp granularity would otherwise look
+	// unchanged.
+	return os.SameFile(a.info, b.info) &&
+		a.info.Mode() == b.info.Mode() &&
+		a.info.Size() == b.info.Size() &&
+		a.info.ModTime().Equal(b.info.ModTime())
+}
+
+func sameStageBlob(a, b *StageBlob) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Hash == b.Hash && a.Mode == b.Mode && a.Size == b.Size
+}
+
+// writableConflictFormat mirrors the frontend's writable whitelist
+// (utils/fileWrites.ts): FileWriter silently re-encodes anything outside it, so
+// a guarded write refuses rather than performing a lossy write.
+func writableConflictFormat(encoding, lineEndings string) bool {
+	switch encoding {
+	case "utf-8", "utf-8-bom", "utf-16le", "utf-16be":
+	default:
+		return false
+	}
+	switch lineEndings {
+	case "lf", "crlf", "none":
+		return true
+	default:
+		return false
+	}
+}
+
+// guardedConflictMutation is the whole point of the source version: read the
+// coherent state, refuse unless it is exactly the state the caller reviewed,
+// and only then mutate — all inside one backend call, so nothing can slip
+// between the comparison and the write.
+//
+// Portability ceiling: this closes the window against Firn's own surfaces and
+// against any process that honors the same per-path lock. An uncooperative
+// external process can still win the final syscall. That is the strongest
+// practical guarantee available with the standard library, not a filesystem
+// compare-and-swap.
+func (s *Service) guardedConflictMutation(
+	ctx context.Context,
+	dir, path, expectedSourceVersion string,
+	withSnapshot bool,
+	mutate func(state ConflictState, root, abs string) error,
+) (ConflictGuardResult, error) {
+	if err := validateRepoRelPaths([]string{path}); err != nil {
+		return ConflictGuardResult{}, err
+	}
+	if expectedSourceVersion == "" {
+		return ConflictGuardResult{}, fmt.Errorf("cannot resolve %s: no expected source version was supplied", path)
+	}
+	state, err := s.conflictState(ctx, dir, path, withSnapshot)
+	if err != nil {
+		return ConflictGuardResult{}, err
+	}
+	if state.SourceVersion != expectedSourceVersion {
+		return ConflictGuardResult{Applied: false, SourceVersion: state.SourceVersion}, nil
+	}
+	root, err := s.repoRoot(ctx, dir)
+	if err != nil {
+		return ConflictGuardResult{}, err
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
+	if err := mutate(state, root, abs); err != nil {
+		return ConflictGuardResult{}, err
+	}
+	after, err := s.conflictState(ctx, dir, path, false)
+	if err != nil {
+		return ConflictGuardResult{}, err
+	}
+	return ConflictGuardResult{Applied: true, SourceVersion: after.SourceVersion}, nil
+}
+
+// WriteConflictResult writes a resolved text result to the working tree only if
+// the file still matches expectedSourceVersion, and returns the post-write
+// version so the caller can stage without re-reading.
+func (s *Service) WriteConflictResult(
+	ctx context.Context,
+	dir, path, expectedSourceVersion, content, encoding, lineEndings string,
+) (ConflictGuardResult, error) {
+	if !writableConflictFormat(encoding, lineEndings) {
+		return ConflictGuardResult{}, fmt.Errorf(
+			"cannot write %s: %s with %s line endings cannot be written back losslessly", path, encoding, lineEndings)
+	}
+	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion, true,
+		func(state ConflictState, _, abs string) error {
+			if state.Snapshot == nil {
+				return fmt.Errorf("cannot write %s: it has no text conflict to resolve", path)
+			}
+			writer := filesystem.NewFileWriter(filesystem.NewOS())
+			return writer.WriteFileWithOptions(abs, content, &filesystem.WriteOptions{
+				Encoding:    encoding,
+				LineEndings: lineEndings,
+			})
+		})
+}
+
+// StageConflictResult stages the working-tree state of a conflicted path (its
+// content, or its deletion) only if the path still matches
+// expectedSourceVersion. `add -A` covers both so content and deletion share one
+// guarded, retryable path.
+func (s *Service) StageConflictResult(
+	ctx context.Context,
+	dir, path, expectedSourceVersion string,
+) (ConflictGuardResult, error) {
+	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion, false,
+		func(ConflictState, string, string) error {
+			_, err := s.runAtRoot(ctx, dir, literalPathspecs, "add", "-A", "--", path)
+			return err
+		})
+}
+
+// ApplyConflictSide applies one whole-file side to the working tree — without
+// staging — only if the path still matches expectedSourceVersion. Keeping the
+// apply and the stage separate lets a failed stage be retried against the
+// version this call returns, instead of re-applying a side over content the
+// user may have since changed.
+func (s *Service) ApplyConflictSide(
+	ctx context.Context,
+	dir, path, side, expectedSourceVersion string,
+) (ConflictGuardResult, error) {
+	if err := validateConflictSide(side); err != nil {
+		return ConflictGuardResult{}, err
+	}
+	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion, false,
+		func(state ConflictState, root, abs string) error {
+			return s.applyConflictSideToWorktree(ctx, dir, path, side, state.Stages, root, abs)
+		})
 }
 
 // MergeHead describes one side of an in-progress conflict for the card header.
@@ -237,48 +676,84 @@ func (s *Service) ResolveConflictSide(ctx context.Context, dir, path, side strin
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return err
 	}
-	var checkoutFlag string
-	switch side {
-	case "ours":
-		checkoutFlag = "--ours"
-	case "theirs":
-		checkoutFlag = "--theirs"
-	default:
-		return fmt.Errorf("invalid conflict side %q (allowed: ours, theirs)", side)
+	if err := validateConflictSide(side); err != nil {
+		return err
 	}
-
+	root, err := s.repoRoot(ctx, dir)
+	if err != nil {
+		return err
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
 	stages, err := s.ConflictStages(ctx, dir, path)
 	if err != nil {
 		return err
 	}
+	if err := s.applyConflictSideToWorktree(ctx, dir, path, side, stages, root, abs); err != nil {
+		return err
+	}
+	// `-A` so a resolution to the deletion stages the removal through the same
+	// call that stages content.
+	_, err = s.runAtRoot(ctx, dir, literalPathspecs, "add", "-A", "--", path)
+	return err
+}
+
+func validateConflictSide(side string) error {
+	switch side {
+	case "ours", "theirs":
+		return nil
+	default:
+		return fmt.Errorf("invalid conflict side %q (allowed: ours, theirs)", side)
+	}
+}
+
+// applyConflictSideToWorktree puts one whole-file side into the working tree and
+// touches nothing else. It is the single implementation shared by the guarded
+// ApplyConflictSide and the compatible ResolveConflictSide, so the two can never
+// disagree about what taking a side means.
+func (s *Service) applyConflictSideToWorktree(
+	ctx context.Context,
+	dir, path, side string,
+	stages ConflictStages,
+	root, abs string,
+) error {
 	// Refuse when the path has no conflict stages at all: it is not conflicted
 	// (already resolved, a stale card, or a double-click). Without this guard
-	// the "chosen side absent = deletion" branch below would `git rm -f` a
-	// clean tracked file and destroy uncommitted content.
-	if stages.Base == nil && stages.Ours == nil && stages.Theirs == nil {
+	// the "chosen side absent = deletion" branch below would delete a clean
+	// tracked file and destroy uncommitted content.
+	if !conflictStagesPresent(stages) {
 		return fmt.Errorf("%s is not conflicted", path)
 	}
-	chosen := stages.Ours
+	chosen, checkoutFlag := stages.Ours, "--ours"
 	if side == "theirs" {
-		chosen = stages.Theirs
+		chosen, checkoutFlag = stages.Theirs, "--theirs"
 	}
-
 	// Chosen side is a deletion (its stage is absent though the path IS
-	// conflicted): remove the path and stage the removal. No -f: plain `git rm`
-	// still removes an unmerged path, but keeps git's up-to-date safety check so
-	// a resolution raced in between ConflictStages and here is rejected rather
-	// than force-deleted.
+	// conflicted): remove the working-tree file and leave the index alone.
 	if chosen == nil {
-		_, err := s.runAtRoot(ctx, dir, literalPathspecs, "rm", "--", path)
-		return err
+		return removeConflictWorktreePath(root, abs, path)
 	}
-	// Chosen side has content: write it to the working tree, then stage it,
-	// collapsing the conflict stages to a resolved entry.
-	if _, err := s.runAtRoot(ctx, dir, literalPathspecs, "checkout", checkoutFlag, "--", path); err != nil {
-		return err
-	}
-	_, err = s.runAtRoot(ctx, dir, literalPathspecs, "add", "--", path)
+	_, err := s.runAtRoot(ctx, dir, literalPathspecs, "checkout", checkoutFlag, "--", path)
 	return err
+}
+
+// removeConflictWorktreePath deletes the working-tree file for a side that is a
+// deletion. An already-absent path is an idempotent success; anything that is
+// not a contained regular file is refused rather than removed.
+func removeConflictWorktreePath(root, abs, path string) error {
+	info, err := os.Lstat(abs)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := verifyUnderRoot(root, abs); err != nil {
+		return fmt.Errorf("cannot resolve %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("cannot resolve %s: path is not a regular file", path)
+	}
+	return os.Remove(abs)
 }
 
 // literalPathspecs is the global git flag that disables pathspec magic, so a
@@ -290,11 +765,14 @@ func (s *Service) ResolveConflictSide(ctx context.Context, dir, path, side strin
 const literalPathspecs = "--literal-pathspecs"
 
 // StageBlob is one conflict index entry (a stage-1/2/3 object). Size is the
-// blob byte size. A nil *StageBlob on ConflictStages means the stage is absent
+// blob byte size and Mode the index mode (e.g. "100644", "100755"), which is
+// part of the conflict's identity: a side that only changed its executable bit
+// still changed. A nil *StageBlob on ConflictStages means the stage is absent
 // — the explicit signal for a delete/modify conflict, never conflated with
 // empty content.
 type StageBlob struct {
 	Hash string `json:"hash"`
+	Mode string `json:"mode"`
 	Size int64  `json:"size"`
 }
 
@@ -340,7 +818,7 @@ func (s *Service) ConflictStages(ctx context.Context, dir, path string) (Conflic
 		if len(fields) != 3 {
 			continue
 		}
-		blob := &StageBlob{Hash: fields[1], Size: s.blobSize(ctx, dir, fields[1])}
+		blob := &StageBlob{Hash: fields[1], Mode: fields[0], Size: s.blobSize(ctx, dir, fields[1])}
 		switch fields[2] {
 		case "1":
 			result.Base = blob

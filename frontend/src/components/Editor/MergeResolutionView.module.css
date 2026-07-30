@@ -418,3 +418,61 @@
   white-space: nowrap;
   border: 0;
 }
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--surface-border);
+  border-left: 3px solid var(--status-warning);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.noticeMessage {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.noticeActions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.dialog {
+  max-width: 420px;
+  padding: 16px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialogTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dialogBody {
+  margin: 0 0 16px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dialogActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

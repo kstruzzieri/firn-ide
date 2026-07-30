@@ -2,6 +2,7 @@ import { createEvent, fireEvent, render, screen, waitFor, within } from '@testin
 import userEvent from '@testing-library/user-event';
 import { Terminal } from '../../components/Terminal';
 import { useIDEStore } from '../../stores/ideStore';
+import { useGitStore, type MergeSession } from '../../stores/gitStore';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
@@ -734,5 +735,81 @@ describe('Terminal component', () => {
       expect(screen.queryByRole('tablist', { name: 'Terminal sessions' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'New terminal session' })).toHaveFocus();
     });
+  });
+});
+
+describe('Terminal — git signal on focus exit', () => {
+  const mergeSession = {
+    kind: 'text',
+    path: 'conflict.ts',
+    absPath: '/repo/conflict.ts',
+    repoRoot: '/repo',
+    labels: {
+      operation: 'merge',
+      ours: { label: 'main', hash: 'a', subject: '' },
+      theirs: { label: 'feature', hash: 'b', subject: '' },
+    },
+    fileQueue: ['conflict.ts'],
+    requestRevision: 1,
+    epoch: 1,
+    fileWriteRevision: 1,
+    sourceVersion: 'v1:x',
+    stages: { path: 'conflict.ts', binary: false },
+    dirty: false,
+    reloadPending: false,
+    closeRequested: false,
+    content: '',
+    encoding: 'utf-8',
+    lineEndings: 'lf',
+    regions: [],
+    decisions: {},
+    readOnly: false,
+  } as unknown as MergeSession;
+
+  const openPanel = async () => {
+    render(<Terminal />);
+    await userEvent.click(screen.getByRole('button', { name: /new terminal/i }));
+    const panel = document.getElementById('terminal-panel-content');
+    if (!panel) throw new Error('terminal panel not rendered');
+    return panel;
+  };
+
+  beforeEach(() => {
+    useGitStore.getState().resetForWorkspace('/repo');
+  });
+
+  it('schedules a git refresh when focus leaves the terminal while a merge session is open', async () => {
+    const scheduleRefresh = jest.fn();
+    useGitStore.setState({ mergeSession, scheduleRefresh });
+    const panel = await openPanel();
+
+    fireEvent.focusOut(panel, { relatedTarget: document.body });
+
+    // `git add` in the embedded terminal touches no watched file and .git is
+    // not watched, so leaving the terminal is the signal that a status read is
+    // worth doing.
+    expect(scheduleRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds no refresh when no merge session is open', async () => {
+    const scheduleRefresh = jest.fn();
+    useGitStore.setState({ mergeSession: null, scheduleRefresh });
+    const panel = await openPanel();
+
+    fireEvent.focusOut(panel, { relatedTarget: document.body });
+
+    expect(scheduleRefresh).not.toHaveBeenCalled();
+  });
+
+  it('ignores focus moves that stay inside the terminal', async () => {
+    const scheduleRefresh = jest.fn();
+    useGitStore.setState({ mergeSession, scheduleRefresh });
+    const panel = await openPanel();
+    const inside = document.createElement('textarea');
+    panel.appendChild(inside);
+
+    fireEvent.focusOut(panel, { relatedTarget: inside });
+
+    expect(scheduleRefresh).not.toHaveBeenCalled();
   });
 });

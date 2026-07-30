@@ -254,3 +254,110 @@ func TestGitMergeBindings_SnapshotStagesHeadsResolve(t *testing.T) {
 		}
 	}
 }
+
+func TestApp_GitConflictState_Binding(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+
+	state, err := app.GitConflictState(dir, "f.txt")
+
+	if err != nil {
+		t.Fatalf("GitConflictState() error = %v", err)
+	}
+	if state.SourceVersion == "" {
+		t.Error("SourceVersion is empty")
+	}
+	if state.Snapshot == nil || len(state.Snapshot.Regions) != 1 {
+		t.Errorf("Snapshot = %+v, want one region", state.Snapshot)
+	}
+	if state.Heads == nil || state.Heads.Operation != "merge" {
+		t.Errorf("Heads = %+v, want a merge operation", state.Heads)
+	}
+}
+
+func TestApp_GitConflictGuards_MismatchIsNotAnError(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+	state, err := app.GitConflictState(dir, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := state.SourceVersion + "-stale"
+
+	write, err := app.GitWriteConflictResult(dir, "f.txt", stale, "resolved\n", "utf-8", "lf")
+	if err != nil {
+		t.Fatalf("GitWriteConflictResult() error = %v, want a clean mismatch", err)
+	}
+	if write.Applied {
+		t.Error("write Applied = true, want false")
+	}
+
+	stage, err := app.GitStageConflictResult(dir, "f.txt", stale)
+	if err != nil {
+		t.Fatalf("GitStageConflictResult() error = %v, want a clean mismatch", err)
+	}
+	if stage.Applied {
+		t.Error("stage Applied = true, want false")
+	}
+
+	side, err := app.GitApplyConflictSide(dir, "f.txt", "ours", stale)
+	if err != nil {
+		t.Fatalf("GitApplyConflictSide() error = %v, want a clean mismatch", err)
+	}
+	if side.Applied {
+		t.Error("side Applied = true, want false")
+	}
+
+	st, _ := app.GitStatus(dir)
+	unmerged := false
+	for _, f := range st.Files {
+		if f.Unmerged {
+			unmerged = true
+		}
+	}
+	if !unmerged {
+		t.Error("f.txt is no longer unmerged, want every refused mutation to be a no-op")
+	}
+}
+
+func TestApp_GitConflictGuards_SucceedWithTheLiveVersion(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+	state, err := app.GitConflictState(dir, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	write, err := app.GitWriteConflictResult(dir, "f.txt", state.SourceVersion, "resolved\n", "utf-8", "lf")
+	if err != nil || !write.Applied {
+		t.Fatalf("GitWriteConflictResult() = %+v, err = %v, want applied", write, err)
+	}
+	stage, err := app.GitStageConflictResult(dir, "f.txt", write.SourceVersion)
+	if err != nil || !stage.Applied {
+		t.Fatalf("GitStageConflictResult() = %+v, err = %v, want applied", stage, err)
+	}
+
+	st, _ := app.GitStatus(dir)
+	for _, f := range st.Files {
+		if f.Unmerged {
+			t.Errorf("f.txt still unmerged after guarded write and stage: %+v", f)
+		}
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != "resolved\n" {
+		t.Errorf("worktree content = %q, want the resolved result", got)
+	}
+}
+
+func TestApp_GitConflictState_OperationalErrorStillErrors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	app := NewApp()
+
+	// Not a repository at all: an operational failure must remain an error and
+	// never be reported as a benign version mismatch.
+	if _, err := app.GitConflictState(t.TempDir(), "f.txt"); err == nil {
+		t.Fatal("GitConflictState(non-repo) error = nil, want an operational error")
+	}
+}

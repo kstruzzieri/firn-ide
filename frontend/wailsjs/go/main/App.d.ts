@@ -47,6 +47,8 @@ export function GetWatchedPath():Promise<string>;
 
 export function GetWorkspaceInfo():Promise<main.WorkspaceInfo>;
 
+export function GitApplyConflictSide(arg1:string,arg2:string,arg3:string,arg4:string):Promise<git.ConflictGuardResult>;
+
 export function GitApplyHunk(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function GitBranches(arg1:string):Promise<Array<string>>;
@@ -60,6 +62,8 @@ export function GitCommitMessageAvailable():Promise<boolean>;
 export function GitConflictSnapshot(arg1:string,arg2:string):Promise<git.ConflictSnapshot>;
 
 export function GitConflictStages(arg1:string,arg2:string):Promise<git.ConflictStages>;
+
+export function GitConflictState(arg1:string,arg2:string):Promise<git.ConflictState>;
 
 export function GitFileAtRev(arg1:string,arg2:string,arg3:string):Promise<git.FileContent>;
 
@@ -79,9 +83,13 @@ export function GitResolveConflictSide(arg1:string,arg2:string,arg3:string):Prom
 
 export function GitStage(arg1:string,arg2:Array<string>):Promise<void>;
 
+export function GitStageConflictResult(arg1:string,arg2:string,arg3:string):Promise<git.ConflictGuardResult>;
+
 export function GitStatus(arg1:string):Promise<git.RepoStatus>;
 
 export function GitUnstage(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function GitWriteConflictResult(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<git.ConflictGuardResult>;
 
 export function IsWatching():Promise<boolean>;
 

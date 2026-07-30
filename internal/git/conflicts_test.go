@@ -1216,3 +1216,915 @@ func TestService_ConflictSnapshot_NoTrailingNewlineAtEOFFailsClosed(t *testing.T
 		t.Fatal("ConflictSnapshot(no trailing newline at EOF) error = nil, want fail-closed refusal")
 	}
 }
+
+// ── ConflictState + guarded mutation boundary (real git) ──
+//
+// These cover the Phase 4 invariant: a watcher event is a hint, so the ONLY
+// thing that may authorize a mutation is a source version the backend computed
+// itself and re-verified inside the same call as the mutation.
+
+// gitStdin runs git in dir with the given stdin, isolated like gitCmd.
+func gitStdin(t *testing.T, dir, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Env = append(scrubGitEnv(os.Environ()),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+// versionOf returns the source version of a conflicted path, failing the test
+// on any read error.
+func versionOf(t *testing.T, dir, path string) string {
+	t.Helper()
+	state, err := NewService().ConflictState(ctx(), dir, path)
+	if err != nil {
+		t.Fatalf("ConflictState(%s) error = %v", path, err)
+	}
+	if state.SourceVersion == "" {
+		t.Fatalf("ConflictState(%s) returned an empty source version", path)
+	}
+	return state.SourceVersion
+}
+
+func TestService_ConflictState_TextSessionCarriesSnapshotHeadsAndVersion(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Snapshot == nil {
+		t.Fatal("Snapshot = nil, want a text snapshot for a mergeable text conflict")
+	}
+	if len(state.Snapshot.Regions) != 1 {
+		t.Errorf("regions = %d, want 1", len(state.Snapshot.Regions))
+	}
+	if !strings.Contains(state.Snapshot.Content, "<<<<<<<") {
+		t.Errorf("Content missing markers:\n%s", state.Snapshot.Content)
+	}
+	if state.Heads == nil || state.Heads.Operation != "merge" {
+		t.Errorf("Heads = %+v, want a merge operation", state.Heads)
+	}
+	if state.Stages.Ours == nil || state.Stages.Theirs == nil {
+		t.Errorf("Stages = %+v, want ours and theirs present", state.Stages)
+	}
+	if state.Stages.Ours.Mode == "" {
+		t.Error("Stages.Ours.Mode is empty, want the index mode")
+	}
+	if state.SourceVersion == "" {
+		t.Error("SourceVersion is empty")
+	}
+}
+
+func TestService_ConflictVersion_StableForUnchangedState(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+
+	first := versionOf(t, dir, "f.txt")
+	second := versionOf(t, dir, "f.txt")
+
+	if first != second {
+		t.Errorf("source version changed without any state change: %q -> %q", first, second)
+	}
+}
+
+func TestService_ConflictVersion_ChangesWithWorktreeBytes(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	before := versionOf(t, dir, "f.txt")
+
+	// Same logical text, CRLF bytes: a decoded-string comparison would call
+	// this identical, which is exactly the hole the raw-byte hash closes.
+	raw, err := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf := strings.ReplaceAll(string(raw), "\n", "\r\n")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(crlf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if after := versionOf(t, dir, "f.txt"); after == before {
+		t.Error("source version unchanged after a CRLF rewrite of the same text")
+	}
+}
+
+func TestService_ConflictVersion_ChangesWithByteOrderMark(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	before := versionOf(t, dir, "f.txt")
+
+	raw, err := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), append([]byte{0xEF, 0xBB, 0xBF}, raw...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if after := versionOf(t, dir, "f.txt"); after == before {
+		t.Error("source version unchanged after a BOM was prepended")
+	}
+}
+
+func TestService_ConflictVersion_ChangesWithWorktreeMode(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	before := versionOf(t, dir, "f.txt")
+
+	if err := os.Chmod(filepath.Join(dir, "f.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if after := versionOf(t, dir, "f.txt"); after == before {
+		t.Error("source version unchanged after the worktree permission mode changed")
+	}
+}
+
+func TestService_ConflictVersion_ChangesWhenWorktreeFileRemoved(t *testing.T) {
+	requireGit(t)
+	// A delete/modify conflict resolves through the whole-file side UI, so an
+	// absent working-tree file is representable there: the index stages still
+	// describe the surviving side.
+	dir := deleteModifyRepo(t)
+	before := versionOf(t, dir, "f.txt")
+
+	if err := os.Remove(filepath.Join(dir, "f.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState after removal error = %v, want a coherent state", err)
+	}
+	if state.SourceVersion == before {
+		t.Error("source version unchanged after the worktree file was removed")
+	}
+	if state.Snapshot != nil {
+		t.Errorf("Snapshot = %+v, want nil with no worktree file", state.Snapshot)
+	}
+	if state.Stages.Theirs == nil {
+		t.Error("Stages.Theirs = nil, want the surviving side still readable")
+	}
+}
+
+func TestService_ConflictState_TextConflictWithoutWorktreeFileFailsClosed(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	if err := os.Remove(filepath.Join(dir, "f.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The index still describes a text conflict with both sides present.
+	// Returning "no snapshot" here would silently offer a whole-file side
+	// choice the stage topology never called for, so this fails closed and the
+	// session surfaces a retryable read failure instead.
+	if _, err := NewService().ConflictState(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictState(text conflict, missing file) error = nil, want a fail-closed error")
+	}
+}
+
+func TestService_ConflictState_SymlinkWorktreePathFailsClosed(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	writeFile(t, dir, "other.txt", "elsewhere\n")
+	if err := os.Remove(filepath.Join(dir, "f.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "other.txt"), filepath.Join(dir, "f.txt")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := NewService().ConflictState(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictState(symlink) error = nil, want a fail-closed error")
+	}
+}
+
+func TestService_ConflictState_DirectoryWorktreePathFailsClosed(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	if err := os.Remove(filepath.Join(dir, "f.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "f.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewService().ConflictState(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictState(directory) error = nil, want a fail-closed error")
+	}
+}
+
+func TestService_ConflictVersion_ChangesWithStageMode(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := state.SourceVersion
+
+	// Replace stage 3 with the same object at an executable mode: presence and
+	// object are identical, only the mode moved.
+	gitStdin(t, dir, "100755 "+state.Stages.Theirs.Hash+" 3\tf.txt\n", "update-index", "--index-info")
+
+	if after := versionOf(t, dir, "f.txt"); after == before {
+		t.Error("source version unchanged after a conflict stage mode changed")
+	}
+}
+
+func TestService_ConflictVersion_ChangesWithStageObject(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := state.SourceVersion
+	replacement := strings.TrimSpace(gitStdin(t, dir, "different theirs\n", "hash-object", "-w", "--stdin"))
+
+	gitStdin(t, dir, "100644 "+replacement+" 3\tf.txt\n", "update-index", "--index-info")
+
+	if after := versionOf(t, dir, "f.txt"); after == before {
+		t.Error("source version unchanged after a conflict stage object changed")
+	}
+}
+
+func TestService_ConflictVersion_ChangesWithOperationHead(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	before := versionOf(t, dir, "f.txt")
+	base := strings.TrimSpace(gitCmd(t, dir, "rev-parse", "main^"))
+	gitDir := strings.TrimSpace(gitCmd(t, dir, "rev-parse", "--absolute-git-dir"))
+
+	// Stages and worktree bytes are untouched; only the incoming side of the
+	// operation moved. Current/Incoming now mean something else.
+	if err := os.WriteFile(filepath.Join(gitDir, "MERGE_HEAD"), []byte(base+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	after := versionOf(t, dir, "f.txt")
+	if after == before {
+		t.Fatal("source version unchanged after the operation's incoming head changed")
+	}
+	// A mutation holding the pre-change version must be refused.
+	res, err := NewService().StageConflictResult(ctx(), dir, "f.txt", before)
+	if err != nil {
+		t.Fatalf("StageConflictResult error = %v, want a clean mismatch", err)
+	}
+	if res.Applied {
+		t.Error("Applied = true, want false for a stale operation head")
+	}
+	if !isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt was staged despite a stale source version")
+	}
+}
+
+func TestService_ConflictGuard_StaleWriteIsRefusedWithoutMutation(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	current := versionOf(t, dir, "f.txt")
+	original, err := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := NewService().WriteConflictResult(ctx(), dir, "f.txt", current+"-stale", "resolved\n", "utf-8", "lf")
+
+	if err != nil {
+		t.Fatalf("WriteConflictResult error = %v, want a clean mismatch", err)
+	}
+	if res.Applied {
+		t.Error("Applied = true, want false for a stale version")
+	}
+	if res.SourceVersion != current {
+		t.Errorf("SourceVersion = %q, want the live version %q", res.SourceVersion, current)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != string(original) {
+		t.Errorf("worktree bytes changed on a refused write: %q", got)
+	}
+	if !isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt was staged on a refused write")
+	}
+}
+
+func TestService_ConflictGuard_StaleStageIsRefusedWithoutMutation(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	current := versionOf(t, dir, "f.txt")
+
+	res, err := NewService().StageConflictResult(ctx(), dir, "f.txt", current+"-stale")
+
+	if err != nil {
+		t.Fatalf("StageConflictResult error = %v, want a clean mismatch", err)
+	}
+	if res.Applied {
+		t.Error("Applied = true, want false for a stale version")
+	}
+	if !isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt was staged despite a stale source version")
+	}
+}
+
+func TestService_ConflictGuard_StaleSideApplyIsRefusedWithoutMutation(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "b\x00ase\n", "o\x00urs\n", "t\x00heirs\n", false)
+	current := versionOf(t, dir, "f.txt")
+	original, err := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := NewService().ApplyConflictSide(ctx(), dir, "f.txt", "ours", current+"-stale")
+
+	if err != nil {
+		t.Fatalf("ApplyConflictSide error = %v, want a clean mismatch", err)
+	}
+	if res.Applied {
+		t.Error("Applied = true, want false for a stale version")
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != string(original) {
+		t.Errorf("worktree bytes changed on a refused side apply: %q", got)
+	}
+	if !isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt was staged on a refused side apply")
+	}
+}
+
+func TestService_ConflictGuard_WriteThenStageWithReturnedVersion(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	svc := NewService()
+	current := versionOf(t, dir, "f.txt")
+	resolved := "resolved\n<<<<<<< literal text\n"
+
+	write, err := svc.WriteConflictResult(ctx(), dir, "f.txt", current, resolved, "utf-8", "lf")
+	if err != nil {
+		t.Fatalf("WriteConflictResult error = %v", err)
+	}
+	if !write.Applied {
+		t.Fatal("Applied = false, want true for the live version")
+	}
+	if write.SourceVersion == current || write.SourceVersion == "" {
+		t.Errorf("SourceVersion = %q, want the post-write version", write.SourceVersion)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != resolved {
+		t.Errorf("worktree content = %q, want the resolved result", got)
+	}
+
+	stage, err := svc.StageConflictResult(ctx(), dir, "f.txt", write.SourceVersion)
+	if err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+	if !stage.Applied {
+		t.Fatal("Applied = false, want true when staging the version the write returned")
+	}
+	if isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt still unmerged after a guarded stage")
+	}
+}
+
+func TestService_ConflictGuard_StageRetryAfterIndexLockUsesSameVersion(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	svc := NewService()
+	write, err := svc.WriteConflictResult(ctx(), dir, "f.txt", versionOf(t, dir, "f.txt"), "resolved\n", "utf-8", "lf")
+	if err != nil || !write.Applied {
+		t.Fatalf("WriteConflictResult = %+v, err = %v", write, err)
+	}
+	gitDir := strings.TrimSpace(gitCmd(t, dir, "rev-parse", "--absolute-git-dir"))
+	lock := filepath.Join(gitDir, "index.lock")
+	if err := os.WriteFile(lock, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.txt", write.SourceVersion); err == nil {
+		t.Fatal("StageConflictResult with a held index.lock error = nil, want an operational error")
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+
+	// The failed stage mutated nothing, so the write's version is still the
+	// live one and a retry needs no new read.
+	retry, err := svc.StageConflictResult(ctx(), dir, "f.txt", write.SourceVersion)
+	if err != nil {
+		t.Fatalf("retry StageConflictResult error = %v", err)
+	}
+	if !retry.Applied {
+		t.Error("Applied = false, want true retrying with the version the write returned")
+	}
+	if isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt still unmerged after the retried stage")
+	}
+}
+
+func TestService_ConflictGuard_SideApplyThenStage(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "b\x00ase\n", "o\x00urs\n", "t\x00heirs\n", false)
+	svc := NewService()
+
+	apply, err := svc.ApplyConflictSide(ctx(), dir, "f.txt", "theirs", versionOf(t, dir, "f.txt"))
+	if err != nil {
+		t.Fatalf("ApplyConflictSide error = %v", err)
+	}
+	if !apply.Applied {
+		t.Fatal("Applied = false, want true for the live version")
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != "t\x00heirs\n" {
+		t.Errorf("worktree content = %q, want theirs", got)
+	}
+	// Apply is worktree-only: the path stays unmerged until the guarded stage.
+	if !isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt was staged by the side apply, want worktree-only")
+	}
+
+	stage, err := svc.StageConflictResult(ctx(), dir, "f.txt", apply.SourceVersion)
+	if err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+	if !stage.Applied || isUnmerged(t, dir, "f.txt") {
+		t.Errorf("stage = %+v, unmerged = %v, want applied and resolved", stage, isUnmerged(t, dir, "f.txt"))
+	}
+}
+
+func TestService_ConflictGuard_AbsentSideStagesTheDeletion(t *testing.T) {
+	requireGit(t)
+	dir := deleteModifyRepo(t) // ours deleted the file (stage 2 absent)
+	svc := NewService()
+
+	apply, err := svc.ApplyConflictSide(ctx(), dir, "f.txt", "ours", versionOf(t, dir, "f.txt"))
+	if err != nil {
+		t.Fatalf("ApplyConflictSide(deletion) error = %v", err)
+	}
+	if !apply.Applied {
+		t.Fatal("Applied = false, want true")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "f.txt")); !os.IsNotExist(err) {
+		t.Error("f.txt should be removed from the worktree")
+	}
+	// Worktree-only: the index still carries the conflict until the stage.
+	if !isUnmerged(t, dir, "f.txt") {
+		t.Error("the side apply staged the deletion, want worktree-only")
+	}
+
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.txt", apply.SourceVersion); err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+	if isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt still unmerged after staging the deletion")
+	}
+	if tracked := strings.TrimSpace(gitCmd(t, dir, "ls-files", "--", "f.txt")); tracked != "" {
+		t.Errorf("f.txt still in the index = %q, want absent", tracked)
+	}
+}
+
+func TestService_ConflictGuard_RejectsUnwritableEncoding(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	original, err := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// latin-1 cannot be re-encoded by the writer: it would silently write UTF-8
+	// bytes. Refuse rather than perform a lossy write.
+	if _, err := NewService().WriteConflictResult(ctx(), dir, "f.txt", versionOf(t, dir, "f.txt"), "resolved\n", "latin-1", "lf"); err == nil {
+		t.Fatal("WriteConflictResult(latin-1) error = nil, want a refusal")
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != string(original) {
+		t.Errorf("worktree bytes changed on a refused encoding: %q", got)
+	}
+}
+
+func TestService_ConflictState_BinaryConflictHasNoSnapshot(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "b\x00ase\n", "o\x00urs\n", "t\x00heirs\n", false)
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Snapshot != nil {
+		t.Error("Snapshot != nil, want nil for a binary conflict")
+	}
+	if !state.Stages.Binary {
+		t.Error("Stages.Binary = false, want true")
+	}
+	if state.SourceVersion == "" {
+		t.Error("SourceVersion is empty for a binary conflict")
+	}
+}
+
+func TestService_ConflictState_MissingSideHasNoSnapshot(t *testing.T) {
+	requireGit(t)
+	dir := deleteModifyRepo(t)
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Snapshot != nil {
+		t.Error("Snapshot != nil, want nil when a side is absent")
+	}
+	if state.Stages.Ours != nil {
+		t.Errorf("Stages.Ours = %+v, want nil (deleted on ours)", state.Stages.Ours)
+	}
+	if state.Heads == nil {
+		t.Error("Heads = nil, want the operation heads while stages exist")
+	}
+}
+
+func TestService_ConflictState_ResolvedPathHasNoStagesAndNoHeads(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	gitCmd(t, dir, "checkout", "--theirs", "--", "f.txt")
+	gitCmd(t, dir, "add", "--", "f.txt")
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Stages.Base != nil || state.Stages.Ours != nil || state.Stages.Theirs != nil {
+		t.Errorf("Stages = %+v, want all absent", state.Stages)
+	}
+	// Resolved-outside detection must not depend on operation metadata that may
+	// already be gone.
+	if state.Heads != nil {
+		t.Errorf("Heads = %+v, want nil with no conflict stages", state.Heads)
+	}
+	if state.Snapshot != nil {
+		t.Errorf("Snapshot = %+v, want nil with no conflict stages", state.Snapshot)
+	}
+}
+
+func TestService_ConflictState_MarkersRemovedKeepsEmptyRegions(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	// Resolved in the worktree by hand but never staged: still conflicted in
+	// the index, and the session must be able to tell markers are gone.
+	writeFile(t, dir, "f.txt", "hand resolved\n")
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Snapshot == nil {
+		t.Fatal("Snapshot = nil, want a marker-free snapshot for a still-conflicted text path")
+	}
+	if state.Snapshot.Regions == nil {
+		t.Error("Regions = nil, want an empty non-nil slice")
+	}
+	if len(state.Snapshot.Regions) != 0 {
+		t.Errorf("regions = %d, want 0", len(state.Snapshot.Regions))
+	}
+}
+
+func TestService_ConflictState_OverLimitTextFailsClosed(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
+	big := strings.Repeat("a\n", (maxDiffableBytes/2)+64)
+	writeFile(t, dir, "f.txt", big)
+
+	// Stages say this is a text conflict, so silently degrading to a
+	// whole-file side choice would change what the user is deciding.
+	if _, err := NewService().ConflictState(ctx(), dir, "f.txt"); err == nil {
+		t.Fatal("ConflictState(over-limit text) error = nil, want a fail-closed error")
+	}
+}
+
+// ── Conflict topology and byte preservation (real git) ──
+
+// modifyDeleteRepo: ours (main) modifies f.txt, theirs (feature) deletes it.
+// The mirror image of deleteModifyRepo, so both stage-absence orientations are
+// covered rather than only the one the earlier phase happened to build.
+func modifyDeleteRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, "f.txt", "base\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	gitCmd(t, dir, "rm", "f.txt")
+	gitCmd(t, dir, "commit", "-m", "delete on feature")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", "ours modified\n")
+	gitCmd(t, dir, "commit", "-am", "modify on main")
+	mergeConflict(t, dir, "feature")
+	return dir
+}
+
+// binaryDeleteModifyRepo: ours deletes a binary file, theirs modifies it.
+func binaryDeleteModifyRepo(t *testing.T, oursDeletes bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	writeFile(t, dir, "f.bin", "b\x00ase\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	if oursDeletes {
+		writeFile(t, dir, "f.bin", "t\x00heirs\n")
+		gitCmd(t, dir, "commit", "-am", "modify on feature")
+	} else {
+		gitCmd(t, dir, "rm", "f.bin")
+		gitCmd(t, dir, "commit", "-m", "delete on feature")
+	}
+	gitCmd(t, dir, "checkout", "main")
+	if oursDeletes {
+		gitCmd(t, dir, "rm", "f.bin")
+		gitCmd(t, dir, "commit", "-m", "delete on main")
+	} else {
+		writeFile(t, dir, "f.bin", "o\x00urs\n")
+		gitCmd(t, dir, "commit", "-am", "modify on main")
+	}
+	mergeConflict(t, dir, "feature")
+	return dir
+}
+
+func TestService_ConflictState_DeleteModifyStageOrientation(t *testing.T) {
+	requireGit(t)
+	dir := deleteModifyRepo(t) // ours deleted: stage 2 absent, stage 3 present
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Stages.Ours != nil {
+		t.Errorf("Stages.Ours = %+v, want nil (deleted on ours)", state.Stages.Ours)
+	}
+	if state.Stages.Theirs == nil {
+		t.Error("Stages.Theirs = nil, want the surviving side")
+	}
+	if state.Snapshot != nil {
+		t.Error("Snapshot != nil, want the whole-file side UI")
+	}
+}
+
+func TestService_ConflictState_ModifyDeleteStageOrientation(t *testing.T) {
+	requireGit(t)
+	dir := modifyDeleteRepo(t) // theirs deleted: stage 3 absent, stage 2 present
+
+	state, err := NewService().ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Stages.Theirs != nil {
+		t.Errorf("Stages.Theirs = %+v, want nil (deleted on theirs)", state.Stages.Theirs)
+	}
+	if state.Stages.Ours == nil {
+		t.Error("Stages.Ours = nil, want the surviving side")
+	}
+	if state.Snapshot != nil {
+		t.Error("Snapshot != nil, want the whole-file side UI")
+	}
+}
+
+func TestService_ConflictGuard_ModifyDeleteKeepsOurSide(t *testing.T) {
+	requireGit(t)
+	dir := modifyDeleteRepo(t)
+	svc := NewService()
+
+	apply, err := svc.ApplyConflictSide(ctx(), dir, "f.txt", "ours", versionOf(t, dir, "f.txt"))
+	if err != nil || !apply.Applied {
+		t.Fatalf("ApplyConflictSide(ours) = %+v, err = %v", apply, err)
+	}
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.txt", apply.SourceVersion); err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+
+	if isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt still unmerged")
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != "ours modified\n" {
+		t.Errorf("worktree content = %q, want ours", got)
+	}
+	if staged := gitCmd(t, dir, "show", ":0:f.txt"); staged != "ours modified\n" {
+		t.Errorf("staged content = %q, want ours", staged)
+	}
+}
+
+func TestService_ConflictGuard_ModifyDeleteTakesTheirDeletion(t *testing.T) {
+	requireGit(t)
+	dir := modifyDeleteRepo(t)
+	svc := NewService()
+
+	apply, err := svc.ApplyConflictSide(ctx(), dir, "f.txt", "theirs", versionOf(t, dir, "f.txt"))
+	if err != nil || !apply.Applied {
+		t.Fatalf("ApplyConflictSide(theirs=deletion) = %+v, err = %v", apply, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "f.txt")); !os.IsNotExist(err) {
+		t.Error("f.txt should be removed from the worktree")
+	}
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.txt", apply.SourceVersion); err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+
+	if isUnmerged(t, dir, "f.txt") {
+		t.Error("f.txt still unmerged")
+	}
+	if tracked := strings.TrimSpace(gitCmd(t, dir, "ls-files", "--", "f.txt")); tracked != "" {
+		t.Errorf("f.txt still in the index = %q, want absent", tracked)
+	}
+}
+
+func TestService_ConflictState_BinaryDeleteModifyBothOrientations(t *testing.T) {
+	requireGit(t)
+	for _, tc := range []struct {
+		name        string
+		oursDeletes bool
+	}{
+		{"binary DU (ours deleted)", true},
+		{"binary UD (theirs deleted)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := binaryDeleteModifyRepo(t, tc.oursDeletes)
+			state, err := NewService().ConflictState(ctx(), dir, "f.bin")
+			if err != nil {
+				t.Fatalf("ConflictState error = %v", err)
+			}
+			if state.Snapshot != nil {
+				t.Error("Snapshot != nil, want the whole-file side UI")
+			}
+			absent, present := state.Stages.Ours, state.Stages.Theirs
+			if !tc.oursDeletes {
+				absent, present = state.Stages.Theirs, state.Stages.Ours
+			}
+			if absent != nil {
+				t.Errorf("deleted side = %+v, want nil", absent)
+			}
+			if present == nil {
+				t.Error("surviving side = nil, want a blob")
+			}
+			if state.SourceVersion == "" {
+				t.Error("SourceVersion is empty")
+			}
+		})
+	}
+}
+
+func TestService_ConflictGuard_BinaryDeleteModifyKeepsTheSurvivingSide(t *testing.T) {
+	requireGit(t)
+	dir := binaryDeleteModifyRepo(t, true) // ours deleted, theirs modified
+	svc := NewService()
+
+	apply, err := svc.ApplyConflictSide(ctx(), dir, "f.bin", "theirs", versionOf(t, dir, "f.bin"))
+	if err != nil || !apply.Applied {
+		t.Fatalf("ApplyConflictSide(theirs) = %+v, err = %v", apply, err)
+	}
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.bin", apply.SourceVersion); err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "f.bin"))
+	if string(got) != "t\x00heirs\n" {
+		t.Errorf("worktree content = %q, want theirs", got)
+	}
+	if isUnmerged(t, dir, "f.bin") {
+		t.Error("f.bin still unmerged")
+	}
+}
+
+// crlfConflictRepo commits CRLF bytes on both sides with autocrlf disabled, so
+// the fixture controls the committed bytes on every platform (no unix2dos).
+func crlfConflictRepo(t *testing.T, prefix string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-b", "main")
+	gitCmd(t, dir, "config", "user.name", "Test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	gitCmd(t, dir, "config", "core.autocrlf", "false")
+	// The first line is shared so the conflict region starts BELOW it: a
+	// difference on line 1 would put the marker (and any byte-order mark) inside
+	// the region, and the file would no longer begin with the prefix under test.
+	writeFile(t, dir, "f.txt", prefix+"header\r\nbase\r\nshared\r\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "base")
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "f.txt", prefix+"header\r\ntheirs\r\nshared\r\n")
+	gitCmd(t, dir, "commit", "-am", "theirs")
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "f.txt", prefix+"header\r\nours\r\nshared\r\n")
+	gitCmd(t, dir, "commit", "-am", "ours")
+	mergeConflict(t, dir, "feature")
+	return dir
+}
+
+func TestService_ConflictGuard_PreservesCRLFThroughWriteAndStage(t *testing.T) {
+	requireGit(t)
+	dir := crlfConflictRepo(t, "")
+	svc := NewService()
+
+	state, err := svc.ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Snapshot == nil {
+		t.Fatal("Snapshot = nil, want a text snapshot")
+	}
+	if state.Snapshot.LineEndings != "crlf" {
+		t.Fatalf("LineEndings = %q, want crlf", state.Snapshot.LineEndings)
+	}
+
+	// The editor hands back an LF document; the captured line endings are what
+	// makes the write round-trip.
+	written, err := svc.WriteConflictResult(ctx(), dir, "f.txt", state.SourceVersion,
+		"header\nours\nshared\n", state.Snapshot.Encoding, state.Snapshot.LineEndings)
+	if err != nil || !written.Applied {
+		t.Fatalf("WriteConflictResult = %+v, err = %v", written, err)
+	}
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.txt", written.SourceVersion); err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(raw) != "header\r\nours\r\nshared\r\n" {
+		t.Errorf("worktree bytes = %q, want CRLF", raw)
+	}
+	if staged := gitCmd(t, dir, "show", ":0:f.txt"); staged != "header\r\nours\r\nshared\r\n" {
+		t.Errorf("staged bytes = %q, want CRLF", staged)
+	}
+}
+
+func TestService_ConflictGuard_PreservesByteOrderMarkThroughWriteAndStage(t *testing.T) {
+	requireGit(t)
+	const bom = "\xEF\xBB\xBF"
+	dir := crlfConflictRepo(t, bom)
+	svc := NewService()
+
+	state, err := svc.ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	if state.Snapshot == nil {
+		t.Fatal("Snapshot = nil, want a text snapshot")
+	}
+	if state.Snapshot.Encoding != "utf-8-bom" {
+		t.Fatalf("Encoding = %q, want utf-8-bom", state.Snapshot.Encoding)
+	}
+	before := state.SourceVersion
+
+	// Source-version sensitivity: dropping the BOM is a real byte change.
+	stripped := strings.TrimPrefix(string(mustRead(t, filepath.Join(dir, "f.txt"))), bom)
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(stripped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after := versionOf(t, dir, "f.txt"); after == before {
+		t.Error("source version unchanged after the BOM was removed")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(bom+stripped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err = svc.ConflictState(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictState error = %v", err)
+	}
+	written, err := svc.WriteConflictResult(ctx(), dir, "f.txt", state.SourceVersion,
+		"header\nours\nshared\n", state.Snapshot.Encoding, state.Snapshot.LineEndings)
+	if err != nil || !written.Applied {
+		t.Fatalf("WriteConflictResult = %+v, err = %v", written, err)
+	}
+	if _, err := svc.StageConflictResult(ctx(), dir, "f.txt", written.SourceVersion); err != nil {
+		t.Fatalf("StageConflictResult error = %v", err)
+	}
+
+	raw := mustRead(t, filepath.Join(dir, "f.txt"))
+	if !strings.HasPrefix(string(raw), bom) {
+		t.Errorf("worktree bytes = %q, want a leading BOM", raw)
+	}
+	if staged := gitCmd(t, dir, "show", ":0:f.txt"); !strings.HasPrefix(staged, bom) {
+		t.Errorf("staged bytes = %q, want a leading BOM", staged)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
