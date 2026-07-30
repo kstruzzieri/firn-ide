@@ -94,6 +94,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   GitPush: jest.fn(),
   GitCheckout: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
+  GitConflictState: jest.fn(),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
@@ -456,5 +457,110 @@ describe('App — surgical watcher reconcile', () => {
     const aNode = useIDEStore.getState().directoryTree[0];
     expect(aNode.children).toEqual([realChild]);
     expect(aNode.unreadable).toBe(false);
+  });
+});
+
+describe('App — merge session revalidation signals', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.clearAllMocks();
+    __resetEnsurePathLoaded();
+    resetLSPDocumentSyncState();
+    (ReadDirectoryShallow as jest.Mock).mockResolvedValue([]);
+    useIDEStore.setState({
+      workspace: { name: 'r', path: '/r' },
+      openFiles: [],
+      activeFileId: null,
+      directoryTree: [],
+      treeError: null,
+      activeSidebarView: 'explorer',
+      isLeftPanelCollapsed: false,
+      expandedPaths: new Set<string>(),
+      loadingPaths: new Set<string>(),
+      dirtyPaths: new Set<string>(),
+      isRootExpanded: true,
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function watcherCallback(): (event: FileEvent) => void {
+    const cb = mockUseFileWatcher.mock.calls[0]?.[1] as ((event: FileEvent) => void) | undefined;
+    expect(cb).toBeDefined();
+    return cb!;
+  }
+
+  /** Replaces the store action so the test observes the signal, not the policy
+   * (which gitStore.merge.test.ts owns). */
+  function captureMergeSignal() {
+    const notifyMergeFileChanged = jest.fn(() => Promise.resolve());
+    useGitStore.setState({ notifyMergeFileChanged });
+    return notifyMergeFileChanged;
+  }
+
+  it('hands a changed path to the merge session revalidator', () => {
+    const notify = captureMergeSignal();
+    render(<App />);
+
+    act(() => {
+      watcherCallback()({
+        type: 'modified',
+        path: '/r/conflict.ts',
+        isDir: false,
+        time: '',
+      });
+    });
+
+    // A merge session is not an open editor buffer, so the reload path in
+    // handleFileChange never sees it — the store has to be told directly.
+    expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
+  });
+
+  it('hands both sides of a rename to the revalidator', () => {
+    const notify = captureMergeSignal();
+    render(<App />);
+
+    act(() => {
+      watcherCallback()({
+        type: 'renamed',
+        path: '/r/renamed.ts',
+        oldPath: '/r/conflict.ts',
+        isDir: false,
+        time: '',
+      });
+    });
+
+    // The session's file may be either end of the rename.
+    expect(notify).toHaveBeenCalledWith('/r/renamed.ts');
+    expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
+  });
+
+  it('signals a deletion of the session file too', () => {
+    const notify = captureMergeSignal();
+    render(<App />);
+
+    act(() => {
+      watcherCallback()({
+        type: 'deleted',
+        path: '/r/conflict.ts',
+        isDir: false,
+        time: '',
+      });
+    });
+
+    expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
+  });
+
+  it('does not signal for directory events', () => {
+    const notify = captureMergeSignal();
+    render(<App />);
+
+    act(() => {
+      watcherCallback()({ type: 'created', path: '/r/sub', isDir: true, time: '' });
+    });
+
+    expect(notify).not.toHaveBeenCalled();
   });
 });

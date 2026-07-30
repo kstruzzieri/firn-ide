@@ -2012,3 +2012,101 @@ describe('merge revalidation', () => {
     expect(mockState.mock.calls.length).toBe(callsBefore);
   });
 });
+
+describe('status-derived merge revalidation', () => {
+  const openTextSession = async () => {
+    mockState.mockResolvedValue(conflictState());
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+    if (!ok) throw new Error('failed to open the text session');
+  };
+  const resolvedState = () =>
+    conflictState({
+      stages: allStages({ base: undefined, ours: undefined, theirs: undefined }),
+      snapshot: undefined,
+      heads: undefined,
+      sourceVersion: 'v1:resolved',
+    });
+  const statusWithoutConflict = () =>
+    repoStatus({ files: [{ path: 'file.txt', index: 'M', worktree: ' ', unmerged: false }] });
+
+  it('revalidates when an accepted status no longer lists the path as unmerged', async () => {
+    await openTextSession();
+    // `git add` in a terminal changes no watched file, so the watcher never
+    // fires: the status snapshot is the only signal.
+    mockGitStatus.mockResolvedValue(statusWithoutConflict());
+    mockState.mockResolvedValue(resolvedState());
+
+    await useGitStore.getState().refresh();
+
+    expect(useGitStore.getState().mergeSession?.external?.kind).toBe('resolved-outside');
+  });
+
+  it('leaves the session untouched while the path is still unmerged', async () => {
+    await openTextSession();
+    const before = useGitStore.getState().mergeSession;
+    const callsBefore = mockState.mock.calls.length;
+
+    await useGitStore.getState().refresh();
+
+    expect(mockState.mock.calls.length).toBe(callsBefore);
+    expect(useGitStore.getState().mergeSession).toBe(before);
+  });
+
+  it('promotes an existing changed notice to resolved-outside', async () => {
+    await openTextSession();
+    useGitStore.getState().markMergeDirty();
+    mockState.mockResolvedValue(conflictState({ sourceVersion: 'v1:moved' }));
+    await useGitStore.getState().notifyMergeFileChanged('/repo/file.txt');
+    expect(useGitStore.getState().mergeSession?.external?.kind).toBe('changed');
+
+    mockGitStatus.mockResolvedValue(statusWithoutConflict());
+    mockState.mockResolvedValue(resolvedState());
+    await useGitStore.getState().refresh();
+
+    // A stale notice must not stop the stronger signal from landing.
+    expect(useGitStore.getState().mergeSession?.external?.kind).toBe('resolved-outside');
+  });
+
+  it('promotes an existing check-failed notice to resolved-outside', async () => {
+    await openTextSession();
+    mockState.mockRejectedValue(new Error('transient'));
+    await useGitStore.getState().notifyMergeFileChanged('/repo/file.txt');
+    expect(useGitStore.getState().mergeSession?.external?.kind).toBe('check-failed');
+
+    mockGitStatus.mockResolvedValue(statusWithoutConflict());
+    mockState.mockResolvedValue(resolvedState());
+    await useGitStore.getState().refresh();
+
+    expect(useGitStore.getState().mergeSession?.external?.kind).toBe('resolved-outside');
+  });
+
+  it('ignores a status snapshot for another repository root', async () => {
+    await openTextSession();
+    const before = useGitStore.getState().mergeSession;
+    const callsBefore = mockState.mock.calls.length;
+    mockGitStatus.mockResolvedValue(repoStatus({ repoRoot: '/elsewhere', files: [] }));
+
+    await useGitStore.getState().refresh();
+
+    expect(mockState.mock.calls.length).toBe(callsBefore);
+    expect(useGitStore.getState().mergeSession).toBe(before);
+  });
+
+  it('cannot act on a refresh that predates the current session', async () => {
+    await openTextSession();
+    const gate = deferred<git.RepoStatus>();
+    mockGitStatus.mockReturnValue(gate.promise);
+    const pending = useGitStore.getState().refresh();
+
+    // The session the refresh started for is gone by the time it resolves.
+    useGitStore.getState().closeMergeResolution();
+    mockState.mockResolvedValue(conflictState({ sourceVersion: 'v1:next' }));
+    await useGitStore.getState().openMergeResolution('other.txt', ['other.txt']);
+    const replacement = useGitStore.getState().mergeSession;
+    gate.resolve(statusWithoutConflict());
+    await pending;
+
+    expect(useGitStore.getState().mergeSession).toBe(replacement);
+    expect(useGitStore.getState().mergeSession?.external).toBeUndefined();
+  });
+});

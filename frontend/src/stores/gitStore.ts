@@ -497,6 +497,21 @@ export const useGitStore = create<GitStore>()(
           // Awaited so callers see a consistent snapshot; it early-returns when
           // no diff is open, so the common path stays cheap.
           await get().refreshOpenDiff();
+          // An index-only resolution (`git add` in a terminal) changes no
+          // watched file, so the watcher never fires and this snapshot is the
+          // only signal. Hand it to the same revalidator rather than setting a
+          // banner here: the policy lives in one place, and a snapshot for a
+          // different repo or a since-replaced session must not act at all.
+          const merge = get().mergeSession;
+          if (
+            merge &&
+            get().epoch === epoch &&
+            status.isRepo &&
+            status.repoRoot === merge.repoRoot &&
+            !(status.files ?? []).some((file) => file.path === merge.path && file.unmerged)
+          ) {
+            await revalidateMergeSession(get, set);
+          }
         } catch (err) {
           if (get().epoch !== epoch) return;
           set({ isRefreshing: false }, false, 'git/refreshFailed');
