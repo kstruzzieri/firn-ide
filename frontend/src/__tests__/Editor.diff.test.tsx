@@ -692,6 +692,31 @@ describe('Editor merge queue hand-off', () => {
     expect(screen.getByRole('tab', { name: /next\.go.*merge/i })).toBeInTheDocument();
   });
 
+  it('restores fallback focus when the next queued file fails to open', async () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
+    useGitStore.setState({ mergeSession, mergeFocused: true });
+    render(<Editor />);
+    const fileTab = screen.getByRole('tab', { name: /other\.ts/i });
+    fileTab.blur();
+
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false, mergeAdvancePending: true });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    expect(fileTab).not.toHaveFocus();
+
+    act(() => {
+      useGitStore.setState({ mergeAdvancePending: false });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+
+    expect(fileTab).toHaveFocus();
+  });
+
   it('keeps a polite announcement region mounted outside the merge view', () => {
     useGitStore.setState({
       mergeSession,

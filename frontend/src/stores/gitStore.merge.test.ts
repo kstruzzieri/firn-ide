@@ -2210,7 +2210,7 @@ describe('guarded finalize', () => {
     expect(mockGitStage).not.toHaveBeenCalled();
   });
 
-  it('refuses without mutating when the backend reports a stale version', async () => {
+  it('keeps a refused text write retryable without mutating', async () => {
     await openText();
     mockGuardedWrite.mockResolvedValue({
       applied: false,
@@ -2227,6 +2227,13 @@ describe('guarded finalize', () => {
     // Decisions survive, and the surface now explains what moved.
     expect(live.decisions).toEqual({ 0: 'C' });
     expect(live.external).toMatchObject({ kind: 'changed', scope: 'worktree' });
+
+    mockGuardedWrite.mockResolvedValue(writeApplied());
+    const retry = await useGitStore.getState().mergeOverwriteAndStage('resolved\n');
+
+    expect(retry).toBe(true);
+    expect(mockGuardedWrite).toHaveBeenCalledTimes(2);
+    expect(mockGuardedStage).toHaveBeenCalledTimes(1);
   });
 
   it('updates the session baseline from the write so a failed stage can retry', async () => {
@@ -2330,7 +2337,7 @@ describe('guarded finalize', () => {
     );
   });
 
-  it('refuses a stale side apply without touching the worktree', async () => {
+  it('keeps a refused side apply retryable without touching the worktree', async () => {
     await openSides();
     useGitStore.getState().selectMergeSide('ours');
     mockGuardedApply.mockResolvedValue({
@@ -2350,6 +2357,38 @@ describe('guarded finalize', () => {
     expect(ok).toBe(false);
     expect(mockGuardedStage).not.toHaveBeenCalled();
     expect(session()?.external?.kind).toBe('changed');
+
+    mockGuardedApply.mockResolvedValue({
+      applied: true,
+      sourceVersion: 'v1:after-apply',
+    } as git.ConflictGuardResult);
+    const retry = await useGitStore.getState().mergeOverwriteAndStage();
+
+    expect(retry).toBe(true);
+    expect(mockGuardedApply).toHaveBeenCalledTimes(2);
+    expect(mockGuardedStage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stage the old repository after a workspace switch during side apply', async () => {
+    await openSides();
+    useGitStore.getState().selectMergeSide('ours');
+    const gate = deferred<git.ConflictGuardResult>();
+    mockGuardedApply.mockReturnValue(gate.promise);
+
+    const call = useGitStore.getState().mergeFinalizeAndStage();
+    for (let i = 0; i < 10 && mockGuardedApply.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(mockGuardedApply).toHaveBeenCalled();
+    useGitStore.getState().resetForWorkspace('/other');
+    gate.resolve({
+      applied: true,
+      sourceVersion: 'v1:after-apply',
+    } as git.ConflictGuardResult);
+
+    expect(await call).toBe(false);
+    expect(mockGuardedStage).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().toast?.message).toMatch(/applied but not staged/i);
   });
 
   it('refuses to finalize while any external state is unresolved', async () => {

@@ -1645,7 +1645,6 @@ async function finalizeMergeSession(
             session.appliedSide?.side === side &&
             session.appliedSide.sourceVersion === expectedVersion;
           if (!alreadyApplied) {
-            markFileWriteAttempt(session.absPath);
             const applied = await GitApplyConflictSide(
               session.repoRoot,
               session.path,
@@ -1659,7 +1658,14 @@ async function finalizeMergeSession(
               );
               return false;
             }
+            markFileWriteAttempt(session.absPath);
             stageVersion = applied.sourceVersion;
+            if (!isSameWorkspace()) {
+              showError(
+                `Workspace switched while finalizing ${session.path}: the chosen side was applied but NOT staged. Stage it manually in its original repository.`
+              );
+              return false;
+            }
             const applying = get().mergeSession;
             if (
               applying?.kind === 'sides' &&
@@ -1774,7 +1780,6 @@ async function finalizeMergeSession(
         // bypassed deliberately: the path lock is still held here, and the write
         // revision is recorded by hand exactly as the sides path does.
         void write;
-        markFileWriteAttempt(session.absPath);
         const written = await GitWriteConflictResult(
           session.repoRoot,
           session.path,
@@ -1790,6 +1795,7 @@ async function finalizeMergeSession(
           );
           return false;
         }
+        markFileWriteAttempt(session.absPath);
         const resolvedWriteRevision = getFileWriteRevision(session.absPath);
         if (!isSameWorkspace()) {
           showError(

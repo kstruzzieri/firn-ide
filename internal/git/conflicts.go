@@ -162,6 +162,10 @@ type conflictSignature struct {
 // conflict) its snapshot in one coherent pass, and returns the source version
 // that identifies exactly that state.
 func (s *Service) ConflictState(ctx context.Context, dir, path string) (ConflictState, error) {
+	return s.conflictState(ctx, dir, path, true)
+}
+
+func (s *Service) conflictState(ctx context.Context, dir, path string, withSnapshot bool) (ConflictState, error) {
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return ConflictState{}, err
 	}
@@ -180,7 +184,7 @@ func (s *Service) ConflictState(ctx context.Context, dir, path string) (Conflict
 		if err != nil {
 			return ConflictState{}, err
 		}
-		state, err := s.readConflictState(ctx, dir, root, abs, path, before)
+		state, err := s.readConflictState(ctx, dir, root, abs, path, before, withSnapshot)
 		if err != nil {
 			return ConflictState{}, err
 		}
@@ -227,7 +231,12 @@ func (s *Service) conflictSignature(ctx context.Context, dir, path, abs string) 
 
 // readConflictState hashes the working-tree bytes and, for a text conflict,
 // decodes and parses the snapshot from those exact bytes.
-func (s *Service) readConflictState(ctx context.Context, dir, root, abs, path string, sig conflictSignature) (ConflictState, error) {
+func (s *Service) readConflictState(
+	ctx context.Context,
+	dir, root, abs, path string,
+	sig conflictSignature,
+	withSnapshot bool,
+) (ConflictState, error) {
 	state := ConflictState{Stages: sig.stages, Heads: sig.heads}
 	// A text session needs both sides in the index and a mergeable (non-binary)
 	// file; anything else is resolved through the whole-file side UI.
@@ -258,13 +267,13 @@ func (s *Service) readConflictState(ctx context.Context, dir, root, abs, path st
 		if err != nil {
 			return ConflictState{}, err
 		}
-	} else if wantsText {
+	} else if wantsText && withSnapshot {
 		// The index still describes a text conflict, so degrading to the
 		// whole-file UI would silently change what the user is deciding.
 		return ConflictState{}, fmt.Errorf("cannot resolve %s: the working-tree file is missing", path)
 	}
 
-	if wantsText {
+	if wantsText && withSnapshot {
 		if raw == nil {
 			return ConflictState{}, fmt.Errorf("cannot resolve %s: file is too large (%d bytes)", path, sig.info.Size())
 		}
@@ -449,6 +458,7 @@ func writableConflictFormat(encoding, lineEndings string) bool {
 func (s *Service) guardedConflictMutation(
 	ctx context.Context,
 	dir, path, expectedSourceVersion string,
+	withSnapshot bool,
 	mutate func(state ConflictState, root, abs string) error,
 ) (ConflictGuardResult, error) {
 	if err := validateRepoRelPaths([]string{path}); err != nil {
@@ -457,7 +467,7 @@ func (s *Service) guardedConflictMutation(
 	if expectedSourceVersion == "" {
 		return ConflictGuardResult{}, fmt.Errorf("cannot resolve %s: no expected source version was supplied", path)
 	}
-	state, err := s.ConflictState(ctx, dir, path)
+	state, err := s.conflictState(ctx, dir, path, withSnapshot)
 	if err != nil {
 		return ConflictGuardResult{}, err
 	}
@@ -472,7 +482,7 @@ func (s *Service) guardedConflictMutation(
 	if err := mutate(state, root, abs); err != nil {
 		return ConflictGuardResult{}, err
 	}
-	after, err := s.ConflictState(ctx, dir, path)
+	after, err := s.conflictState(ctx, dir, path, false)
 	if err != nil {
 		return ConflictGuardResult{}, err
 	}
@@ -490,7 +500,7 @@ func (s *Service) WriteConflictResult(
 		return ConflictGuardResult{}, fmt.Errorf(
 			"cannot write %s: %s with %s line endings cannot be written back losslessly", path, encoding, lineEndings)
 	}
-	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion,
+	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion, true,
 		func(state ConflictState, _, abs string) error {
 			if state.Snapshot == nil {
 				return fmt.Errorf("cannot write %s: it has no text conflict to resolve", path)
@@ -511,7 +521,7 @@ func (s *Service) StageConflictResult(
 	ctx context.Context,
 	dir, path, expectedSourceVersion string,
 ) (ConflictGuardResult, error) {
-	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion,
+	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion, false,
 		func(ConflictState, string, string) error {
 			_, err := s.runAtRoot(ctx, dir, literalPathspecs, "add", "-A", "--", path)
 			return err
@@ -530,7 +540,7 @@ func (s *Service) ApplyConflictSide(
 	if err := validateConflictSide(side); err != nil {
 		return ConflictGuardResult{}, err
 	}
-	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion,
+	return s.guardedConflictMutation(ctx, dir, path, expectedSourceVersion, false,
 		func(state ConflictState, root, abs string) error {
 			return s.applyConflictSideToWorktree(ctx, dir, path, side, state.Stages, root, abs)
 		})

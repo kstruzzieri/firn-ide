@@ -1569,8 +1569,9 @@ func TestService_ConflictGuard_WriteThenStageWithReturnedVersion(t *testing.T) {
 	dir := makeConflict(t, "base\n", "ours\n", "theirs\n", false)
 	svc := NewService()
 	current := versionOf(t, dir, "f.txt")
+	resolved := "resolved\n<<<<<<< literal text\n"
 
-	write, err := svc.WriteConflictResult(ctx(), dir, "f.txt", current, "resolved\n", "utf-8", "lf")
+	write, err := svc.WriteConflictResult(ctx(), dir, "f.txt", current, resolved, "utf-8", "lf")
 	if err != nil {
 		t.Fatalf("WriteConflictResult error = %v", err)
 	}
@@ -1581,7 +1582,7 @@ func TestService_ConflictGuard_WriteThenStageWithReturnedVersion(t *testing.T) {
 		t.Errorf("SourceVersion = %q, want the post-write version", write.SourceVersion)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
-	if string(got) != "resolved\n" {
+	if string(got) != resolved {
 		t.Errorf("worktree content = %q, want the resolved result", got)
 	}
 

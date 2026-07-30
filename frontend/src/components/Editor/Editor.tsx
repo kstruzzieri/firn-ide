@@ -160,7 +160,11 @@ export function Editor() {
   const hadMergeSessionRef = useRef(mergeSession !== null);
   useEffect(() => {
     const had = hadMergeSessionRef.current;
-    hadMergeSessionRef.current = mergeSession !== null;
+    if (mergeSession !== null) {
+      hadMergeSessionRef.current = true;
+    } else if (!mergeAdvancePending) {
+      hadMergeSessionRef.current = false;
+    }
     if (had && mergeSession === null && !mergeAdvancePending) {
       restoreFocusAfterCloseRef.current = true;
     }
@@ -182,7 +186,7 @@ export function Editor() {
     }, 0);
 
     return () => window.clearTimeout(timeout);
-  }, [activeFileId, diffFocused, diffSession, mergeSession, openFiles]);
+  }, [activeFileId, diffFocused, diffSession, mergeAdvancePending, mergeSession, openFiles]);
 
   // Re-fetch the diff each time it becomes visible so it reflects edits made in
   // the editor while it was in the background (the working-tree side re-reads
