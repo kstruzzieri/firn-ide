@@ -799,6 +799,38 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
+  it('keeps Manual selection inside an empty no-newline EOF result', () => {
+    const markerContent = 'prefix\n<<<<<<< current\n=======\n>>>>>>> incoming\n';
+    const merge = session({
+      content: markerContent,
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 2,
+          endLine: 4,
+          ours: [],
+          theirs: [],
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const errors: unknown[] = [];
+    const editor = createMergeResolutionEditor(document.body, merge, {
+      extensions: [EditorView.exceptionSink.of((error) => errors.push(error))],
+    });
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit manually')
+      ?.click();
+
+    expect(editor.getResult()).toBe('prefix');
+    expect(editor.getState().decisions).toEqual({ 0: 'M' });
+    expect(editor.view.state.selection.main.head).toBe(editor.getResult().length);
+    expect(errors).toEqual([]);
+    editor.destroy();
+  });
+
   it('fails closed when empty Both sides disagree about the EOF state', () => {
     const markerContent = '<<<<<<< current\n=======\n>>>>>>> incoming\n';
     const merge = session({

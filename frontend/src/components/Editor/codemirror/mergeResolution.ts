@@ -859,7 +859,17 @@ function applyResolution(
     changes,
     effects: [setMergeDecision.of({ index, decision }), setMergeActive.of(activeIndex)],
     annotations: isolateHistory.of('full'),
-    ...(choice === 'M' ? { selection: { anchor: range.from }, scrollIntoView: true } : {}),
+    ...(choice === 'M'
+      ? {
+          selection: {
+            anchor: Math.min(
+              range.from,
+              view.state.doc.length - (changes.to - changes.from) + changes.insert.length
+            ),
+          },
+          scrollIntoView: true,
+        }
+      : {}),
   });
   view.focus();
   if (choice !== 'M' && activeIndex !== null) activateRegion(view, field, activeIndex);
