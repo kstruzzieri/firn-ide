@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -28,14 +29,14 @@ func TestParseConflictRegions_TwoWayMergeStyle(t *testing.T) {
 		t.Fatalf("parseConflictRegions error = %v", err)
 	}
 	want := []ConflictRegion{{
-		Index:     0,
-		StartLine: 2,
-		EndLine:   7,
-		Ours:      []string{"ours a", "ours b"},
-		Base:      []string{},
-		Theirs:    []string{"theirs a"},
-		HasBase:   false,
-		OursLabel: "HEAD",
+		Index:      0,
+		StartLine:  2,
+		EndLine:    7,
+		Ours:       []string{"ours a", "ours b"},
+		Base:       []string{},
+		Theirs:     []string{"theirs a"},
+		HasBase:    false,
+		OursLabel:  "HEAD",
 		TheirLabel: "feature",
 	}}
 	if !reflect.DeepEqual(regions, want) {
@@ -257,6 +258,32 @@ func TestService_ConflictSnapshot_AddAddWithoutBase(t *testing.T) {
 	if len(snap.Regions) != 1 {
 		t.Fatalf("regions = %d, want 1", len(snap.Regions))
 	}
+	region := snap.Regions[0]
+	if region.BaseEndsWithNewline != nil {
+		t.Errorf("BaseEndsWithNewline = %v, want nil for an absent stage", *region.BaseEndsWithNewline)
+	}
+	if region.OursEndsWithNewline == nil || !*region.OursEndsWithNewline ||
+		region.TheirsEndsWithNewline == nil || !*region.TheirsEndsWithNewline {
+		t.Errorf("EOF ours/theirs = %v/%v, want true/true",
+			region.OursEndsWithNewline, region.TheirsEndsWithNewline)
+	}
+}
+
+func TestService_ConflictSnapshot_EmptyBaseBlobIsPresent(t *testing.T) {
+	requireGit(t)
+	dir := makeConflict(t, "", "ours", "theirs", false)
+
+	snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictSnapshot(empty base) error = %v", err)
+	}
+	base := snap.Regions[0].BaseEndsWithNewline
+	if base == nil {
+		t.Fatal("BaseEndsWithNewline = nil, want present false")
+	}
+	if *base {
+		t.Error("BaseEndsWithNewline = true, want false for a present empty blob")
+	}
 }
 
 func TestService_ConflictSnapshot_MarkerShapedContentOutsideRegionAllowed(t *testing.T) {
@@ -473,7 +500,7 @@ func TestService_ConflictStages_DeleteModifyMissingOurs(t *testing.T) {
 	gitCmd(t, dir, "add", ".")
 	gitCmd(t, dir, "commit", "-m", "base")
 	gitCmd(t, dir, "checkout", "-b", "feature")
-	writeFile(t, dir, "f.txt", "theirs modified\n")
+	writeFile(t, dir, "f.txt", "theirs modified")
 	gitCmd(t, dir, "commit", "-am", "modify on feature")
 	gitCmd(t, dir, "checkout", "main")
 	gitCmd(t, dir, "rm", "f.txt")
@@ -608,7 +635,7 @@ func deleteModifyRepo(t *testing.T) string {
 	gitCmd(t, dir, "add", ".")
 	gitCmd(t, dir, "commit", "-m", "base")
 	gitCmd(t, dir, "checkout", "-b", "feature")
-	writeFile(t, dir, "f.txt", "theirs modified\n")
+	writeFile(t, dir, "f.txt", "theirs modified")
 	gitCmd(t, dir, "commit", "-am", "modify on feature")
 	gitCmd(t, dir, "checkout", "main")
 	gitCmd(t, dir, "rm", "f.txt")
@@ -649,8 +676,11 @@ func TestService_ResolveConflictSide_DeleteModifyTakeTheirs(t *testing.T) {
 		t.Error("f.txt still unmerged after resolve")
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
-	if string(got) != "theirs modified\n" {
+	if string(got) != "theirs modified" {
 		t.Errorf("worktree content = %q, want theirs", got)
+	}
+	if staged := gitCmd(t, dir, "show", ":0:f.txt"); staged != "theirs modified" {
+		t.Errorf("staged content = %q, want theirs without a trailing newline", staged)
 	}
 }
 
@@ -1191,29 +1221,117 @@ func TestService_ConflictSnapshot_ContentFilterFailsClosed(t *testing.T) {
 	}
 }
 
-func TestService_ConflictSnapshot_NoTrailingNewlineAtEOFFailsClosed(t *testing.T) {
+func TestService_ConflictSnapshot_EOFNewlinesMatchStageBlobs(t *testing.T) {
 	requireGit(t)
-	// A conflict at EOF where the sides have no trailing newline. Git inserts a
-	// newline around the markers regardless, so the region carries no signal
-	// that "ours" was newline-free; accepting it would silently add a newline.
-	// Until per-side no-newline metadata exists (Phase 1 reconstruction), refuse.
-	dir := t.TempDir()
-	gitCmd(t, dir, "init", "-b", "main")
-	gitCmd(t, dir, "config", "user.name", "Test")
-	gitCmd(t, dir, "config", "user.email", "test@example.com")
-	writeFile(t, dir, "f.txt", "common") // no trailing newline
-	gitCmd(t, dir, "add", ".")
-	gitCmd(t, dir, "commit", "-m", "base")
-	gitCmd(t, dir, "checkout", "-b", "feature")
-	writeFile(t, dir, "f.txt", "theirs") // no trailing newline
-	gitCmd(t, dir, "commit", "-am", "theirs")
-	gitCmd(t, dir, "checkout", "main")
-	writeFile(t, dir, "f.txt", "ours") // no trailing newline
-	gitCmd(t, dir, "commit", "-am", "ours")
-	mergeConflict(t, dir, "feature")
+	for _, ending := range []struct {
+		name string
+		eol  string
+	}{
+		{name: "LF", eol: "\n"},
+		{name: "CRLF", eol: "\r\n"},
+	} {
+		for mask := 0; mask < 8; mask++ {
+			t.Run(ending.name+"/"+strconv.Itoa(mask), func(t *testing.T) {
+				body := func(text string, bit uint) string {
+					if mask&(1<<bit) != 0 {
+						return text + ending.eol
+					}
+					return text
+				}
+				dir := makeConflict(t, body("base", 0), body("ours", 1), body("theirs", 2), false)
 
-	if _, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt"); err == nil {
-		t.Fatal("ConflictSnapshot(no trailing newline at EOF) error = nil, want fail-closed refusal")
+				snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+				if err != nil {
+					t.Fatalf("ConflictSnapshot error = %v", err)
+				}
+				if len(snap.Regions) != 1 {
+					t.Fatalf("regions = %+v, want one EOF region", snap.Regions)
+				}
+				region := snap.Regions[0]
+				for _, side := range []struct {
+					name string
+					got  *bool
+					bit  uint
+				}{
+					{name: "base", got: region.BaseEndsWithNewline, bit: 0},
+					{name: "ours", got: region.OursEndsWithNewline, bit: 1},
+					{name: "theirs", got: region.TheirsEndsWithNewline, bit: 2},
+				} {
+					want := mask&(1<<side.bit) != 0
+					if side.got == nil || *side.got != want {
+						t.Errorf("%s EOF newline = %v, want %v", side.name, side.got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestLastRegionEndsFile(t *testing.T) {
+	region := []ConflictRegion{{EndLine: 1}}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  bool
+	}{
+		{name: "marker at EOF", lines: []string{">>>>>>> incoming"}, want: true},
+		{name: "Git separator newline", lines: []string{">>>>>>> incoming", ""}, want: true},
+		{name: "blank suffix", lines: []string{">>>>>>> incoming", "", ""}, want: false},
+		{name: "text suffix", lines: []string{">>>>>>> incoming", "suffix"}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastRegionEndsFile(tc.lines, region); got != tc.want {
+				t.Errorf("lastRegionEndsFile() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestService_ConflictGuard_PreservesFinalNewlineStateThroughWriteAndStage(t *testing.T) {
+	requireGit(t)
+	for _, tc := range []struct {
+		name        string
+		stageEOL    string
+		lineEndings string
+		result      string
+		want        string
+	}{
+		{name: "LF/no newline", stageEOL: "\n", lineEndings: "lf", result: "resolved", want: "resolved"},
+		{name: "LF/newline", stageEOL: "\n", lineEndings: "lf", result: "resolved\n", want: "resolved\n"},
+		{name: "CRLF/no newline", stageEOL: "\r\n", lineEndings: "crlf", result: "resolved", want: "resolved"},
+		{name: "CRLF/newline", stageEOL: "\r\n", lineEndings: "crlf", result: "resolved\n", want: "resolved\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := makeConflict(t, "base"+tc.stageEOL, "ours", "theirs"+tc.stageEOL, false)
+			svc := NewService()
+			state, err := svc.ConflictState(ctx(), dir, "f.txt")
+			if err != nil {
+				t.Fatalf("ConflictState error = %v", err)
+			}
+			if state.Snapshot == nil {
+				t.Fatal("Snapshot = nil")
+			}
+			if state.Snapshot.LineEndings != tc.lineEndings {
+				t.Fatalf("LineEndings = %q, want %q", state.Snapshot.LineEndings, tc.lineEndings)
+			}
+
+			written, err := svc.WriteConflictResult(ctx(), dir, "f.txt", state.SourceVersion,
+				tc.result, state.Snapshot.Encoding, state.Snapshot.LineEndings)
+			if err != nil || !written.Applied {
+				t.Fatalf("WriteConflictResult = %+v, err = %v", written, err)
+			}
+			staged, err := svc.StageConflictResult(ctx(), dir, "f.txt", written.SourceVersion)
+			if err != nil || !staged.Applied {
+				t.Fatalf("StageConflictResult = %+v, err = %v", staged, err)
+			}
+
+			if got := string(mustRead(t, filepath.Join(dir, "f.txt"))); got != tc.want {
+				t.Errorf("worktree bytes = %q, want %q", got, tc.want)
+			}
+			if got := gitCmd(t, dir, "show", ":0:f.txt"); got != tc.want {
+				t.Errorf("staged bytes = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -1827,7 +1945,7 @@ func modifyDeleteRepo(t *testing.T) string {
 	gitCmd(t, dir, "rm", "f.txt")
 	gitCmd(t, dir, "commit", "-m", "delete on feature")
 	gitCmd(t, dir, "checkout", "main")
-	writeFile(t, dir, "f.txt", "ours modified\n")
+	writeFile(t, dir, "f.txt", "ours modified")
 	gitCmd(t, dir, "commit", "-am", "modify on main")
 	mergeConflict(t, dir, "feature")
 	return dir
@@ -1918,10 +2036,10 @@ func TestService_ConflictGuard_ModifyDeleteKeepsOurSide(t *testing.T) {
 		t.Error("f.txt still unmerged")
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
-	if string(got) != "ours modified\n" {
+	if string(got) != "ours modified" {
 		t.Errorf("worktree content = %q, want ours", got)
 	}
-	if staged := gitCmd(t, dir, "show", ":0:f.txt"); staged != "ours modified\n" {
+	if staged := gitCmd(t, dir, "show", ":0:f.txt"); staged != "ours modified" {
 		t.Errorf("staged content = %q, want ours", staged)
 	}
 }
