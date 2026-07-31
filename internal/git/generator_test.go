@@ -122,6 +122,46 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 	if got := string(<-provider.requests); !strings.Contains(got, "[diff truncated for prompt budget]") || strings.Contains(got, "must not reach provider") {
 		t.Fatalf("bounded provider request = %q", got)
 	}
+
+	provider = newTestProvider(t, "chore: escape diff", nil)
+	escapeHeavy := strings.Repeat("<", maxPromptBytes) + "must not reach provider"
+	if _, err := NewMessageGenerator().Generate(context.Background(), t.TempDir(), escapeHeavy); err != nil {
+		t.Fatalf("Generate(escape-heavy) error = %v", err)
+	}
+	var escapedRequest struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(<-provider.requests, &escapedRequest); err != nil {
+		t.Fatal(err)
+	}
+	var escapedContextJSON string
+	for _, message := range escapedRequest.Messages {
+		if message.Role == "user" {
+			if _, escapedContextJSON, _ = strings.Cut(message.Content, contextMarker); escapedContextJSON != "" {
+				break
+			}
+		}
+	}
+	var escapedContext []struct {
+		Description string `json:"description"`
+		Value       string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(escapedContextJSON), &escapedContext); err != nil {
+		t.Fatalf("decode escaped staged-diff context: %v", err)
+	}
+	if len(escapedContext) != 1 || !strings.Contains(escapedContext[0].Value, "[diff truncated for prompt budget]") || strings.Contains(escapedContext[0].Value, "must not reach provider") {
+		t.Fatalf("escaped staged-diff context = %+v", escapedContext)
+	}
+	serializedContext, err := json.Marshal(escapedContext[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(serializedContext) > maxPromptBytes {
+		t.Fatalf("serialized staged-diff context is %d bytes, want at most %d", len(serializedContext), maxPromptBytes)
+	}
 }
 
 func TestMessageGenerator_Generate_EmptyDiff(t *testing.T) {

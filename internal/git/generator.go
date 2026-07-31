@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,10 +11,10 @@ import (
 	"github.com/kstruzzieri/go-llm/golem"
 )
 
-// maxPromptBytes bounds the prompt handed to golem. Local models have small
-// context windows; a giant diff would be truncated by the model anyway, so
-// truncate deliberately and say so in the prompt.
+// maxPromptBytes bounds the serialized staged-diff context handed to golem.
 const maxPromptBytes = 48 * 1024
+
+const truncatedDiffMarker = "\n[diff truncated for prompt budget]"
 
 const generateInstruction = `Write a git commit message for the staged diff below.
 Rules: imperative mood, subject line of at most 72 characters, optional short
@@ -34,8 +35,9 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 	if strings.TrimSpace(diff) == "" {
 		return "", errors.New("nothing staged: stage changes before generating a message")
 	}
-	if len(diff) > maxPromptBytes {
-		diff = diff[:maxPromptBytes] + "\n[diff truncated for prompt budget]"
+	stagedDiff, err := stagedDiffContext(diff)
+	if err != nil {
+		return "", fmt.Errorf("golem runtime context: %w", err)
 	}
 
 	runtime, err := golem.New(ctx, golem.Options{
@@ -55,10 +57,7 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 	result, err := runtime.Run(ctx, golem.Turn{
 		RunID:   "firn-commit-message",
 		Message: generateInstruction,
-		Context: []golem.ContextItem{{
-			Description: "staged diff",
-			Value:       diff,
-		}},
+		Context: []golem.ContextItem{stagedDiff},
 	}, func(golem.Event) error { return nil })
 	if err != nil {
 		return "", fmt.Errorf("golem runtime run: %w", err)
@@ -69,4 +68,39 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 		return "", errors.New("golem returned an unusable message")
 	}
 	return message, nil
+}
+
+func stagedDiffContext(diff string) (golem.ContextItem, error) {
+	item := golem.ContextItem{Description: "staged diff", Value: diff}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
+	}
+	if len(encoded) <= maxPromptBytes {
+		return item, nil
+	}
+
+	low, high := 0, len(diff)
+	for low < high {
+		mid := low + (high-low+1)/2
+		item.Value = diff[:mid] + truncatedDiffMarker
+		encoded, err = json.Marshal(item)
+		if err != nil {
+			return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
+		}
+		if len(encoded) <= maxPromptBytes {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	item.Value = diff[:low] + truncatedDiffMarker
+	encoded, err = json.Marshal(item)
+	if err != nil {
+		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
+	}
+	if len(encoded) > maxPromptBytes {
+		return golem.ContextItem{}, errors.New("serialized staged diff exceeds prompt budget")
+	}
+	return item, nil
 }
