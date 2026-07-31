@@ -1173,7 +1173,7 @@ func removeIfExists(fsys filesystem.FileSystem, path string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w: %s is not a regular file", filesystem.ErrUnsafePath, path)
+		return fmt.Errorf("%w: %s is not a regular file", filesystem.ErrPathTypeMismatch, path)
 	}
 	err = fsys.Remove(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -1218,7 +1218,7 @@ func (s *Store) validateArchiveDir(dir string) (bool, error) {
 			return false, fmt.Errorf("reading run history directory: %w", err)
 		}
 		if !info.IsDir() {
-			return false, fmt.Errorf("%w: %s is not a directory", filesystem.ErrUnsafePath, path)
+			return false, fmt.Errorf("%w: %s is not a directory", filesystem.ErrPathTypeMismatch, path)
 		}
 	}
 	return true, nil
@@ -1230,7 +1230,7 @@ func (s *Store) regularFileInfo(path string) (fs.FileInfo, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: %s is not a regular file", filesystem.ErrUnsafePath, path)
+		return nil, fmt.Errorf("%w: %s is not a regular file", filesystem.ErrPathTypeMismatch, path)
 	}
 	return info, nil
 }

@@ -35,14 +35,14 @@ func (o *OS) ReadFileLimited(path string, limit int64) ([]byte, fs.FileInfo, err
 		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, info, fmt.Errorf("%w: %s is not a regular file", ErrUnsafePath, path)
+		return nil, info, fmt.Errorf("%w: %s is not a regular file", ErrPathTypeMismatch, path)
 	}
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, info, err
 	}
 	if !before.Mode().IsRegular() || !os.SameFile(before, info) {
-		return nil, info, fmt.Errorf("%w: %s changed before open", ErrUnsafePath, path)
+		return nil, info, fmt.Errorf("%w: %s changed before open", ErrPathChanged, path)
 	}
 	if info.Size() > limit {
 		return nil, info, fmt.Errorf("file exceeds %d bytes", limit)
@@ -71,14 +71,14 @@ func (o *OS) ReadDirLimited(path string, limit int) ([]fs.DirEntry, error) {
 		return nil, err
 	}
 	if !opened.IsDir() {
-		return nil, fmt.Errorf("%w: %s is not a directory", ErrUnsafePath, path)
+		return nil, fmt.Errorf("%w: %s is not a directory", ErrPathTypeMismatch, path)
 	}
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !before.IsDir() || !os.SameFile(before, opened) {
-		return nil, fmt.Errorf("%w: %s changed before open", ErrUnsafePath, path)
+		return nil, fmt.Errorf("%w: %s changed before open", ErrPathChanged, path)
 	}
 	entries, err := dir.ReadDir(limit + 1)
 	if err != nil && !errors.Is(err, io.EOF) {

@@ -159,12 +159,15 @@ func TestEnsureDirPermRejectsANonDirectoryAndToleratesAMock(t *testing.T) {
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
+	requireSymlinks(t)
 	link := filepath.Join(root, "link")
 	if err := os.Symlink(target, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+		t.Fatalf("Symlink: %v", err)
 	}
-	if err := EnsureDirPerm(NewOS(), link, 0o700); !errors.Is(err, ErrUnsafePath) {
-		t.Fatalf("EnsureDirPerm on a symlinked dir = %v, want ErrUnsafePath", err)
+	// EnsureDirPerm has no no-follow open to refuse with; Lstat catching the
+	// wrong type is exactly the guard under test here.
+	if err := EnsureDirPerm(NewOS(), link, 0o700); !errors.Is(err, ErrPathTypeMismatch) {
+		t.Fatalf("EnsureDirPerm on a symlinked dir = %v, want ErrPathTypeMismatch", err)
 	}
 	info, err := os.Lstat(target)
 	if err != nil {
