@@ -155,7 +155,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 	if len(escapedContext) != 1 || !strings.Contains(escapedContext[0].Value, "[diff truncated for prompt budget]") || strings.Contains(escapedContext[0].Value, "must not reach provider") {
 		t.Fatalf("escaped staged-diff context = %+v", escapedContext)
 	}
-	serializedContext, err := json.Marshal(escapedContext[0])
+	serializedContext, err := json.Marshal(escapedContext)
 	if err != nil {
 		t.Fatal(err)
 	}

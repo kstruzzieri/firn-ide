@@ -72,7 +72,7 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 
 func stagedDiffContext(diff string) (golem.ContextItem, error) {
 	item := golem.ContextItem{Description: "staged diff", Value: diff}
-	encoded, err := json.Marshal(item)
+	encoded, err := json.Marshal([]golem.ContextItem{item})
 	if err != nil {
 		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
 	}
@@ -84,7 +84,7 @@ func stagedDiffContext(diff string) (golem.ContextItem, error) {
 	for low < high {
 		mid := low + (high-low+1)/2
 		item.Value = diff[:mid] + truncatedDiffMarker
-		encoded, err = json.Marshal(item)
+		encoded, err = json.Marshal([]golem.ContextItem{item})
 		if err != nil {
 			return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
 		}
@@ -95,7 +95,7 @@ func stagedDiffContext(diff string) (golem.ContextItem, error) {
 		}
 	}
 	item.Value = diff[:low] + truncatedDiffMarker
-	encoded, err = json.Marshal(item)
+	encoded, err = json.Marshal([]golem.ContextItem{item})
 	if err != nil {
 		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
 	}
