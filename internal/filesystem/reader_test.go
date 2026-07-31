@@ -537,17 +537,19 @@ func TestReadDirectory_EmptyDirectory(t *testing.T) {
 
 func TestReadDirectoryShallow_ImmediateChildrenOnly(t *testing.T) {
 	modTime := time.Now()
+	root := filepath.Join(string(filepath.Separator), "test")
+	subdir := filepath.Join(root, "subdir")
 	calledPaths := map[string]bool{}
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			calledPaths[path] = true
 			switch path {
-			case "/test":
+			case root:
 				return []fs.DirEntry{
 					&mockDirEntry{name: "subdir", isDir: true},
 					&mockDirEntry{name: "top.txt", isDir: false},
 				}, nil
-			case "/test/subdir":
+			case subdir:
 				return []fs.DirEntry{
 					&mockDirEntry{name: "deep.txt", isDir: false},
 				}, nil
@@ -560,7 +562,7 @@ func TestReadDirectoryShallow_ImmediateChildrenOnly(t *testing.T) {
 	}
 
 	reader := NewDirectoryReader(mockFS)
-	entries, err := reader.ReadDirectoryShallow("/test", "/test")
+	entries, err := reader.ReadDirectoryShallow(root, root)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -573,8 +575,8 @@ func TestReadDirectoryShallow_ImmediateChildrenOnly(t *testing.T) {
 	if entries[0].Children != nil {
 		t.Fatalf("want nil children for shallow dir, got %v", entries[0].Children)
 	}
-	if calledPaths["/test/subdir"] {
-		t.Fatalf("shallow read must NOT descend into /test/subdir")
+	if calledPaths[subdir] {
+		t.Fatalf("shallow read must NOT descend into %s", subdir)
 	}
 }
 

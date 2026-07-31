@@ -41,9 +41,6 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 	for component := range map[string]struct{}{"firn": {}, "run-history": {}, "workspace": {}} {
 		for name, operation := range tests {
 			t.Run(component+"/"+name, func(t *testing.T) {
-				if runtime.GOOS == "windows" {
-					t.Skip("symlink permissions are not portable on Windows")
-				}
 				home := t.TempDir()
 				target := t.TempDir()
 				marker := filepath.Join(target, "outside")
@@ -72,6 +69,9 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 					symlinkPath = dir
 				}
 				if err := os.Symlink(target, symlinkPath); err != nil {
+					if runtime.GOOS == "windows" {
+						t.Skipf("Windows symlink creation unavailable: %v", err)
+					}
 					t.Fatalf("Symlink: %v", err)
 				}
 
@@ -91,9 +91,6 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 }
 
 func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink permissions are not portable on Windows")
-	}
 	tests := []string{"index", "canonical", "temp"}
 	for _, name := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -124,6 +121,9 @@ func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 				path = recordPath(dir, historyID.String()) + ".0123456789abcdef"
 			}
 			if err := os.Symlink(target, path); err != nil {
+				if runtime.GOOS == "windows" {
+					t.Skipf("Windows symlink creation unavailable: %v", err)
+				}
 				t.Fatalf("Symlink: %v", err)
 			}
 
