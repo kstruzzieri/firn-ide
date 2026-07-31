@@ -1,35 +1,17 @@
+//go:build darwin || linux || windows
+
+// Restricted to the platforms with a real no-follow implementation. Everywhere
+// else openReadNoFollow is the stub in open_nofollow_fallback.go, which refuses
+// every path outright — open_nofollow_fallback_test.go covers that contract.
+
 package filesystem
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
-
-// Windows only grants SeCreateSymbolicLinkPrivilege under Developer Mode or
-// elevation. Probe once so an unsupported host skips for exactly that reason and
-// every other os.Symlink failure stays a hard failure.
-var symlinkSupported = func() bool {
-	dir, err := os.MkdirTemp("", "firn-symlink-probe")
-	if err != nil {
-		return false
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	target := filepath.Join(dir, "target")
-	if err := os.Mkdir(target, 0o700); err != nil {
-		return false
-	}
-	return os.Symlink(target, filepath.Join(dir, "link")) == nil
-}()
-
-func requireSymlinks(t *testing.T) {
-	t.Helper()
-	if !symlinkSupported {
-		t.Skipf("symlink creation is unavailable on %s", runtime.GOOS)
-	}
-}
 
 // This is the only test that proves openReadNoFollow itself refuses a link.
 // Everything else in the tree reaches ErrUnsafePath through an Lstat type check
@@ -123,5 +105,24 @@ func TestBoundedReadsRefuseSymlinks(t *testing.T) {
 	}
 	if string(data) != "secret" {
 		t.Fatalf("symlink target was modified: %q", data)
+	}
+}
+
+// An ordinary file asked for as a directory is a type mismatch, not a refused
+// link. On unix both arrive as ENOTDIR — O_DIRECTORY fires before O_NOFOLLOW can
+// raise ELOOP — so this pins that the two are told apart rather than lumped
+// together under the louder reason.
+func TestReadDirLimitedOnAPlainFileIsATypeMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err := NewOS().ReadDirLimited(path, 10)
+	if !errors.Is(err, ErrPathTypeMismatch) {
+		t.Fatalf("ReadDirLimited on a plain file = %v, want ErrPathTypeMismatch", err)
+	}
+	if errors.Is(err, ErrSymlinkRefused) {
+		t.Fatalf("a plain file must not be reported as a refused symlink: %v", err)
 	}
 }
