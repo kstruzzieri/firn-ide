@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/golem"
 )
 
@@ -37,7 +38,10 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 		diff = diff[:maxPromptBytes] + "\n[diff truncated for prompt budget]"
 	}
 
-	runtime, err := golem.New(ctx, golem.Options{Root: root})
+	runtime, err := golem.New(ctx, golem.Options{
+		Root:   root,
+		Budget: agent.Budget{InputCeiling: 32 * 1024},
+	})
 	if err != nil {
 		return "", fmt.Errorf("golem runtime initialization: %w", err)
 	}
