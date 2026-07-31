@@ -16,6 +16,8 @@ const maxPromptBytes = 48 * 1024
 
 const truncatedDiffMarker = "\n[diff truncated for prompt budget]"
 
+const generateSystem = "Generate commit messages using only the supplied staged-diff context. Do not call tools."
+
 const generateInstruction = `Write a git commit message for the staged diff below.
 Rules: imperative mood, subject line of at most 72 characters, optional short
 body separated by a blank line explaining why. Output ONLY the commit message,
@@ -41,8 +43,10 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 	}
 
 	runtime, err := golem.New(ctx, golem.Options{
-		Root:   root,
-		Budget: agent.Budget{InputCeiling: 32 * 1024},
+		Root:     root,
+		System:   generateSystem,
+		MaxSteps: 1, // Never send built-in read-tool output in a second provider request.
+		Budget:   agent.Budget{InputCeiling: 32 * 1024},
 	})
 	if err != nil {
 		return "", fmt.Errorf("golem runtime initialization: %w", err)

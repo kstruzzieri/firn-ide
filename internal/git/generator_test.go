@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ type testProvider struct {
 
 func newTestProvider(t *testing.T, answer string, chat func(http.ResponseWriter, *http.Request)) *testProvider {
 	t.Helper()
-	provider := &testProvider{requests: make(chan []byte, 1), answer: answer, chat: chat}
+	provider := &testProvider{requests: make(chan []byte, 4), answer: answer, chat: chat}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -180,6 +181,44 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "golem runtime") {
 		t.Fatalf("Generate() error = %v, want golem runtime failure", err)
+	}
+}
+
+func TestMessageGenerator_Generate_DoesNotSendToolReadResultsToProvider(t *testing.T) {
+	const secret = "firn-provider-boundary-secret"
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int32
+	provider := newTestProvider(t, "", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls.Add(1) == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_secret\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"secret.txt\\\"}\"}}]},\"finish_reason\":null}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n")
+		} else {
+			_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"chore: avoid leak\"},\"finish_reason\":\"stop\"}]}\n\n")
+		}
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	if _, err := NewMessageGenerator().Generate(context.Background(), root, "+change\n"); err == nil || !strings.Contains(err.Error(), "unusable") {
+		t.Errorf("Generate() error = %v, want tool-only turn rejected as unusable", err)
+	}
+
+	var requests [][]byte
+	for len(provider.requests) > 0 {
+		requests = append(requests, <-provider.requests)
+	}
+	if len(requests) != 1 {
+		t.Errorf("provider requests = %d, want one", len(requests))
+	}
+	for i, request := range requests {
+		if strings.Contains(string(request), secret) {
+			t.Errorf("provider request %d contains workspace secret", i+1)
+		}
 	}
 }
 
