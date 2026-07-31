@@ -126,3 +126,19 @@ func TestReadDirLimitedOnAPlainFileIsATypeMismatch(t *testing.T) {
 		t.Fatalf("a plain file must not be reported as a refused symlink: %v", err)
 	}
 }
+
+// The mirror of the case above, and the one Windows used to get wrong: opening a
+// directory there needs FILE_FLAG_BACKUP_SEMANTICS, without which CreateFile
+// fails before any type check and the caller sees a raw PathError instead of the
+// ErrPathTypeMismatch unix returns for the same input.
+func TestReadFileLimitedOnADirectoryIsATypeMismatch(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	_, _, err := NewOS().ReadFileLimited(dir, 10)
+	if !errors.Is(err, ErrPathTypeMismatch) {
+		t.Fatalf("ReadFileLimited on a directory = %v, want ErrPathTypeMismatch", err)
+	}
+}
