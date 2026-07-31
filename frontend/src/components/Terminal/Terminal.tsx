@@ -28,7 +28,6 @@ import {
   useCallback,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { RunOutputPanel } from '../RunOutput';
 import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import { getVisualState } from '../../utils/visualState';
@@ -168,8 +167,6 @@ export function Terminal() {
   const renameSession = useIDEStore((state) => state.renameTerminalSession);
   const reorderSessions = useIDEStore((state) => state.reorderTerminalSessions);
   const showToast = useIDEStore((state) => state.showToast);
-
-  useRunOutputListener();
 
   const runOutputs = useRunOutputs();
   const activeRunOutputId = useActiveRunOutputId();

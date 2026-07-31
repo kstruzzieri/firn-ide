@@ -25,6 +25,17 @@ beforeEach(() => {
 });
 
 describe('useRunOutputListener', () => {
+  it('does not keep a waveform timer alive while idle', () => {
+    jest.useFakeTimers();
+    try {
+      renderHook(() => useRunOutputListener());
+
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('should subscribe to run:output and run:status events', () => {
     renderHook(() => useRunOutputListener());
 
