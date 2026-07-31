@@ -65,21 +65,23 @@ func useAppTestProvider(t *testing.T, answer string) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"qwen3-coder-next:latest"}]}`)
 		case "/v1/chat/completions":
 			if _, err := io.ReadAll(r.Body); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: {\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", answer)
+			_, _ = fmt.Fprintf(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":\"stop\"}]}\n\n", answer)
+			_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
 	configPath := filepath.Join(t.TempDir(), "models.json")
-	config := fmt.Sprintf(`{"providers":{"test":{"base_url":%q,"api_format":"openai-compat"}},"models":{"chat":{"name":"test-model","provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},"defaults":{"agent":"chat"}}`, server.URL)
+	config := fmt.Sprintf(`{"providers":{"test":{"base_url":%q,"api_format":"openai-compat"}},"models":{"chat":{"name":"qwen3-coder-next:latest","provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},"defaults":{"agent":"chat"}}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
