@@ -216,14 +216,14 @@ func TestStorePhase2C_StalledWorkspaceDoesNotBlockAnotherWorkspace(t *testing.T)
 	store := NewStore(blockingFS, t.TempDir())
 	appendA := make(chan error, 1)
 	go func() {
-		_, err := store.Append("/workspace-a", phase2COrdinaryInput("build", 100, "A"))
+		_, err := store.Append(filepath.Join(string(filepath.Separator), "workspace-a"), phase2COrdinaryInput("build", 100, "A"))
 		appendA <- err
 	}()
 	<-blockingFS.entered
 
 	appendB := make(chan error, 1)
 	go func() {
-		_, err := store.Append("/workspace-b", phase2COrdinaryInput("build", 200, "B"))
+		_, err := store.Append(filepath.Join(string(filepath.Separator), "workspace-b"), phase2COrdinaryInput("build", 200, "B"))
 		appendB <- err
 	}()
 	select {
@@ -248,11 +248,11 @@ func TestStorePhase2C_StalledWorkspaceDoesNotBlockAnotherWorkspace(t *testing.T)
 func TestStorePhase2C_UnreadableOwnedBytesWarnWithoutPruningHealthyHistory(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
-	saved, err := store.Append("/repo", phase2COrdinaryInput("build", 7_000, "keep me\n"))
+	saved, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_000, "keep me\n"))
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	badID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("NewV7: %v", err)
@@ -269,7 +269,7 @@ func TestStorePhase2C_UnreadableOwnedBytesWarnWithoutPruningHealthyHistory(t *te
 		t.Fatalf("write foreign file: %v", err)
 	}
 
-	snapshot, err := NewStore(filesystem.NewOS(), home).Snapshot("/repo")
+	snapshot, err := NewStore(filesystem.NewOS(), home).Snapshot(phase2CWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -289,11 +289,11 @@ func TestStorePhase2C_UnreadableOwnedBytesWarnWithoutPruningHealthyHistory(t *te
 func TestStorePhase2C_ClearAllPurgesUnreadableCanonicalAndOwnedTemps(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
-	saved, err := store.Append("/repo", phase2COrdinaryInput("build", 7_100, "clear me\n"))
+	saved, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_100, "clear me\n"))
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	badID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("NewV7: %v", err)
@@ -307,7 +307,7 @@ func TestStorePhase2C_ClearAllPurgesUnreadableCanonicalAndOwnedTemps(t *testing.
 		t.Fatalf("write owned temp: %v", err)
 	}
 
-	if err := NewStore(filesystem.NewOS(), home).ClearAll("/repo"); err != nil {
+	if err := NewStore(filesystem.NewOS(), home).ClearAll(phase2CWorkspacePath); err != nil {
 		t.Fatalf("ClearAll: %v", err)
 	}
 	if _, err := os.Stat(badPath); !errors.Is(err, fs.ErrNotExist) {
@@ -316,7 +316,7 @@ func TestStorePhase2C_ClearAllPurgesUnreadableCanonicalAndOwnedTemps(t *testing.
 	if _, err := os.Stat(tempPath); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("owned temp survived ClearAll: %v", err)
 	}
-	record, err := store.GetRecord("/repo", saved.HistoryID)
+	record, err := store.GetRecord(phase2CWorkspacePath, saved.HistoryID)
 	if err != nil {
 		t.Fatalf("GetRecord: %v", err)
 	}
@@ -328,11 +328,11 @@ func TestStorePhase2C_ClearAllPurgesUnreadableCanonicalAndOwnedTemps(t *testing.
 func TestStorePhase2C_SnapshotCleansOnlyStaleOwnedTemps(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
-	saved, err := store.Append("/repo", phase2COrdinaryInput("build", 7_200, "ok\n"))
+	saved, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_200, "ok\n"))
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	stalePath := filepath.Join(workspaceDir, saved.HistoryID+".json.1111111111111111")
 	freshPath := filepath.Join(workspaceDir, "index.json.2222222222222222")
 	if err := os.WriteFile(stalePath, []byte("stale"), 0o600); err != nil {
@@ -346,7 +346,7 @@ func TestStorePhase2C_SnapshotCleansOnlyStaleOwnedTemps(t *testing.T) {
 		t.Fatalf("write fresh temp: %v", err)
 	}
 
-	snapshot, err := NewStore(filesystem.NewOS(), home).Snapshot("/repo")
+	snapshot, err := NewStore(filesystem.NewOS(), home).Snapshot(phase2CWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -365,17 +365,17 @@ func TestStorePhase2C_IndexedUnchangedRecordIsNotRereadDuringStaleReconciliation
 	home := t.TempDir()
 	base := filesystem.NewOS()
 	store := NewStore(base, home)
-	savedA, err := store.Append("/repo", phase2COrdinaryInput("build", 7_300, "a\n"))
+	savedA, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_300, "a\n"))
 	if err != nil {
 		t.Fatalf("Append A: %v", err)
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	indexPath := filepath.Join(workspaceDir, "index.json")
 	staleIndex, err := os.ReadFile(indexPath)
 	if err != nil {
 		t.Fatalf("read one-record index: %v", err)
 	}
-	savedB, err := store.Append("/repo", phase2COrdinaryInput("build", 7_400, "b\n"))
+	savedB, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_400, "b\n"))
 	if err != nil {
 		t.Fatalf("Append B: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestStorePhase2C_IndexedUnchangedRecordIsNotRereadDuringStaleReconciliation
 	}
 
 	tracking := &phase2CTrackingFS{FileSystem: base, reads: map[string]int{}}
-	snapshot, err := NewStore(tracking, home).Snapshot("/repo")
+	snapshot, err := NewStore(tracking, home).Snapshot(phase2CWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -405,11 +405,11 @@ func TestStorePhase2C_ReconciliationUsesOpenedFileSizesForAggregateReadBudget(t 
 	home := t.TempDir()
 	base := filesystem.NewOS()
 	store := NewStore(base, home)
-	cached, err := store.Append("/repo", phase2COrdinaryInput("cached", 7_450, "cached\n"))
+	cached, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("cached", 7_450, "cached\n"))
 	if err != nil {
 		t.Fatalf("seed cached record: %v", err)
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	cachedPath := filepath.Join(workspaceDir, cached.HistoryID+".json")
 
 	staleSizes := map[string]int64{}
@@ -431,7 +431,7 @@ func TestStorePhase2C_ReconciliationUsesOpenedFileSizesForAggregateReadBudget(t 
 				CompletedAt:     int64(7_500 + i),
 				OutputAvailable: true,
 			},
-			WorkingDir: "/repo",
+			WorkingDir: phase2CWorkspacePath,
 			Entries:    []OutputEntry{{Stream: "stdout", Text: "large\n", Timestamp: int64(7_500 + i)}},
 		}
 		phase2CWritePaddedRecord(t, path, record, maxRecordBytes)
@@ -443,7 +443,7 @@ func TestStorePhase2C_ReconciliationUsesOpenedFileSizesForAggregateReadBudget(t 
 		staleSizes:  staleSizes,
 		recordReads: map[string]int{},
 	}
-	snapshot, err := NewStore(tracking, home).Snapshot("/repo")
+	snapshot, err := NewStore(tracking, home).Snapshot(phase2CWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -466,16 +466,16 @@ func TestStorePhase2C_DerivedIndexFailureAfterPublishReturnsCommittedSuccess(t *
 	home := t.TempDir()
 	base := filesystem.NewOS()
 	store := NewStore(base, home)
-	if _, err := store.Append("/repo", phase2COrdinaryInput("build", 7_500, "a\n")); err != nil {
+	if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_500, "a\n")); err != nil {
 		t.Fatalf("seed Append: %v", err)
 	}
 
 	failing := NewStore(&phase2CIndexRenameFailureFS{FileSystem: base}, home)
-	saved, err := failing.Append("/repo", phase2COrdinaryInput("build", 7_600, "b\n"))
+	saved, err := failing.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 7_600, "b\n"))
 	if err != nil {
 		t.Fatalf("Append returned an error after canonical publish: %v", err)
 	}
-	record, err := NewStore(base, home).GetRecord("/repo", saved.HistoryID)
+	record, err := NewStore(base, home).GetRecord(phase2CWorkspacePath, saved.HistoryID)
 	if err != nil || record.HistoryID != saved.HistoryID {
 		t.Fatalf("committed canonical record = %#v, err = %v", record, err)
 	}
@@ -486,16 +486,16 @@ func TestStorePhase2C_PruneNotExistRaceIsSuccessful(t *testing.T) {
 	base := filesystem.NewOS()
 	store := NewStore(base, home)
 	for i := 0; i < 50; i++ {
-		if _, err := store.Append("/repo", phase2COrdinaryInput("build", int64(8_000+i), "line\n")); err != nil {
+		if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", int64(8_000+i), "line\n")); err != nil {
 			t.Fatalf("seed Append %d: %v", i, err)
 		}
 	}
 
 	racing := NewStore(&phase2CRemoveRaceFS{FileSystem: base}, home)
-	if _, err := racing.Append("/repo", phase2COrdinaryInput("build", 8_100, "line\n")); err != nil {
+	if _, err := racing.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 8_100, "line\n")); err != nil {
 		t.Fatalf("Append lost a concurrent prune race: %v", err)
 	}
-	snapshot, err := NewStore(base, home).Snapshot("/repo")
+	snapshot, err := NewStore(base, home).Snapshot(phase2CWorkspacePath)
 	if err != nil || len(snapshot.Summaries) != 50 {
 		t.Fatalf("post-race Snapshot = %#v, err = %v", snapshot, err)
 	}
@@ -506,14 +506,14 @@ func TestStorePhase2C_SubstantivePostPublishFailureRollsBackNewCanonical(t *test
 	base := filesystem.NewOS()
 	store := NewStore(base, home)
 	for i := 0; i < 50; i++ {
-		if _, err := store.Append("/repo", phase2COrdinaryInput("build", int64(9_000+i), "line\n")); err != nil {
+		if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", int64(9_000+i), "line\n")); err != nil {
 			t.Fatalf("seed Append %d: %v", i, err)
 		}
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 
 	failing := NewStore(&phase2CRemoveFailureFS{FileSystem: base}, home)
-	if _, err := failing.Append("/repo", phase2COrdinaryInput("build", 9_100, "line\n")); err == nil {
+	if _, err := failing.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 9_100, "line\n")); err == nil {
 		t.Fatal("Append succeeded despite substantive retention failure")
 	}
 	if got := len(phase2CRecordFiles(t, workspaceDir)); got != 50 {
@@ -525,19 +525,19 @@ func TestStorePhase2C_AppendReturnsPostEnforcementSummary(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
 	for i := 1; i <= 5; i++ {
-		if _, err := store.Append("/repo", phase2COrdinaryInput("build", int64(10_000+i), "newer\n")); err != nil {
+		if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", int64(10_000+i), "newer\n")); err != nil {
 			t.Fatalf("seed Append %d: %v", i, err)
 		}
 	}
 
-	saved, err := store.Append("/repo", phase2COrdinaryInput("build", 9_999, "oldest\n"))
+	saved, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 9_999, "oldest\n"))
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 	if saved.OutputAvailable {
 		t.Fatalf("Append returned pre-enforcement rich summary: %#v", saved)
 	}
-	record, err := store.GetRecord("/repo", saved.HistoryID)
+	record, err := store.GetRecord(phase2CWorkspacePath, saved.HistoryID)
 	if err != nil || record.OutputAvailable {
 		t.Fatalf("retained record = %#v, err = %v", record, err)
 	}
@@ -588,18 +588,18 @@ func TestStorePhase2C_SmallIndexBudgetPrunesBeforeWriteWithoutWedging(t *testing
 	for i := 0; i < 8; i++ {
 		input := phase2COrdinaryInput("profile-"+strings.Repeat("x", 80)+string(rune('a'+i)), int64(11_000+i), "ok\n")
 		input.ProfileName = strings.Repeat("name", 40)
-		if _, err := store.Append("/repo", input); err != nil {
+		if _, err := store.Append(phase2CWorkspacePath, input); err != nil {
 			t.Fatalf("Append %d wedged on index budget: %v", i, err)
 		}
 	}
-	snapshot, err := store.Snapshot("/repo")
+	snapshot, err := store.Snapshot(phase2CWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot after index pruning: %v", err)
 	}
 	if len(snapshot.Summaries) == 0 {
 		t.Fatal("index budgeting pruned every summary")
 	}
-	workspaceDir := filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	info, err := os.Stat(filepath.Join(workspaceDir, "index.json"))
 	if err != nil {
 		t.Fatalf("Stat(index): %v", err)

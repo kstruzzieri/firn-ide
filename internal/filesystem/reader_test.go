@@ -241,14 +241,16 @@ func TestFileEntryJSON_OmitsFalseAndCarriesTrueUnreadable(t *testing.T) {
 
 func TestReadDirectory_NestedStructure(t *testing.T) {
 	modTime := time.Now()
+	root := filepath.Join(string(filepath.Separator), "test")
+	subdir := filepath.Join(root, "subdir")
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			switch path {
-			case "/test":
+			case root:
 				return []fs.DirEntry{
 					&mockDirEntry{name: "subdir", isDir: true},
 				}, nil
-			case "/test/subdir":
+			case subdir:
 				return []fs.DirEntry{
 					&mockDirEntry{name: "nested.txt", isDir: false},
 				}, nil
@@ -264,7 +266,7 @@ func TestReadDirectory_NestedStructure(t *testing.T) {
 	}
 
 	reader := NewDirectoryReader(mockFS)
-	entries, err := reader.ReadDirectory("/test")
+	entries, err := reader.ReadDirectory(root)
 
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
