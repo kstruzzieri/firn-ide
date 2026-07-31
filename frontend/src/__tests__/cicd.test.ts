@@ -48,6 +48,18 @@ describe('CI Workflow', () => {
     expect(existsSync(resolve(workflowsDir, 'build.yml'))).toBe(true);
   });
 
+  // The setup-go count below would also break if this job were deleted, but it
+  // would break citing step counts. Assert the thing we actually care about so
+  // the failure names it: the path-portability suites must run on Windows.
+  it('should run the path-sensitive Go suites on Windows', () => {
+    const testYml = readFileSync(resolve(workflowsDir, 'test.yml'), 'utf-8');
+
+    expect(testYml).toMatch(/runs-on:\s*windows-latest/);
+    for (const pkg of ['./internal/filesystem', './internal/runhistory', './internal/workspace']) {
+      expect(testYml).toContain(pkg);
+    }
+  });
+
   it('should resolve every setup-go step from the Go version required by go.mod', () => {
     const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
     const goVersion = goMod.match(/^go\s+(\d+\.\d+)/m)?.[1];
@@ -56,7 +68,7 @@ describe('CI Workflow', () => {
       'build.yml': 1,
       'lint.yml': 1,
       'release.yml': 3,
-      'test.yml': 1,
+      'test.yml': 2,
     };
 
     expect(goVersion).toBeDefined();

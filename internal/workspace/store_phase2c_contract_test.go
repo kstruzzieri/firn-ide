@@ -3,6 +3,7 @@ package workspace
 import (
 	"firn/internal/filesystem"
 	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,8 +30,9 @@ func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *te
 			return nil
 		},
 	}
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
-	state := testState("/repo", "Repo")
+	baseDir := filepath.FromSlash("/home/user/.firn/workspaces")
+	store := NewStore(mockFS, baseDir)
+	state := testState(filepath.FromSlash("/repo"), "Repo")
 
 	if err := store.Save(state); err != nil {
 		t.Fatalf("first Save: %v", err)
@@ -39,7 +41,7 @@ func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *te
 		t.Fatalf("second Save: %v", err)
 	}
 
-	finalPath := "/home/user/.firn/workspaces/" + pathToID("/repo") + ".json"
+	finalPath := filepath.Join(baseDir, pathToID(state.WorkspacePath)+".json")
 	if len(renames) != 2 {
 		t.Fatalf("atomic rename count = %d, want 2; writes = %v", len(renames), writes)
 	}
@@ -55,7 +57,7 @@ func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *te
 			t.Fatalf("MkdirAll %d mode = %o, want 0700", i, mode.Perm())
 		}
 	}
-	if mkdirPaths[0] != "/home/user/.firn" || mkdirPaths[1] != "/home/user/.firn/workspaces" {
+	if mkdirPaths[0] != filepath.Dir(baseDir) || mkdirPaths[1] != baseDir {
 		t.Fatalf("MkdirAll paths = %v, want the .firn parent before the workspaces dir", mkdirPaths)
 	}
 	if renames[0][1] != finalPath || renames[1][1] != finalPath {

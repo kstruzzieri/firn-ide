@@ -3,6 +3,7 @@ package workspace
 import (
 	"firn/internal/filesystem"
 	"io/fs"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,19 +14,18 @@ import (
 func fsFromPaths(files ...string) *filesystem.Mock {
 	fileSet := map[string]bool{}
 	for _, f := range files {
-		fileSet[f] = true
+		fileSet[filepath.Clean(filepath.FromSlash(f))] = true
 	}
 	return &filesystem.Mock{
 		ReadDirFunc: func(dir string) ([]fs.DirEntry, error) {
-			dir = strings.TrimSuffix(dir, "/")
+			prefix := filepath.Clean(dir) + string(filepath.Separator)
 			childDirs := map[string]bool{}
 			var entries []fs.DirEntry
 			for f := range fileSet {
-				if !strings.HasPrefix(f, dir+"/") {
+				if !strings.HasPrefix(f, prefix) {
 					continue
 				}
-				rest := strings.TrimPrefix(f, dir+"/")
-				parts := strings.SplitN(rest, "/", 2)
+				parts := strings.SplitN(strings.TrimPrefix(f, prefix), string(filepath.Separator), 2)
 				if len(parts) == 1 {
 					entries = append(entries, &mockEntry{name: parts[0], dir: false})
 				} else {
@@ -51,7 +51,7 @@ func (e *mockEntry) Type() fs.FileMode          { return 0 }
 func (e *mockEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func TestDetectWorkspaces(t *testing.T) {
-	const root = "/repo"
+	root := filepath.FromSlash("/repo")
 	project := WorkspaceDef{ID: "project", Name: "Project", RelDir: "", Type: TypeProject, Accent: "project"}
 	tests := []struct {
 		name  string
