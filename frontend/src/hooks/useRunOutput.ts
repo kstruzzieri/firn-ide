@@ -238,7 +238,9 @@ export function useRunOutputListener(): void {
       }
     });
 
-    const waveformInterval = setInterval(() => {
+    let waveformFlushTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushWaveform = () => {
+      waveformFlushTimer = undefined;
       const store = useIDEStore.getState();
       if (!store.runEventsPaused) {
         for (const [profileId, count] of entryCounts.get(store.workspaceEpoch) ?? []) {
@@ -246,7 +248,7 @@ export function useRunOutputListener(): void {
         }
       }
       entryCounts.clear();
-    }, 500);
+    };
 
     const applyCompoundEvent = (event: CompoundRunEvent) => {
       const before = useIDEStore.getState();
@@ -296,6 +298,7 @@ export function useRunOutputListener(): void {
         const epochCounts = entryCounts.get(workspaceEpoch) ?? new Map<string, number>();
         epochCounts.set(chunk.profileId, (epochCounts.get(chunk.profileId) ?? 0) + 1);
         entryCounts.set(workspaceEpoch, epochCounts);
+        waveformFlushTimer ??= setTimeout(flushWaveform, 500);
       }
     });
 
@@ -368,7 +371,7 @@ export function useRunOutputListener(): void {
       cleanupStatus();
       cleanupCompound();
       cleanupPendingCompoundEvents();
-      clearInterval(waveformInterval);
+      if (waveformFlushTimer !== undefined) clearTimeout(waveformFlushTimer);
     };
   }, []);
 }

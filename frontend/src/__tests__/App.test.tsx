@@ -5,6 +5,7 @@
  * TDD: Written first to define expected behavior.
  */
 
+import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
@@ -23,15 +24,24 @@ const mockDidSave = jest.fn().mockResolvedValue(undefined);
 const mockDidClose = jest.fn().mockResolvedValue(undefined);
 const mockSearchWorkspace = jest.fn().mockResolvedValue({});
 const mockCancelSearch = jest.fn().mockResolvedValue(undefined);
-const mockRunEventCallbacks = new Map<string, (...args: unknown[]) => void>();
-const mockEventsOn = jest.fn((event: string, callback: (...args: unknown[]) => void) => {
-  mockRunEventCallbacks.set(event, callback);
+type RunEventCallback = (...args: unknown[]) => void;
+
+const mockRunEventCallbacks = new Map<string, Map<symbol, RunEventCallback>>();
+const mockEventsOn = jest.fn((event: string, callback: RunEventCallback) => {
+  const callbacks = mockRunEventCallbacks.get(event) ?? new Map<symbol, RunEventCallback>();
+  const registration = Symbol();
+  callbacks.set(registration, callback);
+  mockRunEventCallbacks.set(event, callbacks);
   return () => {
-    if (mockRunEventCallbacks.get(event) === callback) {
+    callbacks.delete(registration);
+    if (callbacks.size === 0) {
       mockRunEventCallbacks.delete(event);
     }
   };
 });
+const emitRunEvent = (event: string, payload: unknown) => {
+  for (const callback of mockRunEventCallbacks.get(event)?.values() ?? []) callback(payload);
+};
 const mockAppendRunHistoryRecord = jest.fn((record: Record<string, unknown>) =>
   Promise.resolve({
     historyId: `${record.kind}:${record.profileId}`,
@@ -351,7 +361,11 @@ describe('App Component', () => {
     });
 
     await act(async () => {
-      render(<App />);
+      render(
+        <StrictMode>
+          <App />
+        </StrictMode>
+      );
     });
     expect(screen.getByRole('tablist', { name: 'Terminal panels' })).toBeInTheDocument();
 
@@ -361,7 +375,7 @@ describe('App Component', () => {
     expect(screen.queryByRole('tablist', { name: 'Terminal panels' })).not.toBeInTheDocument();
 
     act(() => {
-      mockRunEventCallbacks.get('run:status')?.({
+      emitRunEvent('run:status', {
         runInstanceId: 'ordinary-run',
         profileId: 'build',
         stepIdx: 0,
@@ -371,7 +385,7 @@ describe('App Component', () => {
         exitCode: 0,
         timestamp: 100,
       });
-      mockRunEventCallbacks.get('run:output')?.({
+      emitRunEvent('run:output', {
         runInstanceId: 'ordinary-run',
         profileId: 'build',
         stepIdx: 0,
@@ -381,7 +395,7 @@ describe('App Component', () => {
         data: 'captured while hidden\n',
         timestamp: 110,
       });
-      mockRunEventCallbacks.get('run:status')?.({
+      emitRunEvent('run:status', {
         runInstanceId: 'ordinary-run',
         profileId: 'build',
         stepIdx: 0,
@@ -391,7 +405,7 @@ describe('App Component', () => {
         exitCode: 0,
         timestamp: 120,
       });
-      mockRunEventCallbacks.get('run:status')?.({
+      emitRunEvent('run:status', {
         runInstanceId: 'compound-run',
         profileId: 'ci',
         stepIdx: 0,
@@ -401,7 +415,7 @@ describe('App Component', () => {
         exitCode: 0,
         timestamp: 200,
       });
-      mockRunEventCallbacks.get('run:compound')?.({
+      emitRunEvent('run:compound', {
         runInstanceId: 'compound-run',
         compoundId: 'ci',
         launchSeq: 2,
@@ -423,7 +437,7 @@ describe('App Component', () => {
           },
         ],
       });
-      mockRunEventCallbacks.get('run:output')?.({
+      emitRunEvent('run:output', {
         runInstanceId: 'compound-step',
         parentRunInstanceId: 'compound-run',
         profileId: 'build',
@@ -434,7 +448,7 @@ describe('App Component', () => {
         data: 'compound output while hidden\n',
         timestamp: 220,
       });
-      mockRunEventCallbacks.get('run:compound')?.({
+      emitRunEvent('run:compound', {
         runInstanceId: 'compound-run',
         compoundId: 'ci',
         launchSeq: 2,
@@ -457,7 +471,7 @@ describe('App Component', () => {
           },
         ],
       });
-      mockRunEventCallbacks.get('run:status')?.({
+      emitRunEvent('run:status', {
         runInstanceId: 'compound-run',
         profileId: 'ci',
         stepIdx: 0,
@@ -500,7 +514,7 @@ describe('App Component', () => {
 
     expect(screen.getByText('captured while hidden')).toBeInTheDocument();
     for (const event of ['run:output', 'run:status', 'run:compound']) {
-      expect(mockEventsOn.mock.calls.filter(([name]) => name === event)).toHaveLength(1);
+      expect(mockRunEventCallbacks.get(event)?.size).toBe(1);
     }
   });
 });
