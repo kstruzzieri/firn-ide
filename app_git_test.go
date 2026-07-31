@@ -1,15 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"firn/internal/git/gittest"
 )
 
 // isolatedGitEnv strips the repository-local GIT_* variables (so an inherited
@@ -60,34 +58,6 @@ func initGitRepoForApp(t *testing.T) string {
 	return dir
 }
 
-func useAppTestProvider(t *testing.T, answer string) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/models":
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"qwen3-coder-next:latest"}]}`)
-		case "/v1/chat/completions":
-			if _, err := io.ReadAll(r.Body); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":\"stop\"}]}\n\n", answer)
-			_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
-			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	configPath := filepath.Join(t.TempDir(), "models.json")
-	config := fmt.Sprintf(`{"providers":{"test":{"base_url":%q,"api_format":"openai-compat"}},"models":{"chat":{"name":"qwen3-coder-next:latest","provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},"defaults":{"agent":"chat"}}`, server.URL)
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GO_LLM_CONFIG", configPath)
-}
-
 func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {
 	if !NewApp().GitCommitMessageAvailable() {
 		t.Fatal("GitCommitMessageAvailable() = false, want true without a binary")
@@ -96,7 +66,7 @@ func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {
 
 func TestGitGenerateCommitMessage_Binding(t *testing.T) {
 	dir := initGitRepoForApp(t)
-	useAppTestProvider(t, "feat: add f.txt")
+	gittest.Start(t, "feat: add f.txt", nil)
 	app := NewApp()
 	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
 		t.Fatal(err)

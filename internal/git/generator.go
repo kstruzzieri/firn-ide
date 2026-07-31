@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/kstruzzieri/go-llm/agent"
@@ -30,6 +31,10 @@ type MessageGenerator struct{}
 func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
 
 // Available reports whether commit-message generation is embedded in Firn.
+// Always true: a static probe cannot predict whether generation will work — a
+// missing models.json falls back to a synthetic local-provider config, and a
+// present config can still point at a stopped provider — so failures surface
+// as errors from Generate instead of hiding the feature.
 func (*MessageGenerator) Available(context.Context) bool { return true }
 
 // Generate asks the embedded golem runtime for a commit message describing diff.
@@ -46,15 +51,20 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 		Root:     root,
 		System:   generateSystem,
 		MaxSteps: 1, // Never send built-in read-tool output in a second provider request.
-		Budget:   agent.Budget{InputCeiling: 32 * 1024},
+		// InputCeiling is tokens, not bytes: the 48 KiB byte-bounded context is
+		// ~12K tokens, well under it. It does not track the configured model's
+		// real context window; an undersized model rejects at the provider and
+		// that error surfaces from Run.
+		Budget:    agent.Budget{InputCeiling: 32 * 1024},
+		OnWarning: func(warning error) { log.Printf("git: golem warning: %v", warning) },
 	})
 	if err != nil {
 		return "", fmt.Errorf("golem runtime initialization: %w", err)
 	}
 	defer func() {
-		if closeErr := runtime.Close(); err == nil && closeErr != nil {
+		if closeErr := runtime.Close(); closeErr != nil {
 			message = ""
-			err = fmt.Errorf("golem runtime close: %w", closeErr)
+			err = errors.Join(err, fmt.Errorf("golem runtime close: %w", closeErr))
 		}
 	}()
 
