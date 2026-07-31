@@ -1,9 +1,10 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"firn/internal/git"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +60,56 @@ func initGitRepoForApp(t *testing.T) string {
 	return dir
 }
 
+func useAppTestProvider(t *testing.T, answer string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"test-model"}]}`)
+		case "/v1/chat/completions":
+			if _, err := io.ReadAll(r.Body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprintf(w, "data: {\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", answer)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	configPath := filepath.Join(t.TempDir(), "models.json")
+	config := fmt.Sprintf(`{"providers":{"test":{"base_url":%q,"api_format":"openai-compat"}},"models":{"chat":{"name":"test-model","provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},"defaults":{"agent":"chat"}}`, server.URL)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", configPath)
+}
+
+func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {
+	if !NewApp().GitCommitMessageAvailable() {
+		t.Fatal("GitCommitMessageAvailable() = false, want true without a binary")
+	}
+}
+
+func TestGitGenerateCommitMessage_Binding(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	useAppTestProvider(t, "feat: add f.txt")
+	app := NewApp()
+	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := app.GitGenerateCommitMessage(dir)
+
+	if err != nil {
+		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
+	}
+	if msg != "feat: add f.txt" {
+		t.Errorf("msg = %q", msg)
+	}
+}
+
 func TestGitStatus_Binding(t *testing.T) {
 	dir := initGitRepoForApp(t)
 	app := NewApp()
@@ -90,44 +141,6 @@ func TestGitStageAndCommit_Binding(t *testing.T) {
 	st, _ := app.GitStatus(dir)
 	if len(st.Files) != 0 {
 		t.Errorf("Files after commit = %+v, want empty", st.Files)
-	}
-}
-
-func TestGitCommitMessageAvailable_UsesGenerator(t *testing.T) {
-	app := NewApp()
-	app.gitMsgGen = &git.MessageGenerator{
-		LookPath: func(string) (string, error) { return "", errors.New("absent") },
-		Run: func(context.Context, string, []string) (string, error) {
-			t.Fatal("Run must not be called when binary is absent")
-			return "", nil
-		},
-	}
-
-	if app.GitCommitMessageAvailable() {
-		t.Error("GitCommitMessageAvailable() = true, want false when golem absent")
-	}
-}
-
-func TestGitGenerateCommitMessage_Binding(t *testing.T) {
-	dir := initGitRepoForApp(t)
-	app := NewApp()
-	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
-		t.Fatal(err)
-	}
-	app.gitMsgGen = &git.MessageGenerator{
-		LookPath: func(string) (string, error) { return "/fake/golem", nil },
-		Run: func(_ context.Context, _ string, args []string) (string, error) {
-			return "feat: add f.txt\n", nil
-		},
-	}
-
-	msg, err := app.GitGenerateCommitMessage(dir)
-
-	if err != nil {
-		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
-	}
-	if msg != "feat: add f.txt" {
-		t.Errorf("msg = %q", msg)
 	}
 }
 

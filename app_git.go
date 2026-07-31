@@ -217,9 +217,8 @@ func (a *App) GitResolveConflictSide(root, path, side string) error {
 	return a.gitService.ResolveConflictSide(ctx, root, path, side)
 }
 
-// GitCommitMessageAvailable reports whether AI commit-message generation is
-// usable (golem with one-shot support on PATH). The frontend hides the
-// generate button when false.
+// GitCommitMessageAvailable reports whether embedded AI commit-message
+// generation is available.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GitCommitMessageAvailable() bool {
 	ctx, cancel := a.gitCtx(gitLocalTimeout)
@@ -228,7 +227,7 @@ func (a *App) GitCommitMessageAvailable() bool {
 }
 
 // GitGenerateCommitMessage produces a commit message for the staged diff via
-// the local golem agent.
+// the embedded golem runtime.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) GitGenerateCommitMessage(root string) (string, error) {
 	ctx, cancel := a.gitCtx(gitGenerateTimeout)
