@@ -23,7 +23,7 @@ func ReadFileBounded(fsys FileSystem, path string, limit int64) ([]byte, fs.File
 		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, info, fmt.Errorf("%w: %s is not a regular file", ErrUnsafePath, path)
+		return nil, info, fmt.Errorf("%w: %s is not a regular file", ErrPathTypeMismatch, path)
 	}
 	if info.Size() > limit {
 		return nil, info, fmt.Errorf("file exceeds %d bytes", limit)
@@ -48,7 +48,7 @@ func ReadDirBounded(fsys FileSystem, path string, limit int) ([]fs.DirEntry, err
 		return nil, err
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: %s is not a directory", ErrUnsafePath, path)
+		return nil, fmt.Errorf("%w: %s is not a directory", ErrPathTypeMismatch, path)
 	}
 	entries, err := fsys.ReadDir(path)
 	if err != nil {

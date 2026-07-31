@@ -17,7 +17,7 @@ func openReadNoFollow(path string, directory bool) (*os.File, error) {
 	fd, err := syscall.Open(path, flags, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR) {
-			return nil, fmt.Errorf("%w: %s", ErrUnsafePath, path)
+			return nil, fmt.Errorf("%w: %s", ErrSymlinkRefused, path)
 		}
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}

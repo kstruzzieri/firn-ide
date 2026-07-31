@@ -98,8 +98,8 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 					t.Fatalf("Symlink: %v", err)
 				}
 
-				if err := operation(store); !errors.Is(err, filesystem.ErrUnsafePath) {
-					t.Fatalf("%s error = %v, want ErrUnsafePath", name, err)
+				if err := operation(store); !errors.Is(err, filesystem.ErrPathTypeMismatch) {
+					t.Fatalf("%s error = %v, want ErrPathTypeMismatch", name, err)
 				}
 				entries, err := os.ReadDir(target)
 				if err != nil {
@@ -113,10 +113,20 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 	}
 }
 
+// The three owned paths are refused by two different guards, and naming which
+// one is the point: the index is read through the bounded reader, so the
+// no-follow open refuses it outright, while a canonical record and an owned temp
+// are typed by Lstat during reconciliation before any open happens. Asserting
+// the umbrella hid that split, and hid that the "index" case is the only one
+// here that exercises openReadNoFollow at all.
 func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 	requireSymlinks(t)
-	tests := []string{"index", "canonical", "temp"}
-	for _, name := range tests {
+	tests := map[string]error{
+		"index":     filesystem.ErrSymlinkRefused,
+		"canonical": filesystem.ErrPathTypeMismatch,
+		"temp":      filesystem.ErrPathTypeMismatch,
+	}
+	for name, wantErr := range tests {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			store := NewStore(filesystem.NewOS(), home)
@@ -148,8 +158,8 @@ func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 				t.Fatalf("Symlink: %v", err)
 			}
 
-			if _, err := store.Snapshot(phase2CWorkspacePath); !errors.Is(err, filesystem.ErrUnsafePath) {
-				t.Fatalf("Snapshot error = %v, want ErrUnsafePath", err)
+			if _, err := store.Snapshot(phase2CWorkspacePath); !errors.Is(err, wantErr) {
+				t.Fatalf("Snapshot error = %v, want %v", err, wantErr)
 			}
 			data, err := os.ReadFile(target)
 			if err != nil {
@@ -191,8 +201,8 @@ func TestStorePhase2C_RefusesOwnedDirectories(t *testing.T) {
 				t.Fatalf("Mkdir(owned path): %v", err)
 			}
 
-			if _, err := store.Snapshot(phase2CWorkspacePath); !errors.Is(err, filesystem.ErrUnsafePath) {
-				t.Fatalf("Snapshot error = %v, want ErrUnsafePath", err)
+			if _, err := store.Snapshot(phase2CWorkspacePath); !errors.Is(err, filesystem.ErrPathTypeMismatch) {
+				t.Fatalf("Snapshot error = %v, want ErrPathTypeMismatch", err)
 			}
 		})
 	}
@@ -237,8 +247,8 @@ func TestStorePhase2C_FIFOsReturnPromptly(t *testing.T) {
 			}()
 			select {
 			case err := <-done:
-				if !errors.Is(err, filesystem.ErrUnsafePath) {
-					t.Fatalf("Snapshot error = %v, want ErrUnsafePath", err)
+				if !errors.Is(err, filesystem.ErrPathTypeMismatch) {
+					t.Fatalf("Snapshot error = %v, want ErrPathTypeMismatch", err)
 				}
 			case <-time.After(500 * time.Millisecond):
 				writer, openErr := os.OpenFile(path, os.O_WRONLY, 0)

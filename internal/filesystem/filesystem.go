@@ -7,7 +7,34 @@ import (
 	"io/fs"
 )
 
+// ErrUnsafePath is the umbrella every path refusal below wraps. Callers that
+// only need "refuse to self-heal, escalate this" keep matching on it.
 var ErrUnsafePath = errors.New("unsafe filesystem path")
+
+// Refusal reasons. Each wraps ErrUnsafePath, so errors.Is against the umbrella
+// still holds and no caller has to enumerate these.
+//
+// The distinction is not cosmetic. A test that asserts only ErrUnsafePath cannot
+// tell a no-follow open that refused a link from a type check that caught it two
+// layers later — which is how open_nofollow_windows.go reached production
+// without a single test proving it rejects a reparse point.
+var (
+	// ErrSymlinkRefused: the no-follow open itself refused to traverse a link.
+	ErrSymlinkRefused = fmt.Errorf("%w: refused to follow a symbolic link", ErrUnsafePath)
+
+	// ErrPathTypeMismatch: the path resolved to something other than the kind of
+	// object the caller asked for — a directory where a file was expected, or a
+	// link caught by an Lstat type check rather than at open.
+	ErrPathTypeMismatch = fmt.Errorf("%w: unexpected path type", ErrUnsafePath)
+
+	// ErrPathChanged: the path was replaced between the open and the identity
+	// re-check. The handle is real but no longer names what was validated.
+	ErrPathChanged = fmt.Errorf("%w: path changed between open and check", ErrUnsafePath)
+
+	// ErrNoFollowUnsupported: this platform has no no-follow open primitive, so
+	// the read is refused rather than performed unsafely.
+	ErrNoFollowUnsupported = fmt.Errorf("%w: secure no-follow open is unsupported", ErrUnsafePath)
+)
 
 // FileSystem defines the interface for file system operations.
 // This allows for easy mocking in tests.
@@ -73,7 +100,7 @@ func EnsureDirPerm(fsys FileSystem, dir string, perm fs.FileMode) error {
 		return nil
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%w: %s is not a directory", ErrUnsafePath, dir)
+		return fmt.Errorf("%w: %s is not a directory", ErrPathTypeMismatch, dir)
 	}
 	if info.Mode().Perm()&^perm.Perm() == 0 {
 		return nil

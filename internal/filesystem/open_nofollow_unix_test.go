@@ -37,28 +37,11 @@ func TestOpenReadNoFollowDoesNotBlockOnFIFO(t *testing.T) {
 		t.Fatal("openReadNoFollow blocked on a FIFO")
 	}
 
-	if _, _, err := NewOS().ReadFileLimited(path, 1); !errors.Is(err, ErrUnsafePath) {
-		t.Fatalf("ReadFileLimited error = %v, want ErrUnsafePath", err)
+	// A FIFO opens fine under O_NONBLOCK; the type check downstream is what
+	// refuses it, so this asserts the mismatch reason rather than a link refusal.
+	if _, _, err := NewOS().ReadFileLimited(path, 1); !errors.Is(err, ErrPathTypeMismatch) {
+		t.Fatalf("ReadFileLimited error = %v, want ErrPathTypeMismatch", err)
 	}
 }
 
-func TestOpenReadNoFollowRejectsSymlink(t *testing.T) {
-	target := filepath.Join(t.TempDir(), "target")
-	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatalf("Symlink: %v", err)
-	}
-
-	if file, err := openReadNoFollow(link, false); !errors.Is(err, ErrUnsafePath) {
-		if file != nil {
-			_ = file.Close()
-		}
-		t.Fatalf("openReadNoFollow error = %v, want ErrUnsafePath", err)
-	}
-	if _, _, err := NewOS().ReadFileLimited(link, 10); !errors.Is(err, ErrUnsafePath) {
-		t.Fatalf("ReadFileLimited error = %v, want ErrUnsafePath", err)
-	}
-}
+// Symlink refusal moved to open_nofollow_test.go so Windows runs it too.
