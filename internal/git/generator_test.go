@@ -27,7 +27,7 @@ func newTestProvider(t *testing.T, answer string, chat func(http.ResponseWriter,
 		switch r.URL.Path {
 		case "/v1/models":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"test-model"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3-coder-next:latest"}]}`))
 		case "/v1/chat/completions":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -39,8 +39,14 @@ func newTestProvider(t *testing.T, answer string, chat func(http.ResponseWriter,
 				provider.chat(w, r)
 				return
 			}
+			answer, err := json.Marshal(provider.answer)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: {\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":\"stop\"}]}\n\n", provider.answer)
+			_, _ = fmt.Fprintf(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%s},\"finish_reason\":\"stop\"}]}\n\n", answer)
+			_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
 			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		default:
 			http.NotFound(w, r)
@@ -51,7 +57,7 @@ func newTestProvider(t *testing.T, answer string, chat func(http.ResponseWriter,
 	configPath := filepath.Join(t.TempDir(), "models.json")
 	config := fmt.Sprintf(`{
 		"providers":{"test":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
-		"models":{"chat":{"name":"test-model","provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
+		"models":{"chat":{"name":"qwen3-coder-next:latest","provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
 		"defaults":{"agent":"chat"}
 	}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
