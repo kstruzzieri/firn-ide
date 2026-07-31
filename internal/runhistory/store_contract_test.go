@@ -1,9 +1,12 @@
 package runhistory
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -27,6 +30,12 @@ func phase2CWorkspaceDir(t *testing.T, store *Store) string {
 		t.Fatalf("workspaceDir: %v", err)
 	}
 	return dir
+}
+
+func phase2CExpectedWorkspaceDir(home, workspacePath string) string {
+	workspacePath = filepath.Clean(workspacePath)
+	sum := sha256.Sum256([]byte(workspacePath))
+	return filepath.Join(home, "run-history", hex.EncodeToString(sum[:8]))
 }
 
 func phase2COrdinaryInput(profileID string, completedAt int64, text string) RecordInput {
@@ -115,15 +124,20 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 		t.Fatalf("history ID = %q, want UUIDv7: %v", saved.HistoryID, err)
 	}
 
-	workspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
+	workspaceDir := phase2CExpectedWorkspaceDir(home, phase2CWorkspacePath)
+	actualWorkspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
 	if err != nil {
 		t.Fatalf("workspaceDir: %v", err)
+	}
+	if actualWorkspaceDir != workspaceDir {
+		t.Fatalf("workspaceDir = %q, want %q", actualWorkspaceDir, workspaceDir)
 	}
 	dirInfo, err := os.Stat(workspaceDir)
 	if err != nil {
 		t.Fatalf("Stat(workspace history dir): %v", err)
 	}
-	if dirInfo.Mode().Perm() != 0o700 {
+	// Windows reports writable directories as 0777 and cannot express POSIX 0700.
+	if runtime.GOOS != "windows" && dirInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("workspace history dir mode = %v, want 0700", dirInfo.Mode().Perm())
 	}
 	recordPath := filepath.Join(workspaceDir, saved.HistoryID+".json")
@@ -131,7 +145,8 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 	if err != nil {
 		t.Fatalf("Stat(record): %v", err)
 	}
-	if recordInfo.Mode().Perm() != 0o600 {
+	// Windows reports writable files as 0666 and cannot express POSIX 0600.
+	if runtime.GOOS != "windows" && recordInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("record mode = %v, want 0600", recordInfo.Mode().Perm())
 	}
 
@@ -163,7 +178,8 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 	if err != nil {
 		t.Fatalf("Stat(index): %v", err)
 	}
-	if indexInfo.Mode().Perm() != 0o600 {
+	// Windows reports writable files as 0666 and cannot express POSIX 0600.
+	if runtime.GOOS != "windows" && indexInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("index mode = %v, want 0600", indexInfo.Mode().Perm())
 	}
 	var indexSchema map[string]any
