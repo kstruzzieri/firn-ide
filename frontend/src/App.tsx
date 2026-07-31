@@ -42,6 +42,8 @@ function App() {
 
   useAutosave();
   useWorkspacePersistence(flushAllFileEdits, drainRunHistoryForClose);
+  // Own run-event capture at the always-mounted App so collapsing the bottom
+  // panel (which unmounts Terminal) cannot drop run output or history (#235).
   useRunOutputListener();
   useWorkspaceDetection();
   useLSPDocumentSync();
