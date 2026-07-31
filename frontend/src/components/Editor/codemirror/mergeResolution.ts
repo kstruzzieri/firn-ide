@@ -844,7 +844,10 @@ function applyResolution(
     if (eofTarget) {
       if (lines.length > 0 || !result.endsWith('\n')) result += '\n';
     } else {
-      result = result.replace(/\n+$/, '');
+      // Exactly one newline: the EOF flag describes a single byte (is the blob's
+      // last byte an LF), never a run. Stripping greedily would delete real
+      // trailing blank lines carried in from an earlier region's resolution.
+      result = result.replace(/\n$/, '');
     }
     let from = 0;
     while (from < document.length && from < result.length && document[from] === result[from]) {

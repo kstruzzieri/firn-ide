@@ -831,6 +831,55 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
+  it('drops only the final newline when an empty EOF side follows a blank line', () => {
+    // ours   = 'x' + ''    -> "x"      (no trailing LF, so oursEndsWithNewline false)
+    // theirs = 'y\n' + 'z' -> "y\n\nz" (no trailing LF)
+    // Taking Incoming then Current must keep the blank line Incoming carried in.
+    const markerContent = [
+      '<<<<<<< current',
+      'x',
+      '=======',
+      'y',
+      '',
+      '>>>>>>> incoming',
+      '<<<<<<< current',
+      '=======',
+      'z',
+      '>>>>>>> incoming',
+      '',
+    ].join('\n');
+    const base = session().regions[0];
+    const merge = session({
+      content: markerContent,
+      regions: [
+        { ...base, index: 0, startLine: 1, endLine: 6, ours: ['x'], theirs: ['y', ''] },
+        {
+          ...base,
+          index: 1,
+          startLine: 7,
+          endLine: 10,
+          ours: [],
+          theirs: ['z'],
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+    const click = (label: string) =>
+      Array.from(document.querySelectorAll('button'))
+        .filter((button) => button.textContent === label)[0]
+        ?.click();
+
+    click('Take Incoming');
+    expect(editor.getResult()).toBe('y\n\n<<<<<<< current\n=======\nz\n>>>>>>> incoming\n');
+    click('Take Current');
+
+    expect(editor.getResult()).toBe('y\n');
+    expect(editor.getState().decisions).toEqual({ 0: 'I', 1: 'C' });
+    editor.destroy();
+  });
+
   it('fails closed when empty Both sides disagree about the EOF state', () => {
     const markerContent = '<<<<<<< current\n=======\n>>>>>>> incoming\n';
     const merge = session({
