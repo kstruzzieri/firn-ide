@@ -56,7 +56,7 @@ describe('CI Workflow', () => {
       'build.yml': 1,
       'lint.yml': 1,
       'release.yml': 3,
-      'test.yml': 1,
+      'test.yml': 2,
     };
 
     expect(goVersion).toBeDefined();
