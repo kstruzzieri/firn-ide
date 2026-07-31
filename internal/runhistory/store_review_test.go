@@ -216,14 +216,14 @@ func TestStorePhase2C_StalledWorkspaceDoesNotBlockAnotherWorkspace(t *testing.T)
 	store := NewStore(blockingFS, t.TempDir())
 	appendA := make(chan error, 1)
 	go func() {
-		_, err := store.Append(filepath.Join(string(filepath.Separator), "workspace-a"), phase2COrdinaryInput("build", 100, "A"))
+		_, err := store.Append(filepath.FromSlash("/workspace-a"), phase2COrdinaryInput("build", 100, "A"))
 		appendA <- err
 	}()
 	<-blockingFS.entered
 
 	appendB := make(chan error, 1)
 	go func() {
-		_, err := store.Append(filepath.Join(string(filepath.Separator), "workspace-b"), phase2COrdinaryInput("build", 200, "B"))
+		_, err := store.Append(filepath.FromSlash("/workspace-b"), phase2COrdinaryInput("build", 200, "B"))
 		appendB <- err
 	}()
 	select {

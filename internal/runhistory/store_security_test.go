@@ -17,7 +17,33 @@ import (
 
 const phase2CValidIndexRecordJSON = `{"historyId":"01900000-0000-7000-8000-000000000001","kind":"ordinary","profileId":"build","profileName":"Build","state":"success","exitCode":0,"startedAt":1,"completedAt":2,"outputAvailable":true,"size":1,"modifiedAt":1}`
 
+// Windows only grants SeCreateSymbolicLinkPrivilege under Developer Mode or
+// elevation. Probe the capability once, up front, so an unsupported host skips
+// for exactly that reason and every other os.Symlink failure stays a hard
+// failure. Skipping on any error instead would let a real regression — a bad
+// recordPath, a missing parent — pass as "unsupported" on the Windows job.
+var symlinkSupported = func() bool {
+	dir, err := os.MkdirTemp("", "firn-symlink-probe")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		return false
+	}
+	return os.Symlink(target, filepath.Join(dir, "link")) == nil
+}()
+
+func requireSymlinks(t *testing.T) {
+	t.Helper()
+	if !symlinkSupported {
+		t.Skipf("symlink creation is unavailable on %s", runtime.GOOS)
+	}
+}
+
 func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
+	requireSymlinks(t)
 	historyID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("NewV7: %v", err)
@@ -69,9 +95,6 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 					symlinkPath = dir
 				}
 				if err := os.Symlink(target, symlinkPath); err != nil {
-					if runtime.GOOS == "windows" {
-						t.Skipf("Windows symlink creation unavailable: %v", err)
-					}
 					t.Fatalf("Symlink: %v", err)
 				}
 
@@ -91,6 +114,7 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 }
 
 func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
+	requireSymlinks(t)
 	tests := []string{"index", "canonical", "temp"}
 	for _, name := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -121,9 +145,6 @@ func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 				path = recordPath(dir, historyID.String()) + ".0123456789abcdef"
 			}
 			if err := os.Symlink(target, path); err != nil {
-				if runtime.GOOS == "windows" {
-					t.Skipf("Windows symlink creation unavailable: %v", err)
-				}
 				t.Fatalf("Symlink: %v", err)
 			}
 

@@ -350,7 +350,7 @@ func TestWriteFile_CreatesParentDirectories(t *testing.T) {
 
 	writer := NewFileWriter(mockFS)
 	opts := &WriteOptions{CreateDirs: true}
-	path := filepath.Join(string(filepath.Separator), "test", "nested", "dir", "file.txt")
+	path := filepath.FromSlash("/test/nested/dir/file.txt")
 	err := writer.WriteFileWithOptions(path, "content", opts)
 
 	if err != nil {

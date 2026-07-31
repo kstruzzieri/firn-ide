@@ -18,14 +18,14 @@ func fsFromPaths(files ...string) *filesystem.Mock {
 	}
 	return &filesystem.Mock{
 		ReadDirFunc: func(dir string) ([]fs.DirEntry, error) {
+			prefix := filepath.Clean(dir) + string(filepath.Separator)
 			childDirs := map[string]bool{}
 			var entries []fs.DirEntry
 			for f := range fileSet {
-				rel, err := filepath.Rel(dir, f)
-				if err != nil || rel == "." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				if !strings.HasPrefix(f, prefix) {
 					continue
 				}
-				parts := strings.SplitN(rel, string(filepath.Separator), 2)
+				parts := strings.SplitN(strings.TrimPrefix(f, prefix), string(filepath.Separator), 2)
 				if len(parts) == 1 {
 					entries = append(entries, &mockEntry{name: parts[0], dir: false})
 				} else {
@@ -51,7 +51,7 @@ func (e *mockEntry) Type() fs.FileMode          { return 0 }
 func (e *mockEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func TestDetectWorkspaces(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "repo")
+	root := filepath.FromSlash("/repo")
 	project := WorkspaceDef{ID: "project", Name: "Project", RelDir: "", Type: TypeProject, Accent: "project"}
 	tests := []struct {
 		name  string

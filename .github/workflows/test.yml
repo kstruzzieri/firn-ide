@@ -88,9 +88,14 @@ jobs:
           files: coverage.out
           fail_ci_if_error: false
 
+  # No "Build frontend" step here, unlike backend-tests: these three packages are
+  # leaves and none of them reaches main's `go:embed all:frontend/dist`. If that
+  # ever changes this job fails with an embed error that reads like a bad
+  # checkout — add the frontend build step rather than chasing the symptom.
   windows-filesystem-tests:
     name: Windows Filesystem Tests
     runs-on: windows-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -101,5 +106,8 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: go.sum
 
+      # -v is load-bearing: several security tests skip when Windows withholds
+      # SeCreateSymbolicLinkPrivilege, and without -v a fully skipped suite is
+      # indistinguishable from a passing one.
       - name: Run filesystem, run history and workspace tests
-        run: go test ./internal/filesystem ./internal/runhistory ./internal/workspace
+        run: go test -v ./internal/filesystem ./internal/runhistory ./internal/workspace

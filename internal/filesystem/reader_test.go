@@ -241,7 +241,7 @@ func TestFileEntryJSON_OmitsFalseAndCarriesTrueUnreadable(t *testing.T) {
 
 func TestReadDirectory_NestedStructure(t *testing.T) {
 	modTime := time.Now()
-	root := filepath.Join(string(filepath.Separator), "test")
+	root := filepath.FromSlash("/test")
 	subdir := filepath.Join(root, "subdir")
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
@@ -287,7 +287,7 @@ func TestReadDirectory_NestedStructure(t *testing.T) {
 
 func TestReadDirectory_RespectsGitignore(t *testing.T) {
 	modTime := time.Now()
-	root := filepath.Join(string(filepath.Separator), "test")
+	root := filepath.FromSlash("/test")
 	gitignorePath := filepath.Join(root, ".gitignore")
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
@@ -396,7 +396,7 @@ func TestReadDirectory_HidesDotDirectories(t *testing.T) {
 func TestReadDirectory_HandlesPermissionError(t *testing.T) {
 	modTime := time.Now()
 	permErr := errors.New("permission denied")
-	root := filepath.Join(string(filepath.Separator), "test")
+	root := filepath.FromSlash("/test")
 	accessiblePath := filepath.Join(root, "accessible")
 	restrictedPath := filepath.Join(root, "restricted")
 
@@ -537,7 +537,7 @@ func TestReadDirectory_EmptyDirectory(t *testing.T) {
 
 func TestReadDirectoryShallow_ImmediateChildrenOnly(t *testing.T) {
 	modTime := time.Now()
-	root := filepath.Join(string(filepath.Separator), "test")
+	root := filepath.FromSlash("/test")
 	subdir := filepath.Join(root, "subdir")
 	calledPaths := map[string]bool{}
 	mockFS := &Mock{
@@ -610,7 +610,7 @@ func TestReadDirectoryShallow_RootFailureReturnsError(t *testing.T) {
 
 func TestReadDirectoryShallow_RespectsGitignoreAndDotDirs(t *testing.T) {
 	modTime := time.Now()
-	root := filepath.Join(string(filepath.Separator), "test")
+	root := filepath.FromSlash("/test")
 	gitignorePath := filepath.Join(root, ".gitignore")
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
@@ -652,7 +652,7 @@ func TestReadDirectoryShallow_RespectsGitignoreAndDotDirs(t *testing.T) {
 
 func TestReadDirectoryShallow_UsesParentGitignore(t *testing.T) {
 	modTime := time.Now()
-	root := filepath.Join(string(filepath.Separator), "test")
+	root := filepath.FromSlash("/test")
 	src := filepath.Join(root, "src")
 	gitignorePath := filepath.Join(root, ".gitignore")
 	mockFS := &Mock{

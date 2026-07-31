@@ -30,9 +30,9 @@ func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *te
 			return nil
 		},
 	}
-	baseDir := filepath.Join(string(filepath.Separator), "home", "user", ".firn", "workspaces")
+	baseDir := filepath.FromSlash("/home/user/.firn/workspaces")
 	store := NewStore(mockFS, baseDir)
-	state := testState(filepath.Join(string(filepath.Separator), "repo"), "Repo")
+	state := testState(filepath.FromSlash("/repo"), "Repo")
 
 	if err := store.Save(state); err != nil {
 		t.Fatalf("first Save: %v", err)

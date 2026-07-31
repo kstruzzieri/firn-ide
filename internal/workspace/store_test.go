@@ -10,18 +10,18 @@ import (
 	"testing"
 )
 
-var testWorkspaceBaseDir = filepath.Join(string(filepath.Separator), "home", "user", ".firn", "workspaces")
+var testWorkspaceBaseDir = filepath.FromSlash("/home/user/.firn/workspaces")
 
+// Keys are compared byte-for-byte, exactly as a real filesystem would. Do not
+// normalize the paths production hands this mock: separator mistakes on Windows
+// are the whole reason the scoped Windows job exists, and canonicalizing them
+// here would launder them away. Fixtures must be built with filepath.Join.
 func newMockFS() *filesystem.Mock {
 	files := map[string][]byte{}
 	dirs := map[string]bool{}
-	normalize := func(path string) string {
-		return filepath.Clean(filepath.FromSlash(path))
-	}
 
 	return &filesystem.Mock{
 		ReadFileFunc: func(path string) ([]byte, error) {
-			path = normalize(path)
 			data, ok := files[path]
 			if !ok {
 				return nil, fs.ErrNotExist
@@ -29,18 +29,14 @@ func newMockFS() *filesystem.Mock {
 			return data, nil
 		},
 		WriteFileFunc: func(path string, data []byte, perm fs.FileMode) error {
-			path = normalize(path)
 			files[path] = data
 			return nil
 		},
 		RemoveFunc: func(path string) error {
-			path = normalize(path)
 			delete(files, path)
 			return nil
 		},
 		RenameFunc: func(oldPath, newPath string) error {
-			oldPath = normalize(oldPath)
-			newPath = normalize(newPath)
 			data, ok := files[oldPath]
 			if !ok {
 				return fs.ErrNotExist
@@ -50,17 +46,17 @@ func newMockFS() *filesystem.Mock {
 			return nil
 		},
 		MkdirAllFunc: func(path string, perm fs.FileMode) error {
-			path = normalize(path)
 			dirs[path] = true
 			return nil
 		},
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
-			path = normalize(path)
 			if !dirs[path] {
-				// Check if any files exist under this path
+				// Any descendant, not just an immediate child: an unrecorded
+				// directory still exists if something lives anywhere below it.
 				hasFiles := false
+				prefix := path + string(filepath.Separator)
 				for k := range files {
-					if filepath.Dir(k) == path {
+					if strings.HasPrefix(k, prefix) {
 						hasFiles = true
 						break
 					}

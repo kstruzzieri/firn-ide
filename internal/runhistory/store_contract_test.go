@@ -1,8 +1,6 @@
 package runhistory
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -21,7 +19,22 @@ const (
 	phase2CWorkspaceTarget = 20 << 20
 )
 
-var phase2CWorkspacePath = filepath.Join(string(filepath.Separator), "repo")
+var phase2CWorkspacePath = filepath.FromSlash("/repo")
+
+// Golden, not recomputed. The workspace ID names a directory on disk in every
+// install that has ever recorded a run; changing how it is derived orphans that
+// history silently, with no error and no migration. Recomputing sha256 here
+// would assert only that the code does what the code does. The value differs per
+// platform because the derivation hashes the cleaned native path.
+var phase2CWorkspaceIDForRepo = map[string]string{
+	"windows": "c6642de6e88ccf8d", // sha256(`\repo`)[:8]
+}[runtime.GOOS]
+
+func init() {
+	if phase2CWorkspaceIDForRepo == "" {
+		phase2CWorkspaceIDForRepo = "816fc349d3faebf8" // sha256("/repo")[:8]
+	}
+}
 
 func phase2CWorkspaceDir(t *testing.T, store *Store) string {
 	t.Helper()
@@ -32,10 +45,8 @@ func phase2CWorkspaceDir(t *testing.T, store *Store) string {
 	return dir
 }
 
-func phase2CExpectedWorkspaceDir(home, workspacePath string) string {
-	workspacePath = filepath.Clean(workspacePath)
-	sum := sha256.Sum256([]byte(workspacePath))
-	return filepath.Join(home, "run-history", hex.EncodeToString(sum[:8]))
+func phase2CExpectedWorkspaceDir(home string) string {
+	return filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
 }
 
 func phase2COrdinaryInput(profileID string, completedAt int64, text string) RecordInput {
@@ -124,13 +135,9 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 		t.Fatalf("history ID = %q, want UUIDv7: %v", saved.HistoryID, err)
 	}
 
-	workspaceDir := phase2CExpectedWorkspaceDir(home, phase2CWorkspacePath)
-	actualWorkspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
-	if err != nil {
-		t.Fatalf("workspaceDir: %v", err)
-	}
-	if actualWorkspaceDir != workspaceDir {
-		t.Fatalf("workspaceDir = %q, want %q", actualWorkspaceDir, workspaceDir)
+	workspaceDir := phase2CExpectedWorkspaceDir(home)
+	if actual := phase2CWorkspaceDir(t, store); actual != workspaceDir {
+		t.Fatalf("workspaceDir = %q, want %q", actual, workspaceDir)
 	}
 	dirInfo, err := os.Stat(workspaceDir)
 	if err != nil {
@@ -205,10 +212,7 @@ func TestStorePhase2C_AppendRejectsInvalidBoundedRecordBeforePublishing(t *testi
 	if _, err := store.Append(phase2CWorkspacePath, input); err == nil {
 		t.Error("Append accepted an invalid persisted record")
 	}
-	workspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
-	if err != nil {
-		t.Fatalf("workspaceDir: %v", err)
-	}
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	if _, err := os.Stat(workspaceDir); err == nil {
 		if files := phase2CRecordFiles(t, workspaceDir); len(files) != 0 {
 			t.Errorf("Append published %d canonical record files, want 0", len(files))
@@ -236,10 +240,7 @@ func TestStorePhase2C_ReconcilesStaleIndexAndUsesStableSameMillisecondOrder(t *t
 	if err != nil {
 		t.Fatalf("first Append: %v", err)
 	}
-	workspaceDir, err := first.workspaceDir(phase2CWorkspacePath)
-	if err != nil {
-		t.Fatalf("workspaceDir: %v", err)
-	}
+	workspaceDir := phase2CWorkspaceDir(t, first)
 	indexPath := filepath.Join(workspaceDir, "index.json")
 	staleIndex, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -305,10 +306,7 @@ func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedact
 	if len(snapshot.Summaries) != 50 {
 		t.Fatalf("summary count = %d, want 50", len(snapshot.Summaries))
 	}
-	workspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
-	if err != nil {
-		t.Fatalf("workspaceDir: %v", err)
-	}
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	if got := len(phase2CRecordFiles(t, workspaceDir)); got != 50 {
 		t.Fatalf("canonical record count = %d, want 50", got)
 	}
@@ -392,10 +390,7 @@ func TestStorePhase2C_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T
 		}
 	}
 
-	workspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
-	if err != nil {
-		t.Fatalf("workspaceDir: %v", err)
-	}
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	var total int64
 	allFiles, err := os.ReadDir(workspaceDir)
 	if err != nil {
@@ -441,10 +436,7 @@ func TestStorePhase2C_EmptyHomeCorruptIndexRecoveryAndUnsupportedVersion(t *test
 	if err != nil {
 		t.Fatalf("seed Append: %v", err)
 	}
-	workspaceDir, err := store.workspaceDir(phase2CWorkspacePath)
-	if err != nil {
-		t.Fatalf("workspaceDir: %v", err)
-	}
+	workspaceDir := phase2CWorkspaceDir(t, store)
 	indexPath := filepath.Join(workspaceDir, "index.json")
 	if err := os.WriteFile(indexPath, []byte("{recover-me"), 0o600); err != nil {
 		t.Fatalf("seed corrupt index: %v", err)
@@ -495,7 +487,7 @@ func TestStorePhase2C_CompoundAggregateAndStepAreAlwaysBoundedSummaryOnly(t *tes
 	for _, kind := range []RecordKind{RecordKindCompoundAggregate, RecordKindCompoundStep} {
 		input := phase2COrdinaryInput("build", 6_000+int64(len(kind)), "ignored")
 		input.Kind = kind
-		input.WorkingDir = filepath.Join(string(filepath.Separator), "sensitive", "compound", "path")
+		input.WorkingDir = filepath.FromSlash("/sensitive/compound/path")
 		input.Entries = entries
 		saved, err := store.Append(phase2CWorkspacePath, input)
 		if err != nil {
