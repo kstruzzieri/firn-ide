@@ -1,105 +1,121 @@
 package git
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"log"
 	"strings"
+
+	"github.com/kstruzzieri/go-llm/agent"
+	"github.com/kstruzzieri/go-llm/golem"
 )
 
-// maxPromptBytes bounds the prompt handed to golem. Local models have small
-// context windows; a giant diff would be truncated by the model anyway, so
-// truncate deliberately and say so in the prompt.
+// maxPromptBytes bounds the serialized staged-diff context handed to golem.
 const maxPromptBytes = 48 * 1024
+
+const truncatedDiffMarker = "\n[diff truncated for prompt budget]"
+
+const generateSystem = "Generate commit messages using only the supplied staged-diff context. Do not call tools."
 
 const generateInstruction = `Write a git commit message for the staged diff below.
 Rules: imperative mood, subject line of at most 72 characters, optional short
 body separated by a blank line explaining why. Output ONLY the commit message,
 no fences, no commentary.`
 
-// MessageGenerator produces commit messages from a staged diff via the golem
-// one-shot CLI (`golem -p`). The exec seams are exported fields so tests (and
-// a future go-llm library-backed implementation) can replace them; that
-// library swap is the planned end state, this shell-out is phase one.
-type MessageGenerator struct {
-	LookPath func(name string) (string, error)
-	Run      func(ctx context.Context, bin string, args []string) (string, error)
-}
+// MessageGenerator produces commit messages from a staged diff via the public
+// golem runtime.
+type MessageGenerator struct{}
 
-// NewMessageGenerator wires the real exec implementations.
-func NewMessageGenerator() *MessageGenerator {
-	return &MessageGenerator{
-		LookPath: exec.LookPath,
-		Run: func(ctx context.Context, bin string, args []string) (string, error) {
-			// ponytail: cmd.Env is intentionally left nil so golem inherits the
-			// full parent environment. Unlike service.go — which scrubs the
-			// repository-local GIT_* vars because it execs `git` directly, where an
-			// inherited GIT_DIR would override cmd.Dir and redirect the operation —
-			// golem never runs git: it only shells out through its generic exec
-			// tool, and that tool (a) is not registered in the `-p` one-shot mode
-			// Firn invokes (approval-gated tools are unavailable), and (b) even in
-			// REPL mode rebuilds the child env from a PATH/HOME/LANG/USER/TMPDIR
-			// allowlist that excludes every GIT_* variable. So no inherited GIT_DIR
-			// can redirect golem, and there is nothing to scrub here. If a future
-			// backend swap (the planned go-llm library embed) starts touching git,
-			// revisit this and reuse scrubGitEnv.
-			cmd := exec.CommandContext(ctx, bin, args...)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				msg := strings.TrimSpace(stderr.String())
-				if msg == "" {
-					msg = err.Error()
-				}
-				return "", errors.New(msg)
-			}
-			return stdout.String(), nil
-		},
-	}
-}
+func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
 
-// Available reports whether golem is on PATH and new enough to support the
-// -p one-shot flag. Older golems are REPL-only; feeding them a prompt would
-// hang, so the feature stays hidden until the user upgrades.
-func (g *MessageGenerator) Available(ctx context.Context) bool {
-	bin, err := g.LookPath("golem")
-	if err != nil {
-		return false
-	}
-	help, err := g.Run(ctx, bin, []string{"-h"})
-	if err != nil {
-		// flag packages exit non-zero on -h; the usage text still arrives.
-		help = err.Error()
-	}
-	return strings.Contains(help, "-p ")
-}
+// Available reports whether commit-message generation is embedded in Firn.
+// Always true: a static probe cannot predict whether generation will work — a
+// missing models.json falls back to a synthetic local-provider config, and a
+// present config can still point at a stopped provider — so failures surface
+// as errors from Generate instead of hiding the feature.
+func (*MessageGenerator) Available(context.Context) bool { return true }
 
-// Generate asks golem for a commit message describing diff. root scopes
-// golem's workspace tools to the repository.
-func (g *MessageGenerator) Generate(ctx context.Context, root, diff string) (string, error) {
+// Generate asks the embedded golem runtime for a commit message describing diff.
+func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (message string, err error) {
 	if strings.TrimSpace(diff) == "" {
 		return "", errors.New("nothing staged: stage changes before generating a message")
 	}
-	bin, err := g.LookPath("golem")
+	stagedDiff, err := stagedDiffContext(diff)
 	if err != nil {
-		return "", fmt.Errorf("golem not found on PATH: %w", err)
+		return "", fmt.Errorf("golem runtime context: %w", err)
 	}
 
-	if len(diff) > maxPromptBytes {
-		diff = diff[:maxPromptBytes] + "\n[diff truncated for prompt budget]"
-	}
-	prompt := generateInstruction + "\n\n" + diff
-
-	out, err := g.Run(ctx, bin, []string{"-root", root, "-p", prompt})
+	runtime, err := golem.New(ctx, golem.Options{
+		Root:     root,
+		System:   generateSystem,
+		MaxSteps: 1, // Never send built-in read-tool output in a second provider request.
+		// InputCeiling is tokens, not bytes: the 48 KiB byte-bounded context is
+		// ~12K tokens, well under it. It does not track the configured model's
+		// real context window; an undersized model rejects at the provider and
+		// that error surfaces from Run.
+		Budget:    agent.Budget{InputCeiling: 32 * 1024},
+		OnWarning: func(warning error) { log.Printf("git: golem warning: %v", warning) },
+	})
 	if err != nil {
-		return "", fmt.Errorf("golem: %w", err)
+		return "", fmt.Errorf("golem runtime initialization: %w", err)
 	}
-	msg := strings.TrimSpace(out)
-	if msg == "" {
-		return "", errors.New("golem returned an empty message")
+	defer func() {
+		if closeErr := runtime.Close(); closeErr != nil {
+			message = ""
+			err = errors.Join(err, fmt.Errorf("golem runtime close: %w", closeErr))
+		}
+	}()
+
+	result, err := runtime.Run(ctx, golem.Turn{
+		RunID:   "firn-commit-message",
+		Message: generateInstruction,
+		Context: []golem.ContextItem{stagedDiff},
+	}, func(golem.Event) error { return nil })
+	if err != nil {
+		return "", fmt.Errorf("golem runtime run: %w", err)
 	}
-	return msg, nil
+
+	message = strings.TrimSpace(result.Answer)
+	if message == "" || strings.ContainsRune(message, '\x00') {
+		return "", errors.New("golem returned an unusable message")
+	}
+	return message, nil
+}
+
+func stagedDiffContext(diff string) (golem.ContextItem, error) {
+	searchLimit := min(len(diff), maxPromptBytes)
+	item := golem.ContextItem{Description: "staged diff", Value: diff[:searchLimit]}
+	encoded, err := json.Marshal([]golem.ContextItem{item})
+	if err != nil {
+		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
+	}
+	if searchLimit == len(diff) && len(encoded) <= maxPromptBytes {
+		return item, nil
+	}
+
+	low, high := 0, searchLimit
+	for low < high {
+		mid := low + (high-low+1)/2
+		item.Value = diff[:mid] + truncatedDiffMarker
+		encoded, err = json.Marshal([]golem.ContextItem{item})
+		if err != nil {
+			return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
+		}
+		if len(encoded) <= maxPromptBytes {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	item.Value = diff[:low] + truncatedDiffMarker
+	encoded, err = json.Marshal([]golem.ContextItem{item})
+	if err != nil {
+		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
+	}
+	if len(encoded) > maxPromptBytes {
+		return golem.ContextItem{}, errors.New("serialized staged diff exceeds prompt budget")
+	}
+	return item, nil
 }

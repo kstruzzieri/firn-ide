@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"firn/internal/git"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"firn/internal/git/gittest"
 )
 
 // isolatedGitEnv strips the repository-local GIT_* variables (so an inherited
@@ -59,6 +58,30 @@ func initGitRepoForApp(t *testing.T) string {
 	return dir
 }
 
+func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {
+	if !NewApp().GitCommitMessageAvailable() {
+		t.Fatal("GitCommitMessageAvailable() = false, want true without a binary")
+	}
+}
+
+func TestGitGenerateCommitMessage_Binding(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	gittest.Start(t, "feat: add f.txt", nil)
+	app := NewApp()
+	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := app.GitGenerateCommitMessage(dir)
+
+	if err != nil {
+		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
+	}
+	if msg != "feat: add f.txt" {
+		t.Errorf("msg = %q", msg)
+	}
+}
+
 func TestGitStatus_Binding(t *testing.T) {
 	dir := initGitRepoForApp(t)
 	app := NewApp()
@@ -90,44 +113,6 @@ func TestGitStageAndCommit_Binding(t *testing.T) {
 	st, _ := app.GitStatus(dir)
 	if len(st.Files) != 0 {
 		t.Errorf("Files after commit = %+v, want empty", st.Files)
-	}
-}
-
-func TestGitCommitMessageAvailable_UsesGenerator(t *testing.T) {
-	app := NewApp()
-	app.gitMsgGen = &git.MessageGenerator{
-		LookPath: func(string) (string, error) { return "", errors.New("absent") },
-		Run: func(context.Context, string, []string) (string, error) {
-			t.Fatal("Run must not be called when binary is absent")
-			return "", nil
-		},
-	}
-
-	if app.GitCommitMessageAvailable() {
-		t.Error("GitCommitMessageAvailable() = true, want false when golem absent")
-	}
-}
-
-func TestGitGenerateCommitMessage_Binding(t *testing.T) {
-	dir := initGitRepoForApp(t)
-	app := NewApp()
-	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
-		t.Fatal(err)
-	}
-	app.gitMsgGen = &git.MessageGenerator{
-		LookPath: func(string) (string, error) { return "/fake/golem", nil },
-		Run: func(_ context.Context, _ string, args []string) (string, error) {
-			return "feat: add f.txt\n", nil
-		},
-	}
-
-	msg, err := app.GitGenerateCommitMessage(dir)
-
-	if err != nil {
-		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
-	}
-	if msg != "feat: add f.txt" {
-		t.Errorf("msg = %q", msg)
 	}
 }
 
