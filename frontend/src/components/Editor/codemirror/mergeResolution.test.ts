@@ -606,6 +606,333 @@ describe('merge resolution editor', () => {
     eofEditor.destroy();
   });
 
+  it.each([
+    ['Current without LF', 'Take Current', 'current line'],
+    ['Incoming with LF', 'Take Incoming', 'incoming line\n'],
+    ['Current without LF from CRLF markers', 'Take Current', 'current line'],
+  ])('preserves the selected side EOF state: %s', (name, label, expected) => {
+    const crlf = name.includes('CRLF');
+    const markerContent =
+      '<<<<<<< current\ncurrent line\n=======\nincoming line\n>>>>>>> incoming\n';
+    const merge = session({
+      content: crlf ? markerContent.replace(/\n/g, '\r\n') : markerContent,
+      lineEndings: crlf ? 'crlf' : 'lf',
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 5,
+          baseEndsWithNewline: false,
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: true,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === label)
+      ?.click();
+
+    expect(editor.getResult()).toBe(expected);
+    editor.destroy();
+  });
+
+  it.each([
+    ['current-first', false, 'current line\nincoming line'],
+    ['incoming-first', true, 'incoming line\ncurrent line\n'],
+  ])('uses the last emitted side EOF state for Both in %s order', (_, reverse, expected) => {
+    const merge = session({
+      content: '<<<<<<< current\ncurrent line\n=======\nincoming line\n>>>>>>> incoming\n',
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 5,
+          baseEndsWithNewline: false,
+          oursEndsWithNewline: true,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+    if (reverse) {
+      (document.querySelector('.cm-mergeResolution-order') as HTMLButtonElement).click();
+    }
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Take Both')
+      ?.click();
+
+    expect(editor.getResult()).toBe(expected);
+    editor.destroy();
+  });
+
+  it.each([
+    [
+      'Current',
+      'Take Current',
+      '<<<<<<< current\nours\n\n=======\nincoming\n>>>>>>> incoming\n',
+      ['ours', ''],
+      ['incoming'],
+      'ours\n\n',
+    ],
+    [
+      'Both',
+      'Take Both',
+      '<<<<<<< current\nours\n=======\nincoming\n\n>>>>>>> incoming\n',
+      ['ours'],
+      ['incoming', ''],
+      'ours\nincoming\n\n',
+    ],
+  ])('preserves a terminal blank side line for %s', (_, label, content, ours, theirs, expected) => {
+    const merge = session({
+      content,
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 6,
+          ours,
+          theirs,
+          oursEndsWithNewline: true,
+          theirsEndsWithNewline: true,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === label)
+      ?.click();
+
+    expect(editor.getResult()).toBe(expected);
+    editor.destroy();
+  });
+
+  it('starts Manual from lossless Both and leaves later EOF edits under user control', () => {
+    const merge = session({
+      content: '<<<<<<< current\ncurrent line\n=======\nincoming line\n>>>>>>> incoming\n',
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 5,
+          baseEndsWithNewline: false,
+          oursEndsWithNewline: true,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit manually')
+      ?.click();
+    expect(editor.getResult()).toBe('current line\nincoming line');
+
+    editor.view.dispatch({
+      changes: { from: editor.getResult().length, to: editor.getResult().length, insert: '\n' },
+    });
+    expect(editor.getResult()).toBe('current line\nincoming line\n');
+    editor.view.dispatch({
+      changes: { from: editor.getResult().length - 1, to: editor.getResult().length, insert: '' },
+    });
+    expect(editor.getResult()).toBe('current line\nincoming line');
+    editor.destroy();
+  });
+
+  it('uses the non-empty side EOF state when the other side is empty', () => {
+    const merge = session({
+      content: '<<<<<<< current\n=======\nincoming line\n>>>>>>> incoming\n',
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 4,
+          ours: [],
+          baseEndsWithNewline: false,
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: true,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Take Both')
+      ?.click();
+
+    expect(editor.getResult()).toBe('incoming line\n');
+    editor.destroy();
+  });
+
+  it('enforces an empty side no-newline target and restores the exact markers', () => {
+    const markerContent = 'prefix\n<<<<<<< current\n=======\n>>>>>>> incoming\n';
+    const merge = session({
+      content: markerContent,
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 2,
+          endLine: 4,
+          ours: [],
+          theirs: [],
+          baseEndsWithNewline: false,
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Take Current')
+      ?.click();
+    expect(editor.getResult()).toBe('prefix');
+    expect(editor.undo()).toBe(true);
+    expect(editor.getResult()).toBe(markerContent);
+    expect(redo(editor.view)).toBe(true);
+    expect(editor.getResult()).toBe('prefix');
+    expect(editor.reopen(0)).toBe(true);
+    expect(editor.getResult()).toBe(markerContent);
+    editor.destroy();
+  });
+
+  it('keeps Manual selection inside an empty no-newline EOF result', () => {
+    const markerContent = 'prefix\n<<<<<<< current\n=======\n>>>>>>> incoming\n';
+    const merge = session({
+      content: markerContent,
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 2,
+          endLine: 4,
+          ours: [],
+          theirs: [],
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const errors: unknown[] = [];
+    const editor = createMergeResolutionEditor(document.body, merge, {
+      extensions: [EditorView.exceptionSink.of((error) => errors.push(error))],
+    });
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit manually')
+      ?.click();
+
+    expect(editor.getResult()).toBe('prefix');
+    expect(editor.getState().decisions).toEqual({ 0: 'M' });
+    expect(editor.view.state.selection.main.head).toBe(editor.getResult().length);
+    expect(errors).toEqual([]);
+    editor.destroy();
+  });
+
+  it('drops only the final newline when an empty EOF side follows a blank line', () => {
+    // ours   = 'x' + ''    -> "x"      (no trailing LF, so oursEndsWithNewline false)
+    // theirs = 'y\n' + 'z' -> "y\n\nz" (no trailing LF)
+    // Taking Incoming then Current must keep the blank line Incoming carried in.
+    const markerContent = [
+      '<<<<<<< current',
+      'x',
+      '=======',
+      'y',
+      '',
+      '>>>>>>> incoming',
+      '<<<<<<< current',
+      '=======',
+      'z',
+      '>>>>>>> incoming',
+      '',
+    ].join('\n');
+    const base = session().regions[0];
+    const merge = session({
+      content: markerContent,
+      regions: [
+        { ...base, index: 0, startLine: 1, endLine: 6, ours: ['x'], theirs: ['y', ''] },
+        {
+          ...base,
+          index: 1,
+          startLine: 7,
+          endLine: 10,
+          ours: [],
+          theirs: ['z'],
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: false,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+    const click = (label: string) =>
+      Array.from(document.querySelectorAll('button'))
+        .filter((button) => button.textContent === label)[0]
+        ?.click();
+
+    click('Take Incoming');
+    expect(editor.getResult()).toBe('y\n\n<<<<<<< current\n=======\nz\n>>>>>>> incoming\n');
+    click('Take Current');
+
+    expect(editor.getResult()).toBe('y\n');
+    expect(editor.getState().decisions).toEqual({ 0: 'I', 1: 'C' });
+    editor.destroy();
+  });
+
+  it('fails closed when empty Both sides disagree about the EOF state', () => {
+    const markerContent = '<<<<<<< current\n=======\n>>>>>>> incoming\n';
+    const merge = session({
+      content: markerContent,
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 3,
+          ours: [],
+          theirs: [],
+          baseEndsWithNewline: false,
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: true,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Take Both')
+      ?.click();
+
+    expect(editor.getResult()).toBe(markerContent);
+    expect(editor.getState().decisions).toEqual({});
+    editor.destroy();
+  });
+
+  it('fails closed when EOF metadata is attached before trailing document content', () => {
+    const markerContent = '<<<<<<< current\ncurrent\n=======\nincoming\n>>>>>>> incoming\n\n';
+    const merge = session({
+      content: markerContent,
+      regions: [
+        {
+          ...session().regions[0],
+          startLine: 1,
+          endLine: 5,
+          oursEndsWithNewline: false,
+          theirsEndsWithNewline: true,
+        },
+      ],
+    });
+    const editor = createMergeResolutionEditor(document.body, merge);
+
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Take Current')
+      ?.click();
+
+    expect(editor.getResult()).toBe(markerContent);
+    expect(editor.getState().decisions).toEqual({});
+    editor.destroy();
+  });
+
   it('keeps the separator mapped through empty resolution undo before a non-empty choice', () => {
     const merge = session({
       content: 'before\n<<<<<<< current\n=======\ncurrent\n>>>>>>> incoming\nafter\n',

@@ -92,6 +92,9 @@ export namespace git {
 	    hasBase: boolean;
 	    oursLabel: string;
 	    theirLabel: string;
+	    baseEndsWithNewline?: boolean;
+	    oursEndsWithNewline?: boolean;
+	    theirsEndsWithNewline?: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new ConflictRegion(source);
@@ -108,6 +111,9 @@ export namespace git {
 	        this.hasBase = source["hasBase"];
 	        this.oursLabel = source["oursLabel"];
 	        this.theirLabel = source["theirLabel"];
+	        this.baseEndsWithNewline = source["baseEndsWithNewline"];
+	        this.oursEndsWithNewline = source["oursEndsWithNewline"];
+	        this.theirsEndsWithNewline = source["theirsEndsWithNewline"];
 	    }
 	}
 	export class ConflictSnapshot {

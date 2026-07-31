@@ -95,7 +95,11 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	// stage, refuse and fall back rather than surface a region that, if
 	// "resolved", would corrupt unchanged text.
 	if len(regions) > 0 {
-		spurious, err := s.regionMarkersInStages(ctx, dir, path, fc.Content, fc.Encoding, regions)
+		stages, err := s.ConflictStages(ctx, dir, path)
+		if err != nil {
+			return ConflictSnapshot{}, err
+		}
+		spurious, err := s.regionMarkersInStages(ctx, dir, path, fc.Content, fc.Encoding, regions, stages)
 		if err != nil {
 			return ConflictSnapshot{}, err
 		}
@@ -277,7 +281,7 @@ func (s *Service) readConflictState(
 		if raw == nil {
 			return ConflictState{}, fmt.Errorf("cannot resolve %s: file is too large (%d bytes)", path, sig.info.Size())
 		}
-		snapshot, err := s.snapshotFromBytes(ctx, dir, path, raw)
+		snapshot, err := s.snapshotFromBytes(ctx, dir, path, raw, sig.stages)
 		if err != nil {
 			return ConflictState{}, err
 		}
@@ -291,7 +295,12 @@ func (s *Service) readConflictState(
 // snapshotFromBytes decodes and parses a conflict snapshot from the exact bytes
 // the source version was computed over, so the displayed content and the
 // guarded version can never describe different reads.
-func (s *Service) snapshotFromBytes(ctx context.Context, dir, path string, raw []byte) (ConflictSnapshot, error) {
+func (s *Service) snapshotFromBytes(
+	ctx context.Context,
+	dir, path string,
+	raw []byte,
+	stages ConflictStages,
+) (ConflictSnapshot, error) {
 	fc := filesystem.NewFileReader(filesystem.NewOS()).DecodeBytes(raw)
 	if fc.IsBinary {
 		return ConflictSnapshot{}, fmt.Errorf("cannot resolve %s: file is binary", path)
@@ -304,7 +313,7 @@ func (s *Service) snapshotFromBytes(ctx context.Context, dir, path string, raw [
 	// the parser cannot distinguish from a real one; resolving it would corrupt
 	// unchanged text. See ConflictSnapshot for the full reasoning.
 	if len(regions) > 0 {
-		spurious, err := s.regionMarkersInStages(ctx, dir, path, fc.Content, fc.Encoding, regions)
+		spurious, err := s.regionMarkersInStages(ctx, dir, path, fc.Content, fc.Encoding, regions, stages)
 		if err != nil {
 			return ConflictSnapshot{}, err
 		}
@@ -932,11 +941,17 @@ func (s *Service) conflictMarkerSize(ctx context.Context, dir, path string) int 
 }
 
 // regionMarkersInStages reports whether a marker plus its immediate content
-// context appears in one of the conflict's index stages (base/ours/theirs).
-// Git's real markers are absent from the clean stage blobs, while a literal
-// marker and its neighbors remain together. Context avoids mistaking an
-// unrelated marker-shaped line elsewhere in a stage for region structure.
-func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content, encoding string, regions []ConflictRegion) (bool, error) {
+// context appears in one of the conflict's index stages (base/ours/theirs), and
+// records authoritative per-stage newline state on a final EOF region. Git's
+// real markers are absent from the clean stage blobs, while a literal marker
+// and its neighbors remain together. Context avoids mistaking an unrelated
+// marker-shaped line elsewhere in a stage for region structure.
+func (s *Service) regionMarkersInStages(
+	ctx context.Context,
+	dir, path, content, encoding string,
+	regions []ConflictRegion,
+	stages ConflictStages,
+) (bool, error) {
 	// The worktree content is decoded (BOM stripped) while FileAtRev returns raw
 	// blob bytes. That only compares reliably for UTF-8; for a wide or legacy
 	// encoding the bytes differ and a spurious region could slip through, so
@@ -999,30 +1014,42 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 			markerContexts[strings.Join(context, "\n")] = true
 		}
 	}
-	// Git inserts a newline around the markers even when a side ends without one,
-	// so a last-region-at-EOF whose stage lacks a trailing newline would silently
-	// gain a newline on resolve. ConflictRegion carries no per-side no-newline
-	// flag yet (a Phase 1 reconstruction concern), so fail closed for that case.
 	eofAtRisk := lastRegionEndsFile(lines, regions)
+	eofRegion := &regions[len(regions)-1]
 
 	const utf8BOM = "\xef\xbb\xbf"
-	for _, rev := range []string{":1", ":2", ":3"} {
-		fc, err := s.FileAtRev(ctx, dir, rev, path)
+	for _, stage := range []struct {
+		name    string
+		blob    *StageBlob
+		newline **bool
+	}{
+		{name: ":1", blob: stages.Base, newline: &eofRegion.BaseEndsWithNewline},
+		{name: ":2", blob: stages.Ours, newline: &eofRegion.OursEndsWithNewline},
+		{name: ":3", blob: stages.Theirs, newline: &eofRegion.TheirsEndsWithNewline},
+	} {
+		if stage.blob == nil {
+			continue
+		}
+		if stage.blob.Size > maxDiffableBytes {
+			return false, fmt.Errorf("cannot resolve %s: %s stage is too large to verify", path, stage.name)
+		}
+		stageContent, err := s.runAtRoot(ctx, dir, "cat-file", "blob", stage.blob.Hash)
 		if err != nil {
 			return false, err
 		}
-		if fc.Binary || fc.Truncated {
+		if len(stageContent) > maxDiffableBytes || isBinary(stageContent) {
 			// Cannot read the stage to compare — a literal marker could hide in
 			// the part we did not see, so refuse rather than miss it.
-			return false, fmt.Errorf("cannot resolve %s: %s stage is binary or too large to verify", path, rev)
+			return false, fmt.Errorf("cannot resolve %s: %s stage is binary or too large to verify", path, stage.name)
 		}
-		if fc.Content == "" {
-			continue // stage absent (delete/modify) or empty
+		if eofAtRisk {
+			hasNewline := strings.HasSuffix(stageContent, "\n")
+			*stage.newline = &hasNewline
 		}
-		if eofAtRisk && !strings.HasSuffix(fc.Content, "\n") {
-			return false, fmt.Errorf("cannot resolve %s: conflict at end of file without a trailing newline", path)
+		if stageContent == "" {
+			continue // present empty blob
 		}
-		stageLines := strings.Split(strings.TrimPrefix(fc.Content, utf8BOM), "\n")
+		stageLines := strings.Split(strings.TrimPrefix(stageContent, utf8BOM), "\n")
 		for i := range stageLines {
 			stageLines[i] = strings.TrimSuffix(stageLines[i], "\r")
 		}
@@ -1038,19 +1065,14 @@ func (s *Service) regionMarkersInStages(ctx context.Context, dir, path, content,
 }
 
 // lastRegionEndsFile reports whether the final conflict region's closing marker
-// is the last meaningful line of the file (only blank lines follow). Only such a
-// region is exposed to the trailing-newline ambiguity git introduces at EOF.
+// reaches EOF, allowing only the newline Git adds after the marker. Any further
+// blank lines are real suffix content and stay on the normal non-EOF path.
 func lastRegionEndsFile(lines []string, regions []ConflictRegion) bool {
 	if len(regions) == 0 {
 		return false
 	}
 	end := regions[len(regions)-1].EndLine // 1-based line of >>>>>>>
-	for i := end; i < len(lines); i++ {     // lines after the closing marker
-		if strings.TrimSuffix(lines[i], "\r") != "" {
-			return false
-		}
-	}
-	return true
+	return end == len(lines) || (end+1 == len(lines) && lines[end] == "")
 }
 
 // repoRoot returns the repository top-level for dir. Unlike runAtRoot (which
@@ -1071,17 +1093,22 @@ func (s *Service) repoRoot(ctx context.Context, dir string) (string, error) {
 // newline (each entry is one line); they are always non-nil slices so a side
 // that resolves to nothing (a delete/modify within the block) is an empty
 // slice, never a JSON null. Base is populated only for diff3-style markers
-// (HasBase); the default merge style omits the ||||||| section.
+// (HasBase); the default merge style omits the ||||||| section. The three
+// EndsWithNewline fields are populated only on a final EOF region from the
+// authoritative stage blobs; nil means that stage is absent.
 type ConflictRegion struct {
-	Index      int      `json:"index"`
-	StartLine  int      `json:"startLine"` // 1-based line of the <<<<<<< marker
-	EndLine    int      `json:"endLine"`   // 1-based line of the >>>>>>> marker
-	Ours       []string `json:"ours"`
-	Base       []string `json:"base"`
-	Theirs     []string `json:"theirs"`
-	HasBase    bool     `json:"hasBase"`
-	OursLabel  string   `json:"oursLabel"`  // text after <<<<<<< (e.g. "HEAD")
-	TheirLabel string   `json:"theirLabel"` // text after >>>>>>> (e.g. branch name)
+	Index                 int      `json:"index"`
+	StartLine             int      `json:"startLine"` // 1-based line of the <<<<<<< marker
+	EndLine               int      `json:"endLine"`   // 1-based line of the >>>>>>> marker
+	Ours                  []string `json:"ours"`
+	Base                  []string `json:"base"`
+	Theirs                []string `json:"theirs"`
+	HasBase               bool     `json:"hasBase"`
+	OursLabel             string   `json:"oursLabel"`  // text after <<<<<<< (e.g. "HEAD")
+	TheirLabel            string   `json:"theirLabel"` // text after >>>>>>> (e.g. branch name)
+	BaseEndsWithNewline   *bool    `json:"baseEndsWithNewline,omitempty"`
+	OursEndsWithNewline   *bool    `json:"oursEndsWithNewline,omitempty"`
+	TheirsEndsWithNewline *bool    `json:"theirsEndsWithNewline,omitempty"`
 }
 
 // Conflict marker characters. Git begins each marker line with a run of the

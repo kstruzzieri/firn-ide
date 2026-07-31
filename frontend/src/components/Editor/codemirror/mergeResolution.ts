@@ -115,6 +115,36 @@ export function resolutionLines(
     : [...region.theirs, ...region.ours];
 }
 
+function resolutionEOFTarget(
+  region: git.ConflictRegion,
+  choice: MergeChoice,
+  order: MergeOrder
+): boolean | null | undefined {
+  const ours = region.oursEndsWithNewline;
+  const theirs = region.theirsEndsWithNewline;
+  if (ours === undefined && theirs === undefined) return null;
+  if (choice === 'C') return ours;
+  if (choice === 'I') return theirs;
+
+  const sides =
+    order === 'current-first'
+      ? ([
+          ['ours', region.ours],
+          ['theirs', region.theirs],
+        ] as const)
+      : ([
+          ['theirs', region.theirs],
+          ['ours', region.ours],
+        ] as const);
+  for (let index = sides.length - 1; index >= 0; index -= 1) {
+    const [side, lines] = sides[index];
+    if (lines.length > 0)
+      return side === 'ours' ? region.oursEndsWithNewline : region.theirsEndsWithNewline;
+  }
+  if (ours === undefined || theirs === undefined || ours !== theirs) return undefined;
+  return ours;
+}
+
 /** Regions touched by document changes in pre-transaction coordinates. */
 export function changedRegionIndexes(
   regions: readonly MappedMergeRegion[],
@@ -471,14 +501,26 @@ function transactionChanges(tr: {
   return changes;
 }
 
+interface OriginalMarkerBlock {
+  text: string;
+  startsAfterNewline: boolean;
+}
+
 function resolutionExtension(
   session: TextMergeSession,
   onStateChange?: (state: MergeResolutionState) => void,
   onDocumentChanged?: () => void
-): { extension: Extension[]; field: StateField<ResolutionFieldState>; originalBlocks: string[] } {
+): {
+  extension: Extension[];
+  field: StateField<ResolutionFieldState>;
+  originalBlocks: OriginalMarkerBlock[];
+} {
   const document = normalizeDocument(session.content);
   const markerRanges = markerBlockRanges(document, session.regions);
-  const originalBlocks = markerRanges.map(({ from, to }) => document.slice(from, to));
+  const originalBlocks = markerRanges.map(({ from, to }) => ({
+    text: document.slice(from, to),
+    startsAfterNewline: from > 0 && document[from - 1] === '\n',
+  }));
   const regionWordMarks = session.regions.map((region) =>
     sideWordMarks(region.ours, region.theirs)
   );
@@ -784,16 +826,53 @@ function applyResolution(
   if (!range || !region || state.decisions[index] !== undefined) return false;
   // Manual starts from both real sides, preserving every line for the user to edit.
   const decision: MergeDecision = choice === 'M' ? 'M' : choice;
-  const lines = resolutionLines(region, choice === 'M' ? 'B' : choice, state.order);
-  const insert = `${lines.join('\n')}${lines.length > 0 && range.trailingNewline ? '\n' : ''}`;
+  const effectiveChoice = choice === 'M' ? 'B' : choice;
+  const lines = resolutionLines(region, effectiveChoice, state.order);
+  const eofTarget = resolutionEOFTarget(region, effectiveChoice, state.order);
+  if (eofTarget === undefined) return false;
+  let changes: { from: number; to: number; insert: string };
+  if (eofTarget === null) {
+    changes = {
+      from: range.from,
+      to: range.to,
+      insert: `${lines.join('\n')}${lines.length > 0 && range.trailingNewline ? '\n' : ''}`,
+    };
+  } else {
+    const document = view.state.doc.toString();
+    if (range.to !== document.length) return false;
+    let result = document.slice(0, range.from) + lines.join('\n');
+    if (eofTarget) {
+      if (lines.length > 0 || !result.endsWith('\n')) result += '\n';
+    } else {
+      // Exactly one newline: the EOF flag describes a single byte (is the blob's
+      // last byte an LF), never a run. Stripping greedily would delete real
+      // trailing blank lines carried in from an earlier region's resolution.
+      result = result.replace(/\n$/, '');
+    }
+    let from = 0;
+    while (from < document.length && from < result.length && document[from] === result[from]) {
+      from += 1;
+    }
+    changes = { from, to: document.length, insert: result.slice(from) };
+  }
   const decisions = { ...state.decisions, [index]: decision };
   const activeIndex =
     choice === 'M' ? index : nextUnresolved(decisions, session.regions.length, index, 1);
   view.dispatch({
-    changes: { from: range.from, to: range.to, insert },
+    changes,
     effects: [setMergeDecision.of({ index, decision }), setMergeActive.of(activeIndex)],
     annotations: isolateHistory.of('full'),
-    ...(choice === 'M' ? { selection: { anchor: range.from }, scrollIntoView: true } : {}),
+    ...(choice === 'M'
+      ? {
+          selection: {
+            anchor: Math.min(
+              range.from,
+              view.state.doc.length - (changes.to - changes.from) + changes.insert.length
+            ),
+          },
+          scrollIntoView: true,
+        }
+      : {}),
   });
   view.focus();
   if (choice !== 'M' && activeIndex !== null) activateRegion(view, field, activeIndex);
@@ -804,7 +883,7 @@ function applyResolution(
 function reopenRegion(
   view: EditorView,
   field: StateField<ResolutionFieldState>,
-  originalBlocks: readonly string[],
+  originalBlocks: readonly OriginalMarkerBlock[],
   index: number,
   activate: boolean
 ): boolean {
@@ -813,8 +892,8 @@ function reopenRegion(
   if (state.decisions[index] === undefined) return false;
   const snapshot = rangesIn(state);
   const range = snapshot.find((item) => item.index === index);
-  const block = originalBlocks[index];
-  if (!range || block === undefined) return false;
+  const original = originalBlocks[index];
+  if (!range || original === undefined) return false;
   if (
     range.from < range.to &&
     snapshot.some(
@@ -824,7 +903,13 @@ function reopenRegion(
   )
     return false;
 
-  const insert = `${block}${range.trailingNewline ? '\n' : ''}`;
+  const leadingNewline =
+    original.startsAfterNewline &&
+    range.from > 0 &&
+    view.state.doc.sliceString(range.from - 1, range.from) !== '\n'
+      ? '\n'
+      : '';
+  const insert = `${leadingNewline}${original.text}${range.trailingNewline ? '\n' : ''}`;
   const delta = insert.length - (range.to - range.from);
   // Rebuild the range snapshot deterministically by ORIGINAL REGION ORDER (index),
   // never by coordinate comparison. Regions parse in document order, so index order
