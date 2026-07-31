@@ -71,16 +71,17 @@ func (*MessageGenerator) Generate(ctx context.Context, root, diff string) (messa
 }
 
 func stagedDiffContext(diff string) (golem.ContextItem, error) {
-	item := golem.ContextItem{Description: "staged diff", Value: diff}
+	searchLimit := min(len(diff), maxPromptBytes)
+	item := golem.ContextItem{Description: "staged diff", Value: diff[:searchLimit]}
 	encoded, err := json.Marshal([]golem.ContextItem{item})
 	if err != nil {
 		return golem.ContextItem{}, fmt.Errorf("serialize staged diff: %w", err)
 	}
-	if len(encoded) <= maxPromptBytes {
+	if searchLimit == len(diff) && len(encoded) <= maxPromptBytes {
 		return item, nil
 	}
 
-	low, high := 0, len(diff)
+	low, high := 0, searchLimit
 	for low < high {
 		mid := low + (high-low+1)/2
 		item.Value = diff[:mid] + truncatedDiffMarker

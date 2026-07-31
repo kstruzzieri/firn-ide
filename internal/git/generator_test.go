@@ -115,7 +115,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 	}
 
 	provider = newTestProvider(t, "chore: trim diff", nil)
-	huge := strings.Repeat("x", maxPromptBytes) + "must not reach provider"
+	huge := strings.Repeat("x", maxPromptBytes*4) + "must not reach provider"
 	if _, err := NewMessageGenerator().Generate(context.Background(), t.TempDir(), huge); err != nil {
 		t.Fatalf("Generate(huge) error = %v", err)
 	}
