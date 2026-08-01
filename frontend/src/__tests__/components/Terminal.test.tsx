@@ -918,6 +918,92 @@ describe('Terminal — conflicted Problems projection', () => {
     expect(screen.getByText('Unexpected indentation')).toBeInTheDocument();
   });
 
+  it('keeps the collapsed warning across a status refresh while the re-read is in flight', async () => {
+    const second = deferred<ReturnType<typeof conflictState>>();
+    mockGitConflictState
+      .mockResolvedValueOnce(conflictState('app.go', [conflictRegion(0)]))
+      .mockReturnValueOnce(second.promise);
+    setGitStatus('/repo', [{ path: 'app.go', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore
+      .getState()
+      .setDiagnostics('file:///repo/app.go', [diagnostic('expected declaration')]);
+
+    render(<Terminal />);
+    expect(await screen.findByText(/language diagnostics are suspended/)).toBeInTheDocument();
+
+    act(() => {
+      setGitStatus('/repo', [{ path: 'app.go', index: 'U', worktree: 'U', unmerged: true }], 2);
+    });
+
+    expect(screen.getByText(/language diagnostics are suspended/)).toBeInTheDocument();
+    expect(screen.queryByText('expected declaration')).not.toBeInTheDocument();
+
+    await act(async () => {
+      second.resolve(conflictState('app.go', [conflictRegion(0)]));
+      await second.promise;
+    });
+
+    expect(screen.getByText(/language diagnostics are suspended/)).toBeInTheDocument();
+  });
+
+  it('does not repeat an identical conflict read failure toast on every refresh', async () => {
+    mockGitConflictState.mockRejectedValue(new Error('disk denied'));
+    setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }]);
+    render(<Terminal />);
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+
+    act(() => {
+      useIDEStore.setState({ toast: null });
+    });
+    act(() => {
+      setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }], 2);
+    });
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useIDEStore.getState().toast).toBeNull();
+
+    mockGitConflictState.mockResolvedValue(conflictState('app.py', [conflictRegion(0)]));
+    act(() => {
+      setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }], 3);
+    });
+    expect(await screen.findByText(/language diagnostics are suspended/)).toBeInTheDocument();
+
+    mockGitConflictState.mockRejectedValue(new Error('disk denied'));
+    act(() => {
+      setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }], 4);
+    });
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+  });
+
+  it('retains real diagnostics when a snapshot arrives without parsed regions', async () => {
+    const read = deferred<unknown>();
+    mockGitConflictState.mockReturnValue(read.promise);
+    const state = conflictState('odd.ts', [conflictRegion(0)]);
+    setGitStatus('/repo', [{ path: 'odd.ts', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore.getState().setDiagnostics('file:///repo/odd.ts', [diagnostic('real error')]);
+
+    render(<Terminal />);
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'odd.ts'));
+    await act(async () => {
+      read.resolve({ ...state, snapshot: { ...state.snapshot, regions: undefined } });
+      await read.promise;
+    });
+
+    expect(screen.getByText('real error')).toBeInTheDocument();
+    expect(screen.queryByText(/language diagnostics are suspended/)).not.toBeInTheDocument();
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
   it('does not install a stale conflict read after clean status replaces it', async () => {
     const pending = deferred<ReturnType<typeof conflictState>>();
     mockGitConflictState.mockReturnValue(pending.promise);
