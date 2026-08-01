@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { fileURIToPath } from '../utils/lspUri';
+import { fileURIToPath, pathsReferToSameFile } from '../utils/lspUri';
 import { getPlatform } from '../utils/platform';
 
 const pathSep = getPlatform() === 'windows' ? '\\' : '/';
@@ -295,6 +295,23 @@ export interface GroupedDiagnostic {
   diagnostics: LSPDiagnostic[];
 }
 
+export interface ConflictDiagnosticSummary {
+  filePath: string;
+  repoRoot: string;
+  repoPath: string;
+  unresolvedRegionCount: number;
+  markerLineCount: number;
+}
+
+export type ProblemsGroup =
+  | ({ kind: 'diagnostics' } & GroupedDiagnostic)
+  | ({ kind: 'conflict' } & ConflictDiagnosticSummary);
+
+export interface ProblemsProjection {
+  groups: ProblemsGroup[];
+  count: number;
+}
+
 /** Compute grouped diagnostics from a diagnostics Map. Pure function for use in selectors. */
 export function computeGroupedDiagnostics(
   diagnostics: Map<string, LSPDiagnostic[]>
@@ -324,6 +341,41 @@ export function computeGroupedDiagnostics(
   }
 
   return groups;
+}
+
+/** Derive the ordinary Problems view without altering published LSP diagnostics. */
+export function computeProblemsProjection(
+  diagnostics: Map<string, LSPDiagnostic[]>,
+  conflicts: ConflictDiagnosticSummary[]
+): ProblemsProjection {
+  const groups: ProblemsGroup[] = [];
+  const emittedConflicts = new Set<number>();
+  let count = 0;
+
+  for (const group of computeGroupedDiagnostics(diagnostics)) {
+    const conflictIndex = conflicts.findIndex((conflict) =>
+      pathsReferToSameFile(conflict.filePath, group.filePath)
+    );
+    if (conflictIndex < 0) {
+      groups.push({ kind: 'diagnostics', ...group });
+      count += group.diagnostics.length;
+      continue;
+    }
+    if (emittedConflicts.has(conflictIndex)) continue;
+
+    const conflict = conflicts[conflictIndex];
+    groups.push({ kind: 'conflict', ...conflict });
+    count += conflict.unresolvedRegionCount;
+    emittedConflicts.add(conflictIndex);
+  }
+
+  conflicts.forEach((conflict, index) => {
+    if (emittedConflicts.has(index)) return;
+    groups.push({ kind: 'conflict', ...conflict });
+    count += conflict.unresolvedRegionCount;
+  });
+
+  return { groups, count };
 }
 
 /** Reactive hook: all diagnostics grouped by file. Uses the diagnostics map reference for subscription. */

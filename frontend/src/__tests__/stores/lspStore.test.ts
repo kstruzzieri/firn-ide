@@ -6,6 +6,7 @@ import {
   useLSPInfoCount,
   useLSPWarningCount,
   useGroupedDiagnostics,
+  computeProblemsProjection,
   findServerStatusForFile,
   pathContainsOrEquals,
   type LSPDiagnostic,
@@ -220,6 +221,130 @@ describe('lspStore', () => {
 
       expect(result.current).toHaveLength(1);
       expect(result.current[0].filePath).toContain('b.ts');
+    });
+
+    it('projects one conflict row while counting unresolved regions and clean diagnostics', () => {
+      const conflicted = [
+        {
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 7 } },
+          severity: 1,
+          code: 1185,
+          source: 'ts',
+          message: 'Merge conflict marker encountered.',
+        },
+        {
+          range: { start: { line: 3, character: 0 }, end: { line: 3, character: 7 } },
+          severity: 1,
+          code: 1185,
+          source: 'ts',
+          message: 'Merge conflict marker encountered.',
+        },
+      ];
+      const clean = [
+        {
+          range: { start: { line: 4, character: 2 }, end: { line: 4, character: 6 } },
+          severity: 2,
+          source: 'gopls',
+          message: 'unused variable',
+        },
+        {
+          range: { start: { line: 8, character: 1 }, end: { line: 8, character: 5 } },
+          severity: 3,
+          source: 'gopls',
+          message: 'consider simplifying',
+        },
+      ];
+      const diagnostics = new Map<string, LSPDiagnostic[]>([
+        ['file:///repo/conflict.ts', conflicted],
+        ['file:///repo/clean.go', clean],
+      ]);
+
+      const projection = computeProblemsProjection(diagnostics, [
+        {
+          filePath: '/repo/conflict.ts',
+          repoRoot: '/repo',
+          repoPath: 'conflict.ts',
+          unresolvedRegionCount: 4,
+          markerLineCount: 12,
+        },
+      ]);
+
+      expect(projection.count).toBe(6);
+      expect(projection.groups).toEqual([
+        {
+          kind: 'conflict',
+          filePath: '/repo/conflict.ts',
+          repoRoot: '/repo',
+          repoPath: 'conflict.ts',
+          unresolvedRegionCount: 4,
+          markerLineCount: 12,
+        },
+        {
+          kind: 'diagnostics',
+          filePath: '/repo/clean.go',
+          uri: 'file:///repo/clean.go',
+          diagnostics: clean,
+        },
+      ]);
+      expect(diagnostics.get('file:///repo/conflict.ts')).toBe(conflicted);
+      expect(diagnostics.get('file:///repo/clean.go')).toBe(clean);
+    });
+
+    it('collapses conflicted diagnostics without depending on language or diagnostic text', () => {
+      const diagnostic: LSPDiagnostic = {
+        range: { start: { line: 2, character: 0 }, end: { line: 2, character: 2 } },
+        severity: 1,
+        code: 'syntax',
+        source: 'gopls',
+        message: 'expected declaration',
+      };
+
+      const projection = computeProblemsProjection(
+        new Map([['file:///repo/main.go', [diagnostic]]]),
+        [
+          {
+            filePath: '/repo/main.go',
+            repoRoot: '/repo',
+            repoPath: 'main.go',
+            unresolvedRegionCount: 1,
+            markerLineCount: 4,
+          },
+        ]
+      );
+
+      expect(projection.count).toBe(1);
+      expect(projection.groups).toEqual([
+        expect.objectContaining({
+          kind: 'conflict',
+          repoPath: 'main.go',
+          unresolvedRegionCount: 1,
+          markerLineCount: 4,
+        }),
+      ]);
+    });
+
+    it('keeps real diagnostics when no exact conflict snapshot is available', () => {
+      const diagnostic: LSPDiagnostic = {
+        range: { start: { line: 1, character: 0 }, end: { line: 1, character: 3 } },
+        severity: 1,
+        source: 'pyright',
+        message: 'Unexpected indentation',
+      };
+
+      const projection = computeProblemsProjection(
+        new Map([['file:///repo/app.py', [diagnostic]]]),
+        []
+      );
+
+      expect(projection.count).toBe(1);
+      expect(projection.groups).toEqual([
+        {
+          kind: 'diagnostics',
+          filePath: '/repo/app.py',
+          uri: 'file:///repo/app.py',
+          diagnostics: [diagnostic],
+        },
+      ]);
     });
 
     it('counts clear to zero when diagnostics are removed', () => {
