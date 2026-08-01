@@ -295,6 +295,7 @@ func TestPackageJSONClassification(t *testing.T) {
 	}{
 		{"server and tooling dependencies", []byte(`{"dependencies":{"express":"1"},"devDependencies":{"typescript":"1","eslint":"1"}}`), nil},
 		{"dependency-less manifest", []byte(`{"name":"service"}`), nil},
+		{"empty dependency maps", []byte(`{"dependencies":{},"devDependencies":{}}`), nil},
 		{"capitalized dependencies ignored", []byte(`{"Dependencies":{"react":"1"}}`), nil},
 		{"capitalized devDependencies ignored", []byte(`{"DevDependencies":{"vite":"1"}}`), nil},
 		{"malformed manifest", []byte(`{"dependencies":`), nil},
