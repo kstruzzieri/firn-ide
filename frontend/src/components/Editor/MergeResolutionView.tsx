@@ -467,6 +467,7 @@ function TextResolutionContent({
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
   const decisionsRef = useRef(session.decisions);
+  const activeIndexRef = useRef<number | null>(null);
   const hadSurfaceFocusRef = useRef(false);
   const themeId = useEditorSyntaxTheme();
   const themeIdRef = useRef(themeId);
@@ -564,7 +565,9 @@ function TextResolutionContent({
             ? `${decisionLabel(choice)} cannot be applied because this conflict is not at the end of the document as expected. Reopen merge resolution and try again.`
             : choice === 'B'
               ? "Take Both cannot safely represent this conflict's end-of-file newline. Choose Current or Incoming instead."
-              : `${decisionLabel(choice)} cannot be applied because its end-of-file newline state is unavailable. Choose a different side or reopen merge resolution.`
+              : choice === 'M'
+                ? 'Edit manually cannot safely start with both sides because their end-of-file newline state is ambiguous. Choose Current or Incoming, then edit the result.'
+                : `${decisionLabel(choice)} cannot be applied because its end-of-file newline state is unavailable. Choose a different side or reopen merge resolution.`
         ),
       onStateChange: (next) => {
         const previous = decisionsRef.current;
@@ -580,11 +583,11 @@ function TextResolutionContent({
           next.decisions,
           sessionRef.current.regions.length
         );
-        if (message !== null) {
-          setAnnouncement(message);
+        if (message !== null) setAnnouncement(message);
+        if (message !== null || next.activeIndex !== activeIndexRef.current)
           setResolutionRefusal(null);
-        }
         decisionsRef.current = next.decisions;
+        activeIndexRef.current = next.activeIndex;
         setResolutionState(next);
       },
     });
@@ -592,6 +595,7 @@ function TextResolutionContent({
     appliedThemeIdRef.current = themeIdRef.current;
     const initialEditorState = editor.getState();
     decisionsRef.current = initialEditorState.decisions;
+    activeIndexRef.current = initialEditorState.activeIndex;
     setResolutionState(initialEditorState);
     setResolutionRefusal(null);
     setReopened(null);

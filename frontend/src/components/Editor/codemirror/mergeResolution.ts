@@ -855,7 +855,7 @@ function applyResolution(
   const eofTarget = resolutionEOFTarget(region, effectiveChoice, state.order);
   if (eofTarget === undefined) {
     onResolutionRefused?.(choice, 'ambiguous-eof');
-    return false;
+    return onResolutionRefused !== undefined;
   }
   let changes: { from: number; to: number; insert: string };
   if (eofTarget === null) {
@@ -868,7 +868,7 @@ function applyResolution(
     const document = view.state.doc.toString();
     if (range.to !== document.length) {
       onResolutionRefused?.(choice, 'nonterminal-eof');
-      return false;
+      return onResolutionRefused !== undefined;
     }
     let result = document.slice(0, range.from) + lines.join('\n');
     if (eofTarget) {

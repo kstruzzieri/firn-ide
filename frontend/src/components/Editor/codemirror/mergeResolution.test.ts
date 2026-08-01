@@ -912,12 +912,21 @@ describe('merge resolution editor', () => {
     expect(onResolutionRefused).toHaveBeenCalledWith('B', 'ambiguous-eof');
 
     onResolutionRefused.mockClear();
-    runScopeHandlers(
+    const handled = runScopeHandlers(
       editor.view,
       new KeyboardEvent('keydown', { key: '3', ctrlKey: true }),
       'editor'
     );
+    expect(handled).toBe(true);
     expect(onResolutionRefused).toHaveBeenCalledWith('B', 'ambiguous-eof');
+
+    onResolutionRefused.mockClear();
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit manually')
+      ?.click();
+    expect(editor.getResult()).toBe(markerContent);
+    expect(editor.getState().decisions).toEqual({});
+    expect(onResolutionRefused).toHaveBeenCalledWith('M', 'ambiguous-eof');
     editor.destroy();
   });
 

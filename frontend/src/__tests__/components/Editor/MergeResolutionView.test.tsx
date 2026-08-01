@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
-import type { MergeSession } from '../../../stores/gitStore';
+import type { MergeSession, TextMergeSession } from '../../../stores/gitStore';
 
 const controller = {
   view: { requestMeasure: jest.fn(), focus: jest.fn() },
@@ -158,7 +158,7 @@ const textSession = {
   ],
   decisions: {},
   readOnly: false,
-} as unknown as MergeSession;
+} as unknown as TextMergeSession;
 
 const sidesSession = {
   kind: 'sides',
@@ -190,8 +190,12 @@ beforeEach(() => {
 });
 
 describe('MergeResolutionView', () => {
-  it('announces an EOF refusal without mutating and clears it after progress or a new request', () => {
-    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+  it('announces an EOF refusal without mutating and clears it after navigation, progress, or a new request', () => {
+    const navigableSession = {
+      ...textSession,
+      regions: [...textSession.regions, { ...textSession.regions[0], index: 1 }],
+    } as MergeSession;
+    const { rerender } = render(<MergeResolutionView session={navigableSession} visible />);
 
     act(() => onResolutionRefused?.('B', 'ambiguous-eof'));
 
@@ -199,6 +203,12 @@ describe('MergeResolutionView', () => {
     expect(recordDecision).not.toHaveBeenCalled();
     expect(reopenDecision).not.toHaveBeenCalled();
     expect(markMergeDirty).not.toHaveBeenCalled();
+
+    act(() => onStateChange?.({ activeIndex: 1, decisions: {}, order: 'current-first' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    act(() => onResolutionRefused?.('M', 'ambiguous-eof'));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Edit manually.*Current or Incoming/i);
 
     act(() =>
       onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
@@ -210,7 +220,7 @@ describe('MergeResolutionView', () => {
 
     rerender(
       <MergeResolutionView
-        session={{ ...textSession, requestRevision: 2 } as MergeSession}
+        session={{ ...navigableSession, requestRevision: 2 } as MergeSession}
         visible
       />
     );
