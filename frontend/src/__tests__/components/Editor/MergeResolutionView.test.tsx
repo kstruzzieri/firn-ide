@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
-import type { MergeSession } from '../../../stores/gitStore';
+import type { ResolutionRefusalHandler } from '../../../components/Editor/codemirror';
+import type { MergeSession, TextMergeSession } from '../../../stores/gitStore';
 
 const controller = {
   view: { requestMeasure: jest.fn(), focus: jest.fn() },
@@ -23,6 +24,7 @@ const controller = {
 let syntaxThemeId = 'glacier';
 let onStateChange: ((state: MergeResolutionState) => void) | undefined;
 let onDocumentChanged: (() => void) | undefined;
+let onResolutionRefused: ResolutionRefusalHandler | undefined;
 const createMergeResolutionEditor = jest.fn(
   (
     _host: HTMLElement,
@@ -30,11 +32,13 @@ const createMergeResolutionEditor = jest.fn(
     options: {
       onStateChange?: (state: MergeResolutionState) => void;
       onDocumentChanged?: () => void;
+      onResolutionRefused?: ResolutionRefusalHandler;
       syntaxThemeId?: string;
     }
   ) => {
     onStateChange = options.onStateChange;
     onDocumentChanged = options.onDocumentChanged;
+    onResolutionRefused = options.onResolutionRefused;
     return controller;
   }
 );
@@ -62,6 +66,7 @@ jest.mock('../../../components/Editor/codemirror', () => ({
     options: {
       onStateChange?: (state: MergeResolutionState) => void;
       onDocumentChanged?: () => void;
+      onResolutionRefused?: ResolutionRefusalHandler;
     }
   ) => createMergeResolutionEditor(host, session, options),
 }));
@@ -150,7 +155,7 @@ const textSession = {
   ],
   decisions: {},
   readOnly: false,
-} as unknown as MergeSession;
+} as unknown as TextMergeSession;
 
 const sidesSession = {
   kind: 'sides',
@@ -176,11 +181,49 @@ beforeEach(() => {
   syntaxThemeId = 'glacier';
   onStateChange = undefined;
   onDocumentChanged = undefined;
+  onResolutionRefused = undefined;
   storeSession = null;
   applyMergeReload.mockImplementation(() => Promise.resolve());
 });
 
 describe('MergeResolutionView', () => {
+  it('announces an EOF refusal without mutating and clears it after navigation, progress, or a new request', () => {
+    const navigableSession = {
+      ...textSession,
+      regions: [...textSession.regions, { ...textSession.regions[0], index: 1 }],
+    } as MergeSession;
+    const { rerender } = render(<MergeResolutionView session={navigableSession} visible />);
+
+    act(() => onResolutionRefused?.('B', 'ambiguous-eof'));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/Take Both.*Current or Incoming/i);
+    expect(recordDecision).not.toHaveBeenCalled();
+    expect(reopenDecision).not.toHaveBeenCalled();
+    expect(markMergeDirty).not.toHaveBeenCalled();
+
+    act(() => onStateChange?.({ activeIndex: 1, decisions: {}, order: 'current-first' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    act(() => onResolutionRefused?.('M', 'ambiguous-eof'));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Edit manually.*Current or Incoming/i);
+
+    act(() =>
+      onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    act(() => onResolutionRefused?.('C', 'nonterminal-eof'));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Current.*not at the end.*Reopen/i);
+
+    rerender(
+      <MergeResolutionView
+        session={{ ...navigableSession, requestRevision: 2 } as MergeSession}
+        visible
+      />
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('mounts a text Result editor, reflects its decisions, and finalizes only its live document', async () => {
     render(<MergeResolutionView session={textSession} visible />);
 

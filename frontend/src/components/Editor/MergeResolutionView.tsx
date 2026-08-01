@@ -467,12 +467,14 @@ function TextResolutionContent({
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
   const decisionsRef = useRef(session.decisions);
+  const activeIndexRef = useRef<number | null>(null);
   const hadSurfaceFocusRef = useRef(false);
   const themeId = useEditorSyntaxTheme();
   const themeIdRef = useRef(themeId);
   const appliedThemeIdRef = useRef(themeId);
   themeIdRef.current = themeId;
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
+  const [resolutionRefusal, setResolutionRefusal] = useState<string | null>(null);
   const [reopened, setReopened] = useState<number | null>(null);
   const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
   const [baseExpanded, setBaseExpanded] = useState(false);
@@ -557,6 +559,16 @@ function TextResolutionContent({
     const editor = createMergeResolutionEditor(hostRef.current, initialSession, {
       syntaxThemeId: themeIdRef.current,
       onDocumentChanged: () => useGitStore.getState().markMergeDirty(),
+      onResolutionRefused: (choice, reason) =>
+        setResolutionRefusal(
+          reason === 'nonterminal-eof'
+            ? `${decisionLabel(choice)} cannot be applied because this conflict is not at the end of the document as expected. Reopen merge resolution and try again.`
+            : choice === 'B'
+              ? "Take Both cannot safely represent this conflict's end-of-file newline. Choose Current or Incoming instead."
+              : choice === 'M'
+                ? 'Edit manually cannot safely start with both sides because their end-of-file newline state is ambiguous. Choose Current or Incoming, then edit the result.'
+                : `${decisionLabel(choice)} cannot be applied because its end-of-file newline state is unavailable. Choose a different side or reopen merge resolution.`
+        ),
       onStateChange: (next) => {
         const previous = decisionsRef.current;
         const actions = useGitStore.getState();
@@ -572,7 +584,10 @@ function TextResolutionContent({
           sessionRef.current.regions.length
         );
         if (message !== null) setAnnouncement(message);
+        if (message !== null || next.activeIndex !== activeIndexRef.current)
+          setResolutionRefusal(null);
         decisionsRef.current = next.decisions;
+        activeIndexRef.current = next.activeIndex;
         setResolutionState(next);
       },
     });
@@ -580,7 +595,9 @@ function TextResolutionContent({
     appliedThemeIdRef.current = themeIdRef.current;
     const initialEditorState = editor.getState();
     decisionsRef.current = initialEditorState.decisions;
+    activeIndexRef.current = initialEditorState.activeIndex;
     setResolutionState(initialEditorState);
+    setResolutionRefusal(null);
     setReopened(null);
     // Restore focus into the rebuilt surface only if it was inside before the
     // swap: a background reload must never steal focus from another panel.
@@ -705,6 +722,13 @@ function TextResolutionContent({
         </div>
       </header>
       <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
+      {resolutionRefusal && (
+        <div className={styles.notice}>
+          <span className={styles.noticeMessage} role="alert">
+            {resolutionRefusal}
+          </span>
+        </div>
+      )}
       {!REGIONS_CARRY_BASE(session) && (
         <div className={styles.baseStrip}>
           <button

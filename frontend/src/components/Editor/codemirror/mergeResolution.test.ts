@@ -2,6 +2,7 @@ import { redo } from '@codemirror/commands';
 import { searchPanelOpen } from '@codemirror/search';
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, runScopeHandlers } from '@codemirror/view';
+import userEvent from '@testing-library/user-event';
 
 jest.mock('./extensions', () => ({}));
 jest.mock('./diagnostics', () => ({}));
@@ -880,7 +881,7 @@ describe('merge resolution editor', () => {
     editor.destroy();
   });
 
-  it('fails closed when empty Both sides disagree about the EOF state', () => {
+  it('fails closed and reports when keyboard-activated Both sides disagree at EOF', async () => {
     const markerContent = '<<<<<<< current\n=======\n>>>>>>> incoming\n';
     const merge = session({
       content: markerContent,
@@ -897,14 +898,35 @@ describe('merge resolution editor', () => {
         },
       ],
     });
-    const editor = createMergeResolutionEditor(document.body, merge);
+    const onResolutionRefused = jest.fn();
+    const editor = createMergeResolutionEditor(document.body, merge, { onResolutionRefused });
 
-    Array.from(document.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Take Both')
-      ?.click();
+    const both = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Take Both'
+    ) as HTMLButtonElement;
+    both.focus();
+    await userEvent.keyboard('{Enter}');
 
     expect(editor.getResult()).toBe(markerContent);
     expect(editor.getState().decisions).toEqual({});
+    expect(onResolutionRefused).toHaveBeenCalledWith('B', 'ambiguous-eof');
+
+    onResolutionRefused.mockClear();
+    const handled = runScopeHandlers(
+      editor.view,
+      new KeyboardEvent('keydown', { key: '3', ctrlKey: true }),
+      'editor'
+    );
+    expect(handled).toBe(true);
+    expect(onResolutionRefused).toHaveBeenCalledWith('B', 'ambiguous-eof');
+
+    onResolutionRefused.mockClear();
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit manually')
+      ?.click();
+    expect(editor.getResult()).toBe(markerContent);
+    expect(editor.getState().decisions).toEqual({});
+    expect(onResolutionRefused).toHaveBeenCalledWith('M', 'ambiguous-eof');
     editor.destroy();
   });
 
@@ -922,7 +944,8 @@ describe('merge resolution editor', () => {
         },
       ],
     });
-    const editor = createMergeResolutionEditor(document.body, merge);
+    const onResolutionRefused = jest.fn();
+    const editor = createMergeResolutionEditor(document.body, merge, { onResolutionRefused });
 
     Array.from(document.querySelectorAll('button'))
       .find((button) => button.textContent === 'Take Current')
@@ -930,6 +953,7 @@ describe('merge resolution editor', () => {
 
     expect(editor.getResult()).toBe(markerContent);
     expect(editor.getState().decisions).toEqual({});
+    expect(onResolutionRefused).toHaveBeenCalledWith('C', 'nonterminal-eof');
     editor.destroy();
   });
 
