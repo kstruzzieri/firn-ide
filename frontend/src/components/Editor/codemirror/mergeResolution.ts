@@ -37,7 +37,7 @@ const MAX_PROVENANCE_LINES = 1_000;
 export type MergeChoice = Exclude<MergeDecision, 'M'>;
 export type MergeOrder = 'current-first' | 'incoming-first';
 export type MergeDirection = 1 | -1;
-type ResolutionRefusalHandler = (
+export type ResolutionRefusalHandler = (
   choice: MergeChoice | 'M',
   reason: 'ambiguous-eof' | 'nonterminal-eof'
 ) => void;
@@ -834,6 +834,12 @@ function activateRegion(
   return true;
 }
 
+/**
+ * Returns true when the choice was applied OR when a fail-closed refusal was
+ * reported through `onResolutionRefused` — "handled", so the Mod-N keybinding
+ * is consumed rather than falling through. The remaining false returns are the
+ * silent guards whose states correspond to a disabled control.
+ */
 function applyResolution(
   view: EditorView,
   field: StateField<ResolutionFieldState>,

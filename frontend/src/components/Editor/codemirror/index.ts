@@ -77,6 +77,7 @@ export {
   type MergeOrder,
   type MergeResolutionEditor,
   type MergeResolutionState,
+  type ResolutionRefusalHandler,
 } from './mergeResolution';
 
 // Re-export commonly used CodeMirror types

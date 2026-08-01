@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
+import type { ResolutionRefusalHandler } from '../../../components/Editor/codemirror';
 import type { MergeSession, TextMergeSession } from '../../../stores/gitStore';
 
 const controller = {
@@ -23,11 +24,7 @@ const controller = {
 let syntaxThemeId = 'glacier';
 let onStateChange: ((state: MergeResolutionState) => void) | undefined;
 let onDocumentChanged: (() => void) | undefined;
-type ResolutionRefusal = (
-  choice: 'C' | 'I' | 'B' | 'M',
-  reason: 'ambiguous-eof' | 'nonterminal-eof'
-) => void;
-let onResolutionRefused: ResolutionRefusal | undefined;
+let onResolutionRefused: ResolutionRefusalHandler | undefined;
 const createMergeResolutionEditor = jest.fn(
   (
     _host: HTMLElement,
@@ -35,7 +32,7 @@ const createMergeResolutionEditor = jest.fn(
     options: {
       onStateChange?: (state: MergeResolutionState) => void;
       onDocumentChanged?: () => void;
-      onResolutionRefused?: ResolutionRefusal;
+      onResolutionRefused?: ResolutionRefusalHandler;
       syntaxThemeId?: string;
     }
   ) => {
@@ -69,7 +66,7 @@ jest.mock('../../../components/Editor/codemirror', () => ({
     options: {
       onStateChange?: (state: MergeResolutionState) => void;
       onDocumentChanged?: () => void;
-      onResolutionRefused?: ResolutionRefusal;
+      onResolutionRefused?: ResolutionRefusalHandler;
     }
   ) => createMergeResolutionEditor(host, session, options),
 }));
