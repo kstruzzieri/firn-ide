@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"firn/internal/filesystem"
 	"path"
 	"path/filepath"
@@ -29,9 +30,20 @@ type markerRule struct {
 var markerRules = []markerRule{
 	{files: []string{"go.mod"}, typ: TypeGo, accent: "cyan"},
 	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "green"},
-	{files: []string{"package.json"}, typ: TypeFrontend, accent: "blue"},
+	{files: []string{"package.json"}, typ: TypeNode, accent: "orange"},
 	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, typ: TypeDocker, accent: "purple"},
 	{suffix: ".tf", typ: TypeTerraform, accent: "amber"},
+}
+
+var frontendDependencies = map[string]bool{
+	"react":         true,
+	"vue":           true,
+	"svelte":        true,
+	"@angular/core": true,
+	"next":          true,
+	"astro":         true,
+	"solid-js":      true,
+	"vite":          true,
 }
 
 // ignoredDirs are never scanned or treated as workspaces.
@@ -153,6 +165,9 @@ func classifyDir(fsys filesystem.FileSystem, dir string) (WorkspaceType, string,
 	for _, rule := range markerRules {
 		for _, f := range rule.files {
 			if names[f] {
+				if f == "package.json" && packageHasFrontendDependency(fsys, filepath.Join(dir, f)) {
+					return TypeFrontend, "blue", true
+				}
 				return rule.typ, rule.accent, true
 			}
 		}
@@ -167,6 +182,28 @@ func classifyDir(fsys filesystem.FileSystem, dir string) (WorkspaceType, string,
 	return "", "", false
 }
 
+func packageHasFrontendDependency(fsys filesystem.FileSystem, manifestPath string) bool {
+	data, err := fsys.ReadFile(manifestPath)
+	if err != nil {
+		return false
+	}
+	var manifest struct {
+		Dependencies    map[string]json.RawMessage `json:"dependencies"`
+		DevDependencies map[string]json.RawMessage `json:"devDependencies"`
+	}
+	if json.Unmarshal(data, &manifest) != nil {
+		return false
+	}
+	for _, dependencies := range []map[string]json.RawMessage{manifest.Dependencies, manifest.DevDependencies} {
+		for name := range dependencies {
+			if frontendDependencies[name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // typeLabel is the human-facing label for a workspace type.
 func typeLabel(t WorkspaceType) string {
 	switch t {
@@ -174,6 +211,8 @@ func typeLabel(t WorkspaceType) string {
 		return "Project"
 	case TypeFrontend:
 		return "Frontend"
+	case TypeNode:
+		return "Node"
 	case TypeGo:
 		return "Go"
 	case TypePython:
