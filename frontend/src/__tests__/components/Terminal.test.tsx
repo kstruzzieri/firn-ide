@@ -1014,6 +1014,27 @@ describe('Terminal — conflicted Problems projection', () => {
     ).toBeInTheDocument();
   });
 
+  it('retains real diagnostics without an error when the conflict has no text snapshot', async () => {
+    const read = deferred<unknown>();
+    mockGitConflictState.mockReturnValue(read.promise);
+    const state = conflictState('binary.dat', []);
+    setGitStatus('/repo', [{ path: 'binary.dat', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore
+      .getState()
+      .setDiagnostics('file:///repo/binary.dat', [diagnostic('Binary file diagnostic')]);
+
+    render(<Terminal />);
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'binary.dat'));
+    await act(async () => {
+      read.resolve({ ...state, stages: { ...state.stages, binary: true }, snapshot: undefined });
+      await read.promise;
+    });
+
+    expect(screen.getByText('Binary file diagnostic')).toBeInTheDocument();
+    expect(screen.queryByText(/language diagnostics are suspended/)).not.toBeInTheDocument();
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
   it('retains real diagnostics when the exact snapshot has no unresolved regions', async () => {
     const read = deferred<ReturnType<typeof conflictState>>();
     mockGitConflictState.mockReturnValue(read.promise);

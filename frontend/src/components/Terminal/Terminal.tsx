@@ -193,7 +193,8 @@ function useProblemsProjection() {
       unmergedFiles.map(async (file): Promise<ConflictProjectionResult> => {
         try {
           const state = await GitConflictState(repoRoot, file.path);
-          if (!state.snapshot || !Array.isArray(state.snapshot.regions)) {
+          if (!state.snapshot) return null;
+          if (!Array.isArray(state.snapshot.regions)) {
             return { path: file.path, error: 'exact text snapshot unavailable' } as const;
           }
           if (state.snapshot.regions.length === 0) return null;
