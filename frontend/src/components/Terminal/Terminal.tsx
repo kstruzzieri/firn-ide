@@ -13,16 +13,19 @@ import {
   useActiveRunOutputId,
 } from '../../stores/ideStore';
 import {
-  useLSPDiagnosticCount,
-  useGroupedDiagnostics,
-  type GroupedDiagnostic,
+  computeProblemsProjection,
+  useLSPStore,
+  type ConflictDiagnosticSummary,
   type LSPDiagnostic,
+  type ProblemsGroup,
 } from '../../stores/lspStore';
 import { useGitStore } from '../../stores/gitStore';
 import { navigateToEditorLocation } from '../../utils/editorNavigation';
-import { getDirectoryPath, getFileNameFromPath } from '../../utils/lspUri';
+import { getDirectoryPath, getFileNameFromPath, pathsReferToSameFile } from '../../utils/lspUri';
+import { joinRepoPath } from '../../utils/paths';
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useCallback,
@@ -41,6 +44,7 @@ import {
   WriteTerminal,
   CloseTerminal,
   ResizeTerminal,
+  GitConflictState,
 } from '../../../wailsjs/go/main/App';
 import { EventsOn } from '../../../wailsjs/runtime';
 
@@ -155,10 +159,130 @@ function moveTabFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
   }
 }
 
+interface ConflictProjectionRead {
+  status: object;
+  root: string | null;
+  repoRoot: string;
+  epoch: number;
+  statusRevision: number;
+  conflicts: ConflictDiagnosticSummary[];
+}
+
+type ConflictProjectionResult = ConflictDiagnosticSummary | { path: string; error: string } | null;
+
+function useProblemsProjection() {
+  const diagnostics = useLSPStore((state) => state.diagnostics);
+  const status = useGitStore((state) => state.status);
+  const root = useGitStore((state) => state.root);
+  const epoch = useGitStore((state) => state.epoch);
+  const statusRevision = useGitStore((state) => state.statusRevision);
+  const requestRevision = useRef(0);
+  const [read, setRead] = useState<ConflictProjectionRead | null>(null);
+  const repoRoot = status?.isRepo ? status.repoRoot : null;
+  const unmergedFiles = useMemo(
+    () => (status?.isRepo ? (status.files ?? []).filter((file) => file.unmerged) : []),
+    [status]
+  );
+
+  useEffect(() => {
+    if (!status || !repoRoot || unmergedFiles.length === 0) return;
+
+    const revision = ++requestRevision.current;
+    let cancelled = false;
+    void Promise.all(
+      unmergedFiles.map(async (file): Promise<ConflictProjectionResult> => {
+        try {
+          const state = await GitConflictState(repoRoot, file.path);
+          if (!state.snapshot || !Array.isArray(state.snapshot.regions)) {
+            return { path: file.path, error: 'exact text snapshot unavailable' } as const;
+          }
+          if (state.snapshot.regions.length === 0) return null;
+          const unresolvedRegionCount = state.snapshot.regions.length;
+          return {
+            filePath: joinRepoPath(repoRoot, file.path),
+            repoRoot,
+            repoPath: file.path,
+            unresolvedRegionCount,
+            markerLineCount: state.snapshot.regions.reduce(
+              (count, region) => count + (region.hasBase ? 4 : 3),
+              0
+            ),
+          } satisfies ConflictDiagnosticSummary;
+        } catch (error) {
+          return {
+            path: file.path,
+            error: error instanceof Error ? error.message : String(error),
+          } as const;
+        }
+      })
+    ).then((results) => {
+      const current = useGitStore.getState();
+      if (
+        cancelled ||
+        requestRevision.current !== revision ||
+        current.status !== status ||
+        current.root !== root ||
+        current.epoch !== epoch ||
+        current.statusRevision !== statusRevision
+      ) {
+        return;
+      }
+
+      const conflicts: ConflictDiagnosticSummary[] = [];
+      const failures: Array<{ path: string; error: string }> = [];
+      for (const result of results) {
+        if (!result) continue;
+        if ('error' in result) failures.push(result);
+        else conflicts.push(result);
+      }
+      setRead({
+        status,
+        root,
+        repoRoot,
+        epoch,
+        statusRevision,
+        conflicts,
+      });
+      if (failures.length > 0) {
+        useIDEStore
+          .getState()
+          .showToast(
+            `Could not read conflict state for ${failures
+              .map((failure) => `${failure.path}: ${failure.error}`)
+              .join('; ')}`,
+            'error'
+          );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [epoch, repoRoot, root, status, statusRevision, unmergedFiles]);
+
+  const conflicts = useMemo(
+    () =>
+      read &&
+      status &&
+      read.status === status &&
+      read.root === root &&
+      read.epoch === epoch &&
+      read.statusRevision === statusRevision &&
+      repoRoot &&
+      pathsReferToSameFile(read.repoRoot, repoRoot)
+        ? read.conflicts
+        : [],
+    [epoch, read, repoRoot, root, status, statusRevision]
+  );
+
+  return useMemo(() => computeProblemsProjection(diagnostics, conflicts), [conflicts, diagnostics]);
+}
+
 export function Terminal() {
   const activeTab = useIDEStore((state) => state.activeTerminalTab);
   const setTerminalTab = useIDEStore((state) => state.setTerminalTab);
-  const problemCount = useLSPDiagnosticCount();
+  const problems = useProblemsProjection();
+  const problemCount = problems.count;
   const terminalSessions = useTerminalSessions();
   const activeSessionId = useActiveTerminalSessionId();
   const addSession = useIDEStore((state) => state.addTerminalSession);
@@ -635,7 +759,7 @@ export function Terminal() {
           </div>
         </div>
         {activeTab === 'output' && <OutputContent />}
-        {activeTab === 'problems' && <ProblemsContent />}
+        {activeTab === 'problems' && <ProblemsContent groups={problems.groups} />}
       </div>
       {contextMenu && contextMenuSession && (
         <SessionContextMenu
@@ -924,9 +1048,7 @@ function OutputContent() {
   return <RunOutputPanel />;
 }
 
-function ProblemsContent() {
-  const groups = useGroupedDiagnostics();
-
+function ProblemsContent({ groups }: { groups: ProblemsGroup[] }) {
   if (groups.length === 0) {
     return (
       <div className={styles.emptyState}>
@@ -938,13 +1060,16 @@ function ProblemsContent() {
   return (
     <div className={styles.problemsList}>
       {groups.map((group) => (
-        <ProblemsFileGroup key={group.uri} group={group} />
+        <ProblemsFileGroup
+          key={group.kind === 'diagnostics' ? group.uri : `${group.repoRoot}:${group.repoPath}`}
+          group={group}
+        />
       ))}
     </div>
   );
 }
 
-function ProblemsFileGroup({ group }: { group: GroupedDiagnostic }) {
+function ProblemsFileGroup({ group }: { group: ProblemsGroup }) {
   const fileName = getFileNameFromPath(group.filePath);
   const dirPath = getDirectoryPath(group.filePath);
 
@@ -953,11 +1078,58 @@ function ProblemsFileGroup({ group }: { group: GroupedDiagnostic }) {
       <div className={styles.problemsGroupHeader}>
         <span className={styles.problemsFileName}>{fileName}</span>
         {dirPath && <span className={styles.problemsFilePath}>{dirPath}</span>}
-        <span className={styles.problemsGroupCount}>{group.diagnostics.length}</span>
+        <span className={styles.problemsGroupCount}>
+          {group.kind === 'conflict' ? 1 : group.diagnostics.length}
+        </span>
       </div>
-      {group.diagnostics.map((diag, i) => (
-        <ProblemRow key={`${group.uri}-${i}`} diagnostic={diag} filePath={group.filePath} />
-      ))}
+      {group.kind === 'conflict' ? (
+        <ConflictProblemRow conflict={group} />
+      ) : (
+        group.diagnostics.map((diag, i) => (
+          <ProblemRow key={`${group.uri}-${i}`} diagnostic={diag} filePath={group.filePath} />
+        ))
+      )}
+    </div>
+  );
+}
+
+function ConflictProblemRow({ conflict }: { conflict: ConflictDiagnosticSummary }) {
+  const handleResolve = useCallback(() => {
+    const git = useGitStore.getState();
+    const status = git.status;
+    if (!status?.isRepo || !pathsReferToSameFile(status.repoRoot, conflict.repoRoot)) return;
+
+    const queue = (status.files ?? []).filter((file) => file.unmerged);
+    const current = queue.find((file) =>
+      pathsReferToSameFile(joinRepoPath(status.repoRoot, file.path), conflict.filePath)
+    );
+    if (!current) return;
+    void git.openMergeResolution(
+      current.path,
+      queue.map((file) => file.path)
+    );
+  }, [conflict.filePath, conflict.repoRoot]);
+  const regions = `${conflict.unresolvedRegionCount} unresolved conflict region${
+    conflict.unresolvedRegionCount === 1 ? '' : 's'
+  }`;
+  const markers = `${conflict.markerLineCount} conflict marker line${
+    conflict.markerLineCount === 1 ? '' : 's'
+  }`;
+
+  return (
+    <div className={`${styles.problemsRow} ${styles.problemsConflictRow}`}>
+      <span className={`${styles.problemsSeverity} ${styles.problemsWarning}`}>W</span>
+      <span className={styles.problemsMessage}>
+        {regions} — language diagnostics are suspended ({markers}).
+      </span>
+      <button
+        className={styles.problemsResolve}
+        type="button"
+        onClick={handleResolve}
+        aria-label={`Resolve ${conflict.repoPath}`}
+      >
+        Resolve
+      </button>
     </div>
   );
 }

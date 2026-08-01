@@ -363,6 +363,30 @@
   outline-offset: -2px;
 }
 
+.problemsConflictRow {
+  cursor: default;
+}
+
+.problemsResolve {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--status-warning);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--status-warning);
+  font: inherit;
+  cursor: pointer;
+}
+
+.problemsResolve:hover {
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+}
+
+.problemsResolve:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .problemsSeverity {
   font-size: 10px;
   font-weight: 700;

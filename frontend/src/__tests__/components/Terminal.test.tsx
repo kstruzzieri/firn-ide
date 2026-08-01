@@ -1,12 +1,23 @@
-import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Terminal } from '../../components/Terminal';
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
+import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
+import { git } from '../../../wailsjs/go/models';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
 const mockGetRunHistoryRecord = jest.fn();
+const mockGitConflictState = jest.fn();
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
   CreateTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
@@ -14,11 +25,88 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
   CloseTerminal: (...args: unknown[]) => mockCloseTerminal(...args),
   ResizeTerminal: jest.fn(),
   GetRunHistoryRecord: (...args: unknown[]) => mockGetRunHistoryRecord(...args),
+  GitConflictState: (...args: unknown[]) => mockGitConflictState(...args),
 }));
 
 jest.mock('../../../wailsjs/runtime', () => ({
   EventsOn: jest.fn(() => jest.fn()),
 }));
+
+function conflictRegion(index: number, hasBase = false) {
+  return {
+    index,
+    startLine: index * 8 + 1,
+    endLine: index * 8 + (hasBase ? 8 : 6),
+    ours: ['ours'],
+    base: hasBase ? ['base'] : [],
+    theirs: ['theirs'],
+    hasBase,
+    oursLabel: 'HEAD',
+    theirLabel: 'feature',
+    baseEndsWithNewline: true,
+    oursEndsWithNewline: true,
+    theirsEndsWithNewline: true,
+  };
+}
+
+function conflictState(path: string, regions: ReturnType<typeof conflictRegion>[]) {
+  const stage = { hash: 'abc123', mode: '100644', size: 12 };
+  return {
+    stages: { path, base: stage, ours: stage, theirs: stage, binary: false },
+    snapshot: {
+      content: '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n',
+      encoding: 'utf-8',
+      lineEndings: 'lf',
+      regions,
+    },
+    heads: {
+      operation: 'merge',
+      ours: { label: 'main', hash: 'abc123', subject: 'main change' },
+      theirs: { label: 'feature', hash: 'def456', subject: 'feature change' },
+    },
+    sourceVersion: `version:${path}`,
+  };
+}
+
+function setGitStatus(
+  repoRoot: string,
+  files: Array<{ path: string; index: string; worktree: string; unmerged: boolean }>,
+  statusRevision = 1
+) {
+  useGitStore.setState({
+    root: repoRoot,
+    epoch: 1,
+    statusRevision,
+    status: new git.RepoStatus({
+      isRepo: true,
+      repoRoot,
+      branch: 'main',
+      upstream: 'origin/main',
+      ahead: 0,
+      behind: 0,
+      files,
+    }),
+  });
+}
+
+function diagnostic(message: string, source = 'gopls'): LSPDiagnostic {
+  return {
+    range: { start: { line: 2, character: 0 }, end: { line: 2, character: 7 } },
+    severity: 1,
+    source,
+    message,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 describe('Terminal component', () => {
   beforeEach(() => {
@@ -735,6 +823,217 @@ describe('Terminal component', () => {
       expect(screen.queryByRole('tablist', { name: 'Terminal sessions' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'New terminal session' })).toHaveFocus();
     });
+  });
+});
+
+describe('Terminal — conflicted Problems projection', () => {
+  beforeEach(() => {
+    mockGitConflictState.mockReset();
+    useIDEStore.setState(useIDEStore.getInitialState(), true);
+    useIDEStore.setState({ activeTerminalTab: 'problems', toast: null });
+    useGitStore.setState(useGitStore.getInitialState(), true);
+    useLSPStore.setState(useLSPStore.getInitialState(), true);
+  });
+
+  afterEach(() => {
+    act(() => {
+      useIDEStore.setState(useIDEStore.getInitialState(), true);
+      useGitStore.setState(useGitStore.getInitialState(), true);
+      useLSPStore.setState(useLSPStore.getInitialState(), true);
+    });
+  });
+
+  it('renders one warning row but counts exact conflict regions in the badge', async () => {
+    const regions = [
+      conflictRegion(0),
+      conflictRegion(1, true),
+      conflictRegion(2),
+      conflictRegion(3),
+    ];
+    mockGitConflictState.mockResolvedValue(conflictState('conflict.go', regions));
+    const openMergeResolution = jest.fn().mockResolvedValue(true);
+    setGitStatus('/repo', [{ path: 'conflict.go', index: 'U', worktree: 'U', unmerged: true }]);
+    useGitStore.setState({ openMergeResolution });
+    const rawDiagnostics = [diagnostic('expected declaration'), diagnostic('expected semicolon')];
+    useLSPStore.getState().setDiagnostics('file:///repo/conflict.go', rawDiagnostics);
+
+    render(<Terminal />);
+
+    const message = await screen.findByText(
+      '4 unresolved conflict regions — language diagnostics are suspended (13 conflict marker lines).'
+    );
+    const row = message.parentElement as HTMLElement;
+    expect(within(row).getByText('W')).toBeInTheDocument();
+    expect(screen.queryByText('expected declaration')).not.toBeInTheDocument();
+    expect(screen.queryByText('expected semicolon')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('tab', { name: /Problems/ })).getByText('4')
+    ).toBeInTheDocument();
+    expect(useLSPStore.getState().diagnostics.get('file:///repo/conflict.go')).toBe(rawDiagnostics);
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Resolve conflict.go' }));
+
+    expect(openMergeResolution).toHaveBeenCalledWith('conflict.go', ['conflict.go']);
+  });
+
+  it('opens Resolve with the current ordered conflict queue', async () => {
+    mockGitConflictState.mockImplementation((_repoRoot: string, path: string) =>
+      Promise.resolve(conflictState(path, [conflictRegion(0)]))
+    );
+    const openMergeResolution = jest.fn().mockResolvedValue(true);
+    setGitStatus('/repo', [
+      { path: 'first.py', index: 'U', worktree: 'U', unmerged: true },
+      { path: 'second.go', index: 'U', worktree: 'U', unmerged: true },
+    ]);
+    useGitStore.setState({ openMergeResolution });
+
+    render(<Terminal />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Resolve second.go' }));
+
+    expect(openMergeResolution).toHaveBeenCalledWith('second.go', ['first.py', 'second.go']);
+  });
+
+  it('removes a conflict warning immediately when accepted status marks the file clean', async () => {
+    mockGitConflictState.mockResolvedValue(conflictState('app.py', [conflictRegion(0)]));
+    setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore
+      .getState()
+      .setDiagnostics('file:///repo/app.py', [diagnostic('Unexpected indentation', 'pyright')]);
+    render(<Terminal />);
+    expect(await screen.findByText(/language diagnostics are suspended/)).toBeInTheDocument();
+
+    act(() => {
+      const status = useGitStore.getState().status!;
+      useGitStore.setState((state) => ({
+        status: new git.RepoStatus({
+          ...status,
+          files: [{ path: 'app.py', index: 'M', worktree: '.', unmerged: false }],
+        }),
+        statusRevision: state.statusRevision + 1,
+      }));
+    });
+
+    expect(screen.queryByText(/language diagnostics are suspended/)).not.toBeInTheDocument();
+    expect(screen.getByText('Unexpected indentation')).toBeInTheDocument();
+  });
+
+  it('does not install a stale conflict read after clean status replaces it', async () => {
+    const pending = deferred<ReturnType<typeof conflictState>>();
+    mockGitConflictState.mockReturnValue(pending.promise);
+    setGitStatus('/repo', [{ path: 'stale.go', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore
+      .getState()
+      .setDiagnostics('file:///repo/stale.go', [diagnostic('real parser error')]);
+    render(<Terminal />);
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'stale.go'));
+
+    act(() => {
+      const status = useGitStore.getState().status!;
+      useGitStore.setState((state) => ({
+        status: new git.RepoStatus({ ...status, files: [] }),
+        statusRevision: state.statusRevision + 1,
+      }));
+    });
+    await act(async () => {
+      pending.resolve(conflictState('stale.go', [conflictRegion(0), conflictRegion(1)]));
+      await pending.promise;
+    });
+
+    expect(screen.queryByText(/language diagnostics are suspended/)).not.toBeInTheDocument();
+    expect(screen.getByText('real parser error')).toBeInTheDocument();
+  });
+
+  it('drops an old repository read after switching to a different repository', async () => {
+    const oldRead = deferred<ReturnType<typeof conflictState>>();
+    mockGitConflictState.mockImplementation((repoRoot: string, path: string) =>
+      repoRoot === '/repo-old'
+        ? oldRead.promise
+        : Promise.resolve(conflictState(path, [conflictRegion(0)]))
+    );
+    setGitStatus('/repo-old', [{ path: 'old.go', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore.getState().setDiagnostics('file:///repo/old.go', [diagnostic('old diagnostic')]);
+    render(<Terminal />);
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo-old', 'old.go'));
+
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/repo-new');
+      useGitStore.setState({
+        statusRevision: 1,
+        status: new git.RepoStatus({
+          isRepo: true,
+          repoRoot: '/repo-new',
+          branch: 'main',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          files: [{ path: 'new.py', index: 'U', worktree: 'U', unmerged: true }],
+        }),
+      });
+    });
+    expect(
+      await screen.findByText(
+        '1 unresolved conflict region — language diagnostics are suspended (3 conflict marker lines).'
+      )
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      oldRead.resolve(
+        conflictState('old.go', [
+          conflictRegion(0),
+          conflictRegion(1),
+          conflictRegion(2),
+          conflictRegion(3),
+        ])
+      );
+      await oldRead.promise;
+    });
+
+    expect(screen.queryByText(/^4 unresolved conflict regions/)).not.toBeInTheDocument();
+    expect(screen.getByText('old diagnostic')).toBeInTheDocument();
+  });
+
+  it('retains real diagnostics and surfaces an exact conflict read failure', async () => {
+    mockGitConflictState.mockRejectedValue(new Error('disk denied'));
+    setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore
+      .getState()
+      .setDiagnostics('file:///repo/app.py', [diagnostic('Unexpected indentation', 'pyright')]);
+
+    render(<Terminal />);
+
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+    expect(screen.getByText('Unexpected indentation')).toBeInTheDocument();
+    expect(screen.queryByText(/language diagnostics are suspended/)).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('tab', { name: /Problems/ })).getByText('1')
+    ).toBeInTheDocument();
+  });
+
+  it('retains real diagnostics when the exact snapshot has no unresolved regions', async () => {
+    const read = deferred<ReturnType<typeof conflictState>>();
+    mockGitConflictState.mockReturnValue(read.promise);
+    setGitStatus('/repo', [{ path: 'resolved.ts', index: 'U', worktree: 'U', unmerged: true }]);
+    useLSPStore
+      .getState()
+      .setDiagnostics('file:///repo/resolved.ts', [diagnostic('Valid post-resolution diagnostic')]);
+
+    render(<Terminal />);
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'resolved.ts'));
+    await act(async () => {
+      read.resolve(conflictState('resolved.ts', []));
+      await read.promise;
+    });
+
+    expect(screen.getByText('Valid post-resolution diagnostic')).toBeInTheDocument();
+    expect(screen.queryByText(/language diagnostics are suspended/)).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('tab', { name: /Problems/ })).getByText('1')
+    ).toBeInTheDocument();
   });
 });
 
