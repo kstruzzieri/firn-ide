@@ -9,6 +9,7 @@ import {
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Terminal } from '../../components/Terminal';
+import { useConflictProjectionSync } from '../../hooks/useProblemsProjection';
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
@@ -106,6 +107,12 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** The conflict-read effect lives at App level, always mounted; mirror that here. */
+function TerminalWithConflictSync() {
+  useConflictProjectionSync();
+  return <Terminal />;
 }
 
 describe('Terminal component', () => {
@@ -857,7 +864,7 @@ describe('Terminal — conflicted Problems projection', () => {
     const rawDiagnostics = [diagnostic('expected declaration'), diagnostic('expected semicolon')];
     useLSPStore.getState().setDiagnostics('file:///repo/conflict.go', rawDiagnostics);
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
 
     const message = await screen.findByText(
       '4 unresolved conflict regions — language diagnostics are suspended (13 conflict marker lines).'
@@ -887,7 +894,7 @@ describe('Terminal — conflicted Problems projection', () => {
     ]);
     useGitStore.setState({ openMergeResolution });
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Resolve second.go' }));
 
@@ -900,7 +907,7 @@ describe('Terminal — conflicted Problems projection', () => {
     useLSPStore
       .getState()
       .setDiagnostics('file:///repo/app.py', [diagnostic('Unexpected indentation', 'pyright')]);
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     expect(await screen.findByText(/language diagnostics are suspended/)).toBeInTheDocument();
 
     act(() => {
@@ -928,7 +935,7 @@ describe('Terminal — conflicted Problems projection', () => {
       .getState()
       .setDiagnostics('file:///repo/app.go', [diagnostic('expected declaration')]);
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     expect(await screen.findByText(/language diagnostics are suspended/)).toBeInTheDocument();
 
     act(() => {
@@ -949,7 +956,7 @@ describe('Terminal — conflicted Problems projection', () => {
   it('does not repeat an identical conflict read failure toast on every refresh', async () => {
     mockGitConflictState.mockRejectedValue(new Error('disk denied'));
     setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }]);
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     await waitFor(() =>
       expect(useIDEStore.getState().toast?.message).toBe(
         'Could not read conflict state for app.py: disk denied'
@@ -992,7 +999,7 @@ describe('Terminal — conflicted Problems projection', () => {
     setGitStatus('/repo', [{ path: 'odd.ts', index: 'U', worktree: 'U', unmerged: true }]);
     useLSPStore.getState().setDiagnostics('file:///repo/odd.ts', [diagnostic('real error')]);
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'odd.ts'));
     await act(async () => {
       read.resolve({ ...state, snapshot: { ...state.snapshot, regions: undefined } });
@@ -1011,7 +1018,7 @@ describe('Terminal — conflicted Problems projection', () => {
     useLSPStore
       .getState()
       .setDiagnostics('file:///repo/stale.go', [diagnostic('real parser error')]);
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'stale.go'));
 
     act(() => {
@@ -1039,7 +1046,7 @@ describe('Terminal — conflicted Problems projection', () => {
     );
     setGitStatus('/repo-old', [{ path: 'old.go', index: 'U', worktree: 'U', unmerged: true }]);
     useLSPStore.getState().setDiagnostics('file:///repo/old.go', [diagnostic('old diagnostic')]);
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo-old', 'old.go'));
 
     act(() => {
@@ -1086,7 +1093,7 @@ describe('Terminal — conflicted Problems projection', () => {
       .getState()
       .setDiagnostics('file:///repo/app.py', [diagnostic('Unexpected indentation', 'pyright')]);
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
 
     await waitFor(() =>
       expect(useIDEStore.getState().toast?.message).toBe(
@@ -1109,7 +1116,7 @@ describe('Terminal — conflicted Problems projection', () => {
       .getState()
       .setDiagnostics('file:///repo/binary.dat', [diagnostic('Binary file diagnostic')]);
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'binary.dat'));
     await act(async () => {
       read.resolve({ ...state, stages: { ...state.stages, binary: true }, snapshot: undefined });
@@ -1129,7 +1136,7 @@ describe('Terminal — conflicted Problems projection', () => {
       .getState()
       .setDiagnostics('file:///repo/resolved.ts', [diagnostic('Valid post-resolution diagnostic')]);
 
-    render(<Terminal />);
+    render(<TerminalWithConflictSync />);
     await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo', 'resolved.ts'));
     await act(async () => {
       read.resolve(conflictState('resolved.ts', []));

@@ -25,6 +25,7 @@ import { useFileWatcher } from './hooks/useFileWatcher';
 import { useGitSync } from './hooks/useGitSync';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
+import { useConflictProjectionSync } from './hooks/useProblemsProjection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
 import { useGitStore } from './stores/gitStore';
 import { ReadFile } from '../wailsjs/go/main/App';
@@ -53,6 +54,10 @@ function App() {
   // request guards (workspace switch, unmount) survive panel toggling.
   useWorkspaceSearch();
   useGitSync();
+  // Own the conflict-state reads at the always-mounted App: the Problems panel
+  // unmounts when the bottom panel collapses, but the StatusBar consumes the
+  // same conflict-aware projection and is always visible (#254).
+  useConflictProjectionSync();
   const workspace = useWorkspace();
   const sidebarView = useSidebarView();
   const activeAccent = useActiveAccent();

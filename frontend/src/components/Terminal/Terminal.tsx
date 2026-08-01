@@ -13,19 +13,17 @@ import {
   useActiveRunOutputId,
 } from '../../stores/ideStore';
 import {
-  computeProblemsProjection,
-  useLSPStore,
   type ConflictDiagnosticSummary,
   type LSPDiagnostic,
   type ProblemsGroup,
 } from '../../stores/lspStore';
 import { useGitStore } from '../../stores/gitStore';
+import { useProblemsProjection } from '../../hooks/useProblemsProjection';
 import { navigateToEditorLocation } from '../../utils/editorNavigation';
 import { getDirectoryPath, getFileNameFromPath, pathsReferToSameFile } from '../../utils/lspUri';
 import { joinRepoPath } from '../../utils/paths';
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   useCallback,
@@ -44,7 +42,6 @@ import {
   WriteTerminal,
   CloseTerminal,
   ResizeTerminal,
-  GitConflictState,
 } from '../../../wailsjs/go/main/App';
 import { EventsOn } from '../../../wailsjs/runtime';
 
@@ -157,119 +154,6 @@ function moveTabFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
     event.preventDefault();
     tabs[next]?.focus();
   }
-}
-
-interface ConflictProjectionRead {
-  repoRoot: string;
-  epoch: number;
-  conflicts: ConflictDiagnosticSummary[];
-}
-
-type ConflictProjectionResult = ConflictDiagnosticSummary | { path: string; error: string } | null;
-
-function useProblemsProjection() {
-  const diagnostics = useLSPStore((state) => state.diagnostics);
-  const status = useGitStore((state) => state.status);
-  const root = useGitStore((state) => state.root);
-  const epoch = useGitStore((state) => state.epoch);
-  const statusRevision = useGitStore((state) => state.statusRevision);
-  const requestRevision = useRef(0);
-  const lastFailureSignature = useRef<string | null>(null);
-  const [read, setRead] = useState<ConflictProjectionRead | null>(null);
-  const repoRoot = status?.isRepo ? status.repoRoot : null;
-  const unmergedFiles = useMemo(
-    () => (status?.isRepo ? (status.files ?? []).filter((file) => file.unmerged) : []),
-    [status]
-  );
-
-  useEffect(() => {
-    if (!status || !repoRoot || unmergedFiles.length === 0) return;
-
-    const revision = ++requestRevision.current;
-    let cancelled = false;
-    void Promise.all(
-      unmergedFiles.map(async (file): Promise<ConflictProjectionResult> => {
-        try {
-          const state = await GitConflictState(repoRoot, file.path);
-          // No snapshot (binary or whole-file topology) or no unresolved
-          // regions: nothing to collapse — the raw diagnostics stand.
-          const regions = state.snapshot?.regions ?? [];
-          if (regions.length === 0) return null;
-          return {
-            filePath: joinRepoPath(repoRoot, file.path),
-            repoRoot,
-            repoPath: file.path,
-            unresolvedRegionCount: regions.length,
-            markerLineCount: regions.reduce((count, region) => count + (region.hasBase ? 4 : 3), 0),
-          } satisfies ConflictDiagnosticSummary;
-        } catch (error) {
-          return {
-            path: file.path,
-            error: error instanceof Error ? error.message : String(error),
-          } as const;
-        }
-      })
-    ).then((results) => {
-      const current = useGitStore.getState();
-      if (
-        cancelled ||
-        requestRevision.current !== revision ||
-        current.status !== status ||
-        current.root !== root ||
-        current.epoch !== epoch ||
-        current.statusRevision !== statusRevision
-      ) {
-        return;
-      }
-
-      const conflicts: ConflictDiagnosticSummary[] = [];
-      const failures: Array<{ path: string; error: string }> = [];
-      for (const result of results) {
-        if (!result) continue;
-        if ('error' in result) failures.push(result);
-        else conflicts.push(result);
-      }
-      setRead({ repoRoot, epoch, conflicts });
-      // A durable failure (oversized file, literal marker content) recurs on
-      // every status refresh; re-toasting the identical message each time
-      // would spam and stomp unrelated toasts. Toast only when it changes.
-      if (failures.length === 0) {
-        lastFailureSignature.current = null;
-      } else {
-        const signature = failures.map((failure) => `${failure.path}: ${failure.error}`).join('; ');
-        if (signature !== lastFailureSignature.current) {
-          lastFailureSignature.current = signature;
-          useIDEStore
-            .getState()
-            .showToast(`Could not read conflict state for ${signature}`, 'error');
-        }
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [epoch, repoRoot, root, status, statusRevision, unmergedFiles]);
-
-  // Stale-while-revalidate: every refresh installs a new status object, so
-  // requiring identity with the read here would drop the collapse — re-flooding
-  // the panel with raw marker diagnostics — on each refresh until the re-read
-  // lands. Keep the last read for this repository and filter it against the
-  // CURRENT unmerged set instead: a file written clean disappears the moment
-  // its status does, while still-conflicted files never flash.
-  const conflicts = useMemo(
-    () =>
-      read && repoRoot && read.epoch === epoch && pathsReferToSameFile(read.repoRoot, repoRoot)
-        ? read.conflicts.filter((conflict) =>
-            unmergedFiles.some((file) =>
-              pathsReferToSameFile(joinRepoPath(repoRoot, file.path), conflict.filePath)
-            )
-          )
-        : [],
-    [epoch, read, repoRoot, unmergedFiles]
-  );
-
-  return useMemo(() => computeProblemsProjection(diagnostics, conflicts), [conflicts, diagnostics]);
 }
 
 export function Terminal() {

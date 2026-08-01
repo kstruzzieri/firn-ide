@@ -1,15 +1,23 @@
+import { useMemo } from 'react';
 import styles from './StatusBar.module.css';
 import { StatusBranchIcon, CheckIcon, AlertCircleIcon } from '../icons';
 import { useActiveFile, useCursorPosition } from '../../stores/ideStore';
 import { useGitBranchInfo, useGitStore } from '../../stores/gitStore';
-import { useLSPErrorCount, useLSPInfoCount, useLSPWarningCount } from '../../stores/lspStore';
+import { computeProblemsSeverityTotals } from '../../stores/lspStore';
+import { useProblemsProjection } from '../../hooks/useProblemsProjection';
 import { EditorThemePicker } from './EditorThemePicker';
 
 export function StatusBar() {
   const { branch, ahead, behind } = useGitBranchInfo();
-  const errorCount = useLSPErrorCount();
-  const warningCount = useLSPWarningCount();
-  const infoCount = useLSPInfoCount();
+  // Same conflict-aware projection as the Problems tab, so both surfaces of
+  // the window chrome agree during a merge: unresolved conflict regions count
+  // as warnings and the conflicted file's raw diagnostics are suppressed.
+  const problems = useProblemsProjection();
+  const {
+    errors: errorCount,
+    warnings: warningCount,
+    info: infoCount,
+  } = useMemo(() => computeProblemsSeverityTotals(problems), [problems]);
   const activeFile = useActiveFile();
   const cursorPosition = useCursorPosition();
 
