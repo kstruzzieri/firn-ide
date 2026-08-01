@@ -43,8 +43,7 @@ const TYPE_LABEL: Record<string, string> = {
 
 function compatibleWorkspaceTypes(left: string, right: string): boolean {
   return (
-    left === right ||
-    (['frontend', 'node'].includes(left) && ['frontend', 'node'].includes(right))
+    left === right || (['frontend', 'node'].includes(left) && ['frontend', 'node'].includes(right))
   );
 }
 
