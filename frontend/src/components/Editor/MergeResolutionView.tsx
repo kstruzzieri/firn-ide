@@ -473,6 +473,7 @@ function TextResolutionContent({
   const appliedThemeIdRef = useRef(themeId);
   themeIdRef.current = themeId;
   const [resolutionState, setResolutionState] = useState(() => initialState(session));
+  const [resolutionRefusal, setResolutionRefusal] = useState<string | null>(null);
   const [reopened, setReopened] = useState<number | null>(null);
   const [base, setBase] = useState<BaseStrip>({ status: 'idle' });
   const [baseExpanded, setBaseExpanded] = useState(false);
@@ -557,6 +558,14 @@ function TextResolutionContent({
     const editor = createMergeResolutionEditor(hostRef.current, initialSession, {
       syntaxThemeId: themeIdRef.current,
       onDocumentChanged: () => useGitStore.getState().markMergeDirty(),
+      onResolutionRefused: (choice, reason) =>
+        setResolutionRefusal(
+          reason === 'nonterminal-eof'
+            ? `${decisionLabel(choice)} cannot be applied because this conflict is not at the end of the document as expected. Reopen merge resolution and try again.`
+            : choice === 'B'
+              ? "Take Both cannot safely represent this conflict's end-of-file newline. Choose Current or Incoming instead."
+              : `${decisionLabel(choice)} cannot be applied because its end-of-file newline state is unavailable. Choose a different side or reopen merge resolution.`
+        ),
       onStateChange: (next) => {
         const previous = decisionsRef.current;
         const actions = useGitStore.getState();
@@ -571,7 +580,10 @@ function TextResolutionContent({
           next.decisions,
           sessionRef.current.regions.length
         );
-        if (message !== null) setAnnouncement(message);
+        if (message !== null) {
+          setAnnouncement(message);
+          setResolutionRefusal(null);
+        }
         decisionsRef.current = next.decisions;
         setResolutionState(next);
       },
@@ -581,6 +593,7 @@ function TextResolutionContent({
     const initialEditorState = editor.getState();
     decisionsRef.current = initialEditorState.decisions;
     setResolutionState(initialEditorState);
+    setResolutionRefusal(null);
     setReopened(null);
     // Restore focus into the rebuilt surface only if it was inside before the
     // swap: a background reload must never steal focus from another panel.
@@ -705,6 +718,13 @@ function TextResolutionContent({
         </div>
       </header>
       <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
+      {resolutionRefusal && (
+        <div className={styles.notice}>
+          <span className={styles.noticeMessage} role="alert">
+            {resolutionRefusal}
+          </span>
+        </div>
+      )}
       {!REGIONS_CARRY_BASE(session) && (
         <div className={styles.baseStrip}>
           <button

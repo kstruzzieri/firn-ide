@@ -37,6 +37,10 @@ const MAX_PROVENANCE_LINES = 1_000;
 export type MergeChoice = Exclude<MergeDecision, 'M'>;
 export type MergeOrder = 'current-first' | 'incoming-first';
 export type MergeDirection = 1 | -1;
+type ResolutionRefusalHandler = (
+  choice: MergeChoice | 'M',
+  reason: 'ambiguous-eof' | 'nonterminal-eof'
+) => void;
 
 export interface MarkerBlockRange {
   from: number;
@@ -509,7 +513,8 @@ interface OriginalMarkerBlock {
 function resolutionExtension(
   session: TextMergeSession,
   onStateChange?: (state: MergeResolutionState) => void,
-  onDocumentChanged?: () => void
+  onDocumentChanged?: () => void,
+  onResolutionRefused?: ResolutionRefusalHandler
 ): {
   extension: Extension[];
   field: StateField<ResolutionFieldState>;
@@ -534,7 +539,7 @@ function resolutionExtension(
   });
   const activate = (view: EditorView, index: number) => activateRegion(view, field, index);
   const apply = (view: EditorView, index: number, choice: MergeChoice | 'M') =>
-    applyResolution(view, field, session, index, choice);
+    applyResolution(view, field, session, index, choice, onResolutionRefused);
 
   const field = StateField.define<ResolutionFieldState>({
     create: () => ({
@@ -714,10 +719,16 @@ export function createMergeResolutionEditor(
     onStateChange?: (state: MergeResolutionState) => void;
     /** Called for every accepted document-changing transaction, undo included. */
     onDocumentChanged?: () => void;
+    onResolutionRefused?: ResolutionRefusalHandler;
     syntaxThemeId?: SyntaxThemeId;
   } = {}
 ): MergeResolutionEditor {
-  const support = resolutionExtension(session, options.onStateChange, options.onDocumentChanged);
+  const support = resolutionExtension(
+    session,
+    options.onStateChange,
+    options.onDocumentChanged,
+    options.onResolutionRefused
+  );
   const theme = new Compartment();
   const view = new EditorView({
     parent,
@@ -738,9 +749,21 @@ export function createMergeResolutionEditor(
             run: (target) => navigate(target, support.field, session.regions.length, 1),
             shift: (target) => navigate(target, support.field, session.regions.length, -1),
           },
-          { key: 'Mod-1', run: (target) => choose(target, support.field, session, 'C') },
-          { key: 'Mod-2', run: (target) => choose(target, support.field, session, 'I') },
-          { key: 'Mod-3', run: (target) => choose(target, support.field, session, 'B') },
+          {
+            key: 'Mod-1',
+            run: (target) =>
+              choose(target, support.field, session, 'C', options.onResolutionRefused),
+          },
+          {
+            key: 'Mod-2',
+            run: (target) =>
+              choose(target, support.field, session, 'I', options.onResolutionRefused),
+          },
+          {
+            key: 'Mod-3',
+            run: (target) =>
+              choose(target, support.field, session, 'B', options.onResolutionRefused),
+          },
           ...closeBracketsKeymap,
           ...defaultKeymap,
           ...inFileSearchKeymap,
@@ -816,7 +839,8 @@ function applyResolution(
   field: StateField<ResolutionFieldState>,
   session: TextMergeSession,
   index: number,
-  choice: MergeChoice | 'M'
+  choice: MergeChoice | 'M',
+  onResolutionRefused?: ResolutionRefusalHandler
 ): boolean {
   if (session.readOnly) return false;
   const state = view.state.field(field);
@@ -829,7 +853,10 @@ function applyResolution(
   const effectiveChoice = choice === 'M' ? 'B' : choice;
   const lines = resolutionLines(region, effectiveChoice, state.order);
   const eofTarget = resolutionEOFTarget(region, effectiveChoice, state.order);
-  if (eofTarget === undefined) return false;
+  if (eofTarget === undefined) {
+    onResolutionRefused?.(choice, 'ambiguous-eof');
+    return false;
+  }
   let changes: { from: number; to: number; insert: string };
   if (eofTarget === null) {
     changes = {
@@ -839,7 +866,10 @@ function applyResolution(
     };
   } else {
     const document = view.state.doc.toString();
-    if (range.to !== document.length) return false;
+    if (range.to !== document.length) {
+      onResolutionRefused?.(choice, 'nonterminal-eof');
+      return false;
+    }
     let result = document.slice(0, range.from) + lines.join('\n');
     if (eofTarget) {
       if (lines.length > 0 || !result.endsWith('\n')) result += '\n';
@@ -953,10 +983,11 @@ function choose(
   view: EditorView,
   field: StateField<ResolutionFieldState>,
   session: TextMergeSession,
-  choice: MergeChoice
+  choice: MergeChoice,
+  onResolutionRefused?: ResolutionRefusalHandler
 ): boolean {
   const state = view.state.field(field);
   const index = state.activeIndex;
   if (index === null) return false;
-  return applyResolution(view, field, session, index, choice);
+  return applyResolution(view, field, session, index, choice, onResolutionRefused);
 }
