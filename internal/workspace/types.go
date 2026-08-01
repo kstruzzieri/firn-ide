@@ -82,6 +82,7 @@ type WorkspaceType string
 const (
 	TypeProject   WorkspaceType = "project"
 	TypeFrontend  WorkspaceType = "frontend"
+	TypeNode      WorkspaceType = "node"
 	TypeGo        WorkspaceType = "go"
 	TypePython    WorkspaceType = "python"
 	TypeDocker    WorkspaceType = "docker"

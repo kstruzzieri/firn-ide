@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"firn/internal/filesystem"
 	"io/fs"
 	"path/filepath"
@@ -12,16 +13,25 @@ import (
 // fsFromPaths builds a mock filesystem from a set of file paths. Intermediate
 // directories are inferred. ReadDir returns immediate children (dirs + files).
 func fsFromPaths(files ...string) *filesystem.Mock {
-	fileSet := map[string]bool{}
+	fileContents := map[string][]byte{}
 	for _, f := range files {
-		fileSet[filepath.Clean(filepath.FromSlash(f))] = true
+		path := filepath.Clean(filepath.FromSlash(f))
+		if filepath.Base(path) == "package.json" {
+			fileContents[path] = []byte(`{"devDependencies":{"vite":"5.0.0"}}`)
+			continue
+		}
+		fileContents[path] = nil
 	}
+	return fsFromFileContents(fileContents, nil, nil)
+}
+
+func fsFromFileContents(fileContents map[string][]byte, readErrors map[string]error, readCount *int) *filesystem.Mock {
 	return &filesystem.Mock{
 		ReadDirFunc: func(dir string) ([]fs.DirEntry, error) {
 			prefix := filepath.Clean(dir) + string(filepath.Separator)
 			childDirs := map[string]bool{}
 			var entries []fs.DirEntry
-			for f := range fileSet {
+			for f := range fileContents {
 				if !strings.HasPrefix(f, prefix) {
 					continue
 				}
@@ -36,6 +46,20 @@ func fsFromPaths(files ...string) *filesystem.Mock {
 				entries = append(entries, &mockEntry{name: d, dir: true})
 			}
 			return entries, nil
+		},
+		ReadFileFunc: func(path string) ([]byte, error) {
+			if readCount != nil {
+				*readCount++
+			}
+			path = filepath.Clean(path)
+			if err := readErrors[path]; err != nil {
+				return nil, err
+			}
+			data, ok := fileContents[path]
+			if !ok {
+				return nil, fs.ErrNotExist
+			}
+			return data, nil
 		},
 	}
 }
@@ -223,4 +247,133 @@ func TestDetectWorkspaces(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPackageJSONClassification(t *testing.T) {
+	const root = "/repo"
+	packagePath := filepath.FromSlash("/repo/package.json")
+
+	frontendCases := []struct {
+		name     string
+		manifest string
+	}{
+		{"react dependency", `{"dependencies":{"react":"1"}}`},
+		{"vue dependency", `{"dependencies":{"vue":"1"}}`},
+		{"svelte dependency", `{"dependencies":{"svelte":"1"}}`},
+		{"angular dependency", `{"dependencies":{"@angular/core":"1"}}`},
+		{"next dependency", `{"dependencies":{"next":"1"}}`},
+		{"astro dependency", `{"dependencies":{"astro":"1"}}`},
+		{"solid dependency", `{"dependencies":{"solid-js":"1"}}`},
+		{"vite dependency", `{"dependencies":{"vite":"1"}}`},
+		{"react devDependency", `{"devDependencies":{"react":"1"}}`},
+		{"vue devDependency", `{"devDependencies":{"vue":"1"}}`},
+		{"svelte devDependency", `{"devDependencies":{"svelte":"1"}}`},
+		{"angular devDependency", `{"devDependencies":{"@angular/core":"1"}}`},
+		{"next devDependency", `{"devDependencies":{"next":"1"}}`},
+		{"astro devDependency", `{"devDependencies":{"astro":"1"}}`},
+		{"solid devDependency", `{"devDependencies":{"solid-js":"1"}}`},
+		{"vite devDependency", `{"devDependencies":{"vite":"1"}}`},
+	}
+	for _, tc := range frontendCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reads := 0
+			fsys := fsFromFileContents(map[string][]byte{packagePath: []byte(tc.manifest)}, nil, &reads)
+			typ, accent, ok := classifyDir(fsys, filepath.FromSlash(root))
+			if typ != TypeFrontend || accent != "blue" || !ok {
+				t.Fatalf("classifyDir = (%q, %q, %t), want frontend/blue/true", typ, accent, ok)
+			}
+			if reads != 1 {
+				t.Fatalf("package.json reads = %d, want 1", reads)
+			}
+		})
+	}
+
+	nodeCases := []struct {
+		name      string
+		manifest  []byte
+		readError error
+	}{
+		{"server and tooling dependencies", []byte(`{"dependencies":{"express":"1"},"devDependencies":{"typescript":"1","eslint":"1"}}`), nil},
+		{"dependency-less manifest", []byte(`{"name":"service"}`), nil},
+		{"empty dependency maps", []byte(`{"dependencies":{},"devDependencies":{}}`), nil},
+		{"capitalized dependencies ignored", []byte(`{"Dependencies":{"react":"1"}}`), nil},
+		{"capitalized devDependencies ignored", []byte(`{"DevDependencies":{"vite":"1"}}`), nil},
+		{"malformed manifest", []byte(`{"dependencies":`), nil},
+		{"unreadable manifest", nil, errors.New("read denied")},
+	}
+	for _, tc := range nodeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reads := 0
+			fsys := fsFromFileContents(
+				map[string][]byte{packagePath: tc.manifest},
+				map[string]error{packagePath: tc.readError},
+				&reads,
+			)
+			typ, accent, ok := classifyDir(fsys, filepath.FromSlash(root))
+			if typ != WorkspaceType("node") || accent != "orange" || !ok {
+				t.Fatalf("classifyDir = (%q, %q, %t), want node/orange/true", typ, accent, ok)
+			}
+			if reads != 1 {
+				t.Fatalf("package.json reads = %d, want 1", reads)
+			}
+		})
+	}
+
+	t.Run("package beats infrastructure", func(t *testing.T) {
+		reads := 0
+		fsys := fsFromFileContents(map[string][]byte{
+			packagePath:                            []byte(`{"name":"service"}`),
+			filepath.FromSlash("/repo/Dockerfile"): nil,
+		}, nil, &reads)
+		typ, accent, ok := classifyDir(fsys, filepath.FromSlash(root))
+		if typ != WorkspaceType("node") || accent != "orange" || !ok {
+			t.Fatalf("classifyDir = (%q, %q, %t), want node/orange/true", typ, accent, ok)
+		}
+		if reads != 1 {
+			t.Fatalf("package.json reads = %d, want 1", reads)
+		}
+	})
+
+	for _, marker := range []string{"go.mod", "pyproject.toml"} {
+		t.Run(marker+" beats package without reading it", func(t *testing.T) {
+			reads := 0
+			fsys := fsFromFileContents(map[string][]byte{
+				packagePath:                           []byte(`{"dependencies":{"react":"1"}}`),
+				filepath.FromSlash("/repo/" + marker): nil,
+			}, nil, &reads)
+			typ, _, ok := classifyDir(fsys, filepath.FromSlash(root))
+			if !ok {
+				t.Fatal("classifyDir did not classify the directory")
+			}
+			if (marker == "go.mod" && typ != TypeGo) || (marker == "pyproject.toml" && typ != TypePython) {
+				t.Fatalf("classifyDir type = %q, want marker %s to win", typ, marker)
+			}
+			if reads != 0 {
+				t.Fatalf("package.json reads = %d, want 0", reads)
+			}
+		})
+	}
+
+	t.Run("root and subdirectory IDs stay stable", func(t *testing.T) {
+		reads := 0
+		fsys := fsFromFileContents(map[string][]byte{
+			packagePath: []byte(`{"name":"root-service"}`),
+			filepath.FromSlash("/repo/services/api/package.json"): []byte(`{"name":"api-service"}`),
+		}, nil, &reads)
+		got, err := DetectWorkspaces(fsys, filepath.FromSlash(root))
+		if err != nil {
+			t.Fatalf("DetectWorkspaces returned error: %v", err)
+		}
+		want := []WorkspaceDef{
+			{ID: "project", Name: "Project", RelDir: "", Type: TypeProject, Accent: "project"},
+			{ID: "root:node", Name: "Node (root)", RelDir: "", Type: WorkspaceType("node"), Accent: "orange"},
+			{ID: "services/api", Name: "Node (services/api)", RelDir: "services/api", Type: WorkspaceType("node"), Accent: "orange"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("mismatch\n got: %+v\nwant: %+v", got, want)
+		}
+		if reads != 2 {
+			t.Fatalf("package.json reads = %d, want 2", reads)
+		}
+	})
 }
