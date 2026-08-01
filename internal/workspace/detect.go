@@ -187,14 +187,15 @@ func packageHasFrontendDependency(fsys filesystem.FileSystem, manifestPath strin
 	if err != nil {
 		return false
 	}
-	var manifest struct {
-		Dependencies    map[string]json.RawMessage `json:"dependencies"`
-		DevDependencies map[string]json.RawMessage `json:"devDependencies"`
-	}
+	var manifest map[string]json.RawMessage
 	if json.Unmarshal(data, &manifest) != nil {
 		return false
 	}
-	for _, dependencies := range []map[string]json.RawMessage{manifest.Dependencies, manifest.DevDependencies} {
+	for _, field := range []string{"dependencies", "devDependencies"} {
+		var dependencies map[string]json.RawMessage
+		if json.Unmarshal(manifest[field], &dependencies) != nil {
+			continue
+		}
 		for name := range dependencies {
 			if frontendDependencies[name] {
 				return true
