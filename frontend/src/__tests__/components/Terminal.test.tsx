@@ -992,6 +992,67 @@ describe('Terminal — conflicted Problems projection', () => {
     );
   });
 
+  it('surfaces the same conflict read failure after switching repositories', async () => {
+    mockGitConflictState.mockRejectedValue(new Error('disk denied'));
+    setGitStatus('/repo-old', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }]);
+    render(<TerminalWithConflictSync />);
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+
+    act(() => {
+      useIDEStore.setState({ toast: null });
+      useGitStore.getState().resetForWorkspace('/repo-new');
+      useGitStore.setState({
+        statusRevision: 1,
+        status: new git.RepoStatus({
+          isRepo: true,
+          repoRoot: '/repo-new',
+          branch: 'main',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          files: [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }],
+        }),
+      });
+    });
+
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledWith('/repo-new', 'app.py'));
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+  });
+
+  it('surfaces the same conflict read failure after a conflict-free interval', async () => {
+    mockGitConflictState.mockRejectedValue(new Error('disk denied'));
+    setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }]);
+    render(<TerminalWithConflictSync />);
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+
+    act(() => {
+      useIDEStore.setState({ toast: null });
+      setGitStatus('/repo', [], 2);
+    });
+    act(() => {
+      setGitStatus('/repo', [{ path: 'app.py', index: 'U', worktree: 'U', unmerged: true }], 3);
+    });
+
+    await waitFor(() => expect(mockGitConflictState).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast?.message).toBe(
+        'Could not read conflict state for app.py: disk denied'
+      )
+    );
+  });
+
   it('retains real diagnostics when a snapshot arrives without parsed regions', async () => {
     const read = deferred<unknown>();
     mockGitConflictState.mockReturnValue(read.promise);

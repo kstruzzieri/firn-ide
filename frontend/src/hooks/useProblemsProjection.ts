@@ -38,7 +38,10 @@ export function useConflictProjectionSync() {
   const unmergedFiles = useUnmergedFiles();
 
   useEffect(() => {
-    if (!status || !repoRoot || unmergedFiles.length === 0) return;
+    if (!status || !repoRoot || unmergedFiles.length === 0) {
+      lastFailureSignature.current = null;
+      return;
+    }
 
     const revision = ++requestRevision.current;
     let cancelled = false;
@@ -91,12 +94,15 @@ export function useConflictProjectionSync() {
       if (failures.length === 0) {
         lastFailureSignature.current = null;
       } else {
-        const signature = failures.map((failure) => `${failure.path}: ${failure.error}`).join('; ');
+        const failureSummary = failures
+          .map((failure) => `${failure.path}: ${failure.error}`)
+          .join('; ');
+        const signature = JSON.stringify([repoRoot, epoch, failureSummary]);
         if (signature !== lastFailureSignature.current) {
           lastFailureSignature.current = signature;
           useIDEStore
             .getState()
-            .showToast(`Could not read conflict state for ${signature}`, 'error');
+            .showToast(`Could not read conflict state for ${failureSummary}`, 'error');
         }
       }
     });
