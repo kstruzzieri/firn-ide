@@ -145,7 +145,7 @@ interface IDEState {
 }
 ```
 
-Diagnostics live in `lspStore` as a full URI -> diagnostics map. Error/warning/info counts are derived selector hooks, not separately maintained status fields.
+Diagnostics live in `lspStore` as a full URI -> diagnostics map. The Problems panel and StatusBar share the conflict-aware `useProblemsProjection()` hook; severity totals are derived from that projection rather than separately maintained status fields.
 
 ### Selector Hooks
 
@@ -174,9 +174,7 @@ const workspace = useIDEStore(state => state.workspace);
 | `useTerminalTab()` | Active terminal tab |
 | `useGitBranch()` | Current git branch |
 | `useRunProfiles()` | Run profile list |
-| `useLSPErrorCount()` | Derived LSP error count |
-| `useLSPWarningCount()` | Derived LSP warning count |
-| `useLSPInfoCount()` | Derived LSP info/hint count |
+| `useProblemsProjection()` | Conflict-aware Problems groups and total count |
 
 ### Actions
 
