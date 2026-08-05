@@ -73,6 +73,28 @@ it.each(WORKSPACE_ACCENTS)(
   }
 );
 
+it('keeps every pair of workspace accents perceptually distinct from each other', () => {
+  // The semantic guard below compares an accent to git/status colours. This one
+  // compares accents to each other, which is what two adjacent workspace rails
+  // or two rows of the selector menu actually are.
+  //
+  // Known limitation, measured not assumed: rails render at opacity .5 over the
+  // panel, which collapses chroma. In that form the weakest pair is project vs
+  // go at ΔE 7.4, below this floor. It is tolerated because WorkspaceTabs
+  // excludes the synthetic project workspace, so those two never sit adjacent in
+  // the strip. Narrowing any pair further needs that re-measured.
+  const pairs = WORKSPACE_ACCENTS.flatMap((a, i) =>
+    WORKSPACE_ACCENTS.slice(i + 1).map((b) => ({
+      pair: `${a} vs ${b}`,
+      distance: deltaE2000(parseHex(token(`accent-${a}`)), parseHex(token(`accent-${b}`))),
+    }))
+  );
+  const tooClose = pairs
+    .filter((p) => p.distance < 10)
+    .map((p) => `${p.pair} (${p.distance.toFixed(1)})`);
+  expect(tooClose).toEqual([]);
+});
+
 it.each(WORKSPACE_ACCENTS)(
   'keeps the %s workspace accent perceptually clear of every git and status colour',
   (accent) => {

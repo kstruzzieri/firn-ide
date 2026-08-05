@@ -28,16 +28,45 @@ function unionAccents(): string[] {
   return [...body.matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort();
 }
 
+/**
+ * --accent-dark/dim/glow are per-accent derived values, re-set inside every
+ * [data-accent] block rather than being accents themselves. They are excluded by
+ * name because that is a structural fact of the token system, not a value list.
+ */
+const DERIVED_ACCENT_VARS = ['dark', 'dim', 'glow'];
+
 function tokenAccents(): string[] {
-  return [...tokensCss.matchAll(/^\s*--accent-([a-z]+):\s*#/gm)]
+  // Scoped to :root so the derived --accent-dark hex inside each [data-accent]
+  // block cannot be mistaken for an accent definition.
+  const root = tokensCss.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1];
+  if (!root) throw new Error('Missing :root block in tokens.css');
+  return [...root.matchAll(/^\s*--accent-([a-z]+):\s*#/gm)]
     .map((m) => m[1])
-    .filter((name) => !['dark', 'dim', 'glow'].includes(name))
+    .filter((name) => !DERIVED_ACCENT_VARS.includes(name))
     .sort();
 }
 
 function dataAccentBlocks(): string[] {
   return [...tokensCss.matchAll(/\[data-accent='([a-z]+)'\]/g)].map((m) => m[1]).sort();
 }
+
+/**
+ * Every assertion below is a `.filter(...).toEqual([])`, which passes trivially
+ * on an empty scan. If detect.go stopped using accent string literals — deriving
+ * them from the type, say — the Go scan would silently find nothing and the
+ * cross-language guards would all go green while checking nothing at all.
+ * These floors make that refactor fail loudly instead.
+ */
+it('finds the accents it claims to be checking, rather than scanning nothing', () => {
+  // Every workspace type a marker rule can currently produce, plus the
+  // synthetic project entry. Adding a type should raise this, not bypass it.
+  expect(goAccents()).toEqual(
+    expect.arrayContaining(['docker', 'frontend', 'go', 'node', 'project', 'python', 'terraform'])
+  );
+  expect(unionAccents().length).toBeGreaterThanOrEqual(goAccents().length);
+  expect(tokenAccents().length).toBeGreaterThanOrEqual(unionAccents().length);
+  expect(dataAccentBlocks().length).toBeGreaterThanOrEqual(unionAccents().length);
+});
 
 it('emits no accent from Go that TypeScript does not accept', () => {
   const union = unionAccents();
