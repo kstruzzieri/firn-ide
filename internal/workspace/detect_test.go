@@ -92,7 +92,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/frontend/package.json"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -100,7 +100,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/go.mod"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
+				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "go"},
 			},
 		},
 		{
@@ -111,8 +111,8 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "backend/go", Name: "Go", RelDir: "backend/go", Type: TypeGo, Accent: "cyan"},
-				{ID: "backend/py", Name: "Python", RelDir: "backend/py", Type: TypePython, Accent: "green"},
+				{ID: "backend/go", Name: "Go", RelDir: "backend/go", Type: TypeGo, Accent: "go"},
+				{ID: "backend/py", Name: "Python", RelDir: "backend/py", Type: TypePython, Accent: "python"},
 			},
 		},
 		{
@@ -120,7 +120,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/infra/docker-compose.yml"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "infra", Name: "Docker", RelDir: "infra", Type: TypeDocker, Accent: "purple"},
+				{ID: "infra", Name: "Docker", RelDir: "infra", Type: TypeDocker, Accent: "docker"},
 			},
 		},
 		{
@@ -128,7 +128,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/terraform/main.tf"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "terraform", Name: "Terraform", RelDir: "terraform", Type: TypeTerraform, Accent: "amber"},
+				{ID: "terraform", Name: "Terraform", RelDir: "terraform", Type: TypeTerraform, Accent: "terraform"},
 			},
 		},
 		{
@@ -136,7 +136,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/docker-compose.yml"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:docker", Name: "Docker", RelDir: "", Type: TypeDocker, Accent: "purple"},
+				{ID: "root:docker", Name: "Docker", RelDir: "", Type: TypeDocker, Accent: "docker"},
 			},
 		},
 		{
@@ -144,7 +144,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/node_modules/foo/package.json", "/repo/app/package.json"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "app", Name: "Frontend", RelDir: "app", Type: TypeFrontend, Accent: "blue"},
+				{ID: "app", Name: "Frontend", RelDir: "app", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -155,8 +155,8 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "backend", Name: "Go (backend)", RelDir: "backend", Type: TypeGo, Accent: "cyan"},
-				{ID: "backend/api", Name: "Go (backend/api)", RelDir: "backend/api", Type: TypeGo, Accent: "cyan"},
+				{ID: "backend", Name: "Go (backend)", RelDir: "backend", Type: TypeGo, Accent: "go"},
+				{ID: "backend/api", Name: "Go (backend/api)", RelDir: "backend/api", Type: TypeGo, Accent: "go"},
 			},
 		},
 		{
@@ -164,7 +164,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/package.json", "/repo/go.mod"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
+				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "go"},
 			},
 		},
 		{
@@ -172,8 +172,8 @@ func TestDetectWorkspaces(t *testing.T) {
 			files: []string{"/repo/package.json", "/repo/frontend/package.json"},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:frontend", Name: "Frontend (root)", RelDir: "", Type: TypeFrontend, Accent: "blue"},
-				{ID: "frontend", Name: "Frontend (frontend)", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+				{ID: "root:frontend", Name: "Frontend (root)", RelDir: "", Type: TypeFrontend, Accent: "frontend"},
+				{ID: "frontend", Name: "Frontend (frontend)", RelDir: "frontend", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -185,8 +185,8 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "cyan"},
-				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+				{ID: "root:go", Name: "Go", RelDir: "", Type: TypeGo, Accent: "go"},
+				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -197,7 +197,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "app", Name: "Frontend", RelDir: "app", Type: TypeFrontend, Accent: "blue"},
+				{ID: "app", Name: "Frontend", RelDir: "app", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -208,8 +208,8 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "admin", Name: "Frontend (admin)", RelDir: "admin", Type: TypeFrontend, Accent: "blue"},
-				{ID: "web", Name: "Frontend (web)", RelDir: "web", Type: TypeFrontend, Accent: "blue"},
+				{ID: "admin", Name: "Frontend (admin)", RelDir: "admin", Type: TypeFrontend, Accent: "frontend"},
+				{ID: "web", Name: "Frontend (web)", RelDir: "web", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -221,7 +221,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "blue"},
+				{ID: "frontend", Name: "Frontend", RelDir: "frontend", Type: TypeFrontend, Accent: "frontend"},
 			},
 		},
 		{
@@ -232,7 +232,7 @@ func TestDetectWorkspaces(t *testing.T) {
 			},
 			want: []WorkspaceDef{
 				project,
-				{ID: "api", Name: "Python", RelDir: "api", Type: TypePython, Accent: "green"},
+				{ID: "api", Name: "Python", RelDir: "api", Type: TypePython, Accent: "python"},
 			},
 		},
 	}
@@ -279,8 +279,8 @@ func TestPackageJSONClassification(t *testing.T) {
 			reads := 0
 			fsys := fsFromFileContents(map[string][]byte{packagePath: []byte(tc.manifest)}, nil, &reads)
 			typ, accent, ok := classifyDir(fsys, filepath.FromSlash(root))
-			if typ != TypeFrontend || accent != "blue" || !ok {
-				t.Fatalf("classifyDir = (%q, %q, %t), want frontend/blue/true", typ, accent, ok)
+			if typ != TypeFrontend || accent != "frontend" || !ok {
+				t.Fatalf("classifyDir = (%q, %q, %t), want frontend/frontend/true", typ, accent, ok)
 			}
 			if reads != 1 {
 				t.Fatalf("package.json reads = %d, want 1", reads)
@@ -310,8 +310,8 @@ func TestPackageJSONClassification(t *testing.T) {
 				&reads,
 			)
 			typ, accent, ok := classifyDir(fsys, filepath.FromSlash(root))
-			if typ != WorkspaceType("node") || accent != "orange" || !ok {
-				t.Fatalf("classifyDir = (%q, %q, %t), want node/orange/true", typ, accent, ok)
+			if typ != WorkspaceType("node") || accent != "node" || !ok {
+				t.Fatalf("classifyDir = (%q, %q, %t), want node/node/true", typ, accent, ok)
 			}
 			if reads != 1 {
 				t.Fatalf("package.json reads = %d, want 1", reads)
@@ -326,8 +326,8 @@ func TestPackageJSONClassification(t *testing.T) {
 			filepath.FromSlash("/repo/Dockerfile"): nil,
 		}, nil, &reads)
 		typ, accent, ok := classifyDir(fsys, filepath.FromSlash(root))
-		if typ != WorkspaceType("node") || accent != "orange" || !ok {
-			t.Fatalf("classifyDir = (%q, %q, %t), want node/orange/true", typ, accent, ok)
+		if typ != WorkspaceType("node") || accent != "node" || !ok {
+			t.Fatalf("classifyDir = (%q, %q, %t), want node/node/true", typ, accent, ok)
 		}
 		if reads != 1 {
 			t.Fatalf("package.json reads = %d, want 1", reads)
@@ -366,8 +366,8 @@ func TestPackageJSONClassification(t *testing.T) {
 		}
 		want := []WorkspaceDef{
 			{ID: "project", Name: "Project", RelDir: "", Type: TypeProject, Accent: "project"},
-			{ID: "root:node", Name: "Node (root)", RelDir: "", Type: WorkspaceType("node"), Accent: "orange"},
-			{ID: "services/api", Name: "Node (services/api)", RelDir: "services/api", Type: WorkspaceType("node"), Accent: "orange"},
+			{ID: "root:node", Name: "Node (root)", RelDir: "", Type: WorkspaceType("node"), Accent: "node"},
+			{ID: "services/api", Name: "Node (services/api)", RelDir: "services/api", Type: WorkspaceType("node"), Accent: "node"},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("mismatch\n got: %+v\nwant: %+v", got, want)

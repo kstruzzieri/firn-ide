@@ -12,12 +12,12 @@ const cardCss = readFileSync(
 
 const WORKSPACE_ACCENTS = [
   'project',
-  'blue',
-  'green',
-  'cyan',
-  'orange',
-  'purple',
-  'amber',
+  'frontend',
+  'python',
+  'go',
+  'node',
+  'docker',
+  'terraform',
   'general',
 ] as const;
 

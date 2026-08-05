@@ -181,43 +181,43 @@
 
 /* Symbol-kind badge colors, mapped to Firn accents. */
 .kClass {
-  background: var(--accent-orange);
+  background: var(--palette-orange);
 }
 .kInterface {
-  background: var(--accent-blue);
+  background: var(--palette-blue);
   color: #dbeafe;
 }
 .kMethod {
-  background: var(--accent-purple);
+  background: var(--palette-purple);
   color: #faf5ff;
 }
 .kFunction {
-  background: var(--accent-purple);
+  background: var(--palette-purple);
   color: #faf5ff;
 }
 .kProperty {
-  background: var(--accent-cyan);
+  background: var(--palette-cyan);
 }
 .kField {
-  background: var(--accent-cyan);
+  background: var(--palette-cyan);
 }
 .kVariable {
-  background: var(--accent-blue);
+  background: var(--palette-blue);
   color: #dbeafe;
 }
 .kConstant {
-  background: var(--accent-amber);
+  background: var(--palette-amber);
 }
 .kEnum {
-  background: var(--accent-green);
+  background: var(--palette-green);
 }
 .kStruct {
-  background: var(--accent-orange);
+  background: var(--palette-orange);
 }
 .kModule,
 .kNamespace,
 .kTypeParam {
-  background: var(--accent-cyan);
+  background: var(--palette-cyan);
 }
 .kFile,
 .kString,
@@ -261,7 +261,7 @@
 }
 
 .emptyGlyph.warn {
-  color: var(--accent-amber);
+  color: var(--palette-amber);
   background: rgba(245, 158, 11, 0.1);
 }
 

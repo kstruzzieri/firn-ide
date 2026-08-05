@@ -79,14 +79,35 @@ Each workspace type has a distinct accent color that appears in:
 - Status bar workspace label
 - Run profile indicators when running
 
-| Workspace Type | Accent Color | Hex | Rationale |
-|----------------|--------------|-----|-----------|
-| Frontend / TypeScript | Blue | `#2563EB` | WebStorm association |
-| Python | Green | `#22C55E` | PyCharm association |
-| Go | Cyan | `#06B6D4` | GoLand association |
-| Rust | Orange | `#F97316` | Rust community color |
-| Docker / Infrastructure | Purple | `#A855F7` | "Meta" / orchestration feel |
-| General / Untyped | Neutral | `#6B7280` | No specific personality |
+Accents are named for the workspace type, not the color, because the mapping is
+1:1 — renaming a hue must never silently repoint a workspace.
+
+| Workspace Type | Token | Hex | Rationale |
+|----------------|-------|-----|-----------|
+| Frontend | `--accent-frontend` | `#F0389D` | Magenta; keeps clear of Terraform purple |
+| Node | `--accent-node` | `#8FC606` | nodejs green, deepened to clear `--git-added` |
+| Python | `--accent-python` | `#BFAD00` | Python yellow, deepened for the selected-row tint |
+| Go | `--accent-go` | `#12B5CD` | Gopher cyan |
+| Rust | `--accent-rust` | `#E2703A` | Rust oxide orange |
+| Docker | `--accent-docker` | `#3B82F6` | Docker blue |
+| Terraform | `--accent-terraform` | `#A855F7` | Terraform purple |
+| General / Untyped | `--accent-general` | `#6B7280` | No specific personality |
+
+Two constraints bind this palette, both enforced by `__tests__/styles/tokens.test.ts`:
+
+- **CIEDE2000 ΔE >= 10 from every `--git-*` and `--status-*` color.** The previous
+  palette failed this twice — `--accent-green` was byte-identical to `--git-added`
+  and `--accent-amber` to `--status-warning`.
+- **`--text-muted` stays at 4.5:1 over the selected-row tint** (20% accent over
+  `--surface-panel`). This is what caps accent brightness, and why Node and Python
+  are deeper than their brand colors.
+
+The uneven lightness across accents is deliberate; normalizing it measurably
+worsens the weakest pair.
+
+A separate `--palette-*` ramp (`blue`, `green`, `cyan`, `orange`, `purple`, `amber`)
+exists for UI needing several distinguishable colors with no workspace meaning —
+Structure view symbol kinds, the LSP setup card. Do not use it for workspace identity.
 
 ### Workspace Accent System (Implemented)
 
@@ -106,23 +127,25 @@ The entire IDE accent cascades from a single CSS custom property, making workspa
 
 **CSS Implementation:**
 ```css
-/* Accent variant classes — apply to .ide element */
-.ide--accent-blue {
-  --accent: #2563EB;
-  --accent-dim: rgba(37, 99, 235, 0.12);
-  --accent-glow: rgba(37, 99, 235, 0.25);
+/* Accent variants — applied via [data-accent] on the .ide element */
+[data-accent='frontend'] {
+  --accent: var(--accent-frontend);
+  --accent-dark: #ad2871;
+  --accent-dim: rgba(240, 56, 157, 0.12);
+  --accent-glow: rgba(240, 56, 157, 0.25);
 }
 
-.ide--accent-green {
-  --accent: #22C55E;
-  --accent-dim: rgba(34, 197, 94, 0.12);
-  --accent-glow: rgba(34, 197, 94, 0.25);
+[data-accent='rust'] {
+  --accent: var(--accent-rust);
+  --accent-dark: #a3512a;
+  --accent-dim: rgba(226, 112, 58, 0.12);
+  --accent-glow: rgba(226, 112, 58, 0.25);
 }
 
-/* etc. for cyan, orange, purple, amber */
+/* etc. for node, python, go, docker, terraform, general, project */
 ```
 
-**Available Accents:** `blue`, `green`, `cyan`, `orange`, `purple`, `amber`
+**Available Accents:** `frontend`, `node`, `python`, `go`, `rust`, `docker`, `terraform`, `general`, `project`
 
 **Note:** The Firn logo maintains consistent branding (blue→purple gradient) regardless of workspace accent.
 

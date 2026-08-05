@@ -49,14 +49,19 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
+// Named per workspace type, matching the --accent-* tokens and the accent
+// strings emitted by internal/workspace/detect.go.
+// 'rust' has a token and is accepted here so the palette is complete; nothing
+// emits it until Cargo.toml detection lands.
 export type WorkspaceAccent =
   | 'project'
-  | 'blue'
-  | 'cyan'
-  | 'green'
-  | 'purple'
-  | 'orange'
-  | 'amber'
+  | 'frontend'
+  | 'go'
+  | 'python'
+  | 'docker'
+  | 'node'
+  | 'terraform'
+  | 'rust'
   | 'general';
 
 // Re-export FileEntry for convenience

@@ -16,7 +16,7 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
 const mockLoad = LoadWorkspaceState as jest.Mock;
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
 ];
 
 function savedState(activeWorkspaceId?: string) {

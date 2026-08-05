@@ -145,7 +145,7 @@ describe('TreeRow', () => {
         isDir={false}
         isExpanded={false}
         isSelected={false}
-        regionAccent="blue"
+        regionAccent="frontend"
         setSize={1}
         posInSet={1}
       />
@@ -167,8 +167,8 @@ describe('TreeRow', () => {
       isDir: false,
       isExpanded: false,
       isSelected: true,
-      regionAccent: 'blue' as const,
-      fileAccent: 'purple' as const,
+      regionAccent: 'frontend' as const,
+      fileAccent: 'docker' as const,
       setSize: 2,
       posInSet: 1,
       gitStatus: 'modified' as const,
@@ -176,8 +176,8 @@ describe('TreeRow', () => {
     render(<TreeRow {...props} />);
 
     const row = screen.getByRole('treeitem', { name: 'Dockerfile' });
-    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
-    expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
+    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
+    expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-docker)');
     expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
     expect(row).toHaveAttribute('id', rowDomId('/repo/frontend/Dockerfile'));
     expect(row).toHaveAttribute('tabindex', '-1');
@@ -199,8 +199,8 @@ describe('TreeRow', () => {
       isExpanded: false,
       isSelected: true,
       isActive: true,
-      regionAccent: 'blue' as const,
-      ownershipAccent: 'cyan' as const,
+      regionAccent: 'frontend' as const,
+      ownershipAccent: 'go' as const,
       setSize: 1,
       posInSet: 1,
     };
@@ -208,7 +208,7 @@ describe('TreeRow', () => {
 
     const row = screen.getByRole('treeitem', { name: 'App.tsx' });
     expect(row.className).toContain('ownershipRail');
-    expect(row.style.getPropertyValue('--ownership-accent')).toBe('var(--accent-cyan)');
+    expect(row.style.getPropertyValue('--ownership-accent')).toBe('var(--accent-go)');
     expect(row).toHaveAttribute('aria-selected', 'true');
     expect(row.className).toContain('active');
 
@@ -230,7 +230,7 @@ describe('TreeRow', () => {
         isExpanded={false}
         isSelected={true}
         isActive={true}
-        regionAccent="blue"
+        regionAccent="frontend"
         fileAccent={null}
         setSize={2}
         posInSet={1}
@@ -246,7 +246,7 @@ describe('TreeRow', () => {
     expect(row).toHaveAttribute('aria-level', '2');
     expect(row).toHaveAttribute('tabindex', '-1');
     expect(row.className).toContain('active');
-    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
     expect(row).toHaveAttribute('data-git', 'modified');
     expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
     const indicator = screen.getByTestId('unreadable-indicator');
@@ -268,7 +268,7 @@ describe('TreeRow', () => {
         isExpanded={false}
         isSelected={false}
         regionAccent={null}
-        fileAccent="purple"
+        fileAccent="docker"
         setSize={1}
         posInSet={1}
         unreadable={true}
@@ -276,7 +276,7 @@ describe('TreeRow', () => {
     );
 
     expect(screen.getByRole('treeitem', { name: 'Dockerfile, unreadable' })).toHaveStyle({
-      '--file-accent': 'var(--accent-purple)',
+      '--file-accent': 'var(--accent-docker)',
     });
     expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute('aria-hidden', 'true');
@@ -297,7 +297,7 @@ describe('TreeRow', () => {
         isDir={false}
         isExpanded={false}
         isSelected={true}
-        regionAccent="blue"
+        regionAccent="frontend"
         setSize={1}
         posInSet={1}
       />
@@ -323,7 +323,7 @@ describe('TreeRow', () => {
         isDir={false}
         isExpanded={false}
         isSelected={false}
-        regionAccent="blue"
+        regionAccent="frontend"
         setSize={1}
         posInSet={1}
       />

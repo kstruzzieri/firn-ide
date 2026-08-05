@@ -63,21 +63,21 @@ function infraFileAccent(path: string, isDir = false) {
 
 describe('getInfraFileAccent', () => {
   it.each([
-    ['Dockerfile', 'purple'],
-    ['docker-compose.yml', 'purple'],
-    ['docker-compose.yaml', 'purple'],
-    ['compose.yml', 'purple'],
-    ['compose.yaml', 'purple'],
-    ['.dockerignore', 'purple'],
-    ['main.tf', 'amber'],
-    ['production.tfvars', 'amber'],
+    ['Dockerfile', 'docker'],
+    ['docker-compose.yml', 'docker'],
+    ['docker-compose.yaml', 'docker'],
+    ['compose.yml', 'docker'],
+    ['compose.yaml', 'docker'],
+    ['.dockerignore', 'docker'],
+    ['main.tf', 'terraform'],
+    ['production.tfvars', 'terraform'],
   ] as const)('matches %s as %s', (name, accent) => {
     expect(infraFileAccent(`/Users/me/repo/${name}`)).toBe(accent);
   });
 
   it('matches files at any tree depth', () => {
-    expect(infraFileAccent('/Users/me/repo/services/api/Dockerfile')).toBe('purple');
-    expect(infraFileAccent('/Users/me/repo/infra/live/main.tf')).toBe('amber');
+    expect(infraFileAccent('/Users/me/repo/services/api/Dockerfile')).toBe('docker');
+    expect(infraFileAccent('/Users/me/repo/infra/live/main.tf')).toBe('terraform');
   });
 
   it.each([
@@ -108,9 +108,9 @@ describe('createWorkspacePathResolver', () => {
   const root = '/Users/me/repo';
   const workspaces = [
     ws({ id: 'project', relDir: '', accent: 'project' }),
-    ws({ id: 'root:go', relDir: '', accent: 'amber' }),
-    ws({ id: 'backend', relDir: 'backend', accent: 'cyan' }),
-    ws({ id: 'backend/api', relDir: 'backend/api', accent: 'green' }),
+    ws({ id: 'root:go', relDir: '', accent: 'terraform' }),
+    ws({ id: 'backend', relDir: 'backend', accent: 'go' }),
+    ws({ id: 'backend/api', relDir: 'backend/api', accent: 'python' }),
   ];
 
   it('uses the root workspace for files outside nested workspace regions', () => {
@@ -132,7 +132,7 @@ describe('createWorkspacePathResolver', () => {
   it('does not match workspace names across path-segment boundaries', () => {
     const resolve = createWorkspacePathResolver(root, [
       ws({ id: 'project', relDir: '', accent: 'project' }),
-      ws({ id: 'api', relDir: 'backend/api', accent: 'green' }),
+      ws({ id: 'api', relDir: 'backend/api', accent: 'python' }),
     ]);
     expect(resolve('/Users/me/repo/backend/apiary/main.go')).toBeNull();
   });
@@ -142,44 +142,44 @@ describe('createRegionAccentResolver', () => {
   const root = '/Users/me/repo';
   const workspaces = [
     ws({ id: 'project', relDir: '', accent: 'project' }),
-    ws({ id: 'frontend', relDir: 'frontend', accent: 'blue' }),
-    ws({ id: 'backend', relDir: 'backend', accent: 'cyan' }),
-    ws({ id: 'backend/api', relDir: 'backend/api', accent: 'green' }),
+    ws({ id: 'frontend', relDir: 'frontend', accent: 'frontend' }),
+    ws({ id: 'backend', relDir: 'backend', accent: 'go' }),
+    ws({ id: 'backend/api', relDir: 'backend/api', accent: 'python' }),
   ];
 
   it('tints a workspace folder and its descendants with the workspace accent', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
-    expect(resolve(entry('/Users/me/repo/frontend', true))).toBe('blue');
-    expect(resolve(entry('/Users/me/repo/frontend/src/App.tsx'))).toBe('blue');
+    expect(resolve(entry('/Users/me/repo/frontend', true))).toBe('frontend');
+    expect(resolve(entry('/Users/me/repo/frontend/src/App.tsx'))).toBe('frontend');
   });
 
   it('prefers the longest matching relDir for nested workspaces', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
-    expect(resolve(entry('/Users/me/repo/backend/api/main.go'))).toBe('green');
-    expect(resolve(entry('/Users/me/repo/backend/db/x.go'))).toBe('cyan');
+    expect(resolve(entry('/Users/me/repo/backend/api/main.go'))).toBe('python');
+    expect(resolve(entry('/Users/me/repo/backend/db/x.go'))).toBe('go');
   });
 
   it('does NOT match a sibling whose name shares a prefix', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
     // "backend/apiary" must not match "backend/api"
-    expect(resolve(entry('/Users/me/repo/backend/apiary/x.go'))).toBe('cyan');
+    expect(resolve(entry('/Users/me/repo/backend/apiary/x.go'))).toBe('go');
   });
 
   it('skips region tint for root workspaces (relDir === "")', () => {
     const resolve = createRegionAccentResolver(root, [
       ws({ id: 'project', relDir: '', accent: 'project' }),
-      ws({ id: 'root:go', relDir: '', accent: 'cyan' }),
+      ws({ id: 'root:go', relDir: '', accent: 'go' }),
     ]);
     expect(resolve(entry('/Users/me/repo/main.go'))).toBeNull();
   });
 
   it('tints loose root files by file-type association', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
-    expect(resolve(entry('/Users/me/repo/docker-compose.yml'))).toBe('purple');
-    expect(resolve(entry('/Users/me/repo/Dockerfile'))).toBe('purple');
-    expect(resolve(entry('/Users/me/repo/.dockerignore'))).toBe('purple');
-    expect(resolve(entry('/Users/me/repo/main.tf'))).toBe('amber');
-    expect(resolve(entry('/Users/me/repo/production.tfvars'))).toBe('amber');
+    expect(resolve(entry('/Users/me/repo/docker-compose.yml'))).toBe('docker');
+    expect(resolve(entry('/Users/me/repo/Dockerfile'))).toBe('docker');
+    expect(resolve(entry('/Users/me/repo/.dockerignore'))).toBe('docker');
+    expect(resolve(entry('/Users/me/repo/main.tf'))).toBe('terraform');
+    expect(resolve(entry('/Users/me/repo/production.tfvars'))).toBe('terraform');
   });
 
   it('does NOT tint a nested .tf outside any workspace', () => {

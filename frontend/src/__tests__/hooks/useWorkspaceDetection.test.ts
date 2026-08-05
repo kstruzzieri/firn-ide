@@ -17,7 +17,7 @@ beforeEach(() => {
 it('detects workspaces when a repo is open', async () => {
   mockDetect.mockResolvedValue([
     { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
   ]);
 
   renderHook(() => useWorkspaceDetection());
@@ -46,7 +46,7 @@ it('clears workspaces when no repo is open', async () => {
 it('clears stale workspaces immediately on repo switch (no cross-repo leak)', async () => {
   mockDetect.mockResolvedValueOnce([
     { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
   ]);
   renderHook(() => useWorkspaceDetection());
 

@@ -27,13 +27,27 @@ type RGB = [number, number, number];
 
 const WORKSPACE_ACCENTS = [
   'project',
-  'blue',
-  'green',
-  'cyan',
-  'orange',
-  'purple',
-  'amber',
+  'frontend',
+  'python',
+  'go',
+  'node',
+  'docker',
+  'terraform',
+  'rust',
   'general',
+] as const;
+
+// Git and status colours are fixed points: a workspace accent that lands on one
+// makes workspace identity and file state indistinguishable in the same tree.
+const SEMANTIC_TOKENS = [
+  'git-added',
+  'git-modified',
+  'git-deleted',
+  'git-conflicted',
+  'git-untracked',
+  'status-success',
+  'status-warning',
+  'status-error',
 ] as const;
 
 it.each([
@@ -44,6 +58,40 @@ it.each([
 ])('defines the merge %s token', (name, value) => {
   expect(token(name)).toBe(value);
 });
+
+it.each(WORKSPACE_ACCENTS)(
+  'gives the %s accent a [data-accent] block so the derived vars switch with it',
+  (accent) => {
+    // --accent-dark/dim/glow only track the active workspace through these
+    // blocks. A token without one still colours dots but leaves the derived
+    // values stuck on whatever the previous workspace set.
+    const body = rule(css, `[data-accent='${accent}']`);
+    expect(body).toMatch(/--accent:/);
+    expect(body).toMatch(/--accent-dark:/);
+    expect(body).toMatch(/--accent-dim:/);
+    expect(body).toMatch(/--accent-glow:/);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  'keeps the %s workspace accent perceptually clear of every git and status colour',
+  (accent) => {
+    const accentRgb = parseHex(token(`accent-${accent}`));
+    const nearest = SEMANTIC_TOKENS.map((name) => ({
+      name,
+      distance: deltaE2000(accentRgb, parseHex(token(name))),
+    })).sort((a, b) => a.distance - b.distance)[0];
+
+    // 10 is the floor the palette was designed to, and it is not slack: Node
+    // sits at 10.2 against --git-added. Moving an accent closer needs a new
+    // measurement, not a threshold change. Asserting on the pair rather than the
+    // bare number so a failure names the colliding token.
+    expect({ nearest: nearest.name, clear: nearest.distance >= 10 }).toEqual({
+      nearest: nearest.name,
+      clear: true,
+    });
+  }
+);
 
 it('targets the manual merge action semantically instead of by child order', () => {
   expect(mergeResolutionCss).toContain(".cm-mergeResolution-action[data-decision='M']");
@@ -77,6 +125,87 @@ function contrast(a: RGB, b: RGB): number {
   const aLuminance = luminance(a);
   const bLuminance = luminance(b);
   return (Math.max(aLuminance, bLuminance) + 0.05) / (Math.min(aLuminance, bLuminance) + 0.05);
+}
+
+function lab(rgb: RGB): [number, number, number] {
+  const [r, g, b] = rgb
+    .map((channel) => channel / 255)
+    .map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+  const x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  const f = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : (841 / 108) * t + 4 / 29);
+  const [fx, fy, fz] = [f(x), f(y), f(z)];
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+/**
+ * CIEDE2000 colour difference. Contrast ratio answers "is this legible"; it says
+ * nothing about "are these two the same colour" — two accents can share a hex and
+ * still pass every contrast check in this file. This is the metric that catches that.
+ */
+function deltaE2000(a: RGB, b: RGB): number {
+  const [l1, a1, b1] = lab(a);
+  const [l2, a2, b2] = lab(b);
+  const toRad = Math.PI / 180;
+  const toDeg = 180 / Math.PI;
+
+  const chroma1 = Math.hypot(a1, b1);
+  const chroma2 = Math.hypot(a2, b2);
+  const chromaMean = (chroma1 + chroma2) / 2;
+  const g = 0.5 * (1 - Math.sqrt(chromaMean ** 7 / (chromaMean ** 7 + 25 ** 7)));
+  const aPrime1 = (1 + g) * a1;
+  const aPrime2 = (1 + g) * a2;
+  const cPrime1 = Math.hypot(aPrime1, b1);
+  const cPrime2 = Math.hypot(aPrime2, b2);
+
+  const hue = (channelB: number, aPrime: number) => {
+    if (channelB === 0 && aPrime === 0) return 0;
+    const angle = Math.atan2(channelB, aPrime) * toDeg;
+    return angle < 0 ? angle + 360 : angle;
+  };
+  const hPrime1 = hue(b1, aPrime1);
+  const hPrime2 = hue(b2, aPrime2);
+
+  const deltaL = l2 - l1;
+  const deltaC = cPrime2 - cPrime1;
+  let deltah = 0;
+  if (cPrime1 * cPrime2 !== 0) {
+    deltah = hPrime2 - hPrime1;
+    if (deltah > 180) deltah -= 360;
+    else if (deltah < -180) deltah += 360;
+  }
+  const deltaH = 2 * Math.sqrt(cPrime1 * cPrime2) * Math.sin((deltah * toRad) / 2);
+
+  const lMean = (l1 + l2) / 2;
+  const cMean = (cPrime1 + cPrime2) / 2;
+  let hMean: number;
+  if (cPrime1 * cPrime2 === 0) {
+    hMean = hPrime1 + hPrime2;
+  } else {
+    hMean = (hPrime1 + hPrime2) / 2;
+    if (Math.abs(hPrime1 - hPrime2) > 180) hMean += hPrime1 + hPrime2 < 360 ? 180 : -180;
+  }
+
+  const t =
+    1 -
+    0.17 * Math.cos((hMean - 30) * toRad) +
+    0.24 * Math.cos(2 * hMean * toRad) +
+    0.32 * Math.cos((3 * hMean + 6) * toRad) -
+    0.2 * Math.cos((4 * hMean - 63) * toRad);
+  const sl = 1 + (0.015 * (lMean - 50) ** 2) / Math.sqrt(20 + (lMean - 50) ** 2);
+  const sc = 1 + 0.045 * cMean;
+  const sh = 1 + 0.015 * cMean * t;
+  const rt =
+    -Math.sin(2 * (30 * Math.exp(-(((hMean - 275) / 25) ** 2))) * toRad) *
+    (2 * Math.sqrt(cMean ** 7 / (cMean ** 7 + 25 ** 7)));
+
+  return Math.sqrt(
+    (deltaL / sl) ** 2 +
+      (deltaC / sc) ** 2 +
+      (deltaH / sh) ** 2 +
+      rt * (deltaC / sc) * (deltaH / sh)
+  );
 }
 
 function rule(source: string, selector: string): string {

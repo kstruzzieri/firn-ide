@@ -27,12 +27,14 @@ type markerRule struct {
 // infra wins only for dirs with no language marker (pure terraform or
 // compose-only orchestration). go.mod is first so a polyglot root with a tooling
 // package.json classifies as Go.
+// Accents are named for the workspace type, not the colour, and are 1:1 with it.
+// The hex values live in frontend/src/styles/tokens.css.
 var markerRules = []markerRule{
-	{files: []string{"go.mod"}, typ: TypeGo, accent: "cyan"},
-	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "green"},
-	{files: []string{"package.json"}, typ: TypeNode, accent: "orange"},
-	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, typ: TypeDocker, accent: "purple"},
-	{suffix: ".tf", typ: TypeTerraform, accent: "amber"},
+	{files: []string{"go.mod"}, typ: TypeGo, accent: "go"},
+	{files: []string{"pyproject.toml", "requirements.txt", "setup.py"}, typ: TypePython, accent: "python"},
+	{files: []string{"package.json"}, typ: TypeNode, accent: "node"},
+	{files: []string{"docker-compose.yml", "docker-compose.yaml", "Dockerfile"}, typ: TypeDocker, accent: "docker"},
+	{suffix: ".tf", typ: TypeTerraform, accent: "terraform"},
 }
 
 var frontendDependencies = map[string]bool{
@@ -166,7 +168,7 @@ func classifyDir(fsys filesystem.FileSystem, dir string) (WorkspaceType, string,
 		for _, f := range rule.files {
 			if names[f] {
 				if f == "package.json" && packageHasFrontendDependency(fsys, filepath.Join(dir, f)) {
-					return TypeFrontend, "blue", true
+					return TypeFrontend, "frontend", true
 				}
 				return rule.typ, rule.accent, true
 			}

@@ -25,7 +25,7 @@ beforeEach(() => {
     stoppingProfileIds: [],
     restartingProfileIds: [],
     activeWorkspaceId: 'ws1',
-    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'blue' }] as never,
+    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'frontend' }] as never,
     selectedProfileId: null,
     recentWorkspaces: [],
   });

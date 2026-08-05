@@ -80,14 +80,14 @@ describe('flattenVisibleTree', () => {
   it('precomputes regionAccent from the resolver, null when absent', () => {
     const roots = [file('/repo/a.ts', 'a.ts')];
     const resolver = (e: FileEntry): WorkspaceAccent | null =>
-      e.path === '/repo/a.ts' ? 'blue' : null;
+      e.path === '/repo/a.ts' ? 'frontend' : null;
     const tinted = flattenVisibleTree({
       ...base,
       roots,
       expandedPaths: new Set(),
       getRegionAccent: resolver,
     });
-    expect(tinted.find((r) => r.key === '/repo/a.ts')?.regionAccent).toBe('blue');
+    expect(tinted.find((r) => r.key === '/repo/a.ts')?.regionAccent).toBe('frontend');
 
     const untinted = flattenVisibleTree({ ...base, roots, expandedPaths: new Set() });
     expect(untinted.find((r) => r.key === '/repo/a.ts')?.regionAccent).toBeNull();
@@ -99,13 +99,13 @@ describe('flattenVisibleTree', () => {
       ...base,
       roots: [dir('/repo/frontend', 'frontend', [dockerfile])],
       expandedPaths: new Set(['/repo/frontend']),
-      getRegionAccent: () => 'blue',
+      getRegionAccent: () => 'frontend',
       getFileAccent: getInfraFileAccent,
     });
     const row = rows.find((candidate) => candidate.key === dockerfile.path)!;
 
-    expect(row.regionAccent).toBe('blue');
-    expect(row.fileAccent).toBe('purple');
+    expect(row.regionAccent).toBe('frontend');
+    expect(row.fileAccent).toBe('docker');
   });
 
   it('marks the selected entry', () => {

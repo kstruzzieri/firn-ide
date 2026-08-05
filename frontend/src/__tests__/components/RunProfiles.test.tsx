@@ -530,7 +530,7 @@ describe('RunProfiles panel — view toggle', () => {
       runProfileState: profileState,
       workspaces: [
         { id: 'project', name: 'Project', relDir: '', accent: 'project' },
-        { id: WS, name: 'Frontend', relDir: 'frontend', accent: 'blue' },
+        { id: WS, name: 'Frontend', relDir: 'frontend', accent: 'frontend' },
       ] as never,
       activeWorkspaceId: WS, // start in workspace view
       runOutputs: {},
