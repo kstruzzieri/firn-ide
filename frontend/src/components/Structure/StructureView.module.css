@@ -260,14 +260,16 @@
   height: 20px;
 }
 
+/* Backgrounds derive from the same token as the glyph colour, so repointing the
+   ramp cannot leave the wash on the old hue. */
 .emptyGlyph.warn {
   color: var(--palette-amber);
-  background: rgba(245, 158, 11, 0.1);
+  background: color-mix(in srgb, var(--palette-amber) 10%, transparent);
 }
 
 .emptyGlyph.error {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
+  color: var(--palette-red);
+  background: color-mix(in srgb, var(--palette-red) 10%, transparent);
 }
 
 .emptyTitle {
