@@ -1,6 +1,7 @@
 import { getTagColor } from '../../utils/tagColors';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { WORKSPACE_ACCENTS } from '../../utils/accent';
 
 type RGB = [number, number, number];
 
@@ -9,17 +10,6 @@ const cardCss = readFileSync(
   resolve(__dirname, '../../components/RunProfiles/RunProfileCard.module.css'),
   'utf8'
 );
-
-const WORKSPACE_ACCENTS = [
-  'project',
-  'frontend',
-  'python',
-  'go',
-  'node',
-  'docker',
-  'terraform',
-  'general',
-] as const;
 
 const TAG_COLORS = [
   ['dev', { background: 'rgba(56,189,248,0.08)', text: 'rgba(56,189,248,1)' }],

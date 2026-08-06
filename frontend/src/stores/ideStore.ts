@@ -50,19 +50,12 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
 // Named per workspace type, matching the --accent-* tokens and the accent
-// strings emitted by internal/workspace/detect.go.
-// 'rust' has a token and is accepted here so the palette is complete; nothing
+// strings emitted by internal/workspace/detect.go. Re-exported from
+// utils/accent, which owns the one tuple the type and the runtime lookup are
+// both derived from. 'rust' is accepted so the palette is complete; nothing
 // emits it until Cargo.toml detection lands.
-export type WorkspaceAccent =
-  | 'project'
-  | 'frontend'
-  | 'go'
-  | 'python'
-  | 'docker'
-  | 'node'
-  | 'terraform'
-  | 'rust'
-  | 'general';
+import type { WorkspaceAccent } from '../utils/accent';
+export type { WorkspaceAccent };
 
 // Re-export FileEntry for convenience
 export type FileEntry = filesystem.FileEntry;

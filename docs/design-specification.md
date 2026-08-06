@@ -901,12 +901,16 @@ For implementation, extract these as CSS custom properties or design tokens:
   --text-muted: #6E7681;
   --text-disabled: #484F58;
 
-  /* Accents */
-  --accent-frontend: #3B82F6;
-  --accent-python: #22C55E;
-  --accent-go: #06B6D4;
-  --accent-rust: #F97316;
-  --accent-docker: #A855F7;
+  /* Workspace accents — see the Accent Colors table above for the constraints
+     these values satisfy. Keep in sync with frontend/src/styles/tokens.css. */
+  --accent-frontend: #F0389D;
+  --accent-node: #8FC606;
+  --accent-python: #BFAD00;
+  --accent-go: #12B5CD;
+  --accent-rust: #E2703A;
+  --accent-docker: #3B82F6;
+  --accent-terraform: #A855F7;
+  --accent-project: #38BDF8;
   --accent-general: #6B7280;
 
   /* Semantic */

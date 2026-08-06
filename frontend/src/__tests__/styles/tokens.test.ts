@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { WORKSPACE_ACCENTS } from '../../utils/accent';
 
 const css = readFileSync(resolve(__dirname, '../../styles/tokens.css'), 'utf8');
 const terminalCss = readFileSync(
@@ -24,18 +25,6 @@ const mergeResolutionCss = readFileSync(
 );
 
 type RGB = [number, number, number];
-
-const WORKSPACE_ACCENTS = [
-  'project',
-  'frontend',
-  'python',
-  'go',
-  'node',
-  'docker',
-  'terraform',
-  'rust',
-  'general',
-] as const;
 
 // Git and status colours are fixed points: a workspace accent that lands on one
 // makes workspace identity and file state indistinguishable in the same tree.
@@ -73,26 +62,48 @@ it.each(WORKSPACE_ACCENTS)(
   }
 );
 
-it('keeps every pair of workspace accents perceptually distinct from each other', () => {
-  // The semantic guard below compares an accent to git/status colours. This one
-  // compares accents to each other, which is what two adjacent workspace rails
-  // or two rows of the selector menu actually are.
-  //
-  // Known limitation, measured not assumed: rails render at opacity .5 over the
-  // panel, which collapses chroma. In that form the weakest pair is project vs
-  // go at ΔE 7.4, below this floor. It is tolerated because WorkspaceTabs
-  // excludes the synthetic project workspace, so those two never sit adjacent in
-  // the strip. Narrowing any pair further needs that re-measured.
-  const pairs = WORKSPACE_ACCENTS.flatMap((a, i) =>
+/** Every workspace-accent pair, measured through `transform` at the given alpha. */
+function accentPairs(transform: (rgb: RGB) => RGB) {
+  return WORKSPACE_ACCENTS.flatMap((a, i) =>
     WORKSPACE_ACCENTS.slice(i + 1).map((b) => ({
       pair: `${a} vs ${b}`,
-      distance: deltaE2000(parseHex(token(`accent-${a}`)), parseHex(token(`accent-${b}`))),
+      distance: deltaE2000(
+        transform(parseHex(token(`accent-${a}`))),
+        transform(parseHex(token(`accent-${b}`)))
+      ),
     }))
   );
-  const tooClose = pairs
+}
+
+it('keeps every pair of workspace accents perceptually distinct at full strength', () => {
+  // The semantic guard below compares an accent to git/status colours. This one
+  // compares accents to each other, which is what two rows of the selector menu
+  // are. The rendered rail form is asserted separately below.
+  const tooClose = accentPairs((rgb) => rgb)
     .filter((p) => p.distance < 10)
     .map((p) => `${p.pair} (${p.distance.toFixed(1)})`);
   expect(tooClose).toEqual([]);
+});
+
+it('keeps every pair distinct in the rendered ownership-rail form too', () => {
+  // The rail is not the raw token: TreeRow paints it at opacity .5 over the
+  // panel, which collapses chroma and pulls hues together. Asserting the raw
+  // values alone would let a regression through in the form users actually see,
+  // so this composites first, exactly as `.row.ownershipRail::before` does.
+  const railAlpha = opacity(treeRowCss, '.row.ownershipRail::before');
+  const panel = parseHex(token('surface-panel'));
+  const railPairs = accentPairs((rgb) => composite(rgb, panel, railAlpha));
+
+  // One pair sits below the floor and is tolerated: WorkspaceTabs excludes the
+  // synthetic project workspace, so project and go never render as adjacent
+  // rails. Asserting the exact set rather than a count means a new offender
+  // fails loudly, and fixing this one fails too — prompting its removal here.
+  const belowFloor = railPairs.filter((p) => p.distance < 10).map((p) => p.pair);
+  expect(belowFloor).toEqual(['project vs go']);
+
+  // ...and that tolerated pair still may not degrade further.
+  const projectVsGo = railPairs.find((p) => p.pair === 'project vs go');
+  expect(projectVsGo?.distance).toBeGreaterThanOrEqual(7);
 });
 
 it.each(WORKSPACE_ACCENTS)(
