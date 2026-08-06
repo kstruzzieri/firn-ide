@@ -3,8 +3,8 @@ import type { workspace } from '../../../wailsjs/go/models';
 
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
-  { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
+  { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'go' },
 ] as workspace.WorkspaceDef[];
 
 describe('treeView store — setActiveWorkspace + lastFocusedWorkspaceId', () => {
@@ -42,7 +42,7 @@ describe('treeView store — setActiveWorkspace + lastFocusedWorkspaceId', () =>
 describe('treeView store — setTreeViewMode', () => {
   const rootGoDefs = [
     { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-    { id: 'root:go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
+    { id: 'root:go', name: 'Go', relDir: '', type: 'go', accent: 'go' },
   ] as workspace.WorkspaceDef[];
 
   beforeEach(() => {
@@ -78,8 +78,14 @@ describe('treeView store — setTreeViewMode', () => {
   it("'workspace' mode prefers a non-root workspace over a root-typed one", () => {
     const mixed = [
       { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-      { id: 'root:go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
-      { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+      { id: 'root:go', name: 'Go', relDir: '', type: 'go', accent: 'go' },
+      {
+        id: 'frontend',
+        name: 'Frontend',
+        relDir: 'frontend',
+        type: 'frontend',
+        accent: 'frontend',
+      },
     ] as workspace.WorkspaceDef[];
     useIDEStore.getState().setWorkspaces(mixed);
     useIDEStore.getState().setTreeViewMode('workspace');

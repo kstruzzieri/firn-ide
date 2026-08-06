@@ -28,7 +28,7 @@ beforeEach(() => {
     stoppingProfileIds: [],
     restartingProfileIds: [],
     activeWorkspaceId: 'ws1', // workspace view (NOT a treeViewMode field)
-    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'blue' }] as never,
+    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'frontend' }] as never,
     selectedProfileId: 'p1',
   });
 });
@@ -137,8 +137,8 @@ test('project view groups rows by workspace', () => {
       },
     ],
     workspaces: [
-      { id: 'ws1', name: 'frontend', path: '/x', accent: 'blue' },
-      { id: 'ws2', name: 'backend', path: '/y', accent: 'green' },
+      { id: 'ws1', name: 'frontend', path: '/x', accent: 'frontend' },
+      { id: 'ws2', name: 'backend', path: '/y', accent: 'python' },
     ] as never,
     activeWorkspaceId: 'project', // project view
     selectedProfileId: null,

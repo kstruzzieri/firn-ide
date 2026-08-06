@@ -8,25 +8,9 @@ import {
   useIDEStore,
 } from '../../stores/ideStore';
 import { EventsOn } from '../../../wailsjs/runtime/runtime';
+import { accentVar } from '../../utils/accent';
 
 const MENU_ID = 'workspace-selector-menu';
-
-const VALID_ACCENTS = new Set([
-  'project',
-  'blue',
-  'cyan',
-  'green',
-  'purple',
-  'orange',
-  'amber',
-  'general',
-]);
-
-// accentVar maps an accent value to its CSS custom property, falling back to the
-// neutral "project" accent for any value without a defined token.
-function accentVar(accent: string): string {
-  return `var(--accent-${VALID_ACCENTS.has(accent) ? accent : 'project'})`;
-}
 
 export function WorkspaceSelector() {
   const repo = useWorkspace();

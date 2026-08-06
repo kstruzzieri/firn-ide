@@ -46,7 +46,7 @@ beforeEach(() => {
     runEventsPaused: false,
     isLoadingProfiles: false,
     activeWorkspaceId: 'ws1', // drives workspace view (NOT a treeViewMode field)
-    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'blue' }] as never,
+    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'frontend' }] as never,
     selectedProfileId: null,
   });
 });

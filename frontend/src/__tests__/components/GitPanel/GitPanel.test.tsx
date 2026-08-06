@@ -96,7 +96,7 @@ function focusWorkspace(
       workspaces: defs.map((d) => ({
         ...d,
         type: 'node',
-        accent: 'blue',
+        accent: 'frontend',
       })) as unknown as workspace.WorkspaceDef[],
     });
   });
@@ -506,8 +506,14 @@ describe('GitPanel commit area', () => {
     act(() => {
       useIDEStore.setState({
         workspaces: [
-          { id: 'ws-frontend', name: 'Frontend', relDir: 'frontend', type: 'node', accent: 'blue' },
-          { id: 'ws-go', name: 'Go', relDir: 'backend', type: 'go', accent: 'green' },
+          {
+            id: 'ws-frontend',
+            name: 'Frontend',
+            relDir: 'frontend',
+            type: 'node',
+            accent: 'frontend',
+          },
+          { id: 'ws-go', name: 'Go', relDir: 'backend', type: 'go', accent: 'python' },
         ] as unknown as workspace.WorkspaceDef[],
       });
     });

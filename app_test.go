@@ -176,7 +176,7 @@ func TestApp_DetectWorkspaces(t *testing.T) {
 	if defs[0].ID != "project" {
 		t.Errorf("defs[0].ID = %q, want project", defs[0].ID)
 	}
-	if defs[1].ID != "frontend" || defs[1].Accent != "blue" {
-		t.Errorf("defs[1] = %+v, want frontend/blue", defs[1])
+	if defs[1].ID != "frontend" || defs[1].Accent != "frontend" {
+		t.Errorf("defs[1] = %+v, want frontend/frontend", defs[1])
 	}
 }

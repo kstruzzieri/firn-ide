@@ -97,5 +97,8 @@ type WorkspaceDef struct {
 	Name   string        `json:"name"`   // human label, e.g. "Project", "Frontend"
 	RelDir string        `json:"relDir"` // "" for project + root-level markers
 	Type   WorkspaceType `json:"type"`
-	Accent string        `json:"accent"` // project|blue|cyan|green|purple|orange|amber|general
+	// Accent is named for the workspace type, 1:1 with Type, and must match a
+	// --accent-* token in frontend/src/styles/tokens.css and the WorkspaceAccent
+	// union in frontend/src/stores/ideStore.ts.
+	Accent string `json:"accent"` // project|frontend|node|python|go|rust|docker|terraform|general
 }

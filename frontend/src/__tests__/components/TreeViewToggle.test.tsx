@@ -5,7 +5,7 @@ import type { workspace } from '../../../wailsjs/go/models';
 
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
 ] as workspace.WorkspaceDef[];
 
 describe('TreeViewToggle', () => {

@@ -57,7 +57,7 @@ jest.mock('../../components/FileExplorer/useDirectoryTree', () => ({
 it('reflects the active workspace accent on the ide root', async () => {
   const defs = [
     { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
   ] as workspace.WorkspaceDef[];
 
   let container: HTMLElement;
@@ -71,6 +71,6 @@ it('reflects the active workspace accent on the ide root', async () => {
   });
 
   await waitFor(() => {
-    expect(container!.querySelector('[data-accent="blue"]')).not.toBeNull();
+    expect(container!.querySelector('[data-accent="frontend"]')).not.toBeNull();
   });
 });

@@ -11,7 +11,7 @@ const ws = (id: string, type: string, name = id): workspace.WorkspaceDef =>
     name,
     relDir: id === 'project' ? '' : id,
     type,
-    accent: 'blue',
+    accent: 'frontend',
   }) as workspace.WorkspaceDef;
 
 const defs = [

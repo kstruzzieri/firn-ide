@@ -29,24 +29,7 @@ import {
 import type { RunProfile } from '../../types/runProfile';
 import type { RunOutput } from '../../types/runOutput';
 import styles from './RunProfiles.module.css';
-
-// Accents that have a defined --accent-{name} token; anything else falls back to
-// the neutral "project" accent. Mirrors WorkspaceSelector/WorkspaceTabs so the
-// per-workspace dot here colors identically to the rest of the IDE.
-const VALID_ACCENTS = new Set([
-  'project',
-  'blue',
-  'cyan',
-  'green',
-  'purple',
-  'orange',
-  'amber',
-  'general',
-]);
-
-function accentVar(accent: string | undefined): string {
-  return `var(--accent-${accent && VALID_ACCENTS.has(accent) ? accent : 'project'})`;
-}
+import { accentVar } from '../../utils/accent';
 
 export function RunProfiles() {
   const profiles = useRunProfiles();

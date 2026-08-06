@@ -586,10 +586,10 @@ describe('Editor git diff tab', () => {
 describe('Editor workspace tab accents', () => {
   const workspaces = [
     { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-    { id: 'root:go', name: 'Root Go', relDir: '', type: 'go', accent: 'amber' },
-    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'web', accent: 'blue' },
-    { id: 'backend', name: 'Backend', relDir: 'backend', type: 'go', accent: 'cyan' },
-    { id: 'api', name: 'API', relDir: 'backend/api', type: 'go', accent: 'green' },
+    { id: 'root:go', name: 'Root Go', relDir: '', type: 'go', accent: 'terraform' },
+    { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'web', accent: 'frontend' },
+    { id: 'backend', name: 'Backend', relDir: 'backend', type: 'go', accent: 'go' },
+    { id: 'api', name: 'API', relDir: 'backend/api', type: 'go', accent: 'python' },
   ] as workspace.WorkspaceDef[];
 
   it('resolves root, nested, boundary, and unrelated tabs independently of the active workspace', () => {
@@ -609,16 +609,16 @@ describe('Editor workspace tab accents', () => {
     render(<Editor />);
 
     expect(screen.getByRole('tab', { name: /App\.tsx/i }).parentElement).toHaveStyle(
-      '--tab-accent: var(--accent-blue)'
+      '--tab-accent: var(--accent-frontend)'
     );
     expect(screen.getByRole('tab', { name: /root\.go/i }).parentElement).toHaveStyle(
-      '--tab-accent: var(--accent-amber)'
+      '--tab-accent: var(--accent-terraform)'
     );
     expect(screen.getByRole('tab', { name: /api\.go/i }).parentElement).toHaveStyle(
-      '--tab-accent: var(--accent-green)'
+      '--tab-accent: var(--accent-python)'
     );
     expect(screen.getByRole('tab', { name: /apiary\.go/i }).parentElement).toHaveStyle(
-      '--tab-accent: var(--accent-cyan)'
+      '--tab-accent: var(--accent-go)'
     );
     expect(
       screen
@@ -641,7 +641,7 @@ describe('Editor workspace tab accents', () => {
     render(<Editor />);
 
     expect(screen.getByRole('tab', { name: /diff\.go.*diff/i }).parentElement).toHaveStyle(
-      '--tab-accent: var(--accent-green)'
+      '--tab-accent: var(--accent-python)'
     );
   });
 

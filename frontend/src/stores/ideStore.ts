@@ -49,15 +49,13 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
-export type WorkspaceAccent =
-  | 'project'
-  | 'blue'
-  | 'cyan'
-  | 'green'
-  | 'purple'
-  | 'orange'
-  | 'amber'
-  | 'general';
+// Named per workspace type, matching the --accent-* tokens and the accent
+// strings emitted by internal/workspace/detect.go. Re-exported from
+// utils/accent, which owns the one tuple the type and the runtime lookup are
+// both derived from. 'rust' is accepted so the palette is complete; nothing
+// emits it until Cargo.toml detection lands.
+import type { WorkspaceAccent } from '../utils/accent';
+export type { WorkspaceAccent };
 
 // Re-export FileEntry for convenience
 export type FileEntry = filesystem.FileEntry;

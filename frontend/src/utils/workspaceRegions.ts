@@ -82,8 +82,8 @@ export function getInfraFileAccent(
   entry: Pick<FileEntry, 'name' | 'isDir'>
 ): WorkspaceAccent | null {
   if (entry.isDir) return null;
-  if (DOCKER_FILE_NAMES.has(entry.name)) return 'purple';
-  return entry.name.endsWith('.tf') || entry.name.endsWith('.tfvars') ? 'amber' : null;
+  if (DOCKER_FILE_NAMES.has(entry.name)) return 'docker';
+  return entry.name.endsWith('.tf') || entry.name.endsWith('.tfvars') ? 'terraform' : null;
 }
 
 /**

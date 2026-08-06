@@ -27,8 +27,8 @@ jest.mock('../../components/FileExplorer/useDirectoryTree', () => ({
 const root = '/repo';
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
-  { id: 'go', name: 'Go', relDir: 'frontend/go', type: 'go', accent: 'cyan' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
+  { id: 'go', name: 'Go', relDir: 'frontend/go', type: 'go', accent: 'go' },
 ] as workspace.WorkspaceDef[];
 
 const nestedDockerfile = {
@@ -107,8 +107,8 @@ describe('FileExplorer views', () => {
       render(<FileExplorer />);
 
       const row = screen.getByRole('treeitem', { name: 'Dockerfile' });
-      expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
-      expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
+      expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
+      expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-docker)');
       expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
     } finally {
       restoreVirtualLayout();
@@ -126,24 +126,22 @@ describe('FileExplorer views', () => {
       const ownedWorkspaceRow = screen.getByRole('treeitem', { name: 'App.tsx' });
       const nestedWorkspaceRow = screen.getByRole('treeitem', { name: 'main.go' });
       expect(workspaceTree).toHaveClass('workspaceTree');
-      expect(workspaceTree.style.getPropertyValue('--tree-accent')).toBe('var(--accent-blue)');
+      expect(workspaceTree.style.getPropertyValue('--tree-accent')).toBe('var(--accent-frontend)');
       expect(ownedWorkspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
-        'var(--accent-blue)'
+        'var(--accent-frontend)'
       );
       expect(ownedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe(
-        'var(--accent-blue)'
+        'var(--accent-frontend)'
       );
-      expect(nestedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe(
-        'var(--accent-cyan)'
-      );
+      expect(nestedWorkspaceRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-go)');
       expect(nestedWorkspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
-        'var(--accent-cyan)'
+        'var(--accent-go)'
       );
       expect(workspaceRow).toHaveClass('ownershipRail');
       expect(workspaceRow.style.getPropertyValue('--ownership-accent')).toBe(
-        'var(--accent-purple)'
+        'var(--accent-docker)'
       );
-      expect(workspaceRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
+      expect(workspaceRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
       expect(workspaceRow).toHaveAttribute('aria-selected', 'true');
 
       act(() => {
@@ -156,8 +154,8 @@ describe('FileExplorer views', () => {
       expect(projectTree.style.getPropertyValue('--tree-accent')).toBe('');
       expect(projectRow).not.toHaveClass('ownershipRail');
       expect(projectRow.style.getPropertyValue('--ownership-accent')).toBe('');
-      expect(projectRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-blue)');
-      expect(projectRow.style.getPropertyValue('--file-accent')).toBe('var(--accent-purple)');
+      expect(projectRow.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
+      expect(projectRow.style.getPropertyValue('--file-accent')).toBe('var(--accent-docker)');
     } finally {
       restoreVirtualLayout();
     }
@@ -167,7 +165,13 @@ describe('FileExplorer views', () => {
     seed('frontend', {
       workspaces: [
         defs[0],
-        { id: 'frontend', name: 'Frontend', relDir: 'missing', type: 'frontend', accent: 'blue' },
+        {
+          id: 'frontend',
+          name: 'Frontend',
+          relDir: 'missing',
+          type: 'frontend',
+          accent: 'frontend',
+        },
       ] as workspace.WorkspaceDef[],
     });
     render(<FileExplorer />);
@@ -258,7 +262,7 @@ describe('FileExplorer views', () => {
     const restoreVirtualLayout = installVirtualLayout(400);
     const nestedDefs = [
       defs[0],
-      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'go' },
     ] as workspace.WorkspaceDef[];
     const goDir = {
       name: 'go',
@@ -319,7 +323,7 @@ describe('FileExplorer views', () => {
   it('stops nested workspace hydration at the first unreadable ancestor', async () => {
     const nestedDefs = [
       defs[0],
-      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'go' },
     ] as workspace.WorkspaceDef[];
     seed('go', {
       workspaces: nestedDefs,
@@ -348,7 +352,7 @@ describe('FileExplorer views', () => {
     let resolveBackend!: (entries: FileEntry[]) => void;
     const nestedDefs = [
       defs[0],
-      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'go' },
     ] as workspace.WorkspaceDef[];
     seed('go', {
       workspaces: nestedDefs,

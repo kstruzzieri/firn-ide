@@ -19,7 +19,7 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
 
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
 ] as workspace.WorkspaceDef[];
 
 const detected: RunProfile = {
@@ -213,8 +213,8 @@ it('deletes a user profile after confirm and closes', async () => {
 
 const defsWithGo = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
-  { id: 'go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
+  { id: 'go', name: 'Go', relDir: '', type: 'go', accent: 'go' },
 ] as workspace.WorkspaceDef[];
 
 it('defaults the workspace to the matching toolchain as the command is typed (create)', () => {
