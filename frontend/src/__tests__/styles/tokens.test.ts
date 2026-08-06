@@ -55,10 +55,13 @@ it.each(WORKSPACE_ACCENTS)(
     // blocks. A token without one still colours dots but leaves the derived
     // values stuck on whatever the previous workspace set.
     const body = rule(css, `[data-accent='${accent}']`);
-    expect(body).toMatch(/--accent:/);
-    expect(body).toMatch(/--accent-dark:/);
-    expect(body).toMatch(/--accent-dim:/);
-    expect(body).toMatch(/--accent-glow:/);
+    // Asserting the mapped token, not merely that some --accent is declared:
+    // a block pointing at the wrong accent would paint the whole IDE in
+    // another workspace's colour and still satisfy a presence-only check.
+    expect(body).toMatch(new RegExp(`--accent:\\s*var\\(--accent-${accent}\\)`));
+    expect(body).toMatch(/--accent-dark:\s*#[0-9a-f]{6}/);
+    expect(body).toMatch(/--accent-dim:\s*rgba\(/);
+    expect(body).toMatch(/--accent-glow:\s*rgba\(/);
   }
 );
 
@@ -85,25 +88,57 @@ it('keeps every pair of workspace accents perceptually distinct at full strength
   expect(tooClose).toEqual([]);
 });
 
-it('keeps every pair distinct in the rendered ownership-rail form too', () => {
-  // The rail is not the raw token: TreeRow paints it at opacity .5 over the
-  // panel, which collapses chroma and pulls hues together. Asserting the raw
-  // values alone would let a regression through in the form users actually see,
-  // so this composites first, exactly as `.row.ownershipRail::before` does.
+it('keeps every renderable ownership rail distinct in its actual painted form', () => {
+  // Modelling the real row, not a simplification. A Workspace-View row paints
+  // two layers, and both matter:
+  //
+  //   background  .row.tinted.ownershipRail  -> region accent at 16% over the panel
+  //   rail        .row.ownershipRail::before -> ownership accent at 50% over THAT
+  //
+  // The two accents are not always the same. flattenTree resolves the rail as
+  // `fileAccent ?? getOwnershipAccent(entry)`, and getInfraFileAccent overrides
+  // fileAccent to docker/terraform for Dockerfiles and .tf files. So a Docker
+  // rail can sit on a Frontend row while a Terraform rail sits on a Go row —
+  // and those two rails are what a user compares. Compositing over the bare
+  // panel understates how close they get.
   const railAlpha = opacity(treeRowCss, '.row.ownershipRail::before');
+  const washMix = Number(
+    rule(treeRowCss, '.row.tinted.ownershipRail').match(
+      /var\(--region-accent\)\s*([\d.]+)%,\s*transparent/
+    )?.[1]
+  );
+  if (!Number.isFinite(washMix)) throw new Error('Missing ownership-row wash percentage');
   const panel = parseHex(token('surface-panel'));
-  const railPairs = accentPairs((rgb) => composite(rgb, panel, railAlpha));
 
-  // One pair sits below the floor and is tolerated: WorkspaceTabs excludes the
-  // synthetic project workspace, so project and go never render as adjacent
-  // rails. Asserting the exact set rather than a count means a new offender
-  // fails loudly, and fixing this one fails too — prompting its removal here.
-  const belowFloor = railPairs.filter((p) => p.distance < 10).map((p) => p.pair);
-  expect(belowFloor).toEqual(['project vs go']);
+  // `project` is excluded because it cannot reach either layer: orderedWorkspaces
+  // filters out the synthetic project entry, so it never resolves as a region or
+  // ownership accent.
+  const RENDERABLE = WORKSPACE_ACCENTS.filter((a) => a !== 'project');
+  // getInfraFileAccent can only ever override the rail to these two.
+  const INFRA_RAILS = ['docker', 'terraform'] as const;
 
-  // ...and that tolerated pair still may not degrade further.
-  const projectVsGo = railPairs.find((p) => p.pair === 'project vs go');
-  expect(projectVsGo?.distance).toBeGreaterThanOrEqual(7);
+  const combos = RENDERABLE.flatMap((wash) =>
+    [...new Set<string>([wash, ...INFRA_RAILS])].map((rail) => ({
+      rail,
+      label: `${rail} rail on ${wash} row`,
+      rgb: composite(
+        parseHex(token(`accent-${rail}`)),
+        composite(parseHex(token(`accent-${wash}`)), panel, washMix / 100),
+        railAlpha
+      ),
+    }))
+  );
+
+  const tooClose = combos
+    .flatMap((a, i) =>
+      combos.slice(i + 1).map((b) => ({ a, b, distance: deltaE2000(a.rgb, b.rgb) }))
+    )
+    // Same rail accent means the same ownership: those rails are supposed to
+    // match, and only the row wash beneath them differs.
+    .filter((p) => p.a.rail !== p.b.rail && p.distance < 10)
+    .map((p) => `${p.a.label} vs ${p.b.label} (${p.distance.toFixed(1)})`);
+
+  expect(tooClose).toEqual([]);
 });
 
 it.each(WORKSPACE_ACCENTS)(

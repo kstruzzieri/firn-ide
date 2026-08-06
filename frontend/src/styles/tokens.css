@@ -47,7 +47,7 @@
   --accent-rust: #e2703a;
   --accent-node: #8fc606;
   --accent-python: #bfad00;
-  --accent-docker: #3b82f6;
+  --accent-docker: #0573d7;
   --accent-terraform: #a855f7;
   --accent-frontend: #f0389d;
   --accent-go: #12b5cd;
@@ -157,9 +157,9 @@
 
 [data-accent='docker'] {
   --accent: var(--accent-docker);
-  --accent-dark: #2a5eb1;
-  --accent-dim: rgba(59, 130, 246, 0.12);
-  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-dark: #04539b;
+  --accent-dim: rgba(5, 115, 215, 0.12);
+  --accent-glow: rgba(5, 115, 215, 0.25);
 }
 
 [data-accent='terraform'] {
