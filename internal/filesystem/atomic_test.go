@@ -117,6 +117,62 @@ func TestOSWriteFileSyncRefusesAnExistingPath(t *testing.T) {
 	}
 }
 
+// writeSyncOnlyFS implements only the WriteFileSync half of the durable seam.
+type writeSyncOnlyFS struct{ FileSystem }
+
+func (writeSyncOnlyFS) WriteFileSync(string, []byte, fs.FileMode) error { return nil }
+
+// syncDirOnlyFS implements only the SyncDir half of the durable seam.
+type syncDirOnlyFS struct{ FileSystem }
+
+func (syncDirOnlyFS) SyncDir(string) error { return nil }
+
+func TestSyncDirectoryFailsClosedWithoutFullDurability(t *testing.T) {
+	for name, fsys := range map[string]FileSystem{
+		"no seam":         &Mock{},
+		"write-sync only": writeSyncOnlyFS{&Mock{}},
+		"sync-dir only":   syncDirOnlyFS{&Mock{}},
+	} {
+		if err := SyncDirectory(fsys, "/anywhere"); !errors.Is(err, ErrDurabilityUnavailable) {
+			t.Errorf("%s: SyncDirectory = %v, want ErrDurabilityUnavailable", name, err)
+		}
+	}
+}
+
+// syncDirRecorderFS has the full seam and records the delegated path/result.
+type syncDirRecorderFS struct {
+	FileSystem
+	path string
+	err  error
+}
+
+func (syncDirRecorderFS) WriteFileSync(string, []byte, fs.FileMode) error { return nil }
+
+func (s *syncDirRecorderFS) SyncDir(path string) error {
+	s.path = path
+	return s.err
+}
+
+func TestSyncDirectoryDelegatesAndPropagatesErrors(t *testing.T) {
+	rec := &syncDirRecorderFS{FileSystem: &Mock{}}
+	if err := SyncDirectory(rec, "/data"); err != nil || rec.path != "/data" {
+		t.Fatalf("SyncDirectory = %v, delegated path %q, want nil and /data", err, rec.path)
+	}
+	rec.err = errors.New("sync refused")
+	if err := SyncDirectory(rec, "/data"); !errors.Is(err, rec.err) {
+		t.Fatalf("SyncDirectory = %v, want the seam's error", err)
+	}
+}
+
+func TestSyncDirectoryOnTheRealFilesystem(t *testing.T) {
+	if err := SyncDirectory(NewOS(), t.TempDir()); err != nil {
+		t.Fatalf("SyncDirectory on a real directory: %v", err)
+	}
+	if err := SyncDirectory(NewOS(), filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("SyncDirectory on a missing directory returned nil")
+	}
+}
+
 func TestEnsureDirPermTightensAPreexistingLooseDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
