@@ -14,7 +14,9 @@ import (
 )
 
 // ErrWorkspaceUnavailable wraps repository-root and workspace-detection
-// failures: the repository cannot be bound at all.
+// failures: the repository cannot be bound at all. The raw cause is retained
+// in the chain for host logging (and may carry absolute paths); callers must
+// match the sentinel, never the text.
 var ErrWorkspaceUnavailable = errors.New("golem workspace unavailable")
 
 // ErrRequestRejected wraps stale/invalid request identities and
@@ -39,7 +41,9 @@ type Bindings struct {
 	current   *binding
 }
 
-// NewBindings returns an empty Bindings backed by fsys.
+// NewBindings returns an empty Bindings backed by fsys. fsys must view the
+// real filesystem: canonicalization (filepath.Abs/EvalSymlinks) is OS-level,
+// so a virtual fsys would disagree with the canonical roots derived here.
 func NewBindings(fsys filesystem.FileSystem) *Bindings {
 	return &Bindings{fs: fsys}
 }
@@ -47,6 +51,10 @@ func NewBindings(fsys filesystem.FileSystem) *Bindings {
 // Bind canonicalizes repoPath, detects its workspaces, and makes it the
 // current binding. Rebinding the same canonical root is an idempotent refresh
 // that keeps the epoch; any other transition allocates a new epoch.
+//
+// Detection runs outside the lock, so two concurrent same-root refreshes may
+// publish defs out of order (same epoch either way; self-heals on the next
+// refresh).
 func (b *Bindings) Bind(repoPath string) (RepositoryIdentity, error) {
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
@@ -69,7 +77,11 @@ func (b *Bindings) Bind(repoPath string) (RepositoryIdentity, error) {
 	}
 	byID := make(map[string]workspace.WorkspaceDef, len(defs))
 	for _, def := range defs {
-		byID[def.ID] = def
+		// First-wins: DetectWorkspaces emits the synthetic "project" def first,
+		// so a subdirectory literally named "project" cannot shadow it.
+		if _, ok := byID[def.ID]; !ok {
+			byID[def.ID] = def
+		}
 	}
 
 	key := sha256.Sum256([]byte(root))

@@ -224,10 +224,66 @@ func TestBindingsResolve(t *testing.T) {
 	})
 	t.Run("unbound", func(t *testing.T) {
 		unbound := NewBindings(filesystem.NewOS())
-		if _, err := unbound.Resolve(1, "project"); err == nil {
-			t.Error("Resolve on unbound Bindings succeeded")
+		if _, err := unbound.Resolve(1, "project"); !errors.Is(err, ErrWorkspaceUnavailable) {
+			t.Errorf("error = %v, want ErrWorkspaceUnavailable", err)
 		}
 	})
+	t.Run("unbound after Unbind", func(t *testing.T) {
+		bb := NewBindings(filesystem.NewOS())
+		id, err := bb.Bind(newRepo(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bb.Unbind()
+		if _, err := bb.Resolve(id.RepoEpoch, "project"); !errors.Is(err, ErrWorkspaceUnavailable) {
+			t.Errorf("error = %v, want ErrWorkspaceUnavailable", err)
+		}
+	})
+}
+
+// TestBindingsProjectIDNotShadowed proves a repo subdirectory literally named
+// "project" (whose detected workspace ID collides with the synthetic whole-repo
+// entry) cannot narrow Resolve("project") to the subdirectory.
+func TestBindingsProjectIDNotShadowed(t *testing.T) {
+	repo := newRepo(t)
+	writeFile(t, filepath.Join(repo, "project", "go.mod"), "module p\n")
+
+	b := NewBindings(filesystem.NewOS())
+	id, err := b.Bind(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rw, err := b.Resolve(id.RepoEpoch, "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := canonical(t, repo); rw.ToolRoot != want {
+		t.Errorf("ToolRoot = %q, want whole-repo root %q (shadowed by project/ subdir)", rw.ToolRoot, want)
+	}
+	if rw.WorkspaceRel != "" {
+		t.Errorf("WorkspaceRel = %q, want \"\"", rw.WorkspaceRel)
+	}
+}
+
+// TestBindingsFailedBindKeepsBinding proves a failed Bind does not disturb the
+// current binding: identity, Current, and Resolve all keep working.
+func TestBindingsFailedBindKeepsBinding(t *testing.T) {
+	repo := newRepo(t)
+	b := NewBindings(filesystem.NewOS())
+	id, err := b.Bind(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Bind(filepath.Join(repo, "does-not-exist")); !errors.Is(err, ErrWorkspaceUnavailable) {
+		t.Fatalf("Bind(missing) error = %v, want ErrWorkspaceUnavailable", err)
+	}
+	cur, ok := b.Current()
+	if !ok || cur != id {
+		t.Errorf("Current() after failed Bind = %+v %v, want %+v true", cur, ok, id)
+	}
+	if _, err := b.Resolve(id.RepoEpoch, "project"); err != nil {
+		t.Errorf("Resolve after failed Bind: %v", err)
+	}
 }
 
 // TestBindingsResolveSymlinkEscape swaps a detected nested workspace directory
