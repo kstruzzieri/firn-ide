@@ -175,6 +175,51 @@ func TestMemorySessionStoreRefusesWhenTotalWouldExceed(t *testing.T) {
 	}
 }
 
+// TestMemorySessionStoreExactLimitBoundaries pins the strict `>` semantics of
+// both bounds: exactly at a limit is accepted, one byte over refuses.
+func TestMemorySessionStoreExactLimitBoundaries(t *testing.T) {
+	overhead := func(id string) int {
+		raw, err := json.Marshal(convOfSize(id, 0))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return len(raw)
+	}
+
+	// Exactly SessionSnapshotLimit bytes is accepted; one byte over refuses.
+	s := NewMemorySessionStore()
+	exact := SessionSnapshotLimit - overhead("solo")
+	mustSave(t, s, convOfSize("solo", exact))
+	if got := len(s.snaps["solo"]); got != SessionSnapshotLimit {
+		t.Fatalf("snapshot bytes = %d, want exactly %d", got, SessionSnapshotLimit)
+	}
+	if err := s.Save(context.Background(), convOfSize("solo", exact+1)); !errors.Is(err, ErrSessionLimit) {
+		t.Fatalf("Save(snapshot limit+1) = %v, want ErrSessionLimit", err)
+	}
+	if len(s.snaps["solo"]) != SessionSnapshotLimit {
+		t.Fatal("refused +1 replacement disturbed the exact-limit snapshot")
+	}
+
+	// A total of exactly SessionStoreLimit is accepted: sixteen snapshots of
+	// exactly 1 MiB each, all below the per-snapshot cap.
+	s = NewMemorySessionStore()
+	for i := 0; i < 16; i++ {
+		id := fmt.Sprintf("m-%02d", i)
+		mustSave(t, s, convOfSize(id, (1<<20)-overhead(id)))
+	}
+	if s.total != SessionStoreLimit {
+		t.Fatalf("total = %d, want exactly %d", s.total, SessionStoreLimit)
+	}
+	// One byte over the total refuses: a replacement one byte larger stays
+	// under the per-snapshot cap but would make the total limit+1.
+	if err := s.Save(context.Background(), convOfSize("m-00", (1<<20)-overhead("m-00")+1)); !errors.Is(err, ErrSessionLimit) {
+		t.Fatalf("Save(total limit+1) = %v, want ErrSessionLimit", err)
+	}
+	if s.total != SessionStoreLimit || len(s.snaps["m-00"]) != 1<<20 {
+		t.Fatal("refused +1 replacement disturbed accounting or the prior snapshot")
+	}
+}
+
 func TestMemorySessionStoreHonorsCancellation(t *testing.T) {
 	s := NewMemorySessionStore()
 	mustSave(t, s, convOfSize("a", 10))

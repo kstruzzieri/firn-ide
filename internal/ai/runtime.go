@@ -104,7 +104,14 @@ func (r *golemRunner) Close() error {
 // and hardened so nothing can silently change the consented destination:
 // environment proxies are ignored and provider redirects are never followed.
 func buildProvider(target providerTarget) (provider.Provider, *http.Transport, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if ok {
+		transport = transport.Clone()
+	} else {
+		// A dependency replaced http.DefaultTransport with something else;
+		// start from a fresh transport instead of panicking on the assertion.
+		transport = &http.Transport{}
+	}
 	transport.Proxy = nil
 	client := &http.Client{
 		Transport: transport,

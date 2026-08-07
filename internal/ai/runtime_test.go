@@ -719,4 +719,10 @@ func TestGolemRuntimeCloseClosesIdleConnections(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	// Close is idempotent: a second Close returns without panic or deadlock
+	// (golem.Runtime.Close is idempotent; pin the wrapper too).
+	if err := runner.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }
