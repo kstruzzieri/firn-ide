@@ -86,7 +86,11 @@ func loadConsentGrants(fsys filesystem.FileSystem, path string) (map[string]cons
 	if err := filesystem.EnsureDirPerm(fsys, parent, 0o700); err != nil {
 		return nil, fmt.Errorf("ensuring consent directory: %w", err)
 	}
-	if err := verifyPrivateMode(fsys, parent, true); err != nil {
+	parentInfo, err := filesystem.Lstat(fsys, parent)
+	if err != nil {
+		return nil, fmt.Errorf("probing consent directory: %w", err)
+	}
+	if err := verifyPrivateMode(parentInfo, true); err != nil {
 		return nil, fmt.Errorf("verifying consent directory: %w", err)
 	}
 	if err := filesystem.SyncDirectory(fsys, parent); err != nil {
@@ -102,7 +106,7 @@ func loadConsentGrants(fsys filesystem.FileSystem, path string) (map[string]cons
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("consent file is not a regular file")
 	}
-	if err := verifyPrivateMode(fsys, path, false); err != nil {
+	if err := verifyPrivateMode(info, false); err != nil {
 		return nil, fmt.Errorf("verifying consent file: %w", err)
 	}
 	data, _, err := filesystem.ReadFileBounded(fsys, path, ConsentStoreLimit)
@@ -112,14 +116,10 @@ func loadConsentGrants(fsys filesystem.FileSystem, path string) (map[string]cons
 	return parseConsentGrants(data)
 }
 
-// verifyPrivateMode rejects a path that is the wrong kind of object or, on
-// POSIX, retains any group/other permission bit. Windows does not model POSIX
-// mode bits, so only the type check applies there.
-func verifyPrivateMode(fsys filesystem.FileSystem, path string, wantDir bool) error {
-	info, err := filesystem.Lstat(fsys, path)
-	if err != nil {
-		return err
-	}
+// verifyPrivateMode rejects an object of the wrong kind or, on POSIX, one
+// retaining any group/other permission bit. Windows does not model POSIX mode
+// bits, so only the type check applies there.
+func verifyPrivateMode(info fs.FileInfo, wantDir bool) error {
 	if info.IsDir() != wantDir {
 		return errors.New("unexpected object type")
 	}
@@ -191,6 +191,12 @@ func (s *ConsentStore) Has(destinationDigest string) bool {
 // recomputed digest — and the in-memory grant set advances only after the
 // atomic write, its post-rename directory sync, and the file-mode check all
 // succeed. Any persistence failure keeps the prior in-memory authority.
+//
+// A Grant error does not mean the grant is recorded nowhere: after a
+// post-rename sync failure the new bytes may already be durable on disk, and
+// a later open that passes its own parent sync and full validation will treat
+// them as authoritative. The error only guarantees THIS store never
+// authorizes the destination.
 func (s *ConsentStore) Grant(destination ProviderDestination) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -229,13 +235,19 @@ func (s *ConsentStore) Grant(destination ProviderDestination) error {
 	}
 	data, err := encodeConsentFile(next)
 	if err != nil {
+		log.Printf("ai: consent state encode failed: %v", err)
 		return fmt.Errorf("%w: consent state could not be encoded", ErrConsentUnavailable)
 	}
 	if err := filesystem.WriteFileAtomic(s.fs, s.path, data, 0o600); err != nil {
 		log.Printf("ai: consent grant persist failed: %v", err)
 		return fmt.Errorf("%w: consent grant could not be persisted", ErrConsentUnavailable)
 	}
-	if err := verifyPrivateMode(s.fs, s.path, false); err != nil {
+	info, err := filesystem.Lstat(s.fs, s.path)
+	if err != nil {
+		log.Printf("ai: consent file stat failed after write: %v", err)
+		return fmt.Errorf("%w: consent file could not be verified", ErrConsentUnavailable)
+	}
+	if err := verifyPrivateMode(info, false); err != nil {
 		log.Printf("ai: consent file verification failed after write: %v", err)
 		return fmt.Errorf("%w: consent file could not be verified", ErrConsentUnavailable)
 	}

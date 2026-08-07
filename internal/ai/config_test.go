@@ -463,6 +463,16 @@ func TestNormalizeEndpointCanonicalForms(t *testing.T) {
 		if got != tc.want || local != tc.local {
 			t.Errorf("NormalizeEndpoint(%q) = %q, local=%v; want %q, local=%v", tc.raw, got, local, tc.want, tc.local)
 		}
+		// Canonical output must be a fixed point: Grant and consent-file
+		// validation both re-normalize and require the identical string.
+		again, againLocal, err := NormalizeEndpoint(got)
+		if err != nil {
+			t.Errorf("NormalizeEndpoint(%q) rejected its own canonical output: %v", got, err)
+			continue
+		}
+		if again != got || againLocal != local {
+			t.Errorf("canonical %q is not a fixed point: re-normalized to %q, local=%v", got, again, againLocal)
+		}
 	}
 }
 
@@ -494,6 +504,7 @@ func TestNormalizeEndpointRejections(t *testing.T) {
 		"http://example.com/?",
 		"http://example.com/#frag",
 		"http://example.com#frag",
+		"http://[fe80::1%25en0]:11434", // IPv6 zone ID: no consent identity
 		"/relative/path",
 		"example.com",
 	}

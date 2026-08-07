@@ -243,6 +243,12 @@ func NormalizeEndpoint(raw string) (canonical string, local bool, err error) {
 	if host == "" {
 		return "", false, errors.New("endpoint must include a host")
 	}
+	// An IPv6 zone ID is meaningless as a consent identity, and its escaped
+	// form ("%25en0" -> "%en0") would make the canonical output fail its own
+	// re-normalization — canonical must be a fixed point.
+	if strings.Contains(host, "%") {
+		return "", false, errors.New("endpoint host must not carry a zone ID")
+	}
 	hostPart := host
 	if strings.Contains(host, ":") { // IPv6 literal: rebracket
 		hostPart = "[" + host + "]"
