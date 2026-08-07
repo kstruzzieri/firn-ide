@@ -9,6 +9,7 @@ require (
 	github.com/kstruzzieri/go-llm v0.0.0-20260807203203-d45273459a45
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/sys v0.43.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
