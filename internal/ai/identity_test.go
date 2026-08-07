@@ -62,7 +62,9 @@ func TestBindingsCanonicalAliases(t *testing.T) {
 		path string
 	}{
 		{"absolute", repo},
-		{"lexical", filepath.Join(repo, "sub", "..")},
+		// Concatenation, not filepath.Join: Join would Clean away "sub/.." and
+		// Bind would receive an already-clean path.
+		{"lexical", filepath.Join(repo, "sub") + string(filepath.Separator) + ".."},
 		{"symlink", link},
 	}
 	for _, alias := range aliases {

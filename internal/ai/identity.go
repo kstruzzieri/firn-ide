@@ -76,17 +76,17 @@ func (b *Bindings) Bind(repoPath string) (RepositoryIdentity, error) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	var identity RepositoryIdentity
 	if b.current != nil && b.current.repoRoot == root {
-		b.current.defs = byID // idempotent refresh, same incarnation
-		return b.current.identity, nil
+		identity = b.current.identity // idempotent refresh, same incarnation
+	} else {
+		b.nextEpoch++
+		identity = RepositoryIdentity{RepoKey: hex.EncodeToString(key[:]), RepoEpoch: b.nextEpoch}
 	}
-	b.nextEpoch++
-	b.current = &binding{
-		identity: RepositoryIdentity{RepoKey: hex.EncodeToString(key[:]), RepoEpoch: b.nextEpoch},
-		repoRoot: root,
-		defs:     byID,
-	}
-	return b.current.identity, nil
+	// Always publish a fresh binding: Resolve snapshots b.current and reads it
+	// after unlocking, so a published binding must never be mutated.
+	b.current = &binding{identity: identity, repoRoot: root, defs: byID}
+	return identity, nil
 }
 
 // Unbind drops the current binding. The next Bind allocates a new epoch.
