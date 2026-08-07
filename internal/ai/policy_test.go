@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"firn/internal/filesystem"
 	"github.com/kstruzzieri/go-llm/agent"
@@ -520,4 +522,146 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			t.Errorf("search(gitdir) = %q, want no matches", res.Content)
 		}
 	})
+}
+
+func TestScopePolicyStackedDoubleStarCollapses(t *testing.T) {
+	stacked := strings.Repeat("**/", 3000) + "x"
+	pats, ok := compileRule(stacked)
+	if !ok {
+		t.Fatal("compileRule rejected stacked ** rule, want collapsed accept")
+	}
+	// Collapsed to "**/x" plus its "/**" descendant variant — never the
+	// thousands of stacked segments the manifest shipped.
+	if len(pats[0]) != 2 || pats[0][0] != "**" || pats[0][1] != "x" {
+		t.Fatalf("compiled pattern = %v, want [** x]", pats[0])
+	}
+	for _, pat := range pats {
+		if len(pat) > 3 {
+			t.Fatalf("compiled pattern kept stacked segments: %d segments", len(pat))
+		}
+	}
+
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml",
+		"sensitive_paths:\n  - \""+stacked+"\"\n  - \"**/**/marker.txt\"\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	g := p.Guard("")
+
+	// Collapsing preserves semantics: **/**/x still denies a/b/x and x.
+	mustDeny(t, g, "a/b/x")
+	mustDeny(t, g, "x")
+	mustDeny(t, g, "a/b/marker.txt")
+	mustDeny(t, g, "marker.txt")
+	mustAllow(t, g, "a/b/y")
+
+	deep := strings.TrimSuffix(strings.Repeat("d/", 50), "/") + "/file.txt"
+	start := time.Now()
+	for i := 0; i < 1000; i++ {
+		if err := g(deep, false); err != nil {
+			t.Fatalf("deep path denied: %v", err)
+		}
+	}
+	// Generous bound: collapsed patterns make this microseconds; the
+	// pre-collapse blowup made it seconds.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("1000 guard calls on a deep path took %v", elapsed)
+	}
+}
+
+func TestScopePolicySegmentCapRejectsRule(t *testing.T) {
+	long := strings.TrimSuffix(strings.Repeat("seg/", 70), "/")
+	if _, ok := compileRule(long); ok {
+		t.Fatal("compileRule accepted a 70-segment rule, want cap rejection")
+	}
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - "+long+"\n  - ok-extra/**\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	g := p.Guard("")
+
+	mustDeny(t, g, "ok-extra/x")
+	mustAllow(t, g, long) // over-cap rule contributed nothing
+	found := false
+	for _, w := range p.Warnings() {
+		if w.Message == warnRuleRejected {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no rejected-rule warning for over-cap rule: %+v", p.Warnings())
+	}
+}
+
+func TestScopePolicyMatcherProperties(t *testing.T) {
+	cases := []struct {
+		pat, path string
+		want      bool
+	}{
+		{"**/**/**", "a", true}, // equivalent to **
+		{"**/**/**", "a/b/c/d", true},
+		{"**", "a", true},
+		{"**", "a/b/c/d", true},
+		{"a/**/b", "a/b", true}, // ** matches zero segments
+		{"a/**/b", "a/x/b", true},
+		{"a/**/b", "a/x/y/b", true},
+		{"a/**/b", "a/b/c", false}, // trailing literal is anchored
+		{"a/**/b", "b", false},
+		{"a/**/b", "a", false},
+		{"**/mid/**/leaf.txt", "mid/leaf.txt", true},
+		{"**/mid/**/leaf.txt", "x/mid/y/z/leaf.txt", true},
+		{"**/mid/**/leaf.txt", "mid/other.txt", false},
+		{"**/mid/**/leaf.txt", "leaf.txt", false},
+	}
+	for _, c := range cases {
+		got := matchPattern(strings.Split(c.pat, "/"), strings.Split(c.path, "/"))
+		if got != c.want {
+			t.Errorf("matchPattern(%q, %q) = %v, want %v", c.pat, c.path, got, c.want)
+		}
+	}
+}
+
+func TestScopePolicyConcurrentGuardAndMutation(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - alpha/**\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	g := p.Guard("")
+	cfg := filepath.Join(repo, "cfg.yaml")
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			for _, probe := range []string{"main.go", ".env", "alpha/x", "docs/readme.md"} {
+				_ = g(probe, false)
+				_ = g(probe, true)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		defer close(stop)
+		for i := 0; i < 200; i++ {
+			p.Reload()
+			p.Detach()
+			p.Attach()
+			if err := p.ProtectConfigSource(cfg); err != nil {
+				t.Errorf("ProtectConfigSource: %v", err)
+				return
+			}
+			_ = p.Warnings()
+		}
+	}()
+	wg.Wait()
+
+	p.Detach()
+	err := g("main.go", false)
+	if err == nil || !strings.Contains(err.Error(), "reopen repository to resume file access") {
+		t.Fatalf("post-Detach guard = %v, want detached denial", err)
+	}
 }

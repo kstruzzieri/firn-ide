@@ -19,6 +19,11 @@ import (
 // non-regular manifests.
 const policyManifestLimit = 256 << 10
 
+// maxRuleSegments caps one compiled rule's segment count so a hostile
+// manifest cannot inflate per-guard-call matching cost; deeper rules are
+// rejected like any other invalid rule.
+const maxRuleSegments = 64
+
 // policyManifestLabels are the only manifest locations consulted and the only
 // values ever placed in PolicyWarning.Path.
 var policyManifestLabels = []string{"ai-kit.yaml", "docs/ai/ai-kit.yaml"}
@@ -107,6 +112,9 @@ type ScopePolicy struct {
 
 // LoadScopePolicy builds the policy for repoRoot and performs the initial
 // bounded manifest load. Load failure of any kind retains the floor.
+// repoRoot must be the canonical (EvalSymlinks) repository root — the same
+// root the go-llm Workspace resolves — or the Rel-based containment in
+// ProtectConfigSource/Watches and the guard's prefix mapping diverge.
 func LoadScopePolicy(fsys filesystem.FileSystem, repoRoot string) *ScopePolicy {
 	p := &ScopePolicy{fsys: fsys, repoRoot: repoRoot, protected: make(map[string]struct{})}
 	p.Reload()
@@ -386,14 +394,19 @@ func compileRule(raw string) ([][]string, bool) {
 		if seg == ".." {
 			return nil, false
 		}
-		if seg != "**" {
-			if _, err := path.Match(seg, "probe"); err != nil {
-				return nil, false
+		if seg == "**" {
+			// "**/**" ≡ "**" (each matches zero or more segments): collapse so
+			// a hostile manifest cannot stack thousands of "**" segments into
+			// a per-guard-call matcher blowup under the policy mutex.
+			if len(segs) > 0 && segs[len(segs)-1] == "**" {
+				continue
 			}
+		} else if _, err := path.Match(seg, "probe"); err != nil {
+			return nil, false
 		}
 		segs = append(segs, seg)
 	}
-	if len(segs) == 0 {
+	if len(segs) == 0 || len(segs) > maxRuleSegments {
 		return nil, false
 	}
 	patterns := [][]string{segs}
