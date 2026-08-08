@@ -1,3 +1,286 @@
+export namespace ai {
+
+	export class RunIdentity {
+	    repoEpoch: number;
+	    workspaceId: string;
+	    conversationId: string;
+	    runId: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RunIdentity(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repoEpoch = source["repoEpoch"];
+	        this.workspaceId = source["workspaceId"];
+	        this.conversationId = source["conversationId"];
+	        this.runId = source["runId"];
+	    }
+	}
+	export class ActiveRunStatus {
+	    identity: RunIdentity;
+	    workspaceLabel: string;
+	    state: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ActiveRunStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.identity = this.convertValues(source["identity"], RunIdentity);
+	        this.workspaceLabel = source["workspaceLabel"];
+	        this.state = source["state"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ProviderDestination {
+	    provider: string;
+	    model: string;
+	    endpoint: string;
+	    classification: string;
+	    digest: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ProviderDestination(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.endpoint = source["endpoint"];
+	        this.classification = source["classification"];
+	        this.digest = source["digest"];
+	    }
+	}
+	export class ConsentChallenge {
+	    id: string;
+	    identity: RunIdentity;
+	    destination: ProviderDestination;
+	    destinationDigest: string;
+	    expiresAt: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ConsentChallenge(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.identity = this.convertValues(source["identity"], RunIdentity);
+	        this.destination = this.convertValues(source["destination"], ProviderDestination);
+	        this.destinationDigest = source["destinationDigest"];
+	        this.expiresAt = source["expiresAt"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ContextReceipt {
+	    included: number;
+	    bytes: number;
+	    excluded: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ContextReceipt(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.included = source["included"];
+	        this.bytes = source["bytes"];
+	        this.excluded = source["excluded"];
+	    }
+	}
+	export class ConversationIdentity {
+	    repoEpoch: number;
+	    workspaceId: string;
+	    conversationId: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ConversationIdentity(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repoEpoch = source["repoEpoch"];
+	        this.workspaceId = source["workspaceId"];
+	        this.conversationId = source["conversationId"];
+	    }
+	}
+
+
+	export class Status {
+	    available: boolean;
+	    workspaceLabel: string;
+	    identity: ConversationIdentity;
+	    destination?: ProviderDestination;
+	    needsConsent: boolean;
+	    consentChallenge?: ConsentChallenge;
+	    activeRuns: ActiveRunStatus[];
+	    warnings?: string[];
+	    initError?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Status(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.workspaceLabel = source["workspaceLabel"];
+	        this.identity = this.convertValues(source["identity"], ConversationIdentity);
+	        this.destination = this.convertValues(source["destination"], ProviderDestination);
+	        this.needsConsent = source["needsConsent"];
+	        this.consentChallenge = this.convertValues(source["consentChallenge"], ConsentChallenge);
+	        this.activeRuns = this.convertValues(source["activeRuns"], ActiveRunStatus);
+	        this.warnings = source["warnings"];
+	        this.initError = source["initError"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StatusRequest {
+	    repoEpoch: number;
+	    workspaceId: string;
+
+	    static createFrom(source: any = {}) {
+	        return new StatusRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repoEpoch = source["repoEpoch"];
+	        this.workspaceId = source["workspaceId"];
+	    }
+	}
+	export class TurnAdmission {
+	    state: string;
+	    identity: RunIdentity;
+	    destination: ProviderDestination;
+	    context: ContextReceipt;
+	    consentChallenge?: ConsentChallenge;
+
+	    static createFrom(source: any = {}) {
+	        return new TurnAdmission(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.identity = this.convertValues(source["identity"], RunIdentity);
+	        this.destination = this.convertValues(source["destination"], ProviderDestination);
+	        this.context = this.convertValues(source["context"], ContextReceipt);
+	        this.consentChallenge = this.convertValues(source["consentChallenge"], ConsentChallenge);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TurnRequest {
+	    identity: RunIdentity;
+	    message: string;
+	    contextRefs: string[];
+	    consentChallengeId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new TurnRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.identity = this.convertValues(source["identity"], RunIdentity);
+	        this.message = source["message"];
+	        this.contextRefs = source["contextRefs"];
+	        this.consentChallengeId = source["consentChallengeId"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace filesystem {
 
 	export class FileContent {
@@ -811,6 +1094,8 @@ export namespace main {
 	export class WorkspaceInfo {
 	    name: string;
 	    path: string;
+	    repoKey: string;
+	    repoEpoch: number;
 
 	    static createFrom(source: any = {}) {
 	        return new WorkspaceInfo(source);
@@ -820,6 +1105,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.path = source["path"];
+	        this.repoKey = source["repoKey"];
+	        this.repoEpoch = source["repoEpoch"];
 	    }
 	}
 
