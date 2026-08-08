@@ -341,6 +341,43 @@ describe('StatusBar Golem segment', () => {
     expect(golemSegment()).toHaveTextContent('Golem: Attention');
   });
 
+  it('keeps reporting a conversation that still holds a failure after a later one recovers', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true });
+    render(<StatusBar />);
+    hydrateGolem({
+      activeRuns: [golemRun('frontend', 'conv-frontend', 'run-1', 'running', 'Frontend')],
+    });
+    act(() => {
+      useGolemStore.getState().ingestRunStatus({
+        identity: { ...golemIdentity('frontend', 'conv-frontend'), runId: 'run-1' },
+        state: 'failed',
+        message: 'the provider died',
+      });
+    });
+    expect(golemSegment()).toHaveTextContent('Golem: Attention');
+
+    // Backend fails after Frontend, then recovers completely.
+    hydrateGolem({
+      identity: golemIdentity('backend', 'conv-backend'),
+      workspaceLabel: 'Backend',
+      available: false,
+    });
+    hydrateGolem({
+      identity: golemIdentity('backend', 'conv-backend'),
+      workspaceLabel: 'Backend',
+    });
+    expect(useGolemStore.getState().lastFailureConversationId).toBe('conv-backend');
+    expect(useGolemStore.getState().conversations['conv-backend'].available).toBe(true);
+
+    // The newest failure is gone, but Frontend's dead run is not, and it is
+    // still the only thing this segment exists to report.
+    expect(golemSegment()).toHaveTextContent('Golem: Attention');
+
+    fireEvent.click(golemSegment());
+
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-frontend');
+  });
+
   it('ranks a live run above a past failure', () => {
     render(<StatusBar />);
     hydrateGolem({

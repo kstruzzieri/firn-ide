@@ -107,7 +107,9 @@ function GolemIndicator() {
     let canceling = 0;
     let live = 0;
     let owner: string | null = null;
+    let failureOwner: string | null = null;
     const liveOwners = new Set<string>();
+    const failureOwners = new Set<string>();
     for (const [id, conversation] of Object.entries(conversations)) {
       for (const run of Object.values(conversation.runs)) {
         if (run.phase === 'canceling') canceling += 1;
@@ -115,6 +117,21 @@ function GolemIndicator() {
         else continue;
         owner = owner ?? id;
         liveOwners.add(id);
+      }
+      // A failed run is the signal in its own right. `lastFailedTurn` exists to
+      // power Retry, so it is set only for a turn this client sent and holds the
+      // request for; a run that died in the background carries neither, and
+      // reading only that field would report Idle over a dead run.
+      // ponytail: a status-hydrated failure carries no retryable request, so it
+      // clears from here only when the workspace itself recovers.
+      if (
+        !conversation.available ||
+        conversation.initError !== null ||
+        conversation.lastFailedTurn ||
+        Object.values(conversation.runs).some((run) => run.phase === 'failed')
+      ) {
+        failureOwner = failureOwner ?? id;
+        failureOwners.add(id);
       }
     }
 
@@ -131,23 +148,13 @@ function GolemIndicator() {
     }
 
     // Resolved independently of activity: the conversation that last failed is
-    // not always the one that last ran.
-    const failedId = failureRevision > 0 ? lastFailureConversationId : null;
-    const failed = failedId ? conversations[failedId] : undefined;
-    // A failed run is the signal in its own right. `lastFailedTurn` exists to
-    // power Retry, so it is set only for a turn this client sent and holds the
-    // request for; a run that died in the background carries neither, and
-    // reading only that field would report Idle over a dead run.
-    // ponytail: a status-hydrated failure carries no retryable request, so it
-    // clears from here only when the workspace itself recovers.
-    if (
-      failed &&
-      (!failed.available ||
-        failed.initError !== null ||
-        failed.lastFailedTurn ||
-        Object.values(failed.runs).some((run) => run.phase === 'failed'))
-    ) {
-      return { label: 'Attention', state: 'attention', conversationId: failedId };
+    // not always the one that last ran. Mirrors the live path above —
+    // `lastFailureConversationId` only picks WHICH failure to open when several
+    // qualify, so a recovered latest failure cannot hide an older one.
+    if (failureOwner !== null) {
+      const failed = failureRevision > 0 ? lastFailureConversationId : null;
+      const target = failed !== null && failureOwners.has(failed) ? failed : failureOwner;
+      return { label: 'Attention', state: 'attention', conversationId: target };
     }
 
     return { label: 'Idle', state: 'idle', conversationId: selectedConversationId };

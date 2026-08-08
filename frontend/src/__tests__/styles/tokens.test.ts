@@ -23,6 +23,10 @@ const mergeResolutionCss = readFileSync(
   resolve(__dirname, '../../components/Editor/MergeResolutionView.module.css'),
   'utf8'
 );
+const statusBarCss = readFileSync(
+  resolve(__dirname, '../../components/StatusBar/StatusBar.module.css'),
+  'utf8'
+);
 
 type RGB = [number, number, number];
 
@@ -423,5 +427,23 @@ it.each(['.tabTarget:focus-visible', '.tabClose:focus-visible'])(
   'uses the shared focus-ring token for %s',
   (selector) => {
     expect(rule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  'keeps the active Golem status segment at 4.5:1 or better under the %s accent',
+  (accent) => {
+    // Real text at 11px on the status bar's own chrome, so the 4.5:1 text floor
+    // applies, not the 3:1 marker floor. Resolving `--accent` per workspace is
+    // the point: colouring this label with the accent puts `general` (3.89:1)
+    // and `docker` (3.98:1) below the floor, and `general` is the accent every
+    // workspace without a recognized ecosystem gets.
+    const declared = rule(statusBarCss, ".segmentBtn[data-golem-state='active']").match(
+      /color:\s*var\(--([\w-]+)\)/
+    )?.[1];
+    if (!declared) throw new Error('Missing colour for the active Golem status segment');
+    const color = declared === 'accent' ? token(`accent-${accent}`) : token(declared);
+
+    expect(contrast(parseHex(color), parseHex(token('surface-frame')))).toBeGreaterThanOrEqual(4.5);
   }
 );

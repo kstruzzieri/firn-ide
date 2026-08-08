@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import { useGolemStore } from '../../stores/golemStore';
-import type { ConversationView, RunPhase, RunView } from '../../types/golem';
+import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
 import styles from './GolemPanel.module.css';
 
 /**
@@ -52,6 +52,32 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
   return completedReply(conversation, latest.identity.runId) || 'Golem finished its reply.';
 }
 
+/**
+ * One transcript row.
+ *
+ * A component, not a file split: the transcript is the only genuinely O(n)
+ * render here, and every entry but the streaming last one keeps its reference
+ * across a delta, so memoising the row is what stops a token stream from
+ * rebuilding the whole conversation each frame.
+ */
+const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+  return (
+    <div className={`${styles.entry} ${styles[entry.kind]}`}>
+      {entry.kind === 'tool' && (
+        <span className={styles.toolName}>
+          {entry.toolName || 'tool'}
+          {entry.activity ? ` · ${entry.activity}` : ''}
+        </span>
+      )}
+      {/* Rendered as text, never as markup: provider output is untrusted. */}
+      <span className={styles.entryText}>{entry.text}</span>
+    </div>
+  );
+});
+
+/** Slack, in px, for treating a scroll position as "at the newest row". */
+const PIN_SLACK = 4;
+
 export function GolemPanel() {
   const conversations = useGolemStore((state) => state.conversations);
   const selectedConversationId = useGolemStore((state) => state.selectedConversationId);
@@ -61,6 +87,11 @@ export function GolemPanel() {
   const composerFocusRevision = useGolemStore((state) => state.composerFocusRevision);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  // Follow the stream only while the user is already at the newest row, the
+  // same rule the run output follows: scrolling back through a conversation
+  // must not be yanked away by the next delta.
+  const pinnedRef = useRef(true);
 
   const conversation = selectedConversationId
     ? (conversations[selectedConversationId] ?? null)
@@ -107,7 +138,7 @@ export function GolemPanel() {
     return rows;
   }, [conversations, selectedConversationId]);
 
-  const conversationList = useMemo(() => Object.entries(conversations), [conversations]);
+  const conversationList = Object.entries(conversations);
 
   const activeRun =
     conversation?.activeRunId != null
@@ -158,6 +189,12 @@ export function GolemPanel() {
   useEffect(() => {
     composerRef.current?.focus();
   }, [composerFocusRevision]);
+
+  const transcript = conversation?.transcript;
+  useEffect(() => {
+    const element = transcriptRef.current;
+    if (element && pinnedRef.current) element.scrollTop = element.scrollHeight;
+  }, [transcript]);
 
   const send = () => {
     // Only the identity guard: every other blocked state — no workspace, a
@@ -217,24 +254,30 @@ export function GolemPanel() {
       )}
 
       {notice && <p className={styles.notice}>{notice}</p>}
-      {inlineWarnings.map((warning) => (
-        <p key={warning} className={styles.warning}>
+      {/* Provider-supplied strings: two identical warnings are still two rows. */}
+      {inlineWarnings.map((warning, index) => (
+        <p key={`${index}-${warning}`} className={styles.warning}>
           {warning}
         </p>
       ))}
 
-      <div className={styles.transcript}>
-        {conversation?.transcript.map((entry) => (
-          <div key={entry.id} className={`${styles.entry} ${styles[entry.kind]}`}>
-            {entry.kind === 'tool' && (
-              <span className={styles.toolName}>
-                {entry.toolName || 'tool'}
-                {entry.activity ? ` · ${entry.activity}` : ''}
-              </span>
-            )}
-            {/* Rendered as text, never as markup: provider output is untrusted. */}
-            <span className={styles.entryText}>{entry.text}</span>
-          </div>
+      {/* Focusable because it scrolls: WKWebView gives a bare scroll container
+          no keyboard access of its own. `region`, not `log`: the implicit
+          aria-live of a log would fight the one deliberate live region. */}
+      <div
+        ref={transcriptRef}
+        className={styles.transcript}
+        tabIndex={0}
+        role="region"
+        aria-label="Golem transcript"
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          pinnedRef.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight <= PIN_SLACK;
+        }}
+      >
+        {transcript?.map((entry) => (
+          <TranscriptRow key={entry.id} entry={entry} />
         ))}
       </div>
 
@@ -245,7 +288,9 @@ export function GolemPanel() {
               <button
                 type="button"
                 className={styles.backgroundLabel}
-                aria-label={`Show the Golem run in ${label}`}
+                // The phase is in the name because this strip is the only
+                // surface that reports a background run's phase at all.
+                aria-label={`Show the Golem run in ${label}: ${run.phase}`}
                 // That run's own conversation, never the focused one: a
                 // background run may belong to a workspace the IDE is not on.
                 onClick={() =>
@@ -307,11 +352,12 @@ export function GolemPanel() {
         </div>
       )}
 
-      {conversation?.queuedTurns.map((turn) => (
+      {/* Numbered: n queued turns are otherwise n identically named controls. */}
+      {conversation?.queuedTurns.map((turn, index) => (
         <div key={turn.queueId} className={styles.queued}>
           <input
             className={styles.queuedInput}
-            aria-label="Queued message"
+            aria-label={`Queued message ${index + 1}`}
             value={turn.message}
             onChange={(event) => {
               if (conversationId) {
@@ -327,7 +373,7 @@ export function GolemPanel() {
           <button
             type="button"
             className={styles.secondaryButton}
-            aria-label="Remove queued message"
+            aria-label={`Remove queued message ${index + 1}`}
             onClick={() => {
               if (conversationId) {
                 useGolemStore.getState().removeQueuedTurn(conversationId, turn.queueId);

@@ -26,12 +26,17 @@
 }
 
 .workspace {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .badge {
+  flex: none;
   padding: 1px 6px;
   border: 1px solid var(--surface-border);
   border-radius: 999px;
@@ -174,6 +179,7 @@
 
 .backgroundLabel {
   flex: 1;
+  min-width: 0;
   padding: 2px 4px;
   border: none;
   border-radius: 4px;
@@ -182,6 +188,9 @@
   font: inherit;
   font-size: 11px;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 
@@ -277,8 +286,11 @@
   color: var(--text-disabled);
 }
 
+/* `flex: none` so a long label in the row beside them — a background workspace
+   name, a queued message — never crushes the button out of a narrow panel. */
 .primaryButton,
 .secondaryButton {
+  flex: none;
   padding: 4px 10px;
   border: 1px solid var(--surface-border);
   border-radius: 4px;

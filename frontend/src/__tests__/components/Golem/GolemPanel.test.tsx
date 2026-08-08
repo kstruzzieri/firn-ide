@@ -160,6 +160,34 @@ const flush = async () => {
   });
 };
 
+/**
+ * jsdom has no layout, so a scroll container's geometry has to be supplied.
+ * `scrollTop` is backed by a real value here because the assertion is whether
+ * the panel wrote to it.
+ */
+const fakeScroll = (
+  element: HTMLElement,
+  geometry: { scrollTop: number; scrollHeight: number; clientHeight: number }
+) => {
+  let scrollTop = geometry.scrollTop;
+  Object.defineProperty(element, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = value;
+    },
+  });
+  Object.defineProperty(element, 'scrollHeight', {
+    configurable: true,
+    get: () => geometry.scrollHeight,
+  });
+  Object.defineProperty(element, 'clientHeight', {
+    configurable: true,
+    get: () => geometry.clientHeight,
+  });
+  fireEvent.scroll(element);
+};
+
 beforeEach(() => {
   __resetGolemStore();
   useIDEStore.setState(useIDEStore.getInitialState());
@@ -439,6 +467,22 @@ describe('GolemPanel queue', () => {
     expect(store().conversations[CONV].queuedTurns).toHaveLength(0);
     expect(screen.queryByRole('textbox', { name: /queued message/i })).not.toBeInTheDocument();
   });
+
+  it('numbers each queued control instead of repeating one name n times', async () => {
+    await startBusyRun();
+
+    type('second');
+    pressEnter();
+    await flush();
+    type('third');
+    pressEnter();
+    await flush();
+
+    expect(screen.getByRole('textbox', { name: 'Queued message 1' })).toHaveValue('second');
+    expect(screen.getByRole('textbox', { name: 'Queued message 2' })).toHaveValue('third');
+    expect(screen.getByRole('button', { name: 'Remove queued message 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove queued message 2' })).toBeInTheDocument();
+  });
 });
 
 // ── consent ───────────────────────────────────────────────────────────────────
@@ -608,6 +652,58 @@ describe('GolemPanel transcript', () => {
 
     expect(liveRegion()).toHaveTextContent(/cancel/i);
   });
+
+  it('exposes the scrolling transcript as a focusable region', async () => {
+    await startRun();
+
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    // WKWebView does not make a bare scroll container keyboard-focusable, so a
+    // keyboard-only reader could not scroll back through the conversation.
+    expect(region).toHaveAttribute('tabindex', '0');
+    act(() => region.focus());
+    expect(document.activeElement).toBe(region);
+    // `log` would carry an implicit aria-live and fight the one deliberate
+    // polite region.
+    expect(region).not.toHaveAttribute('aria-live');
+    expect(document.querySelectorAll('[aria-live]')).toHaveLength(1);
+  });
+
+  it('follows the stream while the reader is already at the newest row', async () => {
+    await startRun();
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    fakeScroll(region, { scrollTop: 400, scrollHeight: 500, clientHeight: 100 });
+
+    delta('streaming on', 2);
+
+    expect(region.scrollTop).toBe(500);
+  });
+
+  it('leaves a reader who has scrolled back exactly where they are', async () => {
+    await startRun();
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    fakeScroll(region, { scrollTop: 0, scrollHeight: 500, clientHeight: 100 });
+
+    delta('streaming on', 2);
+
+    expect(region.scrollTop).toBe(0);
+  });
+
+  it('leaves every entry but the streaming one referentially stable across a delta', async () => {
+    await startRun();
+    delta('first', 2);
+    const before = store().conversations[CONV].transcript;
+
+    delta(' and more', 3);
+    const after = store().conversations[CONV].transcript;
+
+    // Reference stability is what lets the memoized row skip: the array is new
+    // on every publish, but only the entry the delta touched is. Asserting the
+    // enabling condition rather than a render count — a render-count spy would
+    // need the in-file row component exported, which the plan forbids.
+    expect(after).not.toBe(before);
+    expect(after[0]).toBe(before[0]);
+    expect(after[after.length - 1]).not.toBe(before[before.length - 1]);
+  });
 });
 
 // ── focus ─────────────────────────────────────────────────────────────────────
@@ -719,6 +815,18 @@ describe('GolemPanel conversations', () => {
       conversationId: 'conv-infra',
       runId: RUN_BG,
     });
+  });
+
+  it('names the background run phase, which no other surface reports', () => {
+    withBackground();
+    render(<GolemPanel />);
+
+    // The visible row reads "Infra · running"; an aria-label that stopped at
+    // the workspace would hide the phase from a screen reader entirely, and the
+    // status bar only ever reports a count.
+    expect(
+      screen.getByRole('button', { name: 'Show the Golem run in Infra: running' })
+    ).toBeInTheDocument();
   });
 
   it('selects a background run by its own conversation, not the focused one', () => {

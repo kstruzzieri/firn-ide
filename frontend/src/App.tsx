@@ -1,7 +1,8 @@
 import './styles/tokens.css';
 import './styles/reset.css';
 import { useCallback, useEffect, useRef } from 'react';
-import { IDEShell, RightPanel } from './components/layout';
+import { IDEShell } from './components/layout';
+import { RightPanel } from './components/layout/RightPanel';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
