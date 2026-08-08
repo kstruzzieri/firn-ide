@@ -19,6 +19,7 @@ import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { drainRunHistoryForClose, useRunOutputListener } from './hooks/useRunOutput';
+import { useGolemBridge } from './hooks/useGolemBridge';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
@@ -46,6 +47,10 @@ function App() {
   // Own run-event capture at the always-mounted App so collapsing the bottom
   // panel (which unmounts Terminal) cannot drop run output or history (#235).
   useRunOutputListener();
+  // Same reason as run output: the Golem chat panel unmounts when the right
+  // panel collapses or switches to Runs, so the event bridge and the repository
+  // binding it owns live at the always-mounted App instead (#226).
+  useGolemBridge();
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();

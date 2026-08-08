@@ -35,6 +35,21 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
   SearchWorkspace: jest.fn().mockResolvedValue({}),
   CancelSearch: jest.fn().mockResolvedValue(undefined),
   DetectWorkspaces: jest.fn(() => Promise.resolve([])),
+  // App now mounts useGolemBridge; an unbound repository is the quiet default.
+  GetWorkspaceInfo: jest.fn((path: string) =>
+    Promise.resolve({ name: '', path, repoKey: '', repoEpoch: 0 })
+  ),
+  GetGolemStatus: jest.fn(() =>
+    Promise.resolve({
+      available: false,
+      workspaceLabel: '',
+      identity: { repoEpoch: 0, workspaceId: '', conversationId: '' },
+      needsConsent: false,
+      activeRuns: [],
+    })
+  ),
+  RunGolemTurn: jest.fn(() => Promise.resolve(null)),
+  CancelGolemRun: jest.fn(() => Promise.resolve(false)),
 }));
 
 jest.mock('../../../wailsjs/runtime/runtime', () => ({
