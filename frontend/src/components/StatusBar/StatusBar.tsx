@@ -107,19 +107,25 @@ function GolemIndicator() {
     let canceling = 0;
     let live = 0;
     let owner: string | null = null;
+    const liveOwners = new Set<string>();
     for (const [id, conversation] of Object.entries(conversations)) {
       for (const run of Object.values(conversation.runs)) {
         if (run.phase === 'canceling') canceling += 1;
         else if (run.phase === 'running' || run.phase === 'admitting') live += 1;
         else continue;
         owner = owner ?? id;
+        liveOwners.add(id);
       }
     }
 
     // Fixed priority: a cancel in flight outranks the count, the count outranks
     // a past failure, and idle is only the absence of all three.
     if (canceling > 0 || live > 0) {
-      const target = (activityRevision > 0 ? lastActiveConversationId : null) ?? owner;
+      const active = activityRevision > 0 ? lastActiveConversationId : null;
+      // `lastActiveConversationId` names the conversation that moved last, which
+      // is not always one that is still running: activating the segment must
+      // open a conversation the count is actually about.
+      const target = active !== null && liveOwners.has(active) ? active : owner;
       const activeLabel = canceling > 0 ? 'Canceling' : `${live} running`;
       return { label: activeLabel, state: 'active', conversationId: target };
     }
@@ -128,9 +134,19 @@ function GolemIndicator() {
     // not always the one that last ran.
     const failedId = failureRevision > 0 ? lastFailureConversationId : null;
     const failed = failedId ? conversations[failedId] : undefined;
+    // A failed run is the signal in its own right. `lastFailedTurn` exists to
+    // power Retry, so it is set only for a turn this client sent and holds the
+    // request for; a run that died in the background carries neither, and
+    // reading only that field would report Idle over a dead run.
     // ponytail: a status-hydrated failure carries no retryable request, so it
     // clears from here only when the workspace itself recovers.
-    if (failed && (!failed.available || failed.initError !== null || failed.lastFailedTurn)) {
+    if (
+      failed &&
+      (!failed.available ||
+        failed.initError !== null ||
+        failed.lastFailedTurn ||
+        Object.values(failed.runs).some((run) => run.phase === 'failed'))
+    ) {
       return { label: 'Attention', state: 'attention', conversationId: failedId };
     }
 

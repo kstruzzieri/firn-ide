@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
-import { Panel } from '../layout';
+// The module, not the barrel: `layout/index.ts` re-exports `RightPanel`, which
+// imports this file, and the barrel import closes that cycle.
+import { Panel } from '../layout/Panel';
 import { RunProfileCard } from './RunProfileCard';
 import { RunProfileForm } from './RunProfileForm';
 import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';

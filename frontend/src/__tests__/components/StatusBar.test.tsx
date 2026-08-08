@@ -273,6 +273,31 @@ describe('StatusBar Golem segment', () => {
     expect(golemSegment()).toHaveTextContent('Golem: 1 running');
   });
 
+  it('counts a run still awaiting admission', () => {
+    render(<StatusBar />);
+    hydrateGolem({
+      activeRuns: [golemRun('frontend', 'conv-frontend', 'run-1', 'running', 'Frontend')],
+    });
+
+    // The phase `submitTurn` leaves a turn in until the backend admits it: the
+    // request is already gone, so the segment must not read Idle over it.
+    act(() => {
+      const { conversations } = useGolemStore.getState();
+      const conversation = conversations['conv-frontend'];
+      useGolemStore.setState({
+        conversations: {
+          ...conversations,
+          'conv-frontend': {
+            ...conversation,
+            runs: { 'run-1': { ...conversation.runs['run-1'], phase: 'admitting' } },
+          },
+        },
+      });
+    });
+
+    expect(golemSegment()).toHaveTextContent('Golem: 1 running');
+  });
+
   it('ranks canceling above the running count', () => {
     render(<StatusBar />);
     hydrateGolem({
@@ -289,6 +314,30 @@ describe('StatusBar Golem segment', () => {
     render(<StatusBar />);
     hydrateGolem({ available: false, initError: 'golem.yaml could not be read.' });
 
+    expect(golemSegment()).toHaveTextContent('Golem: Attention');
+  });
+
+  it('reports attention when a background run dies with no request to retry', () => {
+    render(<StatusBar />);
+    hydrateGolem({
+      activeRuns: [golemRun('frontend', 'conv-frontend', 'run-1', 'running', 'Frontend')],
+    });
+    expect(golemSegment()).toHaveTextContent('Golem: 1 running');
+
+    act(() => {
+      useGolemStore.getState().ingestRunStatus({
+        identity: { ...golemIdentity('frontend', 'conv-frontend'), runId: 'run-1' },
+        state: 'failed',
+        message: 'the provider died',
+      });
+    });
+
+    // The workspace is still available and the run was only ever known by
+    // status, so it left no `lastFailedTurn` behind — the death is still the
+    // one thing this segment exists to report.
+    const conversation = useGolemStore.getState().conversations['conv-frontend'];
+    expect(conversation.available).toBe(true);
+    expect(conversation.lastFailedTurn).toBeNull();
     expect(golemSegment()).toHaveTextContent('Golem: Attention');
   });
 
@@ -318,6 +367,33 @@ describe('StatusBar Golem segment', () => {
     expect(useGolemStore.getState().panelMode).toBe('golem');
     expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-infra');
+  });
+
+  it('opens the conversation the count is about, not the one that merely moved last', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true });
+    render(<StatusBar />);
+    hydrateGolem();
+    hydrateGolem({
+      identity: golemIdentity('backend', 'conv-backend'),
+      workspaceLabel: 'Backend',
+      activeRuns: [golemRun('backend', 'conv-backend', 'run-1', 'running', 'Backend')],
+    });
+    hydrateGolem({
+      activeRuns: [golemRun('frontend', 'conv-frontend', 'run-2', 'running', 'Frontend')],
+    });
+
+    // Frontend moved last, then its run ended: the count is Backend's.
+    act(() => {
+      useGolemStore.getState().ingestRunStatus({
+        identity: { ...golemIdentity('frontend', 'conv-frontend'), runId: 'run-2' },
+        state: 'canceled',
+      });
+    });
+    expect(golemSegment()).toHaveTextContent('Golem: 1 running');
+
+    fireEvent.click(golemSegment());
+
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-backend');
   });
 
   it('opens the Golem panel on the failed conversation when nothing is running', () => {

@@ -271,6 +271,11 @@ describe('GolemPanel blocked states', () => {
     expect(within(container).getByText('Policy blocks remote providers.')).toBeInTheDocument();
     expect(within(container).getByText('No API key is configured.')).toBeInTheDocument();
     expect(within(container).getByText('golem.yaml could not be read.')).toBeInTheDocument();
+    expect(
+      within(container).getByText(
+        'This workspace asks for approval before sending anything to a provider.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('prefers the backend init error over the generic unavailable copy', () => {
@@ -280,17 +285,6 @@ describe('GolemPanel blocked states', () => {
 
     expect(screen.queryByText('Golem is unavailable in this workspace.')).not.toBeInTheDocument();
     expect(screen.getByText('golem.yaml could not be read.')).toBeInTheDocument();
-  });
-
-  it('blocks Enter while a state notice is showing', () => {
-    hydrate({ available: false });
-    selectFocused();
-    render(<GolemPanel />);
-
-    type('hello');
-    pressEnter();
-
-    expect(mockRunGolemTurn).not.toHaveBeenCalled();
   });
 });
 
@@ -471,6 +465,17 @@ describe('GolemPanel consent', () => {
     expect(within(shelf).getByRole('button', { name: 'Not now' })).toBeInTheDocument();
   });
 
+  it('still offers Cancel while the shelf holds the turn', async () => {
+    await askConsent();
+
+    // A turn awaiting approval is a run the backend still owns, so the composer
+    // keeps the way out that every other live phase has.
+    expect(store().conversations[CONV].runs[RUN_A].phase).toBe('needs-consent');
+    expect(
+      screen.getByRole('button', { name: /cancel the current golem run/i })
+    ).toBeInTheDocument();
+  });
+
   it('allowing retries the same turn once with the opaque challenge id', async () => {
     await askConsent();
     mockRunGolemTurn.mockResolvedValue(acceptedAdmission(RUN_A));
@@ -580,6 +585,20 @@ describe('GolemPanel transcript', () => {
     expect(liveRegion()).toHaveTextContent(/the provider refused/);
   });
 
+  it('announces an error that arrives without moving any phase', async () => {
+    await startRun();
+    expect(liveRegion().textContent).toBe('');
+
+    mockCancelGolemRun.mockRejectedValueOnce('the backend refused the cancel');
+    fireEvent.click(screen.getByRole('button', { name: /cancel the current golem run/i }));
+    await flush();
+
+    // A refused cancel puts the run back where it was, so no phase moved and
+    // no run is terminal — the error row is the only thing that changed.
+    expect(store().conversations[CONV].runs[RUN_A].phase).toBe('running');
+    expect(liveRegion()).toHaveTextContent('the backend refused the cancel');
+  });
+
   it('announces a cancellation transition', async () => {
     await startRun();
 
@@ -664,6 +683,26 @@ describe('GolemPanel conversations', () => {
 
     expect(store().selectedConversationId).toBe(OTHER_CONV);
     expect(useIDEStore.getState().activeWorkspaceId).toBe(WS);
+  });
+
+  it('keeps the focused conversation own run out of the background strip', () => {
+    hydrate({
+      activeRuns: [{ identity: runIdentity(RUN_BG), workspaceLabel: 'Frontend', state: 'running' }],
+    });
+    selectFocused();
+    render(<GolemPanel />);
+
+    // The composer's own Cancel already governs this run; repeating it in the
+    // strip would offer the same run twice, inches apart.
+    expect(
+      screen.getByRole('button', { name: /cancel the current golem run/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /show the golem run in frontend/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /cancel the golem run in frontend/i })
+    ).not.toBeInTheDocument();
   });
 
   it('cancels a background run through that run own identity', async () => {

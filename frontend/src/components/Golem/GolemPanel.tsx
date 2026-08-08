@@ -44,6 +44,14 @@ function completedReply(conversation: ConversationView, runId: string): string {
   return '';
 }
 
+/** What the latest terminal run has to say, or '' while none has finished. */
+function phaseAnnouncement(conversation: ConversationView, latest: RunView | null): string {
+  if (!latest) return '';
+  if (latest.phase === 'canceled') return 'Golem run canceled.';
+  if (latest.phase === 'failed') return `Golem run failed. ${latest.error ?? ''}`.trim();
+  return completedReply(conversation, latest.identity.runId) || 'Golem finished its reply.';
+}
+
 export function GolemPanel() {
   const conversations = useGolemStore((state) => state.conversations);
   const selectedConversationId = useGolemStore((state) => state.selectedConversationId);
@@ -128,18 +136,34 @@ export function GolemPanel() {
     for (const run of Object.values(conversation.runs)) {
       if (run.phase === 'done' || run.phase === 'failed' || run.phase === 'canceled') latest = run;
     }
-    if (!latest) return '';
-    if (latest.phase === 'canceled') return 'Golem run canceled.';
-    if (latest.phase === 'failed') return `Golem run failed. ${latest.error ?? ''}`.trim();
-    return completedReply(conversation, latest.identity.runId) || 'Golem finished its reply.';
+    // An error can arrive without moving any phase — a refused cancel restores
+    // the run's previous phase and only appends a row — so the newest error row
+    // is part of the derived string, not just the phases. Deltas never append
+    // one, so a stream still leaves this silent.
+    let lastError = '';
+    for (const entry of conversation.transcript) {
+      if (entry.kind === 'error') lastError = entry.text;
+    }
+    const phase = phaseAnnouncement(conversation, latest);
+    // A terminal that already speaks that text does not say it twice.
+    if (lastError && !phase.includes(lastError)) return `${phase} Golem error. ${lastError}`.trim();
+    return phase;
   }, [conversation]);
 
+  // Deliberately every mount, not only a changed revision: the panel unmounts
+  // whenever the right panel collapses or shows Runs, so this effect is the
+  // whole of the ⌘⇧I focus path. The cost is that clicking the Golem tab also
+  // moves focus out of the tablist, because `setPanelMode` is the one signal
+  // both paths raise; the shortcut is the one that has to keep working.
   useEffect(() => {
     composerRef.current?.focus();
   }, [composerFocusRevision]);
 
   const send = () => {
-    if (!canSend || conversationId === null) return;
+    // Only the identity guard: every other blocked state — no workspace, a
+    // binding in flight, a stale identity, an unavailable backend, a blank
+    // draft — is already refused by `golemStore.submitTurn`.
+    if (conversationId === null) return;
     void useGolemStore.getState().submitTurn(conversationId);
   };
 
