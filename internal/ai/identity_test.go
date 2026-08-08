@@ -133,7 +133,7 @@ func TestBindingsEpochs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !(idA1.RepoEpoch < idB.RepoEpoch && idB.RepoEpoch < idA2.RepoEpoch) {
+	if idA1.RepoEpoch >= idB.RepoEpoch || idB.RepoEpoch >= idA2.RepoEpoch {
 		t.Errorf("epochs not increasing: A=%d B=%d A=%d", idA1.RepoEpoch, idB.RepoEpoch, idA2.RepoEpoch)
 	}
 	if idA2.RepoKey != idA1.RepoKey {
@@ -388,7 +388,7 @@ func TestBindingsConcurrentAccess(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				b.Resolve(id.RepoEpoch, "project") // stale epochs are expected here
+				_, _ = b.Resolve(id.RepoEpoch, "project") // stale epochs are expected here
 				b.Current()
 			}
 		}()

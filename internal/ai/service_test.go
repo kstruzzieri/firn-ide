@@ -1748,6 +1748,7 @@ func TestServiceTerminalHeldUntilRunReturns(t *testing.T) {
 	var queuedErr error
 	var queuedState string
 	queuedDone := make(chan struct{})
+	queuedDoneOnce := onceClose(queuedDone)
 	h.rec.setHook(func(name string, args []any) {
 		if name != eventGolemEvent || len(args) != 1 {
 			return
@@ -1760,17 +1761,28 @@ func TestServiceTerminalHeldUntilRunReturns(t *testing.T) {
 		// service released active state, so this admission must be accepted.
 		adm, err := h.svc.StartTurn(context.Background(), turnFor(queued))
 		queuedErr, queuedState = err, adm.State
-		close(queuedDone)
+		queuedDoneOnce()
 	})
+	t.Cleanup(func() { h.rec.setHook(nil) })
 
 	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
+	// Wait for a positive signal that the run goroutine is past its first
+	// relay, so the negative check below cannot pass merely because runTurn was
+	// never scheduled.
+	waitUntil(t, "run.started relay", func() bool {
+		for _, r := range h.rec.relayed() {
+			if r.Type == "run.started" && r.RunID == id.RunID {
+				return true
+			}
+		}
+		return false
+	})
 	// Terminal must be held while Run is still blocked.
-	time.Sleep(30 * time.Millisecond)
 	for _, r := range h.rec.relayed() {
 		if r.Type == "run.finished" {
-			t.Fatal("terminal emitted before Run returned")
+			t.Fatalf("terminal emitted before Run returned: %+v", r)
 		}
 	}
 	releaseOnce()
@@ -2018,11 +2030,11 @@ func TestServiceBackgroundRunsAndCancel(t *testing.T) {
 	if repoBID.RepoEpoch == repoID.RepoEpoch {
 		t.Fatal("expected a new epoch for the different repository")
 	}
-	if runner.closedCount() != 0 {
-		t.Fatal("binding switch closed the active runner")
+	if got := runner.closedCount(); got != 0 {
+		t.Fatalf("binding switch closed the active runner: closedCount = %d, want 0", got)
 	}
-	if activeRunCount(h.svc) != 1 {
-		t.Fatal("binding switch dropped the active run")
+	if got := activeRunCount(h.svc); got != 1 {
+		t.Fatalf("binding switch dropped the active run: activeRunCount = %d, want 1", got)
 	}
 
 	// Status under the new binding still lists the background run.
@@ -2080,6 +2092,7 @@ func TestServiceCancelPendingConsent(t *testing.T) {
 	// The hook calls back into the service, proving the canceled fallback is
 	// emitted after all locks are released.
 	statusOK := make(chan struct{})
+	statusOKOnce := onceClose(statusOK)
 	h.rec.setHook(func(name string, args []any) {
 		if name != eventGolemRunStatus {
 			return
@@ -2087,8 +2100,11 @@ func TestServiceCancelPendingConsent(t *testing.T) {
 		if _, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"}); err != nil {
 			t.Errorf("Status inside emit hook: %v", err)
 		}
-		close(statusOK)
+		statusOKOnce()
 	})
+	// The explicit clear below is on the success path only; this covers an
+	// early t.Fatalf leaving the hook live into t.Cleanup's Close.
+	t.Cleanup(func() { h.rec.setHook(nil) })
 
 	ok, err := h.svc.Cancel(id)
 	if err != nil || !ok {
@@ -2404,11 +2420,11 @@ func TestServiceRetirementAndPolicyDetachment(t *testing.T) {
 		if err := guardA("readme.md", false); err == nil {
 			t.Fatal("A's policy still attached after A -> B")
 		}
-		if runnerA.closedCount() != 0 {
-			t.Fatal("active runner closed during retirement")
+		if got := runnerA.closedCount(); got != 0 {
+			t.Fatalf("active runner closed during retirement: closedCount = %d, want 0", got)
 		}
-		if activeRunCount(h.svc) != 1 {
-			t.Fatal("A's run canceled by the bind")
+		if got := activeRunCount(h.svc); got != 1 {
+			t.Fatalf("A's run canceled by the bind: activeRunCount = %d, want 1", got)
 		}
 		releaseOnce()
 		drainRuns(t, h.svc)

@@ -133,8 +133,12 @@ type Service struct {
 	wg          sync.WaitGroup
 	closeOnce   sync.Once
 	closeDone   chan struct{}
-	closeErr    error                  // published before closeDone closes
-	runClaims   map[string]RunIdentity // process-lifetime global UUID ownership/tombstones
+	closeErr    error // published before closeDone closes
+	// runClaims is process-lifetime global UUID ownership/tombstones. One
+	// entry per admitted turn, never reclaimed (a deleted claim would let a
+	// tombstoned run UUID be replayed): ~100 bytes/turn, so a multi-day
+	// session with 10k turns costs ~1 MB.
+	runClaims map[string]RunIdentity
 
 	loadConfig func() (loadedAgentConfig, error)
 	newRunner  runnerFactory
@@ -144,6 +148,11 @@ type Service struct {
 
 // NewService constructs the Service with its production collaborators.
 // Package-local tests replace only the four function fields.
+//
+// ctx must outlive the Service: its cancellation is NOT observed as shutdown.
+// Only Close sets `closing` and cancels the derived baseCtx, so a caller ctx
+// cancelled without Close leaves every subsequent run context born cancelled
+// while Status still reports Available.
 func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, ...any)) *Service {
 	if emit == nil {
 		emit = func(string, ...any) {}
@@ -171,12 +180,22 @@ func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath strin
 	return s
 }
 
-// publicErr host-logs the raw cause and returns only its fixed public
-// projection; no raw error text ever crosses the Wails boundary.
-func (s *Service) publicErr(err error) error {
+// publicErr host-logs the raw cause under the calling operation's label and
+// returns only its fixed public projection; no raw error text ever crosses the
+// Wails boundary. op distinguishes otherwise identically shaped log lines
+// ("bind", "turn", "cancel", "shutdown").
+func (s *Service) publicErr(op string, err error) error {
 	pe := SanitizeError(err)
-	log.Printf("ai: golem service %s: %v", pe.Code, err)
+	log.Printf("ai: golem %s %s: %v", op, pe.Code, err)
 	return pe
+}
+
+// isClosing is the lifecycle-only fast check shared by the entry points that
+// reject or no-op once shutdown began.
+func (s *Service) isClosing() bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.closing
 }
 
 func (s *Service) currentBinding() *serviceBinding {
@@ -240,26 +259,23 @@ func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
 	// same canonicalization idempotently.
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: resolving %q: %w", ErrWorkspaceUnavailable, repoPath, err))
+		return RepositoryIdentity{}, s.publicErr("bind", fmt.Errorf("%w: resolving %q: %w", ErrWorkspaceUnavailable, repoPath, err))
 	}
 	root, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: canonicalizing %q: %w", ErrWorkspaceUnavailable, repoPath, err))
+		return RepositoryIdentity{}, s.publicErr("bind", fmt.Errorf("%w: canonicalizing %q: %w", ErrWorkspaceUnavailable, repoPath, err))
 	}
 	s.bindingGate.Lock()
 	defer s.bindingGate.Unlock()
 	// Linearize against shutdown: a commit that checked closing here is
 	// ordered before the shutdown writer even if it returns later; a closing
 	// service rejects the bind.
-	s.lifecycleMu.Lock()
-	closing := s.closing
-	s.lifecycleMu.Unlock()
-	if closing {
-		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: bind rejected", errServiceClosing))
+	if s.isClosing() {
+		return RepositoryIdentity{}, s.publicErr("bind", fmt.Errorf("%w: bind rejected", errServiceClosing))
 	}
 	identity, err := s.bindings.Bind(root)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr(err)
+		return RepositoryIdentity{}, s.publicErr("bind", err)
 	}
 	old := s.currentBinding()
 	if old != nil && old.identity == identity {
@@ -274,7 +290,11 @@ func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
 	next.policy.Attach() // bounded manifest reload before exposure
 	s.setBinding(next)
 	for _, rec := range idle {
-		rec.close() // retirement closes idle runners immediately
+		// Retirement closes idle runners immediately. A runtime that fails to
+		// quiesce on a repository switch is host-visible only here.
+		if err := rec.close(); err != nil {
+			log.Printf("ai: golem retirement-on-bind runner close: %v", err)
+		}
 	}
 	return identity, nil
 }
@@ -285,18 +305,12 @@ func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
 func (s *Service) UnbindRepository() {
 	// Lifecycle-only fast check: post-close calls no-op idempotently without
 	// waiting on a stuck binding writer.
-	s.lifecycleMu.Lock()
-	closing := s.closing
-	s.lifecycleMu.Unlock()
-	if closing {
+	if s.isClosing() {
 		return
 	}
 	s.bindingGate.Lock()
 	defer s.bindingGate.Unlock()
-	s.lifecycleMu.Lock()
-	closing = s.closing
-	s.lifecycleMu.Unlock()
-	if closing {
+	if s.isClosing() {
 		return // the shutdown writer owns the final retirement
 	}
 	s.bindings.Unbind()
@@ -307,7 +321,9 @@ func (s *Service) UnbindRepository() {
 	idle := s.retireBinding(old)
 	s.setBinding(nil)
 	for _, rec := range idle {
-		rec.close()
+		if err := rec.close(); err != nil {
+			log.Printf("ai: golem retirement-on-unbind runner close: %v", err)
+		}
 	}
 }
 
@@ -513,7 +529,7 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 	s.lifecycleMu.Lock()
 	if s.closing {
 		s.lifecycleMu.Unlock()
-		return TurnAdmission{}, s.publicErr(fmt.Errorf("%w: turn rejected", errServiceClosing))
+		return TurnAdmission{}, s.publicErr("turn", fmt.Errorf("%w: turn rejected", errServiceClosing))
 	}
 	// This Add must stay inside lifecycleMu: Close sets closing under the same
 	// mutex, so no positive Add can land after Close may begin Wait. The
@@ -534,7 +550,7 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 		fn() // status-changed emissions, outside every lock
 	}
 	if err != nil {
-		return TurnAdmission{}, s.publicErr(err)
+		return TurnAdmission{}, s.publicErr("turn", err)
 	}
 	return adm, nil
 }
@@ -596,7 +612,14 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		}
 		// Durable grant strictly before consumption and construction.
 		if err := s.consent.Grant(dest); err != nil {
-			conv.state = statePendingConsent // retain the unconsumed challenge
+			// Retain the unconsumed challenge. This sticks ONLY because the
+			// steps 7-9 rollback defer below is deliberately not registered
+			// yet: registering it earlier (the conventional "clean up early"
+			// refactor) would overwrite this with stateIdle while
+			// conv.challenge stays live, so the retry falls into `case
+			// stateIdle` and is rejected as having no pending challenge --
+			// permanently wedging a challenge whose run UUID is tombstoned.
+			conv.state = statePendingConsent
 			if s.setConsentDegraded(err) {
 				*after = append(*after, func() { s.emit(eventGolemStatusChanged) })
 			}
@@ -638,6 +661,13 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	var newRec *runnerRecord
 	var registered *activeRun
 	committed := false
+	// Registered AFTER `defer s.bindingGate.RUnlock()` and `defer
+	// conv.mu.Unlock()` above so LIFO runs this rollback while BOTH are still
+	// held -- it mutates conv.state, conv.active, and s.active. Hoisting the
+	// conv.mu Lock/Unlock pair below this line would make the rollback mutate
+	// conversation state unlocked: a rare-interleaving data race no test here
+	// would catch. Registered AFTER the step-6 switch for the reason spelled
+	// out at the Grant-failure branch above.
 	defer func() {
 		if committed {
 			return
@@ -653,7 +683,9 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 			registered.cancel()
 		}
 		if newRec != nil {
-			newRec.close()
+			if err := newRec.close(); err != nil {
+				log.Printf("ai: golem admission rollback runner close: %v", err)
+			}
 		}
 	}()
 
@@ -661,8 +693,16 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	rec := conv.runner
 	if rec != nil && (conv.runnerEpoch != resolved.RepoEpoch || conv.runnerStale) {
 		// Defensive: a retired incarnation's record still cached must fully
-		// quiesce before any re-create for this conversation ID.
-		rec.close()
+		// quiesce before any re-create for this conversation ID. Unreachable
+		// by construction -- retireBinding nils idle runners and only
+		// stale-marks runners whose conversation is running/canceling, and
+		// step 6 already rejected those states -- so log rather than leave a
+		// silent dead branch: this line firing means that argument broke.
+		log.Printf("ai: golem invariant violated: cached runner epoch %d != %d (stale=%v)",
+			conv.runnerEpoch, resolved.RepoEpoch, conv.runnerStale)
+		if err := rec.close(); err != nil {
+			log.Printf("ai: golem stale-cached runner close: %v", err)
+		}
 		conv.runner = nil
 		conv.runnerStale = false
 		rec = nil
@@ -828,7 +868,9 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 	if conv.runnerStale && conv.runner == rec {
 		// Retirement handed this runner to terminal cleanup: quiesce it under
 		// the conversation mutex so no re-create can precede full retirement.
-		rec.close()
+		if err := rec.close(); err != nil {
+			log.Printf("ai: golem terminal-cleanup retirement runner close: %v", err)
+		}
 		conv.runner = nil
 		conv.runnerStale = false
 	}
@@ -878,7 +920,7 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 	s.lifecycleMu.Unlock()
 	if ar != nil {
 		if ar.identity != id {
-			return false, s.publicErr(fmt.Errorf("%w: cancel identity mismatch", ErrRequestRejected))
+			return false, s.publicErr("cancel", fmt.Errorf("%w: cancel identity mismatch", ErrRequestRejected))
 		}
 		ar.conv.mu.Lock()
 		if ar.conv.active == ar && ar.conv.state == stateRunning {
@@ -910,7 +952,7 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 		}
 		conv.mu.Unlock()
 	}
-	return false, s.publicErr(fmt.Errorf("%w: no matching run or pending challenge", ErrRequestRejected))
+	return false, s.publicErr("cancel", fmt.Errorf("%w: no matching run or pending challenge", ErrRequestRejected))
 }
 
 // ReloadPolicy re-reads the manifest rules when absChangedPath is one of the
@@ -989,7 +1031,7 @@ func (s *Service) shutdown(cancels []context.CancelFunc) {
 	// Runner close errors carry runtime/transport text that can embed paths;
 	// host-log the raw joined cause and publish only its fixed projection.
 	if raw := errors.Join(errs...); raw != nil {
-		s.closeErr = s.publicErr(raw)
+		s.closeErr = s.publicErr("shutdown", raw)
 	}
 	close(s.closeDone) // closeErr is published before this
 }
