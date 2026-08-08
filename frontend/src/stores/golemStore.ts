@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { CancelGolemRun, RunGolemTurn } from '../../wailsjs/go/main/App';
 import {
   boundedGolemMessage as boundedMessage,
+  GOLEM_UNAVAILABLE,
   GolemContractError,
   parseGolemEvent,
   parseRunStatus,
@@ -40,7 +41,6 @@ import type {
  *     malformed streamed event is silently dropped.
  */
 
-const GENERIC_ERROR = 'Golem is unavailable.';
 const RUN_FAILED_ERROR = 'The Golem run failed.';
 const NO_SECURE_UUID_ERROR =
   'This window cannot generate a secure run ID, so the turn was not sent.';
@@ -51,12 +51,16 @@ const CONSENT_EXPIRED_ERROR = 'The consent request expired. Send the message aga
  * `rawEvents` is a bounded tail, not the transcript. Every projected row keeps
  * its own `raw` event, so nothing the UI renders reads this array; it exists
  * for raw inspection of what just arrived. A token-level delta stream reaches
- * tens of thousands of events in one session and every accepted event copies
- * this array, so an unbounded list makes ingestion quadratic (measured: 50k
- * events = ~4s of main-thread work). 500 keeps several screens of recent
- * history at a flat cost. Dropping from the head is safe: `lastSeq` lives on
- * the run, and the transcript projection is already applied by the time an
- * entry ages out.
+ * tens of thousands of events in one session and every ingested frame copies
+ * this array, so an unbounded list makes ingestion quadratic (estimated, not
+ * benchmarked: tens of thousands of events cost seconds of main-thread work).
+ * 500 is a judgement call — nothing depends on the exact number, only on the
+ * bound existing — and keeps several screens of recent history at a flat cost.
+ * Dropping from the head is safe: `lastSeq` lives on the run, and the
+ * transcript projection is already applied by the time an entry ages out.
+ *
+ * Truncation is silent, so any view that renders this array must label itself
+ * as the last `MAX_RAW_EVENTS` events rather than the whole session.
  */
 const MAX_RAW_EVENTS = 500;
 
@@ -130,6 +134,13 @@ function newConversation(identity: ConversationIdentity, workspaceLabel = ''): C
 // and React skips the re-render entirely.
 
 interface Mutation {
+  /**
+   * Conversations already copied in this mutation. Every writer drafts rather
+   * than assuming a caller did, so no function carries an unstated ordering
+   * obligation; the memo keeps a second draft within one mutation free, which
+   * is what lets a whole frame of events cost a single working copy.
+   */
+  drafted: Set<string>;
   conversations: Record<string, ConversationView>;
   runToConversation: Record<string, string>;
   lastActiveConversationId: string | null;
@@ -139,6 +150,7 @@ interface Mutation {
 }
 
 const beginMutation = (state: GolemStoreState): Mutation => ({
+  drafted: new Set(),
   conversations: { ...state.conversations },
   runToConversation: { ...state.runToConversation },
   lastActiveConversationId: state.lastActiveConversationId,
@@ -147,9 +159,26 @@ const beginMutation = (state: GolemStoreState): Mutation => ({
   failureRevision: state.failureRevision,
 });
 
+/** The publishable slices of a mutation; `drafted` is scratch and stays here. */
+const toState = (mutation: Mutation) => ({
+  conversations: mutation.conversations,
+  runToConversation: mutation.runToConversation,
+  lastActiveConversationId: mutation.lastActiveConversationId,
+  activityRevision: mutation.activityRevision,
+  lastFailureConversationId: mutation.lastFailureConversationId,
+  failureRevision: mutation.failureRevision,
+});
+
+/**
+ * Returns the mutation's own writable copy of a conversation, making one on
+ * first use. Writing through anything else mutates published state in place:
+ * the data still ends up correct, but the object identity never changes and
+ * every `useGolemStore(s => s.conversations[id])` subscriber goes unnotified.
+ */
 function draftConversation(mutation: Mutation, conversationId: string): ConversationView | null {
   const existing = mutation.conversations[conversationId];
   if (!existing) return null;
+  if (mutation.drafted.has(conversationId)) return existing;
   const copy: ConversationView = {
     ...existing,
     warnings: [...existing.warnings],
@@ -159,6 +188,7 @@ function draftConversation(mutation: Mutation, conversationId: string): Conversa
     queuedTurns: [...existing.queuedTurns],
   };
   mutation.conversations[conversationId] = copy;
+  mutation.drafted.add(conversationId);
   return copy;
 }
 
@@ -361,7 +391,7 @@ function dispatchQueued(
   conversationId: string,
   context: DispatchContext
 ): PendingDispatch | null {
-  const conversation = mutation.conversations[conversationId];
+  const conversation = draftConversation(mutation, conversationId);
   if (!conversation) return null;
   if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) return null;
 
@@ -437,7 +467,7 @@ function finishRun(
   message?: string,
   raw?: GolemEvent
 ): PendingDispatch | null {
-  const conversation = mutation.conversations[conversationId];
+  const conversation = draftConversation(mutation, conversationId);
   if (!conversation) return null;
   const existing = conversation.runs[runId];
   if (existing && isTerminalPhase(existing.phase)) return null;
@@ -555,8 +585,15 @@ const initialState = () => ({
  * bridge rather than a store action, and the declared `GolemStoreState`
  * contract is frozen for Task B8, so it is exported beside the store instead
  * of on it.
+ *
+ * `create()` runs its initializer synchronously at module evaluation, so this
+ * is assigned before any importer can call the export. The default therefore
+ * only survives a future circular import that calls it during evaluation, and
+ * it throws rather than silently dropping the events that caller delivered.
  */
-let ingestGolemEventBatch: (values: unknown[]) => void = () => {};
+let ingestGolemEventBatch: (values: unknown[]) => void = () => {
+  throw new Error('golem store not initialized');
+};
 
 export const useGolemStore = create<GolemStoreState>()((set, get) => {
   /** Send is allowed only into the conversation the backend just hydrated. */
@@ -595,7 +632,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           conversation.pendingConsentTurn = null;
         }
         markActive(mutation, matched.conversationId);
-        return { ...mutation };
+        return toState(mutation);
       }
 
       // A challenge belongs to the binding that issued it; the backend drops it
@@ -613,7 +650,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           conversation.lastFailedTurn = { draft: run.request, userEntryId: run.userEntryId };
         }
         markFailure(mutation, matched.conversationId);
-        return { ...mutation };
+        return toState(mutation);
       }
 
       conversation.runs[identity.runId] = { ...run, phase: 'needs-consent' };
@@ -624,7 +661,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         challenge: admission.consentChallenge,
         userEntryId: run.userEntryId,
       };
-      return { ...mutation };
+      return toState(mutation);
     });
   };
 
@@ -641,7 +678,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         conversation.runs[identity.runId] = { ...run, phase: 'needs-consent', error: message };
         appendError(conversation, identity.runId, message);
         markFailure(mutation, matched.conversationId);
-        return { ...mutation };
+        return toState(mutation);
       }
 
       conversation.runs[identity.runId] = { ...run, phase: 'failed', error: message };
@@ -653,7 +690,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       markFailure(mutation, matched.conversationId);
       // Deliberately no queue dispatch: a rejected admission usually means the
       // next turn would be rejected too, and draining would burn the whole queue.
-      return { ...mutation };
+      return toState(mutation);
     });
   };
 
@@ -709,7 +746,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         changed = true;
         if (reduced.dispatch) dispatches.push(reduced.dispatch);
       }
-      return changed ? { ...mutation } : current;
+      return changed ? toState(mutation) : current;
     });
     for (const dispatch of dispatches) runDispatch(dispatch);
   };
@@ -726,7 +763,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return state;
       }
       markFailure(mutation, conversationId);
-      return { ...mutation };
+      return toState(mutation);
     });
     return true;
   };
@@ -736,11 +773,15 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
 
     hydrateStatus(status: GolemStatus) {
       // A status that never resolved a workspace carries the zero identity: it
-      // is a binding failure, not a conversation.
+      // is a binding failure, not a conversation. The epoch floor below is
+      // deliberately not applied first — the zero identity carries epoch 0, so
+      // ordering the floor ahead of this branch would suppress every binding
+      // failure once any epoch had hydrated. Staleness here is the bridge's
+      // job: `statusGenerationRef` drops a superseded status before it lands.
       if (status.identity.conversationId === '') {
         set({
           bridgePhase: 'error',
-          bridgeError: boundedMessage(status.initError ?? GENERIC_ERROR),
+          bridgeError: boundedMessage(status.initError ?? GOLEM_UNAVAILABLE),
           hydratedIdentity: null,
         });
         return;
@@ -794,10 +835,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
               active.workspaceLabel
             );
           }
-          const target =
-            runConversationId === conversationId
-              ? conversation
-              : draftConversation(mutation, runConversationId)!;
+          const target = draftConversation(mutation, runConversationId)!;
           if (!target.workspaceLabel) target.workspaceLabel = active.workspaceLabel;
 
           const known = target.runs[active.identity.runId];
@@ -816,7 +854,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         }
 
         return {
-          ...mutation,
+          ...toState(mutation),
           hydratedIdentity: status.identity,
           bridgePhase: 'ready' as const,
           bridgeError: null,
@@ -828,12 +866,11 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       let dispatch: PendingDispatch | null = null;
       set((state) => {
         const mutation = beginMutation(state);
-        draftConversation(mutation, status.identity.conversationId);
         dispatch = dispatchQueued(mutation, status.identity.conversationId, {
           hydratedIdentity: state.hydratedIdentity,
           bridgePhase: state.bridgePhase,
         });
-        return { ...mutation };
+        return toState(mutation);
       });
       runDispatch(dispatch);
     },
@@ -867,7 +904,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           );
         }
         return {
-          ...mutation,
+          ...toState(mutation),
           hydratedIdentity: null,
           bridgePhase: 'unbound' as const,
           bridgeError: null,
@@ -901,7 +938,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           { hydratedIdentity: current.hydratedIdentity, bridgePhase: current.bridgePhase },
           status.message ? boundedMessage(status.message) : undefined
         );
-        return { ...mutation };
+        return toState(mutation);
       });
       runDispatch(dispatch);
     },
@@ -957,7 +994,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
             state: 'queued',
           });
           draft.draft = '';
-          return { ...mutation };
+          return toState(mutation);
         });
         return;
       }
@@ -968,7 +1005,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           const mutation = beginMutation(state);
           const draft = draftConversation(mutation, conversationId)!;
           appendError(draft, '', NO_SECURE_UUID_ERROR);
-          return { ...mutation };
+          return toState(mutation);
         });
         return;
       }
@@ -990,7 +1027,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         draft.activeRunId = runId;
         draft.draft = '';
         mutation.runToConversation[runId] = conversationId;
-        return { ...mutation };
+        return toState(mutation);
       });
 
       await runTurn(identity, turnDraft, null);
@@ -1012,17 +1049,24 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         const draft = draftConversation(mutation, conversationId)!;
         const current = draft.runs[pending.identity.runId];
         draft.runs[pending.identity.runId] = { ...current, phase: 'admitting' };
-        return { ...mutation };
+        return toState(mutation);
       });
 
       await runTurn(pending.identity, pending.draft, pending.challenge.id);
     },
 
     async retryLastFailed(conversationId: string) {
+      if (!canSend(conversationId)) return;
+      // Without this, an expired challenge makes Retry a silent dead button:
+      // the busy check below would see `pendingConsentTurn` and return with no
+      // feedback. Releasing it also makes its prompt the newest failure, so
+      // Retry deliberately resends that rather than the older one — the
+      // expiry notice is the last row in the transcript, and every other send
+      // path already treats the released turn as `lastFailedTurn`.
+      dropExpiredConsent(conversationId);
       const conversation = get().conversations[conversationId];
       const failed = conversation?.lastFailedTurn;
       if (!failed) return;
-      if (!canSend(conversationId)) return;
       if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) return;
 
       const runId = secureRandomUUID();
@@ -1031,7 +1075,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           const mutation = beginMutation(state);
           const draft = draftConversation(mutation, conversationId)!;
           appendError(draft, '', NO_SECURE_UUID_ERROR);
-          return { ...mutation };
+          return toState(mutation);
         });
         return;
       }
@@ -1052,7 +1096,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         draft.activeRunId = runId;
         draft.lastFailedTurn = null;
         mutation.runToConversation[runId] = conversationId;
-        return { ...mutation };
+        return toState(mutation);
       });
 
       await runTurn(identity, failed.draft, null);
@@ -1108,7 +1152,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         const draft = draftConversation(mutation, conversationId)!;
         draft.runs[runId] = { ...draft.runs[runId], phase: 'canceling' };
         markActive(mutation, conversationId);
-        return { ...mutation };
+        return toState(mutation);
       });
 
       try {
@@ -1133,7 +1177,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
             appendError(draft, runId, boundedMessage(err));
           }
           markFailure(mutation, conversationId);
-          return { ...mutation };
+          return toState(mutation);
         });
       }
     },

@@ -226,6 +226,9 @@ const contractError = (): never => {
 
 const MAX_ERROR_CHARS = 200;
 
+/** Shown whenever a failure carries no usable message of its own. */
+export const GOLEM_UNAVAILABLE = 'Golem is unavailable.';
+
 /**
  * Clamps any rejection value to a short, displayable string. The backend
  * already sanitizes its own errors; this only bounds length and shape so a
@@ -233,7 +236,7 @@ const MAX_ERROR_CHARS = 200;
  */
 export function boundedGolemMessage(value: unknown): string {
   const raw = typeof value === 'string' ? value : value instanceof Error ? value.message : '';
-  const text = raw.trim() || 'Golem is unavailable.';
+  const text = raw.trim() || GOLEM_UNAVAILABLE;
   return text.length > MAX_ERROR_CHARS ? `${text.slice(0, MAX_ERROR_CHARS - 1)}…` : text;
 }
 

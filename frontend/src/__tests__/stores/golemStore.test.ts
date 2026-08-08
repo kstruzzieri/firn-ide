@@ -41,11 +41,26 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 
 // ── crypto.randomUUID control ─────────────────────────────────────────────────
 
+/**
+ * Exhausting the queue must never be mistaken for the guard under test:
+ * `secureRandomUUID` converts every throw into the same `null` that a missing
+ * `crypto.randomUUID` produces, so a test that simply forgot to stage an ID
+ * would otherwise pass through the identical `NO_SECURE_UUID_ERROR` path. The
+ * flag makes exhaustion fail its own test loudly instead.
+ */
 let uuidQueue: string[] = [];
+let uuidExhausted = false;
 const mockRandomUUID = jest.fn(() => {
   const next = uuidQueue.shift();
-  if (!next) throw new Error('test exhausted the queued UUIDs');
+  if (!next) {
+    uuidExhausted = true;
+    throw new Error('test exhausted the queued UUIDs');
+  }
   return next;
+});
+
+afterEach(() => {
+  expect(uuidExhausted).toBe(false);
 });
 
 const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
@@ -159,6 +174,7 @@ beforeEach(() => {
   __resetGolemStore();
   jest.clearAllMocks();
   uuidQueue = [];
+  uuidExhausted = false;
   installCrypto({ randomUUID: mockRandomUUID });
   // The backend echoes the submitted identity; the default mock must too.
   mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
@@ -1108,6 +1124,52 @@ describe('queueing', () => {
     expect(reissued.message).toBe('second');
     expect(conv().queuedTurns).toHaveLength(0);
   });
+
+  it('publishes a fresh conversation reference for the rebind dispatch', async () => {
+    // `hydrateStatus` re-arms the queue in one `set()` and dispatches it in a
+    // second. Both mutations must copy the conversation: the final state is
+    // identical either way, so no state assertion can catch a writer that
+    // mutates the published object in place — but a selector on
+    // `conversations[CONV]` would then be handed the same reference twice and
+    // React would render the reissued turn's transcript row and activeRunId
+    // never at all. Identity across the two publications is the only witness.
+    await startBusyRun();
+    store().setDraft(CONV, 'second');
+    await store().submitTurn(CONV);
+    store().invalidateBinding();
+    store().ingestEvent(
+      eventPayload({
+        seq: 1,
+        type: 'run.finished',
+        payload: { stopReason: 'end_turn', model: 'm' },
+      })
+    );
+    await flush();
+    expect(conv().queuedTurns[0].state).toBe('reopen-required');
+
+    const published: ConversationView[] = [];
+    const unsubscribe = useGolemStore.subscribe((state) => {
+      const current = state.conversations[CONV];
+      if (current && current !== published[published.length - 1]) published.push(current);
+    });
+
+    uuidQueue = [RUN_B];
+    mockRunGolemTurn.mockClear();
+    store().hydrateStatus(
+      parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 } }))
+    );
+    unsubscribe();
+    await flush();
+
+    expect(published).toHaveLength(2);
+    expect(published[0]).not.toBe(published[1]);
+    // The re-arm publication, then the dispatch publication.
+    expect(published[0].queuedTurns).toMatchObject([{ message: 'second', state: 'queued' }]);
+    expect(published[0].activeRunId).toBeNull();
+    expect(published[1].queuedTurns).toHaveLength(0);
+    expect(published[1].activeRunId).toBe(RUN_B);
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('consent', () => {
@@ -1264,6 +1326,41 @@ describe('consent', () => {
     expect(retried.consentChallengeId).toBe('');
     expect(retried.message).toBe('ask remote');
     expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
+  });
+
+  it('drops an expired challenge on Retry rather than leaving the button dead', async () => {
+    // Turn 1 is rejected, so Retry has something to retry.
+    hydrateReady({ destination: remoteDestination, needsConsent: true });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockRejectedValueOnce('The Golem request is invalid or stale.');
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    expect(conv().lastFailedTurn!.draft.message).toBe('first');
+
+    // Turn 2 parks on a consent challenge, which then expires.
+    uuidQueue = [RUN_B];
+    mockRunGolemTurn.mockResolvedValueOnce(needsConsentAdmission(RUN_B));
+    store().setDraft(CONV, 'ask remote');
+    await store().submitTurn(CONV);
+    jest.spyOn(Date, 'now').mockReturnValue(conv().pendingConsentTurn!.challenge.expiresAt + 1);
+
+    uuidQueue = [RUN_C];
+    mockRunGolemTurn.mockClear();
+    mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
+      Promise.resolve(needsConsentAdmission(request.identity.runId))
+    );
+    await store().retryLastFailed(CONV);
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    const retried = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
+    expect(retried.identity.runId).toBe(RUN_C);
+    expect(retried.consentChallengeId).toBe('');
+    // Releasing the expired challenge makes its prompt the newest failure, and
+    // the expiry notice is the last row the user saw, so Retry resends that
+    // rather than the older 'first'.
+    expect(retried.message).toBe('ask remote');
+    expect(conv().pendingConsentTurn!.identity.runId).toBe(RUN_C);
+    expect(conv().runs[RUN_B].phase).toBe('failed');
   });
 
   it('sends rather than queues behind an expired consent turn', async () => {
