@@ -1,0 +1,980 @@
+package ai
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"path/filepath"
+	"sort"
+	"sync"
+	"time"
+
+	"firn/internal/filesystem"
+	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
+	"github.com/kstruzzieri/go-llm/golem"
+
+	"github.com/google/uuid"
+)
+
+// consentChallengeTTL bounds how long an issued consent challenge stays
+// retryable.
+const consentChallengeTTL = 10 * time.Minute
+
+// Host event names emitted through the Wails emit callback.
+const (
+	eventGolemEvent         = "golem:event"
+	eventGolemRunStatus     = "golem:run-status"
+	eventGolemStatusChanged = "golem:status-changed"
+)
+
+// errServiceClosing marks operations rejected because shutdown began. It is
+// deliberately not a public sentinel: SanitizeError collapses it to the
+// generic catch-all.
+var errServiceClosing = errors.New("golem service is closing")
+
+// runnerFactory is the injection seam for runner construction.
+type runnerFactory func(
+	context.Context,
+	string,
+	providerTarget,
+	agenttools.ScopeGuard,
+	golem.SessionStore,
+) (Runner, error)
+
+// convState is the explicit conversation admission state.
+type convState string
+
+const (
+	stateIdle           convState = "idle"
+	statePendingConsent convState = "pending-consent"
+	stateStarting       convState = "starting"
+	stateRunning        convState = "running"
+	stateCanceling      convState = "canceling"
+)
+
+// runnerRecord wraps one live Runner with an idempotent close so retirement,
+// terminal cleanup, admission rollback, and Close share a single ownership
+// path.
+type runnerRecord struct {
+	runner    Runner
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (r *runnerRecord) close() error {
+	r.closeOnce.Do(func() { r.closeErr = r.runner.Close() })
+	return r.closeErr
+}
+
+// activeRun is one registered live run. identity/workspaceLabel/cancel/runner/
+// conv are immutable after registration; state is guarded by lifecycleMu.
+type activeRun struct {
+	identity       RunIdentity
+	workspaceLabel string
+	state          string // running | canceling; guarded by Service.lifecycleMu
+	cancel         context.CancelFunc
+	runner         *runnerRecord
+	conv           *conversationRecord
+}
+
+// conversationRecord tracks one deterministic conversation for process life.
+//
+// Invariant (1:1 conversation -> runner): at most one live runner exists per
+// conversation ID. Retirement closes an idle runner immediately and only
+// stale-marks a busy one; terminal cleanup then closes the stale-marked
+// runner under mu BEFORE the conversation returns to idle, so a re-create for
+// the same ID can only follow full quiescence of its predecessor.
+type conversationRecord struct {
+	id string
+
+	mu          sync.Mutex // admission mutex; guards everything below
+	state       convState
+	target      *providerTarget
+	sourcePath  string // backend-only config source; protected per incarnation
+	challenge   *ConsentChallenge
+	runner      *runnerRecord
+	runnerEpoch uint64
+	runnerStale bool // retired incarnation's runner; close at terminal cleanup
+	active      *activeRun
+}
+
+// serviceBinding is one repository incarnation as the Service tracks it.
+type serviceBinding struct {
+	identity RepositoryIdentity
+	repoRoot string
+	policy   *ScopePolicy
+}
+
+// Service is the consent-gated asynchronous run lifecycle for Golem chat.
+//
+// Lock order: bindingGate -> conversation admission mutex -> lifecycleMu.
+// lifecycleMu may be taken alone for entry/close/fast checks, but no path
+// holds it while acquiring bindingGate or a conversation mutex.
+type Service struct {
+	fs       filesystem.FileSystem
+	emit     func(string, ...any)
+	bindings *Bindings
+	consent  *ConsentStore
+	sessions *MemorySessionStore
+
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
+
+	lifecycleMu   sync.Mutex
+	closing       bool
+	active        map[string]*activeRun          // run ID -> registered run
+	conversations map[string]*conversationRecord // conversation ID -> record
+	binding       *serviceBinding                // current incarnation; swapped under bindingGate write
+	degraded      error                          // consent degradation cause
+
+	bindingGate sync.RWMutex
+	wg          sync.WaitGroup
+	closeOnce   sync.Once
+	closeDone   chan struct{}
+	closeErr    error                  // published before closeDone closes
+	runClaims   map[string]RunIdentity // process-lifetime global UUID ownership/tombstones
+
+	loadConfig func() (loadedAgentConfig, error)
+	newRunner  runnerFactory
+	now        func() time.Time
+	newID      func() string
+}
+
+// NewService constructs the Service with its production collaborators.
+// Package-local tests replace only the four function fields.
+func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, ...any)) *Service {
+	if emit == nil {
+		emit = func(string, ...any) {}
+	}
+	baseCtx, baseCancel := context.WithCancel(ctx)
+	s := &Service{
+		fs:            fs,
+		emit:          emit,
+		bindings:      NewBindings(fs),
+		sessions:      NewMemorySessionStore(), // the one store every runner shares
+		baseCtx:       baseCtx,
+		baseCancel:    baseCancel,
+		active:        make(map[string]*activeRun),
+		conversations: make(map[string]*conversationRecord),
+		closeDone:     make(chan struct{}),
+		runClaims:     make(map[string]RunIdentity),
+		loadConfig:    loadDefaultAgentConfig,
+		newRunner:     NewGolemRunner,
+		now:           time.Now,
+		newID:         uuid.NewString,
+	}
+	consent, err := OpenConsentStore(fs, consentPath)
+	s.consent = consent
+	s.degraded = err // nil when the store opened cleanly; Remote stays blocked otherwise
+	return s
+}
+
+// publicErr host-logs the raw cause and returns only its fixed public
+// projection; no raw error text ever crosses the Wails boundary.
+func (s *Service) publicErr(err error) error {
+	pe := SanitizeError(err)
+	log.Printf("ai: golem service %s: %v", pe.Code, err)
+	return pe
+}
+
+func (s *Service) currentBinding() *serviceBinding {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.binding
+}
+
+func (s *Service) setBinding(b *serviceBinding) {
+	s.lifecycleMu.Lock()
+	s.binding = b
+	s.lifecycleMu.Unlock()
+}
+
+func (s *Service) conversationFor(id string) *conversationRecord {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	conv, ok := s.conversations[id]
+	if !ok {
+		conv = &conversationRecord{id: id, state: stateIdle}
+		s.conversations[id] = conv
+	}
+	return conv
+}
+
+func (s *Service) conversationsSnapshot() []*conversationRecord {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	out := make([]*conversationRecord, 0, len(s.conversations))
+	for _, conv := range s.conversations {
+		out = append(out, conv)
+	}
+	return out
+}
+
+// setConsentDegraded records the consent degradation cause; the return
+// reports the healthy->degraded transition (emit exactly then).
+func (s *Service) setConsentDegraded(cause error) bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	was := s.degraded
+	s.degraded = cause
+	return was == nil
+}
+
+// clearConsentDegraded reports the degraded->healthy transition.
+func (s *Service) clearConsentDegraded() bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	was := s.degraded
+	s.degraded = nil
+	return was != nil
+}
+
+// BindRepository makes repoPath the current repository incarnation. A failed
+// bind leaves the previous binding and its attached policy fully current; a
+// successful different-root bind retires the previous incarnation without
+// canceling its active runs.
+func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
+	// Resolve the candidate root before locking; Bindings.Bind re-derives the
+	// same canonicalization idempotently.
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: resolving %q: %v", ErrWorkspaceUnavailable, repoPath, err))
+	}
+	root, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: canonicalizing %q: %v", ErrWorkspaceUnavailable, repoPath, err))
+	}
+	s.bindingGate.Lock()
+	defer s.bindingGate.Unlock()
+	// Linearize against shutdown: a commit that checked closing here is
+	// ordered before the shutdown writer even if it returns later; a closing
+	// service rejects the bind.
+	s.lifecycleMu.Lock()
+	closing := s.closing
+	s.lifecycleMu.Unlock()
+	if closing {
+		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: bind rejected", errServiceClosing))
+	}
+	identity, err := s.bindings.Bind(root)
+	if err != nil {
+		return RepositoryIdentity{}, s.publicErr(err)
+	}
+	old := s.currentBinding()
+	if old != nil && old.identity == identity {
+		old.policy.Attach() // same-incarnation refresh: bounded reload before exposure
+		return identity, nil
+	}
+	var idle []*runnerRecord
+	if old != nil {
+		idle = s.retireBinding(old) // retire only after the new root resolved
+	}
+	next := &serviceBinding{identity: identity, repoRoot: root, policy: LoadScopePolicy(s.fs, root)}
+	next.policy.Attach() // bounded manifest reload before exposure
+	s.setBinding(next)
+	for _, rec := range idle {
+		rec.close() // retirement closes idle runners immediately
+	}
+	return identity, nil
+}
+
+// UnbindRepository marks the current binding retired without canceling its
+// active runs, detaches its policy, and drops its unconsumed challenges
+// before releasing the binding writer.
+func (s *Service) UnbindRepository() {
+	// Lifecycle-only fast check: post-close calls no-op idempotently without
+	// waiting on a stuck binding writer.
+	s.lifecycleMu.Lock()
+	closing := s.closing
+	s.lifecycleMu.Unlock()
+	if closing {
+		return
+	}
+	s.bindingGate.Lock()
+	defer s.bindingGate.Unlock()
+	s.lifecycleMu.Lock()
+	closing = s.closing
+	s.lifecycleMu.Unlock()
+	if closing {
+		return // the shutdown writer owns the final retirement
+	}
+	s.bindings.Unbind()
+	old := s.currentBinding()
+	if old == nil {
+		return
+	}
+	idle := s.retireBinding(old)
+	s.setBinding(nil)
+	for _, rec := range idle {
+		rec.close()
+	}
+}
+
+// retireBinding retires one incarnation while the caller holds bindingGate
+// write: detaches its policy (every already-issued guard then denies), drops
+// its unconsumed challenges, removes-and-returns its idle runners for
+// immediate close, and stale-marks busy runners so terminal cleanup closes
+// them. No admission can be mid-flight: admissions hold the read side from
+// re-resolution through goroutine launch, so no conversation is `starting`
+// here — a run is either registered active or was never admitted.
+func (s *Service) retireBinding(b *serviceBinding) []*runnerRecord {
+	b.policy.Detach()
+	var idle []*runnerRecord
+	for _, conv := range s.conversationsSnapshot() {
+		conv.mu.Lock()
+		if conv.challenge != nil && conv.challenge.Identity.RepoEpoch == b.identity.RepoEpoch {
+			conv.challenge = nil
+			if conv.state == statePendingConsent {
+				conv.state = stateIdle
+			}
+		}
+		if conv.runner != nil && conv.runnerEpoch == b.identity.RepoEpoch {
+			if conv.active == nil {
+				idle = append(idle, conv.runner)
+				conv.runner = nil
+				conv.runnerStale = false
+			} else {
+				conv.runnerStale = true
+			}
+		}
+		conv.mu.Unlock()
+	}
+	return idle
+}
+
+// resolveTurnIdentity validates a request identity against the current
+// binding and recomputes the deterministic conversation ID.
+func (s *Service) resolveTurnIdentity(id RunIdentity) (ResolvedWorkspace, error) {
+	resolved, err := s.bindings.Resolve(id.RepoEpoch, id.WorkspaceID)
+	if err != nil {
+		return ResolvedWorkspace{}, err
+	}
+	if ConversationID(resolved.RepoKey, resolved.WorkspaceID) != id.ConversationID {
+		return ResolvedWorkspace{}, fmt.Errorf("%w: conversation ID does not match its workspace", ErrRequestRejected)
+	}
+	return resolved, nil
+}
+
+// resolveTargetLocked is the one target-resolution path Status and StartTurn
+// share: load the source-aware config, protect a contained source path on the
+// CURRENT repository policy, and only then cache or publish the target. The
+// protection re-runs on every call because the policy is per binding
+// incarnation while the cached target lives for the process. No network I/O.
+// Caller holds conv.mu.
+func (s *Service) resolveTargetLocked(conv *conversationRecord, policy *ScopePolicy) (*providerTarget, error) {
+	if conv.target != nil {
+		if err := policy.ProtectConfigSource(conv.sourcePath); err != nil {
+			return nil, fmt.Errorf("%w: config source could not be protected: %v", ErrAgentConfigInvalid, err)
+		}
+		return conv.target, nil
+	}
+	loaded, err := s.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if err := policy.ProtectConfigSource(loaded.SourcePath); err != nil {
+		return nil, fmt.Errorf("%w: config source could not be protected: %v", ErrAgentConfigInvalid, err)
+	}
+	target, err := ResolveAgentTarget(loaded.Config)
+	if err != nil {
+		return nil, err
+	}
+	conv.target = &target
+	conv.sourcePath = loaded.SourcePath
+	return conv.target, nil
+}
+
+// dropExpiredChallengeLocked invalidates a past-deadline challenge. The
+// challenge's run UUID stays tombstoned in runClaims. Caller holds conv.mu.
+func (s *Service) dropExpiredChallengeLocked(conv *conversationRecord) {
+	if conv.challenge != nil && s.now().UnixMilli() > conv.challenge.ExpiresAt {
+		conv.challenge = nil
+		if conv.state == statePendingConsent {
+			conv.state = stateIdle
+		}
+	}
+}
+
+// Status reports the Golem status for one workspace. It never fails: every
+// problem is encoded as Available=false plus a fixed InitError message.
+func (s *Service) Status(req StatusRequest) (Status, error) {
+	st := Status{ActiveRuns: []ActiveRunStatus{}}
+	s.lifecycleMu.Lock()
+	closing := s.closing
+	binding := s.binding
+	degraded := s.degraded
+	for _, ar := range s.active {
+		st.ActiveRuns = append(st.ActiveRuns, ActiveRunStatus{
+			Identity:       ar.identity,
+			WorkspaceLabel: ar.workspaceLabel,
+			State:          ar.state,
+		})
+	}
+	s.lifecycleMu.Unlock()
+	sort.Slice(st.ActiveRuns, func(i, j int) bool {
+		a, b := st.ActiveRuns[i].Identity, st.ActiveRuns[j].Identity
+		if a.ConversationID != b.ConversationID {
+			return a.ConversationID < b.ConversationID
+		}
+		return a.RunID < b.RunID
+	})
+	if closing {
+		st.InitError = SanitizeError(errServiceClosing).Message
+		return st, nil
+	}
+	resolved, err := s.bindings.Resolve(req.RepoEpoch, req.WorkspaceID)
+	if err != nil {
+		st.InitError = SanitizeError(err).Message
+		return st, nil
+	}
+	st.WorkspaceLabel = resolved.WorkspaceName
+	convID := ConversationID(resolved.RepoKey, resolved.WorkspaceID)
+	st.Identity = ConversationIdentity{RepoEpoch: resolved.RepoEpoch, WorkspaceID: resolved.WorkspaceID, ConversationID: convID}
+	if binding == nil || binding.identity.RepoEpoch != resolved.RepoEpoch {
+		st.InitError = SanitizeError(fmt.Errorf("%w: binding changed", ErrRequestRejected)).Message
+		return st, nil
+	}
+	for _, w := range binding.policy.Warnings() {
+		st.Warnings = append(st.Warnings, w.Path+": "+w.Message)
+	}
+	if degraded != nil {
+		st.Warnings = append(st.Warnings, SanitizeError(degraded).Message)
+	}
+	conv := s.conversationFor(convID)
+	conv.mu.Lock()
+	s.dropExpiredChallengeLocked(conv)
+	target, terr := s.resolveTargetLocked(conv, binding.policy)
+	var challenge *ConsentChallenge
+	if ch := conv.challenge; ch != nil &&
+		ch.Identity.RepoEpoch == resolved.RepoEpoch &&
+		ch.Identity.WorkspaceID == resolved.WorkspaceID &&
+		ch.Identity.ConversationID == convID {
+		copied := *ch
+		challenge = &copied
+	}
+	conv.mu.Unlock()
+	if terr != nil {
+		log.Printf("ai: golem status target resolution: %v", terr)
+		st.InitError = SanitizeError(terr).Message
+		return st, nil
+	}
+	st.Available = true
+	dest := target.destination
+	st.Destination = &dest
+	if dest.Classification == "remote" {
+		st.NeedsConsent = !s.consent.Has(dest.Digest)
+	}
+	st.ConsentChallenge = challenge
+	return st, nil
+}
+
+func validateTurnBasics(req TurnRequest) error {
+	if !isCanonicalV4RunID(req.Identity.RunID) {
+		return fmt.Errorf("%w: run ID is not a canonical v4 UUID", ErrRequestRejected)
+	}
+	if req.Message == "" {
+		return fmt.Errorf("%w: message is empty", ErrRequestRejected)
+	}
+	if len(req.Message) > MaxTurnMessageBytes {
+		return fmt.Errorf("%w: message exceeds %d bytes", ErrRequestRejected, MaxTurnMessageBytes)
+	}
+	return nil
+}
+
+// isCanonicalV4RunID accepts exactly the crypto.randomUUID shape: canonical
+// lowercase hyphenated text, version 4, RFC 4122 variant. Uppercase, braced,
+// URN, and unhyphenated forms fail the fixed-point check.
+func isCanonicalV4RunID(id string) bool {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return false
+	}
+	return parsed.String() == id && parsed.Version() == 4 && parsed.Variant() == uuid.RFC4122
+}
+
+// StartTurn admits one turn. Admission order is fixed:
+//  1. register one lifecycle waitgroup unit or reject the closing service;
+//  2. resolve epoch/workspace and recompute the conversation ID;
+//  3. validate canonical v4 run ID/message and the global RunID claim;
+//  4. resolve context refs;
+//  5. take bindingGate read, re-resolve, lock the conversation, load or
+//     reuse the fixed target without network (protecting the config source);
+//  6. under lifecycleMu, recheck closing and claim/reuse the RunID, creating
+//     one pending challenge or transitioning a valid retry to `starting`
+//     before durably granting/consuming;
+//  7. construct or reuse the guarded runner;
+//  8. under lifecycleMu, recheck closing, reserve active state, and derive
+//     the run context from the service lifetime;
+//  9. launch Runner.Run, transferring the registered waitgroup unit;
+//  10. return `accepted` immediately.
+func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission, error) {
+	// Step 1.
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return TurnAdmission{}, s.publicErr(fmt.Errorf("%w: turn rejected", errServiceClosing))
+	}
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+
+	launched := false
+	var after []func()
+	adm, err := s.admit(ctx, req, &launched, &after)
+	if !launched {
+		s.wg.Done() // every pre-launch return balances the unit
+	}
+	for _, fn := range after {
+		fn() // status-changed emissions, outside every lock
+	}
+	if err != nil {
+		return TurnAdmission{}, s.publicErr(err)
+	}
+	return adm, nil
+}
+
+func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, after *[]func()) (TurnAdmission, error) {
+	// Steps 2-4: unlocked preparation; recommitted under the locks below.
+	if _, err := s.resolveTurnIdentity(req.Identity); err != nil {
+		return TurnAdmission{}, err
+	}
+	if err := validateTurnBasics(req); err != nil {
+		return TurnAdmission{}, err
+	}
+	s.lifecycleMu.Lock()
+	claim, claimed := s.runClaims[req.Identity.RunID]
+	s.lifecycleMu.Unlock()
+	if claimed && (claim != req.Identity || req.ConsentChallengeID == "") {
+		return TurnAdmission{}, fmt.Errorf("%w: run ID was already used", ErrRequestRejected)
+	}
+	items, err := ResolveContextRefs(ctx, req.ContextRefs)
+	if err != nil {
+		return TurnAdmission{}, fmt.Errorf("%w: %w", ErrRequestRejected, err)
+	}
+	receipt := ContextReceipt{Included: len(items)}
+
+	// Step 5: bindingGate read is held from re-resolution through launch, so
+	// a later retirement sees `starting` as in flight and an earlier one
+	// makes this re-resolution fail.
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
+	resolved, err := s.resolveTurnIdentity(req.Identity)
+	if err != nil {
+		return TurnAdmission{}, err
+	}
+	binding := s.currentBinding()
+	if binding == nil || binding.identity.RepoEpoch != resolved.RepoEpoch {
+		return TurnAdmission{}, fmt.Errorf("%w: binding changed during admission", ErrRequestRejected)
+	}
+	conv := s.conversationFor(req.Identity.ConversationID)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	s.dropExpiredChallengeLocked(conv)
+	target, err := s.resolveTargetLocked(conv, binding.policy)
+	if err != nil {
+		return TurnAdmission{}, err
+	}
+	dest := target.destination
+
+	// Step 6.
+	switch conv.state {
+	case stateRunning, stateCanceling, stateStarting:
+		return TurnAdmission{}, fmt.Errorf("%w: conversation already has an active run", ErrRequestRejected)
+	case statePendingConsent:
+		if err := s.commitConsentRetry(conv, req, dest); err != nil {
+			return TurnAdmission{}, err
+		}
+		// Durable grant strictly before consumption and construction.
+		if err := s.consent.Grant(dest); err != nil {
+			conv.state = statePendingConsent // retain the unconsumed challenge
+			if s.setConsentDegraded(err) {
+				*after = append(*after, func() { s.emit(eventGolemStatusChanged) })
+			}
+			return TurnAdmission{}, err
+		}
+		if s.clearConsentDegraded() {
+			*after = append(*after, func() { s.emit(eventGolemStatusChanged) })
+		}
+		conv.challenge = nil // consume exactly once
+	case stateIdle:
+		if req.ConsentChallengeID != "" {
+			return TurnAdmission{}, fmt.Errorf("%w: no pending consent challenge", ErrRequestRejected)
+		}
+		if dest.Classification == "remote" && !s.consent.Has(dest.Digest) {
+			ch, err := s.commitChallenge(conv, req.Identity, dest)
+			if err != nil {
+				return TurnAdmission{}, err
+			}
+			return TurnAdmission{
+				State:            "needs_consent",
+				Identity:         req.Identity,
+				Destination:      dest,
+				Context:          receipt,
+				ConsentChallenge: ch,
+			}, nil
+		}
+		if err := s.commitStarting(conv, req.Identity); err != nil {
+			return TurnAdmission{}, err
+		}
+	default:
+		return TurnAdmission{}, fmt.Errorf("%w: conversation state %q", ErrRequestRejected, conv.state)
+	}
+
+	// Steps 7-9 are one transaction with a single deferred rollback: every
+	// post-`starting`, pre-launch exit restores a non-wedged idle state (the
+	// grant, if any, is durable, so future admission can use it), removes any
+	// provisional active entry, and closes a newly constructed runner exactly
+	// once — never a previously cached one. The claim stays tombstoned.
+	var newRec *runnerRecord
+	var registered *activeRun
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		conv.state = stateIdle
+		if registered != nil {
+			s.lifecycleMu.Lock()
+			if s.active[req.Identity.RunID] == registered {
+				delete(s.active, req.Identity.RunID)
+			}
+			s.lifecycleMu.Unlock()
+			conv.active = nil
+			registered.cancel()
+		}
+		if newRec != nil {
+			newRec.close()
+		}
+	}()
+
+	// Step 7.
+	rec := conv.runner
+	if rec != nil && (conv.runnerEpoch != resolved.RepoEpoch || conv.runnerStale) {
+		// Defensive: a retired incarnation's record still cached must fully
+		// quiesce before any re-create for this conversation ID.
+		rec.close()
+		conv.runner = nil
+		conv.runnerStale = false
+		rec = nil
+	}
+	if rec == nil {
+		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target, binding.policy.Guard(resolved.WorkspaceRel), s.sessions)
+		if err != nil {
+			return TurnAdmission{}, fmt.Errorf("%w: runner construction: %w", ErrRunFailed, err)
+		}
+		newRec = &runnerRecord{runner: r}
+		rec = newRec
+	}
+
+	// Step 8.
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return TurnAdmission{}, fmt.Errorf("%w: shutdown during admission", errServiceClosing)
+	}
+	runCtx, cancel := context.WithCancel(s.baseCtx) // service lifetime, not the Wails call
+	ar := &activeRun{
+		identity:       req.Identity,
+		workspaceLabel: resolved.WorkspaceName,
+		state:          "running",
+		cancel:         cancel,
+		runner:         rec,
+		conv:           conv,
+	}
+	s.active[req.Identity.RunID] = ar
+	s.lifecycleMu.Unlock()
+	registered = ar
+	conv.state = stateRunning
+	conv.active = ar
+	conv.runner = rec
+	conv.runnerEpoch = resolved.RepoEpoch
+
+	// Steps 9-10.
+	turn := golem.Turn{
+		ThreadID: conv.id,
+		RunID:    req.Identity.RunID,
+		Message:  req.Message,
+		Context:  items,
+	}
+	committed = true
+	*launched = true // the goroutine inherits the registered waitgroup unit
+	go s.runTurn(runCtx, cancel, conv, ar, rec, turn)
+	return TurnAdmission{State: "accepted", Identity: req.Identity, Destination: dest, Context: receipt}, nil
+}
+
+// commitConsentRetry validates the exact pending-consent retry and, under
+// lifecycleMu, rechecks closing and transitions the conversation to
+// `starting` BEFORE the durable grant/consume. Caller holds conv.mu.
+func (s *Service) commitConsentRetry(conv *conversationRecord, req TurnRequest, dest ProviderDestination) error {
+	ch := conv.challenge
+	if ch == nil || req.ConsentChallengeID == "" || req.ConsentChallengeID != ch.ID || ch.Identity != req.Identity {
+		return fmt.Errorf("%w: consent challenge mismatch", ErrRequestRejected)
+	}
+	if ch.DestinationDigest != dest.Digest || ch.Destination != dest {
+		return fmt.Errorf("%w: consent destination changed", ErrRequestRejected)
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closing {
+		return fmt.Errorf("%w: shutdown during admission", errServiceClosing)
+	}
+	claim, claimed := s.runClaims[req.Identity.RunID]
+	if !claimed || claim != req.Identity {
+		return fmt.Errorf("%w: run ID claim mismatch", ErrRequestRejected)
+	}
+	conv.state = stateStarting
+	return nil
+}
+
+// commitChallenge atomically claims the run UUID and publishes exactly one
+// pending challenge bound to the full identity. Caller holds conv.mu.
+func (s *Service) commitChallenge(conv *conversationRecord, id RunIdentity, dest ProviderDestination) (*ConsentChallenge, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closing {
+		return nil, fmt.Errorf("%w: shutdown during admission", errServiceClosing)
+	}
+	if _, claimed := s.runClaims[id.RunID]; claimed {
+		return nil, fmt.Errorf("%w: run ID was already used", ErrRequestRejected)
+	}
+	s.runClaims[id.RunID] = id
+	ch := &ConsentChallenge{
+		ID:                s.newID(),
+		Identity:          id,
+		Destination:       dest,
+		DestinationDigest: dest.Digest,
+		ExpiresAt:         s.now().Add(consentChallengeTTL).UnixMilli(),
+	}
+	conv.state = statePendingConsent
+	conv.challenge = ch
+	copied := *ch
+	return &copied, nil
+}
+
+// commitStarting atomically claims the run UUID for a directly admissible
+// run and reserves the `starting` transition. Caller holds conv.mu.
+func (s *Service) commitStarting(conv *conversationRecord, id RunIdentity) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closing {
+		return fmt.Errorf("%w: shutdown during admission", errServiceClosing)
+	}
+	if _, claimed := s.runClaims[id.RunID]; claimed {
+		return fmt.Errorf("%w: run ID was already used", ErrRequestRejected)
+	}
+	s.runClaims[id.RunID] = id
+	conv.state = stateStarting
+	return nil
+}
+
+// runTurn owns one admitted run: relay nonterminal events immediately,
+// buffer the single terminal, and after Run returns release the active
+// reservation and finish runner-retirement cleanup BEFORE emitting that
+// terminal — the backend handoff that makes listener-driven queue dispatch
+// safe.
+func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *conversationRecord, ar *activeRun, rec *runnerRecord, turn golem.Turn) {
+	defer s.wg.Done()
+	defer cancel()
+	var terminal *RelayedEvent
+	sink := func(e golem.Event) error {
+		if e.RunID != turn.RunID || e.ThreadID != turn.ThreadID {
+			// Cross-run/thread event: stop the run; never emit it.
+			return fmt.Errorf("golem event identity mismatch: run %q thread %q", e.RunID, e.ThreadID)
+		}
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("marshal golem event: %w", err)
+		}
+		rel := RelayedEvent{
+			Protocol: e.Protocol,
+			ThreadID: e.ThreadID,
+			RunID:    e.RunID,
+			Seq:      e.Seq,
+			Type:     e.Type,
+			Payload:  e.Payload,
+			Raw:      string(raw),
+		}
+		switch e.Type {
+		case "run.finished", "run.failed", "run.canceled":
+			terminal = &rel
+			return nil
+		}
+		s.emit(eventGolemEvent, rel)
+		return nil
+	}
+
+	_, err := rec.runner.Run(ctx, turn, sink)
+	if err != nil && !isCancellationErr(err) {
+		// Host-only diagnostics. A Save refused by the session caps is logged
+		// distinctly; its public presentation stays the fixed failure message.
+		if errors.Is(err, ErrSessionLimit) {
+			log.Printf("ai: golem run %s failed: session memory limit: %v", turn.RunID, err)
+		} else {
+			log.Printf("ai: golem run %s failed: %v", turn.RunID, err)
+		}
+	}
+
+	conv.mu.Lock()
+	if conv.runnerStale && conv.runner == rec {
+		// Retirement handed this runner to terminal cleanup: quiesce it under
+		// the conversation mutex so no re-create can precede full retirement.
+		rec.close()
+		conv.runner = nil
+		conv.runnerStale = false
+	}
+	if conv.active == ar {
+		conv.active = nil
+		conv.state = stateIdle
+	}
+	s.lifecycleMu.Lock()
+	if s.active[turn.RunID] == ar {
+		delete(s.active, turn.RunID)
+	}
+	s.lifecycleMu.Unlock()
+	conv.mu.Unlock()
+
+	if terminal != nil {
+		s.emit(eventGolemEvent, *terminal)
+		return
+	}
+	if err != nil {
+		// No Golem terminal: emit the separate fixed fallback, never a
+		// fabricated golem:event.
+		ev := RunStatusEvent{
+			Identity: ar.identity,
+			State:    "failed",
+			Message:  SanitizeError(fmt.Errorf("%w: %w", ErrRunFailed, err)).Message,
+		}
+		if isCancellationErr(err) {
+			ev.State = "canceled"
+			ev.Message = ""
+		}
+		s.emit(eventGolemRunStatus, ev)
+	}
+}
+
+func isCancellationErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// Cancel cancels by full identity. A registered active run needs only the
+// index, so the exact old identity works after the binding changed; a
+// pending-consent conversation gets its decline path here instead of a
+// fourth Wails API.
+func (s *Service) Cancel(id RunIdentity) (bool, error) {
+	s.lifecycleMu.Lock()
+	ar := s.active[id.RunID]
+	s.lifecycleMu.Unlock()
+	if ar != nil {
+		if ar.identity != id {
+			return false, s.publicErr(fmt.Errorf("%w: cancel identity mismatch", ErrRequestRejected))
+		}
+		ar.conv.mu.Lock()
+		if ar.conv.active == ar && ar.conv.state == stateRunning {
+			ar.conv.state = stateCanceling
+		}
+		s.lifecycleMu.Lock()
+		if s.active[id.RunID] == ar {
+			ar.state = "canceling"
+		}
+		s.lifecycleMu.Unlock()
+		ar.conv.mu.Unlock()
+		ar.cancel()                       // host context cancellation
+		ar.runner.runner.Cancel(id.RunID) // runtime cancellation
+		return true, nil
+	}
+	// Pending-consent decline: consume only the exactly matching challenge.
+	s.lifecycleMu.Lock()
+	conv := s.conversations[id.ConversationID]
+	s.lifecycleMu.Unlock()
+	if conv != nil {
+		conv.mu.Lock()
+		if conv.state == statePendingConsent && conv.challenge != nil && conv.challenge.Identity == id {
+			conv.challenge = nil
+			conv.state = stateIdle
+			conv.mu.Unlock()
+			// Emit only after unlocking.
+			s.emit(eventGolemRunStatus, RunStatusEvent{Identity: id, State: "canceled"})
+			return true, nil
+		}
+		conv.mu.Unlock()
+	}
+	return false, s.publicErr(fmt.Errorf("%w: no matching run or pending challenge", ErrRequestRejected))
+}
+
+// ReloadPolicy re-reads the manifest rules when absChangedPath is one of the
+// current binding's watched manifests.
+func (s *Service) ReloadPolicy(absChangedPath string) bool {
+	b := s.currentBinding()
+	if b == nil || !b.policy.Watches(absChangedPath) {
+		return false
+	}
+	b.policy.Reload()
+	return true
+}
+
+// Close shuts the service down. The first call marks `closing` under
+// lifecycleMu alone — active registration uses the same mutex, so a run is
+// either in the cancellation snapshot or rolls back, and no positive wg.Add
+// can occur after the mark — then starts exactly one background shutdown.
+// Every call, including the first, selects the finished shutdown against its
+// own context: a deadline returns ctx.Err() while the shutdown continues,
+// and a later Close observes the same final result.
+func (s *Service) Close(ctx context.Context) error {
+	s.closeOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.closing = true
+		cancels := make([]context.CancelFunc, 0, len(s.active))
+		for _, ar := range s.active {
+			cancels = append(cancels, ar.cancel)
+		}
+		s.lifecycleMu.Unlock()
+		go s.shutdown(cancels)
+	})
+	select {
+	case <-s.closeDone:
+		return s.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// shutdown is the single background finisher: retire the final binding under
+// the binding writer (waiting out any in-flight admission), cancel the
+// snapshotted active runs, wait for every pre-mark admission/run unit, then
+// close all collected/cached runner records through their sync.Once.
+func (s *Service) shutdown(cancels []context.CancelFunc) {
+	s.bindingGate.Lock()
+	var idle []*runnerRecord
+	if old := s.currentBinding(); old != nil {
+		s.bindings.Unbind()
+		idle = s.retireBinding(old) // detaches the current policy
+		s.setBinding(nil)
+	}
+	s.bindingGate.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	s.wg.Wait()
+	var errs []error
+	for _, rec := range idle {
+		if err := rec.close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, conv := range s.conversationsSnapshot() {
+		conv.mu.Lock()
+		rec := conv.runner
+		conv.runner = nil
+		conv.runnerStale = false
+		conv.mu.Unlock()
+		if rec != nil {
+			if err := rec.close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	s.baseCancel()
+	s.closeErr = errors.Join(errs...) // published before closeDone closes
+	close(s.closeDone)
+}
