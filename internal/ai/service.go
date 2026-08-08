@@ -515,6 +515,12 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 		s.lifecycleMu.Unlock()
 		return TurnAdmission{}, s.publicErr(fmt.Errorf("%w: turn rejected", errServiceClosing))
 	}
+	// This Add must stay inside lifecycleMu: Close sets closing under the same
+	// mutex, so no positive Add can land after Close may begin Wait. The
+	// placement itself is an ownership invariant, not a tested one --
+	// TestServiceCloseVersusConcurrentAdmissions proves the units balance, and
+	// the step-8 closing recheck rolls back an admission that slips through, so
+	// moving this Add out of the critical section is not observable from a test.
 	s.wg.Add(1)
 	s.lifecycleMu.Unlock()
 

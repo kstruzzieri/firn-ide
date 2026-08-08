@@ -2766,9 +2766,11 @@ func TestServiceBindingBarriersWithAdmission(t *testing.T) {
 				if got := h.factory.callCount(); got != 1 {
 					t.Fatalf("iteration %d: accepted admission constructed %d runner(s)", i, got)
 				}
-				if got := h.factory.call(t, 0).runner.runCount(); got != 1 {
-					t.Fatalf("iteration %d: accepted admission never entered Run (%d)", i, got)
-				}
+				// Run is entered on the goroutine launched by StartTurn, so this
+				// must be awaited rather than read synchronously on return.
+				waitUntil(t, "accepted admission entered Run", func() bool {
+					return h.factory.call(t, 0).runner.runCount() == 1
+				})
 				ok, cerr := h.svc.Cancel(id)
 				if !ok || cerr != nil {
 					t.Fatalf("iteration %d: in-flight Cancel = %v, %v", i, ok, cerr)
