@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GetGolemStatus, GetWorkspaceInfo } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { useGolemStore } from '../stores/golemStore';
+import { ingestGolemEvents, useGolemStore } from '../stores/golemStore';
 import { useIDEStore } from '../stores/ideStore';
 import { boundedGolemMessage, parseGolemStatus, toStatusRequest } from '../types/golem';
 
@@ -51,8 +51,9 @@ export function useGolemBridge(): void {
       if (pending.length === 0) return;
       const batch = pending;
       pending = [];
-      const { ingestEvent } = useGolemStore.getState();
-      for (const item of batch) ingestEvent(item);
+      // One store mutation for the whole frame: a per-event apply copies the
+      // conversation once per delta and does not survive a fast token stream.
+      ingestGolemEvents(batch);
     };
 
     const offEvent = EventsOn('golem:event', (payload: unknown) => {

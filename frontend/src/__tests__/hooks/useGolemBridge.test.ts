@@ -194,6 +194,24 @@ describe('subscriptions', () => {
     expect(liveListeners('golem:status-changed')).toBe(1);
   });
 
+  it('lets one effect own the subscriptions for the whole App lifetime', async () => {
+    renderHook(() => useGolemBridge());
+    openRepository(REPO_A);
+    await settle();
+    const subscribed = mockEventsOn.mock.calls.length;
+    expect(subscribed).toBeGreaterThanOrEqual(3);
+
+    // Opening another repository rebinds and re-hydrates, but must not tear the
+    // subscriptions down: a resubscribe window drops whatever arrives inside it.
+    openRepository(REPO_B);
+    await settle();
+
+    expect(mockEventsOn.mock.calls.length).toBe(subscribed);
+    expect(liveListeners('golem:event')).toBe(1);
+    expect(liveListeners('golem:run-status')).toBe(1);
+    expect(liveListeners('golem:status-changed')).toBe(1);
+  });
+
   it('keeps its listeners while the panel is collapsed or showing Runs', async () => {
     renderHook(() => useGolemBridge());
     openRepository();
@@ -210,6 +228,41 @@ describe('subscriptions', () => {
 });
 
 describe('repository binding', () => {
+  it('moves through binding before it reports ready', async () => {
+    const gate = deferred<Record<string, unknown>>();
+    mockGetWorkspaceInfo.mockImplementation((path: string) =>
+      path === '' ? Promise.resolve({ repoEpoch: 0 }) : gate.promise
+    );
+
+    renderHook(() => useGolemBridge());
+    expect(store().bridgePhase).toBe('unbound');
+
+    openRepository();
+    expect(store().bridgePhase).toBe('binding');
+    expect(store().bridgeError).toBeNull();
+
+    await act(async () => {
+      gate.resolve({ name: 'alpha', path: REPO_A, repoKey: 'key', repoEpoch: 4 });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(store().bridgePhase).toBe('ready');
+  });
+
+  it('reports binding then error when the workspace call is rejected', async () => {
+    const gate = deferred<Record<string, unknown>>();
+    mockGetWorkspaceInfo.mockReturnValue(gate.promise);
+
+    renderHook(() => useGolemBridge());
+    openRepository();
+    expect(store().bridgePhase).toBe('binding');
+
+    await act(async () => {
+      gate.reject('The Golem workspace is unavailable.');
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(store().bridgePhase).toBe('error');
+  });
+
   it('binds the open repository and unbinds on close with the only path call', async () => {
     const { unmount } = renderHook(() => useGolemBridge());
     expect(mockGetWorkspaceInfo).not.toHaveBeenCalled();
@@ -481,6 +534,29 @@ describe('delta batching', () => {
     expect(conversation().transcript.find((e) => e.kind === 'assistant')!.text).toBe('Hello');
     expect(conversation().rawEvents.map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(conversation().runs[RUN].lastSeq).toBe(3);
+  });
+
+  it('applies a whole frame of deltas in a single store mutation', () => {
+    let notifications = 0;
+    const unsubscribe = useGolemStore.subscribe(() => {
+      notifications += 1;
+    });
+    try {
+      emit('golem:event', delta(1, 'He'));
+      emit('golem:event', delta(2, 'll'));
+      emit('golem:event', delta(3, 'o'));
+      expect(notifications).toBe(0);
+
+      runFrame();
+
+      // One notification for three events: applying them one at a time copies
+      // the conversation once per token and does not survive a fast stream.
+      expect(notifications).toBe(1);
+      expect(conversation().transcript.find((e) => e.kind === 'assistant')!.text).toBe('Hello');
+      expect(conversation().rawEvents.map((e) => e.seq)).toEqual([1, 2, 3]);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('flushes pending deltas before every non-delta event', () => {

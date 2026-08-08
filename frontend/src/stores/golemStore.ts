@@ -45,6 +45,20 @@ const RUN_FAILED_ERROR = 'The Golem run failed.';
 const NO_SECURE_UUID_ERROR =
   'This window cannot generate a secure run ID, so the turn was not sent.';
 const STALE_BINDING_ERROR = 'The workspace changed before this turn started.';
+const CONSENT_EXPIRED_ERROR = 'The consent request expired. Send the message again to retry it.';
+
+/**
+ * `rawEvents` is a bounded tail, not the transcript. Every projected row keeps
+ * its own `raw` event, so nothing the UI renders reads this array; it exists
+ * for raw inspection of what just arrived. A token-level delta stream reaches
+ * tens of thousands of events in one session and every accepted event copies
+ * this array, so an unbounded list makes ingestion quadratic (measured: 50k
+ * events = ~4s of main-thread work). 500 keeps several screens of recent
+ * history at a flat cost. Dropping from the head is safe: `lastSeq` lives on
+ * the run, and the transcript projection is already applied by the time an
+ * entry ages out.
+ */
+const MAX_RAW_EVENTS = 500;
 
 /**
  * Highest repository epoch ever hydrated. Epochs are never reused within a
@@ -182,6 +196,32 @@ function upsertRun(
   const next = { ...existing, ...patch };
   conversation.runs[runId] = next;
   return next;
+}
+
+/**
+ * Retires a pending consent turn that can no longer be granted, keeping its
+ * prompt retryable.
+ *
+ * The backend drops a past-deadline challenge on its next `Status` call, and
+ * the bridge calls `Status` on every `golem:status-changed`. After that both
+ * `StartTurn` with the challenge ID and `Cancel` on that identity are rejected
+ * forever, so a client that keeps waiting leaves the conversation busy with no
+ * way out. Releasing the turn into `lastFailedTurn` lets the user resend it
+ * under a fresh run ID and collect a fresh challenge.
+ */
+function releasePendingConsent(conversation: ConversationView, message: string): boolean {
+  const pending = conversation.pendingConsentTurn;
+  if (!pending) return false;
+  const runId = pending.identity.runId;
+  conversation.pendingConsentTurn = null;
+  conversation.lastFailedTurn = { draft: pending.draft, userEntryId: pending.userEntryId };
+  const run = conversation.runs[runId];
+  if (run && !isTerminalPhase(run.phase)) {
+    conversation.runs[runId] = { ...run, phase: 'failed', error: message };
+  }
+  if (conversation.activeRunId === runId) conversation.activeRunId = null;
+  appendError(conversation, runId, message);
+  return true;
 }
 
 // ── event payload projections ─────────────────────────────────────────────────
@@ -426,6 +466,71 @@ function finishRun(
   return dispatchQueued(mutation, conversationId, context);
 }
 
+/**
+ * Reduces one streamed event into the working copy. `null` means the event was
+ * ignored, so a batch that changes nothing leaves every object identity — and
+ * therefore every React subscriber — untouched.
+ */
+function reduceEvent(
+  mutation: Mutation,
+  value: unknown,
+  context: DispatchContext
+): { dispatch: PendingDispatch | null } | null {
+  const event = parseGolemEvent(value);
+  if (!event) return null;
+
+  const conversationId = mutation.runToConversation[event.runId] ?? event.threadId;
+  const existing = mutation.conversations[conversationId];
+  if (!existing) return null;
+
+  const knownRun = existing.runs[event.runId];
+  if (knownRun && event.seq <= knownRun.lastSeq) return null;
+  const projection = classifyEvent(event);
+  if (!projection) return null;
+
+  const conversation = draftConversation(mutation, conversationId)!;
+  mutation.runToConversation[event.runId] = conversationId;
+
+  conversation.rawEvents.push(event);
+  if (conversation.rawEvents.length > MAX_RAW_EVENTS) {
+    conversation.rawEvents.splice(0, conversation.rawEvents.length - MAX_RAW_EVENTS);
+  }
+  upsertRun(conversation, event.runId, { lastSeq: event.seq });
+
+  switch (projection.kind) {
+    case 'delta':
+      applyDelta(conversation, event, projection.messageId, projection.text);
+      break;
+    case 'tool-start':
+    case 'tool-finish':
+      applyToolEvent(conversation, event, projection);
+      break;
+    case 'terminal':
+      return {
+        dispatch: finishRun(
+          mutation,
+          conversationId,
+          event.runId,
+          projection.phase,
+          context,
+          projection.message,
+          event
+        ),
+      };
+    case 'none':
+      if (event.type === 'run.started') {
+        const run = conversation.runs[event.runId];
+        if (!isTerminalPhase(run.phase) && run.phase !== 'canceling') {
+          conversation.runs[event.runId] = { ...run, phase: 'running' };
+          // A background run entering `running` by event is activity too.
+          markActive(mutation, conversationId);
+        }
+      }
+      break;
+  }
+  return { dispatch: null };
+}
+
 // ── store ─────────────────────────────────────────────────────────────────────
 
 const initialState = () => ({
@@ -444,6 +549,14 @@ const initialState = () => ({
   panelMode: 'runs' as GolemStoreState['panelMode'],
   composerFocusRevision: 0,
 });
+
+/**
+ * Set while the store is created. Batch ingestion is a delivery concern of the
+ * bridge rather than a store action, and the declared `GolemStoreState`
+ * contract is frozen for Task B8, so it is exported beside the store instead
+ * of on it.
+ */
+let ingestGolemEventBatch: (values: unknown[]) => void = () => {};
 
 export const useGolemStore = create<GolemStoreState>()((set, get) => {
   /** Send is allowed only into the conversation the backend just hydrated. */
@@ -576,6 +689,48 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     if (dispatch) void runTurn(dispatch.identity, dispatch.draft, null);
   };
 
+  /**
+   * Applies a whole delivery — one animation frame's worth of streamed events —
+   * in a single store mutation, so a frame costs one working copy instead of
+   * one per event.
+   */
+  const ingestBatch = (values: unknown[]) => {
+    const dispatches: PendingDispatch[] = [];
+    set((current) => {
+      const mutation = beginMutation(current);
+      const context: DispatchContext = {
+        hydratedIdentity: current.hydratedIdentity,
+        bridgePhase: current.bridgePhase,
+      };
+      let changed = false;
+      for (const value of values) {
+        const reduced = reduceEvent(mutation, value, context);
+        if (!reduced) continue;
+        changed = true;
+        if (reduced.dispatch) dispatches.push(reduced.dispatch);
+      }
+      return changed ? { ...mutation } : current;
+    });
+    for (const dispatch of dispatches) runDispatch(dispatch);
+  };
+  ingestGolemEventBatch = ingestBatch;
+
+  /** Drops a pending consent turn whose challenge deadline has already passed. */
+  const dropExpiredConsent = (conversationId: string): boolean => {
+    const pending = get().conversations[conversationId]?.pendingConsentTurn;
+    if (!pending || Date.now() <= pending.challenge.expiresAt) return false;
+    set((state) => {
+      const mutation = beginMutation(state);
+      const conversation = draftConversation(mutation, conversationId);
+      if (!conversation || !releasePendingConsent(conversation, CONSENT_EXPIRED_ERROR)) {
+        return state;
+      }
+      markFailure(mutation, conversationId);
+      return { ...mutation };
+    });
+    return true;
+  };
+
   return {
     ...initialState(),
 
@@ -648,12 +803,16 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           const known = target.runs[active.identity.runId];
           if (known && isTerminalPhase(known.phase)) continue; // tombstone
           target.runs[active.identity.runId] = {
-            ...(known ?? { lastSeq: -1 }),
+            ...known,
             identity: active.identity,
             phase: active.state,
-          } as RunView;
+            lastSeq: known?.lastSeq ?? -1,
+          };
           mutation.runToConversation[active.identity.runId] = runConversationId;
           if (target.activeRunId === null) target.activeRunId = active.identity.runId;
+          // Adopting a run the backend reports as live is activity; re-listing
+          // an unchanged one is not, or every status refresh would re-alert.
+          if (!known || known.phase !== active.state) markActive(mutation, runConversationId);
         }
 
         return {
@@ -717,60 +876,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     },
 
     ingestEvent(value: unknown) {
-      const event = parseGolemEvent(value);
-      if (!event) return;
-
-      const state = get();
-      const conversationId = state.runToConversation[event.runId] ?? event.threadId;
-      const conversation = state.conversations[conversationId];
-      if (!conversation) return;
-
-      const knownRun = conversation.runs[event.runId];
-      if (knownRun && event.seq <= knownRun.lastSeq) return;
-      const projection = classifyEvent(event);
-      if (!projection) return;
-
-      let dispatch: PendingDispatch | null = null;
-      set((current) => {
-        const mutation = beginMutation(current);
-        const draft = draftConversation(mutation, conversationId);
-        if (!draft) return current;
-        mutation.runToConversation[event.runId] = conversationId;
-
-        draft.rawEvents.push(event);
-        upsertRun(draft, event.runId, { lastSeq: event.seq });
-
-        switch (projection.kind) {
-          case 'delta':
-            applyDelta(draft, event, projection.messageId, projection.text);
-            break;
-          case 'tool-start':
-          case 'tool-finish':
-            applyToolEvent(draft, event, projection);
-            break;
-          case 'terminal':
-            dispatch = finishRun(
-              mutation,
-              conversationId,
-              event.runId,
-              projection.phase,
-              { hydratedIdentity: current.hydratedIdentity, bridgePhase: current.bridgePhase },
-              projection.message,
-              event
-            );
-            break;
-          case 'none':
-            if (event.type === 'run.started') {
-              const run = draft.runs[event.runId];
-              if (!isTerminalPhase(run.phase) && run.phase !== 'canceling') {
-                draft.runs[event.runId] = { ...run, phase: 'running' };
-              }
-            }
-            break;
-        }
-        return { ...mutation };
-      });
-      runDispatch(dispatch);
+      ingestBatch([value]);
     },
 
     ingestRunStatus(value: unknown) {
@@ -822,6 +928,9 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
 
     async submitTurn(conversationId: string) {
       if (!canSend(conversationId)) return;
+      // An expired challenge must not keep the conversation busy: the new
+      // message starts a fresh run, which collects a fresh challenge.
+      dropExpiredConsent(conversationId);
       const conversation = get().conversations[conversationId];
       const message = conversation.draft.trim();
       if (!message) return;
@@ -879,6 +988,9 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
 
     async allowAndSend(conversationId: string) {
       if (!canSend(conversationId)) return;
+      // The backend would reject the grant with "no pending consent challenge"
+      // and leave nothing to clear it, so expire it here instead.
+      if (dropExpiredConsent(conversationId)) return;
       const conversation = get().conversations[conversationId];
       const pending = conversation.pendingConsentTurn;
       if (!pending) return;
@@ -976,6 +1088,11 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       if (!run || isTerminalPhase(run.phase) || run.phase === 'canceling') return;
       const previousPhase = run.phase;
 
+      // Declining an already-expired challenge: the backend has dropped it, so
+      // Cancel would be rejected and leave the turn stuck as pending.
+      const pending = state.conversations[conversationId]?.pendingConsentTurn;
+      if (pending?.identity.runId === runId && dropExpiredConsent(conversationId)) return;
+
       set((current) => {
         const mutation = beginMutation(current);
         const draft = draftConversation(mutation, conversationId)!;
@@ -995,8 +1112,16 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           if (!draft) return current;
           const latest = draft.runs[runId];
           if (!latest || latest.phase !== 'canceling') return current;
-          draft.runs[runId] = { ...latest, phase: previousPhase };
-          appendError(draft, runId, boundedMessage(err));
+          // Cancel on a pending-consent turn is only rejected when the backend
+          // no longer holds that challenge, so restoring `needs-consent` would
+          // offer a grant that can never succeed. Every other rejection leaves
+          // the run alive, so its previous phase is still the truth.
+          if (draft.pendingConsentTurn?.identity.runId === runId) {
+            releasePendingConsent(draft, boundedMessage(err));
+          } else {
+            draft.runs[runId] = { ...latest, phase: previousPhase };
+            appendError(draft, runId, boundedMessage(err));
+          }
           markFailure(mutation, conversationId);
           return { ...mutation };
         });
@@ -1004,6 +1129,11 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     },
   };
 });
+
+/** Ingests one animation frame's batch of streamed events in one mutation. */
+export const ingestGolemEvents = (values: unknown[]): void => {
+  ingestGolemEventBatch(values);
+};
 
 /** Test-only reset of both the store and its process-lifetime counters. */
 export function __resetGolemStore(): void {

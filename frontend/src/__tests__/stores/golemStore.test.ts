@@ -12,6 +12,7 @@
 
 import { ai } from '../../../wailsjs/go/models';
 import {
+  boundedGolemMessage,
   GolemContractError,
   parseGolemEvent,
   parseGolemStatus,
@@ -87,12 +88,16 @@ const localDestination = {
   digest: 'local',
 };
 
+/** Matches `consentChallengeTTL` closely enough to exercise both sides of it. */
+const CHALLENGE_TTL_MS = 5 * 60_000;
+
 const challengeFor = (runId: string, over: Record<string, unknown> = {}) => ({
   id: 'challenge-1',
   identity: runIdentity(runId),
   destination: remoteDestination,
   destinationDigest: remoteDestination.digest,
-  expiresAt: 1_800_000_000_000,
+  // Relative to the clock so the suite cannot become time-dependent.
+  expiresAt: Date.now() + CHALLENGE_TTL_MS,
   ...over,
 });
 
@@ -397,6 +402,19 @@ describe('boundary validators', () => {
     expect(parseRunStatus(value)).toBeNull();
   });
 
+  it('clamps a rejection to a short displayable string', () => {
+    const clamped = boundedGolemMessage('x'.repeat(500));
+    expect(clamped).toHaveLength(200);
+    expect(clamped.endsWith('…')).toBe(true);
+    expect(clamped.slice(0, 199)).toBe('x'.repeat(199));
+
+    expect(boundedGolemMessage('x'.repeat(200))).toBe('x'.repeat(200));
+    expect(boundedGolemMessage(new Error('boom'))).toBe('boom');
+    expect(boundedGolemMessage('  spaced  ')).toBe('spaced');
+    expect(boundedGolemMessage('   ')).toBe('Golem is unavailable.');
+    expect(boundedGolemMessage({ toString: () => 'API_KEY_MARKER' })).toBe('Golem is unavailable.');
+  });
+
   it('builds Wails inputs through the generated constructors only', () => {
     const statusRequest = toStatusRequest(identity);
     expect(statusRequest).toBeInstanceOf(ai.StatusRequest);
@@ -521,6 +539,20 @@ describe('event reduction', () => {
     expect(conv().rawEvents.map((e) => e.type)).toEqual(['plan.updated']);
     expect(conv().transcript).toHaveLength(0);
     expect(conv().runs[RUN_A].lastSeq).toBe(1);
+  });
+
+  it('keeps rawEvents to a bounded tail without losing the projection or lastSeq', () => {
+    for (let seq = 1; seq <= 520; seq += 1) {
+      send({ seq, type: 'message.delta', payload: { messageId: 'm1', text: 'x' } });
+    }
+
+    const raw = conv().rawEvents;
+    expect(raw).toHaveLength(500);
+    expect(raw[0].seq).toBe(21);
+    expect(raw[raw.length - 1].seq).toBe(520);
+    // Everything the UI reads is unaffected by the drop.
+    expect(conv().runs[RUN_A].lastSeq).toBe(520);
+    expect(conv().transcript.filter((e) => e.kind === 'assistant')[0].text).toHaveLength(520);
   });
 
   it('does not mutate state for an invalid envelope', () => {
@@ -685,6 +717,29 @@ describe('bridge lifecycle and hydration', () => {
     expect(conv(OTHER_CONV).workspaceLabel).toBe('Backend');
   });
 
+  it('updates an already-known other-workspace run when a later status re-lists it', () => {
+    const otherIdentity = {
+      ...runIdentity(RUN_B),
+      workspaceId: OTHER_WS,
+      conversationId: OTHER_CONV,
+    };
+    const withOtherRun = (state: string) =>
+      statusPayload({
+        activeRuns: [{ identity: otherIdentity, workspaceLabel: 'Backend', state }],
+      });
+
+    store().hydrateStatus(parseGolemStatus(withOtherRun('running')));
+    expect(conv(OTHER_CONV).runs[RUN_B].phase).toBe('running');
+
+    store().hydrateStatus(parseGolemStatus(withOtherRun('canceling')));
+
+    expect(conv(OTHER_CONV).runs[RUN_B].phase).toBe('canceling');
+    expect(conv(OTHER_CONV).runs[RUN_B].identity).toEqual(otherIdentity);
+    expect(Object.keys(conv(OTHER_CONV).runs)).toEqual([RUN_B]);
+    expect(conv(OTHER_CONV).activeRunId).toBe(RUN_B);
+    expect(store().runToConversation[RUN_B]).toBe(OTHER_CONV);
+  });
+
   it('merges rather than deletes runs from other workspaces', () => {
     store().hydrateStatus(
       parseGolemStatus(
@@ -745,16 +800,35 @@ describe('send gating', () => {
       store().hydrateStatus(parseGolemStatus(statusPayload()));
       useGolemStore.setState({ bridgePhase: 'unbound', hydratedIdentity: null });
     }
+    // A run ID is available: a refusal here has to come from the gate, not from
+    // an exhausted UUID queue, which would look identical from the mock alone.
+    uuidQueue = [RUN_A];
     store().setDraft(CONV, 'hello');
     await store().submitTurn(CONV);
+
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(mockRandomUUID).not.toHaveBeenCalled();
+    expect(uuidQueue).toEqual([RUN_A]);
+    // The refusal is silent and lossless: the message stays in the composer and
+    // nothing is projected, queued, or routed.
+    expect(conv().draft).toBe('hello');
+    expect(conv().transcript).toEqual([]);
+    expect(conv().queuedTurns).toEqual([]);
+    expect(conv().runs).toEqual({});
+    expect(conv().activeRunId).toBeNull();
+    expect(store().runToConversation).toEqual({});
   });
 
   it('makes no backend call for a blank draft', async () => {
     hydrateReady();
+    uuidQueue = [RUN_A];
     store().setDraft(CONV, '   ');
     await store().submitTurn(CONV);
+
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(uuidQueue).toEqual([RUN_A]);
+    expect(conv().transcript).toEqual([]);
+    expect(conv().activeRunId).toBeNull();
   });
 
   it('shows a bounded inline error and calls nothing when secure randomUUID is unavailable', async () => {
@@ -1037,6 +1111,11 @@ describe('queueing', () => {
 });
 
 describe('consent', () => {
+  // Only the expiry tests install a clock; restoring keeps the rest real.
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   const needsConsentAdmission = (runId: string) =>
     admissionPayload(runId, {
       state: 'needs_consent',
@@ -1145,6 +1224,115 @@ describe('consent', () => {
     });
   });
 
+  it('releases an expired challenge for retry instead of leaving the turn pending', async () => {
+    await firstRemoteSubmission();
+    const pending = conv().pendingConsentTurn!;
+    const userEntryId = pending.userEntryId;
+
+    // The backend drops a past-deadline challenge on its next Status call, and
+    // answers every later grant or cancel for it with a rejection.
+    jest.spyOn(Date, 'now').mockReturnValue(pending.challenge.expiresAt + 1);
+    mockRunGolemTurn.mockClear();
+
+    await store().allowAndSend(CONV);
+
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().runs[RUN_A].phase).toBe('failed');
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .pop()!.text
+    ).toBe('The consent request expired. Send the message again to retry it.');
+    expect(conv().lastFailedTurn).toEqual({
+      draft: { message: 'ask remote', contextRefs: [] },
+      userEntryId,
+    });
+    expect(store().lastFailureConversationId).toBe(CONV);
+
+    // The way out is a real one: Retry starts a fresh run and a fresh challenge.
+    uuidQueue = [RUN_B];
+    mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
+      Promise.resolve(needsConsentAdmission(request.identity.runId))
+    );
+    await store().retryLastFailed(CONV);
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    const retried = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
+    expect(retried.identity.runId).toBe(RUN_B);
+    expect(retried.consentChallengeId).toBe('');
+    expect(retried.message).toBe('ask remote');
+    expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
+  });
+
+  it('sends rather than queues behind an expired consent turn', async () => {
+    await firstRemoteSubmission();
+    const expiresAt = conv().pendingConsentTurn!.challenge.expiresAt;
+    jest.spyOn(Date, 'now').mockReturnValue(expiresAt + 1);
+
+    mockRunGolemTurn.mockClear();
+    mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
+      Promise.resolve(needsConsentAdmission(request.identity.runId))
+    );
+    uuidQueue = [RUN_B];
+    store().setDraft(CONV, 'ask again');
+    await store().submitTurn(CONV);
+
+    expect(conv().queuedTurns).toHaveLength(0);
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).identity.runId).toBe(RUN_B);
+    expect(conv().pendingConsentTurn!.identity.runId).toBe(RUN_B);
+  });
+
+  it('declines an expired challenge locally instead of calling Cancel', async () => {
+    await firstRemoteSubmission();
+    const userEntryId = conv().pendingConsentTurn!.userEntryId;
+    jest.spyOn(Date, 'now').mockReturnValue(conv().pendingConsentTurn!.challenge.expiresAt + 1);
+    mockCancelGolemRun.mockClear();
+
+    await store().cancelRun(RUN_A);
+
+    // The backend already dropped the challenge, so Cancel has nothing to
+    // match and would only answer with a rejection.
+    expect(mockCancelGolemRun).not.toHaveBeenCalled();
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(conv().runs[RUN_A].phase).toBe('failed');
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().lastFailedTurn).toEqual({
+      draft: { message: 'ask remote', contextRefs: [] },
+      userEntryId,
+    });
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .pop()!.text
+    ).toBe('The consent request expired. Send the message again to retry it.');
+  });
+
+  it('clears a pending consent turn when its Cancel is rejected', async () => {
+    await firstRemoteSubmission();
+    const userEntryId = conv().pendingConsentTurn!.userEntryId;
+    mockCancelGolemRun.mockRejectedValueOnce('The Golem request is invalid or stale.');
+
+    await store().cancelRun(RUN_A);
+
+    // Cancel is only rejected here when the backend no longer holds the
+    // challenge, so restoring needs-consent would offer an impossible grant.
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().runs[RUN_A].phase).toBe('failed');
+    expect(conv().lastFailedTurn).toEqual({
+      draft: { message: 'ask remote', contextRefs: [] },
+      userEntryId,
+    });
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .pop()!.text
+    ).toBe('The Golem request is invalid or stale.');
+  });
+
   it('refuses to offer a consent challenge issued under a retired epoch', async () => {
     hydrateReady({ destination: remoteDestination, needsConsent: true });
     uuidQueue = [RUN_A];
@@ -1182,6 +1370,84 @@ describe('consent', () => {
     });
   });
 
+  it('re-stages an invalidated challenge and resubmits it on rebind with one user row', async () => {
+    await firstRemoteSubmission();
+    const userEntryId = conv().pendingConsentTurn!.userEntryId;
+    expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
+
+    store().invalidateBinding();
+
+    // The backend dropped the challenge with the binding, so the prompt goes
+    // back on the shelf carrying the row it already projected.
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(conv().queuedTurns).toHaveLength(1);
+    expect(conv().queuedTurns[0]).toMatchObject({
+      message: 'ask remote',
+      state: 'reopen-required',
+      userEntryId,
+    });
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().runs[RUN_A].phase).toBe('canceled');
+
+    mockRunGolemTurn.mockClear();
+    mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
+      Promise.resolve({
+        state: 'accepted',
+        identity: { ...request.identity },
+        destination: remoteDestination,
+        context: { included: 0, bytes: 0, excluded: 0 },
+      })
+    );
+    uuidQueue = [RUN_B];
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          identity: { ...identity, repoEpoch: EPOCH + 1 },
+          destination: remoteDestination,
+        })
+      )
+    );
+    await flush();
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    const resubmitted = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
+    expect(resubmitted.message).toBe('ask remote');
+    expect(resubmitted.consentChallengeId).toBe('');
+    expect(resubmitted.identity.runId).toBe(RUN_B);
+    expect(resubmitted.identity.repoEpoch).toBe(EPOCH + 1);
+
+    const userRows = conv().transcript.filter((e) => e.kind === 'user');
+    expect(userRows).toHaveLength(1);
+    expect(userRows[0].id).toBe(userEntryId);
+    expect(userRows[0].runId).toBe(RUN_B);
+    expect(conv().runs[RUN_B].userEntryId).toBe(userEntryId);
+    expect(conv().queuedTurns).toHaveLength(0);
+  });
+
+  it('honours an accepted admission whose epoch was retired while it was in flight', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    const gate = deferred<unknown>();
+    mockRunGolemTurn.mockReturnValueOnce(gate.promise);
+    store().setDraft(CONV, 'hello');
+    const pending = store().submitTurn(CONV);
+
+    store().hydrateStatus(
+      parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 } }))
+    );
+
+    gate.resolve(admissionPayload(RUN_A));
+    await pending;
+
+    // Unlike needs_consent, an accepted admission names a run the backend is
+    // already running: the epoch guard is deliberately not applied here, or the
+    // run would be orphaned and the user could no longer cancel it.
+    expect(conv().runs[RUN_A].phase).toBe('running');
+    expect(conv().activeRunId).toBe(RUN_A);
+    expect(conv().transcript.filter((e) => e.kind === 'error')).toHaveLength(0);
+    expect(conv().lastFailedTurn).toBeNull();
+  });
+
   it('does not resurrect a terminal run when needs_consent resolves late', async () => {
     hydrateReady({ destination: remoteDestination, needsConsent: true });
     uuidQueue = [RUN_A];
@@ -1211,7 +1477,9 @@ describe('consent', () => {
 describe('failure and retry', () => {
   it('records lastFailedTurn on admission rejection and does not drain queued work', async () => {
     hydrateReady();
-    uuidQueue = [RUN_A];
+    // A second run ID is available on purpose: if the failure path drained the
+    // queue it would succeed, so the queue below cannot survive by accident.
+    uuidQueue = [RUN_A, RUN_B];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
     store().setDraft(CONV, 'first');
@@ -1221,6 +1489,7 @@ describe('failure and retry', () => {
 
     gate.reject('The Golem request is invalid or stale.');
     await pending;
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('failed');
     expect(conv().activeRunId).toBeNull();
@@ -1229,8 +1498,116 @@ describe('failure and retry', () => {
       userEntryId: conv().runs[RUN_A].userEntryId,
     });
     expect(conv().queuedTurns).toHaveLength(1);
+    expect(conv().queuedTurns[0]).toMatchObject({ message: 'second', state: 'queued' });
+    expect(conv().runs[RUN_B]).toBeUndefined();
+    expect(uuidQueue).toEqual([RUN_B]);
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     expect(store().lastFailureConversationId).toBe(CONV);
+  });
+
+  it('ignores a late or duplicate run-status for a run that already ended', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    store().ingestEvent(
+      eventPayload({
+        seq: 1,
+        type: 'run.finished',
+        payload: { stopReason: 'end_turn', model: 'm' },
+      })
+    );
+    const settledRows = conv().transcript.length;
+    const settledFailures = store().failureRevision;
+    expect(conv().runs[RUN_A].phase).toBe('done');
+
+    // `ingestRunStatus` has no seq guard, so the terminal tombstone is the only
+    // thing standing between a duplicated relay and a rewritten history.
+    store().ingestRunStatus({
+      identity: runIdentity(RUN_A),
+      state: 'failed',
+      message: 'late failure',
+    });
+    store().ingestRunStatus({ identity: runIdentity(RUN_A), state: 'canceled' });
+
+    expect(conv().runs[RUN_A].phase).toBe('done');
+    expect(conv().runs[RUN_A].error).toBeUndefined();
+    expect(conv().transcript).toHaveLength(settledRows);
+    expect(conv().transcript.filter((e) => e.kind === 'error')).toHaveLength(0);
+    expect(conv().lastFailedTurn).toBeNull();
+    expect(store().failureRevision).toBe(settledFailures);
+  });
+
+  it('re-stages rather than starts a queued turn under a retired epoch', async () => {
+    // A sibling workspace in the same repository owns the queued work.
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          identity: { ...identity, workspaceId: OTHER_WS, conversationId: OTHER_CONV },
+          workspaceLabel: 'Backend',
+        })
+      )
+    );
+    store().selectConversation(OTHER_CONV);
+    uuidQueue = [RUN_A];
+    store().setDraft(OTHER_CONV, 'first');
+    await store().submitTurn(OTHER_CONV);
+    store().setDraft(OTHER_CONV, 'second');
+    await store().submitTurn(OTHER_CONV);
+    expect(conv(OTHER_CONV).queuedTurns[0].state).toBe('queued');
+
+    // The repository is rebound and focus lands elsewhere, so the sibling's
+    // queued turn is still armed but its epoch is retired.
+    store().hydrateStatus(
+      parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 } }))
+    );
+    expect(conv(OTHER_CONV).queuedTurns[0].state).toBe('queued');
+
+    uuidQueue = [RUN_B];
+    mockRunGolemTurn.mockClear();
+    store().ingestEvent(
+      eventPayload({
+        threadId: OTHER_CONV,
+        runId: RUN_A,
+        seq: 1,
+        type: 'run.finished',
+        payload: { stopReason: 'end_turn', model: 'm' },
+      })
+    );
+    await flush();
+
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(uuidQueue).toEqual([RUN_B]);
+    expect(conv(OTHER_CONV).queuedTurns).toHaveLength(1);
+    expect(conv(OTHER_CONV).queuedTurns[0]).toMatchObject({
+      message: 'second',
+      state: 'reopen-required',
+    });
+    expect(conv(OTHER_CONV).activeRunId).toBeNull();
+    expect(conv(OTHER_CONV).runs[RUN_B]).toBeUndefined();
+  });
+
+  it('refuses Retry while the conversation is unavailable', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
+    );
+    const failed = conv().lastFailedTurn;
+    expect(failed).not.toBeNull();
+
+    hydrateReady({ available: false, initError: 'Golem is unavailable.' });
+    uuidQueue = [RUN_B];
+    mockRunGolemTurn.mockClear();
+    await store().retryLastFailed(CONV);
+
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(uuidQueue).toEqual([RUN_B]);
+    expect(conv().lastFailedTurn).toEqual(failed);
+    expect(conv().runs[RUN_B]).toBeUndefined();
+    expect(conv().activeRunId).toBeNull();
   });
 
   it('sets bridgePhase error when an admission violates the contract', async () => {
@@ -1413,6 +1790,48 @@ describe('activity and failure revisions', () => {
     );
     expect(store().failureRevision).toBeGreaterThan(beforeFailure);
     expect(store().lastFailureConversationId).toBe(CONV);
+  });
+
+  it('advances activity when a background run starts by event', () => {
+    hydrateReady();
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          identity: { ...identity, workspaceId: OTHER_WS, conversationId: OTHER_CONV },
+        })
+      )
+    );
+    store().selectConversation(OTHER_CONV);
+    useGolemStore.setState({ lastActiveConversationId: OTHER_CONV });
+    const before = store().activityRevision;
+
+    store().ingestEvent(
+      eventPayload({ threadId: CONV, runId: RUN_C, seq: 1, type: 'run.started' })
+    );
+
+    expect(conv().runs[RUN_C].phase).toBe('running');
+    expect(store().lastActiveConversationId).toBe(CONV);
+    expect(store().activityRevision).toBeGreaterThan(before);
+  });
+
+  it('advances activity when hydration adopts a live run, but not when it re-lists one', () => {
+    const withRun = (state: string) =>
+      statusPayload({
+        activeRuns: [{ identity: runIdentity(RUN_A), workspaceLabel: 'Frontend', state }],
+      });
+    const before = store().activityRevision;
+
+    store().hydrateStatus(parseGolemStatus(withRun('running')));
+    const adopted = store().activityRevision;
+    expect(adopted).toBeGreaterThan(before);
+    expect(store().lastActiveConversationId).toBe(CONV);
+
+    // A status refresh that reports the same run must not re-alert.
+    store().hydrateStatus(parseGolemStatus(withRun('running')));
+    expect(store().activityRevision).toBe(adopted);
+
+    store().hydrateStatus(parseGolemStatus(withRun('canceling')));
+    expect(store().activityRevision).toBeGreaterThan(adopted);
   });
 
   it('keeps an older failure visible when newer activity happens elsewhere', async () => {
