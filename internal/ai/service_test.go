@@ -124,16 +124,29 @@ func assertEmitsClean(t *testing.T, rec *emitRecorder, markers ...string) {
 	}
 }
 
+// assertStatusChangedPayloadFree proves every golem:status-changed emission is
+// a bare signal. B7 hand-writes TypeScript against this shape, so an added
+// payload must fail the suite.
+func assertStatusChangedPayloadFree(t *testing.T, rec *emitRecorder) {
+	t.Helper()
+	for _, e := range rec.snapshot() {
+		if e.name == eventGolemStatusChanged && len(e.args) != 0 {
+			t.Fatalf("golem:status-changed carried a payload: %#v", e.args)
+		}
+	}
+}
+
 // fakeRunner is a scriptable Runner with counters. A runner without its own
 // run fn reads the factory's CURRENT default at call time, so setRun affects
 // cached (reused) runners too.
 type fakeRunner struct {
-	mu      sync.Mutex
-	run     func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
-	factory *fakeFactory
-	runs    int
-	cancels []string
-	closed  int
+	mu       sync.Mutex
+	run      func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
+	factory  *fakeFactory
+	runs     int
+	cancels  []string
+	closed   int
+	closeErr error
 }
 
 func (f *fakeRunner) Run(ctx context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
@@ -162,14 +175,21 @@ func (f *fakeRunner) Cancel(runID string) bool {
 func (f *fakeRunner) Close() error {
 	f.mu.Lock()
 	f.closed++
+	err := f.closeErr
 	f.mu.Unlock()
-	return nil
+	return err
 }
 
 func (f *fakeRunner) closedCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.closed
+}
+
+func (f *fakeRunner) runCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs
 }
 
 func (f *fakeRunner) cancelCount() int {
@@ -190,14 +210,15 @@ type factoryCall struct {
 // fakeFactory is a scriptable runnerFactory with optional entry/release
 // barriers for lock-window races.
 type fakeFactory struct {
-	mu      sync.Mutex
-	calls   []factoryCall
-	fail    error
-	run     func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
-	makeRun func(idx int, root string, target providerTarget, sessions golem.SessionStore) func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
-	onCall  func(factoryCall)
-	enter   chan struct{}
-	release chan struct{}
+	mu       sync.Mutex
+	calls    []factoryCall
+	fail     error
+	closeErr error // installed on every runner this factory builds
+	run      func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
+	makeRun  func(idx int, root string, target providerTarget, sessions golem.SessionStore) func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
+	onCall   func(factoryCall)
+	enter    chan struct{}
+	release  chan struct{}
 }
 
 func (f *fakeFactory) factory() runnerFactory {
@@ -217,7 +238,7 @@ func (f *fakeFactory) factory() runnerFactory {
 			f.mu.Unlock()
 			return nil, err
 		}
-		r := &fakeRunner{factory: f}
+		r := &fakeRunner{factory: f, closeErr: f.closeErr}
 		if f.makeRun != nil {
 			r.run = f.makeRun(len(f.calls), root, target, sessions)
 		}
@@ -396,6 +417,103 @@ func convStateOf(conv *conversationRecord) convState {
 	conv.mu.Lock()
 	defer conv.mu.Unlock()
 	return conv.state
+}
+
+func convChallengeOf(conv *conversationRecord) *ConsentChallenge {
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	return conv.challenge
+}
+
+// assertBindingWriterBlocked proves an admission parked inside the runner
+// factory genuinely holds bindingGate's READ side, not merely the conversation
+// mutex that incidentally serializes retireBinding: the write side must be
+// unavailable. TryLock never blocks, so this cannot wedge the harness.
+func assertBindingWriterBlocked(t *testing.T, svc *Service, what string) {
+	t.Helper()
+	if svc.bindingGate.TryLock() {
+		svc.bindingGate.Unlock() // never leave the gate held on failure
+		t.Fatalf("%s: bindingGate write lock was available while an admission was parked in the runner factory; "+
+			"the read side must be held through construction, registration, and launch", what)
+	}
+}
+
+// currentPolicy returns the policy of the Service's current binding.
+func currentPolicy(t *testing.T, svc *Service) *ScopePolicy {
+	t.Helper()
+	svc.lifecycleMu.Lock()
+	defer svc.lifecycleMu.Unlock()
+	if svc.binding == nil {
+		t.Fatal("no current binding")
+	}
+	return svc.binding.policy
+}
+
+// assertBuiltinToolsProtectConfig drives the real four built-in tools behind
+// guard (rooted at root) and proves none of them exposes the repo-local config
+// file's name or either provider's API key marker.
+func assertBuiltinToolsProtectConfig(t *testing.T, what, root string, guard agenttools.ScopeGuard, cfgName string) {
+	t.Helper()
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+		scriptedToolCall("c1", "glob", `{"pattern":"**"}`),
+		scriptedToolCall("c2", "list", `{}`),
+		scriptedToolCall("c3", "read_file", fmt.Sprintf(`{"path":%q}`, cfgName)),
+		scriptedToolCall("c4", "search", fmt.Sprintf(`{"pattern":%q}`, svcKeyMarker)),
+		scriptedToolCall("c5", "search", fmt.Sprintf(`{"pattern":%q}`, svcSpareKeyMarker)),
+		{Content: "done"},
+	}}
+	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), guard,
+		NewMemorySessionStore(), backend, nil)
+	if err != nil {
+		t.Fatalf("%s: newGolemRunner: %v", what, err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("%s: Close: %v", what, err)
+		}
+	}()
+	var events []golem.Event
+	result, err := runner.Run(context.Background(), golem.Turn{
+		RunID:    "run-protect-" + what,
+		Message:  "inspect",
+		Approver: approveAll{},
+	}, collectSink(&events))
+	if err != nil {
+		t.Fatalf("%s: Run: %v", what, err)
+	}
+	if result.Answer != "done" {
+		t.Fatalf("%s: Answer = %q", what, result.Answer)
+	}
+	reqs := backend.recorded()
+	last := reqs[len(reqs)-1]
+	var observations []string
+	for _, msg := range last.Messages {
+		if msg.Role == "tool" {
+			observations = append(observations, msg.Content)
+		}
+	}
+	if len(observations) != 5 {
+		t.Fatalf("%s: observations = %d: %q", what, len(observations), observations)
+	}
+	for i, obs := range observations[:2] { // glob, list
+		if strings.Contains(obs, cfgName) {
+			t.Fatalf("%s: tool %d exposed the config filename: %s", what, i, obs)
+		}
+	}
+	if observations[2] != "path denied by workspace policy" {
+		t.Fatalf("%s: read_file observation = %q", what, observations[2])
+	}
+	for i := 3; i < 5; i++ { // searches for both keys
+		if observations[i] != "no matches" {
+			t.Fatalf("%s: search observation %d = %q", what, i, observations[i])
+		}
+	}
+	raw := marshalEvents(t, events)
+	for _, m := range []string{cfgName, svcKeyMarker, svcSpareKeyMarker} {
+		if strings.Contains(raw, m) {
+			t.Fatalf("%s: event stream leaks %q", what, m)
+		}
+	}
 }
 
 func drainRuns(t *testing.T, svc *Service) {
@@ -921,6 +1039,11 @@ func TestServiceConsentFirstTurnZeroEgress(t *testing.T) {
 	if ch.Destination != adm.Destination || ch.DestinationDigest != adm.Destination.Digest {
 		t.Fatalf("challenge destination = %+v vs %+v", ch.Destination, adm.Destination)
 	}
+	// The consented destination is the configured agent use-case exactly; the
+	// fixture's second provider/model must never appear as a fallback.
+	if ch.Destination.Provider != "hosted" || ch.Destination.Model != "wire-model" || ch.Destination.Endpoint != endpoint {
+		t.Fatalf("challenge destination = %+v, want hosted/wire-model at %q with no fallback", ch.Destination, endpoint)
+	}
 	if want := clock.Now().Add(consentChallengeTTL).UnixMilli(); ch.ExpiresAt != want {
 		t.Fatalf("ExpiresAt = %d, want %d", ch.ExpiresAt, want)
 	}
@@ -1118,6 +1241,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if got := h.rec.count(eventGolemStatusChanged); got != 1 {
 		t.Fatalf("status-changed emissions = %d, want exactly 1 on healthy->degraded", got)
 	}
+	assertStatusChangedPayloadFree(t, h.rec)
 	// A second failing retry does not re-emit.
 	_, err = h.svc.StartTurn(ctx, retry)
 	if code := publicCode(t, err); code != "consent_unavailable" {
@@ -1149,6 +1273,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if got := h.rec.count(eventGolemStatusChanged); got != 2 {
 		t.Fatalf("status-changed emissions = %d after recovery, want 2", got)
 	}
+	assertStatusChangedPayloadFree(t, h.rec)
 	drainRuns(t, h.svc)
 	st, err = h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
 	if err != nil {
@@ -1299,6 +1424,14 @@ func TestServiceLocalTargetNoChallenge(t *testing.T) {
 	if adm.Destination.Classification != "local" {
 		t.Fatalf("Destination = %+v", adm.Destination)
 	}
+	// The fixture deliberately carries a second provider/model; the destination
+	// must be exactly the configured agent use-case, never a fallback.
+	if adm.Destination.Provider != "hosted" || adm.Destination.Model != "wire-model" {
+		t.Fatalf("Destination = %+v, want the agent use-case's hosted/wire-model with no fallback", adm.Destination)
+	}
+	if adm.Destination.Endpoint != endpoint {
+		t.Fatalf("Destination.Endpoint = %q, want %q", adm.Destination.Endpoint, endpoint)
+	}
 	drainRuns(t, h.svc)
 	if got := atomic.LoadInt32(requests); got != 0 {
 		t.Fatalf("local admission produced %d provider request(s)", got)
@@ -1309,6 +1442,84 @@ func TestServiceLocalTargetNoChallenge(t *testing.T) {
 	if got := h.factory.callCount(); got != 1 {
 		t.Fatalf("factory calls = %d, want 1", got)
 	}
+	if tgt := h.factory.call(t, 0).target; tgt.destination != adm.Destination {
+		t.Fatalf("constructed target = %+v, want the admitted destination %+v", tgt.destination, adm.Destination)
+	}
+}
+
+// TestServiceZeroEgressWithProductionRunnerFactory keeps the PRODUCTION runner
+// factory installed (wrapped only by a counter) so the request counter is not
+// structurally incapable of incrementing: any premature construction really
+// would build a provider and dial the counting destination. The tail of the
+// test proves the counter is live by letting a consented turn run for real.
+func TestServiceZeroEgressWithProductionRunnerFactory(t *testing.T) {
+	endpoint, requests := startCountingServer(t)
+	rec := &emitRecorder{}
+	svc := NewService(context.Background(), filesystem.NewOS(),
+		filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
+	var constructed int32
+	production := svc.newRunner // NewService installed NewGolemRunner
+	svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+		guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+		atomic.AddInt32(&constructed, 1)
+		return production(ctx, root, target, guard, sessions)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("cleanup Close timed out")
+		}
+	})
+
+	assertZero := func(what string) {
+		t.Helper()
+		if got := atomic.LoadInt32(requests); got != 0 {
+			t.Fatalf("%s: provider received %d request(s)", what, got)
+		}
+		if got := atomic.LoadInt32(&constructed); got != 0 {
+			t.Fatalf("%s: runner constructed %d time(s)", what, got)
+		}
+	}
+
+	repoID, err := svc.BindRepository(newRepo(t))
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	assertZero("BindRepository")
+
+	st, err := svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !st.Available || !st.NeedsConsent || st.Destination == nil || st.Destination.Classification != "remote" {
+		t.Fatalf("Status = %+v", st)
+	}
+	assertZero("Status")
+
+	id := runIdentityFor(repoID, "project")
+	adm, err := svc.StartTurn(context.Background(), turnFor(id))
+	if err != nil || adm.State != "needs_consent" || adm.ConsentChallenge == nil {
+		t.Fatalf("first StartTurn = %+v, %v", adm, err)
+	}
+	assertZero("first StartTurn")
+
+	// Liveness of both counters: the consented retry constructs the real runner
+	// and the real run reaches the counting destination.
+	retry := turnFor(id)
+	retry.ConsentChallengeID = adm.ConsentChallenge.ID
+	acc, err := svc.StartTurn(context.Background(), retry)
+	if err != nil || acc.State != "accepted" {
+		t.Fatalf("consented retry = %+v, %v", acc, err)
+	}
+	waitUntil(t, "consented run to drain", func() bool { return activeRunCount(svc) == 0 })
+	if got := atomic.LoadInt32(&constructed); got != 1 {
+		t.Fatalf("production runner constructed %d time(s) after consent, want 1", got)
+	}
+	waitUntil(t, "a real provider request after consent", func() bool {
+		return atomic.LoadInt32(requests) > 0
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,6 +1672,11 @@ func TestServiceEventRelayAndTerminals(t *testing.T) {
 			return false
 		})
 		waitUntil(t, "conversation idle after cancel", func() bool { return convStateOf(conv) == stateIdle })
+		// Replay after a canceled terminal is rejected: claims are tombstones.
+		_, err = h.svc.StartTurn(ctx, turnFor(idCancel))
+		if code := publicCode(t, err); code != "request_rejected" {
+			t.Fatalf("replay-after-canceled code = %q", code)
+		}
 		// Terminal cleanup happened exactly once: a fresh run admits.
 		h.factory.setRun(nil)
 		idNext := runIdentityFor(repoID, "project")
@@ -1644,6 +1860,127 @@ func TestServiceRunErrorFallbackAndHostLog(t *testing.T) {
 		}
 		assertEmitsClean(t, h.rec, "raw-failure-marker", svcKeyMarker)
 	})
+}
+
+// TestServiceTerminallessSuccessEmitsFallback covers a Runner that returns
+// (result, nil) without ever emitting a Golem terminal. The Runner interface
+// does not enforce a terminal, so the fallback must be gated on "no terminal
+// was buffered" rather than on the error — otherwise the frontend queue is left
+// with a run that never completes.
+func TestServiceTerminallessSuccessEmitsFallback(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+
+	h.factory.setRun(func(_ context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		if err := sink(stampEvent(turn, "run.started", 1, `{}`)); err != nil {
+			return agent.Result{}, err
+		}
+		return agent.Result{}, nil // success, but no run.finished/failed/canceled
+	})
+	id := runIdentityFor(repoID, "project")
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+	waitUntil(t, "terminal-less fallback", func() bool {
+		for _, rs := range h.rec.runStatuses() {
+			if rs.Identity == id {
+				return true
+			}
+		}
+		return false
+	})
+	var got RunStatusEvent
+	for _, rs := range h.rec.runStatuses() {
+		if rs.Identity == id {
+			got = rs
+		}
+	}
+	if got.State != "failed" || got.Message != "The Golem run failed." {
+		t.Fatalf("fallback = %+v, want the fixed public failure", got)
+	}
+	for _, r := range h.rec.relayed() {
+		if r.Type == "run.finished" || r.Type == "run.failed" || r.Type == "run.canceled" {
+			t.Fatalf("fabricated golem:event terminal: %+v", r)
+		}
+	}
+	conv := convRecordOf(h.svc, id.ConversationID)
+	if st := convStateOf(conv); st != stateIdle {
+		t.Fatalf("conversation left in %q after a terminal-less run", st)
+	}
+}
+
+// TestServiceRunnerConstructionFailure exercises the only production path that
+// yields run_failed from StartTurn, and its rollback.
+func TestServiceRunnerConstructionFailure(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+	ctx := context.Background()
+
+	const marker = "/abs/root/factory-failure-marker key=" + svcKeyMarker
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	h.factory.mu.Lock()
+	h.factory.fail = errors.New("runtime construction exploded at " + marker)
+	h.factory.mu.Unlock()
+
+	id := runIdentityFor(repoID, "project")
+	_, err := h.svc.StartTurn(ctx, turnFor(id))
+	if code := publicCode(t, err); code != "run_failed" {
+		t.Fatalf("construction failure code = %q, want run_failed", code)
+	}
+	if err.Error() != "The Golem run failed." {
+		t.Fatalf("construction failure message = %q", err.Error())
+	}
+	for _, m := range []string{"factory-failure-marker", svcKeyMarker} {
+		if strings.Contains(err.Error(), m) {
+			t.Fatalf("returned error leaks %q: %v", m, err)
+		}
+	}
+	if !strings.Contains(buf.String(), "factory-failure-marker") {
+		t.Fatal("raw construction cause was not host-logged")
+	}
+	assertEmitsClean(t, h.rec, "factory-failure-marker", svcKeyMarker)
+
+	// Rollback: no active entry, no runner leaked, conversation not wedged.
+	if got := activeRunCount(h.svc); got != 0 {
+		t.Fatalf("active runs = %d after a failed construction", got)
+	}
+	if got := h.factory.callCount(); got != 0 {
+		t.Fatalf("factory recorded %d runner(s) despite failing", got)
+	}
+	conv := convRecordOf(h.svc, id.ConversationID)
+	if st := convStateOf(conv); st != stateIdle {
+		t.Fatalf("conversation left in %q, want idle", st)
+	}
+	// The committed claim stays tombstoned.
+	_, err = h.svc.StartTurn(ctx, turnFor(id))
+	if code := publicCode(t, err); code != "request_rejected" {
+		t.Fatalf("replay after a failed construction code = %q", code)
+	}
+
+	// A fresh run ID admits normally: the conversation really is usable again.
+	h.factory.mu.Lock()
+	h.factory.fail = nil
+	h.factory.mu.Unlock()
+	adm, err := h.svc.StartTurn(ctx, turnFor(runIdentityFor(repoID, "project")))
+	if err != nil || adm.State != "accepted" {
+		t.Fatalf("post-failure admission = %+v, %v", adm, err)
+	}
+	drainRuns(t, h.svc)
+
+	// The waitgroup is balanced: Close completes instead of hanging.
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := h.svc.Close(cctx); err != nil {
+		t.Fatalf("Close after a failed construction = %v", err)
+	}
+	if got := h.factory.call(t, 0).runner.closedCount(); got != 1 {
+		t.Fatalf("runner closed %d time(s)", got)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1923,6 +2260,71 @@ func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 			t.Fatalf("fresh challenge epoch = %d", adm2.ConsentChallenge.Identity.RepoEpoch)
 		}
 	})
+
+	// A successful direct BindRepository(B) — no Unbind in between — retires A
+	// under the same non-canceling rules AND invalidates A's challenges. This
+	// needs a Remote destination: a Local one never issues a challenge, so the
+	// clause would go unexercised.
+	t.Run("direct_bind_b_invalidates_challenges", func(t *testing.T) {
+		endpoint, requests := startCountingServer(t)
+		h := newServiceHarness(t, endpoint)
+		repoAID, repoA := h.bind(t)
+		ctx := context.Background()
+
+		idA := runIdentityFor(repoAID, "project")
+		adm, err := h.svc.StartTurn(ctx, turnFor(idA))
+		if err != nil || adm.State != "needs_consent" || adm.ConsentChallenge == nil {
+			t.Fatalf("challenge turn = %+v, %v", adm, err)
+		}
+		conv := convRecordOf(h.svc, idA.ConversationID)
+		if convChallengeOf(conv) == nil {
+			t.Fatal("no live challenge before the direct bind")
+		}
+
+		if _, err := h.svc.BindRepository(newRepo(t)); err != nil {
+			t.Fatalf("BindRepository(B): %v", err)
+		}
+		if ch := convChallengeOf(conv); ch != nil {
+			t.Fatalf("A's challenge survived the direct A -> B bind: %+v", ch)
+		}
+		if st := convStateOf(conv); st != stateIdle {
+			t.Fatalf("conversation left in %q after its challenge was dropped", st)
+		}
+
+		// Rebinding A gets a fresh epoch: no older-epoch challenge is exposed,
+		// the dropped challenge cannot be retried, and a fresh submission gets a
+		// brand-new challenge.
+		repoA2ID, err := h.svc.BindRepository(repoA)
+		if err != nil {
+			t.Fatalf("rebind A: %v", err)
+		}
+		st, err := h.svc.Status(StatusRequest{RepoEpoch: repoA2ID.RepoEpoch, WorkspaceID: "project"})
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if st.ConsentChallenge != nil {
+			t.Fatalf("rebound Status exposed a retired challenge: %+v", st.ConsentChallenge)
+		}
+		req := turnFor(runIdentityFor(repoA2ID, "project"))
+		req.ConsentChallengeID = adm.ConsentChallenge.ID
+		_, err = h.svc.StartTurn(ctx, req)
+		if code := publicCode(t, err); code != "request_rejected" {
+			t.Fatalf("retired-challenge retry code = %q", code)
+		}
+		fresh, err := h.svc.StartTurn(ctx, turnFor(runIdentityFor(repoA2ID, "project")))
+		if err != nil || fresh.State != "needs_consent" {
+			t.Fatalf("fresh turn = %+v, %v", fresh, err)
+		}
+		if fresh.ConsentChallenge.ID == adm.ConsentChallenge.ID {
+			t.Fatal("the retired challenge was reissued")
+		}
+		if got := h.factory.callCount(); got != 0 {
+			t.Fatalf("factory calls = %d; no runner may be constructed without consent", got)
+		}
+		if got := atomic.LoadInt32(requests); got != 0 {
+			t.Fatalf("provider saw %d request(s)", got)
+		}
+	})
 }
 
 func TestServiceRetirementAndPolicyDetachment(t *testing.T) {
@@ -2049,6 +2451,75 @@ func TestServiceRetirementAndPolicyDetachment(t *testing.T) {
 			t.Fatalf("cached runner closed %d time(s) by Close", got)
 		}
 	})
+}
+
+// TestServiceRebindRefreshesPolicyRules proves BindRepository calls the
+// incarnation's policy Attach (bounded manifest reload) before exposing it, so
+// a re-open never keeps stale manifest rules and never drops fresh ones.
+func TestServiceRebindRefreshesPolicyRules(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repo := newRepo(t)
+	repoID, err := h.svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project"))); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+	guard := h.factory.call(t, 0).guard
+	if err := guard("vault/data.txt", false); err != nil {
+		t.Fatalf("guard denied vault before any rule existed: %v", err)
+	}
+
+	manifest := filepath.Join(canonical(t, repo), "ai-kit.yaml")
+	deny := "sensitive_paths:\n  - \"vault/**\"\n"
+
+	// Same-root re-open (no Unbind): the refresh path must reload the manifest
+	// before the incarnation is exposed again.
+	writeFile(t, manifest, deny)
+	repoID2, err := h.svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("same-root rebind: %v", err)
+	}
+	if repoID2 != repoID {
+		t.Fatalf("same-root rebind identity = %+v, want the same incarnation %+v", repoID2, repoID)
+	}
+	if err := guard("vault/data.txt", false); err == nil {
+		t.Fatal("same-root rebind exposed the incarnation with stale manifest rules")
+	}
+
+	// ...and only the REFRESHED rules survive: removing the rule and re-opening
+	// permits the path again.
+	writeFile(t, manifest, "sensitive_paths: []\n")
+	if _, err := h.svc.BindRepository(repo); err != nil {
+		t.Fatalf("same-root rebind after rule removal: %v", err)
+	}
+	if err := guard("vault/data.txt", false); err != nil {
+		t.Fatalf("same-root rebind kept a removed rule: %v", err)
+	}
+	if err := guard(".env", false); err == nil {
+		t.Fatal("the immutable floor was lost across the refresh")
+	}
+
+	// Unbind + rebind of the same root builds a new policy; it must also expose
+	// only the refreshed rules.
+	writeFile(t, manifest, deny)
+	h.svc.UnbindRepository()
+	repoID3, err := h.svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("rebind after unbind: %v", err)
+	}
+	if repoID3.RepoEpoch == repoID.RepoEpoch {
+		t.Fatalf("rebind after unbind kept epoch %d", repoID3.RepoEpoch)
+	}
+	fresh := currentPolicy(t, h.svc).Guard("")
+	if err := fresh("vault/data.txt", false); err == nil {
+		t.Fatal("rebound policy does not honour the refreshed rules")
+	}
+	if err := fresh("readme.md", false); err != nil {
+		t.Fatalf("rebound policy denies an ordinary file: %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2217,6 +2688,7 @@ func TestServiceBindingBarriersWithAdmission(t *testing.T) {
 			admDone <- err
 		}()
 		<-enter // admission reserved starting and holds the binding reader
+		assertBindingWriterBlocked(t, h.svc, "unbind barrier")
 
 		unbindDone := make(chan struct{})
 		go func() {
@@ -2259,6 +2731,61 @@ func TestServiceBindingBarriersWithAdmission(t *testing.T) {
 		}
 	})
 
+	// The sequential case above fixes the ordering; this one actually races the
+	// two. Either the admission reserved `starting` first and launched on the
+	// live incarnation, or the binding change won and admission failed BEFORE
+	// any runner was constructed — it never launches on a retired runner.
+	t.Run("binding_change_races_admission", func(t *testing.T) {
+		for i := 0; i < 12; i++ {
+			h := newServiceHarness(t, "http://127.0.0.1:1")
+			repoID, _ := h.bind(t)
+			h.factory.setRun(func(runCtx context.Context, _ golem.Turn, _ golem.EventSink) (agent.Result, error) {
+				<-runCtx.Done()
+				return agent.Result{}, runCtx.Err()
+			})
+
+			id := runIdentityFor(repoID, "project")
+			start := make(chan struct{})
+			admDone := make(chan error, 1)
+			unbindDone := make(chan struct{})
+			go func() {
+				<-start
+				_, err := h.svc.StartTurn(context.Background(), turnFor(id))
+				admDone <- err
+			}()
+			go func() {
+				<-start
+				h.svc.UnbindRepository()
+				close(unbindDone)
+			}()
+			close(start)
+			err := <-admDone
+			<-unbindDone
+
+			if err == nil {
+				if got := h.factory.callCount(); got != 1 {
+					t.Fatalf("iteration %d: accepted admission constructed %d runner(s)", i, got)
+				}
+				if got := h.factory.call(t, 0).runner.runCount(); got != 1 {
+					t.Fatalf("iteration %d: accepted admission never entered Run (%d)", i, got)
+				}
+				ok, cerr := h.svc.Cancel(id)
+				if !ok || cerr != nil {
+					t.Fatalf("iteration %d: in-flight Cancel = %v, %v", i, ok, cerr)
+				}
+				drainRuns(t, h.svc)
+				waitUntil(t, "runner closed", func() bool { return h.factory.call(t, 0).runner.closedCount() == 1 })
+				continue
+			}
+			if code := publicCode(t, err); code != "workspace_unavailable" && code != "request_rejected" {
+				t.Fatalf("iteration %d: losing admission code = %q", i, code)
+			}
+			if got := h.factory.callCount(); got != 0 {
+				t.Fatalf("iteration %d: losing admission constructed %d runner(s)", i, got)
+			}
+		}
+	})
+
 	t.Run("direct_a_to_b_bind_race", func(t *testing.T) {
 		h := newServiceHarness(t, "http://127.0.0.1:1")
 		repoAID, _ := h.bind(t)
@@ -2280,6 +2807,7 @@ func TestServiceBindingBarriersWithAdmission(t *testing.T) {
 			admDone <- err
 		}()
 		<-enter
+		assertBindingWriterBlocked(t, h.svc, "direct A -> B barrier")
 
 		repoB := newRepo(t)
 		bindDone := make(chan error, 1)
@@ -2358,6 +2886,162 @@ func TestServiceCloseVersusBindUnbindBarrier(t *testing.T) {
 			t.Fatalf("iteration %d: repeat Close = %v", i, err)
 		}
 		cancel()
+	}
+}
+
+// TestServiceCloseSanitizesRunnerCloseErrors: B6 calls Close from beforeClose,
+// so its error crosses the Wails boundary. golemRunner.Close forwards
+// golem.Runtime.Close, whose text can carry paths.
+func TestServiceCloseSanitizesRunnerCloseErrors(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+
+	const marker = "/abs/root/close-failure-marker key=" + svcKeyMarker
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	h.factory.mu.Lock()
+	h.factory.closeErr = errors.New("runtime close failed at " + marker)
+	h.factory.mu.Unlock()
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project"))); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := h.svc.Close(ctx)
+	if err == nil {
+		t.Fatal("Close swallowed the runner close error")
+	}
+	if code := publicCode(t, err); code != "golem_unavailable" {
+		t.Fatalf("Close error code = %q", code)
+	}
+	if err.Error() != "Golem is unavailable." {
+		t.Fatalf("Close error message = %q", err.Error())
+	}
+	for _, m := range []string{"close-failure-marker", svcKeyMarker} {
+		if strings.Contains(err.Error(), m) {
+			t.Fatalf("Close error leaks %q: %v", m, err)
+		}
+	}
+	if !strings.Contains(buf.String(), "close-failure-marker") {
+		t.Fatal("raw runner close cause was not host-logged")
+	}
+	// A later Close observes the same sanitized final result.
+	again := h.svc.Close(ctx)
+	if again == nil || again.Error() != err.Error() {
+		t.Fatalf("repeat Close = %v, want the same sanitized result", again)
+	}
+}
+
+// TestServiceCloseVersusConcurrentAdmissions proves by exhaustion that no
+// positive wg.Add can land after Close can begin Wait: every racing admission
+// either linearized before the closing mark (and is then canceled and waited)
+// or was rejected without launching, and Close always returns rather than
+// hanging or panicking on an unbalanced counter.
+func TestServiceCloseVersusConcurrentAdmissions(t *testing.T) {
+	const admissions = 8
+	for iter := 0; iter < 4; iter++ {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repo := newRepo(t)
+		workspaces := make([]string, admissions)
+		for i := range workspaces {
+			workspaces[i] = fmt.Sprintf("ws%d", i)
+			writeFile(t, filepath.Join(repo, workspaces[i], "package.json"), `{"dependencies":{"react":"^18"}}`)
+		}
+		repoID, err := h.svc.BindRepository(repo)
+		if err != nil {
+			t.Fatalf("iteration %d: BindRepository: %v", iter, err)
+		}
+		h.factory.setRun(func(runCtx context.Context, _ golem.Turn, _ golem.EventSink) (agent.Result, error) {
+			<-runCtx.Done()
+			return agent.Result{}, runCtx.Err()
+		})
+
+		// One admission registered before Close is even called: it is
+		// unambiguously inside the cancellation snapshot and must be canceled and
+		// waited, never abandoned. This arm of the disjunction is therefore
+		// exercised on every iteration regardless of how the race lands.
+		preID := runIdentityFor(repoID, "project")
+		if _, err := h.svc.StartTurn(context.Background(), turnFor(preID)); err != nil {
+			t.Fatalf("iteration %d: pre-race StartTurn: %v", iter, err)
+		}
+		waitUntil(t, "pre-race run active", func() bool { return activeRunCount(h.svc) == 1 })
+
+		// Identities are computed up front so the racing goroutines enter
+		// StartTurn immediately instead of losing to Close on UUID/hash work.
+		ids := make([]RunIdentity, admissions)
+		for i, ws := range workspaces {
+			ids[i] = runIdentityFor(repoID, ws)
+		}
+		start := make(chan struct{})
+		results := make([]error, admissions)
+		states := make([]string, admissions)
+		var wg sync.WaitGroup
+		for i := range ids {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				adm, err := h.svc.StartTurn(context.Background(), turnFor(ids[i]))
+				results[i], states[i] = err, adm.State
+			}(i)
+		}
+		closeErr := make(chan error, 1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			closeErr <- h.svc.Close(ctx)
+		}()
+		close(start)
+		wg.Wait()
+
+		// Close returning at all is the waitgroup-balance proof: an Add landing
+		// after Wait began would either panic or hang out the 30s deadline.
+		if err := <-closeErr; err != nil {
+			t.Fatalf("iteration %d: Close = %v", iter, err)
+		}
+		accepted := 0
+		for i := range results {
+			if results[i] == nil {
+				if states[i] != "accepted" {
+					t.Fatalf("iteration %d: admission %d state = %q", iter, i, states[i])
+				}
+				accepted++
+				continue
+			}
+			switch code := publicCode(t, results[i]); code {
+			case "golem_unavailable", "request_rejected", "workspace_unavailable":
+			default:
+				t.Fatalf("iteration %d: admission %d code = %q", iter, i, code)
+			}
+		}
+		if got := activeRunCount(h.svc); got != 0 {
+			t.Fatalf("iteration %d: %d active run(s) leaked past Close", iter, got)
+		}
+		launched := 0
+		for i := 0; i < h.factory.callCount(); i++ {
+			r := h.factory.call(t, i).runner
+			if got := r.closedCount(); got != 1 {
+				t.Fatalf("iteration %d: runner %d closed %d time(s), want exactly once", iter, i, got)
+			}
+			if r.runCount() > 0 {
+				launched++
+			}
+		}
+		// +1 for the pre-race run: exactly the admitted runs launched, and every
+		// constructed runner (including any built then rolled back) closed once.
+		if launched != accepted+1 {
+			t.Fatalf("iteration %d: %d runner(s) entered Run for %d accepted admission(s) plus the pre-race run",
+				iter, launched, accepted)
+		}
 	}
 }
 
@@ -2489,66 +3173,78 @@ func TestServiceRepoLocalConfigSourceProtected(t *testing.T) {
 
 	// Drive the real four built-in tools behind the captured guard.
 	call := f.call(t, 0)
-	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
-		scriptedToolCall("c1", "glob", `{"pattern":"**"}`),
-		scriptedToolCall("c2", "list", `{}`),
-		scriptedToolCall("c3", "read_file", fmt.Sprintf(`{"path":%q}`, cfgName)),
-		scriptedToolCall("c4", "search", fmt.Sprintf(`{"pattern":%q}`, svcKeyMarker)),
-		scriptedToolCall("c5", "search", fmt.Sprintf(`{"pattern":%q}`, svcSpareKeyMarker)),
-		{Content: "done"},
-	}}
-	runner, err := newGolemRunner(context.Background(), call.root, testTarget("hosted", "big-coder"), call.guard,
-		NewMemorySessionStore(), backend, nil)
+	assertBuiltinToolsProtectConfig(t, "first-incarnation", call.root, call.guard, cfgName)
+
+	// Per-incarnation re-protection: the cached target lives for the process,
+	// but every rebind installs a fresh ScopePolicy whose protected set starts
+	// empty. The cached-target resolution path must re-protect the source on the
+	// NEW policy, or the new incarnation's guard would hand back the API key.
+	svc.UnbindRepository()
+	repoID2, err := svc.BindRepository(repo)
 	if err != nil {
-		t.Fatalf("newGolemRunner: %v", err)
+		t.Fatalf("rebind: %v", err)
 	}
-	defer func() {
-		if err := runner.Close(); err != nil {
+	if repoID2.RepoEpoch == repoID.RepoEpoch {
+		t.Fatalf("rebind kept epoch %d; the incarnation must be new", repoID2.RepoEpoch)
+	}
+	adm, err = svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID2, "project")))
+	if err != nil || adm.State != "accepted" {
+		t.Fatalf("rebound StartTurn = %+v, %v", adm, err)
+	}
+	waitUntil(t, "rebound drain", func() bool { return activeRunCount(svc) == 0 })
+	if got := f.callCount(); got != 2 {
+		t.Fatalf("factory calls = %d, want a fresh runner for the new incarnation", got)
+	}
+	call2 := f.call(t, 1)
+	if call2.guard == nil {
+		t.Fatal("no guard captured for the rebound incarnation")
+	}
+	assertBuiltinToolsProtectConfig(t, "second-incarnation", call2.root, call2.guard, cfgName)
+	if got := atomic.LoadInt32(requests); got != 0 {
+		t.Fatalf("provider saw %d request(s) across both protection steps", got)
+	}
+}
+
+// TestServiceRepoLocalConfigSourceProtectedOnFirstStartTurn covers the
+// StartTurn-first flow: with no prior Status call, the FIRST-load branch is the
+// only site that can protect the repo-local config source before the guard and
+// runner are constructed.
+func TestServiceRepoLocalConfigSourceProtectedOnFirstStartTurn(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	endpoint, requests := startLocalCountingServer(t)
+	repo := newRepo(t)
+	const cfgName = "golem-keys.conf"
+	writeFile(t, filepath.Join(repo, cfgName), agentConfigJSON(endpoint))
+	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
+
+	rec := &emitRecorder{}
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	f := &fakeFactory{} // production loadConfig stays installed
+	svc.newRunner = f.factory()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
 			t.Errorf("Close: %v", err)
 		}
-	}()
-	var events []golem.Event
-	result, err := runner.Run(context.Background(), golem.Turn{
-		RunID:    "run-protect",
-		Message:  "inspect",
-		Approver: approveAll{},
-	}, collectSink(&events))
+	})
+
+	repoID, err := svc.BindRepository(repo)
 	if err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("BindRepository: %v", err)
 	}
-	if result.Answer != "done" {
-		t.Fatalf("Answer = %q", result.Answer)
+	// No Status call: StartTurn must protect the source on first load itself.
+	adm, err := svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project")))
+	if err != nil || adm.State != "accepted" {
+		t.Fatalf("StartTurn = %+v, %v", adm, err)
 	}
-	reqs := backend.recorded()
-	last := reqs[len(reqs)-1]
-	var observations []string
-	for _, msg := range last.Messages {
-		if msg.Role == "tool" {
-			observations = append(observations, msg.Content)
-		}
+	waitUntil(t, "drain", func() bool { return activeRunCount(svc) == 0 })
+	if got := atomic.LoadInt32(requests); got != 0 {
+		t.Fatalf("provider saw %d request(s) during the protection step", got)
 	}
-	if len(observations) != 5 {
-		t.Fatalf("observations = %d: %q", len(observations), observations)
-	}
-	for i, obs := range observations[:2] { // glob, list
-		if strings.Contains(obs, cfgName) {
-			t.Fatalf("tool %d exposed the config filename: %s", i, obs)
-		}
-	}
-	if observations[2] != "path denied by workspace policy" {
-		t.Fatalf("read_file observation = %q", observations[2])
-	}
-	for i := 3; i < 5; i++ { // searches for both keys
-		if observations[i] != "no matches" {
-			t.Fatalf("search observation %d = %q", i, observations[i])
-		}
-	}
-	raw := marshalEvents(t, events)
-	for _, m := range []string{cfgName, svcKeyMarker, svcSpareKeyMarker} {
-		if strings.Contains(raw, m) {
-			t.Fatalf("event stream leaks %q", m)
-		}
-	}
+	// Inspect the guard before any further Status/StartTurn can re-protect it.
+	call := f.call(t, 0)
+	assertBuiltinToolsProtectConfig(t, "first-load", call.root, call.guard, cfgName)
 }
 
 func TestServiceExternalConfigSourceNormal(t *testing.T) {

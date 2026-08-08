@@ -240,11 +240,11 @@ func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
 	// same canonicalization idempotently.
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: resolving %q: %v", ErrWorkspaceUnavailable, repoPath, err))
+		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: resolving %q: %w", ErrWorkspaceUnavailable, repoPath, err))
 	}
 	root, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: canonicalizing %q: %v", ErrWorkspaceUnavailable, repoPath, err))
+		return RepositoryIdentity{}, s.publicErr(fmt.Errorf("%w: canonicalizing %q: %w", ErrWorkspaceUnavailable, repoPath, err))
 	}
 	s.bindingGate.Lock()
 	defer s.bindingGate.Unlock()
@@ -365,7 +365,7 @@ func (s *Service) resolveTurnIdentity(id RunIdentity) (ResolvedWorkspace, error)
 func (s *Service) resolveTargetLocked(conv *conversationRecord, policy *ScopePolicy) (*providerTarget, error) {
 	if conv.target != nil {
 		if err := policy.ProtectConfigSource(conv.sourcePath); err != nil {
-			return nil, fmt.Errorf("%w: config source could not be protected: %v", ErrAgentConfigInvalid, err)
+			return nil, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
 		}
 		return conv.target, nil
 	}
@@ -374,7 +374,7 @@ func (s *Service) resolveTargetLocked(conv *conversationRecord, policy *ScopePol
 		return nil, err
 	}
 	if err := policy.ProtectConfigSource(loaded.SourcePath); err != nil {
-		return nil, fmt.Errorf("%w: config source could not be protected: %v", ErrAgentConfigInvalid, err)
+		return nil, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
 	}
 	target, err := ResolveAgentTarget(loaded.Config)
 	if err != nil {
@@ -535,6 +535,10 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 
 func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, after *[]func()) (TurnAdmission, error) {
 	// Steps 2-4: unlocked preparation; recommitted under the locks below.
+	// Step 3's conversation-state check is deliberately deferred to step 6:
+	// conv.state is shared state guarded by conv.mu, so reading it here — before
+	// bindingGate read + conv.mu are held — would be a genuine data race, and the
+	// authoritative check under both locks is the one the spec requires anyway.
 	if _, err := s.resolveTurnIdentity(req.Identity); err != nil {
 		return TurnAdmission{}, err
 	}
@@ -837,20 +841,21 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 		s.emit(eventGolemEvent, *terminal)
 		return
 	}
-	if err != nil {
-		// No Golem terminal: emit the separate fixed fallback, never a
-		// fabricated golem:event.
-		ev := RunStatusEvent{
-			Identity: ar.identity,
-			State:    "failed",
-			Message:  SanitizeError(fmt.Errorf("%w: %w", ErrRunFailed, err)).Message,
+	// No Golem terminal was buffered: emit the separate fixed fallback, never a
+	// fabricated golem:event. The gate is the missing terminal, not err — a
+	// Runner that returns (result, nil) without emitting a terminal would
+	// otherwise leave the frontend queue with a run that never completes.
+	ev := RunStatusEvent{Identity: ar.identity, State: "failed"}
+	if isCancellationErr(err) {
+		ev.State = "canceled"
+	} else {
+		cause := error(ErrRunFailed)
+		if err != nil {
+			cause = fmt.Errorf("%w: %w", ErrRunFailed, err)
 		}
-		if isCancellationErr(err) {
-			ev.State = "canceled"
-			ev.Message = ""
-		}
-		s.emit(eventGolemRunStatus, ev)
+		ev.Message = SanitizeError(cause).Message
 	}
+	s.emit(eventGolemRunStatus, ev)
 }
 
 func isCancellationErr(err error) bool {
@@ -975,6 +980,10 @@ func (s *Service) shutdown(cancels []context.CancelFunc) {
 		}
 	}
 	s.baseCancel()
-	s.closeErr = errors.Join(errs...) // published before closeDone closes
-	close(s.closeDone)
+	// Runner close errors carry runtime/transport text that can embed paths;
+	// host-log the raw joined cause and publish only its fixed projection.
+	if raw := errors.Join(errs...); raw != nil {
+		s.closeErr = s.publicErr(raw)
+	}
+	close(s.closeDone) // closeErr is published before this
 }
