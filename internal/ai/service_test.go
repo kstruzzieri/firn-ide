@@ -130,7 +130,7 @@ func assertEmitsClean(t *testing.T, rec *emitRecorder, markers ...string) {
 func assertStatusChangedPayloadFree(t *testing.T, rec *emitRecorder) {
 	t.Helper()
 	for _, e := range rec.snapshot() {
-		if e.name == eventGolemStatusChanged && len(e.args) != 0 {
+		if e.name == EventGolemStatusChanged && len(e.args) != 0 {
 			t.Fatalf("golem:status-changed carried a payload: %#v", e.args)
 		}
 	}
@@ -1238,7 +1238,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if !degradedWarning {
 		t.Fatalf("degraded status not visible in warnings: %v", st.Warnings)
 	}
-	if got := h.rec.count(eventGolemStatusChanged); got != 1 {
+	if got := h.rec.count(EventGolemStatusChanged); got != 1 {
 		t.Fatalf("status-changed emissions = %d, want exactly 1 on healthy->degraded", got)
 	}
 	assertStatusChangedPayloadFree(t, h.rec)
@@ -1247,7 +1247,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if code := publicCode(t, err); code != "consent_unavailable" {
 		t.Fatalf("second degraded retry code = %q", code)
 	}
-	if got := h.rec.count(eventGolemStatusChanged); got != 1 {
+	if got := h.rec.count(EventGolemStatusChanged); got != 1 {
 		t.Fatalf("status-changed emissions = %d after repeat failure, want 1", got)
 	}
 	if got := atomic.LoadInt32(requests); got != 0 {
@@ -1270,7 +1270,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if err != nil || acc.State != "accepted" {
 		t.Fatalf("recovered retry = %+v, %v", acc, err)
 	}
-	if got := h.rec.count(eventGolemStatusChanged); got != 2 {
+	if got := h.rec.count(EventGolemStatusChanged); got != 2 {
 		t.Fatalf("status-changed emissions = %d after recovery, want 2", got)
 	}
 	assertStatusChangedPayloadFree(t, h.rec)

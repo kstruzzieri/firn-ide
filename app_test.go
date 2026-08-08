@@ -3,11 +3,33 @@ package main
 import (
 	"context"
 	"firn/internal/runprofile"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestMain sandboxes the home directory for the whole package. startup opens
+// the Golem consent store under <home>/.firn, which creates that directory and
+// tightens its permissions, and the workspace and run-history stores write
+// there too; without this the suite would reach into the developer's real home
+// directory. USERPROFILE covers Windows, where os.UserHomeDir ignores HOME.
+// Individual tests still override HOME with t.Setenv when they need to.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "firn-test-home")
+	if err != nil {
+		log.Fatalf("sandbox home directory: %v", err)
+	}
+	for _, key := range []string{"HOME", "USERPROFILE"} {
+		if err := os.Setenv(key, home); err != nil {
+			log.Fatalf("sandbox %s: %v", key, err)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
 
 func TestNewApp(t *testing.T) {
 	app := NewApp()

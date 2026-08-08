@@ -129,7 +129,11 @@ func (a *App) startup(ctx context.Context) {
 	// relative .firn, so Local chat keeps working while Remote stays degraded
 	// and cannot grant consent.
 	consentPath := ""
-	if a.firnDir != "" {
+	if a.firnDir == "" {
+		// ai.ConsentStore returns before its own log line on an empty path, so
+		// this is the only host-side record of the degradation.
+		log.Printf(golemLogPrefix + "consent unavailable: no home directory")
+	} else {
 		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
 	}
 	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit)
@@ -317,6 +321,12 @@ type WorkspaceInfo struct {
 // service. It is deliberately not an ai sentinel: it projects to the catch-all.
 var errGolemUnavailable = errors.New("golem service is not initialized")
 
+// golemLogPrefix starts every host-side Golem log line App writes, as distinct
+// from internal/ai's own "ai: golem ..." lines. Named so the contract is
+// greppable and the test can observe the production value instead of
+// duplicating it.
+const golemLogPrefix = "app: golem "
+
 // golemError host-logs the raw Golem cause and returns only its fixed public
 // projection, so no repository root, config or consent path, or credential
 // text can cross the Wails boundary.
@@ -329,17 +339,17 @@ func (a *App) golemError(err error) error {
 	if err == nil {
 		return nil
 	}
-	public := ai.SanitizeError(err)
-	var already ai.PublicError
-	if errors.As(err, &already) {
-		public = already
+	// errors.As, not a type assertion: the projection survives wrapping.
+	var public ai.PublicError
+	if !errors.As(err, &public) {
+		public = ai.SanitizeError(err)
 	}
 	// The standard logger, as internal/ai already uses for host-only Golem
 	// diagnostics. runtime.LogErrorf would need a.ctx to be the Wails lifecycle
 	// context carrying the logger — it calls log.Fatalf otherwise — so it cannot
 	// record the calls that land before startup, which are exactly the ones
 	// worth recording. In a Wails app both reach the same destination.
-	log.Printf("app: golem %s: %v", public.Code, err)
+	log.Printf(golemLogPrefix+"%s: %v", public.Code, err)
 	return public
 }
 
@@ -473,7 +483,7 @@ func (a *App) handleWatchEvent(event watcher.FileEvent) {
 	// policy path crosses the boundary, and it is emitted only for a manifest
 	// the current binding actually watches.
 	if a.aiService != nil && a.aiService.ReloadPolicy(event.Path) {
-		a.emit("golem:status-changed")
+		a.emit(ai.EventGolemStatusChanged)
 	}
 
 	// Reactive run profile re-detection on config file changes

@@ -22,11 +22,16 @@ import (
 // retryable.
 const consentChallengeTTL = 10 * time.Minute
 
+// EventGolemStatusChanged is the payload-free event telling the frontend to
+// re-read Golem status. The Wails binding layer emits it as well — on a policy
+// manifest reload — so it is exported to keep the two emitters from drifting
+// apart silently, which would just stop the UI refreshing without failing.
+const EventGolemStatusChanged = "golem:status-changed"
+
 // Host event names emitted through the Wails emit callback.
 const (
-	eventGolemEvent         = "golem:event"
-	eventGolemRunStatus     = "golem:run-status"
-	eventGolemStatusChanged = "golem:status-changed"
+	eventGolemEvent     = "golem:event"
+	eventGolemRunStatus = "golem:run-status"
 )
 
 // errServiceClosing marks operations rejected because shutdown began. It is
@@ -621,12 +626,12 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 			// permanently wedging a challenge whose run UUID is tombstoned.
 			conv.state = statePendingConsent
 			if s.setConsentDegraded(err) {
-				*after = append(*after, func() { s.emit(eventGolemStatusChanged) })
+				*after = append(*after, func() { s.emit(EventGolemStatusChanged) })
 			}
 			return TurnAdmission{}, err
 		}
 		if s.clearConsentDegraded() {
-			*after = append(*after, func() { s.emit(eventGolemStatusChanged) })
+			*after = append(*after, func() { s.emit(EventGolemStatusChanged) })
 		}
 		conv.challenge = nil // consume exactly once
 	case stateIdle:

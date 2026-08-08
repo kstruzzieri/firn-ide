@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -31,10 +32,6 @@ const golemRunID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 
 // golemConsentDegraded is the only Remote-consent degradation notice.
 const golemConsentDegraded = "Remote consent storage is unavailable."
-
-// golemLogPrefix is what App's host-side Golem log lines start with, as
-// distinct from internal/ai's own "ai: golem ..." lines.
-const golemLogPrefix = "app: golem "
 
 // golemPublicMessages is the complete set of user-visible Golem failures.
 // Anything else crossing the boundary is a leak or an unprojected error.
@@ -456,33 +453,37 @@ func TestGolemErrorProjectsRawCausesToFixedMessages(t *testing.T) {
 	}
 }
 
-// Every error result of the four Wails methods is a golemError call. Three of
+// Every error result of the Wails Golem methods is a golemError call. Three of
 // them receive only already-projected ai errors today, so returning one raw
 // would change no message — the seal would simply be gone the first time an
 // App-constructed cause appeared. This pins it structurally, including the
-// branch that no reachable input exercises.
+// branch that no reachable input exercises. The method list is derived from
+// the source, so a fifth bound method is covered the day it is written.
 func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "app.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse app.go: %v", err)
+	fset, files := golemPackageFiles(t)
+
+	methods := golemWailsMethods(files)
+	// The plan freezes four bound Golem methods. Fewer means the derivation
+	// itself broke, and everything below it would pass vacuously.
+	if len(methods) < 4 {
+		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least the four the plan freezes",
+			len(methods), golemSortedNames(methods))
 	}
 
-	for _, name := range []string{"GetWorkspaceInfo", "GetGolemStatus", "RunGolemTurn", "CancelGolemRun"} {
-		method := golemFuncDecl(t, file, name)
-		scanned := 0
-		ast.Inspect(method.Body, func(node ast.Node) bool {
+	for _, name := range golemSortedNames(methods) {
+		sealed := 0
+		ast.Inspect(methods[name].Body, func(node ast.Node) bool {
 			ret, ok := node.(*ast.ReturnStmt)
 			if !ok || len(ret.Results) == 0 {
 				return true
 			}
-			scanned++
 			last := ret.Results[len(ret.Results)-1]
 			if identifier, ok := last.(*ast.Ident); ok && identifier.Name == "nil" {
 				return true
 			}
 			if call, ok := last.(*ast.CallExpr); ok {
 				if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "golemError" {
+					sealed++
 					return true
 				}
 			}
@@ -490,8 +491,12 @@ func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 				name, golemNodeText(t, fset, last))
 			return true
 		})
-		if scanned == 0 {
-			t.Errorf("%s has no return statements, so the scan proved nothing", name)
+		// Counting golemError returns specifically, not returns in general:
+		// deleting a method's error path outright would still leave returns
+		// behind, and the floor is meant to mean "this method still routes its
+		// errors through the seal".
+		if sealed == 0 {
+			t.Errorf("%s routes no error through golemError; the seal is gone from it", name)
 		}
 	}
 }
@@ -658,18 +663,13 @@ func TestGolemWatchEventReloadsPolicyOnlyForWatchedManifests(t *testing.T) {
 	app := newGolemApp(t)
 	info := bindGolemRepo(t, app)
 
-	type emitted struct {
-		event string
-		data  []any
-	}
-	var events []emitted
-	app.emitFn = func(event string, data ...any) {
-		events = append(events, emitted{event: event, data: data})
-	}
+	sink := &golemEventSink{}
+	app.emitFn = sink.emit
 
 	manifest := filepath.Join(info.Path, "ai-kit.yaml")
 	app.handleWatchEvent(watcher.FileEvent{Path: manifest, Type: watcher.EventModified})
 
+	events := sink.drain()
 	if len(events) != 2 {
 		t.Fatalf("manifest change emitted %d events (%+v), want file:changed then golem:status-changed",
 			len(events), events)
@@ -677,19 +677,18 @@ func TestGolemWatchEventReloadsPolicyOnlyForWatchedManifests(t *testing.T) {
 	if events[0].event != "file:changed" {
 		t.Errorf("first event = %q, want file:changed emitted before the policy reload", events[0].event)
 	}
-	if events[1].event != "golem:status-changed" {
-		t.Errorf("second event = %q, want golem:status-changed", events[1].event)
+	if events[1].event != ai.EventGolemStatusChanged {
+		t.Errorf("second event = %q, want %q", events[1].event, ai.EventGolemStatusChanged)
 	}
 	if len(events[1].data) != 0 {
-		t.Errorf("golem:status-changed carried a payload %+v, want none", events[1].data)
+		t.Errorf("%s carried a payload %+v, want none", ai.EventGolemStatusChanged, events[1].data)
 	}
 
-	events = nil
 	app.handleWatchEvent(watcher.FileEvent{
 		Path: filepath.Join(info.Path, "src", "main.go"),
 		Type: watcher.EventModified,
 	})
-	if len(events) != 1 || events[0].event != "file:changed" {
+	if events = sink.drain(); len(events) != 1 || events[0].event != "file:changed" {
 		t.Fatalf("unrelated change emitted %+v, want only file:changed", events)
 	}
 
@@ -697,9 +696,9 @@ func TestGolemWatchEventReloadsPolicyOnlyForWatchedManifests(t *testing.T) {
 	if _, err := app.GetWorkspaceInfo(""); err != nil {
 		t.Fatalf("unbind: %v", err)
 	}
-	events = nil
+	sink.drain()
 	app.handleWatchEvent(watcher.FileEvent{Path: manifest, Type: watcher.EventModified})
-	if len(events) != 1 || events[0].event != "file:changed" {
+	if events = sink.drain(); len(events) != 1 || events[0].event != "file:changed" {
 		t.Fatalf("unbound manifest change emitted %+v, want only file:changed", events)
 	}
 }
@@ -736,12 +735,8 @@ func TestGolemCloseAIServiceClosesAdmissionAndToleratesNoService(t *testing.T) {
 // unrunnable outside a live Wails app, so the concurrency shape is asserted
 // structurally — the same approach the existing beforeClose contract test uses.
 func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "app.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse app.go: %v", err)
-	}
-	beforeClose := golemFuncDecl(t, file, "beforeClose")
+	fset, files := golemPackageFiles(t)
+	beforeClose := golemFuncDecl(t, files, "beforeClose")
 
 	// Each worker is a goroutine that closes its own done channel.
 	closedInGoroutines := map[string]bool{}
@@ -789,7 +784,7 @@ func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
 	}
 
 	// The AI shutdown gets its own 1500 ms budget inside that deadline.
-	closeAI := golemFuncDecl(t, file, "closeAIService")
+	closeAI := golemFuncDecl(t, files, "closeAIService")
 	if text := golemNodeText(t, fset, closeAI); !strings.Contains(text, "1500*time.Millisecond") &&
 		!strings.Contains(text, "1500 * time.Millisecond") {
 		t.Error("closeAIService does not bound ai.Service.Close with a 1500 ms context")
@@ -825,6 +820,35 @@ func (s *golemLogSink) String() string {
 	return s.lines.String()
 }
 
+// golemEventSink records emit calls. ai.Service is handed App.emit at startup
+// and calls it from run goroutines, so the recorder a test installs must be
+// safe to append to and read concurrently even when this particular test
+// starts no runs.
+type golemEventSink struct {
+	mu     sync.Mutex
+	events []golemEmitted
+}
+
+type golemEmitted struct {
+	event string
+	data  []any
+}
+
+func (s *golemEventSink) emit(event string, data ...any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, golemEmitted{event: event, data: data})
+}
+
+// drain returns everything recorded since the last drain and resets the sink.
+func (s *golemEventSink) drain() []golemEmitted {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	recorded := s.events
+	s.events = nil
+	return recorded
+}
+
 func golemHasWarning(status ai.Status, want string) bool {
 	for _, warning := range status.Warnings {
 		if warning == want {
@@ -834,16 +858,76 @@ func golemHasWarning(status ai.Status, want string) bool {
 	return false
 }
 
-func golemFuncDecl(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
+// golemPackageFiles parses every non-test source file in the package. Scanning
+// the package rather than app.go by name keeps splitting app.go a free choice:
+// the contracts below follow the declarations wherever they move.
+func golemPackageFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 	t.Helper()
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && function.Name.Name == name {
-			return function
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob package sources: %v", err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		files = append(files, parsed)
+	}
+	if len(files) == 0 {
+		t.Fatal("no non-test sources found in the package directory")
+	}
+	return fset, files
+}
+
+func golemFuncDecl(t *testing.T, files []*ast.File, name string) *ast.FuncDecl {
+	t.Helper()
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Name.Name == name {
+				return function
+			}
 		}
 	}
-	t.Fatalf("app.go has no %s function", name)
+	t.Fatalf("the package has no %s function", name)
 	return nil
+}
+
+// golemWailsMethods returns the exported App methods that reach the Golem
+// service, keyed by name — the set that crosses the Wails boundary carrying
+// ai errors.
+func golemWailsMethods(files []*ast.File) map[string]*ast.FuncDecl {
+	found := map[string]*ast.FuncDecl{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			method, ok := declaration.(*ast.FuncDecl)
+			if !ok || method.Recv == nil || method.Body == nil || !method.Name.IsExported() {
+				continue
+			}
+			ast.Inspect(method.Body, func(node ast.Node) bool {
+				if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "aiService" {
+					found[method.Name.Name] = method
+				}
+				return true
+			})
+		}
+	}
+	return found
+}
+
+func golemSortedNames(methods map[string]*ast.FuncDecl) []string {
+	names := make([]string, 0, len(methods))
+	for name := range methods {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func golemCallsFunction(body ast.Node, name string) bool {
