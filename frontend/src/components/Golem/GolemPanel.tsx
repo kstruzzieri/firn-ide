@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import { useGolemStore } from '../../stores/golemStore';
+import { GOLEM_UNAVAILABLE } from '../../types/golem';
 import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
 import styles from './GolemPanel.module.css';
 
@@ -20,7 +21,6 @@ const NO_WORKSPACE = 'Open a workspace to chat with Golem.';
 const BINDING = 'Connecting to Golem…';
 const STALE = 'This workspace is no longer open.';
 const UNAVAILABLE = 'Golem is unavailable in this workspace.';
-const GENERIC_ERROR = 'Golem is unavailable.';
 const CONSENT_REQUIRED = 'This workspace asks for approval before sending anything to a provider.';
 
 /** Phases in which the backend still owns the run, so Cancel is meaningful. */
@@ -100,7 +100,7 @@ export function GolemPanel() {
 
   const notice = useMemo(() => {
     if (bridgePhase === 'binding') return BINDING;
-    if (bridgePhase === 'error') return bridgeError ?? GENERIC_ERROR;
+    if (bridgePhase === 'error') return bridgeError ?? GOLEM_UNAVAILABLE;
     if (!conversation) return NO_WORKSPACE;
     // A conversation the backend is no longer bound to cannot accept a turn,
     // and its identity is the only thing the backend would reject it by.
