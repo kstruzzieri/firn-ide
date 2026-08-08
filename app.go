@@ -15,6 +15,7 @@ import (
 	"firn/internal/watcher"
 	"firn/internal/workspace"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -333,12 +334,12 @@ func (a *App) golemError(err error) error {
 	if errors.As(err, &already) {
 		public = already
 	}
-	// runtime.LogErrorf terminates the process when a.ctx is not the Wails
-	// lifecycle context that carries the logger, which is the case for any
-	// call that lands before startup.
-	if a.ctx != nil && a.ctx.Value("logger") != nil {
-		runtime.LogErrorf(a.ctx, "golem %s: %v", public.Code, err)
-	}
+	// The standard logger, as internal/ai already uses for host-only Golem
+	// diagnostics. runtime.LogErrorf would need a.ctx to be the Wails lifecycle
+	// context carrying the logger — it calls log.Fatalf otherwise — so it cannot
+	// record the calls that land before startup, which are exactly the ones
+	// worth recording. In a Wails app both reach the same destination.
+	log.Printf("app: golem %s: %v", public.Code, err)
 	return public
 }
 

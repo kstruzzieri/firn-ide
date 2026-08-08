@@ -12,11 +12,12 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -30,6 +31,10 @@ const golemRunID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 
 // golemConsentDegraded is the only Remote-consent degradation notice.
 const golemConsentDegraded = "Remote consent storage is unavailable."
+
+// golemLogPrefix is what App's host-side Golem log lines start with, as
+// distinct from internal/ai's own "ai: golem ..." lines.
+const golemLogPrefix = "app: golem "
 
 // golemPublicMessages is the complete set of user-visible Golem failures.
 // Anything else crossing the boundary is a leak or an unprojected error.
@@ -95,6 +100,17 @@ func TestGetWorkspaceInfoReturnsCanonicalRootAndRepoIdentity(t *testing.T) {
 	}
 	if info.RepoEpoch == 0 {
 		t.Error("RepoEpoch = 0, want the allocated incarnation epoch")
+	}
+
+	// App canonicalizes independently of ai.Bindings, so the root it reports
+	// must be a fixpoint of Bind: rebinding it changes nothing. Should either
+	// side ever normalize further, the two stop agreeing here first.
+	again, err := app.GetWorkspaceInfo(info.Path)
+	if err != nil {
+		t.Fatalf("rebinding the returned root: %v", err)
+	}
+	if again != info {
+		t.Errorf("rebinding the returned root gave %+v, want the unchanged %+v", again, info)
 	}
 }
 
@@ -256,6 +272,29 @@ func TestGolemWailsMethodsReturnOnlyFixedPublicErrors(t *testing.T) {
 	leaky := filepath.Join(t.TempDir(), golemMarker, "no-such-repository")
 	notStarted := &App{}
 
+	// A second app bound to a live root whose canonical path carries the
+	// marker. The unbound cases below cannot leak a root that does not exist;
+	// these can, so the stale-request projections are checked against one.
+	markerApp := newGolemApp(t)
+	markerRoot := filepath.Join(t.TempDir(), golemMarker)
+	if err := os.Mkdir(markerRoot, 0o700); err != nil {
+		t.Fatalf("mkdir marker root: %v", err)
+	}
+	bound, err := markerApp.GetWorkspaceInfo(markerRoot)
+	if err != nil {
+		t.Fatalf("bind marker root: %v", err)
+	}
+	if !strings.Contains(bound.Path, golemMarker) {
+		t.Fatalf("bound root %q lost the marker; the leak assertions would be vacuous", bound.Path)
+	}
+	staleEpoch := bound.RepoEpoch + 1
+	staleIdentity := ai.RunIdentity{
+		RepoEpoch:      staleEpoch,
+		WorkspaceID:    "project",
+		ConversationID: ai.ConversationID(bound.RepoKey, "project"),
+		RunID:          golemRunID,
+	}
+
 	cases := []struct {
 		name string
 		call func() error
@@ -296,6 +335,30 @@ func TestGolemWailsMethodsReturnOnlyFixedPublicErrors(t *testing.T) {
 			},
 			want: "The Golem request is invalid or stale.",
 		},
+		{
+			name: "RunGolemTurn against a stale epoch of a marker-bearing root",
+			call: func() error {
+				_, err := markerApp.RunGolemTurn(ai.TurnRequest{Identity: staleIdentity, Message: "hello"})
+				return err
+			},
+			want: "The Golem request is invalid or stale.",
+		},
+		{
+			name: "CancelGolemRun against a stale epoch of a marker-bearing root",
+			call: func() error {
+				_, err := markerApp.CancelGolemRun(staleIdentity)
+				return err
+			},
+			want: "The Golem request is invalid or stale.",
+		},
+		{
+			name: "GetWorkspaceInfo on an unresolvable child of a marker-bearing root",
+			call: func() error {
+				_, err := markerApp.GetWorkspaceInfo(filepath.Join(bound.Path, "no-such-child"))
+				return err
+			},
+			want: "The Golem workspace is unavailable.",
+		},
 	}
 
 	for _, tc := range cases {
@@ -314,12 +377,12 @@ func TestGolemWailsMethodsReturnOnlyFixedPublicErrors(t *testing.T) {
 			if !golemPublicMessages[err.Error()] {
 				t.Errorf("message %q is not on the fixed public allowlist", err.Error())
 			}
-			assertNoGolemLeak(t, err.Error(), leaky)
+			assertNoGolemLeak(t, err.Error(), leaky, bound.Path)
 			encoded, marshalErr := json.Marshal(err.Error())
 			if marshalErr != nil {
 				t.Fatalf("marshal error string: %v", marshalErr)
 			}
-			assertNoGolemLeak(t, string(encoded), leaky)
+			assertNoGolemLeak(t, string(encoded), leaky, bound.Path)
 		})
 	}
 }
@@ -393,6 +456,107 @@ func TestGolemErrorProjectsRawCausesToFixedMessages(t *testing.T) {
 	}
 }
 
+// Every error result of the four Wails methods is a golemError call. Three of
+// them receive only already-projected ai errors today, so returning one raw
+// would change no message — the seal would simply be gone the first time an
+// App-constructed cause appeared. This pins it structurally, including the
+// branch that no reachable input exercises.
+func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "app.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse app.go: %v", err)
+	}
+
+	for _, name := range []string{"GetWorkspaceInfo", "GetGolemStatus", "RunGolemTurn", "CancelGolemRun"} {
+		method := golemFuncDecl(t, file, name)
+		scanned := 0
+		ast.Inspect(method.Body, func(node ast.Node) bool {
+			ret, ok := node.(*ast.ReturnStmt)
+			if !ok || len(ret.Results) == 0 {
+				return true
+			}
+			scanned++
+			last := ret.Results[len(ret.Results)-1]
+			if identifier, ok := last.(*ast.Ident); ok && identifier.Name == "nil" {
+				return true
+			}
+			if call, ok := last.(*ast.CallExpr); ok {
+				if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "golemError" {
+					return true
+				}
+			}
+			t.Errorf("%s returns %s as its error result; every error must pass through golemError",
+				name, golemNodeText(t, fset, last))
+			return true
+		})
+		if scanned == 0 {
+			t.Errorf("%s has no return statements, so the scan proved nothing", name)
+		}
+	}
+}
+
+// golemError is the only host-side record of a raw Golem cause: the raw text —
+// credential marker and all — reaches the log, and only the fixed projection is
+// returned. A method returning its error without the helper loses the log line.
+func TestGolemWailsMethodsHostLogRawCausesWithoutReturningThem(t *testing.T) {
+	app := newGolemApp(t)
+	leaky := filepath.Join(t.TempDir(), golemMarker, "no-such-repository")
+	notStarted := &App{}
+	unknownRun := ai.RunIdentity{
+		RepoEpoch: 99, WorkspaceID: "project",
+		ConversationID: "golem-unbound", RunID: golemRunID,
+	}
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+		// wantRaw is raw cause text that must reach the host log, if the cause
+		// carries any; the projection returned to the UI must never contain it.
+		wantRaw string
+	}{
+		{
+			name:    "GetWorkspaceInfo",
+			call:    func() error { _, err := app.GetWorkspaceInfo(leaky); return err },
+			wantRaw: golemMarker,
+		},
+		{
+			name: "GetGolemStatus",
+			call: func() error { _, err := notStarted.GetGolemStatus(ai.StatusRequest{}); return err },
+		},
+		{
+			name: "RunGolemTurn",
+			call: func() error {
+				_, err := app.RunGolemTurn(ai.TurnRequest{Identity: unknownRun, Message: "hello"})
+				return err
+			},
+		},
+		{
+			name: "CancelGolemRun",
+			call: func() error { _, err := app.CancelGolemRun(unknownRun); return err },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logged := captureGolemLog(t)
+			err := tc.call()
+			if err == nil {
+				t.Fatal("expected a rejection, got nil")
+			}
+			if !strings.Contains(logged(), golemLogPrefix) {
+				t.Errorf("host log %q carries no %q line: the error never passed through golemError",
+					logged(), golemLogPrefix)
+			}
+			if tc.wantRaw != "" && !strings.Contains(logged(), tc.wantRaw) {
+				t.Errorf("host log %q dropped the raw cause %q", logged(), tc.wantRaw)
+			}
+			if !golemPublicMessages[err.Error()] {
+				t.Errorf("message %q is not on the fixed public allowlist", err.Error())
+			}
+			assertNoGolemLeak(t, err.Error(), leaky)
+		})
+	}
+}
+
 // A missing home directory must not fall back to a relative .firn, must leave
 // Local chat usable, and must report Remote consent as explicitly degraded.
 func TestGolemStartupWithoutFirnDirDegradesRemoteConsent(t *testing.T) {
@@ -421,18 +585,26 @@ func TestGolemStartupWithoutFirnDirDegradesRemoteConsent(t *testing.T) {
 	if !golemHasWarning(status, golemConsentDegraded) {
 		t.Errorf("Warnings = %v, want the Remote consent degradation notice", status.Warnings)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, ".firn")); !os.IsNotExist(err) {
-		t.Errorf("a relative .firn was created in the process CWD: %v", err)
+	// Nothing at all lands in the process CWD. Naming the artifacts instead
+	// would miss most of them: without the firnDir guard the consent path is
+	// the bare relative "golem-consent.json", so the hazard is a file beside
+	// the working directory rather than a .firn under it.
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		t.Fatalf("read CWD: %v", err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Errorf("startup wrote %v into the process CWD, want nothing", names)
 	}
 }
 
-// The consent store lives at exactly <firnDir>/golem-consent.json: an
-// unreadably-permissioned file at that path must degrade Remote consent, and a
-// clean home must not.
+// The consent store lives at exactly <firnDir>/golem-consent.json: an unusable
+// file at that path must degrade Remote consent, and a clean home must not.
 func TestGolemStartupUsesConsentPathUnderFirnDir(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("consent permission verification is POSIX-only")
-	}
 	t.Setenv("GO_LLM_CONFIG", "")
 
 	poisoned := t.TempDir()
@@ -440,12 +612,11 @@ func TestGolemStartupUsesConsentPathUnderFirnDir(t *testing.T) {
 	if err := os.MkdirAll(firnDir, 0o700); err != nil {
 		t.Fatalf("mkdir .firn: %v", err)
 	}
+	// Invalid content fails the store closed on every OS, so the exact filename
+	// stays pinned on Windows too, where mode-bit poisoning would not apply.
 	consentPath := filepath.Join(firnDir, "golem-consent.json")
-	if err := os.WriteFile(consentPath, []byte(`{}`), 0o600); err != nil {
+	if err := os.WriteFile(consentPath, []byte(`{"version":`), 0o600); err != nil {
 		t.Fatalf("write consent file: %v", err)
-	}
-	if err := os.Chmod(consentPath, 0o644); err != nil { // group/other readable: fail closed
-		t.Fatalf("chmod consent file: %v", err)
 	}
 
 	for _, tc := range []struct {
@@ -453,7 +624,7 @@ func TestGolemStartupUsesConsentPathUnderFirnDir(t *testing.T) {
 		home         string
 		wantDegraded bool
 	}{
-		{name: "world-readable consent file at the expected path", home: poisoned, wantDegraded: true},
+		{name: "unreadable consent state at the expected path", home: poisoned, wantDegraded: true},
 		{name: "clean home", home: t.TempDir(), wantDegraded: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -623,6 +794,35 @@ func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
 		!strings.Contains(text, "1500 * time.Millisecond") {
 		t.Error("closeAIService does not bound ai.Service.Close with a 1500 ms context")
 	}
+}
+
+// captureGolemLog redirects the standard logger for the rest of the test and
+// returns an accessor for everything written to it.
+func captureGolemLog(t *testing.T) func() string {
+	t.Helper()
+	sink := &golemLogSink{}
+	previous := log.Writer()
+	log.SetOutput(sink)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return sink.String
+}
+
+// golemLogSink is readable while service goroutines are still logging.
+type golemLogSink struct {
+	mu    sync.Mutex
+	lines bytes.Buffer
+}
+
+func (s *golemLogSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lines.Write(p)
+}
+
+func (s *golemLogSink) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lines.String()
 }
 
 func golemHasWarning(status ai.Status, want string) bool {
