@@ -3,8 +3,10 @@ import styles from './StatusBar.module.css';
 import { StatusBranchIcon, CheckIcon, AlertCircleIcon } from '../icons';
 import { useActiveFile, useCursorPosition } from '../../stores/ideStore';
 import { useGitBranchInfo, useGitStore } from '../../stores/gitStore';
+import { useGolemStore } from '../../stores/golemStore';
 import { computeProblemsSeverityTotals } from '../../stores/lspStore';
 import { useProblemsProjection } from '../../hooks/useProblemsProjection';
+import { showGolem } from '../../utils/commands';
 import { EditorThemePicker } from './EditorThemePicker';
 
 export function StatusBar() {
@@ -70,6 +72,7 @@ export function StatusBar() {
       </div>
       <div className={styles.spacer} />
       <div className={styles.right}>
+        <GolemIndicator />
         <EditorThemePicker />
         {activeFile && (
           <>
@@ -82,6 +85,80 @@ export function StatusBar() {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * The persistent Golem segment (#226 Task B8).
+ *
+ * Always mounted, because it is the only Golem surface that survives a
+ * collapsed right panel or Runs mode — background activity in another
+ * workspace would otherwise have nowhere to be seen.
+ */
+function GolemIndicator() {
+  const conversations = useGolemStore((state) => state.conversations);
+  const lastActiveConversationId = useGolemStore((state) => state.lastActiveConversationId);
+  const activityRevision = useGolemStore((state) => state.activityRevision);
+  const lastFailureConversationId = useGolemStore((state) => state.lastFailureConversationId);
+  const failureRevision = useGolemStore((state) => state.failureRevision);
+  const selectedConversationId = useGolemStore((state) => state.selectedConversationId);
+
+  const { label, state, conversationId } = useMemo(() => {
+    let canceling = 0;
+    let live = 0;
+    let owner: string | null = null;
+    for (const [id, conversation] of Object.entries(conversations)) {
+      for (const run of Object.values(conversation.runs)) {
+        if (run.phase === 'canceling') canceling += 1;
+        else if (run.phase === 'running' || run.phase === 'admitting') live += 1;
+        else continue;
+        owner = owner ?? id;
+      }
+    }
+
+    // Fixed priority: a cancel in flight outranks the count, the count outranks
+    // a past failure, and idle is only the absence of all three.
+    if (canceling > 0 || live > 0) {
+      const target = (activityRevision > 0 ? lastActiveConversationId : null) ?? owner;
+      const activeLabel = canceling > 0 ? 'Canceling' : `${live} running`;
+      return { label: activeLabel, state: 'active', conversationId: target };
+    }
+
+    // Resolved independently of activity: the conversation that last failed is
+    // not always the one that last ran.
+    const failedId = failureRevision > 0 ? lastFailureConversationId : null;
+    const failed = failedId ? conversations[failedId] : undefined;
+    // ponytail: a status-hydrated failure carries no retryable request, so it
+    // clears from here only when the workspace itself recovers.
+    if (failed && (!failed.available || failed.initError !== null || failed.lastFailedTurn)) {
+      return { label: 'Attention', state: 'attention', conversationId: failedId };
+    }
+
+    return { label: 'Idle', state: 'idle', conversationId: selectedConversationId };
+  }, [
+    conversations,
+    lastActiveConversationId,
+    activityRevision,
+    lastFailureConversationId,
+    failureRevision,
+    selectedConversationId,
+  ]);
+
+  return (
+    <span className={styles.item}>
+      <button
+        type="button"
+        className={styles.segmentBtn}
+        data-golem-state={state}
+        // Deliberately state-only: a repository root or a provider endpoint has
+        // no business being read out of the window chrome.
+        aria-label={`Golem: ${label}. Open the Golem panel`}
+        title="Open Golem"
+        onClick={() => showGolem(conversationId ?? undefined)}
+      >
+        <span>Golem: {label}</span>
+      </button>
+    </span>
   );
 }
 

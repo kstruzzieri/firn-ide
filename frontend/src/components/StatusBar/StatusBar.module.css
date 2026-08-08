@@ -53,3 +53,11 @@
   width: 12px;
   height: 12px;
 }
+
+.segmentBtn[data-golem-state='active'] {
+  color: var(--accent);
+}
+
+.segmentBtn[data-golem-state='attention'] {
+  color: var(--status-warning);
+}

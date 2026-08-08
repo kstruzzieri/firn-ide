@@ -913,6 +913,16 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       }));
     },
 
+    setPanelMode(mode: GolemStoreState['panelMode']) {
+      // Showing the chat is a request to type in it, so the same action that
+      // reveals the panel arms the composer; Runs has no composer to focus.
+      set((state) => ({
+        panelMode: mode,
+        composerFocusRevision:
+          mode === 'golem' ? state.composerFocusRevision + 1 : state.composerFocusRevision,
+      }));
+    },
+
     setDraft(conversationId: string, value: string) {
       set((state) => {
         const conversation = state.conversations[conversationId];

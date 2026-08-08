@@ -8,6 +8,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { act } from 'react';
 import { GitPull, GitPush } from '../../wailsjs/go/main/App';
 import { StatusBar } from '../components/StatusBar';
+import { __resetGolemStore } from '../stores/golemStore';
 import { useLSPStore } from '../stores/lspStore';
 import { useGitStore } from '../stores/gitStore';
 import type { git } from '../../wailsjs/go/models';
@@ -40,6 +41,7 @@ const gitStatus = (over: Partial<git.RepoStatus> = {}) =>
 beforeEach(() => {
   useLSPStore.setState(useLSPStore.getInitialState());
   useGitStore.setState({ status: null });
+  __resetGolemStore();
 });
 
 describe('StatusBar git segment', () => {
@@ -162,6 +164,18 @@ describe('StatusBar Component', () => {
 
     expect(screen.getByText(/1 info/)).toBeInTheDocument();
     expect(screen.queryByText(/No issues/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the Golem segment beside the git and diagnostics segments', () => {
+    render(<StatusBar />);
+
+    act(() => {
+      useGitStore.setState({ status: gitStatus() });
+    });
+
+    expect(screen.getByText('main')).toBeInTheDocument();
+    expect(screen.getByText(/No issues/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Golem:/ })).toHaveTextContent('Golem: Idle');
   });
 
   it('should clear counts when diagnostics are removed', () => {

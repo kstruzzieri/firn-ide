@@ -6,6 +6,7 @@ import {
   navigateBack,
   navigateForward,
   runOrRestartSelectedProfile,
+  showGolem,
   showSidebarView,
 } from '../utils/commands';
 
@@ -62,6 +63,15 @@ export function useKeyboardShortcuts(
       if (modifier && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
         showSidebarView('search');
+        return;
+      }
+
+      // Cmd+Shift+I / Ctrl+Shift+I — Golem chat.
+      // preventDefault is essential: both WKWebView and Chromium claim this
+      // chord for developer tools.
+      if (modifier && e.shiftKey && !e.altKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        showGolem();
         return;
       }
 

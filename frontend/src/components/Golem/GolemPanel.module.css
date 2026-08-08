@@ -1,0 +1,327 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 8px;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.identityRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge[data-classification='remote'] {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.destinationRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.endpoint {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.context {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.conversations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.conversationButton {
+  padding: 2px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.conversationButton:hover {
+  background-color: var(--surface-hover);
+}
+
+.conversationButton[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background-color: var(--accent-dim);
+}
+
+.notice,
+.warning {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.warning {
+  border-left: 2px solid var(--status-warning);
+}
+
+.transcript {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: var(--surface-elevated);
+}
+
+.entry.user {
+  border-left: 2px solid var(--accent);
+}
+
+.entry.error {
+  border-left: 2px solid var(--status-error);
+  color: var(--status-error);
+}
+
+.entry.tool {
+  color: var(--text-secondary);
+}
+
+.toolName {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.entryText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.background,
+.consent,
+.queued {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 6px;
+}
+
+.backgroundRow,
+.queued {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.backgroundRow {
+  padding: 0;
+  border: none;
+}
+
+.backgroundLabel {
+  flex: 1;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.backgroundLabel:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.consent {
+  border-color: var(--status-warning);
+}
+
+.consentCopy {
+  margin: 0;
+  font-size: 11px;
+}
+
+.destinationList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.destinationPair {
+  display: flex;
+  gap: 6px;
+}
+
+.destinationPair dt {
+  color: var(--text-muted);
+  min-width: 58px;
+}
+
+.destinationPair dd {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.consentActions,
+.composerActions {
+  display: flex;
+  gap: 6px;
+}
+
+.queuedInput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 4px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.queuedState {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.composerRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+  resize: vertical;
+}
+
+.composer:focus-visible,
+.queuedInput:focus-visible,
+.conversationButton:focus-visible,
+.backgroundLabel:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.composer:disabled {
+  color: var(--text-disabled);
+}
+
+.primaryButton,
+.secondaryButton {
+  padding: 4px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.primaryButton {
+  border-color: var(--accent);
+  background-color: var(--accent-dim);
+}
+
+.primaryButton:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversationButton,
+  .primaryButton,
+  .secondaryButton {
+    transition: none;
+  }
+}

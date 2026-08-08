@@ -1,7 +1,7 @@
 import './styles/tokens.css';
 import './styles/reset.css';
 import { useCallback, useEffect, useRef } from 'react';
-import { IDEShell } from './components/layout';
+import { IDEShell, RightPanel } from './components/layout';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
@@ -10,7 +10,6 @@ import { GitPanel } from './components/GitPanel';
 import { StructureView } from './components/Structure';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
-import { RunProfiles } from './components/RunProfiles';
 import { StatusBar } from './components/StatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Toast } from './components/Toast';
@@ -183,7 +182,7 @@ function App() {
         }
         centerPanel={<Editor />}
         bottomPanel={<Terminal />}
-        rightPanel={<RunProfiles />}
+        rightPanel={<RightPanel />}
         statusBar={<StatusBar />}
       />
       <Toast />
