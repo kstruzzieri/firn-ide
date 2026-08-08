@@ -255,20 +255,21 @@ func (s *Service) clearConsentDegraded() bool {
 	return was != nil
 }
 
-// BindRepository makes repoPath the current repository incarnation. A failed
-// bind leaves the previous binding and its attached policy fully current; a
-// successful different-root bind retires the previous incarnation without
-// canceling its active runs.
-func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
+// BindRepository makes repoPath the current repository incarnation and returns
+// the canonical root it authorized alongside the identity, so no caller has to
+// recompute it. A failed bind leaves the previous binding and its attached
+// policy fully current; a successful different-root bind retires the previous
+// incarnation without canceling its active runs.
+func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, string, error) {
 	// Resolve the candidate root before locking; Bindings.Bind re-derives the
 	// same canonicalization idempotently.
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr("bind", fmt.Errorf("%w: resolving %q: %w", ErrWorkspaceUnavailable, repoPath, err))
+		return RepositoryIdentity{}, "", s.publicErr("bind", fmt.Errorf("%w: resolving %q: %w", ErrWorkspaceUnavailable, repoPath, err))
 	}
 	root, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr("bind", fmt.Errorf("%w: canonicalizing %q: %w", ErrWorkspaceUnavailable, repoPath, err))
+		return RepositoryIdentity{}, "", s.publicErr("bind", fmt.Errorf("%w: canonicalizing %q: %w", ErrWorkspaceUnavailable, repoPath, err))
 	}
 	s.bindingGate.Lock()
 	defer s.bindingGate.Unlock()
@@ -276,16 +277,16 @@ func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
 	// ordered before the shutdown writer even if it returns later; a closing
 	// service rejects the bind.
 	if s.isClosing() {
-		return RepositoryIdentity{}, s.publicErr("bind", fmt.Errorf("%w: bind rejected", errServiceClosing))
+		return RepositoryIdentity{}, "", s.publicErr("bind", fmt.Errorf("%w: bind rejected", errServiceClosing))
 	}
 	identity, err := s.bindings.Bind(root)
 	if err != nil {
-		return RepositoryIdentity{}, s.publicErr("bind", err)
+		return RepositoryIdentity{}, "", s.publicErr("bind", err)
 	}
 	old := s.currentBinding()
 	if old != nil && old.identity == identity {
 		old.policy.Attach() // same-incarnation refresh: bounded reload before exposure
-		return identity, nil
+		return identity, old.repoRoot, nil
 	}
 	var idle []*runnerRecord
 	if old != nil {
@@ -301,7 +302,7 @@ func (s *Service) BindRepository(repoPath string) (RepositoryIdentity, error) {
 			log.Printf("ai: golem retirement-on-bind runner close: %v", err)
 		}
 	}
-	return identity, nil
+	return identity, next.repoRoot, nil
 }
 
 // UnbindRepository marks the current binding retired without canceling its

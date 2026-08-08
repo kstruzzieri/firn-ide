@@ -358,7 +358,7 @@ func newServiceHarness(t *testing.T, endpoint string) *svcHarness {
 func (h *svcHarness) bind(t *testing.T) (RepositoryIdentity, string) {
 	t.Helper()
 	repo := newRepo(t)
-	id, err := h.svc.BindRepository(repo)
+	id, _, err := h.svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}
@@ -642,7 +642,7 @@ func TestServiceSanitizeErrorAllowlist(t *testing.T) {
 			t.Fatalf("unbound StartTurn error = %v, want the fixed workspace message", err)
 		}
 		missing := filepath.Join(t.TempDir(), "missing", "repo-path-marker")
-		_, err = h.svc.BindRepository(missing)
+		_, _, err = h.svc.BindRepository(missing)
 		if err == nil || err.Error() != "The Golem workspace is unavailable." {
 			t.Fatalf("failed bind error = %v, want the fixed workspace message", err)
 		}
@@ -820,7 +820,7 @@ func TestServiceStatusShape(t *testing.T) {
 	h := newServiceHarness(t, "http://127.0.0.1:1")
 	repo := newRepo(t)
 	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), ":\tnot yaml [")
-	repoID, err := h.svc.BindRepository(repo)
+	repoID, _, err := h.svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}
@@ -972,7 +972,7 @@ func TestServiceReloadPolicy(t *testing.T) {
 	h := newServiceHarness(t, "http://127.0.0.1:1")
 	repo := newRepo(t)
 	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), "sensitive_paths: []\n")
-	repoID, err := h.svc.BindRepository(repo)
+	repoID, _, err := h.svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}
@@ -1483,7 +1483,7 @@ func TestServiceZeroEgressWithProductionRunnerFactory(t *testing.T) {
 		}
 	}
 
-	repoID, err := svc.BindRepository(newRepo(t))
+	repoID, _, err := svc.BindRepository(newRepo(t))
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}
@@ -2023,7 +2023,7 @@ func TestServiceBackgroundRunsAndCancel(t *testing.T) {
 
 	// A repository switch does not cancel the admitted run.
 	repoB := newRepo(t)
-	repoBID, err := h.svc.BindRepository(repoB)
+	repoBID, _, err := h.svc.BindRepository(repoB)
 	if err != nil {
 		t.Fatalf("BindRepository(B): %v", err)
 	}
@@ -2193,7 +2193,7 @@ func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 		waitUntil(t, "first run active", func() bool { return activeRunCount(h.svc) == 1 })
 
 		h.svc.UnbindRepository()
-		repoID2, err := h.svc.BindRepository(repo)
+		repoID2, _, err := h.svc.BindRepository(repo)
 		if err != nil {
 			t.Fatalf("rebind: %v", err)
 		}
@@ -2249,7 +2249,7 @@ func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 			t.Fatalf("unbound retry code = %q", code)
 		}
 
-		repoID2, err := h.svc.BindRepository(repo)
+		repoID2, _, err := h.svc.BindRepository(repo)
 		if err != nil {
 			t.Fatalf("rebind: %v", err)
 		}
@@ -2297,7 +2297,7 @@ func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 			t.Fatal("no live challenge before the direct bind")
 		}
 
-		if _, err := h.svc.BindRepository(newRepo(t)); err != nil {
+		if _, _, err := h.svc.BindRepository(newRepo(t)); err != nil {
 			t.Fatalf("BindRepository(B): %v", err)
 		}
 		if ch := convChallengeOf(conv); ch != nil {
@@ -2310,7 +2310,7 @@ func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 		// Rebinding A gets a fresh epoch: no older-epoch challenge is exposed,
 		// the dropped challenge cannot be retried, and a fresh submission gets a
 		// brand-new challenge.
-		repoA2ID, err := h.svc.BindRepository(repoA)
+		repoA2ID, _, err := h.svc.BindRepository(repoA)
 		if err != nil {
 			t.Fatalf("rebind A: %v", err)
 		}
@@ -2399,7 +2399,7 @@ func TestServiceRetirementAndPolicyDetachment(t *testing.T) {
 		guardA := h.factory.call(t, 0).guard
 
 		// A failed bind leaves A fully current and attached.
-		_, err := h.svc.BindRepository(filepath.Join(t.TempDir(), "missing"))
+		_, _, err := h.svc.BindRepository(filepath.Join(t.TempDir(), "missing"))
 		if err == nil {
 			t.Fatal("bind of a missing path succeeded")
 		}
@@ -2413,7 +2413,7 @@ func TestServiceRetirementAndPolicyDetachment(t *testing.T) {
 
 		// A successful A -> B bind retires A without canceling its run.
 		repoB := newRepo(t)
-		repoBID, err := h.svc.BindRepository(repoB)
+		repoBID, _, err := h.svc.BindRepository(repoB)
 		if err != nil {
 			t.Fatalf("BindRepository(B): %v", err)
 		}
@@ -2475,7 +2475,7 @@ func TestServiceRetirementAndPolicyDetachment(t *testing.T) {
 func TestServiceRebindRefreshesPolicyRules(t *testing.T) {
 	h := newServiceHarness(t, "http://127.0.0.1:1")
 	repo := newRepo(t)
-	repoID, err := h.svc.BindRepository(repo)
+	repoID, _, err := h.svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}
@@ -2494,7 +2494,7 @@ func TestServiceRebindRefreshesPolicyRules(t *testing.T) {
 	// Same-root re-open (no Unbind): the refresh path must reload the manifest
 	// before the incarnation is exposed again.
 	writeFile(t, manifest, deny)
-	repoID2, err := h.svc.BindRepository(repo)
+	repoID2, _, err := h.svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("same-root rebind: %v", err)
 	}
@@ -2508,7 +2508,7 @@ func TestServiceRebindRefreshesPolicyRules(t *testing.T) {
 	// ...and only the REFRESHED rules survive: removing the rule and re-opening
 	// permits the path again.
 	writeFile(t, manifest, "sensitive_paths: []\n")
-	if _, err := h.svc.BindRepository(repo); err != nil {
+	if _, _, err := h.svc.BindRepository(repo); err != nil {
 		t.Fatalf("same-root rebind after rule removal: %v", err)
 	}
 	if err := guard("vault/data.txt", false); err != nil {
@@ -2522,7 +2522,7 @@ func TestServiceRebindRefreshesPolicyRules(t *testing.T) {
 	// only the refreshed rules.
 	writeFile(t, manifest, deny)
 	h.svc.UnbindRepository()
-	repoID3, err := h.svc.BindRepository(repo)
+	repoID3, _, err := h.svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("rebind after unbind: %v", err)
 	}
@@ -2576,7 +2576,7 @@ func TestServiceCloseLifecycle(t *testing.T) {
 	if err == nil || err.Error() != "Golem is unavailable." {
 		t.Fatalf("closing StartTurn error = %v", err)
 	}
-	if _, err := h.svc.BindRepository(newRepo(t)); err == nil {
+	if _, _, err := h.svc.BindRepository(newRepo(t)); err == nil {
 		t.Fatal("closing BindRepository succeeded")
 	}
 	h.svc.UnbindRepository() // post-close Unbind is an idempotent no-op
@@ -2830,7 +2830,7 @@ func TestServiceBindingBarriersWithAdmission(t *testing.T) {
 		repoB := newRepo(t)
 		bindDone := make(chan error, 1)
 		go func() {
-			_, err := h.svc.BindRepository(repoB)
+			_, _, err := h.svc.BindRepository(repoB)
 			bindDone <- err
 		}()
 		select {
@@ -2872,7 +2872,7 @@ func TestServiceCloseVersusBindUnbindBarrier(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, _ = h.svc.BindRepository(repoB)
+			_, _, _ = h.svc.BindRepository(repoB)
 		}()
 		go func() {
 			defer wg.Done()
@@ -2894,7 +2894,7 @@ func TestServiceCloseVersusBindUnbindBarrier(t *testing.T) {
 			t.Fatalf("iteration %d: Close = %v", i, firstClose)
 		}
 		// Post-close mutations reject/no-op; the shared runner closed once.
-		if _, err := h.svc.BindRepository(repoB); err == nil {
+		if _, _, err := h.svc.BindRepository(repoB); err == nil {
 			t.Fatalf("iteration %d: post-close Bind succeeded", i)
 		}
 		h.svc.UnbindRepository()
@@ -2971,7 +2971,7 @@ func TestServiceCloseVersusConcurrentAdmissions(t *testing.T) {
 			workspaces[i] = fmt.Sprintf("ws%d", i)
 			writeFile(t, filepath.Join(repo, workspaces[i], "package.json"), `{"dependencies":{"react":"^18"}}`)
 		}
-		repoID, err := h.svc.BindRepository(repo)
+		repoID, _, err := h.svc.BindRepository(repo)
 		if err != nil {
 			t.Fatalf("iteration %d: BindRepository: %v", iter, err)
 		}
@@ -3092,7 +3092,7 @@ func TestServiceProcessResetSemantics(t *testing.T) {
 	}
 
 	svc1, f1 := build(t)
-	repoID1, err := svc1.BindRepository(repo)
+	repoID1, _, err := svc1.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -3118,7 +3118,7 @@ func TestServiceProcessResetSemantics(t *testing.T) {
 	// A new Service in the same process: no conversation snapshots, but the
 	// persisted destination consent remains authoritative.
 	svc2, f2 := build(t)
-	repoID2, err := svc2.BindRepository(repo)
+	repoID2, _, err := svc2.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("bind 2: %v", err)
 	}
@@ -3171,7 +3171,7 @@ func TestServiceRepoLocalConfigSourceProtected(t *testing.T) {
 		}
 	})
 
-	repoID, err := svc.BindRepository(repo)
+	repoID, _, err := svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}
@@ -3198,7 +3198,7 @@ func TestServiceRepoLocalConfigSourceProtected(t *testing.T) {
 	// empty. The cached-target resolution path must re-protect the source on the
 	// NEW policy, or the new incarnation's guard would hand back the API key.
 	svc.UnbindRepository()
-	repoID2, err := svc.BindRepository(repo)
+	repoID2, _, err := svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
@@ -3247,7 +3247,7 @@ func TestServiceRepoLocalConfigSourceProtectedOnFirstStartTurn(t *testing.T) {
 		}
 	})
 
-	repoID, err := svc.BindRepository(repo)
+	repoID, _, err := svc.BindRepository(repo)
 	if err != nil {
 		t.Fatalf("BindRepository: %v", err)
 	}

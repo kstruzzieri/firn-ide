@@ -366,20 +366,10 @@ func (a *App) GetWorkspaceInfo(repoPath string) (WorkspaceInfo, error) {
 		a.aiService.UnbindRepository()
 		return WorkspaceInfo{}, nil
 	}
-	// Canonicalize exactly as ai.Bindings does, and bind the result, so the
-	// root reported back is the one the backend authorized. A failure here
-	// leaves the previous binding untouched.
-	abs, err := filepath.Abs(repoPath)
-	if err != nil {
-		return WorkspaceInfo{}, a.golemError(
-			fmt.Errorf("%w: resolving %q: %w", ai.ErrWorkspaceUnavailable, repoPath, err))
-	}
-	root, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return WorkspaceInfo{}, a.golemError(
-			fmt.Errorf("%w: canonicalizing %q: %w", ai.ErrWorkspaceUnavailable, repoPath, err))
-	}
-	identity, err := a.aiService.BindRepository(root)
+	// The service canonicalizes and returns the root it authorized, so the
+	// root reported back is that value itself rather than a recomputation of
+	// it. A failed bind leaves the previous binding untouched.
+	identity, root, err := a.aiService.BindRepository(repoPath)
 	if err != nil {
 		return WorkspaceInfo{}, a.golemError(err)
 	}

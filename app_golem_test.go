@@ -99,15 +99,54 @@ func TestGetWorkspaceInfoReturnsCanonicalRootAndRepoIdentity(t *testing.T) {
 		t.Error("RepoEpoch = 0, want the allocated incarnation epoch")
 	}
 
-	// App canonicalizes independently of ai.Bindings, so the root it reports
-	// must be a fixpoint of Bind: rebinding it changes nothing. Should either
-	// side ever normalize further, the two stop agreeing here first.
+	// The root reported back must be a fixpoint of Bind: feeding it in again
+	// changes nothing, epoch included.
 	again, err := app.GetWorkspaceInfo(info.Path)
 	if err != nil {
 		t.Fatalf("rebinding the returned root: %v", err)
 	}
 	if again != info {
 		t.Errorf("rebinding the returned root gave %+v, want the unchanged %+v", again, info)
+	}
+}
+
+// TestGetWorkspaceInfoPathIsTheServiceAuthorizedRoot pins Path to the root
+// ai.Service reports having authorized, rather than to any canonicalization
+// App performs for itself. Binding through a symlink separates the caller's
+// input from the authorized root, and the comparison target is the service's
+// own return: a rebind of the live incarnation hands back the root stored on
+// the binding, so this asserts Path equals what the backend actually holds.
+func TestGetWorkspaceInfoPathIsTheServiceAuthorizedRoot(t *testing.T) {
+	app := newGolemApp(t)
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "repo-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	info, err := app.GetWorkspaceInfo(link)
+	if err != nil {
+		t.Fatalf("GetWorkspaceInfo: %v", err)
+	}
+	if info.Path == link {
+		t.Fatalf("Path = %q, want the resolved root rather than the caller's input", link)
+	}
+
+	// Same root, so this is the same-incarnation refresh: the returned root is
+	// the one recorded when GetWorkspaceInfo bound it, not a fresh derivation.
+	identity, authorized, err := app.aiService.BindRepository(link)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	if info.Path != authorized {
+		t.Errorf("Path = %q, want the service-authorized root %q", info.Path, authorized)
+	}
+	if info.Name != filepath.Base(authorized) {
+		t.Errorf("Name = %q, want %q", info.Name, filepath.Base(authorized))
+	}
+	if info.RepoKey != identity.RepoKey || info.RepoEpoch != identity.RepoEpoch {
+		t.Errorf("identity = {%q %d}, want the service's {%q %d}",
+			info.RepoKey, info.RepoEpoch, identity.RepoKey, identity.RepoEpoch)
 	}
 }
 
