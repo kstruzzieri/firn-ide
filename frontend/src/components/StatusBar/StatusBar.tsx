@@ -106,17 +106,28 @@ function GolemIndicator() {
   const { label, state, conversationId } = useMemo(() => {
     let canceling = 0;
     let live = 0;
-    let owner: string | null = null;
+    let cancelingOwner: string | null = null;
+    let liveOwner: string | null = null;
+    let approvalOwner: string | null = null;
     let failureOwner: string | null = null;
+    const cancelingOwners = new Set<string>();
     const liveOwners = new Set<string>();
+    const approvalOwners = new Set<string>();
     const failureOwners = new Set<string>();
     for (const [id, conversation] of Object.entries(conversations)) {
       for (const run of Object.values(conversation.runs)) {
-        if (run.phase === 'canceling') canceling += 1;
-        else if (run.phase === 'running' || run.phase === 'admitting') live += 1;
-        else continue;
-        owner = owner ?? id;
-        liveOwners.add(id);
+        if (run.phase === 'canceling') {
+          canceling += 1;
+          cancelingOwner = cancelingOwner ?? id;
+          cancelingOwners.add(id);
+        } else if (run.phase === 'running' || run.phase === 'admitting') {
+          live += 1;
+          liveOwner = liveOwner ?? id;
+          liveOwners.add(id);
+        } else if (run.phase === 'needs-consent') {
+          approvalOwner = approvalOwner ?? id;
+          approvalOwners.add(id);
+        }
       }
       // A failed run is the signal in its own right. `lastFailedTurn` exists to
       // power Retry, so it is set only for a turn this client sent and holds the
@@ -135,16 +146,26 @@ function GolemIndicator() {
       }
     }
 
-    // Fixed priority: a cancel in flight outranks the count, the count outranks
-    // a past failure, and idle is only the absence of all three.
-    if (canceling > 0 || live > 0) {
+    // Fixed priority: canceling, approval, running, past failure, then idle.
+    if (canceling > 0) {
+      const active = activityRevision > 0 ? lastActiveConversationId : null;
+      const target = active !== null && cancelingOwners.has(active) ? active : cancelingOwner;
+      return { label: 'Canceling', state: 'active', conversationId: target };
+    }
+
+    if (approvalOwner !== null) {
+      const active = activityRevision > 0 ? lastActiveConversationId : null;
+      const target = active !== null && approvalOwners.has(active) ? active : approvalOwner;
+      return { label: 'Approval needed', state: 'attention', conversationId: target };
+    }
+
+    if (live > 0) {
       const active = activityRevision > 0 ? lastActiveConversationId : null;
       // `lastActiveConversationId` names the conversation that moved last, which
       // is not always one that is still running: activating the segment must
       // open a conversation the count is actually about.
-      const target = active !== null && liveOwners.has(active) ? active : owner;
-      const activeLabel = canceling > 0 ? 'Canceling' : `${live} running`;
-      return { label: activeLabel, state: 'active', conversationId: target };
+      const target = active !== null && liveOwners.has(active) ? active : liveOwner;
+      return { label: `${live} running`, state: 'active', conversationId: target };
     }
 
     // Resolved independently of activity: the conversation that last failed is

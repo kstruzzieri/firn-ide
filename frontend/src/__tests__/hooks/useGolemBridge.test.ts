@@ -427,6 +427,31 @@ describe('status hydration', () => {
 });
 
 describe('golem:status-changed', () => {
+  it('ignores an older refresh that resolves after a newer request in the same binding', async () => {
+    renderHook(() => useGolemBridge());
+    openRepository();
+    await settle();
+
+    const older = deferred<unknown>();
+    const newer = deferred<unknown>();
+    mockGetGolemStatus.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+    emit('golem:status-changed');
+    emit('golem:status-changed');
+
+    await act(async () => {
+      newer.resolve(statusPayload({ workspaceLabel: 'newer' }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(conversation().workspaceLabel).toBe('newer');
+
+    await act(async () => {
+      older.resolve(statusPayload({ workspaceLabel: 'older' }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(conversation().workspaceLabel).toBe('newer');
+  });
+
   it('re-fetches only the current identity and hydrates the consent degradation', async () => {
     renderHook(() => useGolemBridge());
     openRepository();

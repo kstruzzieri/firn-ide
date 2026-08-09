@@ -23,12 +23,16 @@ const STALE = 'This workspace is no longer open.';
 const UNAVAILABLE = 'Golem is unavailable in this workspace.';
 const CONSENT_REQUIRED = 'This workspace asks for approval before sending anything to a provider.';
 
-/** Phases in which the backend still owns the run, so Cancel is meaningful. */
+/** Phases shown as live in the focused or background run surfaces. */
 const isLivePhase = (phase: RunPhase): boolean =>
   phase === 'admitting' ||
   phase === 'needs-consent' ||
   phase === 'running' ||
   phase === 'canceling';
+
+/** The backend has accepted these phases, so a cancellation can name a run it owns. */
+const isCancelablePhase = (phase: RunPhase): boolean =>
+  phase === 'needs-consent' || phase === 'running';
 
 const workspaceName = (conversation: ConversationView): string =>
   conversation.workspaceLabel || 'Workspace';
@@ -299,14 +303,16 @@ export function GolemPanel() {
               >
                 {label} · {run.phase}
               </button>
-              <button
-                type="button"
-                className={styles.secondaryButton}
-                aria-label={`Cancel the Golem run in ${label}`}
-                onClick={() => void useGolemStore.getState().cancelRun(run.identity.runId)}
-              >
-                Cancel
-              </button>
+              {isCancelablePhase(run.phase) && (
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  aria-label={`Cancel the Golem run in ${label}`}
+                  onClick={() => void useGolemStore.getState().cancelRun(run.identity.runId)}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -335,6 +341,7 @@ export function GolemPanel() {
             <button
               type="button"
               className={styles.primaryButton}
+              disabled={conversation?.runs[pending.identity.runId]?.phase !== 'needs-consent'}
               onClick={() => {
                 if (conversationId) void useGolemStore.getState().allowAndSend(conversationId);
               }}
@@ -344,6 +351,7 @@ export function GolemPanel() {
             <button
               type="button"
               className={styles.secondaryButton}
+              disabled={conversation?.runs[pending.identity.runId]?.phase !== 'needs-consent'}
               onClick={() => void useGolemStore.getState().cancelRun(pending.identity.runId)}
             >
               Not now
@@ -405,7 +413,7 @@ export function GolemPanel() {
           <button type="button" className={styles.primaryButton} disabled={!canSend} onClick={send}>
             Send
           </button>
-          {activeRun && isLivePhase(activeRun.phase) && (
+          {activeRun && isCancelablePhase(activeRun.phase) && (
             <button
               type="button"
               className={styles.secondaryButton}

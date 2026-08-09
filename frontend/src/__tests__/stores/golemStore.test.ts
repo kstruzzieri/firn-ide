@@ -614,6 +614,35 @@ describe('event reduction', () => {
     expect(conv().transcript.find((e) => e.kind === 'error')!.text).toBe('The Golem run failed.');
   });
 
+  it.each([
+    ['repository epoch', { repoEpoch: EPOCH + 1 }],
+    ['workspace', { workspaceId: OTHER_WS }],
+    ['conversation', { conversationId: OTHER_CONV }],
+  ])('ignores a run-status whose %s does not match the mapped run', (_label, mismatch) => {
+    send({ seq: 1, type: 'run.started' });
+
+    store().ingestRunStatus({
+      identity: runIdentity(RUN_A, mismatch),
+      state: 'failed',
+      message: 'wrong run',
+    });
+
+    expect(conv().runs[RUN_A].phase).toBe('running');
+    expect(conv().transcript.filter((entry) => entry.kind === 'error')).toHaveLength(0);
+  });
+
+  it('ignores an unmapped run-status whose identity collides with a conversation ID', () => {
+    store().ingestRunStatus({
+      identity: runIdentity(RUN_B, { workspaceId: OTHER_WS }),
+      state: 'failed',
+      message: 'wrong workspace',
+    });
+
+    expect(conv().runs[RUN_B]).toBeUndefined();
+    expect(store().runToConversation[RUN_B]).toBeUndefined();
+    expect(conv().transcript.filter((entry) => entry.kind === 'error')).toHaveLength(0);
+  });
+
   it('ignores a malformed streamed status', () => {
     const before = store().conversations;
     store().ingestRunStatus({ identity: runIdentity(RUN_A), state: 'weird' });
@@ -626,6 +655,88 @@ describe('event reduction', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('bridge lifecycle and hydration', () => {
+  it('lets a pre-hydration relayed terminal tombstone beat a stale active snapshot until reset', () => {
+    store().ingestEvent(
+      eventPayload({
+        seq: 2,
+        type: 'run.finished',
+        payload: { stopReason: 'end_turn', model: 'm' },
+      })
+    );
+
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          activeRuns: [
+            { identity: runIdentity(RUN_A), workspaceLabel: 'Frontend', state: 'running' },
+          ],
+        })
+      )
+    );
+
+    expect(conv().runs[RUN_A]).toMatchObject({ phase: 'done', lastSeq: 2 });
+    expect(conv().rawEvents.map((event) => event.type)).toEqual(['run.finished']);
+    expect(conv().activeRunId).toBeNull();
+
+    __resetGolemStore();
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          activeRuns: [
+            { identity: runIdentity(RUN_A), workspaceLabel: 'Frontend', state: 'running' },
+          ],
+        })
+      )
+    );
+
+    expect(conv().runs[RUN_A].phase).toBe('running');
+  });
+
+  it('lets a pre-hydration run-status tombstone beat a stale active snapshot', () => {
+    store().ingestRunStatus({ identity: runIdentity(RUN_A), state: 'failed', message: 'died' });
+
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          activeRuns: [
+            { identity: runIdentity(RUN_A), workspaceLabel: 'Frontend', state: 'running' },
+          ],
+        })
+      )
+    );
+
+    expect(conv().runs[RUN_A]).toMatchObject({ phase: 'failed', error: 'died' });
+    expect(conv().transcript.filter((entry) => entry.kind === 'error')).toMatchObject([
+      { runId: RUN_A, text: 'died' },
+    ]);
+    expect(conv().activeRunId).toBeNull();
+  });
+
+  it('clears an unmatched terminal buffer after a successful global hydration', () => {
+    store().ingestEvent(
+      eventPayload({
+        seq: 2,
+        type: 'run.finished',
+        payload: { stopReason: 'end_turn', model: 'm' },
+      })
+    );
+    store().hydrateStatus(parseGolemStatus(statusPayload()));
+
+    expect(conv().runs[RUN_A]).toBeUndefined();
+
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          activeRuns: [
+            { identity: runIdentity(RUN_A), workspaceLabel: 'Frontend', state: 'running' },
+          ],
+        })
+      )
+    );
+
+    expect(conv().runs[RUN_A].phase).toBe('running');
+  });
+
   it('starts unbound with the Runs panel preserved', () => {
     expect(store().panelMode).toBe('runs');
     expect(store().bridgePhase).toBe('unbound');
@@ -1239,6 +1350,71 @@ describe('consent', () => {
     ).toBe('Remote consent storage is unavailable.');
     expect(conv().lastFailedTurn).toBeNull();
     expect(store().lastFailureConversationId).toBe(CONV);
+  });
+
+  it('admits a consent grant only once while preserving retry after rejection', async () => {
+    await firstRemoteSubmission();
+    const grant = deferred<unknown>();
+    mockRunGolemTurn.mockClear();
+    mockRunGolemTurn.mockReturnValue(grant.promise);
+
+    const first = store().allowAndSend(CONV);
+    const duplicate = store().allowAndSend(CONV);
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    grant.reject('Remote consent storage is unavailable.');
+    await Promise.all([first, duplicate]);
+    expect(conv().runs[RUN_A].phase).toBe('needs-consent');
+
+    mockRunGolemTurn.mockResolvedValueOnce(
+      admissionPayload(RUN_A, { destination: remoteDestination })
+    );
+    await store().allowAndSend(CONV);
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(2);
+    expect(conv().runs[RUN_A].phase).toBe('running');
+  });
+
+  it('does not cancel a consent grant while it is being admitted', async () => {
+    await firstRemoteSubmission();
+    const grant = deferred<unknown>();
+    mockRunGolemTurn.mockReturnValueOnce(grant.promise);
+
+    const admitting = store().allowAndSend(CONV);
+    expect(conv().runs[RUN_A].phase).toBe('admitting');
+
+    await store().cancelRun(RUN_A);
+
+    expect(mockCancelGolemRun).not.toHaveBeenCalled();
+    expect(conv().runs[RUN_A].phase).toBe('admitting');
+
+    grant.resolve(admissionPayload(RUN_A, { destination: remoteDestination }));
+    await admitting;
+    expect(conv().runs[RUN_A].phase).toBe('running');
+  });
+
+  it('clears consent when run.started arrives before an accepted grant', async () => {
+    await firstRemoteSubmission();
+    const grant = deferred<unknown>();
+    mockRunGolemTurn.mockReturnValueOnce(grant.promise);
+
+    const admitting = store().allowAndSend(CONV);
+    store().ingestEvent(eventPayload({ seq: 1, type: 'run.started' }));
+    expect(conv().runs[RUN_A].phase).toBe('running');
+
+    grant.resolve(admissionPayload(RUN_A, { destination: remoteDestination }));
+    await admitting;
+    expect(conv().pendingConsentTurn).toBeNull();
+
+    store().ingestEvent(
+      eventPayload({
+        seq: 2,
+        type: 'run.finished',
+        payload: { stopReason: 'end_turn', model: 'm' },
+      })
+    );
+    expect(conv().runs[RUN_A].phase).toBe('done');
+    expect(conv().lastFailedTurn).toBeNull();
   });
 
   it('keeps one prompt row and one first request across a deferred fail-then-recover grant', async () => {
@@ -1907,6 +2083,42 @@ describe('activity and failure revisions', () => {
     );
 
     expect(conv().runs[RUN_C].phase).toBe('running');
+    expect(store().lastActiveConversationId).toBe(CONV);
+    expect(store().activityRevision).toBeGreaterThan(before);
+  });
+
+  it('marks a new consent challenge as the newest conversation activity', async () => {
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          activeRuns: [
+            {
+              identity: runIdentity(RUN_C, {
+                workspaceId: OTHER_WS,
+                conversationId: OTHER_CONV,
+              }),
+              workspaceLabel: 'Backend',
+              state: 'running',
+            },
+          ],
+        })
+      )
+    );
+    expect(store().lastActiveConversationId).toBe(OTHER_CONV);
+    const before = store().activityRevision;
+
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(
+      admissionPayload(RUN_A, {
+        state: 'needs_consent',
+        destination: remoteDestination,
+        consentChallenge: challengeFor(RUN_A),
+      })
+    );
+    store().setDraft(CONV, 'ask remote');
+    await store().submitTurn(CONV);
+
+    expect(conv().runs[RUN_A].phase).toBe('needs-consent');
     expect(store().lastActiveConversationId).toBe(CONV);
     expect(store().activityRevision).toBeGreaterThan(before);
   });

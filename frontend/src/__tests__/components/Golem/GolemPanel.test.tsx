@@ -536,6 +536,43 @@ describe('GolemPanel consent', () => {
     expect(store().conversations[CONV].pendingConsentTurn).toBeNull();
   });
 
+  it('disables approval while the consent grant is being admitted', async () => {
+    await askConsent();
+    mockRunGolemTurn.mockImplementationOnce(() => new Promise(() => {}));
+
+    const allow = screen.getByRole('button', { name: 'Allow & send' });
+    fireEvent.click(allow);
+
+    expect(allow).toBeDisabled();
+  });
+
+  it('disables cancellation while the consent grant is being admitted', async () => {
+    await askConsent();
+    let resolveGrant!: (value: unknown) => void;
+    mockRunGolemTurn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGrant = resolve;
+        })
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow & send' }));
+
+    const decline = screen.getByRole('button', { name: 'Not now' });
+    expect(decline).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: /cancel the current golem run/i })
+    ).not.toBeInTheDocument();
+    fireEvent.click(decline);
+    expect(mockCancelGolemRun).not.toHaveBeenCalled();
+
+    resolveGrant(acceptedAdmission(RUN_A));
+    await flush();
+    expect(
+      screen.getByRole('button', { name: /cancel the current golem run/i })
+    ).toBeInTheDocument();
+  });
+
   it('declining cancels the pending run identity', async () => {
     await askConsent();
 
@@ -848,7 +885,6 @@ describe('GolemPanel cancel and retry', () => {
   it('offers Cancel as a real button while a run is live', async () => {
     hydrate();
     selectFocused();
-    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
     render(<GolemPanel />);
     type('long one');
     pressEnter();

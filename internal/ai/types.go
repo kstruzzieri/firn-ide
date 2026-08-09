@@ -39,11 +39,12 @@ type RunIdentity struct {
 // must never serialize.
 type ResolvedWorkspace struct {
 	RepositoryIdentity
-	WorkspaceID   string
-	WorkspaceName string
-	WorkspaceRel  string
-	RepoRoot      string `json:"-"` // backend-only
-	ToolRoot      string `json:"-"` // backend-only
+	WorkspaceID         string
+	WorkspaceName       string
+	WorkspaceRel        string
+	workspaceLexicalRel string // detected path before an in-repo symlink is resolved
+	RepoRoot            string `json:"-"` // backend-only
+	ToolRoot            string `json:"-"` // backend-only
 }
 
 // StatusRequest asks for the Golem status of one workspace under the caller's

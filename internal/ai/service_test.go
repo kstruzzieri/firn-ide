@@ -292,6 +292,34 @@ func (c *fakeClock) advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
+// blockingReadFS snapshots and parks the first selected ReadFile call after
+// announcing entry. Later reads proceed, exposing out-of-order reloads.
+// Embedding only FileSystem deliberately routes ReadFileBounded through its
+// bounded fallback and therefore through this override.
+type blockingReadFS struct {
+	filesystem.FileSystem
+	blockPath string
+	entered   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func (f *blockingReadFS) ReadFile(path string) ([]byte, error) {
+	data, err := f.FileSystem.ReadFile(path)
+	if path != f.blockPath {
+		return data, err
+	}
+	blocked := false
+	f.once.Do(func() {
+		blocked = true
+		close(f.entered)
+	})
+	if blocked {
+		<-f.release
+	}
+	return data, err
+}
+
 // agentConfigJSON is a valid go-llm config with an explicit defaults.agent
 // (no fallback chain) plus a second, unselected provider carrying its own key.
 func agentConfigJSON(endpoint string) string {
@@ -996,6 +1024,160 @@ func TestServiceReloadPolicy(t *testing.T) {
 	}
 	if err := guard("vault/data.txt", false); err == nil {
 		t.Fatal("already-issued guard did not pick up the reloaded rule")
+	}
+}
+
+func TestServiceSymlinkWorkspaceGuardUsesLexicalAndCanonicalPrefixes(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repo := newRepo(t)
+	service := filepath.Join(repo, "service")
+	writeFile(t, filepath.Join(service, "go.mod"), "module service\n")
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths:\n  - service/private/**\n")
+	repoID, _, err := h.svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+
+	if err := os.RemoveAll(service); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "frontend"), service); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "service"))); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+	call := h.factory.call(t, 0)
+	if want := canonical(t, filepath.Join(repo, "frontend")); call.root != want {
+		t.Fatalf("runner root = %q, want canonical target %q", call.root, want)
+	}
+	mustDeny(t, call.guard, "private/lexical.txt")
+
+	writeFile(t, manifest, "sensitive_paths:\n  - frontend/private/**\n")
+	if !h.svc.ReloadPolicy(canonical(t, manifest)) {
+		t.Fatal("ReloadPolicy returned false for the policy manifest")
+	}
+	mustDeny(t, call.guard, "private/canonical.txt")
+}
+
+func TestServiceReloadPolicyHoldsBindingGateThroughRead(t *testing.T) {
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	svc := NewService(context.Background(), fsys, "", nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	repo := newRepo(t)
+	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), "sensitive_paths: []\n")
+	if _, _, err := svc.BindRepository(repo); err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	manifest := filepath.Join(canonical(t, repo), "ai-kit.yaml")
+	fsys.blockPath = manifest
+
+	done := make(chan bool, 1)
+	go func() { done <- svc.ReloadPolicy(manifest) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		close(fsys.release)
+		t.Fatal("timed out waiting for ReloadPolicy manifest read")
+	}
+
+	writerAvailable := svc.bindingGate.TryLock()
+	if writerAvailable {
+		svc.bindingGate.Unlock()
+	}
+	close(fsys.release)
+	select {
+	case reloaded := <-done:
+		if !reloaded {
+			t.Error("ReloadPolicy returned false for the current manifest")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for ReloadPolicy completion")
+	}
+	if writerAvailable {
+		t.Fatal("bindingGate writer acquired while ReloadPolicy was reading the current manifest")
+	}
+}
+
+func TestServiceReloadPolicySerializesSnapshots(t *testing.T) {
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	svc := NewService(context.Background(), fsys, "", nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	repo := newRepo(t)
+	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), "sensitive_paths: []\n")
+	if _, _, err := svc.BindRepository(repo); err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	manifest := filepath.Join(canonical(t, repo), "ai-kit.yaml")
+	fsys.blockPath = manifest
+
+	olderDone := make(chan bool, 1)
+	go func() { olderDone <- svc.ReloadPolicy(manifest) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the older policy snapshot")
+	}
+
+	writeFile(t, manifest, "sensitive_paths:\n  - vault/**\n")
+	newerStarted := make(chan struct{})
+	newerDone := make(chan bool, 1)
+	go func() {
+		close(newerStarted)
+		newerDone <- svc.ReloadPolicy(manifest)
+	}()
+	<-newerStarted
+
+	released := false
+	defer func() {
+		if !released {
+			close(fsys.release)
+		}
+	}()
+	select {
+	case <-newerDone:
+		t.Fatal("a newer policy reload completed while an older snapshot was still blocked")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(fsys.release)
+	released = true
+	for name, done := range map[string]<-chan bool{"older": olderDone, "newer": newerDone} {
+		select {
+		case reloaded := <-done:
+			if !reloaded {
+				t.Errorf("%s ReloadPolicy returned false", name)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out waiting for %s ReloadPolicy", name)
+		}
+	}
+	if err := svc.currentBinding().policy.Guard("")("vault/data.txt", false); err == nil {
+		t.Fatal("newer policy snapshot was overwritten by the older reload")
 	}
 }
 
@@ -3270,8 +3452,8 @@ func TestServiceExternalConfigSourceNormal(t *testing.T) {
 	h := newServiceHarness(t, endpoint) // fixture config lives outside the repo
 	repoID, repo := h.bind(t)
 
-	// An in-repo file sharing the external source's basename stays readable:
-	// ProtectConfigSource was a no-op for the outside-the-repo source.
+	// An unrelated in-repo file sharing the external source's basename stays
+	// readable; identity protection does not deny namesakes.
 	writeFile(t, filepath.Join(repo, "models-fixture.json"), `{"unrelated": true}`)
 
 	st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})

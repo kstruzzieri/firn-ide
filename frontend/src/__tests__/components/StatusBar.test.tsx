@@ -298,6 +298,80 @@ describe('StatusBar Golem segment', () => {
     expect(golemSegment()).toHaveTextContent('Golem: 1 running');
   });
 
+  it('reports approval needed and opens the conversation awaiting consent', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true });
+    render(<StatusBar />);
+    hydrateGolem();
+    hydrateGolem({
+      identity: golemIdentity('backend', 'conv-backend'),
+      workspaceLabel: 'Backend',
+      activeRuns: [golemRun('backend', 'conv-backend', 'run-1', 'running', 'Backend')],
+    });
+
+    act(() => {
+      const { conversations } = useGolemStore.getState();
+      const conversation = conversations['conv-backend'];
+      useGolemStore.setState({
+        conversations: {
+          ...conversations,
+          'conv-backend': {
+            ...conversation,
+            runs: { 'run-1': { ...conversation.runs['run-1'], phase: 'needs-consent' } },
+          },
+        },
+      });
+    });
+
+    expect(golemSegment()).toHaveTextContent('Golem: Approval needed');
+    expect(golemSegment()).toHaveAttribute('data-golem-state', 'attention');
+
+    fireEvent.click(golemSegment());
+
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-backend');
+    expect(useGolemStore.getState().panelMode).toBe('golem');
+    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+  });
+
+  it('prioritizes canceling, then approval, then running and routes each mixed state', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true });
+    render(<StatusBar />);
+    hydrateGolem({
+      activeRuns: [golemRun('frontend', 'conv-frontend', 'run-1', 'running', 'Frontend')],
+    });
+    hydrateGolem({
+      identity: golemIdentity('backend', 'conv-backend'),
+      workspaceLabel: 'Backend',
+      activeRuns: [golemRun('backend', 'conv-backend', 'run-2', 'running', 'Backend')],
+    });
+    act(() => {
+      const { conversations } = useGolemStore.getState();
+      const backend = conversations['conv-backend'];
+      useGolemStore.setState({
+        conversations: {
+          ...conversations,
+          'conv-backend': {
+            ...backend,
+            runs: { 'run-2': { ...backend.runs['run-2'], phase: 'needs-consent' } },
+          },
+        },
+      });
+    });
+
+    expect(golemSegment()).toHaveTextContent('Golem: Approval needed');
+    fireEvent.click(golemSegment());
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-backend');
+
+    hydrateGolem({
+      identity: golemIdentity('infra', 'conv-infra'),
+      workspaceLabel: 'Infra',
+      activeRuns: [golemRun('infra', 'conv-infra', 'run-3', 'canceling', 'Infra')],
+    });
+
+    expect(golemSegment()).toHaveTextContent('Golem: Canceling');
+    fireEvent.click(golemSegment());
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-infra');
+  });
+
   it('ranks canceling above the running count', () => {
     render(<StatusBar />);
     hydrateGolem({

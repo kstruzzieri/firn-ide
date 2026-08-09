@@ -714,7 +714,8 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		rec = nil
 	}
 	if rec == nil {
-		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target, binding.policy.Guard(resolved.WorkspaceRel), s.sessions)
+		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
+			binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel), s.sessions)
 		if err != nil {
 			return TurnAdmission{}, fmt.Errorf("%w: runner construction: %w", ErrRunFailed, err)
 		}
@@ -964,6 +965,8 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 // ReloadPolicy re-reads the manifest rules when absChangedPath is one of the
 // current binding's watched manifests.
 func (s *Service) ReloadPolicy(absChangedPath string) bool {
+	s.bindingGate.Lock()
+	defer s.bindingGate.Unlock()
 	b := s.currentBinding()
 	if b == nil || !b.policy.Watches(absChangedPath) {
 		return false

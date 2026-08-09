@@ -213,17 +213,19 @@ func TestScopePolicyDoubleStarDepth(t *testing.T) {
 
 func TestScopePolicyWorkspacePrefix(t *testing.T) {
 	repo := newPolicyRepo(t)
-	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - frontend/config-private.yaml\n")
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - frontend/config-private.yaml\n  - private/**\n")
 	p := LoadScopePolicy(filesystem.NewOS(), repo)
 
-	focused := p.Guard("frontend")
+	focused := p.Guard("frontend", "")
 	// Tool-relative paths are converted to repo-relative before matching.
 	mustDeny(t, focused, "config-private.yaml")
 	mustDeny(t, focused, "secret.txt") // frontend/secret.txt hits the floor
 	mustAllow(t, focused, "src/app.tsx")
+	mustAllow(t, focused, "private/readme.md") // an empty alternate is not the repository root
 
 	root := p.Guard("")
 	mustDeny(t, root, "frontend/config-private.yaml")
+	mustDeny(t, root, "private/readme.md")
 	mustAllow(t, root, "config-private.yaml") // rule names the frontend copy only
 }
 
@@ -332,15 +334,38 @@ func TestScopePolicyProtectConfigSource(t *testing.T) {
 		}
 	})
 
-	t.Run("outsideRootNoOp", func(t *testing.T) {
+	t.Run("outsideRootNamesakeAllowed", func(t *testing.T) {
 		repo := newPolicyRepo(t)
 		p := LoadScopePolicy(filesystem.NewOS(), repo)
 		g := p.Guard("")
 		outside := filepath.Join(canonical(t, t.TempDir()), "golem-config.yaml")
+		writeFile(t, outside, "provider: test\n")
 		if err := p.ProtectConfigSource(outside); err != nil {
-			t.Fatalf("ProtectConfigSource(outside) = %v, want nil no-op", err)
+			t.Fatalf("ProtectConfigSource(outside) = %v", err)
 		}
 		mustAllow(t, g, "golem-config.yaml")
+	})
+
+	t.Run("outsideRootHardLinkAlias", func(t *testing.T) {
+		const marker = "ZZEXTERNALCONFIGMARKER"
+		repo := newPolicyRepo(t)
+		source := filepath.Join(canonical(t, t.TempDir()), "golem-config.yaml")
+		writeFile(t, source, marker+"\n")
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		if err := p.ProtectConfigSource(source); err != nil {
+			t.Fatalf("ProtectConfigSource(outside) = %v", err)
+		}
+		alias := filepath.Join(repo, "ordinary.txt")
+		if err := os.Link(source, alias); err != nil {
+			t.Skipf("cross-directory hard links unavailable here: %v", err)
+		}
+
+		g := p.Guard("")
+		mustDeny(t, g, "ordinary.txt")
+		tools := newScopedTools(t, repo, g)
+		if res := invokeTool(t, tools["read_file"], `{"path":"ordinary.txt"}`); !res.IsError || res.Content != scopeDeniedMsg {
+			t.Errorf("read_file external hard-link alias = %+v, want scope denial", res)
+		}
 	})
 
 	t.Run("differentVolumeWindows", func(t *testing.T) {
@@ -390,6 +415,97 @@ func TestScopePolicyProtectConfigSource(t *testing.T) {
 		// Repo policy reload can never remove a protected config source.
 		p.Reload()
 		mustDeny(t, g, "custom-golem.yaml")
+	})
+
+	t.Run("identityLookupFailureKeepsExactDeny", func(t *testing.T) {
+		repo := newPolicyRepo(t)
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		g := p.Guard("")
+		source := filepath.Join(repo, "missing-golem.yaml")
+
+		if err := p.ProtectConfigSource(source); err == nil {
+			t.Fatal("ProtectConfigSource missing source = nil, want identity lookup error")
+		}
+		mustDeny(t, g, "missing-golem.yaml")
+	})
+
+	t.Run("hardLinkAlias", func(t *testing.T) {
+		const marker = "ZZHARDLINKEDCONFIGMARKER"
+		repo := newPolicyRepo(t)
+		source := filepath.Join(repo, "custom-golem.yaml")
+		alias := filepath.Join(repo, "ordinary.txt")
+		writeFile(t, source, marker+"\n")
+
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		if err := p.ProtectConfigSource(source); err != nil {
+			t.Fatalf("ProtectConfigSource: %v", err)
+		}
+		// Create the alias after protection: enforcement must follow the saved
+		// file identity, not a one-time enumeration of names.
+		if err := os.Link(source, alias); err != nil {
+			t.Skipf("hard links unavailable here: %v", err)
+		}
+		g := p.Guard("")
+		mustDeny(t, g, "custom-golem.yaml") // preserve exact-path denial
+
+		tools := newScopedTools(t, repo, g)
+		if res := invokeTool(t, tools["read_file"], `{"path":"ordinary.txt"}`); !res.IsError || res.Content != scopeDeniedMsg {
+			t.Errorf("read_file alias = %+v, want scope denial", res)
+		}
+		if res := invokeTool(t, tools["list"], `{"path":"."}`); strings.Contains(res.Content, "ordinary.txt") {
+			t.Errorf("list exposes hard-link alias: %q", res.Content)
+		}
+		if res := invokeTool(t, tools["glob"], `{"pattern":"**"}`); strings.Contains(res.Content, "ordinary.txt") {
+			t.Errorf("glob exposes hard-link alias: %q", res.Content)
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+marker+`"}`); res.Content != "no matches" {
+			t.Errorf("search alias = %q, want no matches", res.Content)
+		}
+	})
+
+	t.Run("literalBackslashHardLinkAlias", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("backslash is a path separator on Windows")
+		}
+		repo := newPolicyRepo(t)
+		source := filepath.Join(repo, "custom-golem.yaml")
+		const aliasName = `ordinary\alias.txt`
+		writeFile(t, source, "provider: test\n")
+
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		if err := p.ProtectConfigSource(source); err != nil {
+			t.Fatalf("ProtectConfigSource: %v", err)
+		}
+		if err := os.Link(source, filepath.Join(repo, aliasName)); err != nil {
+			t.Skipf("hard links unavailable here: %v", err)
+		}
+		args, err := json.Marshal(map[string]string{"path": aliasName})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res := invokeTool(t, newScopedTools(t, repo, p.Guard(""))["read_file"], string(args)); !res.IsError || res.Content != scopeDeniedMsg {
+			t.Errorf("read_file literal-backslash alias = %+v, want scope denial", res)
+		}
+	})
+
+	t.Run("literalBackslashExactPathSurvivesReplacement", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("backslash is a path separator on Windows")
+		}
+		repo := newPolicyRepo(t)
+		const sourceName = `custom\golem.yaml`
+		source := filepath.Join(repo, sourceName)
+		writeFile(t, source, "provider: old\n")
+
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		if err := p.ProtectConfigSource(source); err != nil {
+			t.Fatalf("ProtectConfigSource: %v", err)
+		}
+		if err := os.Remove(source); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, source, "provider: replacement\n")
+		mustDeny(t, p.Guard(""), sourceName)
 	})
 }
 
@@ -591,6 +707,102 @@ func TestScopePolicySegmentCapRejectsRule(t *testing.T) {
 	}
 }
 
+func TestScopePolicyCandidateSegmentCapFailsClosed(t *testing.T) {
+	p := LoadScopePolicy(filesystem.NewOS(), newPolicyRepo(t))
+	g := p.Guard("")
+	mustAllow(t, g, strings.TrimSuffix(strings.Repeat("ok/", 256), "/"))
+	mustDeny(t, g, strings.TrimSuffix(strings.Repeat("too-deep/", 257), "/"))
+}
+
+func TestScopePolicyCandidateByteCapFailsClosed(t *testing.T) {
+	const maxWindowsUTF8PathBytes = 128 << 10
+	p := LoadScopePolicy(filesystem.NewOS(), newPolicyRepo(t))
+	g := p.Guard("")
+	if err := g(strings.Repeat("a", maxWindowsUTF8PathBytes), false); err != nil {
+		t.Fatalf("candidate at the byte cap was denied: %v", err)
+	}
+	if err := g(strings.Repeat("a", maxWindowsUTF8PathBytes+1), false); err == nil {
+		t.Fatal("candidate over the byte cap was allowed")
+	}
+	if err := g(strings.Repeat("./", maxWindowsUTF8PathBytes/2+1), false); err == nil {
+		t.Fatal("oversized separator run was allowed")
+	}
+}
+
+func TestScopePolicyManifestRuleCapFailsClosed(t *testing.T) {
+	const (
+		atCap       = 512
+		overCap     = atCap + 1
+		wantWarning = "AI policy manifest contains too many sensitive path rules; workspace file access was denied"
+	)
+
+	t.Run("atCap", func(t *testing.T) {
+		repo := newPolicyRepo(t)
+		writeManifest(t, repo, "ai-kit.yaml",
+			"sensitive_paths:\n"+strings.Repeat("  - bounded-sensitive\n", atCap))
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		g := p.Guard("")
+		p.mu.Lock()
+		patternCount := len(p.additive)
+		p.mu.Unlock()
+		if patternCount != 1024 {
+			t.Fatalf("compiled patterns = %d, want boundary count 1024", patternCount)
+		}
+		mustDeny(t, g, "bounded-sensitive/child.txt")
+		mustAllow(t, g, "ordinary.txt")
+		for _, warning := range p.Warnings() {
+			if warning.Message == wantWarning {
+				t.Fatalf("at-cap manifest was rejected: %+v", p.Warnings())
+			}
+		}
+	})
+
+	tests := []struct {
+		name      string
+		rootRules string
+		docRules  string
+		wantPath  string
+	}{
+		{
+			name:      "validEntries",
+			rootRules: strings.Repeat("  - repeated-sensitive\n", overCap),
+			wantPath:  "ai-kit.yaml",
+		},
+		{
+			name:      "invalidEntries",
+			rootRules: strings.Repeat("  - ../escape\n", overCap),
+			wantPath:  "ai-kit.yaml",
+		},
+		{
+			name:      "totalAcrossManifests",
+			rootRules: strings.Repeat("  - root-sensitive\n", atCap/2),
+			docRules:  strings.Repeat("  - docs-sensitive\n", atCap/2+1),
+			wantPath:  "docs/ai/ai-kit.yaml",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newPolicyRepo(t)
+			writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n"+tc.rootRules)
+			if tc.docRules != "" {
+				writeManifest(t, repo, "docs/ai/ai-kit.yaml", "sensitive_paths:\n"+tc.docRules)
+			}
+			p := LoadScopePolicy(filesystem.NewOS(), repo)
+			p.mu.Lock()
+			patternCount := len(p.additive)
+			p.mu.Unlock()
+			if patternCount != 1 {
+				t.Fatalf("overflow compiled patterns = %d, want one bounded deny-all pattern", patternCount)
+			}
+			mustDeny(t, p.Guard(""), "ordinary.txt")
+			warnings := p.Warnings()
+			if len(warnings) != 1 || warnings[0].Path != tc.wantPath || warnings[0].Message != wantWarning {
+				t.Fatalf("warnings = %+v, want one fixed overflow warning for %q", warnings, tc.wantPath)
+			}
+		})
+	}
+}
+
 func TestScopePolicyMatcherProperties(t *testing.T) {
 	cases := []struct {
 		pat, path string
@@ -625,6 +837,7 @@ func TestScopePolicyConcurrentGuardAndMutation(t *testing.T) {
 	p := LoadScopePolicy(filesystem.NewOS(), repo)
 	g := p.Guard("")
 	cfg := filepath.Join(repo, "cfg.yaml")
+	writeFile(t, cfg, "provider: test\n")
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

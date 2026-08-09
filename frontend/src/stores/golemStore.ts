@@ -71,6 +71,18 @@ const MAX_RAW_EVENTS = 500;
  */
 let hydratedEpochFloor = 0;
 let localIdSeq = 0;
+type TerminalPhase = 'done' | 'failed' | 'canceled';
+
+interface UnknownTerminal {
+  conversationId: string;
+  identity?: RunIdentity;
+  phase: TerminalPhase;
+  message?: string;
+  seq?: number;
+  raw?: GolemEvent;
+}
+
+const unknownTerminals = new Map<string, UnknownTerminal>();
 
 const nextLocalId = (prefix: string): string => `${prefix}-${++localIdSeq}`;
 
@@ -101,6 +113,9 @@ const sameConversationIdentity = (
   a.repoEpoch === b.repoEpoch &&
   a.workspaceId === b.workspaceId &&
   a.conversationId === b.conversationId;
+
+const sameRunIdentity = (a: RunIdentity, b: RunIdentity): boolean =>
+  sameConversationIdentity(a, b) && a.runId === b.runId;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -213,6 +228,13 @@ function appendError(
   conversation.transcript.push(entry);
 }
 
+function appendRawEvent(conversation: ConversationView, event: GolemEvent): void {
+  conversation.rawEvents.push(event);
+  if (conversation.rawEvents.length > MAX_RAW_EVENTS) {
+    conversation.rawEvents.splice(0, conversation.rawEvents.length - MAX_RAW_EVENTS);
+  }
+}
+
 function upsertRun(
   conversation: ConversationView,
   runId: string,
@@ -261,7 +283,7 @@ type Projection =
   | { kind: 'delta'; messageId: string; text: string }
   | { kind: 'tool-start'; toolCallId: string; name: string; preview: string }
   | { kind: 'tool-finish'; toolCallId: string; name: string; preview: string; isError: boolean }
-  | { kind: 'terminal'; phase: RunPhase; message?: string };
+  | { kind: 'terminal'; phase: TerminalPhase; message?: string };
 
 /**
  * Classifies one already-validated envelope. `null` means the payload does not
@@ -508,23 +530,31 @@ function reduceEvent(
 ): { dispatch: PendingDispatch | null } | null {
   const event = parseGolemEvent(value);
   if (!event) return null;
+  const projection = classifyEvent(event);
+  if (!projection) return null;
 
   const conversationId = mutation.runToConversation[event.runId] ?? event.threadId;
   const existing = mutation.conversations[conversationId];
-  if (!existing) return null;
+  if (!existing) {
+    if (projection.kind === 'terminal' && !unknownTerminals.has(event.runId)) {
+      unknownTerminals.set(event.runId, {
+        conversationId: event.threadId,
+        phase: projection.phase,
+        message: projection.message,
+        seq: event.seq,
+        raw: event,
+      });
+    }
+    return null;
+  }
 
   const knownRun = existing.runs[event.runId];
   if (knownRun && event.seq <= knownRun.lastSeq) return null;
-  const projection = classifyEvent(event);
-  if (!projection) return null;
 
   const conversation = draftConversation(mutation, conversationId)!;
   mutation.runToConversation[event.runId] = conversationId;
 
-  conversation.rawEvents.push(event);
-  if (conversation.rawEvents.length > MAX_RAW_EVENTS) {
-    conversation.rawEvents.splice(0, conversation.rawEvents.length - MAX_RAW_EVENTS);
-  }
+  appendRawEvent(conversation, event);
   upsertRun(conversation, event.runId, { lastSeq: event.seq });
 
   switch (projection.kind) {
@@ -552,6 +582,9 @@ function reduceEvent(
         const run = conversation.runs[event.runId];
         if (!isTerminalPhase(run.phase) && run.phase !== 'canceling') {
           conversation.runs[event.runId] = { ...run, phase: 'running' };
+          if (conversation.pendingConsentTurn?.identity.runId === event.runId) {
+            conversation.pendingConsentTurn = null;
+          }
           // A background run entering `running` by event is activity too.
           markActive(mutation, conversationId);
         }
@@ -661,6 +694,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         challenge: admission.consentChallenge,
         userEntryId: run.userEntryId,
       };
+      markActive(mutation, matched.conversationId);
       return toState(mutation);
     });
   };
@@ -838,6 +872,27 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           const target = draftConversation(mutation, runConversationId)!;
           if (!target.workspaceLabel) target.workspaceLabel = active.workspaceLabel;
 
+          const terminal = unknownTerminals.get(active.identity.runId);
+          if (
+            terminal?.conversationId === runConversationId &&
+            (!terminal.identity || sameRunIdentity(terminal.identity, active.identity))
+          ) {
+            target.runs[active.identity.runId] = {
+              identity: active.identity,
+              phase: terminal.phase,
+              lastSeq: terminal.seq ?? -1,
+              ...(terminal.message ? { error: terminal.message } : {}),
+            };
+            mutation.runToConversation[active.identity.runId] = runConversationId;
+            if (terminal.raw) appendRawEvent(target, terminal.raw);
+            if (terminal.message) {
+              appendError(target, active.identity.runId, terminal.message, terminal.raw);
+            }
+            if (terminal.phase === 'failed') markFailure(mutation, runConversationId);
+            unknownTerminals.delete(active.identity.runId);
+            continue;
+          }
+
           const known = target.runs[active.identity.runId];
           if (known && isTerminalPhase(known.phase)) continue; // tombstone
           target.runs[active.identity.runId] = {
@@ -852,6 +907,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           // an unchanged one is not, or every status refresh would re-alert.
           if (!known || known.phase !== active.state) markActive(mutation, runConversationId);
         }
+        unknownTerminals.clear();
 
         return {
           ...toState(mutation),
@@ -921,9 +977,27 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       if (!status) return;
 
       const state = get();
-      const conversationId =
-        state.runToConversation[status.identity.runId] ?? status.identity.conversationId;
-      if (!state.conversations[conversationId]) return;
+      const mappedConversationId = state.runToConversation[status.identity.runId];
+      const conversationId = mappedConversationId ?? status.identity.conversationId;
+      const conversation = state.conversations[conversationId];
+      const run = conversation?.runs[status.identity.runId];
+      if (conversation && !sameConversationIdentity(conversation.identity, status.identity)) {
+        return;
+      }
+      if (mappedConversationId && (!run || !sameRunIdentity(run.identity, status.identity))) {
+        return;
+      }
+      if (!conversation) {
+        if (!unknownTerminals.has(status.identity.runId)) {
+          unknownTerminals.set(status.identity.runId, {
+            conversationId: status.identity.conversationId,
+            identity: status.identity,
+            phase: status.state,
+            message: status.message ? boundedMessage(status.message) : undefined,
+          });
+        }
+        return;
+      }
 
       let dispatch: PendingDispatch | null = null;
       set((current) => {
@@ -1042,7 +1116,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       const pending = conversation.pendingConsentTurn;
       if (!pending) return;
       const run = conversation.runs[pending.identity.runId];
-      if (!run || isTerminalPhase(run.phase)) return;
+      if (!run || run.phase !== 'needs-consent') return;
 
       set((state) => {
         const mutation = beginMutation(state);
@@ -1139,7 +1213,13 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       const conversationId = state.runToConversation[runId];
       if (!conversationId) return;
       const run = state.conversations[conversationId]?.runs[runId];
-      if (!run || isTerminalPhase(run.phase) || run.phase === 'canceling') return;
+      if (
+        !run ||
+        isTerminalPhase(run.phase) ||
+        run.phase === 'admitting' ||
+        run.phase === 'canceling'
+      )
+        return;
       const previousPhase = run.phase;
 
       // Declining an already-expired challenge: the backend has dropped it, so
@@ -1193,5 +1273,6 @@ export const ingestGolemEvents = (values: unknown[]): void => {
 export function __resetGolemStore(): void {
   hydratedEpochFloor = 0;
   localIdSeq = 0;
+  unknownTerminals.clear();
   useGolemStore.setState(initialState(), false);
 }

@@ -35,6 +35,7 @@ export function useGolemBridge(): void {
   const bindChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const bindGenerationRef = useRef(0);
   const statusGenerationRef = useRef(0);
+  const statusRequestRef = useRef(0);
 
   useEffect(() => {
     // Consecutive deltas are coalesced into one frame, but any other event —
@@ -126,15 +127,20 @@ export function useGolemBridge(): void {
     if (repoEpoch === null) return;
 
     const load = () => {
+      const request = ++statusRequestRef.current;
       void (async () => {
         try {
           const raw = await GetGolemStatus(
             toStatusRequest({ repoEpoch, workspaceId, conversationId: '' })
           );
-          if (generation !== statusGenerationRef.current) return; // superseded
+          if (generation !== statusGenerationRef.current || request !== statusRequestRef.current) {
+            return; // superseded
+          }
           useGolemStore.getState().hydrateStatus(parseGolemStatus(raw));
         } catch (err) {
-          if (generation !== statusGenerationRef.current) return;
+          if (generation !== statusGenerationRef.current || request !== statusRequestRef.current) {
+            return;
+          }
           useGolemStore.setState({
             bridgePhase: 'error',
             bridgeError: boundedGolemMessage(err),

@@ -171,6 +171,15 @@ func TestSyncDirectoryOnTheRealFilesystem(t *testing.T) {
 	if err := SyncDirectory(NewOS(), filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("SyncDirectory on a missing directory returned nil")
 	}
+	if runtime.GOOS == "windows" {
+		file := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := SyncDirectory(NewOS(), file); !errors.Is(err, ErrPathTypeMismatch) {
+			t.Fatalf("SyncDirectory on a regular file = %v, want ErrPathTypeMismatch", err)
+		}
+	}
 }
 
 func TestEnsureDirPermTightensAPreexistingLooseDirectory(t *testing.T) {

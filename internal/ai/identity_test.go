@@ -191,6 +191,9 @@ func TestBindingsResolve(t *testing.T) {
 			if rw.WorkspaceRel != tc.wantRel {
 				t.Errorf("WorkspaceRel = %q, want %q", rw.WorkspaceRel, tc.wantRel)
 			}
+			if rw.workspaceLexicalRel != "" {
+				t.Errorf("workspaceLexicalRel = %q, want no alternate for a canonical workspace", rw.workspaceLexicalRel)
+			}
 			if rw.WorkspaceID != tc.workspaceID {
 				t.Errorf("WorkspaceID = %q, want %q", rw.WorkspaceID, tc.workspaceID)
 			}
@@ -329,6 +332,12 @@ func TestBindingsResolveSymlinkEscape(t *testing.T) {
 	if want := canonical(t, filepath.Join(repo, "frontend")); rw.ToolRoot != want {
 		t.Errorf("ToolRoot = %q, want canonical inside target %q", rw.ToolRoot, want)
 	}
+	if rw.WorkspaceRel != "frontend" {
+		t.Errorf("WorkspaceRel = %q, want canonical policy prefix %q", rw.WorkspaceRel, "frontend")
+	}
+	if rw.workspaceLexicalRel != "service" {
+		t.Errorf("workspaceLexicalRel = %q, want detected policy prefix %q", rw.workspaceLexicalRel, "service")
+	}
 }
 
 func TestBindingsJSONExposesNoPaths(t *testing.T) {
@@ -338,12 +347,13 @@ func TestBindingsJSONExposesNoPaths(t *testing.T) {
 		"ConversationIdentity": ConversationIdentity{RepoEpoch: 2, WorkspaceID: "w", ConversationID: "c"},
 		"RunIdentity":          RunIdentity{RepoEpoch: 2, WorkspaceID: "w", ConversationID: "c", RunID: "r"},
 		"ResolvedWorkspace": ResolvedWorkspace{
-			RepositoryIdentity: RepositoryIdentity{RepoKey: "k", RepoEpoch: 2},
-			WorkspaceID:        "w",
-			WorkspaceName:      "W",
-			WorkspaceRel:       "w",
-			RepoRoot:           secret,
-			ToolRoot:           secret,
+			RepositoryIdentity:  RepositoryIdentity{RepoKey: "k", RepoEpoch: 2},
+			WorkspaceID:         "w",
+			WorkspaceName:       "W",
+			WorkspaceRel:        "w",
+			workspaceLexicalRel: secret,
+			RepoRoot:            secret,
+			ToolRoot:            secret,
 		},
 	}
 	for name, v := range values {

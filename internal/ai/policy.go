@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -19,10 +20,23 @@ import (
 // non-regular manifests.
 const policyManifestLimit = 256 << 10
 
-// maxRuleSegments caps one compiled rule's segment count so a hostile
-// manifest cannot inflate per-guard-call matching cost; deeper rules are
-// rejected like any other invalid rule.
-const maxRuleSegments = 64
+// Manifest rules are capped across both supported files before compilation;
+// every rule can compile to at most two patterns. The separate pattern cap is
+// defense in depth if compileRule's expansion changes later.
+const (
+	maxManifestRules  = 512
+	maxPolicyPatterns = 1024
+)
+
+// Segment caps bound both sides of one pattern match so hostile manifests and
+// tool paths cannot inflate its memo table or recursion depth.
+const (
+	maxRuleSegments      = 64
+	maxCandidateSegments = 256
+	// Windows extended paths top out below 128 KiB when represented as UTF-8.
+	// Checking raw bytes first bounds the normalization copies on every OS.
+	maxCandidateBytes = 128 << 10
+)
 
 // policyManifestLabels are the only manifest locations consulted and the only
 // values ever placed in PolicyWarning.Path.
@@ -36,6 +50,7 @@ const (
 	warnManifestUnreadable = "AI policy manifest could not be read; its rules were ignored"
 	warnManifestMalformed  = "AI policy manifest could not be parsed; its rules were ignored"
 	warnRuleRejected       = "AI policy manifest contains an invalid sensitive path rule; it was ignored"
+	warnRuleLimitExceeded  = "AI policy manifest contains too many sensitive path rules; workspace file access was denied"
 )
 
 var (
@@ -103,11 +118,12 @@ type ScopePolicy struct {
 	fsys     filesystem.FileSystem
 	repoRoot string
 
-	mu        sync.Mutex
-	detached  bool
-	additive  [][]string
-	warnings  []PolicyWarning
-	protected map[string]struct{} // lowercased slash repo-relative exact denies; never reloaded
+	mu         sync.Mutex
+	detached   bool
+	additive   [][]string
+	warnings   []PolicyWarning
+	protected  map[string]struct{} // lowercased slash repo-relative exact denies; never reloaded
+	identities []fs.FileInfo       // protected config sources; hard-link aliases share identity
 }
 
 // LoadScopePolicy builds the policy for repoRoot and performs the initial
@@ -170,10 +186,12 @@ func (p *ScopePolicy) Watches(absPath string) bool {
 }
 
 // ProtectConfigSource permanently denies workspace access to a config source
-// file inside the repository. Input must be an absolute, NUL-free, lexically
-// canonical path. A source outside repoRoot (including a different Windows
-// volume) is a successful no-op: it is already unreachable from the
-// workspace. Protected paths survive Reload.
+// file. Input must be an absolute, NUL-free, lexically canonical path. A source
+// on a different Windows volume is unreachable because hard links cannot cross
+// volumes; every same-volume source keeps its identity so an in-repo hard-link
+// alias is denied. Protected paths survive Reload. For a contained source,
+// exact path protection is installed before file-identity lookup, so a lookup
+// error cannot reopen the known config name.
 func (p *ScopePolicy) ProtectConfigSource(canonicalSourcePath string) error {
 	if strings.IndexByte(canonicalSourcePath, 0) >= 0 {
 		return errors.New("config source path contains a NUL byte")
@@ -186,59 +204,109 @@ func (p *ScopePolicy) ProtectConfigSource(canonicalSourcePath string) error {
 	}
 	rel, err := filepath.Rel(p.repoRoot, canonicalSourcePath)
 	if err != nil {
-		return nil // different volume: unreachable from the workspace
+		return nil // different volume: hard links cannot cross into the workspace
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return nil // outside the repository: unreachable from the workspace
+	contained := rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	if contained {
+		key := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(rel), `\`, "/"))
+		p.mu.Lock()
+		p.protected[key] = struct{}{}
+		p.mu.Unlock()
 	}
-	key := strings.ToLower(filepath.ToSlash(rel))
+
+	info, err := filesystem.Lstat(p.fsys, canonicalSourcePath)
+	if err != nil {
+		return err
+	}
 	p.mu.Lock()
-	p.protected[key] = struct{}{}
-	p.mu.Unlock()
+	defer p.mu.Unlock()
+	for _, protected := range p.identities {
+		if os.SameFile(protected, info) {
+			return nil
+		}
+	}
+	p.identities = append(p.identities, info)
 	return nil
 }
 
-// Guard returns the go-llm scope guard for a workspace rooted at workspaceRel
-// (slash-relative to the repository root, "" for the repository itself). The
-// closure reads live policy state on every call.
-func (p *ScopePolicy) Guard(workspaceRel string) agenttools.ScopeGuard {
+// Guard returns the go-llm scope guard for a workspace rooted at the canonical
+// workspaceRel (slash-relative to the repository root, "" for the repository
+// itself). Alternate rels retain additive rules written against an in-repo
+// symlink's detected path. The closure reads live policy state on every call.
+func (p *ScopePolicy) Guard(workspaceRel string, alternateRels ...string) agenttools.ScopeGuard {
 	prefix, ok := workspacePrefix(workspaceRel)
 	if !ok {
-		// ponytail: a workspaceRel with ".." is an identity-layer bug; fail
-		// closed for everything rather than guess a repo-relative mapping.
 		return func(string, bool) error { return errPolicyDenied }
 	}
+	prefixes := [][]string{prefix}
+	seen := map[string]struct{}{strings.Join(prefix, "/"): {}}
+	for _, rel := range alternateRels {
+		if rel == "" {
+			continue
+		}
+		prefix, ok := workspacePrefix(rel)
+		if !ok {
+			// ponytail: a workspace rel with ".." is an identity-layer bug; fail
+			// closed for everything rather than guess a repo-relative mapping.
+			return func(string, bool) error { return errPolicyDenied }
+		}
+		key := strings.Join(prefix, "/")
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
 	return func(rel string, _ bool) error {
-		return p.check(prefix, rel)
+		return p.check(prefixes, workspaceRel, rel)
 	}
 }
 
 // check evaluates one candidate. Runs under the policy mutex: matching is
 // cheap and the lock keeps Reload/Detach/ProtectConfigSource race-free.
-func (p *ScopePolicy) check(prefix []string, rel string) error {
+func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.detached {
 		return errPolicyDetached
 	}
-	segs, ok := candidateSegments(prefix, rel)
-	if !ok {
-		return errPolicyDenied // absolute, escaping, or NUL input: fail closed
-	}
-	joined := strings.Join(segs, "/")
-	for prot := range p.protected {
-		if joined == prot || strings.HasPrefix(joined, prot+"/") {
-			return errPolicyDenied
+	candidates := make([][]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		segs, ok := candidateSegments(prefix, rel)
+		if !ok {
+			return errPolicyDenied // oversized, absolute, escaping, or NUL input: fail closed
+		}
+		candidates = append(candidates, segs)
+		joined := strings.Join(segs, "/")
+		for prot := range p.protected {
+			if joined == prot || strings.HasPrefix(joined, prot+"/") {
+				return errPolicyDenied
+			}
 		}
 	}
-	for _, pat := range floorPatterns {
-		if matchPattern(pat, segs) {
-			return errPolicyDenied
+	if len(p.identities) > 0 {
+		// ponytail: phase-one Golem has read-only file tools. Before adding any
+		// mutating or exec tool, go-llm needs a post-open FileInfo guard so a
+		// concurrent path swap cannot race this identity check.
+		candidate := filepath.Join(p.repoRoot, filepath.FromSlash(workspaceRel), filepath.FromSlash(rel))
+		if info, err := filesystem.Lstat(p.fsys, candidate); err == nil {
+			for _, protected := range p.identities {
+				if os.SameFile(protected, info) {
+					return errPolicyDenied
+				}
+			}
 		}
 	}
-	for _, pat := range p.additive {
-		if matchPattern(pat, segs) {
-			return errPolicyDenied
+	for _, segs := range candidates {
+		for _, pat := range floorPatterns {
+			if matchPattern(pat, segs) {
+				return errPolicyDenied
+			}
+		}
+		for _, pat := range p.additive {
+			if matchPattern(pat, segs) {
+				return errPolicyDenied
+			}
 		}
 	}
 	return nil
@@ -266,7 +334,7 @@ func workspacePrefix(workspaceRel string) ([]string, bool) {
 // result is lowercased so neither separator tricks nor case can bypass a
 // denial on any platform. ok is false for NUL, absolute, or escaping input.
 func candidateSegments(prefix []string, rel string) ([]string, bool) {
-	if strings.IndexByte(rel, 0) >= 0 {
+	if len(rel) > maxCandidateBytes || strings.IndexByte(rel, 0) >= 0 {
 		return nil, false
 	}
 	s := strings.ToLower(strings.ReplaceAll(rel, `\`, "/"))
@@ -274,6 +342,9 @@ func candidateSegments(prefix []string, rel string) ([]string, bool) {
 		return nil, false
 	}
 	segs := append([]string(nil), prefix...)
+	if len(segs) > maxCandidateSegments {
+		return nil, false
+	}
 	for _, seg := range strings.Split(s, "/") {
 		if seg == "" || seg == "." {
 			continue
@@ -282,6 +353,9 @@ func candidateSegments(prefix []string, rel string) ([]string, bool) {
 			return nil, false
 		}
 		segs = append(segs, seg)
+		if len(segs) > maxCandidateSegments {
+			return nil, false
+		}
 	}
 	return segs, true
 }
@@ -325,11 +399,13 @@ type policyManifest struct {
 }
 
 // loadManifests reads both supported manifests and unions their valid rules.
-// Every failure mode contributes a fixed-category warning and no rules.
+// Ordinary failures contribute a fixed-category warning and no rules from the
+// affected manifest. A rule-count overflow discards the union and denies all.
 func loadManifests(fsys filesystem.FileSystem, repoRoot string) ([][]string, []PolicyWarning) {
 	var rules [][]string
 	var warnings []PolicyWarning
 	found := false
+	rawRuleCount := 0
 	for _, label := range policyManifestLabels {
 		full := filepath.Join(repoRoot, filepath.FromSlash(label))
 		data, _, err := filesystem.ReadFileBounded(fsys, full, policyManifestLimit)
@@ -349,6 +425,10 @@ func loadManifests(fsys filesystem.FileSystem, repoRoot string) ([][]string, []P
 			warnings = append(warnings, PolicyWarning{Path: label, Message: warnManifestMalformed})
 			continue
 		}
+		if len(doc.SensitivePaths) > maxManifestRules-rawRuleCount {
+			return manifestRuleOverflow(label)
+		}
+		rawRuleCount += len(doc.SensitivePaths)
 		accepted := 0
 		for _, raw := range doc.SensitivePaths {
 			pats, ok := compileRule(raw)
@@ -356,6 +436,9 @@ func loadManifests(fsys filesystem.FileSystem, repoRoot string) ([][]string, []P
 				log.Printf("ai: policy manifest %s: rejected sensitive path rule %q", label, raw)
 				warnings = append(warnings, PolicyWarning{Path: label, Message: warnRuleRejected})
 				continue
+			}
+			if len(pats) > maxPolicyPatterns-len(rules) {
+				return manifestRuleOverflow(label)
 			}
 			rules = append(rules, pats...)
 			accepted++
@@ -368,6 +451,14 @@ func loadManifests(fsys filesystem.FileSystem, repoRoot string) ([][]string, []P
 		warnings = append(warnings, PolicyWarning{Path: policyManifestLabels[0], Message: warnManifestMissing})
 	}
 	return rules, warnings
+}
+
+// manifestRuleOverflow discards every partially loaded additive rule and
+// warning. One cheap deny-all pattern fails closed; one fixed warning keeps
+// UI-visible state bounded independently of hostile manifest contents.
+func manifestRuleOverflow(label string) ([][]string, []PolicyWarning) {
+	log.Printf("ai: policy manifest %s exceeds the sensitive path rule limit", label)
+	return [][]string{{"**"}}, []PolicyWarning{{Path: label, Message: warnRuleLimitExceeded}}
 }
 
 // compileRule validates and compiles one additive rule into its pattern and,

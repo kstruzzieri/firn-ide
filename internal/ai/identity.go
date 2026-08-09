@@ -134,36 +134,41 @@ func (b *Bindings) Resolve(repoEpoch uint64, workspaceID string) (ResolvedWorksp
 	if !ok {
 		return ResolvedWorkspace{}, fmt.Errorf("%w: unknown workspace %q", ErrRequestRejected, workspaceID)
 	}
-	toolRoot, err := toolRootFor(cur.repoRoot, def.RelDir)
+	toolRoot, workspaceRel, err := toolRootFor(cur.repoRoot, def.RelDir)
 	if err != nil {
 		return ResolvedWorkspace{}, err
 	}
+	workspaceLexicalRel := def.RelDir
+	if workspaceLexicalRel == workspaceRel {
+		workspaceLexicalRel = ""
+	}
 	return ResolvedWorkspace{
-		RepositoryIdentity: cur.identity,
-		WorkspaceID:        def.ID,
-		WorkspaceName:      def.Name,
-		WorkspaceRel:       def.RelDir,
-		RepoRoot:           cur.repoRoot,
-		ToolRoot:           toolRoot,
+		RepositoryIdentity:  cur.identity,
+		WorkspaceID:         def.ID,
+		WorkspaceName:       def.Name,
+		WorkspaceRel:        workspaceRel,
+		workspaceLexicalRel: workspaceLexicalRel,
+		RepoRoot:            cur.repoRoot,
+		ToolRoot:            toolRoot,
 	}, nil
 }
 
-// toolRootFor canonicalizes repoRoot+relDir at request time and rejects any
-// result that escapes the canonical repo root (e.g. a workspace directory
-// swapped for an outward symlink after detection).
-func toolRootFor(repoRoot, relDir string) (string, error) {
+// toolRootFor canonicalizes repoRoot+relDir at request time, rejects any result
+// that escapes the canonical repo root, and returns the canonical repo-relative
+// slash prefix the scope policy must evaluate.
+func toolRootFor(repoRoot, relDir string) (string, string, error) {
 	if relDir == "" {
-		return repoRoot, nil
+		return repoRoot, "", nil
 	}
 	toolRoot, err := filepath.EvalSymlinks(filepath.Join(repoRoot, filepath.FromSlash(relDir)))
 	if err != nil {
-		return "", fmt.Errorf("%w: canonicalizing workspace %q: %w", ErrRequestRejected, relDir, err)
+		return "", "", fmt.Errorf("%w: canonicalizing workspace %q: %w", ErrRequestRejected, relDir, err)
 	}
 	rel, err := filepath.Rel(repoRoot, toolRoot)
 	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%w: workspace %q resolves outside the repository", ErrRequestRejected, relDir)
+		return "", "", fmt.Errorf("%w: workspace %q resolves outside the repository", ErrRequestRejected, relDir)
 	}
-	return toolRoot, nil
+	return toolRoot, filepath.ToSlash(rel), nil
 }
 
 // ConversationID derives the stable conversation ID for a workspace within a
