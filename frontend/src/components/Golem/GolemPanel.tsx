@@ -86,10 +86,12 @@ const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: Transcript
     <div className={`${styles.entry} ${styles[entry.kind]}`}>
       <div className={styles.bubble}>
         {entry.kind === 'tool' && (
-          <span className={styles.toolName}>
-            {entry.toolName || 'tool'}
-            {entry.activity ? ` · ${entry.activity}` : ''}
-          </span>
+          <>
+            {/* Two-tone like the mockups' `.k`: purple verb, neutral detail,
+                separated by the chip's own gap rather than a middot. */}
+            <span className={styles.toolName}>{entry.toolName || 'tool'}</span>
+            {entry.activity && <span className={styles.toolActivity}>{entry.activity}</span>}
+          </>
         )}
         {/* Rendered as text, never as markup: provider output is untrusted. */}
         <span className={styles.entryText}>{entry.text}</span>
@@ -238,12 +240,25 @@ export function GolemPanel() {
   };
 
   return (
-    <div className={styles.panel}>
+    // data-accent pins the whole panel to the glacier accent the way
+    // Terminal.tsx does, so Send, focus rings, and the Golem chrome share one
+    // accent regardless of the workspace.
+    <div className={styles.panel} data-accent="project">
       <header className={styles.header}>
+        {/* Two deliberate rows at dock width (layout.html option A shows a
+            collapsed header): identity + live status, then the destination. */}
         <div className={styles.identityRow}>
           <span className={styles.wordmark}>
             <span aria-hidden="true">◆</span> GOLEM
           </span>
+          {statusLabel && (
+            <span className={styles.statusChip} data-status={statusLabel}>
+              <span className={styles.statusDot} aria-hidden="true" />
+              {statusLabel}
+            </span>
+          )}
+        </div>
+        <div className={styles.identityRow}>
           <span className={styles.workspace}>
             {conversation ? workspaceName(conversation) : 'No workspace'}
           </span>
@@ -259,18 +274,12 @@ export function GolemPanel() {
               <span className={styles.model}>{destination.model}</span>
             </span>
           )}
-          {statusLabel && (
-            <span className={styles.statusChip} data-status={statusLabel}>
-              <span className={styles.statusDot} aria-hidden="true" />
-              {statusLabel}
-            </span>
-          )}
         </div>
         {/* The mockup header drops the endpoint; it stays because it is the only
             place the exact machine a prompt would reach is spelled out. */}
         <div className={styles.metaRow}>
           {destination && <span className={styles.endpoint}>{destination.endpoint}</span>}
-          <span className={styles.context}>Context: prompt only</span>
+          <span>Context: prompt only</span>
         </div>
       </header>
 

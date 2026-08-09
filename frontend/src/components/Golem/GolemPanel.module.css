@@ -7,25 +7,28 @@
  * the chip header, the right-aligned prompt chip, tool calls as chips, the
  * timeline rail, and the composer strip.
  *
- * Four hues are held locally rather than added to tokens.css, which carries its
- * own reviewed contrast contract:
- *   --golem-accent  the mockups' --ac. Pinned to the glacier blue instead of
- *                   var(--accent) because var(--accent) follows the workspace:
- *                   --accent-general (#6b7280, 2.8:1) and --accent-docker
- *                   (#0573d7, 2.5:1) would drop accent-coloured chip TEXT under
- *                   AA in those workspaces. Terminal.module.css pins the same
- *                   way, via data-accent.
- *   --golem-teal    the mockups' --go. Same hex as --accent-go, held here so
- *                   repointing a workspace accent can never restyle the
- *                   workspace chip.
+ * The panel root carries data-accent="project" (the Terminal.tsx idiom), which
+ * re-points --accent/--accent-dim/--accent-glow to the glacier blue for every
+ * descendant — Send, focus rings, and the Golem chrome wear ONE accent instead
+ * of following the workspace. Pinning matters for contrast: as chip text on
+ * the 12% tint over --surface-elevated, --accent-general lands at 2.98:1 and
+ * --accent-docker at 3.06:1, both under the 4.5:1 text floor.
+ *
+ * Three hues are held locally rather than added to tokens.css, which carries
+ * its own reviewed contrast contract:
+ *   --golem-teal    the mockups' --go. A literal duplicating --accent-go
+ *                   (tokens.css), deliberately invisible to that token's
+ *                   dE-10 drift guard: repointing a workspace accent must
+ *                   never restyle the workspace chip. If --accent-go moves,
+ *                   this stays the mockups' color.
  *   --golem-purple  the mockups' --purple; the generic hue ramp already carries
  *                   that exact value with no workspace meaning attached.
  *   --golem-red     the mockups' cancel uses --err (#ef4444), which lands at
- *                   3.91:1 on its own 12% tint — under AA. Lifted to the ramp's
- *                   lighter red: same idiom, 4.99:1.
+ *                   3.90:1 on its own 12% tint — under AA. Lifted to the ramp's
+ *                   lighter red: same idiom, 5.00:1 (hover tint 18%, 4.53:1).
  */
 .panel {
-  --golem-accent: var(--accent-project);
+  --golem-accent: var(--accent);
   --golem-teal: #12b5cd;
   --golem-purple: var(--palette-purple);
   --golem-red: var(--palette-red);
@@ -109,13 +112,20 @@
   color: var(--status-warning);
 }
 
-/* `.chip.model` */
+/* `.chip.model` — truncation lives on the provider/model children:
+   text-overflow is inert on a flex container itself. */
 .modelChip {
   display: inline-flex;
   gap: 4px;
   min-width: 0;
+  max-width: 100%;
   background-color: var(--surface-hover);
   color: var(--text-secondary);
+}
+
+.provider,
+.model {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -284,8 +294,10 @@
   background-color: var(--surface-active);
 }
 
-/* The newest node while a run is live: the mockups' accent node with a glow. */
-.transcript[data-live='true'] .entry:last-child::after {
+/* The newest node while a run is live: the mockups' accent node with a glow.
+   :not(.error) — a refused cancel appends an error row while the run stays
+   live, and that row's red node must win over the live accent. */
+.transcript[data-live='true'] .entry:last-child:not(.error)::after {
   border-color: color-mix(in srgb, var(--golem-accent) 25%, transparent);
   background-color: var(--golem-accent);
   box-shadow: 0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent);
@@ -348,6 +360,11 @@
 
 .toolName {
   color: var(--golem-purple);
+  font-family: var(--font-mono);
+}
+
+.toolActivity {
+  color: var(--text-secondary);
   font-family: var(--font-mono);
 }
 
@@ -530,8 +547,10 @@
   font-weight: 600;
 }
 
+/* 18%, not the mockups' visual 20%: #f87171 holds 4.53:1 at 18% and drops to
+   4.37:1 at 20%. */
 .cancelButton:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--golem-red) 20%, transparent);
+  background-color: color-mix(in srgb, var(--golem-red) 18%, transparent);
 }
 
 .primaryButton:disabled,
