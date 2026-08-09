@@ -98,18 +98,35 @@
   background-color: var(--accent-dim);
 }
 
+/*
+ * Status rows are flat metadata, not content cards: no box, no border bar.
+ * Severity lives in the leading dot (the repo's color-as-marker convention,
+ * 3:1 floor) while the text itself stays slate at AA contrast.
+ */
 .notice,
 .warning {
+  position: relative;
   margin: 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background-color: var(--surface-elevated);
+  padding: 2px 0 2px 14px;
   color: var(--text-secondary);
   font-size: 11px;
+  line-height: 1.5;
 }
 
-.warning {
-  border-left: 2px solid var(--status-warning);
+.notice::before,
+.warning::before {
+  content: '';
+  position: absolute;
+  top: 8px; /* optically centered on the first line */
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+}
+
+.warning::before {
+  background-color: var(--status-warning);
 }
 
 .transcript {
@@ -121,22 +138,39 @@
   overflow-y: auto;
 }
 
+/*
+ * Speaker identity comes from surface, not from edge bars: the user's own
+ * messages sit on a quiet elevated chip, replies and tool activity are flat
+ * text. Errors reuse the status-dot marker rather than full-red text.
+ */
 .entry {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 4px 0;
+}
+
+.entry.user {
   padding: 6px 8px;
   border-radius: 6px;
   background-color: var(--surface-elevated);
 }
 
-.entry.user {
-  border-left: 2px solid var(--accent);
+.entry.error {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-secondary);
 }
 
-.entry.error {
-  border-left: 2px solid var(--status-error);
-  color: var(--status-error);
+.entry.error::before {
+  content: '';
+  position: absolute;
+  top: 10px; /* optically centered on the first line */
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--status-error);
 }
 
 .entry.tool {
