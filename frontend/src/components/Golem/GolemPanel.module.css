@@ -244,6 +244,12 @@
   background-color: var(--status-warning);
 }
 
+/*
+ * No timeline rail: the card-rail-with-dots idiom was cut by design revision
+ * (2026-08-09) as generic AI-frontend furniture. Structure comes from the
+ * message idioms themselves — prompt chips right, replies flat, tool chips
+ * small — and liveness from the streaming caret below plus the header chip.
+ */
 .transcript {
   position: relative;
   display: flex;
@@ -251,19 +257,9 @@
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  /* The rail's gutter. Wide enough that a node sits clear of the text and
-     still inside the padding box, which is where this scroller clips. */
-  padding-left: 18px;
   overflow-y: auto;
 }
 
-/*
- * Concept A's mission-timeline rail, drawn entirely from the rows that are
- * already there: `::before` is this row's segment of the line, `::after` its
- * node. Segments overlap the 8px row gap by 4px each, so the line is
- * continuous, scrolls with the transcript, and costs no element and no
- * component — a delta still re-renders exactly one memoized row.
- */
 .entry {
   position: relative;
   display: flex;
@@ -271,48 +267,34 @@
   padding: 2px 0;
 }
 
-.entry::before {
+/* The mockups' block caret: while the run is live, the newest reply carries a
+   pulsing terminal-style cursor at the end of its text. */
+.transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
   content: '';
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  left: -14px;
-  width: 2px;
-  border-radius: 1px;
-  background-color: var(--surface-border);
-}
-
-.entry::after {
-  content: '';
-  position: absolute;
-  top: 6px; /* optically centered on the first line */
-  left: -17px;
-  width: 8px;
-  height: 8px;
-  border: 2px solid var(--surface-border);
-  border-radius: 50%;
-  background-color: var(--surface-active);
-}
-
-/* The newest node while a run is live: the mockups' accent node with a glow.
-   :not(.error) — a refused cancel appends an error row while the run stays
-   live, and that row's red node must win over the live accent. */
-.transcript[data-live='true'] .entry:last-child:not(.error)::after {
-  border-color: color-mix(in srgb, var(--golem-accent) 25%, transparent);
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  margin-left: 2px;
+  vertical-align: middle;
   background-color: var(--golem-accent);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent);
+  animation: golemPulse 1s infinite;
 }
 
-/*
- * Errors keep the repo's color-as-marker convention, but the marker is now the
- * row's own timeline node rather than a second dot beside it.
- */
+/* Errors keep the repo's color-as-marker convention: a leading red dot, same
+   geometry as the notice/warning dots above. */
 .entry.error {
+  padding-left: 14px;
   color: var(--text-secondary);
 }
 
-.entry.error::after {
-  border-color: color-mix(in srgb, var(--status-error) 35%, transparent);
+.entry.error::before {
+  content: '';
+  position: absolute;
+  top: 9px; /* optically centered on the first line */
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
   background-color: var(--status-error);
 }
 
@@ -578,7 +560,8 @@
     transition: none;
   }
 
-  .statusDot {
+  .statusDot,
+  .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
     animation: none;
   }
 }
