@@ -215,7 +215,18 @@ func (p *ScopePolicy) ProtectConfigSource(canonicalSourcePath string) error {
 	}
 
 	info, err := filesystem.Lstat(p.fsys, canonicalSourcePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A missing file has no inode, so no hard-link alias can exist, and the
+		// exact-path deny above already covers the name. Erroring here would
+		// take the whole workspace unavailable (Status maps this to InitError)
+		// on every re-protect after the config file is deleted, even though the
+		// cached target is still valid.
+		return nil
+	}
 	if err != nil {
+		// Any other lookup failure (e.g. permissions) means an existing file
+		// whose identity we cannot record: a hard-link alias could slip the
+		// deny, so fail closed.
 		return err
 	}
 	p.mu.Lock()

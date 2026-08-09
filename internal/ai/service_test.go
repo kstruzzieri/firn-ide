@@ -3405,6 +3405,66 @@ func TestServiceRepoLocalConfigSourceProtected(t *testing.T) {
 	}
 }
 
+// TestServiceConfigSourceDeletionKeepsWorkspaceAvailable: once the target is
+// cached, deleting the repo-local config file must not take the workspace
+// unavailable. A missing file has no inode, so no hard-link alias can exist,
+// and the exact-path deny persists — proven here by recreating the file with a
+// marker and driving the real tools against the same incarnation's guard.
+func TestServiceConfigSourceDeletionKeepsWorkspaceAvailable(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	endpoint, _ := startLocalCountingServer(t)
+	repo := newRepo(t)
+	const cfgName = "golem-keys.conf"
+	cfgPath := filepath.Join(repo, cfgName)
+	writeFile(t, cfgPath, agentConfigJSON(endpoint))
+	t.Setenv("GO_LLM_CONFIG", cfgPath)
+
+	rec := &emitRecorder{}
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	f := &fakeFactory{}
+	svc.newRunner = f.factory()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	repoID, _, err := svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	st, err := svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
+	if err != nil || !st.Available {
+		t.Fatalf("Status = %+v, %v", st, err)
+	}
+
+	if err := os.Remove(cfgPath); err != nil {
+		t.Fatalf("removing the config source: %v", err)
+	}
+
+	st, err = svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
+	if err != nil {
+		t.Fatalf("Status after deletion: %v", err)
+	}
+	if !st.Available || st.InitError != "" {
+		t.Fatalf("deleting the cached config source took the workspace down: %+v", st)
+	}
+	id := runIdentityFor(repoID, "project")
+	adm, err := svc.StartTurn(context.Background(), turnFor(id))
+	if err != nil || adm.State != "accepted" {
+		t.Fatalf("StartTurn after deletion = %+v, %v", adm, err)
+	}
+	waitUntil(t, "drain", func() bool { return activeRunCount(svc) == 0 })
+
+	// An attacker recreating the file does not reopen it: the exact-path deny
+	// was installed before the file vanished and is permanent for the binding.
+	writeFile(t, cfgPath, agentConfigJSON(endpoint))
+	call := f.call(t, 0)
+	assertBuiltinToolsProtectConfig(t, "post-deletion", call.root, call.guard, cfgName)
+}
+
 // TestServiceRepoLocalConfigSourceProtectedOnFirstStartTurn covers the
 // StartTurn-first flow: with no prior Status call, the FIRST-load branch is the
 // only site that can protect the repo-local config source before the guard and

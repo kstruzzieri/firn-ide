@@ -417,15 +417,24 @@ func TestScopePolicyProtectConfigSource(t *testing.T) {
 		mustDeny(t, g, "custom-golem.yaml")
 	})
 
-	t.Run("identityLookupFailureKeepsExactDeny", func(t *testing.T) {
+	t.Run("missingSourceToleratedButStillDenied", func(t *testing.T) {
+		// A missing file has no inode, so no hard-link alias can exist and the
+		// exact-path deny fully covers the name. Erroring here would take the
+		// workspace unavailable on every re-protect after the config file is
+		// deleted (the cached target outlives the file), so the lookup miss is
+		// tolerated — but the name must stay denied, including after the file
+		// is recreated.
 		repo := newPolicyRepo(t)
 		p := LoadScopePolicy(filesystem.NewOS(), repo)
 		g := p.Guard("")
 		source := filepath.Join(repo, "missing-golem.yaml")
 
-		if err := p.ProtectConfigSource(source); err == nil {
-			t.Fatal("ProtectConfigSource missing source = nil, want identity lookup error")
+		if err := p.ProtectConfigSource(source); err != nil {
+			t.Fatalf("ProtectConfigSource missing source = %v, want tolerated", err)
 		}
+		mustDeny(t, g, "missing-golem.yaml")
+
+		writeFile(t, source, "recreated\n")
 		mustDeny(t, g, "missing-golem.yaml")
 	})
 
