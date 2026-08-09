@@ -34,6 +34,20 @@ const isLivePhase = (phase: RunPhase): boolean =>
 const isCancelablePhase = (phase: RunPhase): boolean =>
   phase === 'needs-consent' || phase === 'running';
 
+/**
+ * The header status chip (the mockups' `.chip.run`).
+ *
+ * Keyed by exactly the live phases, so a present label is also the panel's
+ * "something is happening" flag — the transcript's live rail node reads it
+ * rather than testing `isLivePhase` a second time.
+ */
+const STATUS_LABEL: Partial<Record<RunPhase, string>> = {
+  admitting: 'RUNNING',
+  running: 'RUNNING',
+  canceling: 'CANCELING',
+  'needs-consent': 'APPROVAL',
+};
+
 const workspaceName = (conversation: ConversationView): string =>
   conversation.workspaceLabel || 'Workspace';
 
@@ -66,15 +80,20 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
  */
 const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   return (
+    // The row spans the column so its timeline node always lands on the rail;
+    // the bubble inside is what shifts right for a prompt or shrinks to a chip
+    // for a tool call.
     <div className={`${styles.entry} ${styles[entry.kind]}`}>
-      {entry.kind === 'tool' && (
-        <span className={styles.toolName}>
-          {entry.toolName || 'tool'}
-          {entry.activity ? ` · ${entry.activity}` : ''}
-        </span>
-      )}
-      {/* Rendered as text, never as markup: provider output is untrusted. */}
-      <span className={styles.entryText}>{entry.text}</span>
+      <div className={styles.bubble}>
+        {entry.kind === 'tool' && (
+          <span className={styles.toolName}>
+            {entry.toolName || 'tool'}
+            {entry.activity ? ` · ${entry.activity}` : ''}
+          </span>
+        )}
+        {/* Rendered as text, never as markup: provider output is untrusted. */}
+        <span className={styles.entryText}>{entry.text}</span>
+      </div>
     </div>
   );
 });
@@ -152,6 +171,7 @@ export function GolemPanel() {
   const draft = conversation?.draft ?? '';
   const destination = conversation?.destination ?? null;
   const canSend = notice === null && conversationId !== null && draft.trim() !== '';
+  const statusLabel = activeRun ? STATUS_LABEL[activeRun.phase] : undefined;
 
   /**
    * The single polite announcement, derived rather than accumulated.
@@ -221,6 +241,9 @@ export function GolemPanel() {
     <div className={styles.panel}>
       <header className={styles.header}>
         <div className={styles.identityRow}>
+          <span className={styles.wordmark}>
+            <span aria-hidden="true">◆</span> GOLEM
+          </span>
           <span className={styles.workspace}>
             {conversation ? workspaceName(conversation) : 'No workspace'}
           </span>
@@ -229,15 +252,26 @@ export function GolemPanel() {
               {destination.classification === 'local' ? 'Local' : 'Remote'}
             </span>
           )}
+          {destination && (
+            <span className={styles.modelChip}>
+              <span className={styles.provider}>{destination.provider}</span>
+              <span aria-hidden="true">·</span>
+              <span className={styles.model}>{destination.model}</span>
+            </span>
+          )}
+          {statusLabel && (
+            <span className={styles.statusChip} data-status={statusLabel}>
+              <span className={styles.statusDot} aria-hidden="true" />
+              {statusLabel}
+            </span>
+          )}
         </div>
-        {destination && (
-          <div className={styles.destinationRow}>
-            <span className={styles.provider}>{destination.provider}</span>
-            <span className={styles.model}>{destination.model}</span>
-            <span className={styles.endpoint}>{destination.endpoint}</span>
-          </div>
-        )}
-        <div className={styles.context}>Context: prompt only</div>
+        {/* The mockup header drops the endpoint; it stays because it is the only
+            place the exact machine a prompt would reach is spelled out. */}
+        <div className={styles.metaRow}>
+          {destination && <span className={styles.endpoint}>{destination.endpoint}</span>}
+          <span className={styles.context}>Context: prompt only</span>
+        </div>
       </header>
 
       {/* A switcher for one conversation is just a label repeated. */}
@@ -271,6 +305,10 @@ export function GolemPanel() {
       <div
         ref={transcriptRef}
         className={styles.transcript}
+        // Lights the newest timeline node while a run is live. An attribute
+        // rather than a class on the row: the rail has to stay pure CSS so a
+        // token delta still re-renders one memoized row and nothing else.
+        data-live={statusLabel ? 'true' : undefined}
         tabIndex={0}
         role="region"
         aria-label="Golem transcript"
@@ -416,7 +454,7 @@ export function GolemPanel() {
           {activeRun && isCancelablePhase(activeRun.phase) && (
             <button
               type="button"
-              className={styles.secondaryButton}
+              className={`${styles.secondaryButton} ${styles.cancelButton}`}
               aria-label="Cancel the current Golem run"
               onClick={() => void useGolemStore.getState().cancelRun(activeRun.identity.runId)}
             >

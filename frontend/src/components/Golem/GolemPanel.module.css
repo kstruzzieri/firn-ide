@@ -1,4 +1,35 @@
+/*
+ * The approved Golem mockups (.superpowers/brainstorm/37347-1785974314):
+ * `chat-paradigm.html` concept B — Plan Spine — as the primary, with concept
+ * A's Mission Timeline rail stolen into the transcript, docked right per
+ * `layout.html` option A. The spine itself is Phase 2+ (there are no plans and
+ * no file edits yet); what Phase 1 adopts is the visual language around it —
+ * the chip header, the right-aligned prompt chip, tool calls as chips, the
+ * timeline rail, and the composer strip.
+ *
+ * Four hues are held locally rather than added to tokens.css, which carries its
+ * own reviewed contrast contract:
+ *   --golem-accent  the mockups' --ac. Pinned to the glacier blue instead of
+ *                   var(--accent) because var(--accent) follows the workspace:
+ *                   --accent-general (#6b7280, 2.8:1) and --accent-docker
+ *                   (#0573d7, 2.5:1) would drop accent-coloured chip TEXT under
+ *                   AA in those workspaces. Terminal.module.css pins the same
+ *                   way, via data-accent.
+ *   --golem-teal    the mockups' --go. Same hex as --accent-go, held here so
+ *                   repointing a workspace accent can never restyle the
+ *                   workspace chip.
+ *   --golem-purple  the mockups' --purple; the generic hue ramp already carries
+ *                   that exact value with no workspace meaning attached.
+ *   --golem-red     the mockups' cancel uses --err (#ef4444), which lands at
+ *                   3.91:1 on its own 12% tint — under AA. Lifted to the ramp's
+ *                   lighter red: same idiom, 4.99:1.
+ */
 .panel {
+  --golem-accent: var(--accent-project);
+  --golem-teal: #12b5cd;
+  --golem-purple: var(--palette-purple);
+  --golem-red: var(--palette-red);
+
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -11,37 +42,64 @@
   font-size: 12px;
 }
 
+/* `.phead`: a full-bleed elevated strip, so the chip row reads as chrome
+   rather than as the first row of the conversation. */
 .header {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-bottom: 8px;
+  margin: -8px -8px 0;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--surface-border-subtle);
+  background-color: var(--surface-elevated);
 }
 
 .identityRow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
+.wordmark {
+  flex: none;
+  color: var(--golem-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.workspace,
+.badge,
+.modelChip,
+.statusChip {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* `.chip.ws` */
 .workspace {
   min-width: 0;
+  max-width: 100%;
+  border-color: color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  color: var(--golem-teal);
   overflow: hidden;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* Not in the mockups, and not droppable: which machine the prompt would reach
+   is the panel's whole safety story. Given chip geometry so it sits in the row. */
 .badge {
-  flex: none;
-  padding: 1px 6px;
-  border: 1px solid var(--surface-border);
-  border-radius: 999px;
+  border-color: var(--surface-border);
   color: var(--text-secondary);
-  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -51,23 +109,70 @@
   color: var(--status-warning);
 }
 
-.destinationRow {
+/* `.chip.model` */
+.modelChip {
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* `.chip.run` — only ever rendered for a live phase. */
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  border-color: color-mix(in srgb, var(--golem-accent) 35%, transparent);
+  background-color: color-mix(in srgb, var(--golem-accent) 12%, transparent);
+  color: var(--golem-accent);
+  letter-spacing: 0.06em;
+}
+
+.statusChip[data-status='APPROVAL'] {
+  border-color: color-mix(in srgb, var(--status-warning) 35%, transparent);
+  background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  color: var(--status-warning);
+}
+
+.statusChip[data-status='CANCELING'] {
+  border-color: var(--surface-border);
+  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+/* currentColor so the dot follows whichever phase tint the chip is wearing. */
+.statusDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentcolor;
+  animation: golemPulse 1.2s infinite;
+}
+
+@keyframes golemPulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.metaRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  color: var(--text-secondary);
+  gap: 8px;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .endpoint {
-  color: var(--text-muted);
+  min-width: 0;
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
-}
-
-.context {
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 .conversations {
@@ -130,57 +235,120 @@
 }
 
 .transcript {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-height: 0;
+  /* The rail's gutter. Wide enough that a node sits clear of the text and
+     still inside the padding box, which is where this scroller clips. */
+  padding-left: 18px;
   overflow-y: auto;
 }
 
 /*
- * Speaker identity comes from surface, not from edge bars: the user's own
- * messages sit on a quiet elevated chip, replies and tool activity are flat
- * text. Errors reuse the status-dot marker rather than full-red text.
+ * Concept A's mission-timeline rail, drawn entirely from the rows that are
+ * already there: `::before` is this row's segment of the line, `::after` its
+ * node. Segments overlap the 8px row gap by 4px each, so the line is
+ * continuous, scrolls with the transcript, and costs no element and no
+ * component — a delta still re-renders exactly one memoized row.
  */
 .entry {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
-.entry.user {
-  padding: 6px 8px;
-  border-radius: 6px;
-  background-color: var(--surface-elevated);
+.entry::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: -14px;
+  width: 2px;
+  border-radius: 1px;
+  background-color: var(--surface-border);
 }
 
+.entry::after {
+  content: '';
+  position: absolute;
+  top: 6px; /* optically centered on the first line */
+  left: -17px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface-border);
+  border-radius: 50%;
+  background-color: var(--surface-active);
+}
+
+/* The newest node while a run is live: the mockups' accent node with a glow. */
+.transcript[data-live='true'] .entry:last-child::after {
+  border-color: color-mix(in srgb, var(--golem-accent) 25%, transparent);
+  background-color: var(--golem-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent);
+}
+
+/*
+ * Errors keep the repo's color-as-marker convention, but the marker is now the
+ * row's own timeline node rather than a second dot beside it.
+ */
 .entry.error {
-  position: relative;
-  padding-left: 14px;
   color: var(--text-secondary);
 }
 
-.entry.error::before {
-  content: '';
-  position: absolute;
-  top: 10px; /* optically centered on the first line */
-  left: 2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+.entry.error::after {
+  border-color: color-mix(in srgb, var(--status-error) 35%, transparent);
   background-color: var(--status-error);
 }
 
+.bubble {
+  display: block;
+  min-width: 0;
+}
+
+/* `.usr`: the prompt as a right-aligned chip on an elevated surface. */
+.entry.user {
+  align-items: flex-end;
+}
+
+.entry.user .bubble {
+  max-width: 85%;
+  padding: 7px 10px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+  background-color: var(--surface-hover);
+}
+
+/* `.asst`: flat text, no container at all. */
+.entry.assistant .bubble {
+  line-height: 1.5;
+}
+
+/* `.tool`: a compact bordered chip, the tool's name in the mockups' purple. */
 .entry.tool {
+  align-items: flex-start;
   color: var(--text-secondary);
 }
 
-.toolName {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
+.entry.tool .bubble {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: baseline;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  background-color: var(--surface-frame);
   font-size: 10px;
+}
+
+.toolName {
+  color: var(--golem-purple);
+  font-family: var(--font-mono);
 }
 
 .entryText {
@@ -289,18 +457,25 @@
   font-size: 10px;
 }
 
+/* `.composer`: an elevated strip under the transcript, the field sitting on the
+   panel surface inside it. Ours stays a column — the field is a 3-row textarea
+   and the actions are three buttons, not the mockup's single line plus Cancel. */
 .composerRow {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin: 0 -8px -8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--surface-border-subtle);
+  background-color: var(--surface-elevated);
 }
 
 .composer {
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 10px;
   border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  background-color: var(--surface-base);
+  border-radius: 7px;
+  background-color: var(--surface-panel);
   color: var(--text-primary);
   font: inherit;
   resize: vertical;
@@ -346,6 +521,19 @@
   background-color: var(--surface-hover);
 }
 
+/* `.composer .cancel`: the one red affordance in the panel, and only while a
+   run is live. Ordered after the shared rules so it wins on equal specificity. */
+.cancelButton {
+  border-color: color-mix(in srgb, var(--golem-red) 40%, transparent);
+  background-color: color-mix(in srgb, var(--golem-red) 12%, transparent);
+  color: var(--golem-red);
+  font-weight: 600;
+}
+
+.cancelButton:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--golem-red) 20%, transparent);
+}
+
 .primaryButton:disabled,
 .secondaryButton:disabled {
   color: var(--text-disabled);
@@ -369,5 +557,9 @@
   .primaryButton,
   .secondaryButton {
     transition: none;
+  }
+
+  .statusDot {
+    animation: none;
   }
 }

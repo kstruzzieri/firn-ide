@@ -230,6 +230,51 @@ describe('GolemPanel destination', () => {
   });
 });
 
+// ── header status chip ────────────────────────────────────────────────────────
+
+describe('GolemPanel status chip', () => {
+  it('names the live phase in the header and shows nothing while idle', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    expect(screen.queryByText('RUNNING')).not.toBeInTheDocument();
+
+    type('long one');
+    pressEnter();
+    await flush();
+
+    expect(screen.getByText('RUNNING')).toBeInTheDocument();
+
+    // A cancel the backend has not answered yet is its own phase, and the chip
+    // is the only surface that says so.
+    mockCancelGolemRun.mockReturnValueOnce(new Promise(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: /cancel the current golem run/i }));
+
+    expect(screen.getByText('CANCELING')).toBeInTheDocument();
+    expect(screen.queryByText('RUNNING')).not.toBeInTheDocument();
+
+    act(() => {
+      store().ingestRunStatus({ identity: runIdentity(RUN_A), state: 'canceled' });
+    });
+
+    expect(screen.queryByText('CANCELING')).not.toBeInTheDocument();
+  });
+
+  it('flags a turn the consent shelf is holding', async () => {
+    hydrate({ destination: remoteDestination });
+    selectFocused();
+    mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
+    render(<GolemPanel />);
+
+    type('send this remotely');
+    pressEnter();
+    await flush();
+
+    expect(screen.getByText('APPROVAL')).toBeInTheDocument();
+  });
+});
+
 // ── blocked states ────────────────────────────────────────────────────────────
 
 describe('GolemPanel blocked states', () => {
