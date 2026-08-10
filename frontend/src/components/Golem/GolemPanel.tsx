@@ -456,16 +456,21 @@ export function GolemPanel() {
             collapsed header): identity + live status, then the destination. */}
         <div className={styles.identityRow}>
           <span className={styles.wordmark}>
-            {/* Decorative: "GOLEM" beside it is the accessible name. */}
-            <img className={styles.wordmarkIcon} src={golemIcon} alt="" aria-hidden="true" />
+            {/* The logo doubles as the live indicator: it breathes while a run
+                is active, replacing a separate status chip. Decorative — "GOLEM"
+                is the accessible name; the live state rides the sr-only span. */}
+            <img
+              className={styles.wordmarkIcon}
+              src={golemIcon}
+              alt=""
+              aria-hidden="true"
+              data-live={statusLabel ? 'true' : undefined}
+            />
             GOLEM
+            {/* Not a live region (the single announcer is below): plain sr-only
+                text so the phase stays readable without the visible chip. */}
+            {statusLabel && <span className={styles.srOnly}>{statusLabel}</span>}
           </span>
-          {statusLabel && (
-            <span className={styles.statusChip} data-status={statusLabel}>
-              <span className={styles.statusDot} aria-hidden="true" />
-              {statusLabel}
-            </span>
-          )}
         </div>
         <div className={styles.identityRow}>
           <span className={styles.workspace}>

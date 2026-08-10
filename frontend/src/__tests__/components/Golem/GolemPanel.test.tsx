@@ -230,35 +230,43 @@ describe('GolemPanel destination', () => {
   });
 });
 
-// ── header status chip ────────────────────────────────────────────────────────
+// ── header live indicator (the breathing logo + sr-only phase) ────────────────
 
-describe('GolemPanel status chip', () => {
-  it('names the live phase in the header and shows nothing while idle', async () => {
+describe('GolemPanel live indicator', () => {
+  it('names the live phase and breathes the logo, and is quiet while idle', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    const { container } = render(<GolemPanel />);
+    // The logo is decorative (alt="", aria-hidden) so it has no role; query it
+    // directly to read its live-pulse attribute.
+    const logo = () => container.querySelector('img') as HTMLImageElement;
 
     expect(screen.queryByText('RUNNING')).not.toBeInTheDocument();
+    expect(logo()).not.toHaveAttribute('data-live');
 
     type('long one');
     pressEnter();
     await flush();
 
+    // The phase is readable (sr-only) and the logo carries the visual pulse.
     expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    expect(logo()).toHaveAttribute('data-live', 'true');
 
-    // A cancel the backend has not answered yet is its own phase, and the chip
-    // is the only surface that says so.
+    // A cancel the backend has not answered yet is its own phase, and the
+    // sr-only label is the only surface that names it.
     mockCancelGolemRun.mockReturnValueOnce(new Promise(() => {}));
     fireEvent.click(screen.getByRole('button', { name: /cancel the current golem run/i }));
 
     expect(screen.getByText('CANCELING')).toBeInTheDocument();
     expect(screen.queryByText('RUNNING')).not.toBeInTheDocument();
+    expect(logo()).toHaveAttribute('data-live', 'true');
 
     act(() => {
       store().ingestRunStatus({ identity: runIdentity(RUN_A), state: 'canceled' });
     });
 
     expect(screen.queryByText('CANCELING')).not.toBeInTheDocument();
+    expect(logo()).not.toHaveAttribute('data-live');
   });
 
   it('flags a turn the consent shelf is holding', async () => {

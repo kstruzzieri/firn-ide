@@ -80,17 +80,28 @@
   white-space: nowrap;
 }
 
-/* Decorative logo beside the wordmark, sized as a prominent brand mark. */
+/* Decorative logo beside the wordmark, sized as a prominent brand mark. It
+   also carries liveness: while a run is active it breathes, standing in for a
+   separate status chip. */
 .wordmarkIcon {
   flex: none;
   width: 54px;
   height: 54px;
 }
 
+.wordmarkIcon[data-live='true'] {
+  animation: golemBreath 1.8s ease-in-out infinite;
+}
+
+@keyframes golemBreath {
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .workspace,
 .badge,
-.modelChip,
-.statusChip {
+.modelChip {
   flex: none;
   padding: 2px 7px;
   border: 1px solid transparent;
@@ -143,45 +154,6 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-/* `.chip.run` — only ever rendered for a live phase. */
-.statusChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border-color: color-mix(in srgb, var(--golem-accent) 35%, transparent);
-  background-color: color-mix(in srgb, var(--golem-accent) 12%, transparent);
-  color: var(--golem-accent);
-  letter-spacing: 0.06em;
-}
-
-.statusChip[data-status='APPROVAL'] {
-  border-color: color-mix(in srgb, var(--status-warning) 35%, transparent);
-  background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
-  color: var(--status-warning);
-}
-
-.statusChip[data-status='CANCELING'] {
-  border-color: var(--surface-border);
-  background-color: var(--surface-hover);
-  color: var(--text-secondary);
-}
-
-/* currentColor so the dot follows whichever phase tint the chip is wearing. */
-.statusDot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: currentcolor;
-  animation: golemPulse 1.2s infinite;
-}
-
-@keyframes golemPulse {
-  50% {
-    opacity: 0.3;
-  }
 }
 
 .metaRow {
@@ -291,7 +263,7 @@
   margin-left: 2px;
   vertical-align: middle;
   background-color: var(--golem-accent);
-  animation: golemPulse 1s infinite;
+  animation: golemBreath 1s infinite;
 }
 
 /* Errors keep the repo's color-as-marker convention: a leading red dot, same
@@ -722,7 +694,7 @@
     transition: none;
   }
 
-  .statusDot,
+  .wordmarkIcon[data-live='true'],
   .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
     animation: none;
   }
