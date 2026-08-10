@@ -50,9 +50,9 @@
 .header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   margin: -8px -8px 0;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--surface-border-subtle);
   background-color: var(--surface-elevated);
 }
@@ -66,44 +66,44 @@
 }
 
 /* Icon over wordmark, centered — the brand mark leads, GOLEM reads beneath it
-   at a size that carries against the 54px logo. */
+   at a size that carries against the logo. */
 .wordmark {
   flex: none;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   color: var(--golem-accent);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.14em;
   white-space: nowrap;
 }
 
 /* Decorative logo beside the wordmark, sized as a prominent brand mark. It
-   also carries liveness: while a run is active it breathes, standing in for a
+   also carries liveness: while a run is active it glows, standing in for a
    separate status chip. */
 .wordmarkIcon {
   flex: none;
-  width: 54px;
-  height: 54px;
+  width: 44px;
+  height: 44px;
 }
 
 .wordmarkIcon[data-live='true'] {
-  animation: golemBreathGlow 1.8s ease-in-out infinite;
+  animation: golemBreathGlow 2.4s ease-in-out infinite;
 }
 
-/* The live logo breathes AND glows golem-blue — the glow carries the signal,
-   the opacity dip keeps it from looking static at the extremes. */
+/* A pure golem-blue glow that breathes in and out. Only the halo pulses (no
+   opacity dip that reads as flicker), and both stops mix the SAME hue with
+   transparent — so it fades blue↔blue instead of muddying through the black
+   of a plain `transparent`, which is what made it look choppy. */
 @keyframes golemBreathGlow {
   0%,
   100% {
-    opacity: 1;
-    filter: drop-shadow(0 0 1px transparent);
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--golem-accent) 18%, transparent));
   }
   50% {
-    opacity: 0.72;
-    filter: drop-shadow(0 0 9px var(--golem-accent));
+    filter: drop-shadow(0 0 11px color-mix(in srgb, var(--golem-accent) 80%, transparent));
   }
 }
 
