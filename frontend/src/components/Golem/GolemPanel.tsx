@@ -7,6 +7,8 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
+import Markdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useGolemStore } from '../../stores/golemStore';
 import { GOLEM_UNAVAILABLE } from '../../types/golem';
 import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
@@ -80,6 +82,54 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
 }
 
 /**
+ * Sanitized markdown for assistant replies. The security story is entirely
+ * structural: react-markdown WITHOUT `rehype-raw` never parses raw HTML — a
+ * literal `<b>x</b>` in provider output stays inert text — and we never touch
+ * `dangerouslySetInnerHTML`. Markdown carries two live vectors even so, both
+ * closed here by rendering our own inert elements:
+ *   - links: a `<span>`, never an `<a href>`. In WKWebView an anchor click
+ *     navigates the whole app to an attacker URL; a span cannot. The
+ *     destination shows in `title` (react-markdown's default urlTransform has
+ *     already stripped javascript:/data: etc., so title is belt-and-braces).
+ *   - images: the alt text as a `<span>`, never an `<img>`, so the webview
+ *     never fetches an attacker URL (tracking / SSRF). `disallowedElements`
+ *     can't preserve alt on a void `<img>`, so a component is the honest fix.
+ * `disallowedElements` still drops the embed-family names for defense in depth
+ * (they can't appear without rehype-raw, but cost nothing to refuse).
+ */
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <span className={styles.mdLink} title={href}>
+      {children}
+    </span>
+  ),
+  img: ({ alt }) => (alt ? <span className={styles.mdImage}>{alt}</span> : null),
+};
+
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
+const MARKDOWN_DISALLOWED = ['iframe', 'script', 'html', 'style', 'link', 'object', 'embed'];
+
+/**
+ * Memoised on its text: the transcript's streaming last row re-renders each
+ * rAF-batched delta and re-parses its growing text (acceptable), while every
+ * settled row keeps its reference and skips re-parsing entirely.
+ */
+const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: string }) {
+  return (
+    <div className={styles.markdown}>
+      <Markdown
+        remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+        components={MARKDOWN_COMPONENTS}
+        disallowedElements={MARKDOWN_DISALLOWED}
+        unwrapDisallowed
+      >
+        {text}
+      </Markdown>
+    </div>
+  );
+});
+
+/**
  * One non-tool transcript row (user / assistant / error).
  *
  * A component, not a file split: the transcript is the only genuinely O(n)
@@ -87,13 +137,20 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
  * across a delta, so memoising the row is what stops a token stream from
  * rebuilding the whole conversation each frame. Tool entries take the
  * `ToolChip` / `ToolCluster` path below instead.
+ *
+ * Assistant text is rendered as sanitized markdown; a user prompt and error
+ * text are not model markdown, so they stay verbatim plain text.
  */
 const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   return (
     <div className={`${styles.entry} ${styles[entry.kind]}`}>
       <div className={styles.bubble}>
-        {/* Rendered as text, never as markup: provider output is untrusted. */}
-        <span className={styles.entryText}>{entry.text}</span>
+        {entry.kind === 'assistant' ? (
+          <MarkdownMessage text={entry.text} />
+        ) : (
+          // Rendered as text, never as markup: user/error text is not markdown.
+          <span className={styles.entryText}>{entry.text}</span>
+        )}
       </div>
     </div>
   );

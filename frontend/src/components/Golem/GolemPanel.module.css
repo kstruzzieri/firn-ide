@@ -295,8 +295,10 @@
 }
 
 /* The mockups' block caret: while the run is live, the newest reply carries a
-   pulsing terminal-style cursor at the end of its text. */
-.transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
+   pulsing terminal-style cursor at the end of its text. Assistant text now
+   renders as markdown in `.markdown`, so the caret rides its last block's last
+   line rather than the old `.entryText` span. */
+.transcript[data-live='true'] .entry.assistant:last-child .markdown > :last-child::after {
   content: '';
   display: inline-block;
   width: 7px;
@@ -346,6 +348,161 @@
 /* `.asst`: flat text, no container at all. */
 .entry.assistant .bubble {
   line-height: 1.5;
+}
+
+/*
+ * Sanitized assistant markdown, scoped under `.markdown` so nothing here leaks
+ * to the plain user/error rows. Kept compact for the ~280px dock. Contrast on
+ * --surface-panel unless noted: --text-primary 16.30:1, --text-muted 6.71:1,
+ * table --text-secondary 6.96:1, .mdLink --golem-accent 8.33:1; inline and
+ * fenced code use --text-primary on --surface-frame at 17.19:1.
+ */
+.markdown {
+  overflow-wrap: anywhere;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 6px 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 8px 0 4px;
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.markdown h1 {
+  font-size: 14px;
+}
+
+.markdown h2 {
+  font-size: 13px;
+}
+
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 12px;
+}
+
+.markdown strong {
+  font-weight: 700;
+}
+
+.markdown em {
+  font-style: italic;
+}
+
+.markdown del {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.markdown code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background-color: var(--surface-frame);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* The fenced block scrolls inside its own box so the panel body never scrolls
+   horizontally. */
+.markdown pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.markdown li {
+  margin: 2px 0;
+}
+
+/* A loose or task-list item wraps its text in a <p>; don't double its spacing. */
+.markdown li > p {
+  margin: 0;
+}
+
+.markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--golem-accent) 40%, transparent);
+  color: var(--text-muted);
+}
+
+/* Links are our own inert span (never an <a>); style it as a link but with a
+   default cursor since it does not navigate. */
+.mdLink {
+  color: var(--golem-accent);
+  text-decoration: underline;
+  cursor: default;
+}
+
+/* Dropped image, shown as its alt text so the reply still reads. */
+.mdImage {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* react-markdown emits a bare <table> with no wrapper, so the table itself is
+   the scroll box — it can be wider than the dock without pushing the panel. */
+.markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 6px 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.markdown th,
+.markdown td {
+  padding: 3px 6px;
+  border: 1px solid var(--surface-border);
+  text-align: left;
+}
+
+.markdown th {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.markdown td {
+  color: var(--text-secondary);
 }
 
 /* `.tool`: a compact bordered chip, the tool's name in the mockups' purple.
@@ -737,7 +894,7 @@
 
   .wordmarkIcon[data-live='true'],
   .workingDot,
-  .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
+  .transcript[data-live='true'] .entry.assistant:last-child .markdown > :last-child::after {
     animation: none;
   }
 }

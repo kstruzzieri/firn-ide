@@ -706,15 +706,81 @@ describe('GolemPanel transcript', () => {
       );
     });
 
-  it('renders assistant markup as literal text', async () => {
+  it('renders assistant markdown but keeps raw HTML inert', async () => {
     await startRun();
 
-    delta('<b>x</b>', 2);
+    // Two blocks in one delta so the bold and the literal HTML never share a
+    // paragraph: **x** must become real bold, <b>y</b> must stay visible text.
+    delta('**x**\n\n<b>y</b>', 2);
 
-    // getByText is the guard: an innerHTML render would show a bold "x" whose
-    // text content is "x", and this query would find nothing.
-    expect(screen.getByText('<b>x</b>')).toBeInTheDocument();
-    expect(screen.getByText('<b>x</b>').querySelector('b')).toBeNull();
+    // Real markdown: a <strong>, not the literal asterisks.
+    const bold = screen.getByText('x');
+    expect(bold.tagName).toBe('STRONG');
+    expect(screen.queryByText('**x**')).toBeNull();
+
+    // The security invariant: raw HTML from the model is inert text. getByText
+    // is the guard — an innerHTML render would show a bold "y" whose text
+    // content is "y", and this exact-text query would find nothing. No
+    // rehype-raw, no dangerouslySetInnerHTML, so the <b> never becomes live.
+    const literal = screen.getByText('<b>y</b>');
+    expect(literal.querySelector('b')).toBeNull();
+  });
+
+  it('renders a fenced code block as a pre > code with the code text', async () => {
+    await startRun();
+    delta('```\nconst a = 1;\n```', 2);
+
+    const code = screen.getByRole('region', { name: 'Golem transcript' }).querySelector('pre code');
+    expect(code).not.toBeNull();
+    expect(code?.textContent).toContain('const a = 1;');
+  });
+
+  it('renders a markdown list as list items', async () => {
+    await startRun();
+    delta('- a\n- b', 2);
+
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent('a');
+    expect(items[1]).toHaveTextContent('b');
+  });
+
+  it('renders a link as non-navigating text with the destination in a title', async () => {
+    await startRun();
+    delta('[t](http://x.test/p)', 2);
+
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    const link = screen.getByText('t');
+    // In WKWebView an <a href> click navigates the whole app to an attacker
+    // URL — so there must be no navigating anchor at all.
+    expect(link.closest('a')).toBeNull();
+    expect(region.querySelector('a[href]')).toBeNull();
+    // The destination stays visible, but only as a hover title.
+    expect(link).toHaveAttribute('title', 'http://x.test/p');
+  });
+
+  it('drops an image to its alt text with no img element', async () => {
+    await startRun();
+    delta('![a pixel](http://x.test/p.png)', 2);
+
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    // The webview would fetch an <img src>; alt survives as plain text instead.
+    expect(screen.getByText('a pixel')).toBeInTheDocument();
+    expect(region.querySelector('img')).toBeNull();
+  });
+
+  it('renders a user prompt as literal text, not markdown', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+    type('**x**');
+    pressEnter();
+    await flush();
+
+    // Markdown is assistant-only: a user's own **x** is not model output.
+    const prompt = screen.getByText('**x**');
+    expect(prompt.tagName).not.toBe('STRONG');
+    expect(prompt.querySelector('strong')).toBeNull();
   });
 
   it('keeps exactly one polite live region that stays silent through deltas', async () => {
