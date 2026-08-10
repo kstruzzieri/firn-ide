@@ -66,11 +66,24 @@
 
 .wordmark {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--golem-accent);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   white-space: nowrap;
+}
+
+/* Decorative logo beside the wordmark. Held to 18px so it centers on the
+   GOLEM text without pushing the header row past the chip-row rhythm. */
+.wordmarkIcon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  max-width: 20px;
+  max-height: 20px;
 }
 
 .workspace,
@@ -321,13 +334,14 @@
   line-height: 1.5;
 }
 
-/* `.tool`: a compact bordered chip, the tool's name in the mockups' purple. */
+/* `.tool`: a compact bordered chip, the tool's name in the mockups' purple.
+   The chip is a button now — clicking it reveals the operation detail below. */
 .entry.tool {
   align-items: flex-start;
   color: var(--text-secondary);
 }
 
-.entry.tool .bubble {
+.toolChip {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 5px;
@@ -337,7 +351,16 @@
   border: 1px solid var(--surface-border-subtle);
   border-radius: 5px;
   background-color: var(--surface-frame);
+  color: var(--text-secondary);
+  font: inherit;
   font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.toolChip:hover {
+  background-color: var(--surface-hover);
 }
 
 .toolName {
@@ -348,6 +371,136 @@
 .toolActivity {
   color: var(--text-secondary);
   font-family: var(--font-mono);
+}
+
+/*
+ * A collapsed run of tool calls. The header carries the summary and a leading
+ * status marker (failed > running > done), colour as marker at the 3:1 floor
+ * while --text-secondary summary text holds 6.96:1 on --surface-panel.
+ */
+.cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.clusterHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.clusterHeader:hover {
+  background-color: var(--surface-hover);
+}
+
+.clusterMarker {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-muted); /* done: 6.71:1 on --surface-panel */
+}
+
+.clusterMarker[data-status='running'] {
+  background-color: var(--golem-accent); /* 8.34:1 */
+}
+
+.clusterMarker[data-status='failed'] {
+  background-color: var(--status-error); /* 4.75:1 */
+}
+
+.clusterSummary {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
+.clusterChevron {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.clusterBody {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/*
+ * Chip detail: the honest fields plus the raw payload JSON as text. Labels in
+ * --text-muted (6.71:1), values in --text-secondary (7.35:1) on --surface-frame;
+ * the raw <pre> sits on --surface-base where --text-secondary holds 7.87:1.
+ */
+.toolDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  font-size: 10px;
+}
+
+.detailPair {
+  display: flex;
+  gap: 6px;
+}
+
+.detailPair dt {
+  flex: none;
+  min-width: 54px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.detailPair dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.detailText {
+  white-space: pre-wrap;
+}
+
+.detailNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.toolRaw {
+  margin: 4px 0 0;
+  max-height: 200px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow: auto;
 }
 
 .entryText {
@@ -469,21 +622,27 @@
   background-color: var(--surface-elevated);
 }
 
+/* Auto-grown from JS to fit the draft; rows=3 is the first-paint floor and the
+   ceiling below is where it starts to scroll. No native handle to jump. */
 .composer {
   width: 100%;
+  max-height: 160px;
   padding: 7px 10px;
   border: 1px solid var(--surface-border);
   border-radius: 7px;
   background-color: var(--surface-panel);
   color: var(--text-primary);
   font: inherit;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
 }
 
 .composer:focus-visible,
 .queuedInput:focus-visible,
 .conversationButton:focus-visible,
 .backgroundLabel:focus-visible,
+.toolChip:focus-visible,
+.clusterHeader:focus-visible,
 .primaryButton:focus-visible,
 .secondaryButton:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -555,6 +714,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .conversationButton,
+  .toolChip,
+  .clusterHeader,
   .primaryButton,
   .secondaryButton {
     transition: none;

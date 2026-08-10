@@ -1,7 +1,16 @@
-import { memo, useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useGolemStore } from '../../stores/golemStore';
 import { GOLEM_UNAVAILABLE } from '../../types/golem';
 import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
+import golemIcon from '../../assets/branding/golem-icon.svg';
 import styles from './GolemPanel.module.css';
 
 /**
@@ -71,28 +80,18 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
 }
 
 /**
- * One transcript row.
+ * One non-tool transcript row (user / assistant / error).
  *
  * A component, not a file split: the transcript is the only genuinely O(n)
  * render here, and every entry but the streaming last one keeps its reference
  * across a delta, so memoising the row is what stops a token stream from
- * rebuilding the whole conversation each frame.
+ * rebuilding the whole conversation each frame. Tool entries take the
+ * `ToolChip` / `ToolCluster` path below instead.
  */
 const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   return (
-    // The row spans the column so its timeline node always lands on the rail;
-    // the bubble inside is what shifts right for a prompt or shrinks to a chip
-    // for a tool call.
     <div className={`${styles.entry} ${styles[entry.kind]}`}>
       <div className={styles.bubble}>
-        {entry.kind === 'tool' && (
-          <>
-            {/* Two-tone like the mockups' `.k`: purple verb, neutral detail,
-                separated by the chip's own gap rather than a middot. */}
-            <span className={styles.toolName}>{entry.toolName || 'tool'}</span>
-            {entry.activity && <span className={styles.toolActivity}>{entry.activity}</span>}
-          </>
-        )}
         {/* Rendered as text, never as markup: provider output is untrusted. */}
         <span className={styles.entryText}>{entry.text}</span>
       </div>
@@ -100,8 +99,190 @@ const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: Transcript
   );
 });
 
+/** Worst-first status of a run of tool calls: failed dominates running dominates done. */
+type ToolStatus = 'failed' | 'running' | 'done';
+
+const STATUS_PHRASE: Record<ToolStatus, string> = {
+  failed: 'some failed',
+  running: 'in progress',
+  done: 'all completed',
+};
+
+function clusterStatus(entries: TranscriptEntry[]): ToolStatus {
+  let running = false;
+  for (const entry of entries) {
+    // An interrupted tool (a run canceled mid-call) is an abnormal end, so it
+    // reads as the failed marker rather than a quiet "done".
+    if (entry.activity === 'failed' || entry.activity === 'interrupted') return 'failed';
+    if (entry.activity === 'running') running = true;
+  }
+  return running ? 'running' : 'done';
+}
+
+/** `search ×3, glob` — distinct tool names in first-seen order, counted. */
+function toolNameSummary(entries: TranscriptEntry[]): string {
+  const order: string[] = [];
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const name = entry.toolName || 'tool';
+    if (!counts.has(name)) order.push(name);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return order
+    .map((name) => (counts.get(name)! > 1 ? `${name} ×${counts.get(name)}` : name))
+    .join(', ');
+}
+
+/**
+ * One tool call as a clickable chip that reveals what the event carries.
+ *
+ * Honest limit: go-llm's tool events emit only `{toolCallId, name, preview,
+ * isError}`, and the four read tools send an empty preview — so the richest
+ * detail available today is the tool's name, its status, the call id, the
+ * event `seq`, a non-empty preview when present, and the raw payload JSON.
+ * Upstream kstruzzieri/go-llm#393 adds sanitized arguments; when it lands they
+ * appear in the raw payload below with no change here.
+ *
+ * Memoised on the entry: a chip that reached a terminal activity keeps its
+ * reference across a delta, so a token stream re-renders one assistant row and
+ * skips every settled chip. The detail toggle is the chip's own local state,
+ * so opening one never touches the store or its neighbours.
+ */
+const ToolChip = memo(function ToolChip({ entry }: { entry: TranscriptEntry }) {
+  const [open, setOpen] = useState(false);
+  const raw = entry.raw;
+  const preview = entry.text;
+  return (
+    <div className={`${styles.entry} ${styles.tool}`}>
+      <button
+        type="button"
+        className={styles.toolChip}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {/* Two-tone like the mockups' `.k`: purple verb, neutral detail. */}
+        <span className={styles.toolName}>{entry.toolName || 'tool'}</span>
+        {entry.activity && <span className={styles.toolActivity}>{entry.activity}</span>}
+      </button>
+      {open && (
+        <dl className={styles.toolDetail}>
+          <div className={styles.detailPair}>
+            <dt>Tool</dt>
+            <dd>{entry.toolName || 'tool'}</dd>
+          </div>
+          {entry.activity && (
+            <div className={styles.detailPair}>
+              <dt>Status</dt>
+              <dd>{entry.activity}</dd>
+            </div>
+          )}
+          {entry.toolCallId && (
+            <div className={styles.detailPair}>
+              <dt>Call ID</dt>
+              <dd>{entry.toolCallId}</dd>
+            </div>
+          )}
+          {raw && (
+            <div className={styles.detailPair}>
+              <dt>Seq</dt>
+              <dd>{raw.seq}</dd>
+            </div>
+          )}
+          {preview !== '' && (
+            <div className={styles.detailPair}>
+              <dt>Preview</dt>
+              {/* Text, never markup: the preview is untrusted tool output. */}
+              <dd className={styles.detailText}>{preview}</dd>
+            </div>
+          )}
+          {raw ? (
+            // Raw payload as TEXT inside a <pre>, never dangerouslySetInnerHTML:
+            // args land here for free once go-llm#393 populates the payload.
+            <pre className={styles.toolRaw}>{JSON.stringify(raw.payload, null, 2)}</pre>
+          ) : (
+            <p className={styles.detailNote}>No raw event was captured for this tool call.</p>
+          )}
+        </dl>
+      )}
+    </div>
+  );
+});
+
+/**
+ * A run of consecutive tool calls, folded into one collapsible summary so a
+ * four-search turn is one row rather than four chips. Rendered only for two or
+ * more calls; a lone tool takes the `ToolChip` path directly.
+ */
+function ToolCluster({
+  entries,
+  expanded,
+  onToggle,
+}: {
+  entries: TranscriptEntry[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const status = clusterStatus(entries);
+  const label = `${entries.length} tool calls, ${STATUS_PHRASE[status]} — ${
+    expanded ? 'hide' : 'show'
+  } details`;
+  return (
+    <div className={styles.cluster}>
+      <button
+        type="button"
+        className={styles.clusterHeader}
+        aria-expanded={expanded}
+        aria-label={label}
+        onClick={onToggle}
+      >
+        <span className={styles.clusterMarker} data-status={status} aria-hidden="true" />
+        <span className={styles.clusterSummary}>
+          {entries.length} tools · {toolNameSummary(entries)}
+        </span>
+        <span className={styles.clusterChevron} aria-hidden="true">
+          {expanded ? '▾' : '▸'}
+        </span>
+      </button>
+      {expanded && (
+        <div className={styles.clusterBody}>
+          {entries.map((entry) => (
+            <ToolChip key={entry.id} entry={entry} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Render-layer view of the flat transcript: tool runs folded into clusters. */
+type TranscriptItem =
+  | { type: 'entry'; entry: TranscriptEntry }
+  | { type: 'cluster'; id: string; entries: TranscriptEntry[] };
+
+/**
+ * Folds each run of consecutive `kind: 'tool'` entries into one cluster; any
+ * non-tool entry breaks the run. Pure over the entry list — the store keeps
+ * entries flat, so this is the only place the grouping exists.
+ */
+function groupTranscript(transcript: TranscriptEntry[]): TranscriptItem[] {
+  const items: TranscriptItem[] = [];
+  for (const entry of transcript) {
+    if (entry.kind === 'tool') {
+      const last = items[items.length - 1];
+      if (last && last.type === 'cluster') last.entries.push(entry);
+      else items.push({ type: 'cluster', id: entry.id, entries: [entry] });
+    } else {
+      items.push({ type: 'entry', entry });
+    }
+  }
+  return items;
+}
+
 /** Slack, in px, for treating a scroll position as "at the newest row". */
 const PIN_SLACK = 4;
+
+/** Composer auto-grow ceiling, in px, past which the field scrolls. */
+const COMPOSER_MAX_HEIGHT = 160;
 
 export function GolemPanel() {
   const conversations = useGolemStore((state) => state.conversations);
@@ -117,6 +298,11 @@ export function GolemPanel() {
   // same rule the run output follows: scrolling back through a conversation
   // must not be yanked away by the next delta.
   const pinnedRef = useRef(true);
+  // Per-cluster collapse overrides, keyed by the cluster's stable id (its first
+  // entry's id). Local, never in the store: a disclosure is view state. Absent
+  // means "use the default", so a finished cluster collapses on its own once its
+  // running tool settles and stops being the default-expanded one.
+  const [clusterOverrides, setClusterOverrides] = useState<Record<string, boolean>>({});
 
   const conversation = selectedConversationId
     ? (conversations[selectedConversationId] ?? null)
@@ -222,6 +408,27 @@ export function GolemPanel() {
     if (element && pinnedRef.current) element.scrollTop = element.scrollHeight;
   }, [transcript]);
 
+  // Grouping is a pure fold over the entry list, memoised on the array identity
+  // so it re-runs once per transcript change (a delta) and not on unrelated
+  // re-renders like composer typing. The heavy per-chip work stays in the
+  // memoized ToolChip, so a delta still updates one row.
+  const renderItems = useMemo(() => groupTranscript(transcript ?? []), [transcript]);
+  // Only the newest cluster defaults open, and only while it holds a live tool —
+  // that is the one the user needs to watch; finished clusters stay tucked away.
+  let lastClusterId: string | null = null;
+  for (const item of renderItems) if (item.type === 'cluster') lastClusterId = item.id;
+
+  // Auto-grow the composer to fit the draft, then scroll past the ceiling. The
+  // draft lives in golemStore, so this keys on that value rather than moving it
+  // to component state; the rows=3 intrinsic height is the natural floor, so a
+  // cleared draft shrinks the box back on its own.
+  useLayoutEffect(() => {
+    const element = composerRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  }, [draft]);
+
   const send = () => {
     // Only the identity guard: every other blocked state — no workspace, a
     // binding in flight, a stale identity, an unavailable backend, a blank
@@ -249,7 +456,9 @@ export function GolemPanel() {
             collapsed header): identity + live status, then the destination. */}
         <div className={styles.identityRow}>
           <span className={styles.wordmark}>
-            <span aria-hidden="true">◆</span> GOLEM
+            {/* Decorative: "GOLEM" beside it is the accessible name. */}
+            <img className={styles.wordmarkIcon} src={golemIcon} alt="" aria-hidden="true" />
+            GOLEM
           </span>
           {statusLabel && (
             <span className={styles.statusChip} data-status={statusLabel}>
@@ -327,9 +536,28 @@ export function GolemPanel() {
             element.scrollHeight - element.scrollTop - element.clientHeight <= PIN_SLACK;
         }}
       >
-        {transcript?.map((entry) => (
-          <TranscriptRow key={entry.id} entry={entry} />
-        ))}
+        {renderItems.map((item) => {
+          if (item.type === 'entry') {
+            return <TranscriptRow key={item.entry.id} entry={item.entry} />;
+          }
+          // A lone tool is a chip on its own, never wrapped in a "1 tool" cluster.
+          if (item.entries.length === 1) {
+            return <ToolChip key={item.id} entry={item.entries[0]} />;
+          }
+          const defaultExpanded =
+            item.id === lastClusterId && item.entries.some((entry) => entry.activity === 'running');
+          const expanded = clusterOverrides[item.id] ?? defaultExpanded;
+          return (
+            <ToolCluster
+              key={item.id}
+              entries={item.entries}
+              expanded={expanded}
+              onToggle={() =>
+                setClusterOverrides((previous) => ({ ...previous, [item.id]: !expanded }))
+              }
+            />
+          );
+        })}
       </div>
 
       {backgroundRuns.length > 0 && (

@@ -995,3 +995,208 @@ describe('GolemPanel cancel and retry', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });
+
+// ── header logo ───────────────────────────────────────────────────────────────
+
+describe('GolemPanel header', () => {
+  it('shows the Golem logo decoratively beside the GOLEM wordmark', () => {
+    hydrate();
+    selectFocused();
+    const { container } = render(<GolemPanel />);
+
+    // GOLEM stays the accessible name; the image is decorative, so it must be
+    // hidden from the accessibility tree with an empty alt.
+    expect(screen.getByText('GOLEM')).toBeInTheDocument();
+    const logo = container.querySelector('img[aria-hidden="true"]');
+    expect(logo).not.toBeNull();
+    expect(logo).toHaveAttribute('alt', '');
+  });
+});
+
+// ── tool activity clustering ──────────────────────────────────────────────────
+
+describe('GolemPanel tool clustering', () => {
+  beforeEach(() => {
+    hydrate();
+    selectFocused();
+  });
+
+  const startRun = async () => {
+    const view = render(<GolemPanel />);
+    type('go');
+    pressEnter();
+    await flush();
+    return view;
+  };
+
+  const toolFinished = (
+    seq: number,
+    over: { toolCallId?: string; name?: string; preview?: string; isError?: boolean } = {}
+  ) =>
+    act(() => {
+      store().ingestEvent(
+        eventPayload({
+          seq,
+          type: 'tool.finished',
+          payload: {
+            toolCallId: over.toolCallId ?? `call-${seq}`,
+            name: over.name ?? 'search',
+            preview: over.preview ?? '',
+            isError: over.isError ?? false,
+          },
+        })
+      );
+    });
+
+  const toolStarted = (
+    seq: number,
+    over: { toolCallId?: string; name?: string; preview?: string } = {}
+  ) =>
+    act(() => {
+      store().ingestEvent(
+        eventPayload({
+          seq,
+          type: 'tool.started',
+          payload: {
+            toolCallId: over.toolCallId ?? `call-${seq}`,
+            name: over.name ?? 'search',
+            preview: over.preview ?? '',
+          },
+        })
+      );
+    });
+
+  const assistantDelta = (seq: number, text: string) =>
+    act(() => {
+      store().ingestEvent(
+        eventPayload({ seq, type: 'message.delta', payload: { messageId: 'm1', text } })
+      );
+    });
+
+  it('folds consecutive tool calls into one collapsed cluster and reveals the chips on expand', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'c1', name: 'search' });
+    toolFinished(3, { toolCallId: 'c2', name: 'search' });
+    toolFinished(4, { toolCallId: 'c3', name: 'search' });
+    toolFinished(5, { toolCallId: 'c4', name: 'glob' });
+
+    const header = screen.getByRole('button', { name: /4 tool calls, all completed/i });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    expect(header).toHaveTextContent('4 tools');
+    expect(header).toHaveTextContent('search ×3, glob');
+    // Collapsed: the individual chips are not in the DOM at all.
+    expect(screen.queryAllByText('search')).toHaveLength(0);
+    expect(screen.queryByText('glob')).not.toBeInTheDocument();
+
+    fireEvent.click(header);
+
+    expect(screen.getByRole('button', { name: /4 tool calls, all completed/i })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
+    expect(screen.getAllByText('search')).toHaveLength(3);
+    expect(screen.getByText('glob')).toBeInTheDocument();
+  });
+
+  it('splits tool calls into two clusters when a non-tool entry falls between them', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'a1', name: 'search' });
+    toolFinished(3, { toolCallId: 'a2', name: 'search' });
+    assistantDelta(4, 'thinking'); // a reply breaks the run of tools
+    toolFinished(5, { toolCallId: 'b1', name: 'glob' });
+    toolFinished(6, { toolCallId: 'b2', name: 'glob' });
+
+    const clusters = screen.getAllByRole('button', { name: /tool calls,/i });
+    expect(clusters).toHaveLength(2);
+    // Never one combined cluster spanning the reply.
+    expect(screen.queryByRole('button', { name: /4 tool calls/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a lone tool call as a chip with no cluster wrapper', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'solo', name: 'search' });
+
+    expect(screen.getByText('search')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /tool calls,/i })).not.toBeInTheDocument();
+  });
+
+  it('defaults the newest cluster to expanded while it holds a running tool', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'd1', name: 'search' }); // done
+    toolStarted(3, { toolCallId: 'd2', name: 'glob' }); // still running
+
+    // Last cluster, holds a running tool, so it opens without a click.
+    const header = screen.getByRole('button', { name: /2 tool calls, in progress/i });
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('glob')).toBeInTheDocument();
+    expect(screen.getByText('running')).toBeInTheDocument();
+  });
+
+  it('reveals a tool chip raw detail as text, rendering markup literally', async () => {
+    const { container } = await startRun();
+    toolFinished(2, { toolCallId: 'call-x', name: 'search', preview: '<b>x</b>' });
+
+    const chip = screen.getByRole('button', { name: /search/i });
+    expect(chip).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(chip);
+    expect(chip).toHaveAttribute('aria-expanded', 'true');
+
+    // The preview renders as literal text, never a real <b> element.
+    const preview = screen.getByText('<b>x</b>');
+    expect(preview.querySelector('b')).toBeNull();
+
+    // The raw payload is pretty-printed JSON, also text inside a <pre>.
+    const raw = container.querySelector('pre');
+    expect(raw).not.toBeNull();
+    expect(raw?.textContent).toContain('"toolCallId": "call-x"');
+    expect(raw?.textContent).toContain('"preview": "<b>x</b>"');
+    expect(raw?.querySelector('b')).toBeNull();
+  });
+
+  it('keeps the streaming assistant reply as the transcript last child after a tool cluster', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'q1', name: 'search' });
+    toolFinished(3, { toolCallId: 'q2', name: 'search' });
+    assistantDelta(4, 'the answer');
+
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    // The caret selector is `.entry.assistant:last-child`; the reply must stay
+    // the transcript's last child for the streaming caret to keep matching.
+    const last = region.lastElementChild;
+    expect(last?.className).toContain('entry');
+    expect(last?.className).toContain('assistant');
+    expect(last).toHaveTextContent('the answer');
+  });
+});
+
+// ── composer auto-grow ────────────────────────────────────────────────────────
+
+describe('GolemPanel composer auto-grow', () => {
+  beforeEach(() => {
+    hydrate();
+    selectFocused();
+  });
+
+  it('grows the composer to fit a multi-line draft and shrinks back when it clears', () => {
+    render(<GolemPanel />);
+    const box = composer();
+    // jsdom has no layout, so the grow target has to be supplied — the assertion
+    // is whether the panel wrote a clamped scrollHeight to the inline height.
+    let scrollHeight = 132;
+    Object.defineProperty(box, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+
+    type('a\nb\nc\nd\ne');
+    expect(box.style.height).toBe('132px');
+
+    scrollHeight = 400; // taller than the 160px ceiling
+    type('a\nb\nc\nd\ne\nf\ng\nh');
+    expect(box.style.height).toBe('160px');
+
+    scrollHeight = 44;
+    type(''); // cleared after a send
+    expect(box.style.height).toBe('44px');
+  });
+});
