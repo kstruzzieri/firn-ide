@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	goruntime "runtime"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -18,6 +19,15 @@ var assets embed.FS
 
 func buildAppMenu(app *App) *menu.Menu {
 	appMenu := menu.NewMenu()
+
+	// A custom Menu replaces the macOS default entirely. Without the standard
+	// App and Edit menus, the OS never wires Cmd+C/V/X/A or Cmd+Q to the
+	// webview's responder chain, so copy/paste is dead in every text field.
+	// Other platforms handle clipboard natively and need no menu entry.
+	if goruntime.GOOS == "darwin" {
+		appMenu.Append(menu.AppMenu())
+		appMenu.Append(menu.EditMenu())
+	}
 
 	navigateMenu := appMenu.AddSubmenu("Navigate")
 	navigateMenu.AddText("Go Back", keys.CmdOrCtrl("["), func(_ *menu.CallbackData) {
