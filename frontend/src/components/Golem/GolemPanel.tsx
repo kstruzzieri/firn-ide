@@ -99,6 +99,60 @@ const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: Transcript
   );
 });
 
+/** Phases in which the agent is actively working (a consent wait is not work). */
+const isWorkingPhase = (phase: RunPhase): boolean =>
+  phase === 'admitting' || phase === 'running' || phase === 'canceling';
+
+/**
+ * What the agent is doing right now, derived from real state only — no invented
+ * counts. A currently-running tool wins; otherwise streamed assistant text means
+ * it is composing a reply; otherwise it is still thinking.
+ */
+function workingActivity(conversation: ConversationView, activeRun: RunView): string {
+  if (activeRun.phase === 'canceling') return 'Canceling…';
+  const runId = activeRun.identity.runId;
+  let responding = false;
+  for (const entry of conversation.transcript) {
+    if (entry.runId !== runId) continue;
+    if (entry.kind === 'tool' && entry.activity === 'running') {
+      return `Running ${entry.toolName || 'tool'}…`;
+    }
+    if (entry.kind === 'assistant' && entry.text.trim() !== '') responding = true;
+  }
+  return responding ? 'Responding…' : 'Thinking…';
+}
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/**
+ * The Claude-Code-style working line: an obvious "the agent is running" notice
+ * in the chat body after a prompt is sent. Elapsed is measured client-side from
+ * when the notice appears — the only number here, and a real one. Token counts
+ * and task counts are deliberately absent: neither is in the Phase 1 event
+ * stream (firn-ide#265). `aria-hidden` because the sr-only phase label already
+ * announces the working state and a ticking timer would spam a screen reader.
+ */
+function RunningNotice({ activity }: { activity: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = window.setInterval(() => setElapsed(Date.now() - start), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div className={styles.workingNotice} aria-hidden="true">
+      <span className={styles.workingDot} />
+      <span>{activity}</span>
+      <span aria-hidden="true">·</span>
+      <span className={styles.workingElapsed}>{formatElapsed(elapsed)}</span>
+    </div>
+  );
+}
+
 /** Worst-first status of a run of tool calls: failed dominates running dominates done. */
 type ToolStatus = 'failed' | 'running' | 'done';
 
@@ -564,6 +618,10 @@ export function GolemPanel() {
           );
         })}
       </div>
+
+      {conversation && activeRun && isWorkingPhase(activeRun.phase) && (
+        <RunningNotice activity={workingActivity(conversation, activeRun)} />
+      )}
 
       {backgroundRuns.length > 0 && (
         <div className={styles.background}>

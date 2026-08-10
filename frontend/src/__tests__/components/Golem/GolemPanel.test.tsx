@@ -269,6 +269,40 @@ describe('GolemPanel live indicator', () => {
     expect(logo()).not.toHaveAttribute('data-live');
   });
 
+  it('shows a working notice while a run is live and removes it on terminal', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    expect(screen.queryByText(/Thinking|Responding|Running/)).not.toBeInTheDocument();
+
+    type('do the thing');
+    pressEnter();
+    await flush();
+
+    // No tool running yet → thinking; the notice is present and obvious.
+    expect(screen.getByText('Thinking…')).toBeInTheDocument();
+
+    // A running tool becomes the activity verbatim.
+    act(() => {
+      store().ingestEvent(
+        eventPayload({
+          seq: 2,
+          type: 'tool.started',
+          payload: { toolCallId: 'call-1', name: 'search', preview: '' },
+        })
+      );
+    });
+    expect(screen.getByText('Running search…')).toBeInTheDocument();
+    expect(screen.queryByText('Thinking…')).not.toBeInTheDocument();
+
+    // Terminal clears the notice entirely.
+    act(() => {
+      store().ingestEvent(eventPayload({ seq: 3, type: 'run.finished', payload: {} }));
+    });
+    expect(screen.queryByText(/Thinking|Responding|Running/)).not.toBeInTheDocument();
+  });
+
   it('flags a turn the consent shelf is holding', async () => {
     hydrate({ destination: remoteDestination });
     selectFocused();

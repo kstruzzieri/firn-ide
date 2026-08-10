@@ -90,9 +90,24 @@
 }
 
 .wordmarkIcon[data-live='true'] {
-  animation: golemBreath 1.8s ease-in-out infinite;
+  animation: golemBreathGlow 1.8s ease-in-out infinite;
 }
 
+/* The live logo breathes AND glows golem-blue — the glow carries the signal,
+   the opacity dip keeps it from looking static at the extremes. */
+@keyframes golemBreathGlow {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 1px transparent);
+  }
+  50% {
+    opacity: 0.72;
+    filter: drop-shadow(0 0 9px var(--golem-accent));
+  }
+}
+
+/* The streaming caret's plain blink. */
 @keyframes golemBreath {
   50% {
     opacity: 0.4;
@@ -163,6 +178,32 @@
   gap: 8px;
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* The working line under the transcript: an obvious "agent is running" notice,
+   dim like the surrounding chrome, with a glowing golem-blue pulse. */
+.workingNotice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.workingDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--golem-accent);
+  box-shadow: 0 0 6px var(--golem-accent);
+  animation: golemBreath 1.2s ease-in-out infinite;
+}
+
+.workingElapsed {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .endpoint {
@@ -695,6 +736,7 @@
   }
 
   .wordmarkIcon[data-live='true'],
+  .workingDot,
   .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
     animation: none;
   }
