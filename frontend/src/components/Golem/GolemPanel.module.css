@@ -76,14 +76,11 @@
   white-space: nowrap;
 }
 
-/* Decorative logo beside the wordmark. Held to 18px so it centers on the
-   GOLEM text without pushing the header row past the chip-row rhythm. */
+/* Decorative logo beside the wordmark, sized as a prominent brand mark. */
 .wordmarkIcon {
   flex: none;
-  width: 18px;
-  height: 18px;
-  max-width: 20px;
-  max-height: 20px;
+  width: 54px;
+  height: 54px;
 }
 
 .workspace,
