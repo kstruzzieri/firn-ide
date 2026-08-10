@@ -89,25 +89,27 @@
   height: 44px;
 }
 
+/* While a run is active the logo breathes: a smooth opacity fade 100%↔30% plus
+   a constant soft golem-blue halo so it reads as "lit". Opacity is animated, not
+   `drop-shadow` — WKWebView does not interpolate an animated `drop-shadow`
+   filter and snaps between keyframes (the blink); opacity tweens reliably. The
+   halo is a static filter, so it never blinks and dims together with the logo. */
 .wordmarkIcon[data-live='true'] {
-  animation: golemBreathGlow 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent));
+  animation: golemBreathe 2s ease-in-out infinite;
 }
 
-/* A pure golem-blue glow that breathes in and out. Only the halo pulses (no
-   opacity dip that reads as flicker), and both stops mix the SAME hue with
-   transparent — so it fades blue↔blue instead of muddying through the black
-   of a plain `transparent`, which is what made it look choppy. */
-@keyframes golemBreathGlow {
+@keyframes golemBreathe {
   0%,
   100% {
-    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--golem-accent) 18%, transparent));
+    opacity: 1;
   }
   50% {
-    filter: drop-shadow(0 0 11px color-mix(in srgb, var(--golem-accent) 80%, transparent));
+    opacity: 0.3;
   }
 }
 
-/* The streaming caret's plain blink. */
+/* The streaming caret / working dot blink. */
 @keyframes golemBreath {
   50% {
     opacity: 0.4;
