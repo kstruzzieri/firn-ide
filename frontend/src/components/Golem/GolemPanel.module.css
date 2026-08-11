@@ -59,8 +59,9 @@
 }
 
 /* The "New chat" reset: a compact + icon button in the header's top-right
-   corner, quiet enough not to fight the centered wordmark. Text --text-secondary
-   on --surface-elevated is 6.35:1; it brightens to --text-primary on hover. */
+   corner, quiet enough not to fight the centered wordmark. The mark is
+   --text-secondary on --surface-elevated at 6.35:1; it brightens to
+   --text-primary on hover. */
 .newChatButton {
   position: absolute;
   top: 6px;
@@ -75,12 +76,19 @@
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1;
   cursor: pointer;
   transition:
     background-color var(--transition),
     color var(--transition);
+}
+
+/* The mark is an SVG, not a text "+". A glyph centers by line-box metrics, which
+   reserve descender space a plus never fills, so it rides off-center in a box
+   this small and drifts with the font. PlusIcon's strokes cross at the exact
+   center of its 24x24 viewBox, so flex centering lands true. */
+.newChatButton svg {
+  width: 12px;
+  height: 12px;
 }
 
 .newChatButton:hover:not(:disabled) {

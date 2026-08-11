@@ -13,6 +13,7 @@ import { useGolemStore } from '../../stores/golemStore';
 import { GOLEM_UNAVAILABLE } from '../../types/golem';
 import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
 import golemIcon from '../../assets/branding/golem-icon.svg';
+import { PlusIcon } from '../icons';
 import styles from './GolemPanel.module.css';
 
 /**
@@ -650,7 +651,7 @@ export function GolemPanel() {
             if (conversationId) useGolemStore.getState().clearConversation(conversationId);
           }}
         >
-          <span aria-hidden="true">+</span>
+          <PlusIcon aria-hidden="true" />
         </button>
       </header>
 
