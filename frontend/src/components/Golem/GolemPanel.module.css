@@ -58,16 +58,44 @@
   background-color: var(--surface-elevated);
 }
 
-/* The "New chat" reset. Reuses the reviewed .secondaryButton look (its
-   contrast contract is unchanged: --text-primary text on --surface-elevated,
-   --surface-border edge); this class only parks it in the header's top-right
-   corner and shrinks it to chip size so it never fights the centered wordmark. */
+/* The "New chat" reset: a compact + icon button in the header's top-right
+   corner, quiet enough not to fight the centered wordmark. Text --text-secondary
+   on --surface-elevated is 6.35:1; it brightens to --text-primary on hover. */
 .newChatButton {
   position: absolute;
   top: 6px;
   right: 8px;
-  padding: 2px 8px;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.newChatButton:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.newChatButton:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.newChatButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .identityRow {

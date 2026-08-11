@@ -637,19 +637,20 @@ export function GolemPanel() {
           {destination && <span className={styles.endpoint}>{destination.endpoint}</span>}
           <span>Context: prompt only</span>
         </div>
-        {/* A corner action, absolutely placed so it never shifts the centered
-            wordmark rows. Disabled — not hidden — when there is nothing to clear
-            or a run is live, so the affordance stays discoverable. */}
+        {/* A compact + in the corner, absolutely placed so it never shifts the
+            centered wordmark rows. Disabled — not hidden — when there is nothing
+            to clear or a run is live, so the affordance stays discoverable. */}
         <button
           type="button"
-          className={`${styles.secondaryButton} ${styles.newChatButton}`}
+          className={styles.newChatButton}
           disabled={!canClear}
-          title={clearBusy ? 'Finish or cancel the current run first' : undefined}
+          aria-label="New chat"
+          title={clearBusy ? 'Finish or cancel the current run first' : 'New chat'}
           onClick={() => {
             if (conversationId) useGolemStore.getState().clearConversation(conversationId);
           }}
         >
-          New chat
+          <span aria-hidden="true">+</span>
         </button>
       </header>
 
