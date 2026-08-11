@@ -3,11 +3,33 @@ package main
 import (
 	"context"
 	"firn/internal/runprofile"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestMain sandboxes the home directory for the whole package. startup opens
+// the Golem consent store under <home>/.firn, which creates that directory and
+// tightens its permissions, and the workspace and run-history stores write
+// there too; without this the suite would reach into the developer's real home
+// directory. USERPROFILE covers Windows, where os.UserHomeDir ignores HOME.
+// Individual tests still override HOME with t.Setenv when they need to.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "firn-test-home")
+	if err != nil {
+		log.Fatalf("sandbox home directory: %v", err)
+	}
+	for _, key := range []string{"HOME", "USERPROFILE"} {
+		if err := os.Setenv(key, home); err != nil {
+			log.Fatalf("sandbox %s: %v", key, err)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
 
 func TestNewApp(t *testing.T) {
 	app := NewApp()
@@ -28,24 +50,26 @@ func TestStartup(t *testing.T) {
 	}
 }
 
-func TestGetWorkspaceInfo(t *testing.T) {
+// GetWorkspaceInfo is the Golem repository binding call. Before startup there
+// is no service to bind against, so it must reject rather than panic.
+func TestGetWorkspaceInfoBeforeStartup(t *testing.T) {
 	app := NewApp()
 
-	info := app.GetWorkspaceInfo()
-
-	// Currently returns empty values (no workspace loaded)
-	if info.Name != "" {
-		t.Errorf("Expected empty Name, got %q", info.Name)
+	info, err := app.GetWorkspaceInfo(t.TempDir())
+	if err == nil {
+		t.Fatal("expected a rejection before startup, got nil")
 	}
-	if info.Path != "" {
-		t.Errorf("Expected empty Path, got %q", info.Path)
+	if info != (WorkspaceInfo{}) {
+		t.Errorf("Expected zero WorkspaceInfo, got %+v", info)
 	}
 }
 
 func TestWorkspaceInfoStruct(t *testing.T) {
 	info := WorkspaceInfo{
-		Name: "test-project",
-		Path: "/path/to/project",
+		Name:      "test-project",
+		Path:      "/path/to/project",
+		RepoKey:   "0f9a",
+		RepoEpoch: 3,
 	}
 
 	if info.Name != "test-project" {
@@ -53,6 +77,12 @@ func TestWorkspaceInfoStruct(t *testing.T) {
 	}
 	if info.Path != "/path/to/project" {
 		t.Errorf("Expected Path '/path/to/project', got %q", info.Path)
+	}
+	if info.RepoKey != "0f9a" {
+		t.Errorf("Expected RepoKey '0f9a', got %q", info.RepoKey)
+	}
+	if info.RepoEpoch != 3 {
+		t.Errorf("Expected RepoEpoch 3, got %d", info.RepoEpoch)
 	}
 }
 

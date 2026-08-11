@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"firn/internal/ai"
 	"firn/internal/filesystem"
 	"firn/internal/git"
 	"firn/internal/lsp"
@@ -14,6 +15,7 @@ import (
 	"firn/internal/watcher"
 	"firn/internal/workspace"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,9 +49,14 @@ type App struct {
 	searchManager   *search.Manager
 	gitService      *git.Service
 	gitMsgGen       *git.MessageGenerator
-	closeMu         sync.Mutex
-	isClosing       bool
-	runShutdown     bool
+	aiService       *ai.Service
+	// firnDir is the ~/.firn state root, or "" when no home/config directory
+	// is available. An empty firnDir must never become a relative path: state
+	// that needs it is simply unavailable.
+	firnDir     string
+	closeMu     sync.Mutex
+	isClosing   bool
+	runShutdown bool
 	// activeHistoryWorkspace and activeHistoryEpoch mirror the successfully
 	// loaded profile workspace for shutdown capture. Guarded by closeMu.
 	activeHistoryWorkspace string
@@ -86,6 +93,7 @@ func NewApp() *App {
 		fileWatcher:     fw,
 		termManager:     terminal.NewManager(),
 		osFS:            osFS,
+		firnDir:         firnDir,
 		workspaceStore:  workspace.NewStore(osFS, workspaceBaseDir),
 		runHistoryStore: runhistory.NewStore(osFS, firnDir),
 		searchManager:   search.NewManager(),
@@ -115,6 +123,20 @@ func (a *App) startup(ctx context.Context) {
 		runtime.EventsEmit(a.ctx, event, data...)
 	})
 	a.wireLSPProvisioners()
+
+	// Golem chat. Without a ~/.firn root there is no consent path at all: an
+	// empty path makes ai.ConsentStore fail closed instead of writing a
+	// relative .firn, so Local chat keeps working while Remote stays degraded
+	// and cannot grant consent.
+	consentPath := ""
+	if a.firnDir == "" {
+		// ai.ConsentStore returns before its own log line on an empty path, so
+		// this is the only host-side record of the degradation.
+		log.Printf(golemLogPrefix + "consent unavailable: no home directory")
+	} else {
+		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
+	}
+	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit)
 }
 
 // wireLSPProvisioners builds and registers the managed-server provisioners on
@@ -207,12 +229,19 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 			close(lspDone)
 		}()
 
+		aiDone := make(chan struct{})
+		go func() {
+			a.closeAIService()
+			close(aiDone)
+		}()
+
 		deadline := time.After(2 * time.Second)
 		closeReadyCh := closeReady
 		runnerDoneCh := runnerDone
 		lspDoneCh := lspDone
+		aiDoneCh := aiDone
 
-		for closeReadyCh != nil || runnerDoneCh != nil || lspDoneCh != nil {
+		for closeReadyCh != nil || runnerDoneCh != nil || lspDoneCh != nil || aiDoneCh != nil {
 			select {
 			case <-closeReadyCh:
 				closeReadyCh = nil
@@ -220,6 +249,8 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 				runnerDoneCh = nil
 			case <-lspDoneCh:
 				lspDoneCh = nil
+			case <-aiDoneCh:
+				aiDoneCh = nil
 			case <-deadline:
 				runtime.Quit(a.ctx)
 				return
@@ -230,6 +261,23 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	}()
 
 	return true
+}
+
+// closeAIService shuts the Golem service down inside beforeClose's budget. It
+// is idempotent and a no-op before startup, so a second close (or a close that
+// races the shutdown drain) costs nothing.
+func (a *App) closeAIService() {
+	if a.aiService == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	// Close returns the raw ctx.Err() on deadline and an already-sanitized
+	// public error for runner-close failures. Nothing is returned to the UI
+	// during shutdown; golemError is here only to host-log the raw cause.
+	if err := a.aiService.Close(ctx); err != nil {
+		_ = a.golemError(err)
+	}
 }
 
 // beginRunShutdown closes run admission for shutdown. BeginDrainWithReason
@@ -259,20 +307,122 @@ func (a *App) shutdownHistoryWorkspaceFor(epoch uint64) (string, bool) {
 		epoch == a.shutdownHistoryEpoch
 }
 
-// GetWorkspaceInfo returns information about the current workspace.
-// Returns empty values when no workspace is loaded.
-func (a *App) GetWorkspaceInfo() WorkspaceInfo {
-	// TODO: Implement actual workspace detection
-	return WorkspaceInfo{
-		Name: "",
-		Path: "",
-	}
+// WorkspaceInfo identifies the repository the Golem chat is bound to. Path is
+// the canonical root the backend authorized, never the caller's input, and all
+// four fields are zero when nothing is bound.
+type WorkspaceInfo struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	RepoKey   string `json:"repoKey"`
+	RepoEpoch uint64 `json:"repoEpoch"`
 }
 
-// WorkspaceInfo contains information about the current workspace.
-type WorkspaceInfo struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+// errGolemUnavailable marks calls that arrive before startup created the
+// service. It is deliberately not an ai sentinel: it projects to the catch-all.
+var errGolemUnavailable = errors.New("golem service is not initialized")
+
+// golemLogPrefix starts every host-side Golem log line App writes, as distinct
+// from internal/ai's own "ai: golem ..." lines. Named so the contract is
+// greppable and the test can observe the production value instead of
+// duplicating it.
+const golemLogPrefix = "app: golem "
+
+// golemError host-logs the raw Golem cause and returns only its fixed public
+// projection, so no repository root, config or consent path, or credential
+// text can cross the Wails boundary.
+//
+// ai.Service errors arrive already projected. Re-projecting one would collapse
+// its selected message onto the generic catch-all — ai.PublicError carries no
+// sentinel to match — so an already-public error is passed through as it
+// stands and only unprojected causes are sanitized here.
+func (a *App) golemError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// errors.As, not a type assertion: the projection survives wrapping.
+	var public ai.PublicError
+	if !errors.As(err, &public) {
+		public = ai.SanitizeError(err)
+	}
+	// The standard logger, as internal/ai already uses for host-only Golem
+	// diagnostics. runtime.LogErrorf would need a.ctx to be the Wails lifecycle
+	// context carrying the logger — it calls log.Fatalf otherwise — so it cannot
+	// record the calls that land before startup, which are exactly the ones
+	// worth recording. In a Wails app both reach the same destination.
+	log.Printf(golemLogPrefix+"%s: %v", public.Code, err)
+	return public
+}
+
+// GetWorkspaceInfo binds repoPath as the current Golem repository and returns
+// its canonical root plus repository identity. An empty repoPath unbinds and
+// returns empty values. Rebinding the same root keeps the epoch; unbinding and
+// binding again advances it, which invalidates every request built on the old
+// one. This is exposed to the frontend via Wails bindings.
+func (a *App) GetWorkspaceInfo(repoPath string) (WorkspaceInfo, error) {
+	if a.aiService == nil {
+		return WorkspaceInfo{}, a.golemError(errGolemUnavailable)
+	}
+	if repoPath == "" {
+		a.aiService.UnbindRepository()
+		return WorkspaceInfo{}, nil
+	}
+	// The service canonicalizes and returns the root it authorized, so the
+	// root reported back is that value itself rather than a recomputation of
+	// it. A failed bind leaves the previous binding untouched.
+	identity, root, err := a.aiService.BindRepository(repoPath)
+	if err != nil {
+		return WorkspaceInfo{}, a.golemError(err)
+	}
+	return WorkspaceInfo{
+		Name:      filepath.Base(root),
+		Path:      root,
+		RepoKey:   identity.RepoKey,
+		RepoEpoch: identity.RepoEpoch,
+	}, nil
+}
+
+// GetGolemStatus returns the Golem status for one workspace of the bound
+// repository. Request and response cross the boundary unchanged and neither
+// carries a filesystem path.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GetGolemStatus(req ai.StatusRequest) (ai.Status, error) {
+	if a.aiService == nil {
+		return ai.Status{}, a.golemError(errGolemUnavailable)
+	}
+	status, err := a.aiService.Status(req)
+	if err != nil {
+		return ai.Status{}, a.golemError(err)
+	}
+	return status, nil
+}
+
+// RunGolemTurn submits one chat turn for admission. It returns as soon as the
+// turn is accepted or a consent decision is needed; run output arrives on the
+// golem:event and golem:run-status events.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) RunGolemTurn(req ai.TurnRequest) (ai.TurnAdmission, error) {
+	if a.aiService == nil {
+		return ai.TurnAdmission{}, a.golemError(errGolemUnavailable)
+	}
+	admission, err := a.aiService.StartTurn(a.ctx, req)
+	if err != nil {
+		return ai.TurnAdmission{}, a.golemError(err)
+	}
+	return admission, nil
+}
+
+// CancelGolemRun cancels the run named by identity, or declines its pending
+// consent challenge. It reports whether anything matched.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CancelGolemRun(identity ai.RunIdentity) (bool, error) {
+	if a.aiService == nil {
+		return false, a.golemError(errGolemUnavailable)
+	}
+	canceled, err := a.aiService.Cancel(identity)
+	if err != nil {
+		return false, a.golemError(err)
+	}
+	return canceled, nil
 }
 
 // ReadDirectory reads a directory and returns its contents as a tree structure.
@@ -311,27 +461,38 @@ func (a *App) WriteFile(path string, content string, encoding string, lineEnding
 // Events are emitted to the frontend via "file:changed" event.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) StartWatching(path string) error {
-	return a.fileWatcher.Watch(a.ctx, path, func(event watcher.FileEvent) {
-		runtime.EventsEmit(a.ctx, "file:changed", event)
+	return a.fileWatcher.Watch(a.ctx, path, a.handleWatchEvent)
+}
 
-		// Reactive run profile re-detection on config file changes
-		a.profileMu.RLock()
-		if a.profileManager == nil {
-			a.profileMu.RUnlock()
-			return
-		}
+// handleWatchEvent fans one debounced filesystem change out to the frontend,
+// the Golem scope policy, and run-profile re-detection.
+func (a *App) handleWatchEvent(event watcher.FileEvent) {
+	a.emit("file:changed", event)
 
-		changed := a.profileManager.HandleFileChange(event.Path)
-		var snap runprofile.RunProfilesSnapshot
-		if changed {
-			snap = a.runProfilesSnapshot(a.profileManager)
-		}
+	// Golem scope manifests reload in place. The notice is payload-free so no
+	// policy path crosses the boundary, and it is emitted only for a manifest
+	// the current binding actually watches.
+	if a.aiService != nil && a.aiService.ReloadPolicy(event.Path) {
+		a.emit(ai.EventGolemStatusChanged)
+	}
+
+	// Reactive run profile re-detection on config file changes
+	a.profileMu.RLock()
+	if a.profileManager == nil {
 		a.profileMu.RUnlock()
+		return
+	}
 
-		if changed {
-			runtime.EventsEmit(a.ctx, "runprofiles:changed", snap)
-		}
-	})
+	changed := a.profileManager.HandleFileChange(event.Path)
+	var snap runprofile.RunProfilesSnapshot
+	if changed {
+		snap = a.runProfilesSnapshot(a.profileManager)
+	}
+	a.profileMu.RUnlock()
+
+	if changed {
+		a.emit("runprofiles:changed", snap)
+	}
 }
 
 // StopWatching stops watching for file changes.

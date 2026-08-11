@@ -1,3 +1,4 @@
+import { useGolemStore } from '../stores/golemStore';
 import {
   isLiveRunState,
   representativeRunInstanceId,
@@ -75,9 +76,28 @@ export function showSidebarView(view: 'explorer' | 'search' | 'git' | 'structure
   if (view === 'search') useSearchStore.getState().requestInputFocus();
 }
 
-export function showRunProfiles(): void {
+const openRightPanel = (): void => {
   const state = useIDEStore.getState();
   if (state.isRightPanelCollapsed) state.toggleRightPanel();
+};
+
+export function showRunProfiles(): void {
+  // Expanding is not enough now that the right panel has two modes: an expand
+  // alone would re-show whichever mode was last selected.
+  useGolemStore.getState().setPanelMode('runs');
+  openRightPanel();
+}
+
+/**
+ * Reveals the Golem chat, optionally on a specific backend conversation — the
+ * StatusBar uses that to jump to the workspace whose run needs attention,
+ * which is not necessarily the workspace the IDE has focused.
+ */
+export function showGolem(conversationId?: string): void {
+  const golem = useGolemStore.getState();
+  if (conversationId) golem.selectConversation(conversationId);
+  golem.setPanelMode('golem');
+  openRightPanel();
 }
 
 const currentEditorLocation = (
@@ -196,6 +216,13 @@ export const createCommands = (openFolder: () => void): Command[] => [
     run: () => showSidebarView('git'),
   },
   { id: 'show-run-profiles', title: 'Show Run Profiles', run: showRunProfiles },
+  {
+    id: 'show-golem',
+    title: 'Show Golem',
+    keywords: ['ai', 'chat'],
+    shortcut: '⌘⇧I',
+    run: () => showGolem(),
+  },
   {
     id: 'show-structure',
     title: 'Show Structure',

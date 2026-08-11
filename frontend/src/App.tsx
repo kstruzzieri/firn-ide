@@ -2,6 +2,7 @@ import './styles/tokens.css';
 import './styles/reset.css';
 import { useCallback, useEffect, useRef } from 'react';
 import { IDEShell } from './components/layout';
+import { RightPanel } from './components/layout/RightPanel';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
@@ -10,7 +11,6 @@ import { GitPanel } from './components/GitPanel';
 import { StructureView } from './components/Structure';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
-import { RunProfiles } from './components/RunProfiles';
 import { StatusBar } from './components/StatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Toast } from './components/Toast';
@@ -19,6 +19,7 @@ import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { drainRunHistoryForClose, useRunOutputListener } from './hooks/useRunOutput';
+import { useGolemBridge } from './hooks/useGolemBridge';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
@@ -46,6 +47,10 @@ function App() {
   // Own run-event capture at the always-mounted App so collapsing the bottom
   // panel (which unmounts Terminal) cannot drop run output or history (#235).
   useRunOutputListener();
+  // Same reason as run output: the Golem chat panel unmounts when the right
+  // panel collapses or switches to Runs, so the event bridge and the repository
+  // binding it owns live at the always-mounted App instead (#226).
+  useGolemBridge();
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
@@ -178,7 +183,7 @@ function App() {
         }
         centerPanel={<Editor />}
         bottomPanel={<Terminal />}
-        rightPanel={<RunProfiles />}
+        rightPanel={<RightPanel />}
         statusBar={<StatusBar />}
       />
       <Toast />

@@ -70,6 +70,7 @@ Firn IDE uses a hybrid architecture: a **Go backend** for system operations and 
 | `terminal` | `internal/terminal/` | PTY session management |
 | `lsp` | `internal/lsp/` | LSP client, stdio transport, registry, URI handling |
 | `search` | `internal/search/` | ripgrep runner, JSON parser, cancellation, typed results |
+| `ai` | `internal/ai/` | Golem chat: repository binding/epochs, scope policy, Remote consent, run lifecycle |
 
 ## Data Flow
 
@@ -376,7 +377,20 @@ Bind: []interface{}{
 
 | Go Method | Frontend Call | Returns |
 |-----------|---------------|---------|
-| `App.GetWorkspaceInfo()` | `window.go.main.App.GetWorkspaceInfo()` | `Promise<WorkspaceInfo>` |
+| `App.GetWorkspaceInfo(repoPath)` | `window.go.main.App.GetWorkspaceInfo(repoPath)` | `Promise<WorkspaceInfo>` |
+| `App.GetGolemStatus(req)` | `window.go.main.App.GetGolemStatus(req)` | `Promise<ai.Status>` |
+| `App.RunGolemTurn(req)` | `window.go.main.App.RunGolemTurn(req)` | `Promise<ai.TurnAdmission>` |
+| `App.CancelGolemRun(identity)` | `window.go.main.App.CancelGolemRun(identity)` | `Promise<boolean>` |
+
+The Golem surface is deliberately narrow. `GetWorkspaceInfo` is the only call
+that takes a path: it binds the repository, returns the canonical root the
+backend authorized plus its `repoKey`/`repoEpoch`, and unbinds when given `""`.
+The other three carry `internal/ai` structs unchanged and address work by
+identity alone — no path, no provider endpoint — so a frontend caller cannot
+redirect the repository root or the destination. Every error they return is a
+fixed public message; the raw cause is logged host-side only. Run output
+arrives asynchronously on the `golem:event`, `golem:run-status`, and
+`golem:status-changed` events.
 
 ### Adding New Bindings
 

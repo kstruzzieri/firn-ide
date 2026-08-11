@@ -242,13 +242,16 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Merge conflict resolution editor — Current / Incoming / Both / Manual decisions on a live Result spine, with a conflict rail, keyboard navigation, undo-safe region mapping, and no write or stage until every region is resolved
 - [x] Merge confidence layer — hover and focus preview of the exact lines a choice produces, word-level marks between the two sides, provenance stripes showing where each resolution landed, exact targeted reopen of any decision, the common ancestor per region or as a lazy stage-`:1` strip, line numbers with per-card line ranges, and polite screen-reader announcements
 
+**AI (Golem)**
+- [x] Workspace chat panel (#226 phase 1) — read-only assistant on the embedded `go-llm` runtime, scoped to the bound repository with a sensitive-path floor, consent-gated remote egress with durable per-destination approval, streamed conversations that survive workspace switches, and a persistent status-bar segment (`Cmd/Ctrl+Shift+I`)
+
 ### Planned
 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Run execution identity Phase 2D — execution-plan abstraction (#146)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
-- [ ] AI Chat Panel — read-only workspace chat (#226) on an embedded `go-llm` runtime (#165)
+- [ ] Git commit messages on the embedded `go-llm` runtime (#165), replacing the CLI shell-out
 
 ## Project Structure
 
@@ -341,7 +344,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 Active tracks:
 
-1. **Golem:** replace the commit-message CLI shell-out with the embedded `go-llm` runtime (#165), then the read-only workspace chat panel (#226). Both were unblocked by the #225 toolchain upgrade.
+1. **Golem:** the read-only workspace chat panel shipped as #226 phase 1. Next: replace the commit-message CLI shell-out with the embedded `go-llm` runtime (#165), then the phase 2 chat follow-ups (context attachments, mutating tools).
 2. **Git merge:** finish #164 phase 4 — multi-file queue advance and watcher/external-change hardening — then work the follow-up backlog: auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), and the diagnostics follow-ups surfaced by phase 3 (#240, #241, #242). Destructive VCS operations (#166) come after.
 3. **Run engine:** continue run execution identity Phase 2 (#146) — 2A retained tabs shipped, 2B parallelism shipped via #232, and the current pull request delivers 2C persistence. Only 2D execution plans remain deferred.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.

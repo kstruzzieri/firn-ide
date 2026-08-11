@@ -10,6 +10,10 @@ export function AppendRunHistoryRecord(arg1) {
   return window['go']['main']['App']['AppendRunHistoryRecord'](arg1);
 }
 
+export function CancelGolemRun(arg1) {
+  return window['go']['main']['App']['CancelGolemRun'](arg1);
+}
+
 export function CancelSearch(arg1) {
   return window['go']['main']['App']['CancelSearch'](arg1);
 }
@@ -50,6 +54,10 @@ export function GetAllRunProfiles() {
   return window['go']['main']['App']['GetAllRunProfiles']();
 }
 
+export function GetGolemStatus(arg1) {
+  return window['go']['main']['App']['GetGolemStatus'](arg1);
+}
+
 export function GetLSPStatus() {
   return window['go']['main']['App']['GetLSPStatus']();
 }
@@ -74,8 +82,8 @@ export function GetWatchedPath() {
   return window['go']['main']['App']['GetWatchedPath']();
 }
 
-export function GetWorkspaceInfo() {
-  return window['go']['main']['App']['GetWorkspaceInfo']();
+export function GetWorkspaceInfo(arg1) {
+  return window['go']['main']['App']['GetWorkspaceInfo'](arg1);
 }
 
 export function GitApplyConflictSide(arg1, arg2, arg3, arg4) {
@@ -264,6 +272,10 @@ export function RestartRunInstance(arg1) {
 
 export function RestartRunProfile(arg1) {
   return window['go']['main']['App']['RestartRunProfile'](arg1);
+}
+
+export function RunGolemTurn(arg1) {
+  return window['go']['main']['App']['RunGolemTurn'](arg1);
 }
 
 export function SaveRunProfile(arg1) {

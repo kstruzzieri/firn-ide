@@ -6,6 +6,7 @@ import {
   navigateBack,
   navigateForward,
   runOrRestartSelectedProfile,
+  showGolem,
   showSidebarView,
 } from '../utils/commands';
 
@@ -58,15 +59,29 @@ export function useKeyboardShortcuts(
         return;
       }
 
+      // One shape for every platform-modifier+Shift chord below. Alt is
+      // excluded: Alt makes a different chord, not a sloppier spelling of this
+      // one, and the OS or the webview may already own it.
+      const chordModifier = modifier && e.shiftKey && !e.altKey;
+
       // Cmd+Shift+F / Ctrl+Shift+F — Workspace search.
-      if (modifier && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      if (chordModifier && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
         showSidebarView('search');
         return;
       }
 
+      // Cmd+Shift+I / Ctrl+Shift+I — Golem chat.
+      // preventDefault is essential: both WKWebView and Chromium claim this
+      // chord for developer tools.
+      if (chordModifier && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        showGolem();
+        return;
+      }
+
       // Cmd+Shift+Y / Ctrl+Shift+Y — Structure (current-file outline).
-      if (modifier && e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+      if (chordModifier && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
         showSidebarView('structure');
         return;

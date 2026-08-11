@@ -95,6 +95,21 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   GitCheckout: jest.fn(),
   GitGenerateCommitMessage: jest.fn(),
   GitConflictState: jest.fn(),
+  // App now mounts useGolemBridge; an unbound repository is the quiet default.
+  GetWorkspaceInfo: jest.fn((path: string) =>
+    Promise.resolve({ name: '', path, repoKey: '', repoEpoch: 0 })
+  ),
+  GetGolemStatus: jest.fn(() =>
+    Promise.resolve({
+      available: false,
+      workspaceLabel: '',
+      identity: { repoEpoch: 0, workspaceId: '', conversationId: '' },
+      needsConsent: false,
+      activeRuns: [],
+    })
+  ),
+  RunGolemTurn: jest.fn(() => Promise.resolve(null)),
+  CancelGolemRun: jest.fn(() => Promise.resolve(false)),
 }));
 
 jest.mock('../../wailsjs/runtime/runtime', () => ({
@@ -492,6 +507,17 @@ describe('App — merge session revalidation signals', () => {
     return cb!;
   }
 
+  /**
+   * Renders inside act and settles the mount: the always-mounted Golem bridge
+   * resolves GetWorkspaceInfo a microtask after render, which would otherwise
+   * land after the test body returns and count as an update outside act (#226).
+   */
+  async function renderApp() {
+    await act(async () => {
+      render(<App />);
+    });
+  }
+
   /** Replaces the store action so the test observes the signal, not the policy
    * (which gitStore.merge.test.ts owns). */
   function captureMergeSignal() {
@@ -500,9 +526,9 @@ describe('App — merge session revalidation signals', () => {
     return notifyMergeFileChanged;
   }
 
-  it('hands a changed path to the merge session revalidator', () => {
+  it('hands a changed path to the merge session revalidator', async () => {
     const notify = captureMergeSignal();
-    render(<App />);
+    await renderApp();
 
     act(() => {
       watcherCallback()({
@@ -518,9 +544,9 @@ describe('App — merge session revalidation signals', () => {
     expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
   });
 
-  it('hands both sides of a rename to the revalidator', () => {
+  it('hands both sides of a rename to the revalidator', async () => {
     const notify = captureMergeSignal();
-    render(<App />);
+    await renderApp();
 
     act(() => {
       watcherCallback()({
@@ -537,9 +563,9 @@ describe('App — merge session revalidation signals', () => {
     expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
   });
 
-  it('signals a deletion of the session file too', () => {
+  it('signals a deletion of the session file too', async () => {
     const notify = captureMergeSignal();
-    render(<App />);
+    await renderApp();
 
     act(() => {
       watcherCallback()({
@@ -553,9 +579,9 @@ describe('App — merge session revalidation signals', () => {
     expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
   });
 
-  it('does not signal for directory events', () => {
+  it('does not signal for directory events', async () => {
     const notify = captureMergeSignal();
-    render(<App />);
+    await renderApp();
 
     act(() => {
       watcherCallback()({ type: 'created', path: '/r/sub', isDir: true, time: '' });

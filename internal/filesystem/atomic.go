@@ -3,10 +3,29 @@ package filesystem
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
 )
+
+// ErrDurabilityUnavailable reports that the filesystem cannot force a
+// directory's entries to stable storage. Callers whose correctness depends on
+// durability (the remote consent store) must treat this as failure, unlike
+// WriteFileAtomic's best-effort fallback.
+var ErrDurabilityUnavailable = errors.New("filesystem directory sync unavailable")
+
+// SyncDirectory flushes a directory's entries through the durable seam. A
+// filesystem lacking either half of the WriteFileSync+SyncDir capability
+// cannot promise durability at all, so the call fails closed rather than
+// silently succeeding.
+func SyncDirectory(fsys FileSystem, path string) error {
+	durable, ok := fsys.(durableFileSystem)
+	if !ok {
+		return ErrDurabilityUnavailable
+	}
+	return durable.SyncDir(path)
+}
 
 // durableFileSystem is implemented by filesystems that can force data to stable
 // storage. Mocks that do not implement it fall back to plain writes, which stay

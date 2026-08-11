@@ -1,6 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { getPlatform } from '../../utils/platform';
 import * as platform from '../../utils/platform';
+import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 import { useSearchStore } from '../../stores/searchStore';
 
@@ -354,6 +355,74 @@ describe('useKeyboardShortcuts', () => {
 
       expect(openCommandPalette).not.toHaveBeenCalled();
       events.slice(0, -1).forEach((event) => expect(event.defaultPrevented).toBe(false));
+    });
+  });
+
+  describe.each([
+    ['macOS', true],
+    ['Windows/Linux', false],
+  ] as const)('Golem shortcut on %s', (_platformName, mac) => {
+    beforeEach(() => {
+      __resetGolemStore();
+      jest.spyOn(platform, 'isMac').mockReturnValue(mac);
+      useIDEStore.setState({ isRightPanelCollapsed: true });
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    const golemEvent = (over: KeyboardEventInit = {}) =>
+      new KeyboardEvent('keydown', {
+        key: 'i',
+        metaKey: mac,
+        ctrlKey: !mac,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+        ...over,
+      });
+
+    it('opens the Golem panel and prevents default for the platform modifier+Shift+I', () => {
+      renderShortcuts();
+      const event = golemEvent();
+
+      act(() => {
+        window.dispatchEvent(event);
+      });
+
+      expect(useGolemStore.getState().panelMode).toBe('golem');
+      expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+      // WKWebView and Chromium both claim Cmd/Ctrl+Shift+I for devtools.
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    it('accepts the shifted uppercase key the browser actually reports', () => {
+      renderShortcuts();
+
+      act(() => {
+        window.dispatchEvent(golemEvent({ key: 'I' }));
+      });
+
+      expect(useGolemStore.getState().panelMode).toBe('golem');
+    });
+
+    it('ignores plain I, a missing Shift, an Alt-modified chord, and the other platform modifier', () => {
+      renderShortcuts();
+      const events = [
+        golemEvent({ metaKey: false, ctrlKey: false, shiftKey: false }),
+        golemEvent({ shiftKey: false }),
+        golemEvent({ altKey: true }),
+        golemEvent({ metaKey: !mac, ctrlKey: mac }),
+      ];
+
+      act(() => {
+        events.forEach((event) => window.dispatchEvent(event));
+      });
+
+      expect(useGolemStore.getState().panelMode).toBe('runs');
+      expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
+      events.forEach((event) => expect(event.defaultPrevented).toBe(false));
     });
   });
 
