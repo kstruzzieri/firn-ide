@@ -22,6 +22,11 @@ import (
 // retryable.
 const consentChallengeTTL = 10 * time.Minute
 
+// maxAssistantOutputBytes caps decoded message.delta text for one run. It
+// matches Golem's 128 KiB event ceiling (about 32k output tokens) while
+// keeping the frontend's terminal Markdown parse bounded.
+const maxAssistantOutputBytes = 128 << 10
+
 // EventGolemStatusChanged is the payload-free event telling the frontend to
 // re-read Golem status. The Wails binding layer emits it as well — on a policy
 // manifest reload — so it is exported to keep the two emitters from drifting
@@ -833,10 +838,25 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 	defer s.wg.Done()
 	defer cancel()
 	var terminal *RelayedEvent
+	assistantOutputBytes := 0
 	sink := func(e golem.Event) error {
 		if e.RunID != turn.RunID || e.ThreadID != turn.ThreadID {
 			// Cross-run/thread event: stop the run; never emit it.
 			return fmt.Errorf("golem event identity mismatch: run %q thread %q", e.RunID, e.ThreadID)
+		}
+		if e.Type == "message.delta" {
+			var delta struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(e.Payload, &delta); err != nil {
+				cancel()
+				return errors.New("golem message.delta payload is invalid")
+			}
+			if len(delta.Text) > maxAssistantOutputBytes-assistantOutputBytes {
+				cancel()
+				return fmt.Errorf("golem assistant output exceeds %d bytes", maxAssistantOutputBytes)
+			}
+			assistantOutputBytes += len(delta.Text)
 		}
 		raw, err := json.Marshal(e)
 		if err != nil {

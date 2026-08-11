@@ -1904,6 +1904,91 @@ func TestServiceEventRelayAndTerminals(t *testing.T) {
 	})
 }
 
+func TestServiceRejectsAssistantOutputOverLimit(t *testing.T) {
+	const outputLimit = 128 << 10
+	overflowMarker := "provider-output-must-not-cross-relay"
+
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
+	deltaPayload := func(text string) string {
+		raw, err := json.Marshal(struct {
+			MessageID string `json:"messageId"`
+			Text      string `json:"text"`
+		}{MessageID: "m1", Text: text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	h.factory.setRun(func(runCtx context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		if err := sink(stampEvent(turn, "run.started", 1, `{}`)); err != nil {
+			return agent.Result{}, err
+		}
+		chunk := strings.Repeat("x", 64<<10)
+		seq := uint64(2)
+		for sent := 0; sent < outputLimit; sent += len(chunk) {
+			if err := sink(stampEvent(turn, "message.delta", seq, deltaPayload(chunk))); err != nil {
+				return agent.Result{}, err
+			}
+			seq++
+		}
+		if err := sink(stampEvent(turn, "message.delta", seq, deltaPayload(overflowMarker))); err != nil {
+			if runCtx.Err() == nil {
+				return agent.Result{}, errors.New("assistant output rejection did not cancel the run")
+			}
+			return agent.Result{}, err
+		}
+		return agent.Result{}, errors.New("assistant output sink accepted more than the limit")
+	})
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+
+	gotBytes := 0
+	for _, event := range h.rec.relayed() {
+		if event.RunID != id.RunID || event.Type != "message.delta" {
+			continue
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode relayed delta: %v", err)
+		}
+		gotBytes += len(payload.Text)
+		if strings.Contains(payload.Text, overflowMarker) {
+			t.Fatal("overflowing provider output crossed the relay")
+		}
+	}
+	if gotBytes != outputLimit {
+		t.Fatalf("relayed assistant output = %d bytes, want exactly %d", gotBytes, outputLimit)
+	}
+
+	var fallback RunStatusEvent
+	for _, status := range h.rec.runStatuses() {
+		if status.Identity == id {
+			fallback = status
+		}
+	}
+	if fallback.State != "failed" || fallback.Message != "The Golem run failed." {
+		t.Fatalf("overflow fallback = %+v, want fixed public failure", fallback)
+	}
+	assertEmitsClean(t, h.rec, overflowMarker)
+	if strings.Contains(logs.String(), overflowMarker) {
+		t.Fatal("overflowing provider output leaked into host logs")
+	}
+}
+
 func TestServiceTerminalHeldUntilRunReturns(t *testing.T) {
 	h := newServiceHarness(t, "http://127.0.0.1:1")
 	repoID, _ := h.bind(t)
