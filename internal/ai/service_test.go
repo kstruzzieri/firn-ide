@@ -1989,6 +1989,63 @@ func TestServiceRejectsAssistantOutputOverLimit(t *testing.T) {
 	}
 }
 
+// TestServiceRejectsMalformedAssistantDelta covers the defensive branch: a
+// message.delta whose payload does not decode cancels the run and never relays
+// the event, surfacing only the fixed public failure.
+func TestServiceRejectsMalformedAssistantDelta(t *testing.T) {
+	const badMarker = "malformed-delta-must-not-cross-relay"
+
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
+	h.factory.setRun(func(runCtx context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		if err := sink(stampEvent(turn, "run.started", 1, `{}`)); err != nil {
+			return agent.Result{}, err
+		}
+		// Not valid JSON for the {messageId,text} struct (trailing comma, never
+		// closed); carries a marker so a leak into the relay or host log shows.
+		malformed := `{"text":"` + badMarker + `",`
+		if err := sink(stampEvent(turn, "message.delta", 2, malformed)); err != nil {
+			if runCtx.Err() == nil {
+				return agent.Result{}, errors.New("malformed delta rejection did not cancel the run")
+			}
+			return agent.Result{}, err
+		}
+		return agent.Result{}, errors.New("sink accepted a malformed message.delta")
+	})
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+
+	for _, event := range h.rec.relayed() {
+		if event.Type == "message.delta" && event.RunID == id.RunID {
+			t.Fatalf("a malformed delta was relayed: %s", event.Payload)
+		}
+	}
+
+	var fallback RunStatusEvent
+	for _, status := range h.rec.runStatuses() {
+		if status.Identity == id {
+			fallback = status
+		}
+	}
+	if fallback.State != "failed" || fallback.Message != "The Golem run failed." {
+		t.Fatalf("malformed-delta fallback = %+v, want fixed public failure", fallback)
+	}
+	assertEmitsClean(t, h.rec, badMarker)
+	if strings.Contains(logs.String(), badMarker) {
+		t.Fatal("malformed provider output leaked into host logs")
+	}
+}
+
 func TestServiceTerminalHeldUntilRunReturns(t *testing.T) {
 	h := newServiceHarness(t, "http://127.0.0.1:1")
 	repoID, _ := h.bind(t)

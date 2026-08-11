@@ -22,9 +22,10 @@ import (
 // retryable.
 const consentChallengeTTL = 10 * time.Minute
 
-// maxAssistantOutputBytes caps decoded message.delta text for one run. It
-// matches Golem's 128 KiB event ceiling (about 32k output tokens) while
-// keeping the frontend's terminal Markdown parse bounded.
+// maxAssistantOutputBytes caps the cumulative decoded message.delta text for
+// one run (about 32k output tokens) so the frontend's terminal Markdown parse
+// stays bounded. This is a per-run text ceiling; Golem's own 128 KiB limit is
+// per-event over the whole event JSON, a different (coincidentally equal) unit.
 const maxAssistantOutputBytes = 128 << 10
 
 // EventGolemStatusChanged is the payload-free event telling the frontend to
