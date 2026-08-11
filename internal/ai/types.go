@@ -146,6 +146,12 @@ func (e PublicError) Error() string { return e.Message }
 // runner failures. The raw cause stays in the chain for host logging.
 var ErrRunFailed = errors.New("golem run failed")
 
+// ErrAssistantOutputLimit categorizes a run stopped because its assistant text
+// crossed maxAssistantOutputBytes. It reaches SanitizeError nested inside
+// ErrRunFailed — the terminal-less fallback wraps every cause that way — so its
+// allowlist case is ordered ahead of the ErrRunFailed catch.
+var ErrAssistantOutputLimit = errors.New("golem assistant output limit exceeded")
+
 // SanitizeError projects any error onto the fixed public allowlist using only
 // errors.Is against package sentinels. There is no pass-through fallback: an
 // unrecognized error collapses to the generic catch-all. Raw error text —
@@ -163,6 +169,8 @@ func SanitizeError(err error) PublicError {
 		return PublicError{Code: "request_rejected", Message: "The Golem request is invalid or stale."}
 	case errors.Is(err, ErrWorkspaceUnavailable):
 		return PublicError{Code: "workspace_unavailable", Message: "The Golem workspace is unavailable."}
+	case errors.Is(err, ErrAssistantOutputLimit):
+		return PublicError{Code: "output_limit", Message: "The Golem reply exceeded the output limit."}
 	case errors.Is(err, ErrRunFailed):
 		return PublicError{Code: "run_failed", Message: "The Golem run failed."}
 	default:

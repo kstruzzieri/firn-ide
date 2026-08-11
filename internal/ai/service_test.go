@@ -637,6 +637,10 @@ func TestServiceSanitizeErrorAllowlist(t *testing.T) {
 		{"request_rejected", fmt.Errorf("%w: epoch for %s", ErrRequestRejected, seed), "request_rejected", "The Golem request is invalid or stale."},
 		{"workspace_unavailable", fmt.Errorf("%w: stat %q: %s", ErrWorkspaceUnavailable, rootMarker, seed), "workspace_unavailable", "The Golem workspace is unavailable."},
 		{"run_failed", fmt.Errorf("%w: dial: %s", ErrRunFailed, seed), "run_failed", "The Golem run failed."},
+		{"output_limit", fmt.Errorf("%w: %d bytes: %s", ErrAssistantOutputLimit, 1<<20, seed), "output_limit", "The Golem reply exceeded the output limit."},
+		// The overflow sink error reaches the fallback wrapped in ErrRunFailed:
+		// the limit case must win over the generic run_failed case it nests in.
+		{"output_limit_under_run_failed", fmt.Errorf("%w: %w", ErrRunFailed, fmt.Errorf("%w: %s", ErrAssistantOutputLimit, seed)), "output_limit", "The Golem reply exceeded the output limit."},
 		{"catch_all_unknown", fmt.Errorf("mystery: %s", seed), "golem_unavailable", "Golem is unavailable."},
 		{"catch_all_internal", errServiceClosing, "golem_unavailable", "Golem is unavailable."},
 	}
@@ -1980,8 +1984,8 @@ func TestServiceRejectsAssistantOutputOverLimit(t *testing.T) {
 			fallback = status
 		}
 	}
-	if fallback.State != "failed" || fallback.Message != "The Golem run failed." {
-		t.Fatalf("overflow fallback = %+v, want fixed public failure", fallback)
+	if fallback.State != "failed" || fallback.Message != "The Golem reply exceeded the output limit." {
+		t.Fatalf("overflow fallback = %+v, want the fixed public output-limit failure", fallback)
 	}
 	assertEmitsClean(t, h.rec, overflowMarker)
 	if strings.Contains(logs.String(), overflowMarker) {

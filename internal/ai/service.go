@@ -855,7 +855,10 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 			}
 			if len(delta.Text) > maxAssistantOutputBytes-assistantOutputBytes {
 				cancel()
-				return fmt.Errorf("golem assistant output exceeds %d bytes", maxAssistantOutputBytes)
+				// Golem returns a latched sink error ahead of the run context
+				// error, so this cause — not context.Canceled — is what the
+				// terminal-less fallback sanitizes into its public message.
+				return fmt.Errorf("%w: %d bytes", ErrAssistantOutputLimit, maxAssistantOutputBytes)
 			}
 			assistantOutputBytes += len(delta.Text)
 		}
