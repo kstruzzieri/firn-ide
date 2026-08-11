@@ -181,6 +181,7 @@ export interface GolemStoreState {
   ingestEvent(value: unknown): void;
   ingestRunStatus(value: unknown): void;
   selectConversation(conversationId: string): void;
+  clearConversation(conversationId: string): void;
   setPanelMode(mode: GolemStoreState['panelMode']): void;
   setDraft(conversationId: string, value: string): void;
   submitTurn(conversationId: string): Promise<void>;

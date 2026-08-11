@@ -1024,6 +1024,63 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       }));
     },
 
+    clearConversation(conversationId: string) {
+      set((state) => {
+        const conversation = state.conversations[conversationId];
+        if (!conversation) return state;
+        // Idle guard (the load-bearing safety rule): clearing while a run is
+        // live would drop a conversation whose backend run is still emitting
+        // events, and a GetGolemStatus snapshot could still list that live run
+        // and re-hydrate it. When idle there is no live run — finished runs
+        // never appear in backend ActiveRuns, and the backend emits exactly one
+        // terminal per run — so a full reset cannot be repopulated by a stray
+        // event. The button is disabled in this state too; the guard is defense
+        // in depth.
+        if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) {
+          return state;
+        }
+
+        const mutation = beginMutation(state);
+        // Draft through the copy-on-write path so every subscriber sees a new
+        // reference; writing the published object in place leaves the data
+        // correct but the panel frozen.
+        const draft = draftConversation(mutation, conversationId)!;
+
+        // Reset content to the fresh shape; the backend-derived status fields
+        // (identity, workspaceLabel, available, needsConsent, warnings,
+        // initError, destination) reflect the workspace, not chat content, and
+        // stay as they are.
+        draft.rawEvents = [];
+        draft.transcript = [];
+        draft.runs = {};
+        draft.activeRunId = null;
+        draft.draft = '';
+        draft.queuedTurns = [];
+        draft.pendingConsentTurn = null;
+        draft.lastFailedTurn = null;
+
+        // Purge this conversation's run routing. No live run exists, so this is
+        // safe, and it keeps the map from growing unbounded across clears.
+        // Iterate a key snapshot; delete from the mutation's own copy.
+        for (const runId of Object.keys(mutation.runToConversation)) {
+          if (mutation.runToConversation[runId] === conversationId) {
+            delete mutation.runToConversation[runId];
+          }
+        }
+
+        // The failure that drove a StatusBar "Attention" is gone. Leave the
+        // monotonic counters and lastActiveConversationId alone.
+        if (mutation.lastFailureConversationId === conversationId) {
+          mutation.lastFailureConversationId = null;
+        }
+
+        return {
+          ...toState(mutation),
+          composerFocusRevision: state.composerFocusRevision + 1,
+        };
+      });
+    },
+
     setPanelMode(mode: GolemStoreState['panelMode']) {
       // Showing the chat is a request to type in it, so the same action that
       // reveals the panel arms the composer; Runs has no composer to focus.

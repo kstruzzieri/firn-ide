@@ -2183,6 +2183,169 @@ describe('activity and failure revisions', () => {
   });
 });
 
+describe('clearConversation', () => {
+  const needsConsentAdmission = (runId: string) =>
+    admissionPayload(runId, {
+      state: 'needs_consent',
+      destination: remoteDestination,
+      consentChallenge: challengeFor(runId),
+    });
+
+  it('resets content to the fresh idle shape while preserving backend status and changing the object reference', async () => {
+    hydrateReady({
+      needsConsent: true,
+      warnings: ['policy drift'],
+      destination: remoteDestination,
+    });
+    uuidQueue = [RUN_A];
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'hi' } })
+    );
+    store().ingestEvent(
+      eventPayload({ seq: 2, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
+    );
+    store().setDraft(CONV, 'leftover draft');
+
+    // A rich but idle conversation: content present, no live run, and a failure
+    // that put this conversation in the StatusBar's "Attention" slot.
+    const before = conv();
+    expect(before.transcript.length).toBeGreaterThanOrEqual(3);
+    expect(before.rawEvents).toHaveLength(2);
+    expect(before.runs[RUN_A].phase).toBe('failed');
+    expect(before.lastFailedTurn).not.toBeNull();
+    expect(before.activeRunId).toBeNull();
+    expect(before.pendingConsentTurn).toBeNull();
+    expect(store().runToConversation[RUN_A]).toBe(CONV);
+    expect(store().lastFailureConversationId).toBe(CONV);
+    const focusRevision = store().composerFocusRevision;
+
+    store().clearConversation(CONV);
+    const after = conv();
+
+    // Copy-on-write: a brand-new conversation object so every subscriber re-renders.
+    expect(after).not.toBe(before);
+    // Content wiped to the fresh values.
+    expect(after.rawEvents).toEqual([]);
+    expect(after.transcript).toEqual([]);
+    expect(after.runs).toEqual({});
+    expect(after.activeRunId).toBeNull();
+    expect(after.draft).toBe('');
+    expect(after.queuedTurns).toEqual([]);
+    expect(after.pendingConsentTurn).toBeNull();
+    expect(after.lastFailedTurn).toBeNull();
+    // Backend-derived status survives untouched.
+    expect(after.identity).toEqual(identity);
+    expect(after.workspaceLabel).toBe('Frontend');
+    expect(after.available).toBe(true);
+    expect(after.needsConsent).toBe(true);
+    expect(after.warnings).toEqual(['policy drift']);
+    expect(after.initError).toBeNull();
+    expect(after.destination).toEqual(remoteDestination);
+    // Routing purged, the failure slot released, and the composer refocused.
+    expect(store().runToConversation[RUN_A]).toBeUndefined();
+    expect(store().lastFailureConversationId).toBeNull();
+    expect(store().composerFocusRevision).toBe(focusRevision + 1);
+  });
+
+  it('purges only the cleared conversation from runToConversation', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
+    // A second CONV-mapped run plus one belonging to another conversation.
+    useGolemStore.setState((state) => ({
+      runToConversation: { ...state.runToConversation, [RUN_B]: OTHER_CONV, [RUN_C]: CONV },
+    }));
+
+    store().clearConversation(CONV);
+
+    expect(store().runToConversation[RUN_A]).toBeUndefined();
+    expect(store().runToConversation[RUN_C]).toBeUndefined();
+    expect(store().runToConversation[RUN_B]).toBe(OTHER_CONV);
+  });
+
+  it('clears its own failure slot but leaves one pointing elsewhere', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
+    useGolemStore.setState({ lastFailureConversationId: OTHER_CONV });
+    const failureRevision = store().failureRevision;
+
+    store().clearConversation(CONV);
+
+    expect(store().lastFailureConversationId).toBe(OTHER_CONV);
+    expect(store().failureRevision).toBe(failureRevision);
+  });
+
+  it('empties queued turns left idle after an unbind', async () => {
+    hydrateReady({ destination: remoteDestination, needsConsent: true });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValue(needsConsentAdmission(RUN_A));
+    store().setDraft(CONV, 'first');
+    await store().submitTurn(CONV);
+    store().setDraft(CONV, 'second');
+    await store().submitTurn(CONV);
+    store().invalidateBinding();
+
+    // Idle (no live run, no pending consent) but still carrying staged turns.
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(conv().queuedTurns.length).toBeGreaterThan(0);
+
+    store().clearConversation(CONV);
+
+    expect(conv().queuedTurns).toEqual([]);
+    expect(conv().transcript).toEqual([]);
+  });
+
+  it('is a no-op while a run is live', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    const gate = deferred<unknown>();
+    mockRunGolemTurn.mockReturnValue(gate.promise);
+    store().setDraft(CONV, 'first');
+    const pending = store().submitTurn(CONV);
+    expect(conv().activeRunId).toBe(RUN_A);
+
+    const before = conv();
+    store().clearConversation(CONV);
+
+    // Same reference and content intact: the guard refused it.
+    expect(conv()).toBe(before);
+    expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
+
+    gate.resolve(admissionPayload(RUN_A));
+    await pending;
+  });
+
+  it('is a no-op while a consent is pending', async () => {
+    hydrateReady({ destination: remoteDestination, needsConsent: true });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValue(needsConsentAdmission(RUN_A));
+    store().setDraft(CONV, 'ask remote');
+    await store().submitTurn(CONV);
+    expect(conv().pendingConsentTurn).not.toBeNull();
+
+    const before = conv();
+    store().clearConversation(CONV);
+
+    expect(conv()).toBe(before);
+    expect(conv().pendingConsentTurn).not.toBeNull();
+  });
+
+  it('does nothing for an unknown conversation', () => {
+    hydrateReady();
+    const before = store().conversations;
+    expect(() => store().clearConversation('conv-nope')).not.toThrow();
+    expect(store().conversations).toBe(before);
+  });
+});
+
 describe('monotonicity under deferred promises', () => {
   it('does not let a late accepted admission resurrect a terminal run or redispatch the queue', async () => {
     hydrateReady();

@@ -9,6 +9,7 @@
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import { GolemPanel } from '../../../components/Golem';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 import { useIDEStore } from '../../../stores/ideStore';
@@ -160,6 +161,16 @@ const flush = async () => {
   });
 };
 
+const applyGolemStyles = () => {
+  const element = document.createElement('style');
+  element.textContent = [
+    readFileSync('src/styles/reset.css', 'utf8'),
+    readFileSync('src/components/Golem/GolemPanel.module.css', 'utf8'),
+  ].join('\n');
+  document.head.appendChild(element);
+  return element;
+};
+
 /**
  * jsdom has no layout, so a scroll container's geometry has to be supplied.
  * `scrollTop` is backed by a real value here because the assertion is whether
@@ -301,6 +312,99 @@ describe('GolemPanel live indicator', () => {
       store().ingestEvent(eventPayload({ seq: 3, type: 'run.finished', payload: {} }));
     });
     expect(screen.queryByText(/Thinking|Responding|Running/)).not.toBeInTheDocument();
+  });
+
+  it('announces a stable working state without exposing the ticking elapsed time', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    type('do the thing');
+    pressEnter();
+    await flush();
+
+    expect(liveRegion()).toHaveTextContent('Golem is working.');
+    expect(liveRegion()).not.toHaveTextContent(/\d+s/);
+    expect(liveRegion()).toHaveAttribute('aria-atomic', 'false');
+
+    act(() => {
+      store().ingestEvent(
+        eventPayload({ seq: 2, type: 'message.delta', payload: { messageId: 'm1', text: 'hi' } })
+      );
+    });
+    expect(liveRegion()).toHaveTextContent('Golem is working.');
+
+    mockCancelGolemRun.mockReturnValueOnce(new Promise(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: /cancel the current golem run/i }));
+
+    expect(liveRegion()).toHaveTextContent('Golem is canceling.');
+    expect(liveRegion()).not.toHaveTextContent(/\d+s/);
+  });
+
+  it('restarts elapsed time when a queued run takes over', async () => {
+    jest.useFakeTimers();
+    try {
+      hydrate();
+      selectFocused();
+      render(<GolemPanel />);
+
+      type('first');
+      pressEnter();
+      await flush();
+      act(() => jest.advanceTimersByTime(2200));
+      expect(screen.getByText('2s')).toBeInTheDocument();
+
+      type('second');
+      pressEnter();
+      mockRunGolemTurn.mockResolvedValueOnce(acceptedAdmission(RUN_B));
+      act(() => {
+        store().ingestEvent(eventPayload({ seq: 2, type: 'run.finished', payload: {} }));
+      });
+      await flush();
+
+      expect(store().conversations[CONV].activeRunId).toBe(RUN_B);
+      expect(screen.getByText('0s')).toBeInTheDocument();
+      expect(screen.queryByText('2s')).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('announces a terminal run before the queued run working state', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    type('first');
+    pressEnter();
+    await flush();
+    const firstWorkingAnnouncement = within(liveRegion()).getByText('Golem is working.');
+    type('second');
+    pressEnter();
+
+    mockRunGolemTurn.mockResolvedValueOnce(acceptedAdmission(RUN_B));
+    act(() => {
+      store().ingestEvent(eventPayload({ seq: 2, type: 'run.finished', payload: {} }));
+    });
+    await flush();
+
+    expect(liveRegion()).toHaveTextContent('Golem finished its reply. Golem is working.');
+    expect(within(liveRegion()).getByText('Golem is working.')).not.toBe(firstWorkingAnnouncement);
+  });
+
+  it('disables the live reply caret animation for reduced motion', () => {
+    const stylesheet = applyGolemStyles();
+    try {
+      const media = Array.from(stylesheet.sheet?.cssRules ?? []).find(
+        (rule) => (rule as CSSMediaRule).media?.mediaText === '(prefers-reduced-motion: reduce)'
+      ) as CSSMediaRule | undefined;
+      const caret = Array.from(media?.cssRules ?? []).find((rule) =>
+        (rule as CSSStyleRule).selectorText?.includes('.entryText::after')
+      ) as CSSStyleRule | undefined;
+      expect(caret?.style.animation).toBe('none');
+    } finally {
+      stylesheet.remove();
+    }
   });
 
   it('flags a turn the consent shelf is holding', async () => {
@@ -706,12 +810,65 @@ describe('GolemPanel transcript', () => {
       );
     });
 
+  const finish = (seq = 3) =>
+    act(() => {
+      store().ingestEvent(eventPayload({ seq, type: 'run.finished', payload: {} }));
+    });
+
+  it('keeps a live reply plain and parses markdown only after the run finishes', async () => {
+    await startRun();
+    delta('**streaming**', 2);
+
+    const live = screen.getByText('**streaming**');
+    expect(live.querySelector('strong')).toBeNull();
+
+    finish();
+
+    const transcript = screen.getByRole('region', { name: 'Golem transcript' });
+    const settled = within(transcript).getByText('streaming');
+    expect(settled.tagName).toBe('STRONG');
+    expect(within(transcript).queryByText('**streaming**')).toBeNull();
+  });
+
+  it('restores ordinary list markers while leaving GFM task lists unbulleted', async () => {
+    const stylesheet = applyGolemStyles();
+    try {
+      await startRun();
+      delta('- bullet\n\n1. numbered\n\n- [ ] task', 2);
+      finish();
+
+      const bullet = screen.getByText('bullet').closest('ul');
+      const numbered = screen.getByText('numbered').closest('ol');
+      const task = screen.getByText('task').closest('ul');
+      expect(bullet).not.toBeNull();
+      expect(numbered).not.toBeNull();
+      expect(task).not.toBeNull();
+      expect(getComputedStyle(bullet!)).toHaveProperty('listStyle', 'disc');
+      expect(getComputedStyle(numbered!)).toHaveProperty('listStyle', 'decimal');
+      expect(getComputedStyle(task!)).toHaveProperty('listStyle', 'none');
+    } finally {
+      stylesheet.remove();
+    }
+  });
+
+  it('does not expose an unsafe link destination after sanitization', async () => {
+    await startRun();
+    delta('[bad](javascript:alert(1))', 2);
+    finish();
+
+    const region = screen.getByRole('region', { name: 'Golem transcript' });
+    expect(region).toHaveTextContent('bad');
+    expect(region).not.toHaveTextContent('javascript:');
+    expect(region.querySelector('a')).toBeNull();
+  });
+
   it('renders assistant markdown but keeps raw HTML inert', async () => {
     await startRun();
 
     // Two blocks in one delta so the bold and the literal HTML never share a
     // paragraph: **x** must become real bold, <b>y</b> must stay visible text.
     delta('**x**\n\n<b>y</b>', 2);
+    finish();
 
     // Real markdown: a <strong>, not the literal asterisks.
     const bold = screen.getByText('x');
@@ -729,6 +886,7 @@ describe('GolemPanel transcript', () => {
   it('renders a fenced code block as a pre > code with the code text', async () => {
     await startRun();
     delta('```\nconst a = 1;\n```', 2);
+    finish();
 
     const code = screen.getByRole('region', { name: 'Golem transcript' }).querySelector('pre code');
     expect(code).not.toBeNull();
@@ -738,6 +896,7 @@ describe('GolemPanel transcript', () => {
   it('renders a markdown list as list items', async () => {
     await startRun();
     delta('- a\n- b', 2);
+    finish();
 
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(2);
@@ -745,9 +904,10 @@ describe('GolemPanel transcript', () => {
     expect(items[1]).toHaveTextContent('b');
   });
 
-  it('renders a link as non-navigating text with the destination in a title', async () => {
+  it('renders a link as non-navigating text with a visible destination', async () => {
     await startRun();
     delta('[t](http://x.test/p)', 2);
+    finish();
 
     const region = screen.getByRole('region', { name: 'Golem transcript' });
     const link = screen.getByText('t');
@@ -755,13 +915,13 @@ describe('GolemPanel transcript', () => {
     // URL — so there must be no navigating anchor at all.
     expect(link.closest('a')).toBeNull();
     expect(region.querySelector('a[href]')).toBeNull();
-    // The destination stays visible, but only as a hover title.
-    expect(link).toHaveAttribute('title', 'http://x.test/p');
+    expect(region).toHaveTextContent('t (http://x.test/p)');
   });
 
   it('drops an image to its alt text with no img element', async () => {
     await startRun();
     delta('![a pixel](http://x.test/p.png)', 2);
+    finish();
 
     const region = screen.getByRole('region', { name: 'Golem transcript' });
     // The webview would fetch an <img src>; alt survives as plain text instead.
@@ -783,16 +943,17 @@ describe('GolemPanel transcript', () => {
     expect(prompt.querySelector('strong')).toBeNull();
   });
 
-  it('keeps exactly one polite live region that stays silent through deltas', async () => {
+  it('keeps exactly one polite live region stable through deltas', async () => {
     await startRun();
 
     expect(document.querySelectorAll('[aria-live]')).toHaveLength(1);
-    expect(liveRegion().textContent).toBe('');
+    const working = liveRegion().textContent;
+    expect(working).toBe('Golem is working.');
 
     delta('par', 2);
     delta('tial', 3);
 
-    expect(liveRegion().textContent).toBe('');
+    expect(liveRegion().textContent).toBe(working);
     expect(screen.getByText('partial')).toBeInTheDocument();
   });
 
@@ -821,7 +982,7 @@ describe('GolemPanel transcript', () => {
 
   it('announces an error that arrives without moving any phase', async () => {
     await startRun();
-    expect(liveRegion().textContent).toBe('');
+    expect(liveRegion()).toHaveTextContent('Golem is working.');
 
     mockCancelGolemRun.mockRejectedValueOnce('the backend refused the cancel');
     fireEvent.click(screen.getByRole('button', { name: /cancel the current golem run/i }));
@@ -1306,5 +1467,80 @@ describe('GolemPanel composer auto-grow', () => {
     scrollHeight = 44;
     type(''); // cleared after a send
     expect(box.style.height).toBe('44px');
+  });
+});
+
+// ── new chat ──────────────────────────────────────────────────────────────────
+
+describe('GolemPanel new chat', () => {
+  const newChatButton = () => screen.getByRole('button', { name: /new chat/i });
+
+  it('clears a populated transcript and returns focus to the composer', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    type('hello there');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().ingestEvent(
+        eventPayload({
+          seq: 2,
+          type: 'message.delta',
+          payload: { messageId: 'm1', text: 'a reply' },
+        })
+      );
+    });
+    act(() => {
+      store().ingestEvent(eventPayload({ seq: 3, type: 'run.finished', payload: {} }));
+    });
+
+    // Idle with content: the reset is available.
+    expect(screen.getByText('hello there')).toBeInTheDocument();
+    expect(newChatButton()).toBeEnabled();
+
+    fireEvent.click(newChatButton());
+
+    expect(screen.queryByText('hello there')).not.toBeInTheDocument();
+    expect(store().conversations[CONV].transcript).toHaveLength(0);
+    // The reset re-arms the composer the same way selecting the panel does.
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it('is disabled while a run is live, with a reason', async () => {
+    hydrate();
+    selectFocused();
+    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
+    render(<GolemPanel />);
+
+    type('long one');
+    pressEnter();
+    await flush();
+
+    const button = newChatButton();
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Finish or cancel the current run first');
+  });
+
+  it('is disabled while a consent is pending', async () => {
+    hydrate({ destination: remoteDestination });
+    selectFocused();
+    mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
+    render(<GolemPanel />);
+
+    type('send this remotely');
+    pressEnter();
+    await flush();
+
+    expect(newChatButton()).toBeDisabled();
+  });
+
+  it('is disabled when the conversation is already empty', () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    expect(newChatButton()).toBeDisabled();
   });
 });

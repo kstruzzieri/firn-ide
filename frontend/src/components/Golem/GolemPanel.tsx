@@ -89,8 +89,9 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
  * closed here by rendering our own inert elements:
  *   - links: a `<span>`, never an `<a href>`. In WKWebView an anchor click
  *     navigates the whole app to an attacker URL; a span cannot. The
- *     destination shows in `title` (react-markdown's default urlTransform has
- *     already stripped javascript:/data: etc., so title is belt-and-braces).
+ *     destination is visible text (react-markdown's default urlTransform has
+ *     already stripped javascript:/data: etc.), so every input mode can read
+ *     and copy it without making the WebView navigate.
  *   - images: the alt text as a `<span>`, never an `<img>`, so the webview
  *     never fetches an attacker URL (tracking / SSRF). `disallowedElements`
  *     can't preserve alt on a void `<img>`, so a component is the honest fix.
@@ -99,8 +100,9 @@ function phaseAnnouncement(conversation: ConversationView, latest: RunView | nul
  */
 const MARKDOWN_COMPONENTS: Components = {
   a: ({ href, children }) => (
-    <span className={styles.mdLink} title={href}>
+    <span className={styles.mdLink}>
       {children}
+      {href && <span className={styles.mdLinkDestination}> ({href})</span>}
     </span>
   ),
   img: ({ alt }) => (alt ? <span className={styles.mdImage}>{alt}</span> : null),
@@ -109,11 +111,7 @@ const MARKDOWN_COMPONENTS: Components = {
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
 const MARKDOWN_DISALLOWED = ['iframe', 'script', 'html', 'style', 'link', 'object', 'embed'];
 
-/**
- * Memoised on its text: the transcript's streaming last row re-renders each
- * rAF-batched delta and re-parses its growing text (acceptable), while every
- * settled row keeps its reference and skips re-parsing entirely.
- */
+/** Parsed only for settled replies; memoization keeps older rows untouched. */
 const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: string }) {
   return (
     <div className={styles.markdown}>
@@ -138,15 +136,26 @@ const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: string }
  * rebuilding the whole conversation each frame. Tool entries take the
  * `ToolChip` / `ToolCluster` path below instead.
  *
- * Assistant text is rendered as sanitized markdown; a user prompt and error
- * text are not model markdown, so they stay verbatim plain text.
+ * A live assistant reply stays plain text rather than reparsing the complete
+ * growing document. Once its run settles, it renders as sanitized markdown.
+ * User prompts and errors always stay plain.
  */
-const TranscriptRow = memo(function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+const TranscriptRow = memo(function TranscriptRow({
+  entry,
+  live,
+}: {
+  entry: TranscriptEntry;
+  live: boolean;
+}) {
   return (
     <div className={`${styles.entry} ${styles[entry.kind]}`}>
       <div className={styles.bubble}>
         {entry.kind === 'assistant' ? (
-          <MarkdownMessage text={entry.text} />
+          live ? (
+            <span className={styles.entryText}>{entry.text}</span>
+          ) : (
+            <MarkdownMessage text={entry.text} />
+          )
         ) : (
           // Rendered as text, never as markup: user/error text is not markdown.
           <span className={styles.entryText}>{entry.text}</span>
@@ -472,6 +481,21 @@ export function GolemPanel() {
   const canSend = notice === null && conversationId !== null && draft.trim() !== '';
   const statusLabel = activeRun ? STATUS_LABEL[activeRun.phase] : undefined;
 
+  // "New chat" resets the conversation to a fresh idle state. It is blocked
+  // while a run is live or a consent is pending — the store refuses the clear
+  // there anyway (a live run could re-hydrate a cleared conversation), so a
+  // disabled button reads as the honest affordance. It is also pointless with
+  // nothing to clear: an empty transcript, no draft, and no queued turns.
+  const clearBusy =
+    conversation !== null &&
+    (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null);
+  const clearEmpty =
+    conversation !== null &&
+    conversation.transcript.length === 0 &&
+    conversation.draft === '' &&
+    conversation.queuedTurns.length === 0;
+  const canClear = conversation !== null && !clearBusy && !clearEmpty;
+
   /**
    * The single polite announcement, derived rather than accumulated.
    *
@@ -503,6 +527,13 @@ export function GolemPanel() {
     if (lastError && !phase.includes(lastError)) return `${phase} Golem error. ${lastError}`.trim();
     return phase;
   }, [conversation]);
+
+  const activeAnnouncement =
+    activeRun && isWorkingPhase(activeRun.phase)
+      ? activeRun.phase === 'canceling'
+        ? 'Golem is canceling.'
+        : 'Golem is working.'
+      : '';
 
   // Deliberately every mount, not only a changed revision: the panel unmounts
   // whenever the right panel collapses or shows Runs, so this effect is the
@@ -606,6 +637,20 @@ export function GolemPanel() {
           {destination && <span className={styles.endpoint}>{destination.endpoint}</span>}
           <span>Context: prompt only</span>
         </div>
+        {/* A corner action, absolutely placed so it never shifts the centered
+            wordmark rows. Disabled — not hidden — when there is nothing to clear
+            or a run is live, so the affordance stays discoverable. */}
+        <button
+          type="button"
+          className={`${styles.secondaryButton} ${styles.newChatButton}`}
+          disabled={!canClear}
+          title={clearBusy ? 'Finish or cancel the current run first' : undefined}
+          onClick={() => {
+            if (conversationId) useGolemStore.getState().clearConversation(conversationId);
+          }}
+        >
+          New chat
+        </button>
       </header>
 
       {/* A switcher for one conversation is just a label repeated. */}
@@ -654,7 +699,9 @@ export function GolemPanel() {
       >
         {renderItems.map((item) => {
           if (item.type === 'entry') {
-            return <TranscriptRow key={item.entry.id} entry={item.entry} />;
+            const live =
+              item.entry.runId === activeRun?.identity.runId && isLivePhase(activeRun.phase);
+            return <TranscriptRow key={item.entry.id} entry={item.entry} live={live} />;
           }
           // A lone tool is a chip on its own, never wrapped in a "1 tool" cluster.
           if (item.entries.length === 1) {
@@ -677,7 +724,10 @@ export function GolemPanel() {
       </div>
 
       {conversation && activeRun && isWorkingPhase(activeRun.phase) && (
-        <RunningNotice activity={workingActivity(conversation, activeRun)} />
+        <RunningNotice
+          key={activeRun.identity.runId}
+          activity={workingActivity(conversation, activeRun)}
+        />
       )}
 
       {backgroundRuns.length > 0 && (
@@ -832,8 +882,14 @@ export function GolemPanel() {
         </div>
       </div>
 
-      <div className={styles.srOnly} role="status" aria-live="polite">
-        {announcement}
+      <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="false">
+        {announcement && <span>{announcement}</span>}
+        {activeRun && activeAnnouncement && (
+          <span key={activeRun.identity.runId}>
+            {announcement && ' '}
+            {activeAnnouncement}
+          </span>
+        )}
       </div>
     </div>
   );

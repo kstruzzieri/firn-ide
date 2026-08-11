@@ -48,6 +48,7 @@
 /* `.phead`: a full-bleed elevated strip, so the chip row reads as chrome
    rather than as the first row of the conversation. */
 .header {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -55,6 +56,18 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--surface-border-subtle);
   background-color: var(--surface-elevated);
+}
+
+/* The "New chat" reset. Reuses the reviewed .secondaryButton look (its
+   contrast contract is unchanged: --text-primary text on --surface-elevated,
+   --surface-border edge); this class only parks it in the header's top-right
+   corner and shrinks it to chip size so it never fights the centered wordmark. */
+.newChatButton {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 2px 8px;
+  font-size: 10px;
 }
 
 .identityRow {
@@ -296,11 +309,8 @@
   padding: 2px 0;
 }
 
-/* The mockups' block caret: while the run is live, the newest reply carries a
-   pulsing terminal-style cursor at the end of its text. Assistant text now
-   renders as markdown in `.markdown`, so the caret rides its last block's last
-   line rather than the old `.entryText` span. */
-.transcript[data-live='true'] .entry.assistant:last-child .markdown > :last-child::after {
+/* The mockups' block caret: the live reply is plain text for cheap streaming. */
+.transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
   content: '';
   display: inline-block;
   width: 7px;
@@ -449,6 +459,20 @@
   padding-left: 18px;
 }
 
+.markdown ul {
+  list-style: disc;
+}
+
+.markdown ol {
+  list-style: decimal;
+}
+
+/* GFM task items already carry disabled checkboxes; a bullet would duplicate
+   their marker. Attribute matching keeps the plugin-owned class global. */
+.markdown ul[class~='contains-task-list'] {
+  list-style: none;
+}
+
 .markdown li {
   margin: 2px 0;
 }
@@ -471,6 +495,11 @@
   color: var(--golem-accent);
   text-decoration: underline;
   cursor: default;
+  user-select: text;
+}
+
+.mdLinkDestination {
+  color: var(--text-muted);
 }
 
 /* Dropped image, shown as its alt text so the reply still reads. */
@@ -896,7 +925,7 @@
 
   .wordmarkIcon[data-live='true'],
   .workingDot,
-  .transcript[data-live='true'] .entry.assistant:last-child .markdown > :last-child::after {
+  .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
     animation: none;
   }
 }
