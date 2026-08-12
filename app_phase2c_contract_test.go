@@ -170,7 +170,6 @@ func TestAppPhase2C_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testin
 	}
 	if beforeClose == nil {
 		t.Fatal("app.go has no beforeClose method")
-		return
 	}
 
 	found := false

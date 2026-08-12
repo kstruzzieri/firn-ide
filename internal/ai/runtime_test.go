@@ -520,7 +520,6 @@ func TestGolemRuntimeRunFailedRedactsProviderFailure(t *testing.T) {
 	}
 	if failed == nil {
 		t.Fatalf("no run.failed event in %s", marshalEvents(t, events))
-		return
 	}
 	var payload struct {
 		Code    string `json:"code"`

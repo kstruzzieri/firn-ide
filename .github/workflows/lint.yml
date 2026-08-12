@@ -85,3 +85,6 @@ jobs:
           # fails otherwise-green runs. golangci-lint still errors on a genuinely
           # broken config at runtime.
           verify: false
+          # Cached Staticcheck facts produced different SA5011 results for the
+          # same source tree across otherwise-identical Actions runs.
+          skip-cache: true
