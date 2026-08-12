@@ -60,6 +60,40 @@ describe('CI Workflow', () => {
     }
   });
 
+  // `pull_request.branches` matches the PR's BASE branch, so a [main, develop]
+  // filter silently gives stacked PRs zero checks -- no red X, just a mergeable
+  // "no checks reported". Nothing else fails when this regresses, so assert it.
+  it('should run the CI workflows on pull requests regardless of base branch', () => {
+    for (const file of ['test.yml', 'build.yml', 'lint.yml']) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      const pullRequest = content.match(/^ {2}pull_request:\n((?: {3,}.*\n|[ \t]*\n)*)/m);
+
+      expect({ file, hasPullRequestTrigger: Boolean(pullRequest) }).toEqual({
+        file,
+        hasPullRequestTrigger: true,
+      });
+      expect({
+        file,
+        baseBranchFilters: (pullRequest?.[1].match(/^\s*branches(-ignore)?:/gm) ?? []).length,
+      }).toEqual({ file, baseBranchFilters: 0 });
+    }
+  });
+
+  // Counterpart to the filter above: `push` must stay scoped to the long-lived
+  // branches. Widening it would run every feature-branch push twice -- once for
+  // the push, once for the PR's synchronize event.
+  it('should keep the push trigger scoped to the long-lived branches', () => {
+    for (const file of ['test.yml', 'build.yml', 'lint.yml']) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      const push = content.match(/^ {2}push:\n((?: {3,}.*\n|[ \t]*\n)*)/m);
+
+      expect({ file, branches: push?.[1].match(/^\s*branches:\s*(.+)$/m)?.[1].trim() }).toEqual({
+        file,
+        branches: '[main, develop]',
+      });
+    }
+  });
+
   it('should resolve every setup-go step from the Go version required by go.mod', () => {
     const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
     const goVersion = goMod.match(/^go\s+(\d+\.\d+)/m)?.[1];

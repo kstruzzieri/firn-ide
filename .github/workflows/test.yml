@@ -8,8 +8,11 @@ on:
       - 'docs/**'
       - '.Codex/**'
       - '.claude/**'
+  # No `branches:` filter: that filter matches the PR's BASE branch, so scoping
+  # it to [main, develop] gave stacked PRs (base = another feature branch) zero
+  # checks and a mergeable "no checks reported" state. The narrow `push` filter
+  # above is what keeps this from double-running on feature-branch pushes.
   pull_request:
-    branches: [main, develop]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
