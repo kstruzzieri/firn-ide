@@ -231,6 +231,7 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Retained run history — same-profile parallel runs plus persisted terminal ordinary/compound summaries and lazy ordinary output from `internal/runhistory`
 - [x] Bounded history retention — 50 summaries and 5 rich ordinary records per profile, 10 MiB per record, and a 20 MiB workspace target
 - [x] Explicit durability boundary — terminal events enqueue history; close drains appends for up to 300 ms, waits for explicit redactions, and still withholds acknowledgement when editor flush fails
+- [x] Owned compound execution plans (#146 Phase 2D) — an `executionNode` tree deep-copied at admission, with a recursive reflection guard against self-referencing plans
 
 **Version Control (Git)**
 - [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
@@ -250,7 +251,6 @@ The roadmap includes a built-in AI assistant panel with:
 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
 - [ ] Git — richer branch/VCS menu (#166)
-- [ ] Run execution identity Phase 2D — execution-plan abstraction (#146)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
 - [ ] Golem follow-ups — settings UI for models, roles, and keys (#263), durable multi-conversation history (#264), token and context usage (#265)
 
@@ -347,7 +347,7 @@ Active tracks:
 
 1. **Golem:** the read-only workspace chat panel shipped as #226 phase 1, on the embedded `go-llm` runtime that also replaced the commit-message CLI shell-out (#165). Next: the settings UI (#263), then durable multi-conversation history (#264); token and context usage (#265) waits on go-llm emitting usage. Phase 2 chat work (context attachments, mutating tools) comes after.
 2. **Git merge:** finish #164 phase 4 — multi-file queue advance and watcher/external-change hardening — then work the follow-up backlog: auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), and the diagnostics follow-ups surfaced by phase 3 (#240, #241, #242). Destructive VCS operations (#166) come after.
-3. **Run engine:** continue run execution identity Phase 2 (#146) — 2A retained tabs shipped, 2B parallelism shipped via #232, and the current pull request delivers 2C persistence. Only 2D execution plans remain deferred.
+3. **Run engine:** run execution identity Phase 2 (#146) is complete and the issue is closed — 2A retained tabs (#224), 2B same-profile parallelism (#232), 2C persisted history (#233), and 2D owned execution plans (#237), with the two bugs that work surfaced fixed in #238 and #245. No run-engine track is currently open.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
 
 Watcher and ignore-rule caching (#148/#196) stay benchmark-gated. Store extraction (#41) happens only when one of the tracks above needs it, not as a standalone rewrite.
