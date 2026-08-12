@@ -3682,6 +3682,7 @@ func TestServiceExternalConfigSourceNormal(t *testing.T) {
 	}()
 	if binding == nil {
 		t.Fatal("no current binding")
+		return
 	}
 	guard := binding.policy.Guard("")
 	if err := guard("models-fixture.json", false); err != nil {
