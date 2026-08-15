@@ -12,12 +12,10 @@ on:
   # it to [main, develop] gave stacked PRs (base = another feature branch) zero
   # checks and a mergeable "no checks reported" state. The narrow `push` filter
   # above is what keeps this from double-running on feature-branch pushes.
+  # No `paths-ignore` either: branch protection requires these checks, and a
+  # filtered-out PR never reports them -- it would sit "Expected" forever and
+  # be unmergeable. Docs-only PRs pay one short CI run instead.
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.Codex/**'
-      - '.claude/**'
 
 jobs:
   frontend-tests:
