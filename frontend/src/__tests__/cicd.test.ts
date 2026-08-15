@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { resolve } from 'path';
+import { parse } from 'yaml';
 
 const rootDir = resolve(__dirname, '../../..');
 const workflowsDir = resolve(rootDir, '.github/workflows');
@@ -35,6 +36,19 @@ function workflowSteps(content: string): string[][] {
   return steps;
 }
 
+type WorkflowEvent = Record<string, unknown> | null;
+
+function workflowEvents(content: string): Record<string, WorkflowEvent> {
+  return (parse(content) as { on?: Record<string, WorkflowEvent> }).on ?? {};
+}
+
+function workflowBranchFilters(content: string, event: string): string[] {
+  const config = workflowEvents(content)[event];
+  return config
+    ? ['branches', 'branches-ignore'].filter((filter) => Object.hasOwn(config, filter))
+    : [];
+}
+
 describe('CI Workflow', () => {
   it('should have test.yml workflow', () => {
     expect(existsSync(resolve(workflowsDir, 'test.yml'))).toBe(true);
@@ -57,6 +71,57 @@ describe('CI Workflow', () => {
     expect(testYml).toMatch(/runs-on:\s*windows-latest/);
     for (const pkg of ['./internal/filesystem', './internal/runhistory', './internal/workspace']) {
       expect(testYml).toContain(pkg);
+    }
+  });
+
+  // `pull_request.branches` matches the PR's BASE branch, so a [main, develop]
+  // filter silently gives stacked PRs zero checks -- no red X, just a mergeable
+  // "no checks reported". Nothing else fails when this regresses, so assert it.
+  it('should run the CI workflows on pull requests regardless of base branch', () => {
+    for (const file of ['test.yml', 'build.yml', 'lint.yml']) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      const events = workflowEvents(content);
+
+      expect({ file, hasPullRequestTrigger: Object.hasOwn(events, 'pull_request') }).toEqual({
+        file,
+        hasPullRequestTrigger: true,
+      });
+      expect({
+        file,
+        baseBranchFilters: workflowBranchFilters(content, 'pull_request').length,
+      }).toEqual({ file, baseBranchFilters: 0 });
+    }
+  });
+
+  it.each([
+    {
+      format: 'a quoted filter key',
+      content: "name: fixture\non:\n  pull_request:\n    'branches': [main, develop]\n",
+      filter: 'branches',
+    },
+    {
+      format: 'CRLF line endings',
+      content: ['name: fixture', 'on:', '  pull_request:', '    branches-ignore: [main]'].join(
+        '\r\n'
+      ),
+      filter: 'branches-ignore',
+    },
+  ])('should detect pull-request branch filters with $format', ({ content, filter }) => {
+    expect(workflowBranchFilters(content, 'pull_request')).toEqual([filter]);
+  });
+
+  // Counterpart to the filter above: `push` must stay scoped to the long-lived
+  // branches. Widening it would run every feature-branch push twice -- once for
+  // the push, once for the PR's synchronize event.
+  it('should keep the push trigger scoped to the long-lived branches', () => {
+    for (const file of ['test.yml', 'build.yml', 'lint.yml']) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      const push = workflowEvents(content).push;
+
+      expect({ file, branches: push?.branches }).toEqual({
+        file,
+        branches: ['main', 'develop'],
+      });
     }
   });
 
