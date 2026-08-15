@@ -76,16 +76,32 @@ describe('CI Workflow', () => {
 
   // `pull_request.branches` matches the PR's BASE branch, so a [main, develop]
   // filter silently gives stacked PRs zero checks -- no red X, just a mergeable
-  // "no checks reported". Nothing else fails when this regresses, so assert it.
+  // "no checks reported". Nothing else fails when this regresses, so assert it
+  // for every workflow file, current or future. The three CI workflows also
+  // may not path-filter: branch protection requires their checks, and a
+  // filtered-out PR never reports them -- it would sit "Expected" forever and
+  // be unmergeable.
   it('should run the CI workflows on pull requests regardless of base branch', () => {
     for (const file of ['test.yml', 'build.yml', 'lint.yml']) {
       const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
       const events = workflowEvents(content);
+      const pullRequest = events.pull_request;
 
       expect({ file, hasPullRequestTrigger: Object.hasOwn(events, 'pull_request') }).toEqual({
         file,
         hasPullRequestTrigger: true,
       });
+      expect({
+        file,
+        pathFilters: pullRequest
+          ? ['paths', 'paths-ignore'].filter((filter) => Object.hasOwn(pullRequest, filter))
+          : [],
+      }).toEqual({ file, pathFilters: [] });
+    }
+
+    for (const file of readdirSync(workflowsDir).filter((entry) => /\.ya?ml$/.test(entry))) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+
       expect({
         file,
         baseBranchFilters: workflowBranchFilters(content, 'pull_request').length,
