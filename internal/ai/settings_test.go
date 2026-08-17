@@ -383,6 +383,9 @@ func validateSettingsProjection(p SettingsProjection) error {
 		if over(m.Role) || over(m.ModelName) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
 			return fmt.Errorf("model %+v", m)
 		}
+		if len(m.EffectiveCapabilities) > len(provider.CanonicalCapabilityNames) {
+			return fmt.Errorf("capabilities over vocabulary size")
+		}
 		for _, c := range m.EffectiveCapabilities {
 			if !caps[c] {
 				return fmt.Errorf("capability %q", c)
@@ -432,8 +435,13 @@ func structuralCheck(projection json.RawMessage) error {
 		return err
 	}
 	for _, key := range []string{"state", "sourceOrigin"} {
-		if _, ok := root[key]; !ok {
+		raw, ok := root[key]
+		if !ok {
 			return fmt.Errorf("missing key %q", key)
+		}
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || trimmed[0] != '"' {
+			return fmt.Errorf("key %q is not a string", key)
 		}
 	}
 	requiredItemKeys := map[string][]string{
@@ -465,10 +473,19 @@ func structuralCheck(projection json.RawMessage) error {
 				if !ok {
 					return fmt.Errorf("%s[%d] missing %q", key, i, field)
 				}
-				if field == "effectiveCapabilities" {
-					ft := bytes.TrimSpace(fieldRaw)
+				ft := bytes.TrimSpace(fieldRaw)
+				switch field {
+				case "effectiveCapabilities":
 					if len(ft) == 0 || ft[0] != '[' {
 						return fmt.Errorf("%s[%d].%s is not an array", key, i, field)
+					}
+				case "blocking":
+					if string(ft) != "true" && string(ft) != "false" {
+						return fmt.Errorf("%s[%d].%s is not a boolean", key, i, field)
+					}
+				default:
+					if len(ft) == 0 || ft[0] != '"' {
+						return fmt.Errorf("%s[%d].%s is not a string", key, i, field)
 					}
 				}
 			}
