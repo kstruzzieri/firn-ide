@@ -25,8 +25,7 @@
   gap: 8px;
 }
 
-/* Programmatic focus target on mount; the browser's default focus ring is
-   kept (no outline:none) so the a11y move is visible, not just logical. */
+/* Focus ring comes from the app-wide :focus-visible rule; nothing suppressed here. */
 .heading {
   margin: 0;
   font-size: 14px;

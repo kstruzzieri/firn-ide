@@ -686,6 +686,16 @@ export function GolemPanel() {
             centered wordmark rows. Disabled — not hidden — when there is nothing
             to clear or a run is live, so the affordance stays discoverable. */}
         <button
+          ref={configToggleRef}
+          type="button"
+          className={`${styles.newChatButton} ${styles.configButton}`}
+          aria-label="Configuration"
+          title="Configuration"
+          onClick={() => useGolemStore.getState().setGolemView('configuration')}
+        >
+          <SettingsIcon aria-hidden="true" />
+        </button>
+        <button
           type="button"
           className={styles.newChatButton}
           disabled={!canClear}
@@ -696,16 +706,6 @@ export function GolemPanel() {
           }}
         >
           <PlusIcon aria-hidden="true" />
-        </button>
-        <button
-          ref={configToggleRef}
-          type="button"
-          className={`${styles.newChatButton} ${styles.configButton}`}
-          aria-label="Configuration"
-          title="Configuration"
-          onClick={() => useGolemStore.getState().setGolemView('configuration')}
-        >
-          <SettingsIcon aria-hidden="true" />
         </button>
       </header>
 

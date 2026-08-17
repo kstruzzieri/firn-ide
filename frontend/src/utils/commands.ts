@@ -105,6 +105,7 @@ export function showGolemConfiguration(): void {
   const golem = useGolemStore.getState();
   golem.setPanelMode('golem');
   golem.setGolemView('configuration');
+  openRightPanel();
 }
 
 const currentEditorLocation = (

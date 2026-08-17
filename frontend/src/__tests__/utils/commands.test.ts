@@ -244,12 +244,14 @@ describe('showGolem', () => {
 });
 
 it('golem-configuration opens the golem panel on the configuration view', () => {
+  useIDEStore.setState({ isRightPanelCollapsed: true });
   const command = createCommands(jest.fn()).find((c) => c.id === 'golem-configuration');
   expect(command).toBeDefined();
   command!.run();
   const golem = useGolemStore.getState();
   expect(golem.panelMode).toBe('golem');
   expect(golem.golemView).toBe('configuration');
+  expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
 });
 
 test('showRunProfiles is exported for direct use and switches modes', () => {
