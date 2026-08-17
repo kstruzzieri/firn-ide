@@ -425,6 +425,36 @@ func (a *App) CancelGolemRun(identity ai.RunIdentity) (bool, error) {
 	return canceled, nil
 }
 
+// GetGolemSettings returns the read-only settings projection of the current
+// effective Golem configuration. It carries no filesystem paths, raw JSON,
+// keys, or raw error text; diagnostics travel in-band as allowlisted codes.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) GetGolemSettings() (ai.SettingsProjection, error) {
+	if a.aiService == nil {
+		return ai.SettingsProjection{}, a.golemError(errGolemUnavailable)
+	}
+	projection, err := a.aiService.Settings()
+	if err != nil {
+		return ai.SettingsProjection{}, a.golemError(err)
+	}
+	return projection, nil
+}
+
+// ReloadGolemSettings rebuilds the effective configuration snapshot under the
+// idle barrier. Busy=true reports a rejected reload with the unchanged
+// current projection.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ReloadGolemSettings() (ai.SettingsReloadResult, error) {
+	if a.aiService == nil {
+		return ai.SettingsReloadResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.ReloadSettings()
+	if err != nil {
+		return ai.SettingsReloadResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
 // ReadDirectory reads a directory and returns its contents as a tree structure.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ReadDirectory(path string) ([]filesystem.FileEntry, error) {

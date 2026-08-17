@@ -299,6 +299,66 @@ func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 			}
 		}
 	}
+
+	// The two settings methods take no input at all: nothing a caller supplies
+	// can influence discovery, and the projection is the only output.
+	zeroInput := []struct {
+		method string
+		out    reflect.Type
+	}{
+		{"GetGolemSettings", reflect.TypeOf(ai.SettingsProjection{})},
+		{"ReloadGolemSettings", reflect.TypeOf(ai.SettingsReloadResult{})},
+	}
+	for _, tc := range zeroInput {
+		method, ok := appType.MethodByName(tc.method)
+		if !ok {
+			t.Errorf("App has no method %s", tc.method)
+			continue
+		}
+		signature := method.Type
+		if signature.NumIn() != 1 {
+			t.Errorf("%s takes arguments (%v); it must take none", tc.method, signature)
+			continue
+		}
+		if signature.NumOut() != 2 || signature.Out(0) != tc.out || signature.Out(1) != errorType {
+			t.Errorf("%s returns %v, want (%v, error)", tc.method, signature, tc.out)
+		}
+	}
+
+	// Settings RESPONSE types may expose endpoints (like ProviderDestination)
+	// but never paths, roots, keys, or tokens.
+	forbiddenResponse := []string{"path", "root", "dir", "key", "token"}
+	for _, responseType := range []reflect.Type{
+		reflect.TypeOf(ai.SettingsProjection{}),
+		reflect.TypeOf(ai.SettingsReloadResult{}),
+		reflect.TypeOf(ai.RouteProjection{}),
+		reflect.TypeOf(ai.ModelProjection{}),
+		reflect.TypeOf(ai.ProviderProjection{}),
+		reflect.TypeOf(ai.Diagnostic{}),
+	} {
+		for i := range responseType.NumField() {
+			name := strings.ToLower(responseType.Field(i).Name)
+			for _, bad := range forbiddenResponse {
+				if strings.Contains(name, bad) {
+					t.Errorf("%s.%s would carry a %s across the settings boundary",
+						responseType.Name(), responseType.Field(i).Name, bad)
+				}
+			}
+		}
+	}
+}
+
+// The two settings methods share the same pre-startup guard as the other
+// Golem-bound methods: no service means the fixed unavailable projection, not
+// a nil-pointer panic.
+func TestGolemSettingsMethodsUninitializedService(t *testing.T) {
+	app := &App{}
+	if _, err := app.GetGolemSettings(); err == nil || err.Error() != "Golem is unavailable." {
+		t.Fatalf("GetGolemSettings uninitialized = %v", err)
+	}
+	if _, err := app.ReloadGolemSettings(); err == nil || err.Error() != "Golem is unavailable." {
+		t.Fatalf("ReloadGolemSettings uninitialized = %v", err)
+	}
 }
 
 // Every error the four Wails methods return is a fixed public projection: no
