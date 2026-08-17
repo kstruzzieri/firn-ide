@@ -350,7 +350,7 @@ func fixtureConfigLoader(t *testing.T, cfgJSON string) func() (loadedAgentConfig
 		if err != nil {
 			return loadedAgentConfig{}, fmt.Errorf("%w: fixture failed to load: %v", ErrAgentConfigInvalid, err)
 		}
-		return loadedAgentConfig{Config: cfg, SourcePath: source}, nil
+		return loadedAgentConfig{Config: cfg, SourcePath: source, LexicalPath: source, Origin: originUserConfig}, nil
 	}
 }
 
@@ -969,7 +969,7 @@ func TestServiceStatusShape(t *testing.T) {
 		h2 := newServiceHarness(t, "http://127.0.0.1:1")
 		repoID2, _ := h2.bind(t)
 		h2.svc.loadConfig = func() (loadedAgentConfig, error) {
-			return loadedAgentConfig{}, fmt.Errorf("%w: no config at /home/user/cfg-path-marker key=%s", ErrAgentConfigMissing, svcKeyMarker)
+			return loadedAgentConfig{Origin: originNone}, fmt.Errorf("%w: no config at /home/user/cfg-path-marker key=%s", ErrAgentConfigMissing, svcKeyMarker)
 		}
 		st, err := h2.svc.Status(StatusRequest{RepoEpoch: repoID2.RepoEpoch, WorkspaceID: "project"})
 		if err != nil {

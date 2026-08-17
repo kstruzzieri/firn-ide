@@ -622,6 +622,9 @@ func TestLoadDefaultAgentConfigClassifiesJSONSyntax(t *testing.T) {
 	if loaded.Origin != originEnv || loaded.LexicalPath != p {
 		t.Fatalf("partial loadedAgentConfig missing origin/lexical: %+v", loaded)
 	}
+	if loaded.SourcePath != canonicalPath(t, p) {
+		t.Fatalf("SourcePath = %q, want the canonicalized source even on load failure", loaded.SourcePath)
+	}
 	if strings.Contains(err.Error(), p) || strings.Contains(err.Error(), dir) {
 		t.Fatalf("error text leaks path: %q", err.Error())
 	}

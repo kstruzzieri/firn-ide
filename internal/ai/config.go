@@ -36,8 +36,9 @@ var ErrAgentConfigInvalid = errors.New("agent configuration invalid")
 var errConfigJSONSyntax = errors.New("agent configuration is not valid JSON")
 
 // sourceOrigin classifies which discovery branch produced the config source.
-// Values are the Wails-facing sourceOrigin vocabulary; the zero value is not
-// part of the contract and never serializes.
+// Values are the Wails-facing sourceOrigin vocabulary. The zero value is not
+// part of the contract: any consumer projecting an origin across the boundary
+// must map every value explicitly and never pass the raw string through.
 type sourceOrigin string
 
 const (
@@ -72,24 +73,24 @@ func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 	if err != nil {
 		return loadedAgentConfig{Origin: origin}, err
 	}
-	partial := loadedAgentConfig{LexicalPath: source, Origin: origin}
+	loaded := loadedAgentConfig{LexicalPath: source, Origin: origin}
 	resolved, err := canonicalizeConfigSource(source)
 	if err != nil {
 		log.Printf("ai: agent config source rejected: %v", err)
-		return partial, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+		return loaded, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
-	partial.SourcePath = resolved
+	loaded.SourcePath = resolved
 	cfg, err := config.Load(resolved)
 	if err != nil {
 		log.Printf("ai: agent config load failed: %v", err)
 		var syntaxErr *json.SyntaxError
 		if errors.As(err, &syntaxErr) {
-			return partial, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax)
+			return loaded, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax)
 		}
-		return partial, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
+		return loaded, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
 	}
-	partial.Config = cfg
-	return partial, nil
+	loaded.Config = cfg
+	return loaded, nil
 }
 
 // discoverAgentConfigSource mirrors the pinned go-llm discovery order and
