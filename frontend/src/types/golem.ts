@@ -175,6 +175,8 @@ export interface GolemStoreState {
   lastFailureConversationId: string | null;
   failureRevision: number;
   panelMode: 'golem' | 'runs'; // initialize to 'runs'
+  golemView: 'chat' | 'configuration'; // panel-level view; initialize to 'chat'
+  setGolemView(view: GolemStoreState['golemView']): void;
   composerFocusRevision: number;
   hydrateStatus(status: GolemStatus): void;
   invalidateBinding(): void;
