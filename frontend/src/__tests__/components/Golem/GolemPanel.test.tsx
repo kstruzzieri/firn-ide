@@ -11,10 +11,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
+import { useMemo, useState } from 'react';
+import { CommandPalette } from '../../../components/CommandPalette';
 import { GolemPanel } from '../../../components/Golem';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 import { useIDEStore } from '../../../stores/ideStore';
 import { parseGolemStatus } from '../../../types/golem';
+import { createCommands } from '../../../utils/commands';
 
 const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
@@ -25,6 +28,27 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
   ReloadGolemSettings: (...args: unknown[]) => mockReloadGolemSettings(...args),
 }));
+
+// The command-palette focus-interplay test below mounts the real
+// CommandPalette, which relies on <dialog> methods jsdom does not implement.
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute('open');
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: jest.fn(),
+  });
+});
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -1596,6 +1620,47 @@ describe('configuration view', () => {
     expect(useGolemStore.getState().golemView).toBe('chat');
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /^configuration$/i })).toHaveFocus()
+    );
+  });
+});
+
+// ── command palette focus interplay ──────────────────────────────────────────
+//
+// The command-palette test file (CommandPalette.test.tsx) renders the palette
+// in isolation with stub commands, so it cannot exercise this: the real
+// command palette closing must not steal focus back from the configuration
+// view it just opened. That composition only exists here, alongside the real
+// GolemPanel.
+
+function PaletteAndPanelHarness() {
+  const [open, setOpen] = useState(false);
+  const commands = useMemo(() => createCommands(jest.fn()), []);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open palette
+      </button>
+      <GolemPanel />
+      <CommandPalette open={open} commands={commands} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
+describe('configuration view and command palette focus interplay', () => {
+  it('lets the configuration view heading hold focus after the palette closes', async () => {
+    hydrate();
+    selectFocused();
+    const user = userEvent.setup();
+    render(<PaletteAndPanelHarness />);
+
+    await user.click(screen.getByRole('button', { name: 'Open palette' }));
+    const combobox = await screen.findByRole('combobox', { name: 'Command palette' });
+    await user.type(combobox, 'configuration');
+    await user.keyboard('{Enter}');
+
+    expect(useGolemStore.getState().golemView).toBe('configuration');
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /configuration/i })).toHaveFocus()
     );
   });
 });

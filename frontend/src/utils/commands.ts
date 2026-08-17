@@ -100,6 +100,13 @@ export function showGolem(conversationId?: string): void {
   openRightPanel();
 }
 
+/** Opens the Golem panel directly on the read-only configuration view. */
+export function showGolemConfiguration(): void {
+  const golem = useGolemStore.getState();
+  golem.setPanelMode('golem');
+  golem.setGolemView('configuration');
+}
+
 const currentEditorLocation = (
   state: ReturnType<typeof useIDEStore.getState>
 ): NavigationLocation | null => {
@@ -222,6 +229,12 @@ export const createCommands = (openFolder: () => void): Command[] => [
     keywords: ['ai', 'chat'],
     shortcut: '⌘⇧I',
     run: () => showGolem(),
+  },
+  {
+    id: 'golem-configuration',
+    title: 'Golem: Configuration',
+    keywords: ['settings', 'models', 'providers', 'config', 'ai'],
+    run: showGolemConfiguration,
   },
   {
     id: 'show-structure',

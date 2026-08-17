@@ -100,6 +100,7 @@ test('creates the approved command registry with stable metadata', () => {
     'show-source-control',
     'show-run-profiles',
     'show-golem',
+    'golem-configuration',
     'show-structure',
     'navigate-back',
     'navigate-forward',
@@ -129,6 +130,12 @@ test('creates the approved command registry with stable metadata', () => {
       title: 'Show Golem',
       keywords: ['ai', 'chat'],
       shortcut: '⌘⇧I',
+    },
+    {
+      id: 'golem-configuration',
+      title: 'Golem: Configuration',
+      keywords: ['settings', 'models', 'providers', 'config', 'ai'],
+      shortcut: undefined,
     },
     {
       id: 'show-structure',
@@ -234,6 +241,15 @@ describe('showGolem', () => {
 
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-a');
   });
+});
+
+it('golem-configuration opens the golem panel on the configuration view', () => {
+  const command = createCommands(jest.fn()).find((c) => c.id === 'golem-configuration');
+  expect(command).toBeDefined();
+  command!.run();
+  const golem = useGolemStore.getState();
+  expect(golem.panelMode).toBe('golem');
+  expect(golem.golemView).toBe('configuration');
 });
 
 test('showRunProfiles is exported for direct use and switches modes', () => {
