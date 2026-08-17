@@ -249,9 +249,10 @@ func TestGolemStatusNeverReturnsARepositoryRoot(t *testing.T) {
 	}
 }
 
-// The three Golem methods carry ai structs verbatim and take no path or
-// endpoint: a caller must not be able to redirect the repository root or the
-// provider endpoint through the Wails surface.
+// The six Golem methods — GetWorkspaceInfo plus the three that carry ai
+// structs verbatim, and the two zero-input settings methods — must never let
+// a caller redirect the repository root or the provider endpoint through the
+// Wails surface.
 func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 	appType := reflect.TypeOf(&App{})
 	errorType := reflect.TypeOf((*error)(nil)).Elem()
@@ -361,8 +362,11 @@ func TestGolemSettingsMethodsUninitializedService(t *testing.T) {
 	}
 }
 
-// Every error the four Wails methods return is a fixed public projection: no
-// absolute root, no config or consent path, no credential text.
+// Every error each of these four struct-carrying Wails methods returns is a
+// fixed public projection: no absolute root, no config or consent path, no
+// credential text. The two zero-input settings methods carry the same
+// guarantee, checked separately above and by the golemError-routing tests
+// below.
 func TestGolemWailsMethodsReturnOnlyFixedPublicErrors(t *testing.T) {
 	app := newGolemApp(t)
 	leaky := filepath.Join(t.TempDir(), golemMarker, "no-such-repository")
@@ -557,15 +561,18 @@ func TestGolemErrorProjectsRawCausesToFixedMessages(t *testing.T) {
 // would change no message — the seal would simply be gone the first time an
 // App-constructed cause appeared. This pins it structurally, including the
 // branch that no reachable input exercises. The method list is derived from
-// the source, so a fifth bound method is covered the day it is written.
+// the source, so every aiService-touching method is covered the day it is
+// written — six today, more tomorrow.
 func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 	fset, files := golemPackageFiles(t)
 
 	methods := golemWailsMethods(files)
-	// The plan freezes four bound Golem methods. Fewer means the derivation
-	// itself broke, and everything below it would pass vacuously.
+	// The plan freezes six bound Golem methods today (the four struct-carrying
+	// methods plus the two zero-input settings methods). The floor stays at 4:
+	// fewer than that means the derivation itself broke, and everything below
+	// it would pass vacuously.
 	if len(methods) < 4 {
-		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least the four the plan freezes",
+		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 4 (six expected today)",
 			len(methods), golemSortedNames(methods))
 	}
 
