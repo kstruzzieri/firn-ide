@@ -3,6 +3,7 @@ package ai
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -28,12 +29,36 @@ var ErrAgentConfigMissing = errors.New("agent configuration missing")
 // selected source path or config bytes.
 var ErrAgentConfigInvalid = errors.New("agent configuration invalid")
 
+// errConfigJSONSyntax marks a load failure whose root cause is malformed JSON
+// (errors.As *json.SyntaxError on config.Load's return). Backend-only: it is
+// chained ALONGSIDE ErrAgentConfigInvalid so SanitizeError is unchanged and
+// the settings projection can classify json_invalid without string matching.
+var errConfigJSONSyntax = errors.New("agent configuration is not valid JSON")
+
+// sourceOrigin classifies which discovery branch produced the config source.
+// Values are the Wails-facing sourceOrigin vocabulary; the zero value is not
+// part of the contract and never serializes.
+type sourceOrigin string
+
+const (
+	originNone             sourceOrigin = "none"
+	originEnv              sourceOrigin = "env"
+	originWorkingDirectory sourceOrigin = "working_directory"
+	originUserConfig       sourceOrigin = "user_config"
+	originLegacy           sourceOrigin = "legacy"
+)
+
 // loadedAgentConfig couples a validated go-llm config with the file it came
-// from. SourcePath is absolute and symlink-resolved; it is backend-only and
-// must never cross the Wails boundary or appear in a ProviderDestination.
+// from. SourcePath (canonical) and LexicalPath (as discovered, pre-symlink
+// resolution) are backend-only and must never cross the Wails boundary. On a
+// load failure the Config is nil but Origin and the paths are still populated
+// as far as discovery got, so the settings projection can name the source
+// class without re-running discovery.
 type loadedAgentConfig struct {
-	Config     *config.Config
-	SourcePath string
+	Config      *config.Config
+	SourcePath  string
+	LexicalPath string
+	Origin      sourceOrigin
 }
 
 // loadDefaultAgentConfig discovers the go-llm provider config exactly the way
@@ -43,49 +68,56 @@ type loadedAgentConfig struct {
 // The selected file is canonicalized and handed to config.Load exactly once.
 // No discovery step performs network I/O.
 func loadDefaultAgentConfig() (loadedAgentConfig, error) {
-	source, err := discoverAgentConfigSource()
+	source, origin, err := discoverAgentConfigSource()
 	if err != nil {
-		return loadedAgentConfig{}, err
+		return loadedAgentConfig{Origin: origin}, err
 	}
+	partial := loadedAgentConfig{LexicalPath: source, Origin: origin}
 	resolved, err := canonicalizeConfigSource(source)
 	if err != nil {
 		log.Printf("ai: agent config source rejected: %v", err)
-		return loadedAgentConfig{}, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+		return partial, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
+	partial.SourcePath = resolved
 	cfg, err := config.Load(resolved)
 	if err != nil {
 		log.Printf("ai: agent config load failed: %v", err)
-		return loadedAgentConfig{}, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
+		var syntaxErr *json.SyntaxError
+		if errors.As(err, &syntaxErr) {
+			return partial, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax)
+		}
+		return partial, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
 	}
-	return loadedAgentConfig{Config: cfg, SourcePath: resolved}, nil
+	partial.Config = cfg
+	return partial, nil
 }
 
-// discoverAgentConfigSource mirrors the pinned go-llm discovery order. A set
-// $GO_LLM_CONFIG always decides — set-but-empty is an error, never a
-// fallthrough, matching go-llm.
-func discoverAgentConfigSource() (string, error) {
+// discoverAgentConfigSource mirrors the pinned go-llm discovery order and
+// reports which branch matched. A set $GO_LLM_CONFIG always decides —
+// set-but-empty is an error, never a fallthrough, matching go-llm.
+func discoverAgentConfigSource() (string, sourceOrigin, error) {
 	if envPath, ok := os.LookupEnv("GO_LLM_CONFIG"); ok {
 		if envPath == "" {
-			return "", fmt.Errorf("%w: GO_LLM_CONFIG is set but empty", ErrAgentConfigInvalid)
+			return "", originEnv, fmt.Errorf("%w: GO_LLM_CONFIG is set but empty", ErrAgentConfigInvalid)
 		}
-		return envPath, nil
+		return envPath, originEnv, nil
 	}
 	if _, err := os.Stat("models.json"); err == nil {
-		return "models.json", nil
+		return "models.json", originWorkingDirectory, nil
 	}
 	if configDir, err := os.UserConfigDir(); err == nil {
 		path := filepath.Join(configDir, "go-llm", "models.json")
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			return path, originUserConfig, nil
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		path := filepath.Join(home, ".config", "go-llm", "models.json")
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			return path, originLegacy, nil
 		}
 	}
-	return "", fmt.Errorf("%w: no models.json found at any discovery location", ErrAgentConfigMissing)
+	return "", originNone, fmt.Errorf("%w: no models.json found at any discovery location", ErrAgentConfigMissing)
 }
 
 // canonicalizeConfigSource resolves a discovered source to an absolute,
