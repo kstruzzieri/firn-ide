@@ -8,7 +8,8 @@
  * status — and assert only on what a user (or a screen reader) can perceive.
  */
 
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { GolemPanel } from '../../../components/Golem';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
@@ -17,10 +18,12 @@ import { parseGolemStatus } from '../../../types/golem';
 
 const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
+const mockReloadGolemSettings = jest.fn();
 
 jest.mock('../../../../wailsjs/go/main/App', () => ({
   RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
   CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
+  ReloadGolemSettings: (...args: unknown[]) => mockReloadGolemSettings(...args),
 }));
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
@@ -206,6 +209,17 @@ beforeEach(() => {
   uuidQueue = [RUN_A, RUN_B];
   mockRunGolemTurn.mockResolvedValue(acceptedAdmission(RUN_A));
   mockCancelGolemRun.mockResolvedValue(undefined);
+  mockReloadGolemSettings.mockResolvedValue({
+    busy: false,
+    projection: {
+      state: 'missing',
+      sourceOrigin: 'none',
+      routes: [],
+      models: [],
+      providers: [],
+      diagnostics: [{ code: 'config_missing', subjectKind: '', subjectName: '', blocking: true }],
+    },
+  });
 });
 
 // ── identity and destination ──────────────────────────────────────────────────
@@ -1542,5 +1556,46 @@ describe('GolemPanel new chat', () => {
     render(<GolemPanel />);
 
     expect(newChatButton()).toBeDisabled();
+  });
+});
+
+// ── configuration view ───────────────────────────────────────────────────────
+
+describe('configuration view', () => {
+  it('toggles to the configuration view from the header control', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
+
+    expect(useGolemStore.getState().golemView).toBe('configuration');
+    expect(await screen.findByRole('heading', { name: /configuration/i })).toBeInTheDocument();
+  });
+
+  it('offers Review configuration from the unavailable state', async () => {
+    hydrate({ available: false, initError: 'golem.yaml could not be read.' });
+    selectFocused();
+    render(<GolemPanel />);
+
+    await userEvent.click(screen.getByRole('button', { name: /review configuration/i }));
+
+    expect(await screen.findByRole('heading', { name: /configuration/i })).toHaveFocus();
+  });
+
+  it('restores focus to the header toggle after closing the view', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
+    await screen.findByRole('heading', { name: /configuration/i });
+
+    await userEvent.click(screen.getByRole('button', { name: /back to chat/i }));
+
+    expect(useGolemStore.getState().golemView).toBe('chat');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^configuration$/i })).toHaveFocus()
+    );
   });
 });

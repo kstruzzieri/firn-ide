@@ -13,7 +13,8 @@ import { useGolemStore } from '../../stores/golemStore';
 import { GOLEM_UNAVAILABLE } from '../../types/golem';
 import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
 import golemIcon from '../../assets/branding/golem-icon.svg';
-import { PlusIcon } from '../icons';
+import { PlusIcon, SettingsIcon } from '../icons';
+import { GolemConfiguration } from './GolemConfiguration';
 import styles from './GolemPanel.module.css';
 
 /**
@@ -412,9 +413,15 @@ export function GolemPanel() {
   const bridgePhase = useGolemStore((state) => state.bridgePhase);
   const bridgeError = useGolemStore((state) => state.bridgeError);
   const composerFocusRevision = useGolemStore((state) => state.composerFocusRevision);
+  const golemView = useGolemStore((state) => state.golemView);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  // The header toggle unmounts while the configuration view is shown, so
+  // `onClose` cannot focus it synchronously — it flags the restore instead,
+  // and this effect fires it once the toggle has remounted.
+  const configToggleRef = useRef<HTMLButtonElement>(null);
+  const pendingToggleFocus = useRef(false);
   // Follow the stream only while the user is already at the newest row, the
   // same rule the run output follows: scrolling back through a conversation
   // must not be yanked away by the next delta.
@@ -446,6 +453,21 @@ export function GolemPanel() {
     if (!conversation.available) return conversation.initError ?? UNAVAILABLE;
     return null;
   }, [bridgePhase, bridgeError, conversation, hydratedIdentity]);
+
+  // True only for the notice's "Golem is unavailable" branch above — not the
+  // no-workspace, still-binding, or stale-identity cases, none of which have a
+  // configuration worth reviewing.
+  const unavailable = useMemo(() => {
+    if (bridgePhase === 'binding' || bridgePhase === 'error') return false;
+    if (!conversation) return false;
+    const current = hydratedIdentity;
+    const bound =
+      current !== null &&
+      current.repoEpoch === conversation.identity.repoEpoch &&
+      current.workspaceId === conversation.identity.workspaceId &&
+      current.conversationId === conversation.identity.conversationId;
+    return bound && !conversation.available;
+  }, [bridgePhase, conversation, hydratedIdentity]);
 
   // Everything the backend flagged, shown in the panel rather than as a toast
   // that scrolls away before the user reads it.
@@ -545,6 +567,15 @@ export function GolemPanel() {
     composerRef.current?.focus();
   }, [composerFocusRevision]);
 
+  // Fires only after the chat view (and its header toggle) has remounted, so
+  // the pending flag from `onClose` below survives the unmount in between.
+  useLayoutEffect(() => {
+    if (golemView === 'chat' && pendingToggleFocus.current) {
+      pendingToggleFocus.current = false;
+      configToggleRef.current?.focus();
+    }
+  }, [golemView]);
+
   const transcript = conversation?.transcript;
   useEffect(() => {
     const element = transcriptRef.current;
@@ -588,6 +619,19 @@ export function GolemPanel() {
     event.preventDefault();
     send();
   };
+
+  if (golemView === 'configuration') {
+    return (
+      <div className={styles.panel} data-accent="project">
+        <GolemConfiguration
+          onClose={() => {
+            pendingToggleFocus.current = true;
+            useGolemStore.getState().setGolemView('chat');
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     // data-accent pins the whole panel to the glacier accent the way
@@ -653,6 +697,16 @@ export function GolemPanel() {
         >
           <PlusIcon aria-hidden="true" />
         </button>
+        <button
+          ref={configToggleRef}
+          type="button"
+          className={`${styles.newChatButton} ${styles.configButton}`}
+          aria-label="Configuration"
+          title="Configuration"
+          onClick={() => useGolemStore.getState().setGolemView('configuration')}
+        >
+          <SettingsIcon aria-hidden="true" />
+        </button>
       </header>
 
       {/* A switcher for one conversation is just a label repeated. */}
@@ -672,7 +726,20 @@ export function GolemPanel() {
         </div>
       )}
 
-      {notice && <p className={styles.notice}>{notice}</p>}
+      {notice && (
+        <p className={styles.notice}>
+          {notice}
+          {unavailable && (
+            <button
+              type="button"
+              className={styles.reviewConfigButton}
+              onClick={() => useGolemStore.getState().setGolemView('configuration')}
+            >
+              Review configuration
+            </button>
+          )}
+        </p>
+      )}
       {/* Provider-supplied strings: two identical warnings are still two rows. */}
       {inlineWarnings.map((warning, index) => (
         <p key={`${index}-${warning}`} className={styles.warning}>
