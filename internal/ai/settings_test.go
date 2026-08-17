@@ -421,6 +421,62 @@ func validateSettingsProjection(p SettingsProjection) error {
 	return nil
 }
 
+// structuralCheck verifies the raw JSON shape of a projection: every required
+// key present at every level, arrays non-null (including nested
+// effectiveCapabilities). Value validity (enums, bounds) belongs to
+// validateSettingsProjection; presence is checked here because typed decoding
+// erases the difference between an explicit zero value and an absent key.
+func structuralCheck(projection json.RawMessage) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(projection, &root); err != nil {
+		return err
+	}
+	for _, key := range []string{"state", "sourceOrigin"} {
+		if _, ok := root[key]; !ok {
+			return fmt.Errorf("missing key %q", key)
+		}
+	}
+	requiredItemKeys := map[string][]string{
+		"routes":      {"useCase", "role"},
+		"models":      {"role", "modelName", "provider", "type", "effectiveCapabilities", "thinkMode"},
+		"providers":   {"name", "endpoint", "classification", "apiFormat", "credentialState"},
+		"diagnostics": {"code", "subjectKind", "subjectName", "blocking"},
+	}
+	for _, key := range []string{"routes", "models", "providers", "diagnostics"} {
+		raw, ok := root[key]
+		if !ok {
+			return fmt.Errorf("missing key %q", key)
+		}
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || trimmed[0] != '[' {
+			return fmt.Errorf("key %q is not an array", key)
+		}
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return fmt.Errorf("key %q: %v", key, err)
+		}
+		for i, item := range items {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(item, &fields); err != nil {
+				return fmt.Errorf("%s[%d]: %v", key, i, err)
+			}
+			for _, field := range requiredItemKeys[key] {
+				fieldRaw, ok := fields[field]
+				if !ok {
+					return fmt.Errorf("%s[%d] missing %q", key, i, field)
+				}
+				if field == "effectiveCapabilities" {
+					ft := bytes.TrimSpace(fieldRaw)
+					if len(ft) == 0 || ft[0] != '[' {
+						return fmt.Errorf("%s[%d].%s is not an array", key, i, field)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // TestSettingsContractCorpus keeps the Go and TS validators honest against the
 // same fixtures: accept fixtures must decode strictly and validate; reject
 // fixtures must fail decoding or validation.
@@ -441,27 +497,7 @@ func TestSettingsContractCorpus(t *testing.T) {
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
-		var rawKeys map[string]json.RawMessage
-		structuralErr := json.Unmarshal(entry.Projection, &rawKeys)
-		if structuralErr == nil {
-			for _, key := range []string{"state", "sourceOrigin", "routes", "models", "providers", "diagnostics"} {
-				raw, ok := rawKeys[key]
-				if !ok {
-					structuralErr = fmt.Errorf("missing key %q", key)
-					break
-				}
-				trimmed := bytes.TrimSpace(raw)
-				switch key {
-				case "routes", "models", "providers", "diagnostics":
-					if len(trimmed) == 0 || trimmed[0] != '[' {
-						structuralErr = fmt.Errorf("key %q is not an array", key)
-					}
-				}
-				if structuralErr != nil {
-					break
-				}
-			}
-		}
+		structuralErr := structuralCheck(entry.Projection)
 		var p SettingsProjection
 		dec := json.NewDecoder(bytes.NewReader(entry.Projection))
 		dec.DisallowUnknownFields()
