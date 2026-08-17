@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/provider"
 )
 
 // loadFixture parses cfgJSON the way a successful load ends up shaped, without
@@ -170,6 +172,13 @@ func TestBuildSettingsProjectionFailures(t *testing.T) {
 	})
 }
 
+func TestBuildSettingsProjectionNilConfigDegrades(t *testing.T) {
+	p := buildSettingsProjection(loadedAgentConfig{Origin: originUserConfig}, nil)
+	if p.State != "invalid" || len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != "config_invalid" {
+		t.Fatalf("%+v", p)
+	}
+}
+
 // overLimitConfigJSON builds a valid config with n providers; n > 256 trips
 // the entry bound. The agent route optionally points at a provider with an
 // unsupported endpoint so the limited+blocking contract is testable.
@@ -267,6 +276,9 @@ func TestBuildSettingsProjectionFromRealLoad(t *testing.T) {
 	if proj.State != "ready" {
 		t.Fatalf("state: %q", proj.State)
 	}
+	if len(proj.Providers) != 1 {
+		t.Fatalf("providers: %+v", proj.Providers)
+	}
 	if proj.Providers[0].APIFormat != "ollama" {
 		t.Fatalf("defaults did not materialize api_format: %+v", proj.Providers[0])
 	}
@@ -304,15 +316,82 @@ func TestSettingsProjectionSerializationLeaksNothing(t *testing.T) {
 	}
 }
 
+// validateSettingsProjection checks every enum and bound of the Phase 1
+// contract. It is the Go twin of the frontend validator; the corpus keeps the
+// two honest against the same fixtures.
+func validateSettingsProjection(p SettingsProjection) error {
+	states := map[string]bool{"missing": true, "invalid": true, "limited": true, "ready": true}
+	if !states[p.State] {
+		return fmt.Errorf("state %q", p.State)
+	}
+	origins := map[string]bool{"none": true, "env": true, "working_directory": true, "user_config": true, "legacy": true}
+	if !origins[p.SourceOrigin] {
+		return fmt.Errorf("sourceOrigin %q", p.SourceOrigin)
+	}
+	if len(p.Routes) > maxProjectionEntries || len(p.Models) > maxProjectionEntries ||
+		len(p.Providers) > maxProjectionEntries || len(p.Diagnostics) > maxProjectionDiagnostics {
+		return fmt.Errorf("collection over bound")
+	}
+	over := func(s string) bool { return len(s) > maxProjectionIdentifierLen }
+	caps := map[string]bool{}
+	for _, name := range provider.CanonicalCapabilityNames {
+		caps[name] = true
+	}
+	for _, r := range p.Routes {
+		if r.UseCase == "" || over(r.UseCase) || over(r.Role) {
+			return fmt.Errorf("route %+v", r)
+		}
+	}
+	for _, m := range p.Models {
+		if m.Role == "" || over(m.Role) || over(m.ModelName) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
+			return fmt.Errorf("model %+v", m)
+		}
+		for _, c := range m.EffectiveCapabilities {
+			if !caps[c] {
+				return fmt.Errorf("capability %q", c)
+			}
+		}
+	}
+	classifications := map[string]bool{"local": true, "remote": true, "unknown": true}
+	credentials := map[string]bool{"none": true, "available": true, "reference_unavailable": true}
+	for _, pr := range p.Providers {
+		if pr.Name == "" || over(pr.Name) || over(pr.APIFormat) || len(pr.Endpoint) > maxProjectionEndpointLen {
+			return fmt.Errorf("provider %+v", pr)
+		}
+		if !classifications[pr.Classification] {
+			return fmt.Errorf("classification %q", pr.Classification)
+		}
+		if !credentials[pr.CredentialState] {
+			return fmt.Errorf("credentialState %q", pr.CredentialState)
+		}
+	}
+	codes := map[string]bool{}
+	for _, c := range settingsDiagnosticCodes {
+		codes[c] = true
+	}
+	kinds := map[string]bool{"": true, "role": true, "model": true, "provider": true}
+	for _, d := range p.Diagnostics {
+		if !codes[d.Code] {
+			return fmt.Errorf("diagnostic code %q", d.Code)
+		}
+		if !kinds[d.SubjectKind] {
+			return fmt.Errorf("subjectKind %q", d.SubjectKind)
+		}
+		if over(d.SubjectName) {
+			return fmt.Errorf("subjectName over bound")
+		}
+	}
+	return nil
+}
+
 // TestSettingsContractCorpus keeps the Go and TS validators honest against the
-// same fixtures (frontend mirror lands in golem.settings.test.ts).
+// same fixtures: accept fixtures must decode strictly and validate; reject
+// fixtures must fail decoding or validation.
 func TestSettingsContractCorpus(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("testdata", "settings_contract", "*.json"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("corpus missing: %v (%d files)", err, len(files))
 	}
-	allowedStates := map[string]bool{"missing": true, "invalid": true, "limited": true, "ready": true}
-	allowedOrigins := map[string]bool{"none": true, "env": true, "working_directory": true, "user_config": true, "legacy": true}
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
@@ -325,21 +404,25 @@ func TestSettingsContractCorpus(t *testing.T) {
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
-		if entry.Verdict != "accept" && entry.Verdict != "reject" {
-			t.Fatalf("%s: verdict %q", f, entry.Verdict)
-		}
-		if entry.Verdict != "accept" {
-			continue
-		}
 		var p SettingsProjection
-		if err := json.Unmarshal(entry.Projection, &p); err != nil {
-			t.Fatalf("%s: accept fixture does not unmarshal: %v", f, err)
+		dec := json.NewDecoder(bytes.NewReader(entry.Projection))
+		dec.DisallowUnknownFields()
+		decodeErr := dec.Decode(&p)
+		var validateErr error
+		if decodeErr == nil {
+			validateErr = validateSettingsProjection(p)
 		}
-		if !allowedStates[p.State] || !allowedOrigins[p.SourceOrigin] {
-			t.Fatalf("%s: accept fixture outside Go enums: %+v", f, p)
-		}
-		if len(p.Diagnostics) > maxProjectionDiagnostics {
-			t.Fatalf("%s: accept fixture over diagnostic bound", f)
+		switch entry.Verdict {
+		case "accept":
+			if decodeErr != nil || validateErr != nil {
+				t.Fatalf("%s: accept fixture rejected (decode=%v validate=%v)", f, decodeErr, validateErr)
+			}
+		case "reject":
+			if decodeErr == nil && validateErr == nil {
+				t.Fatalf("%s: reject fixture passed every check", f)
+			}
+		default:
+			t.Fatalf("%s: verdict %q", f, entry.Verdict)
 		}
 	}
 }

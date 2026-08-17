@@ -21,6 +21,30 @@ const (
 	maxProjectionDiagnostics = maxProjectionEntries + 1
 )
 
+// Phase 1 diagnostic-code allowlist. The frontend validator mirrors this list
+// byte-for-byte; grow both sides in the same change.
+const (
+	codeConfigMissing               = "config_missing"
+	codeJSONInvalid                 = "json_invalid"
+	codeConfigInvalid               = "config_invalid"
+	codeAgentRoleMissing            = "agent_role_missing"
+	codeAgentCapsInsufficient       = "agent_capabilities_insufficient"
+	codeProviderEndpointUnsupported = "provider_endpoint_unsupported"
+	codeProjectionLimited           = "projection_limited"
+)
+
+// settingsDiagnosticCodes enumerates every code the builder can emit, in the
+// contract's canonical order.
+var settingsDiagnosticCodes = []string{
+	codeConfigMissing,
+	codeJSONInvalid,
+	codeConfigInvalid,
+	codeAgentRoleMissing,
+	codeAgentCapsInsufficient,
+	codeProviderEndpointUnsupported,
+	codeProjectionLimited,
+}
+
 // SettingsProjection is the Wails-facing read-only view of the effective Golem
 // configuration. It never carries filesystem paths, raw JSON, API keys,
 // environment variable names, or raw go-llm error text.
@@ -71,16 +95,25 @@ type Diagnostic struct {
 	Blocking    bool   `json:"blocking"`
 }
 
+// projectedOrigin maps a backend sourceOrigin onto the boundary vocabulary
+// explicitly — the sourceOrigin contract forbids raw pass-through, so an
+// unknown or zero value collapses to "none" instead of leaking a new string
+// into the frontend enum.
+func projectedOrigin(origin sourceOrigin) string {
+	switch origin {
+	case originEnv, originWorkingDirectory, originUserConfig, originLegacy:
+		return string(origin)
+	default:
+		return string(originNone)
+	}
+}
+
 // emptyProjection returns a projection with empty (non-nil) collections so
 // the boundary never serializes null where the contract says array.
 func emptyProjection(state string, origin sourceOrigin) SettingsProjection {
-	o := origin
-	if o == "" {
-		o = originNone
-	}
 	return SettingsProjection{
 		State:        state,
-		SourceOrigin: string(o),
+		SourceOrigin: projectedOrigin(origin),
 		Routes:       []RouteProjection{},
 		Models:       []ModelProjection{},
 		Providers:    []ProviderProjection{},
@@ -94,19 +127,26 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 	if loadErr != nil {
 		if errors.Is(loadErr, ErrAgentConfigMissing) {
 			p := emptyProjection("missing", originNone)
-			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: "config_missing", Blocking: true})
+			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
 		}
 		p := emptyProjection("invalid", loaded.Origin)
-		code := "config_invalid"
+		code := codeConfigInvalid
 		if errors.Is(loadErr, errConfigJSONSyntax) {
-			code = "json_invalid"
+			code = codeJSONInvalid
 		}
 		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: code, Blocking: true})
 		return p
 	}
 
 	cfg := loaded.Config
+	if cfg == nil {
+		// Contract slip (loadErr == nil implies Config != nil): degrade to the
+		// invalid projection rather than panicking a Wails call.
+		p := emptyProjection("invalid", loaded.Origin)
+		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigInvalid, Blocking: true})
+		return p
+	}
 	if exceedsProjectionBounds(cfg) {
 		p := emptyProjection("limited", loaded.Origin)
 		// A limited projection must not conceal an unusable agent route: keep
@@ -114,7 +154,7 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 		if d, ok := selectedAgentBlockingDiagnostic(cfg); ok {
 			p.Diagnostics = append(p.Diagnostics, d)
 		}
-		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: "projection_limited"})
+		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeProjectionLimited})
 		sortDiagnostics(p.Diagnostics)
 		return p
 	}
@@ -151,7 +191,7 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 		case err != nil:
 			row.Classification = "unknown"
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{
-				Code:        "provider_endpoint_unsupported",
+				Code:        codeProviderEndpointUnsupported,
 				SubjectKind: "provider",
 				SubjectName: name,
 				Blocking:    name == agentProvider,
@@ -225,7 +265,7 @@ func selectedAgentBlockingDiagnostic(cfg *config.Config) (Diagnostic, bool) {
 		if pc := cfg.Provider(name); pc != nil {
 			if _, _, err := NormalizeEndpoint(pc.BaseURL); err != nil {
 				return boundSubject(Diagnostic{
-					Code:        "provider_endpoint_unsupported",
+					Code:        codeProviderEndpointUnsupported,
 					SubjectKind: "provider",
 					SubjectName: name,
 					Blocking:    true,
@@ -249,20 +289,20 @@ func boundSubject(d Diagnostic) Diagnostic {
 func agentRouteDiagnostics(cfg *config.Config) []Diagnostic {
 	role, ok := cfg.RoleForUseCase("agent")
 	if !ok {
-		return []Diagnostic{{Code: "agent_role_missing", Blocking: true}}
+		return []Diagnostic{{Code: codeAgentRoleMissing, Blocking: true}}
 	}
 	m := cfg.RoleConfig(role)
 	if m == nil || m.Provider == "" || cfg.Provider(m.Provider) == nil {
-		return []Diagnostic{{Code: "agent_role_missing", SubjectKind: "role", SubjectName: role, Blocking: true}}
+		return []Diagnostic{{Code: codeAgentRoleMissing, SubjectKind: "role", SubjectName: role, Blocking: true}}
 	}
 	caps, err := provider.ParseCapsStrict(m.ResolvedCapabilities())
 	if err != nil {
 		// Unreachable post-Load (validate rejects unknown capabilities); the
 		// coarse load-failure path owns that case. Guard anyway.
-		return []Diagnostic{{Code: "agent_capabilities_insufficient", SubjectKind: "model", SubjectName: role, Blocking: true}}
+		return []Diagnostic{{Code: codeAgentCapsInsufficient, SubjectKind: "model", SubjectName: role, Blocking: true}}
 	}
 	if !caps.Has(requiredAgentCaps) {
-		return []Diagnostic{{Code: "agent_capabilities_insufficient", SubjectKind: "model", SubjectName: role, Blocking: true}}
+		return []Diagnostic{{Code: codeAgentCapsInsufficient, SubjectKind: "model", SubjectName: role, Blocking: true}}
 	}
 	return nil
 }
