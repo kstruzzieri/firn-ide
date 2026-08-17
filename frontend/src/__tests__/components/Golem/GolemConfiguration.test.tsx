@@ -168,6 +168,23 @@ describe('GolemConfiguration', () => {
     expect(await screen.findByText(/No models\.json was found/)).toBeInTheDocument();
   });
 
+  it('invalid state renders its diagnostic', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        state: 'invalid',
+        sourceOrigin: 'env',
+        routes: [],
+        models: [],
+        providers: [],
+        diagnostics: [{ code: 'json_invalid', subjectKind: '', subjectName: '', blocking: true }],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+    expect(await screen.findByText(/not valid JSON/)).toBeInTheDocument();
+    expect(screen.getByText('Blocking')).toBeInTheDocument();
+  });
+
   it('a rejected call renders the retry state with a bounded message', async () => {
     (ReloadGolemSettings as jest.Mock).mockRejectedValue('Golem is unavailable.');
     render(<GolemConfiguration onClose={() => {}} />);

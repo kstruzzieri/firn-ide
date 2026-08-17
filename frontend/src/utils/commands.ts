@@ -97,6 +97,7 @@ export function showGolem(conversationId?: string): void {
   const golem = useGolemStore.getState();
   if (conversationId) golem.selectConversation(conversationId);
   golem.setPanelMode('golem');
+  golem.setGolemView('chat');
   openRightPanel();
 }
 

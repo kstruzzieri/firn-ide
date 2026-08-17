@@ -202,6 +202,7 @@ const golemStatus = (conversationId: string, workspaceId: string) =>
 describe('showGolem', () => {
   it('shows the Golem panel, expanding the right panel and focusing the composer', () => {
     useIDEStore.setState({ isRightPanelCollapsed: true, activeSidebarView: 'git' });
+    useGolemStore.getState().setGolemView('configuration');
     const focusBefore = useGolemStore.getState().composerFocusRevision;
 
     commandById('show-golem').run();
@@ -211,6 +212,8 @@ describe('showGolem', () => {
     expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
     // Only the right panel: the sidebar is not this command's business.
     expect(useIDEStore.getState().activeSidebarView).toBe('git');
+    // Lands on chat, not whatever view was persisted before (e.g. configuration).
+    expect(useGolemStore.getState().golemView).toBe('chat');
   });
 
   it('leaves an already-expanded right panel open', () => {

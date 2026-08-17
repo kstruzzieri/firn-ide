@@ -537,3 +537,28 @@ func TestSettingsContractCorpus(t *testing.T) {
 		}
 	}
 }
+
+// TestCapabilityVocabularyPinned fails when a go-llm bump changes the
+// canonical capability set, forcing the TS validator's closed list (and the
+// corpus) to be updated in the same change instead of breaking in the UI.
+func TestCapabilityVocabularyPinned(t *testing.T) {
+	want := []string{"chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"}
+	got := provider.CanonicalCapabilityNames
+	if len(got) != len(want) {
+		t.Fatalf("capability vocabulary changed: %v (update frontend/src/types/golem.ts CAPABILITY_NAMES and the settings contract corpus in the same change)", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("capability vocabulary changed at %d: %v", i, got)
+		}
+	}
+}
+
+func TestProjectedOriginCollapsesUnknown(t *testing.T) {
+	if got := projectedOrigin(sourceOrigin("future_branch")); got != "none" {
+		t.Fatalf("unknown origin projected as %q, want none", got)
+	}
+	if got := projectedOrigin(""); got != "none" {
+		t.Fatalf("zero origin projected as %q, want none", got)
+	}
+}
