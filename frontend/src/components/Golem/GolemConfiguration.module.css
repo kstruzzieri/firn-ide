@@ -120,10 +120,13 @@
 
 .subject {
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .table {
   border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
   font-size: 11px;
 }
 
@@ -132,6 +135,7 @@
   padding: 3px 8px;
   border: 1px solid var(--surface-border);
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .table th {
@@ -165,11 +169,13 @@
 .entityName {
   color: var(--text-primary);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .entityDetail {
   color: var(--text-muted);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .capabilityChip {

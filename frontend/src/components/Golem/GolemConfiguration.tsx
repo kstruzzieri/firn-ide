@@ -131,7 +131,8 @@ function ConfigurationBody({
     <div className={styles.body}>
       {busyNotice && (
         <p className={styles.busyNotice} role="status">
-          Golem is busy; showing the configuration currently in effect. Refresh when idle.
+          Golem is busy — a run or pending consent prompt is active. Showing the configuration
+          currently in effect; refresh when idle.
         </p>
       )}
 
