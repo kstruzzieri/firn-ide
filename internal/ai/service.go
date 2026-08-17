@@ -100,15 +100,14 @@ type activeRun struct {
 type conversationRecord struct {
 	id string
 
-	mu          sync.Mutex // admission mutex; guards everything below
-	state       convState
-	target      *providerTarget
-	sourcePath  string // backend-only config source; protected per incarnation
-	challenge   *ConsentChallenge
-	runner      *runnerRecord
-	runnerEpoch uint64
-	runnerStale bool // retired incarnation's runner; close at terminal cleanup
-	active      *activeRun
+	mu                sync.Mutex // admission mutex; guards everything below
+	state             convState
+	challenge         *ConsentChallenge
+	runner            *runnerRecord
+	runnerEpoch       uint64
+	runnerConfigEpoch uint64 // configEpoch the cached runner was built from
+	runnerStale       bool   // retired incarnation's runner; close at terminal cleanup
+	active            *activeRun
 }
 
 // serviceBinding is one repository incarnation as the Service tracks it.
@@ -118,11 +117,25 @@ type serviceBinding struct {
 	policy   *ScopePolicy
 }
 
+// loadedSnapshot is the process-wide effective configuration: one load
+// outcome shared by settings, Status, and StartTurn. Backend-only, never
+// serialized. Pointer and configEpoch are guarded by Service.snapshotMu.
+type loadedSnapshot struct {
+	projection    SettingsProjection
+	target        *providerTarget // selected agent target; nil when unresolvable
+	targetErr     error           // config loaded but agent target unresolvable
+	loadErr       error           // discovery/load failed (sentinel-wrapped)
+	origin        sourceOrigin
+	lexicalPath   string // backend-only; Phase 3 apply verification
+	canonicalPath string // backend-only; per-binding protection input
+	epoch         uint64 // configEpoch; monotonic per process
+}
+
 // Service is the consent-gated asynchronous run lifecycle for Golem chat.
 //
-// Lock order: bindingGate -> conversation admission mutex -> lifecycleMu.
-// lifecycleMu may be taken alone for entry/close/fast checks, but no path
-// holds it while acquiring bindingGate or a conversation mutex.
+// Lock order: bindingGate -> conversation admission mutex -> snapshotMu;
+// lifecycleMu as before (taken alone or last, never held while acquiring the
+// others); snapshotMu never wraps another lock.
 type Service struct {
 	fs       filesystem.FileSystem
 	emit     func(string, ...any)
@@ -141,6 +154,12 @@ type Service struct {
 	degraded      error                          // consent degradation cause
 
 	bindingGate sync.RWMutex
+	// snapshotMu guards snapshot and configEpoch exclusively. Lock order:
+	// bindingGate -> conv.mu -> snapshotMu; snapshotMu is also taken alone and
+	// never held while acquiring any other Service lock.
+	snapshotMu  sync.Mutex
+	snapshot    *loadedSnapshot
+	configEpoch uint64
 	wg          sync.WaitGroup
 	closeOnce   sync.Once
 	closeDone   chan struct{}
@@ -219,6 +238,42 @@ func (s *Service) setBinding(b *serviceBinding) {
 	s.lifecycleMu.Lock()
 	s.binding = b
 	s.lifecycleMu.Unlock()
+}
+
+// snapshotOrBuild returns the effective snapshot, building one when absent.
+// Building performs config file I/O under snapshotMu only.
+func (s *Service) snapshotOrBuild() *loadedSnapshot {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	if s.snapshot == nil {
+		s.snapshot = s.buildSnapshotLocked()
+	}
+	return s.snapshot
+}
+
+// buildSnapshotLocked loads the config once and derives projection + run
+// target from that single outcome. The expanded config is NOT retained
+// (minimal secret residency). Caller holds snapshotMu.
+func (s *Service) buildSnapshotLocked() *loadedSnapshot {
+	loaded, err := s.loadConfig()
+	s.configEpoch++
+	sn := &loadedSnapshot{
+		projection:    buildSettingsProjection(loaded, err),
+		loadErr:       err,
+		origin:        loaded.Origin,
+		lexicalPath:   loaded.LexicalPath,
+		canonicalPath: loaded.SourcePath,
+		epoch:         s.configEpoch,
+	}
+	if err == nil {
+		target, terr := ResolveAgentTarget(loaded.Config)
+		if terr != nil {
+			sn.targetErr = terr
+		} else {
+			sn.target = &target
+		}
+	}
+	return sn
 }
 
 func (s *Service) conversationFor(id string) *conversationRecord {
@@ -385,32 +440,23 @@ func (s *Service) resolveTurnIdentity(id RunIdentity) (ResolvedWorkspace, error)
 }
 
 // resolveTargetLocked is the one target-resolution path Status and StartTurn
-// share: load the source-aware config, protect a contained source path on the
-// CURRENT repository policy, and only then cache or publish the target. The
-// protection re-runs on every call because the policy is per binding
-// incarnation while the cached target lives for the process. No network I/O.
-// Caller holds conv.mu.
-func (s *Service) resolveTargetLocked(conv *conversationRecord, policy *ScopePolicy) (*providerTarget, error) {
-	if conv.target != nil {
-		if err := policy.ProtectConfigSource(conv.sourcePath); err != nil {
-			return nil, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
-		}
-		return conv.target, nil
+// share. Loading a snapshot never authorizes its source for a workspace: the
+// CURRENT binding's policy protects the canonical source on EVERY call,
+// cache hit or not, because policy is per binding incarnation while the
+// snapshot lives until reload. Returns the snapshot's configEpoch so
+// admission can stamp runner reuse. Caller holds bindingGate and conv.mu.
+func (s *Service) resolveTargetLocked(policy *ScopePolicy) (*providerTarget, uint64, error) {
+	sn := s.snapshotOrBuild()
+	if sn.loadErr != nil {
+		return nil, 0, sn.loadErr
 	}
-	loaded, err := s.loadConfig()
-	if err != nil {
-		return nil, err
+	if err := policy.ProtectConfigSource(sn.canonicalPath); err != nil {
+		return nil, 0, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
 	}
-	if err := policy.ProtectConfigSource(loaded.SourcePath); err != nil {
-		return nil, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
+	if sn.targetErr != nil {
+		return nil, 0, sn.targetErr
 	}
-	target, err := ResolveAgentTarget(loaded.Config)
-	if err != nil {
-		return nil, err
-	}
-	conv.target = &target
-	conv.sourcePath = loaded.SourcePath
-	return conv.target, nil
+	return sn.target, sn.epoch, nil
 }
 
 // dropExpiredChallengeLocked invalidates a past-deadline challenge. The
@@ -427,6 +473,8 @@ func (s *Service) dropExpiredChallengeLocked(conv *conversationRecord) {
 // Status reports the Golem status for one workspace. It never fails: every
 // problem is encoded as Available=false plus a fixed InitError message.
 func (s *Service) Status(req StatusRequest) (Status, error) {
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
 	st := Status{ActiveRuns: []ActiveRunStatus{}}
 	s.lifecycleMu.Lock()
 	closing := s.closing
@@ -472,7 +520,7 @@ func (s *Service) Status(req StatusRequest) (Status, error) {
 	conv := s.conversationFor(convID)
 	conv.mu.Lock()
 	s.dropExpiredChallengeLocked(conv)
-	target, terr := s.resolveTargetLocked(conv, binding.policy)
+	target, _, terr := s.resolveTargetLocked(binding.policy)
 	var challenge *ConsentChallenge
 	if ch := conv.challenge; ch != nil &&
 		ch.Identity.RepoEpoch == resolved.RepoEpoch &&
@@ -608,7 +656,7 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	conv.mu.Lock()
 	defer conv.mu.Unlock()
 	s.dropExpiredChallengeLocked(conv)
-	target, err := s.resolveTargetLocked(conv, binding.policy)
+	target, cfgEpoch, err := s.resolveTargetLocked(binding.policy)
 	if err != nil {
 		return TurnAdmission{}, err
 	}
@@ -703,15 +751,15 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 
 	// Step 7.
 	rec := conv.runner
-	if rec != nil && (conv.runnerEpoch != resolved.RepoEpoch || conv.runnerStale) {
+	if rec != nil && (conv.runnerEpoch != resolved.RepoEpoch || conv.runnerConfigEpoch != cfgEpoch || conv.runnerStale) {
 		// Defensive: a retired incarnation's record still cached must fully
 		// quiesce before any re-create for this conversation ID. Unreachable
 		// by construction -- retireBinding nils idle runners and only
 		// stale-marks runners whose conversation is running/canceling, and
 		// step 6 already rejected those states -- so log rather than leave a
 		// silent dead branch: this line firing means that argument broke.
-		log.Printf("ai: golem invariant violated: cached runner epoch %d != %d (stale=%v)",
-			conv.runnerEpoch, resolved.RepoEpoch, conv.runnerStale)
+		log.Printf("ai: golem invariant violated: cached runner repo epoch %d != %d or config epoch %d != %d (stale=%v)",
+			conv.runnerEpoch, resolved.RepoEpoch, conv.runnerConfigEpoch, cfgEpoch, conv.runnerStale)
 		if err := rec.close(); err != nil {
 			log.Printf("ai: golem stale-cached runner close: %v", err)
 		}
@@ -751,6 +799,7 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	conv.active = ar
 	conv.runner = rec
 	conv.runnerEpoch = resolved.RepoEpoch
+	conv.runnerConfigEpoch = cfgEpoch
 
 	// Steps 9-10.
 	turn := golem.Turn{

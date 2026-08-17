@@ -3710,3 +3710,90 @@ func TestServiceExternalConfigSourceNormal(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotSharedAcrossConversations: one loadConfig call serves every
+// conversation — the process-wide snapshot is the single configuration truth.
+func TestSnapshotSharedAcrossConversations(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	loads := 0
+	inner := h.svc.loadConfig
+	h.svc.loadConfig = func() (loadedAgentConfig, error) {
+		loads++
+		return inner()
+	}
+	repoID, _ := h.bind(t)
+	for _, ws := range []string{"project", "frontend"} {
+		st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: ws})
+		if err != nil || !st.Available {
+			t.Fatalf("Status(%s) = %+v, %v", ws, st, err)
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("loadConfig calls = %d, want 1 (snapshot shared across conversations)", loads)
+	}
+}
+
+// TestSettingsSnapshotProtectedPerBinding (P0, adapted from
+// TestServiceRepoLocalConfigSourceProtected): a snapshot loaded BEFORE any
+// binding exists is not thereby authorized — the binding that later publishes
+// its target must protect the source, and the real built-in tools behind that
+// binding's guard must deny the config file and both key markers.
+func TestSettingsSnapshotProtectedPerBinding(t *testing.T) {
+	t.Skip("TEMPORARY red-step scaffold: Settings() lands in plan Task 5, which deletes this skip")
+	sandboxAgentConfigEnv(t)
+	endpoint, requests := startLocalCountingServer(t)
+	repo := newRepo(t)
+	const cfgName = "golem-keys.conf"
+	writeFile(t, filepath.Join(repo, cfgName), agentConfigJSON(endpoint))
+	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
+
+	rec := &emitRecorder{}
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	// Production loadConfig stays installed: discovery resolves the repo-local
+	// $GO_LLM_CONFIG source.
+	f := &fakeFactory{}
+	svc.newRunner = f.factory()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	// Snapshot loads with NO binding, and the projection leaks nothing.
+	// Task 5 unskips and restores the Settings() leak assertions here.
+	sn := svc.snapshotOrBuild()
+	if sn.loadErr != nil || sn.target == nil {
+		t.Fatalf("snapshot before bind: loadErr=%v target=%v", sn.loadErr, sn.target)
+	}
+	p := sn.projection
+	if p.State != "ready" {
+		t.Fatalf("state = %q", p.State)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{repo, cfgName, svcKeyMarker, svcSpareKeyMarker} {
+		if strings.Contains(string(raw), marker) {
+			t.Fatalf("pre-binding settings leak %q", marker)
+		}
+	}
+
+	// The binding that then publishes the target must protect the source.
+	repoID, _, err := svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	adm, err := svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project")))
+	if err != nil || adm.State != "accepted" {
+		t.Fatalf("StartTurn = %+v, %v", adm, err)
+	}
+	waitUntil(t, "drain", func() bool { return activeRunCount(svc) == 0 })
+	if got := atomic.LoadInt32(requests); got != 0 {
+		t.Fatalf("provider saw %d request(s)", got)
+	}
+	call := f.call(t, 0)
+	assertBuiltinToolsProtectConfig(t, "settings-then-bind", call.root, call.guard, cfgName)
+}
