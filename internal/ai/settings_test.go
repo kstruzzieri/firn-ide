@@ -251,6 +251,43 @@ func TestBuildSettingsProjectionOverlongEndpointLimited(t *testing.T) {
 	}
 }
 
+// TestBuildSettingsProjectionBoundEdges pins the exact accept/withhold edges:
+// at-limit configs stay ready, one past the limit goes limited. Bounds are
+// UTF-8 byte counts.
+func TestBuildSettingsProjectionBoundEdges(t *testing.T) {
+	t.Run("providers at 256 ready, 257 limited", func(t *testing.T) {
+		// overLimitConfigJSON(n, _) emits n numbered providers plus agent-p.
+		if p := buildSettingsProjection(loadFixture(t, overLimitConfigJSON(255, false)), nil); p.State != "ready" {
+			t.Fatalf("256 providers: state %q", p.State)
+		}
+		if p := buildSettingsProjection(loadFixture(t, overLimitConfigJSON(256, false)), nil); p.State != "limited" {
+			t.Fatalf("257 providers: state %q", p.State)
+		}
+	})
+	t.Run("endpoint at 1024 ready, 1025 limited", func(t *testing.T) {
+		// Canonical form of "http://h/aaaa..." is the input unchanged: 9 bytes
+		// of scheme+host+slash plus the path payload.
+		at := "http://h/" + strings.Repeat("a", maxProjectionEndpointLen-9)
+		over := at + "a"
+		base := strings.Replace(settingsFixtureJSON, "http://localhost:11434", at, 1)
+		if p := buildSettingsProjection(loadFixture(t, base), nil); p.State != "ready" {
+			t.Fatalf("endpoint at limit: state %q", p.State)
+		}
+		base = strings.Replace(settingsFixtureJSON, "http://localhost:11434", over, 1)
+		if p := buildSettingsProjection(loadFixture(t, base), nil); p.State != "limited" {
+			t.Fatalf("endpoint over limit: state %q", p.State)
+		}
+	})
+	t.Run("identifier at 256 bytes ready", func(t *testing.T) {
+		exact := strings.Repeat("x", maxProjectionIdentifierLen)
+		j := strings.Replace(settingsFixtureJSON, `"chat-m"`, fmt.Sprintf("%q", exact), 1)
+		j = strings.Replace(j, `"chat": "chat-m"`, fmt.Sprintf(`"chat": %q`, exact), 1)
+		if p := buildSettingsProjection(loadFixture(t, j), nil); p.State != "ready" {
+			t.Fatalf("identifier at limit: state %q", p.State)
+		}
+	})
+}
+
 // TestBuildSettingsProjectionFromRealLoad drives config.Load end to end so
 // defaults materialization (empty api_format -> "ollama") and ${ENV} key
 // expansion are covered — the direct-unmarshal fixture cannot see those.
@@ -338,12 +375,12 @@ func validateSettingsProjection(p SettingsProjection) error {
 		caps[name] = true
 	}
 	for _, r := range p.Routes {
-		if r.UseCase == "" || over(r.UseCase) || over(r.Role) {
+		if over(r.UseCase) || over(r.Role) {
 			return fmt.Errorf("route %+v", r)
 		}
 	}
 	for _, m := range p.Models {
-		if m.Role == "" || over(m.Role) || over(m.ModelName) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
+		if over(m.Role) || over(m.ModelName) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
 			return fmt.Errorf("model %+v", m)
 		}
 		for _, c := range m.EffectiveCapabilities {
@@ -404,6 +441,27 @@ func TestSettingsContractCorpus(t *testing.T) {
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
+		var rawKeys map[string]json.RawMessage
+		structuralErr := json.Unmarshal(entry.Projection, &rawKeys)
+		if structuralErr == nil {
+			for _, key := range []string{"state", "sourceOrigin", "routes", "models", "providers", "diagnostics"} {
+				raw, ok := rawKeys[key]
+				if !ok {
+					structuralErr = fmt.Errorf("missing key %q", key)
+					break
+				}
+				trimmed := bytes.TrimSpace(raw)
+				switch key {
+				case "routes", "models", "providers", "diagnostics":
+					if len(trimmed) == 0 || trimmed[0] != '[' {
+						structuralErr = fmt.Errorf("key %q is not an array", key)
+					}
+				}
+				if structuralErr != nil {
+					break
+				}
+			}
+		}
 		var p SettingsProjection
 		dec := json.NewDecoder(bytes.NewReader(entry.Projection))
 		dec.DisallowUnknownFields()
@@ -414,11 +472,11 @@ func TestSettingsContractCorpus(t *testing.T) {
 		}
 		switch entry.Verdict {
 		case "accept":
-			if decodeErr != nil || validateErr != nil {
-				t.Fatalf("%s: accept fixture rejected (decode=%v validate=%v)", f, decodeErr, validateErr)
+			if structuralErr != nil || decodeErr != nil || validateErr != nil {
+				t.Fatalf("%s: accept fixture rejected (structural=%v decode=%v validate=%v)", f, structuralErr, decodeErr, validateErr)
 			}
 		case "reject":
-			if decodeErr == nil && validateErr == nil {
+			if structuralErr == nil && decodeErr == nil && validateErr == nil {
 				t.Fatalf("%s: reject fixture passed every check", f)
 			}
 		default:

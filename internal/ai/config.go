@@ -99,7 +99,7 @@ func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 func discoverAgentConfigSource() (string, sourceOrigin, error) {
 	if envPath, ok := os.LookupEnv("GO_LLM_CONFIG"); ok {
 		if envPath == "" {
-			return "", originEnv, fmt.Errorf("%w: GO_LLM_CONFIG is set but empty", ErrAgentConfigInvalid)
+			return "", originEnv, fmt.Errorf("%w: config override variable is set but empty", ErrAgentConfigInvalid)
 		}
 		return envPath, originEnv, nil
 	}
@@ -118,7 +118,7 @@ func discoverAgentConfigSource() (string, sourceOrigin, error) {
 			return path, originLegacy, nil
 		}
 	}
-	return "", originNone, fmt.Errorf("%w: no models.json found at any discovery location", ErrAgentConfigMissing)
+	return "", originNone, fmt.Errorf("%w: no configuration found at any discovery location", ErrAgentConfigMissing)
 }
 
 // canonicalizeConfigSource resolves a discovered source to an absolute,

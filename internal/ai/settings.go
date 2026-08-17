@@ -9,9 +9,12 @@ import (
 )
 
 // Response bounds for the settings projection (mirrored exactly by the
-// frontend validators and the testdata/settings_contract corpus). Exceeding
-// them never redefines go-llm validity: the runtime target still resolves,
-// the projection is withheld as state "limited" instead.
+// frontend validators and the testdata/settings_contract corpus). All string
+// limits are UTF-8 BYTE counts — the TypeScript mirror measures
+// TextEncoder-encoded byte length, never UTF-16 code units — so the two
+// validators agree on every input. Exceeding a bound never redefines go-llm
+// validity: the runtime target still resolves, the projection is withheld as
+// state "limited" instead.
 const (
 	maxProjectionEntries       = 256
 	maxProjectionIdentifierLen = 256

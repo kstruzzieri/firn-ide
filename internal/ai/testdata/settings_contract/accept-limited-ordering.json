@@ -1,0 +1,14 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "limited",
+    "sourceOrigin": "working_directory",
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [
+      {"code": "provider_endpoint_unsupported", "subjectKind": "provider", "subjectName": "agent-p", "blocking": true},
+      {"code": "projection_limited", "subjectKind": "", "subjectName": "", "blocking": false}
+    ]
+  }
+}
