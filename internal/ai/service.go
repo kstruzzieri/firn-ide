@@ -125,10 +125,9 @@ type loadedSnapshot struct {
 	target        *providerTarget // selected agent target; nil when unresolvable
 	targetErr     error           // config loaded but agent target unresolvable
 	loadErr       error           // discovery/load failed (sentinel-wrapped)
-	origin        sourceOrigin
-	lexicalPath   string // backend-only; Phase 3 apply verification
-	canonicalPath string // backend-only; per-binding protection input
-	epoch         uint64 // configEpoch; monotonic per process
+	lexicalPath   string          // backend-only; Phase 3 apply verification
+	canonicalPath string          // backend-only; per-binding protection input
+	epoch         uint64          // configEpoch; monotonic per process
 }
 
 // Service is the consent-gated asynchronous run lifecycle for Golem chat.
@@ -260,7 +259,6 @@ func (s *Service) buildSnapshotLocked() *loadedSnapshot {
 	sn := &loadedSnapshot{
 		projection:    buildSettingsProjection(loaded, err),
 		loadErr:       err,
-		origin:        loaded.Origin,
 		lexicalPath:   loaded.LexicalPath,
 		canonicalPath: loaded.SourcePath,
 		epoch:         s.configEpoch,
@@ -1046,6 +1044,95 @@ func (s *Service) ReloadPolicy(absChangedPath string) bool {
 	}
 	b.policy.Reload()
 	return true
+}
+
+// SettingsReloadResult is the Wails-facing reload outcome. Busy means the
+// idle barrier rejected the reload and Projection is the unchanged current
+// snapshot's.
+type SettingsReloadResult struct {
+	Busy       bool               `json:"busy"`
+	Projection SettingsProjection `json:"projection"`
+}
+
+// Settings returns the settings projection of the current effective snapshot,
+// loading one if none exists. It takes the bindingGate read side FIRST and
+// rechecks closing under it. No per-binding source protection runs here: no
+// target is published and the projection carries no path or key material.
+func (s *Service) Settings() (SettingsProjection, error) {
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
+	if s.isClosing() {
+		return SettingsProjection{}, s.publicErr("settings", fmt.Errorf("%w: settings rejected", errServiceClosing))
+	}
+	return s.snapshotOrBuild().projection, nil
+}
+
+// ReloadSettings rebuilds the effective snapshot under the idle barrier:
+// after expiring stale challenges every conversation must be exactly idle —
+// running AND canceling both count as busy. The rebuild is unconditional (a
+// latched load failure is recoverable only here). It registers a lifecycle
+// waitgroup unit (Close waits for a mid-flight reload), holds the binding
+// writer across busy check, load, swap, AND idle-runner close (matching
+// BindRepository's retirement ownership), and emits golem:status-changed
+// exactly once after release on success.
+func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return SettingsReloadResult{}, s.publicErr("settings", fmt.Errorf("%w: reload rejected", errServiceClosing))
+	}
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+	defer s.wg.Done()
+
+	s.bindingGate.Lock()
+	if s.isClosing() {
+		s.bindingGate.Unlock()
+		return SettingsReloadResult{}, s.publicErr("settings", fmt.Errorf("%w: reload rejected", errServiceClosing))
+	}
+	busy := false
+	for _, conv := range s.conversationsSnapshot() {
+		conv.mu.Lock()
+		s.dropExpiredChallengeLocked(conv)
+		if conv.state != stateIdle {
+			busy = true
+		}
+		conv.mu.Unlock()
+		if busy {
+			break
+		}
+	}
+	if busy {
+		cur := s.snapshotOrBuild().projection
+		s.bindingGate.Unlock()
+		return SettingsReloadResult{Busy: true, Projection: cur}, nil
+	}
+
+	s.snapshotMu.Lock()
+	s.snapshot = s.buildSnapshotLocked()
+	sn := s.snapshot
+	s.snapshotMu.Unlock()
+
+	// Every runner is idle (the barrier held). Close them while STILL HOLDING
+	// the writer so no admission can construct a replacement before its
+	// predecessor fully quiesced — the ownership rule BindRepository's
+	// retirement follows.
+	for _, conv := range s.conversationsSnapshot() {
+		conv.mu.Lock()
+		rec := conv.runner
+		conv.runner = nil
+		conv.runnerStale = false
+		conv.mu.Unlock()
+		if rec != nil {
+			if err := rec.close(); err != nil {
+				log.Printf("ai: golem settings-reload runner close: %v", err)
+			}
+		}
+	}
+	s.bindingGate.Unlock()
+
+	s.emit(EventGolemStatusChanged)
+	return SettingsReloadResult{Busy: false, Projection: sn.projection}, nil
 }
 
 // Close shuts the service down. The first call marks `closing` under
