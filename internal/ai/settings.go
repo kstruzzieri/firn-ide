@@ -60,6 +60,14 @@ type SettingsProjection struct {
 	Diagnostics  []Diagnostic         `json:"diagnostics"`
 }
 
+// SettingsReloadResult is the Wails-facing reload outcome. Busy means the
+// idle barrier rejected the reload and Projection is the unchanged current
+// snapshot's.
+type SettingsReloadResult struct {
+	Busy       bool               `json:"busy"`
+	Projection SettingsProjection `json:"projection"`
+}
+
 // RouteProjection is one defaults.* entry: use case -> model role.
 type RouteProjection struct {
 	UseCase string `json:"useCase"`

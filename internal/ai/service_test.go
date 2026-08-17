@@ -3938,7 +3938,7 @@ func TestReloadClosesIdleRunnerUnderWriter(t *testing.T) {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 	if first.closedCount() != 1 {
-		t.Fatalf("idle runner closed %d times, want 1 (closed under the reload writer)", first.closedCount())
+		t.Fatalf("idle runner closed %d times, want 1 (closed before reload returned)", first.closedCount())
 	}
 	if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project"))); err != nil {
 		t.Fatal(err)

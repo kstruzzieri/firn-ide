@@ -1046,18 +1046,12 @@ func (s *Service) ReloadPolicy(absChangedPath string) bool {
 	return true
 }
 
-// SettingsReloadResult is the Wails-facing reload outcome. Busy means the
-// idle barrier rejected the reload and Projection is the unchanged current
-// snapshot's.
-type SettingsReloadResult struct {
-	Busy       bool               `json:"busy"`
-	Projection SettingsProjection `json:"projection"`
-}
-
 // Settings returns the settings projection of the current effective snapshot,
 // loading one if none exists. It takes the bindingGate read side FIRST and
 // rechecks closing under it. No per-binding source protection runs here: no
-// target is published and the projection carries no path or key material.
+// target is published and the projection carries no path or key material. It
+// may briefly block behind a reload or bind writer; Status polls share the
+// same gate, so this adds no new stall class.
 func (s *Service) Settings() (SettingsProjection, error) {
 	s.bindingGate.RLock()
 	defer s.bindingGate.RUnlock()
@@ -1079,7 +1073,7 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 	s.lifecycleMu.Lock()
 	if s.closing {
 		s.lifecycleMu.Unlock()
-		return SettingsReloadResult{}, s.publicErr("settings", fmt.Errorf("%w: reload rejected", errServiceClosing))
+		return SettingsReloadResult{}, s.publicErr("settings-reload", fmt.Errorf("%w: reload rejected", errServiceClosing))
 	}
 	s.wg.Add(1)
 	s.lifecycleMu.Unlock()
@@ -1088,7 +1082,7 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 	s.bindingGate.Lock()
 	if s.isClosing() {
 		s.bindingGate.Unlock()
-		return SettingsReloadResult{}, s.publicErr("settings", fmt.Errorf("%w: reload rejected", errServiceClosing))
+		return SettingsReloadResult{}, s.publicErr("settings-reload", fmt.Errorf("%w: reload rejected", errServiceClosing))
 	}
 	busy := false
 	for _, conv := range s.conversationsSnapshot() {
