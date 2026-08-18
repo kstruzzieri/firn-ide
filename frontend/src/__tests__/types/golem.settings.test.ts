@@ -140,6 +140,30 @@ describe('parseSettingsProjection', () => {
         (v.routes as Record<string, unknown>[])[0].role = 'é'.repeat(129); // 258 UTF-8 bytes
       },
     ],
+    [
+      'unknown top-level key',
+      (v: Record<string, unknown>) => {
+        v.extra = 1;
+      },
+    ],
+    [
+      'unknown provider key',
+      (v: Record<string, unknown>) => {
+        (v.providers as Record<string, unknown>[])[0].timeout = 5;
+      },
+    ],
+    [
+      'bidi override in an identifier',
+      (v: Record<string, unknown>) => {
+        (v.routes as Record<string, unknown>[])[0].role = 'agent\u202Em'; // RLO
+      },
+    ],
+    [
+      'control character in an identifier',
+      (v: Record<string, unknown>) => {
+        (v.providers as Record<string, unknown>[])[0].name = 'lo\u0007cal'; // BEL
+      },
+    ],
   ])('rejects %s', (_name, mutate) => {
     const value = validProjection();
     mutate(value);
@@ -193,6 +217,11 @@ describe('parseSettingsReloadResult', () => {
     expect(() => parseSettingsReloadResult({ busy: 'yes', projection: validProjection() })).toThrow(
       GolemContractError
     );
+  });
+  it('rejects an unknown key', () => {
+    expect(() =>
+      parseSettingsReloadResult({ busy: false, projection: validProjection(), extra: true })
+    ).toThrow(GolemContractError);
   });
 });
 

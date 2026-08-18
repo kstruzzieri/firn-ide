@@ -77,18 +77,30 @@ applying configuration) are explicitly out of scope — Phase 2.
   `limited` withholds the collections entirely but keeps at most one bounded
   blocking diagnostic for the agent route (`selectedAgentBlockingDiagnostic`)
   so a limited projection can never silently hide an unusable agent route.
-  Diagnostics sort blocking-first, then code, then subject name
-  (`sortDiagnostics`).
+  Diagnostic ordering is producer-enforced: the Go builder sorts
+  blocking-first, then code, then subject name (`sortDiagnostics`, Go-tested);
+  the TS side renders the received order and does not re-verify it.
+  Every projected identifier is scrubbed on the way out
+  (`sanitizeProjectionIdentifiers`): control and bidi-format runes (Unicode
+  Cc/Cf) become U+FFFD so a hostile config key cannot visually spoof the
+  configuration view. Identifier bounds are measured on the sanitized form
+  (sanitize-then-bound), since the scrub can grow a 1-byte control to the
+  3-byte replacement character.
 - `TestSettingsProjectionSerializationLeaksNothing` locks the no-leak
   guarantee: marshal the projection and assert it never contains a
   filesystem separator, `.json`, or a fixture-planted API key.
-- `TestSettingsContractCorpus` (`internal/ai/settings_test.go:500`) is the Go
+- `TestSettingsContractCorpus` (`internal/ai/settings_test.go`) is the Go
   half of the cross-language corpus: it feeds every fixture in
   `internal/ai/testdata/settings_contract/` through `structuralCheck` (a
   hand-rolled JSON structural validator independent of `encoding/json`'s
-  struct tags, so it cannot silently pass by ignoring an unknown field) and
-  `validateSettingsProjection` (the semantic oracle: closed-set membership,
-  bounds, blocking-first ordering). Companion frontend test
+  struct tags) and `validateSettingsProjection` (the semantic oracle:
+  closed-set membership, bounds, forbidden identifier runes). Both validators
+  reject unknown keys at every level: the Go corpus decode uses
+  `DisallowUnknownFields`, and the TS readers enforce per-object key
+  allowlists (`hasOnlyKeys`) — strict in both directions. That strictness is
+  a deliberate same-repo-lockstep choice: producer and validators ship
+  together, so an unknown key is contract drift, never forward
+  compatibility. Companion frontend test
   `golem.settings.test.ts` `describe('cross-language contract corpus')`
   confirms the same directory exists and is non-empty from the TS side.
   External codex review hardened the oracle over three follow-up commits: a
@@ -217,11 +229,30 @@ applying configuration) are explicitly out of scope — Phase 2.
 | Max identifier length | 256 — **UTF-8 bytes**, not UTF-16 code units or runes |
 | Max endpoint length | 1024 — UTF-8 bytes |
 | Max diagnostics | 257 (256 + 1: one `provider_endpoint_unsupported` per provider, plus one agent diagnostic) |
-| Cross-language fixture corpus | 17 fixtures in `internal/ai/testdata/settings_contract/` (8 `accept-*`, 9 `reject-*`), validated identically by the Go oracle (`settings_test.go`'s `validateSettingsProjection` + `structuralCheck`) and the TS validators (`parseSettingsProjection` in `frontend/src/types/golem.ts`) |
+| Cross-language fixture corpus | 18 fixtures in `internal/ai/testdata/settings_contract/` (8 `accept-*`, 10 `reject-*`), validated identically by the Go oracle (`settings_test.go`'s `validateSettingsProjection` + `structuralCheck` + `DisallowUnknownFields` decode) and the TS validators (`parseSettingsProjection` in `frontend/src/types/golem.ts`) |
+| Unknown keys | Rejected at every level by BOTH validators (Go: `DisallowUnknownFields`; TS: `hasOnlyKeys`) — deliberate same-repo-lockstep strictness, not forward compatibility |
+| Identifier rune policy | Builder scrubs all Cc/Cf runes to U+FFFD (`sanitizeIdentifier`); both oracles reject the explicit forbidden list (C0/C1 + bidi/format runes), kept byte-identical between `forbiddenIdentifierRunes` (Go) and `FORBIDDEN_IDENTIFIER_RUNES` (TS) |
 | Fixed public error messages (unchanged by this work) | 8 — `SanitizeError`'s 7 sentinel cases plus the catch-all |
 
 Exceeding a bound never redefines go-llm validity — the runtime agent target
 still resolves normally — it only withholds the *projection* as `limited`.
+
+## Accepted Risks and Reserved Seams
+
+- **Unbounded config-file reads.** Phase 1 reads the config file without a
+  size cap; a pathologically large `models.json` costs memory/CPU before the
+  bounds checks can classify it `limited`. Accepted as a local
+  resource-exhaustion risk until the Phase 2 document API's single-snapshot
+  bounded parse lands (go-llm#410 criterion 1).
+- **`GetGolemSettings` has no Phase 1 caller — by design.** The frontend view
+  calls `ReloadGolemSettings` on mount. `GetGolemSettings` is the pure-read
+  seam reserved for Phase 2 surfaces; it exists now so the read-without-reload
+  binding is in place before Phase 2 starts, not as dead code to remove.
+- **Identifier display policy.** The builder scrubs all Unicode Cc/Cf runes to
+  U+FFFD; the validators reject the explicit forbidden list (C0/C1 controls
+  plus the spoofing-relevant bidi/format runes). The builder is deliberately
+  broader than the contract — producer stricter than contract is safe; the
+  reverse would split corpus verdicts.
 
 ## Verification
 

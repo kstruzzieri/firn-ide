@@ -433,10 +433,14 @@ export function parseRunStatus(value: unknown): GolemRunStatusEvent | null {
 
 // ── Settings projection (#263 Phase 1) ───────────────────────────────────────
 // Read-only. EVERY enum below is a CLOSED set — including capability names and
-// diagnostic codes. Phase 2 grows the sets on both sides of the boundary in
-// the same change; an unknown value here is a contract break, not data.
-// Limits mirror internal/ai/settings.go and are exercised by the shared corpus
-// in internal/ai/testdata/settings_contract/.
+// diagnostic codes — and unknown KEYS are contract breaks too: every reader
+// rejects them (hasOnlyKeys), mirroring the Go corpus harness's
+// DisallowUnknownFields, so the validators are strict in both directions.
+// That is deliberate: the producer and this validator ship from the same repo
+// in lockstep, so an unknown key or value is contract drift, not forward
+// compatibility. Phase 2 grows the sets on both sides of the boundary in the
+// same change. Limits mirror internal/ai/settings.go and are exercised by the
+// shared corpus in internal/ai/testdata/settings_contract/.
 
 export type SettingsState = 'missing' | 'invalid' | 'limited' | 'ready';
 export type SettingsSourceOrigin = 'none' | 'env' | 'working_directory' | 'user_config' | 'legacy';
@@ -553,6 +557,27 @@ const CAPABILITY_NAMES: readonly CapabilityName[] = [
 const isBoundedString = (value: unknown, maxBytes: number): value is string =>
   isString(value) && utf8Length(value) <= maxBytes;
 
+// hasOnlyKeys rejects any key outside the allowlist: strict-both-ways mirror
+// of the Go corpus harness's DisallowUnknownFields (see the section comment).
+const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
+  Object.keys(value).every((key) => allowed.includes(key));
+
+// Identifier spoofing guard: C0/C1 controls plus the bidi/format runes that
+// can reorder or hide characters (soft hyphen, zero-widths, LRM/RLM, bidi
+// embeddings/overrides, word joiner..invisible operators, bidi isolates,
+// BOM/ZWNBSP). JS regexes cannot express the full Unicode Cf category, so the
+// contract is this EXPLICIT list — it MUST stay identical to
+// forbiddenIdentifierRunes in internal/ai/settings_test.go, or a corpus
+// fixture could split verdicts between the two oracles. The Go builder scrubs
+// the broader Cc/Cf categories to U+FFFD, which is safe: producer stricter
+// than contract.
+const FORBIDDEN_IDENTIFIER_RUNES =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
+
+const isCleanIdentifier = (value: unknown, maxBytes: number): value is string =>
+  isBoundedString(value, maxBytes) && !FORBIDDEN_IDENTIFIER_RUNES.test(value);
+
 const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
   isString(value) && (allowed as readonly string[]).includes(value);
 
@@ -573,21 +598,33 @@ function readCappedArray<T>(
 
 function readRoute(value: unknown): RouteProjection | null {
   if (!isRecord(value)) return null;
+  if (!hasOnlyKeys(value, ['useCase', 'role'])) return null;
   // Explicit empty useCase/role stay legal: go-llm permits empty map keys and
   // the Go oracle mirrors that; only providers reject empty names.
-  if (!isBoundedString(value.useCase, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isBoundedString(value.role, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(value.useCase, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(value.role, MAX_IDENTIFIER_BYTES)) return null;
   return { useCase: value.useCase, role: value.role };
 }
 
 function readModel(value: unknown): ModelProjection | null {
   if (!isRecord(value)) return null;
+  if (
+    !hasOnlyKeys(value, [
+      'role',
+      'modelName',
+      'provider',
+      'type',
+      'effectiveCapabilities',
+      'thinkMode',
+    ])
+  )
+    return null;
   const { role, modelName, provider, type, effectiveCapabilities, thinkMode } = value;
-  if (!isBoundedString(role, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isBoundedString(modelName, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isBoundedString(provider, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isBoundedString(type, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isBoundedString(thinkMode, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(role, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(modelName, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(provider, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(type, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(thinkMode, MAX_IDENTIFIER_BYTES)) return null;
   const caps = readCappedArray(effectiveCapabilities, CAPABILITY_NAMES.length, (c) =>
     isOneOf(c, CAPABILITY_NAMES) ? c : null
   );
@@ -597,27 +634,36 @@ function readModel(value: unknown): ModelProjection | null {
 
 function readProvider(value: unknown): ProviderProjection | null {
   if (!isRecord(value)) return null;
+  if (!hasOnlyKeys(value, ['name', 'endpoint', 'classification', 'apiFormat', 'credentialState']))
+    return null;
   const { name, endpoint, classification, apiFormat, credentialState } = value;
-  if (!isBoundedString(name, MAX_IDENTIFIER_BYTES) || name === '') return null;
+  if (!isCleanIdentifier(name, MAX_IDENTIFIER_BYTES) || name === '') return null;
+  // Endpoint is not an identifier: NormalizeEndpoint's URL parse constrains it
+  // on the Go side, so only the byte bound applies here.
   if (!isBoundedString(endpoint, MAX_ENDPOINT_BYTES)) return null;
   if (!isOneOf(classification, CLASSIFICATIONS)) return null;
-  if (!isBoundedString(apiFormat, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(apiFormat, MAX_IDENTIFIER_BYTES)) return null;
   if (!isOneOf(credentialState, CREDENTIAL_STATES)) return null;
   return { name, endpoint, classification, apiFormat, credentialState };
 }
 
 function readSettingsDiagnostic(value: unknown): SettingsDiagnostic | null {
   if (!isRecord(value)) return null;
+  if (!hasOnlyKeys(value, ['code', 'subjectKind', 'subjectName', 'blocking'])) return null;
   const { code, subjectKind, subjectName, blocking } = value;
   if (!isOneOf(code, DIAGNOSTIC_CODES)) return null;
   if (!isOneOf(subjectKind, SUBJECT_KINDS)) return null;
-  if (!isBoundedString(subjectName, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isCleanIdentifier(subjectName, MAX_IDENTIFIER_BYTES)) return null;
   if (typeof blocking !== 'boolean') return null;
   return { code, subjectKind, subjectName, blocking };
 }
 
 export function parseSettingsProjection(value: unknown): SettingsProjection {
   if (!isRecord(value)) return contractError();
+  if (
+    !hasOnlyKeys(value, ['state', 'sourceOrigin', 'routes', 'models', 'providers', 'diagnostics'])
+  )
+    return contractError();
   if (!isOneOf(value.state, SETTINGS_STATES)) return contractError();
   if (!isOneOf(value.sourceOrigin, SOURCE_ORIGINS)) return contractError();
   const routes = readCappedArray(value.routes, MAX_PROJECTION_ENTRIES, readRoute);
@@ -638,6 +684,7 @@ export function parseSettingsProjection(value: unknown): SettingsProjection {
 
 export function parseSettingsReloadResult(value: unknown): SettingsReloadResult {
   if (!isRecord(value)) return contractError();
+  if (!hasOnlyKeys(value, ['busy', 'projection'])) return contractError();
   if (typeof value.busy !== 'boolean') return contractError();
   return { busy: value.busy, projection: parseSettingsProjection(value.projection) };
 }

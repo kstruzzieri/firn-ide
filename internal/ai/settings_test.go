@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -333,6 +334,55 @@ func TestBuildSettingsProjectionFromRealLoad(t *testing.T) {
 	}
 }
 
+// TestBuildSettingsProjectionSanitizesIdentifiers: control and bidi-format
+// runes in config keys are scrubbed to U+FFFD before they cross the boundary
+// — an RLO in a role name or a C0 control in a provider name could otherwise
+// visually spoof the configuration view.
+func TestBuildSettingsProjectionSanitizesIdentifiers(t *testing.T) {
+	// U+202E (RLO) into the chat role key + route, U+0007 (BEL) into the
+	// provider name + the model's provider reference. The escapes are
+	// JSON-level: json.Unmarshal decodes them into the real runes.
+	j := strings.Replace(settingsFixtureJSON, `"chat-m":`, `"chat\u202em":`, 1)
+	j = strings.Replace(j, `"chat": "chat-m"`, `"chat": "chat\u202em"`, 1)
+	j = strings.Replace(j, `"local":`, `"lo\u0007cal":`, 1)
+	j = strings.Replace(j, `"provider": "local"`, `"provider": "lo\u0007cal"`, 1)
+
+	p := buildSettingsProjection(loadFixture(t, j), nil)
+	if p.State != "ready" {
+		t.Fatalf("state: %q", p.State)
+	}
+	if p.Routes[1].Role != "chat\uFFFDm" {
+		t.Fatalf("route role not sanitized: %q", p.Routes[1].Role)
+	}
+	roleByName := map[string]ModelProjection{}
+	for _, m := range p.Models {
+		roleByName[m.Role] = m
+	}
+	m, ok := roleByName["chat\uFFFDm"]
+	if !ok || m.Provider != "lo\uFFFDcal" {
+		t.Fatalf("model not sanitized: %+v", p.Models)
+	}
+	found := false
+	for _, pr := range p.Providers {
+		if pr.Name == "lo\uFFFDcal" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("provider name not sanitized: %+v", p.Providers)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(string(raw), "\u202e\a") {
+		t.Fatalf("raw control/bidi rune crossed the boundary: %s", raw)
+	}
+	if err := validateSettingsProjection(p); err != nil {
+		t.Fatalf("sanitized projection must satisfy the oracle: %v", err)
+	}
+}
+
 // TestSettingsProjectionSerializationLeaksNothing is the boundary proof.
 func TestSettingsProjectionSerializationLeaksNothing(t *testing.T) {
 	projections := []SettingsProjection{
@@ -353,6 +403,29 @@ func TestSettingsProjectionSerializationLeaksNothing(t *testing.T) {
 	}
 }
 
+// forbiddenIdentifierRunes is the contract's explicit identifier reject list:
+// C0/C1 controls plus the bidi/format runes that can reorder or hide
+// characters (soft hyphen, zero-widths, LRM/RLM, bidi embeddings/overrides,
+// word joiner..invisible operators, bidi isolates, BOM/ZWNBSP). It MUST stay
+// identical to FORBIDDEN_IDENTIFIER_RUNES in frontend/src/types/golem.ts — a
+// JS regex cannot express the full Cf category, so the contract is this
+// explicit list on both sides, or a corpus fixture with an exotic Cf rune
+// would split verdicts between the oracles. The builder's scrub is BROADER
+// (all of Cc/Cf), which is safe: producer stricter than contract.
+var forbiddenIdentifierRunes = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x0000, Hi: 0x001F, Stride: 1},
+		{Lo: 0x007F, Hi: 0x009F, Stride: 1},
+		{Lo: 0x00AD, Hi: 0x00AD, Stride: 1},
+		{Lo: 0x200B, Hi: 0x200F, Stride: 1},
+		{Lo: 0x202A, Hi: 0x202E, Stride: 1},
+		{Lo: 0x2060, Hi: 0x2064, Stride: 1},
+		{Lo: 0x2066, Hi: 0x2069, Stride: 1},
+		{Lo: 0xFEFF, Hi: 0xFEFF, Stride: 1},
+	},
+	LatinOffset: 2,
+}
+
 // validateSettingsProjection checks every enum and bound of the Phase 1
 // contract. It is the Go twin of the frontend validator; the corpus keeps the
 // two honest against the same fixtures.
@@ -369,18 +442,23 @@ func validateSettingsProjection(p SettingsProjection) error {
 		len(p.Providers) > maxProjectionEntries || len(p.Diagnostics) > maxProjectionDiagnostics {
 		return fmt.Errorf("collection over bound")
 	}
-	over := func(s string) bool { return len(s) > maxProjectionIdentifierLen }
+	// badIdent: over the byte bound, or carrying a forbidden rune the producer
+	// contractually never emits (builder scrubs Cc/Cf to U+FFFD first).
+	badIdent := func(s string) bool {
+		return len(s) > maxProjectionIdentifierLen ||
+			strings.ContainsFunc(s, func(r rune) bool { return unicode.Is(forbiddenIdentifierRunes, r) })
+	}
 	caps := map[string]bool{}
 	for _, name := range provider.CanonicalCapabilityNames {
 		caps[name] = true
 	}
 	for _, r := range p.Routes {
-		if over(r.UseCase) || over(r.Role) {
+		if badIdent(r.UseCase) || badIdent(r.Role) {
 			return fmt.Errorf("route %+v", r)
 		}
 	}
 	for _, m := range p.Models {
-		if over(m.Role) || over(m.ModelName) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
+		if badIdent(m.Role) || badIdent(m.ModelName) || badIdent(m.Provider) || badIdent(m.Type) || badIdent(m.ThinkMode) {
 			return fmt.Errorf("model %+v", m)
 		}
 		if len(m.EffectiveCapabilities) > len(provider.CanonicalCapabilityNames) {
@@ -395,7 +473,7 @@ func validateSettingsProjection(p SettingsProjection) error {
 	classifications := map[string]bool{"local": true, "remote": true, "unknown": true}
 	credentials := map[string]bool{"none": true, "available": true, "reference_unavailable": true}
 	for _, pr := range p.Providers {
-		if pr.Name == "" || over(pr.Name) || over(pr.APIFormat) || len(pr.Endpoint) > maxProjectionEndpointLen {
+		if pr.Name == "" || badIdent(pr.Name) || badIdent(pr.APIFormat) || len(pr.Endpoint) > maxProjectionEndpointLen {
 			return fmt.Errorf("provider %+v", pr)
 		}
 		if !classifications[pr.Classification] {
@@ -417,8 +495,8 @@ func validateSettingsProjection(p SettingsProjection) error {
 		if !kinds[d.SubjectKind] {
 			return fmt.Errorf("subjectKind %q", d.SubjectKind)
 		}
-		if over(d.SubjectName) {
-			return fmt.Errorf("subjectName over bound")
+		if badIdent(d.SubjectName) {
+			return fmt.Errorf("subjectName over bound or forbidden rune")
 		}
 	}
 	return nil

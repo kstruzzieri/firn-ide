@@ -3,6 +3,8 @@ package ai
 import (
 	"errors"
 	"sort"
+	"strings"
+	"unicode"
 
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -106,6 +108,49 @@ type Diagnostic struct {
 	Blocking    bool   `json:"blocking"`
 }
 
+// sanitizeIdentifier replaces control and bidirectional-format runes with
+// U+FFFD before an identifier crosses the boundary: a config key carrying
+// RLO/LRO or C0/C1 controls could otherwise visually spoof diagnostic and
+// model names in the UI. Category Cc and Cf cover both.
+func sanitizeIdentifier(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.In(r, unicode.Cc, unicode.Cf) {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
+}
+
+// sanitizeProjectionIdentifiers scrubs every projected identifier in place —
+// the one pass every build path funnels through, so no emit site can forget
+// it. Endpoints are excluded: NormalizeEndpoint's URL parse already
+// constrains them, and effectiveCapabilities come from the canonical
+// vocabulary. Bounds were measured on the sanitized form
+// (exceedsProjectionBounds, boundSubject), so the scrub can never push a
+// field over a limit.
+func sanitizeProjectionIdentifiers(p SettingsProjection) SettingsProjection {
+	for i := range p.Routes {
+		r := &p.Routes[i]
+		r.UseCase, r.Role = sanitizeIdentifier(r.UseCase), sanitizeIdentifier(r.Role)
+	}
+	for i := range p.Models {
+		m := &p.Models[i]
+		m.Role = sanitizeIdentifier(m.Role)
+		m.ModelName = sanitizeIdentifier(m.ModelName)
+		m.Provider = sanitizeIdentifier(m.Provider)
+		m.Type = sanitizeIdentifier(m.Type)
+		m.ThinkMode = sanitizeIdentifier(m.ThinkMode)
+	}
+	for i := range p.Providers {
+		pr := &p.Providers[i]
+		pr.Name, pr.APIFormat = sanitizeIdentifier(pr.Name), sanitizeIdentifier(pr.APIFormat)
+	}
+	for i := range p.Diagnostics {
+		p.Diagnostics[i].SubjectName = sanitizeIdentifier(p.Diagnostics[i].SubjectName)
+	}
+	return p
+}
+
 // projectedOrigin maps a backend sourceOrigin onto the boundary vocabulary
 // explicitly — the sourceOrigin contract forbids raw pass-through, so an
 // unknown or zero value collapses to "none" instead of leaking a new string
@@ -134,7 +179,15 @@ func emptyProjection(state string, origin sourceOrigin) SettingsProjection {
 
 // buildSettingsProjection maps one load outcome onto the safe projection.
 // Pure: no I/O, no service state. loadErr non-nil means loaded.Config is nil.
+// Every path funnels through sanitizeProjectionIdentifiers so no identifier
+// can carry a control or bidi-format rune across the boundary.
 func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
+	return sanitizeProjectionIdentifiers(assembleSettingsProjection(loaded, loadErr))
+}
+
+// assembleSettingsProjection builds the projection from raw config values;
+// buildSettingsProjection sanitizes what it returns.
+func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
 	if loadErr != nil {
 		if errors.Is(loadErr, ErrAgentConfigMissing) {
 			p := emptyProjection("missing", originNone)
@@ -222,14 +275,19 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 }
 
 // exceedsProjectionBounds reports whether any collection, identifier, or
-// derived endpoint is over the response bounds.
+// derived endpoint is over the response bounds. Identifier bounds are
+// measured on the SANITIZED form (sanitize-then-bound): sanitizeIdentifier
+// maps every scrubbed rune to U+FFFD (3 UTF-8 bytes), which can grow a
+// 1-byte control past the limit, and what the ready path emits is the
+// sanitized value — so the bound must be checked on exactly that. Endpoints
+// are never sanitized and are measured as derived.
 func exceedsProjectionBounds(cfg *config.Config) bool {
 	if len(cfg.Defaults) > maxProjectionEntries ||
 		len(cfg.Models) > maxProjectionEntries ||
 		len(cfg.Providers) > maxProjectionEntries {
 		return true
 	}
-	over := func(s string) bool { return len(s) > maxProjectionIdentifierLen }
+	over := func(s string) bool { return len(sanitizeIdentifier(s)) > maxProjectionIdentifierLen }
 	for useCase, role := range cfg.Defaults {
 		if over(useCase) || over(role) {
 			return true
@@ -287,8 +345,12 @@ func selectedAgentBlockingDiagnostic(cfg *config.Config) (Diagnostic, bool) {
 	return Diagnostic{}, false
 }
 
+// boundSubject drops the subject when its SANITIZED form is over the
+// identifier bound — the scrub can grow a raw in-bound name past the limit,
+// and the sanitized value is what gets emitted (sanitize-then-bound, same
+// order as exceedsProjectionBounds).
 func boundSubject(d Diagnostic) Diagnostic {
-	if len(d.SubjectName) > maxProjectionIdentifierLen {
+	if len(sanitizeIdentifier(d.SubjectName)) > maxProjectionIdentifierLen {
 		d.SubjectKind = ""
 		d.SubjectName = ""
 	}
