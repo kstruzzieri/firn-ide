@@ -1,7 +1,21 @@
 /*
  * Task 9 (#263 Phase 1) — read-only Golem configuration view.
- * Reuses GolemPanel.module.css's design tokens (colors/spacing) so the view
- * reads as the same surface, not a bolted-on settings page.
+ *
+ * An instrument readout, not a settings form: a sticky state masthead over
+ * annunciator-style diagnostic rows, then the routing chain traced by colour
+ * across sections — roles wear the panel's teal chip recipe, model names are
+ * primary mono, providers the panel's tool purple. All three hues inherit from
+ * .panel in GolemPanel.module.css (--golem-teal/--golem-purple/--golem-red),
+ * since this view always renders inside that root.
+ *
+ * Contrast (WCAG): --golem-accent 8.34:1 and --status-warning 8.26:1 on
+ * --surface-panel; --golem-teal 7.19:1 on panel and higher on the darker
+ * --surface-frame. --palette-purple holds only 4.48:1 on --surface-panel —
+ * below AA — but 4.76:1 on --surface-frame, so every purple provider name
+ * sits on a frame-background card, the same reason GolemPanel's .toolName
+ * lives on frame chips. --golem-red follows the panel's cancel recipe:
+ * 5.00:1 on its own 12% tint. Severity and credential state always carry a
+ * text label; colour is never the only signal.
  */
 
 .root {
@@ -18,18 +32,42 @@
   font-size: 12px;
 }
 
-.headerRow {
+/*
+ * Full-bleed elevated strip like the panel header, sticky so the state verdict
+ * stays in view while long model/provider lists scroll beneath it. top: -8px
+ * cancels the root padding so the strip pins to the true panel edge.
+ */
+.masthead {
+  position: sticky;
+  top: -8px;
+  z-index: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
+  margin: -8px -8px 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  background-color: var(--surface-elevated);
 }
 
-/* Focus ring comes from the app-wide :focus-visible rule; nothing suppressed here. */
+.headerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+/* Echoes the GOLEM wordmark: accent hue, tracked-out uppercase. The DOM text
+   stays "Configuration" (tests and the accessible name); only the rendering is
+   uppercase. Focus ring comes from the app-wide :focus-visible rule. */
 .heading {
   margin: 0;
-  font-size: 14px;
+  color: var(--golem-accent);
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .headerActions {
@@ -37,28 +75,152 @@
   gap: 6px;
 }
 
-.sectionHeading {
-  margin: 0 0 4px;
-  color: var(--text-secondary);
+/* The panel's secondary-button recipe; the panel surface reads inset against
+   the elevated masthead strip. */
+.headerButton {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--surface-border);
+  border-radius: 5px;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
   font-size: 11px;
-  font-weight: 700;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.headerButton:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.headerButton:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.headerButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.stateRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The state instrument: dot + uppercase label in one tinted pill, the panel's
+   chip recipe (12% tint fill, 35% tint border). The dot doubles the hue but
+   the text label carries the verdict, so severity never rests on colour. */
+.statePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stateDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.statePill[data-state='ready'] {
+  border-color: color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  color: var(--golem-teal);
+}
+
+.statePill[data-state='limited'] {
+  border-color: color-mix(in srgb, var(--status-warning) 35%, transparent);
+  background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  color: var(--status-warning);
+}
+
+.statePill[data-state='invalid'],
+.statePill[data-state='missing'] {
+  border-color: color-mix(in srgb, var(--golem-red) 40%, transparent);
+  background-color: color-mix(in srgb, var(--golem-red) 12%, transparent);
+  color: var(--golem-red);
+}
+
+.sourceChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--surface-border);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.sourceKey {
+  flex: none;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  font-size: 9px;
 }
 
-.sourceLine {
-  margin: 0;
+/* Section headings extend into a hairline rule — the readout's frame lines. */
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
   color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sectionHeading::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background-color: var(--surface-border-subtle);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
-.sourceOrigin {
-  color: var(--text-primary);
-  font-weight: 600;
+/* The panel's working-dot idiom; keyframes are module-scoped, so this module
+   carries its own copy of the breath animation. */
+.loadingDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--golem-accent);
+  box-shadow: 0 0 6px var(--golem-accent);
+  animation: cfgBreath 1.2s ease-in-out infinite;
 }
 
-.muted {
-  color: var(--text-muted);
+@keyframes cfgBreath {
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .errorBox {
@@ -67,18 +229,38 @@
   align-items: flex-start;
   gap: 6px;
   padding: 8px 10px;
-  border: 1px solid var(--status-error);
+  border: 1px solid color-mix(in srgb, var(--golem-red) 40%, transparent);
   border-radius: 6px;
-  color: var(--text-secondary);
+  background-color: var(--surface-frame);
 }
 
-.busyNotice {
+.errorText {
   margin: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--status-warning);
-  border-radius: 5px;
-  color: var(--status-warning);
+  color: var(--text-secondary);
   font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Flat status row with a leading warning dot — the panel's notice convention,
+   not a boxed banner. */
+.busyNotice {
+  position: relative;
+  margin: 0;
+  padding: 2px 0 2px 14px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.busyNotice::before {
+  content: '';
+  position: absolute;
+  top: 8px; /* optically centered on the first line */
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--status-warning);
 }
 
 .body {
@@ -96,58 +278,73 @@
   list-style: none;
 }
 
-.diagnostic,
-.diagnosticBlocking {
+/* Annunciator rows: severity as a labelled chip, message beside it. */
+.diagnosticRow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   padding: 4px 8px;
   border: 1px solid var(--surface-border-subtle);
   border-radius: 5px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-/* Blocking gets an accent border; the "Blocking"/"Notice" text label carries
-   the actual signal so severity never rests on color alone. */
-.diagnosticBlocking {
-  border-color: var(--status-error);
+  background-color: var(--surface-frame);
 }
 
 .diagnosticSeverity {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+}
+
+.diagnosticRow[data-blocking] .diagnosticSeverity {
+  border-color: color-mix(in srgb, var(--golem-red) 40%, transparent);
+  background-color: color-mix(in srgb, var(--golem-red) 12%, transparent);
+  color: var(--golem-red);
+}
+
+.diagnosticText {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .subject {
   color: var(--text-muted);
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 
-.table {
-  border-collapse: collapse;
-  table-layout: fixed;
-  width: 100%;
+/* Empty readout: the brand mark dimmed to a watermark. */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 0 12px;
+}
+
+.emptyIcon {
+  width: 40px;
+  height: 40px;
+  opacity: 0.35;
+  filter: grayscale(0.4);
+}
+
+.emptyText {
+  margin: 0;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
-.table th,
-.table td {
-  padding: 3px 8px;
-  border: 1px solid var(--surface-border);
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
-.table th {
-  color: var(--text-primary);
-  font-weight: 700;
-}
-
-.table td {
-  color: var(--text-secondary);
-}
-
-.entityList {
+.routeList {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -156,26 +353,128 @@
   list-style: none;
 }
 
-.entityRow {
+/* A wire in the routing chain: use case → role. */
+.routeRow {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--surface-border-subtle);
-  border-radius: 5px;
+  padding: 2px 0;
 }
 
-.entityName {
+.routeUseCase {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.routeArrow {
+  flex: none;
+  color: var(--golem-accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Role identity chip — the workspace-chip recipe in teal, reused verbatim so
+   a role reads as the same entity in the Roles list and on a model card. */
+.roleChip {
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  border-radius: 5px;
+  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  color: var(--golem-teal);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.cardList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Frame-background card: required for the purple contrast noted above. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 6px;
+  background-color: var(--surface-frame);
+}
+
+.cardHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.modelName {
+  min-width: 0;
   color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-.entityDetail {
-  color: var(--text-muted);
+/* The panel's tool-name purple: provider identity across both sections. */
+.providerName {
+  min-width: 0;
+  color: var(--golem-purple);
+  font-family: var(--font-mono);
   font-size: 11px;
   overflow-wrap: anywhere;
+}
+
+/* The panel's destination-badge idiom: remote is the one that matters. */
+.badge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge[data-classification='remote'] {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.cardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.metaChip {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.capabilityRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .capabilityChip {
@@ -187,10 +486,58 @@
   font-size: 10px;
 }
 
+/* Key presence as a labelled state light. */
+.credential {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.credentialDot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.credential[data-credential='available'] {
+  color: var(--golem-teal);
+}
+
+.credential[data-credential='reference_unavailable'] {
+  color: var(--status-warning);
+}
+
 .endpoint {
   min-width: 0;
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
   overflow-wrap: anywhere;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .headerButton {
+    transition: none;
+  }
+
+  .loadingDot {
+    animation: none;
+  }
 }

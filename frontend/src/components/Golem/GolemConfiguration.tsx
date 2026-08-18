@@ -4,10 +4,16 @@
  * Component-local state only: no Zustand. Phase 3 adds a write-only key
  * field that must never reach a store, so this view is deliberately kept
  * outside the golemStore from the start.
+ *
+ * Visual language: an instrument readout extending the panel's mission-control
+ * idiom. Entities keep one hue across sections — roles teal, model names
+ * primary mono, providers purple — so the routing chain use case → role →
+ * model → provider can be traced by colour between sections.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
+import golemIcon from '../../assets/branding/golem-icon.svg';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,
@@ -34,6 +40,13 @@ const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {
   working_directory: 'Working directory models.json',
   user_config: 'User configuration directory',
   legacy: 'Legacy configuration directory',
+};
+
+const STATE_LABEL: Record<SettingsProjection['state'], string> = {
+  ready: 'Ready',
+  limited: 'Limited',
+  invalid: 'Invalid',
+  missing: 'Missing',
 };
 
 const CLASSIFICATION_LABEL = { local: 'Local', remote: 'Remote', unknown: 'Unknown' } as const;
@@ -88,26 +101,55 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
 
   return (
     <div className={styles.root}>
-      <div className={styles.headerRow}>
-        <h2 ref={headingRef} tabIndex={-1} className={styles.heading}>
-          Configuration
-        </h2>
-        <div className={styles.headerActions}>
-          <button type="button" disabled={inFlight} onClick={() => void load(true)}>
-            Refresh
-          </button>
-          <button type="button" onClick={onClose}>
-            Back to chat
-          </button>
+      <header className={styles.masthead}>
+        <div className={styles.headerRow}>
+          <h2 ref={headingRef} tabIndex={-1} className={styles.heading}>
+            Configuration
+          </h2>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={styles.headerButton}
+              disabled={inFlight}
+              onClick={() => void load(true)}
+            >
+              Refresh
+            </button>
+            <button type="button" className={styles.headerButton} onClick={onClose}>
+              Back to chat
+            </button>
+          </div>
         </div>
-      </div>
+        {phase.kind === 'ready' && (
+          <div className={styles.stateRow}>
+            <span className={styles.statePill} data-state={phase.projection.state}>
+              <span className={styles.stateDot} aria-hidden="true" />
+              {STATE_LABEL[phase.projection.state]}
+            </span>
+            <span className={styles.sourceChip}>
+              <span className={styles.sourceKey}>Source</span>
+              {ORIGIN_LABEL[phase.projection.sourceOrigin]}
+            </span>
+          </div>
+        )}
+      </header>
 
-      {phase.kind === 'loading' && <p className={styles.muted}>Loading…</p>}
+      {phase.kind === 'loading' && (
+        <p className={styles.loading}>
+          <span className={styles.loadingDot} aria-hidden="true" />
+          Loading configuration…
+        </p>
+      )}
 
       {phase.kind === 'error' && (
         <div className={styles.errorBox} role="alert">
-          <p>{phase.message}</p>
-          <button type="button" disabled={inFlight} onClick={() => void load(true)}>
+          <p className={styles.errorText}>{phase.message}</p>
+          <button
+            type="button"
+            className={styles.headerButton}
+            disabled={inFlight}
+            onClick={() => void load(true)}
+          >
             Retry
           </button>
         </div>
@@ -127,6 +169,11 @@ function ConfigurationBody({
   projection: SettingsProjection;
   busyNotice: boolean;
 }) {
+  const empty =
+    projection.routes.length === 0 &&
+    projection.models.length === 0 &&
+    projection.providers.length === 0;
+
   return (
     <div className={styles.body}>
       {busyNotice && (
@@ -136,10 +183,6 @@ function ConfigurationBody({
         </p>
       )}
 
-      <p className={styles.sourceLine}>
-        Source: <span className={styles.sourceOrigin}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
-      </p>
-
       {projection.diagnostics.length > 0 && (
         <section aria-label="Configuration diagnostics">
           <h3 className={styles.sectionHeading}>Diagnostics</h3>
@@ -147,57 +190,74 @@ function ConfigurationBody({
             {projection.diagnostics.map((d, i) => (
               <li
                 key={`${d.code}-${d.subjectName}-${i}`}
-                className={d.blocking ? styles.diagnosticBlocking : styles.diagnostic}
+                className={styles.diagnosticRow}
+                data-blocking={d.blocking || undefined}
               >
                 <span className={styles.diagnosticSeverity}>
                   {d.blocking ? 'Blocking' : 'Notice'}
-                </span>{' '}
-                {DIAGNOSTIC_TEXT[d.code]}
-                {d.subjectName !== '' && <span className={styles.subject}> — {d.subjectName}</span>}
+                </span>
+                <span className={styles.diagnosticText}>
+                  {DIAGNOSTIC_TEXT[d.code]}
+                  {d.subjectName !== '' && (
+                    <span className={styles.subject}> — {d.subjectName}</span>
+                  )}
+                </span>
               </li>
             ))}
           </ul>
         </section>
       )}
 
+      {empty && (
+        <div className={styles.emptyState}>
+          <img className={styles.emptyIcon} src={golemIcon} alt="" aria-hidden="true" />
+          <p className={styles.emptyText}>No resolved configuration to display.</p>
+        </div>
+      )}
+
       {projection.routes.length > 0 && (
         <section aria-label="Role routing">
           <h3 className={styles.sectionHeading}>Roles</h3>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th scope="col">Use case</th>
-                <th scope="col">Role</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projection.routes.map((r) => (
-                <tr key={r.useCase}>
-                  <td>{r.useCase}</td>
-                  <td>{r.role}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ul className={styles.routeList}>
+            {projection.routes.map((r) => (
+              <li key={r.useCase} className={styles.routeRow}>
+                <span className={styles.routeUseCase}>{r.useCase}</span>
+                <span className={styles.srOnly}>routes to role</span>
+                <span className={styles.routeArrow} aria-hidden="true">
+                  →
+                </span>
+                <span className={styles.roleChip}>{r.role}</span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
       {projection.models.length > 0 && (
         <section aria-label="Models">
           <h3 className={styles.sectionHeading}>Models</h3>
-          <ul className={styles.entityList}>
+          <ul className={styles.cardList}>
             {projection.models.map((m) => (
-              <li key={m.role} className={styles.entityRow}>
-                <span className={styles.entityName}>{m.role}</span>
-                <span className={styles.entityDetail}>{m.modelName}</span>
-                <span className={styles.entityDetail}>{m.provider}</span>
-                {m.effectiveCapabilities.map((c) => (
-                  <span key={c} className={styles.capabilityChip}>
-                    {c}
-                  </span>
-                ))}
-                {m.thinkMode !== '' && (
-                  <span className={styles.entityDetail}>think: {m.thinkMode}</span>
+              <li key={m.role} className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <span className={styles.roleChip}>{m.role}</span>
+                  <span className={styles.modelName}>{m.modelName}</span>
+                </div>
+                <div className={styles.cardMeta}>
+                  <span className={styles.providerName}>{m.provider}</span>
+                  {m.type !== '' && <span className={styles.metaChip}>{m.type}</span>}
+                  {m.thinkMode !== '' && (
+                    <span className={styles.metaChip}>think: {m.thinkMode}</span>
+                  )}
+                </div>
+                {m.effectiveCapabilities.length > 0 && (
+                  <div className={styles.capabilityRow}>
+                    {m.effectiveCapabilities.map((c) => (
+                      <span key={c} className={styles.capabilityChip}>
+                        {c}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </li>
             ))}
@@ -208,16 +268,23 @@ function ConfigurationBody({
       {projection.providers.length > 0 && (
         <section aria-label="Providers">
           <h3 className={styles.sectionHeading}>Providers</h3>
-          <ul className={styles.entityList}>
+          <ul className={styles.cardList}>
             {projection.providers.map((p) => (
-              <li key={p.name} className={styles.entityRow}>
-                <span className={styles.entityName}>{p.name}</span>
-                {p.endpoint !== '' && <span className={styles.endpoint}>{p.endpoint}</span>}
-                <span className={styles.entityDetail}>
-                  {CLASSIFICATION_LABEL[p.classification]}
-                </span>
-                <span className={styles.entityDetail}>{p.apiFormat}</span>
-                <span className={styles.entityDetail}>{CREDENTIAL_LABEL[p.credentialState]}</span>
+              <li key={p.name} className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <span className={styles.providerName}>{p.name}</span>
+                  <span className={styles.badge} data-classification={p.classification}>
+                    {CLASSIFICATION_LABEL[p.classification]}
+                  </span>
+                </div>
+                {p.endpoint !== '' && <div className={styles.endpoint}>{p.endpoint}</div>}
+                <div className={styles.cardMeta}>
+                  <span className={styles.metaChip}>{p.apiFormat}</span>
+                  <span className={styles.credential} data-credential={p.credentialState}>
+                    <span className={styles.credentialDot} aria-hidden="true" />
+                    {CREDENTIAL_LABEL[p.credentialState]}
+                  </span>
+                </div>
               </li>
             ))}
           </ul>
