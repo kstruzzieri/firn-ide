@@ -33,6 +33,20 @@ const validProjection = (): Record<string, unknown> => ({
   diagnostics: [{ code: 'agent_role_missing', subjectKind: '', subjectName: '', blocking: true }],
 });
 
+type SettingsDiagnosticMappingCase = {
+  input: string;
+  output: string;
+  keepSubject: boolean;
+  blocking: boolean;
+};
+
+const settingsDiagnosticMappingCases = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, '../../../../internal/ai/testdata/settings_diagnostic_mapping.json'),
+    'utf8'
+  )
+) as SettingsDiagnosticMappingCase[];
+
 describe('parseSettingsProjection', () => {
   it('accepts a full valid projection', () => {
     const p: SettingsProjection = parseSettingsProjection(validProjection());
@@ -202,6 +216,39 @@ describe('parseSettingsProjection', () => {
   it('treats empty collections as empty arrays', () => {
     const value = { ...validProjection(), routes: [], models: [], providers: [], diagnostics: [] };
     expect(parseSettingsProjection(value).routes).toEqual([]);
+  });
+});
+
+describe('settings diagnostic mapping contract', () => {
+  it('contains 27 pinned upstream codes plus the unknown-future case', () => {
+    expect(settingsDiagnosticMappingCases).toHaveLength(28);
+    expect(settingsDiagnosticMappingCases.at(-1)?.input).toBe('certified_future_code');
+    expect(new Set(settingsDiagnosticMappingCases.map(({ input }) => input)).size).toBe(28);
+  });
+
+  it.each(settingsDiagnosticMappingCases)(
+    '$input maps to a parseable $output diagnostic',
+    ({ output, keepSubject, blocking }) => {
+      const projection = validProjection();
+      projection.diagnostics = [
+        {
+          code: output,
+          subjectKind: keepSubject ? 'provider' : '',
+          subjectName: keepSubject ? 'p1' : '',
+          blocking,
+        },
+      ];
+      expect(() => parseSettingsProjection(projection)).not.toThrow();
+    }
+  );
+
+  it('accepts use_case and the Firn-owned identifier notice', () => {
+    const projection = validProjection();
+    projection.diagnostics = [
+      { code: 'defaults_invalid', subjectKind: 'use_case', subjectName: 'agent', blocking: true },
+      { code: 'identifier_not_editable', subjectKind: '', subjectName: '', blocking: false },
+    ];
+    expect(() => parseSettingsProjection(projection)).not.toThrow();
   });
 });
 

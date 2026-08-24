@@ -201,6 +201,37 @@ describe('GolemConfiguration', () => {
     expect(await screen.findByText('Golem returned an unexpected response.')).toBeInTheDocument();
   });
 
+  it('renders typed Slice-A diagnostics with exact copy and severity', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        state: 'limited',
+        diagnostics: [
+          {
+            code: 'key_reference_unavailable',
+            subjectKind: 'provider',
+            subjectName: '',
+            blocking: true,
+          },
+          { code: 'duplicate_keys', subjectKind: 'provider', subjectName: '', blocking: false },
+        ],
+      },
+    });
+
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    expect(
+      await screen.findByText('An API-key environment variable is unavailable.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Duplicate JSON keys make this configuration read-only.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Blocking')).toBeInTheDocument();
+    expect(screen.getByText('Notice')).toBeInTheDocument();
+    expect(screen.getByText('wire-model')).toBeInTheDocument();
+  });
+
   it('moves focus to the heading on mount', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
     await screen.findByText('wire-model');

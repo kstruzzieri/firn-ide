@@ -446,7 +446,7 @@ export type SettingsState = 'missing' | 'invalid' | 'limited' | 'ready';
 export type SettingsSourceOrigin = 'none' | 'env' | 'working_directory' | 'user_config' | 'legacy';
 export type ProviderClassification = 'local' | 'remote' | 'unknown';
 export type CredentialState = 'none' | 'available' | 'reference_unavailable';
-export type DiagnosticSubjectKind = '' | 'role' | 'model' | 'provider';
+export type DiagnosticSubjectKind = '' | 'role' | 'model' | 'provider' | 'use_case';
 export type SettingsDiagnosticCode =
   | 'config_missing'
   | 'json_invalid'
@@ -454,7 +454,21 @@ export type SettingsDiagnosticCode =
   | 'agent_role_missing'
   | 'agent_capabilities_insufficient'
   | 'provider_endpoint_unsupported'
-  | 'projection_limited';
+  | 'projection_limited'
+  | 'duplicate_keys'
+  | 'provider_required'
+  | 'provider_name_invalid'
+  | 'provider_endpoint_invalid'
+  | 'provider_format_invalid'
+  | 'slot_policy_invalid'
+  | 'model_invalid'
+  | 'think_invalid'
+  | 'provider_not_found'
+  | 'defaults_invalid'
+  | 'key_reference_malformed'
+  | 'key_reference_unavailable'
+  | 'selector_conflict'
+  | 'identifier_not_editable';
 export type CapabilityName =
   | 'chat'
   | 'generate'
@@ -534,7 +548,13 @@ const CREDENTIAL_STATES: readonly CredentialState[] = [
   'available',
   'reference_unavailable',
 ];
-const SUBJECT_KINDS: readonly DiagnosticSubjectKind[] = ['', 'role', 'model', 'provider'];
+const SUBJECT_KINDS: readonly DiagnosticSubjectKind[] = [
+  '',
+  'role',
+  'model',
+  'provider',
+  'use_case',
+];
 const DIAGNOSTIC_CODES: readonly SettingsDiagnosticCode[] = [
   'config_missing',
   'json_invalid',
@@ -543,6 +563,20 @@ const DIAGNOSTIC_CODES: readonly SettingsDiagnosticCode[] = [
   'agent_capabilities_insufficient',
   'provider_endpoint_unsupported',
   'projection_limited',
+  'duplicate_keys',
+  'provider_required',
+  'provider_name_invalid',
+  'provider_endpoint_invalid',
+  'provider_format_invalid',
+  'slot_policy_invalid',
+  'model_invalid',
+  'think_invalid',
+  'provider_not_found',
+  'defaults_invalid',
+  'key_reference_malformed',
+  'key_reference_unavailable',
+  'selector_conflict',
+  'identifier_not_editable',
 ];
 const CAPABILITY_NAMES: readonly CapabilityName[] = [
   'chat',

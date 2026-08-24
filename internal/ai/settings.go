@@ -26,7 +26,7 @@ const (
 	maxProjectionDiagnostics = maxProjectionEntries + 1
 )
 
-// Phase 1 diagnostic-code allowlist. The frontend validator mirrors this list
+// Slice A diagnostic-code allowlist. The frontend validator mirrors this list
 // byte-for-byte; grow both sides in the same change.
 const (
 	codeConfigMissing               = "config_missing"
@@ -36,6 +36,20 @@ const (
 	codeAgentCapsInsufficient       = "agent_capabilities_insufficient"
 	codeProviderEndpointUnsupported = "provider_endpoint_unsupported"
 	codeProjectionLimited           = "projection_limited"
+	codeDuplicateKeys               = "duplicate_keys"
+	codeProviderRequired            = "provider_required"
+	codeProviderNameInvalid         = "provider_name_invalid"
+	codeProviderEndpointInvalid     = "provider_endpoint_invalid"
+	codeProviderFormatInvalid       = "provider_format_invalid"
+	codeSlotPolicyInvalid           = "slot_policy_invalid"
+	codeModelInvalid                = "model_invalid"
+	codeThinkInvalid                = "think_invalid"
+	codeProviderNotFound            = "provider_not_found"
+	codeDefaultsInvalid             = "defaults_invalid"
+	codeKeyReferenceMalformed       = "key_reference_malformed"
+	codeKeyReferenceUnavailable     = "key_reference_unavailable"
+	codeSelectorConflict            = "selector_conflict"
+	codeIdentifierNotEditable       = "identifier_not_editable"
 )
 
 // settingsDiagnosticCodes enumerates every code the builder can emit, in the
@@ -48,6 +62,20 @@ var settingsDiagnosticCodes = []string{
 	codeAgentCapsInsufficient,
 	codeProviderEndpointUnsupported,
 	codeProjectionLimited,
+	codeDuplicateKeys,
+	codeProviderRequired,
+	codeProviderNameInvalid,
+	codeProviderEndpointInvalid,
+	codeProviderFormatInvalid,
+	codeSlotPolicyInvalid,
+	codeModelInvalid,
+	codeThinkInvalid,
+	codeProviderNotFound,
+	codeDefaultsInvalid,
+	codeKeyReferenceMalformed,
+	codeKeyReferenceUnavailable,
+	codeSelectorConflict,
+	codeIdentifierNotEditable,
 }
 
 // SettingsProjection is the Wails-facing read-only view of the effective Golem
@@ -100,12 +128,77 @@ type ProviderProjection struct {
 }
 
 // Diagnostic is one allowlisted configuration finding. SubjectName is a
-// length-bounded role/model/provider name; never a path or value.
+// length-bounded role/model/provider/use_case name; never a path or value.
 type Diagnostic struct {
 	Code        string `json:"code"`
-	SubjectKind string `json:"subjectKind"` // "" | role | model | provider
+	SubjectKind string `json:"subjectKind"` // "" | role | model | provider | use_case
 	SubjectName string `json:"subjectName"`
 	Blocking    bool   `json:"blocking"`
+}
+
+// mapConfigDiagnostic maps a go-llm config.Diagnostic onto the closed Slice-A
+// Firn diagnostic vocabulary. Every upstream ErrorCode this pinned go-llm
+// version can emit (config/diagnostic.go) is listed explicitly; an unknown
+// code — a future upstream addition not yet reviewed — fails closed onto
+// codeConfigInvalid rather than leaking an unreviewed string across the
+// boundary. The mapping table lives in
+// testdata/settings_diagnostic_mapping.json and is shared with the frontend
+// test via the same fixture file.
+func mapConfigDiagnostic(d config.Diagnostic) Diagnostic {
+	subjectKind, subjectName := "", ""
+	switch d.SubjectKind {
+	case config.SubjectProvider:
+		subjectKind, subjectName = "provider", d.Subject
+	case config.SubjectRole:
+		subjectKind, subjectName = "role", d.Subject
+	case config.SubjectUseCase:
+		subjectKind, subjectName = "use_case", d.Subject
+	case config.SubjectNone:
+	}
+
+	switch d.Code {
+	case config.CodeConfigNotFound:
+		return Diagnostic{Code: codeConfigMissing, Blocking: true}
+	case config.CodeParseError:
+		return Diagnostic{Code: codeJSONInvalid, Blocking: true}
+	case config.CodeConfigDiscoveryInvalid, config.CodeIO, config.CodeRenderError:
+		return Diagnostic{Code: codeConfigInvalid, Blocking: true}
+	}
+
+	code, blocking := "", true
+	switch d.Code {
+	case config.CodeDuplicateKeys:
+		code, blocking = codeDuplicateKeys, false
+	case config.CodeProviderRequired:
+		code = codeProviderRequired
+	case config.CodeProviderNameInvalid:
+		code = codeProviderNameInvalid
+	case config.CodeProviderEndpointInvalid:
+		code = codeProviderEndpointInvalid
+	case config.CodeProviderFormatInvalid:
+		code = codeProviderFormatInvalid
+	case config.CodeSlotPolicyInvalid:
+		code = codeSlotPolicyInvalid
+	case config.CodeModelInvalid:
+		code = codeModelInvalid
+	case config.CodeThinkInvalid:
+		code = codeThinkInvalid
+	case config.CodeProviderNotFound:
+		code = codeProviderNotFound
+	case config.CodeDefaultsInvalid:
+		code = codeDefaultsInvalid
+	case config.CodeKeyReferenceMalformed:
+		code = codeKeyReferenceMalformed
+	case config.CodeKeyReferenceUnavailable:
+		code = codeKeyReferenceUnavailable
+	case config.CodeSelectorConflict:
+		code = codeSelectorConflict
+	default:
+		return Diagnostic{Code: codeConfigInvalid, Blocking: true}
+	}
+
+	return Diagnostic{Code: code, SubjectKind: subjectKind,
+		SubjectName: subjectName, Blocking: blocking}
 }
 
 // sanitizeIdentifier replaces control and bidirectional-format runes with
@@ -195,6 +288,12 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 			return p
 		}
 		p := emptyProjection("invalid", loaded.Origin)
+		if loaded.HasConfigDiagnostic {
+			d := mapConfigDiagnostic(loaded.ConfigDiagnostic)
+			d.Blocking = true
+			p.Diagnostics = append(p.Diagnostics, d)
+			return p
+		}
 		code := codeConfigInvalid
 		if errors.Is(loadErr, errConfigJSONSyntax) {
 			code = codeJSONInvalid

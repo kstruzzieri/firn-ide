@@ -22,7 +22,7 @@ import {
 } from '../../types/golem';
 import styles from './GolemConfiguration.module.css';
 
-/** Total map over the closed Phase 1 code set; the validator guarantees
+/** Total map over the closed Slice A code set; the validator guarantees
  * membership, so no fallback branch exists to rot. */
 const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
   config_missing: 'No models.json was found at any discovery location.',
@@ -32,6 +32,21 @@ const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
   agent_capabilities_insufficient: 'The agent model must support chat, stream, and tool_call.',
   provider_endpoint_unsupported: 'This provider endpoint is not a usable URL.',
   projection_limited: 'Configuration is too large to display in full.',
+  duplicate_keys: 'Duplicate JSON keys make this configuration read-only.',
+  provider_required: 'At least one provider is required.',
+  provider_name_invalid: 'A provider name is invalid.',
+  provider_endpoint_invalid: 'A provider endpoint is invalid.',
+  provider_format_invalid: 'A provider API format is invalid.',
+  slot_policy_invalid: 'A provider slot policy is invalid.',
+  model_invalid: 'A model entry is invalid.',
+  think_invalid: 'A thinking configuration is invalid.',
+  provider_not_found: 'A model references a provider that does not exist.',
+  defaults_invalid: 'A default route is invalid.',
+  key_reference_malformed: 'An API-key environment reference is malformed.',
+  key_reference_unavailable: 'An API-key environment variable is unavailable.',
+  selector_conflict: 'Models sharing a provider/model selector disagree.',
+  identifier_not_editable:
+    'An identifier is empty or contains unsafe control characters; edit the file externally.',
 };
 
 const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {

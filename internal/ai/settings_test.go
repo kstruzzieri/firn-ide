@@ -487,7 +487,9 @@ func validateSettingsProjection(p SettingsProjection) error {
 	for _, c := range settingsDiagnosticCodes {
 		codes[c] = true
 	}
-	kinds := map[string]bool{"": true, "role": true, "model": true, "provider": true}
+	kinds := map[string]bool{
+		"": true, "role": true, "model": true, "provider": true, "use_case": true,
+	}
 	for _, d := range p.Diagnostics {
 		if !codes[d.Code] {
 			return fmt.Errorf("diagnostic code %q", d.Code)
@@ -638,5 +640,175 @@ func TestProjectedOriginCollapsesUnknown(t *testing.T) {
 	}
 	if got := projectedOrigin(""); got != "none" {
 		t.Fatalf("zero origin projected as %q, want none", got)
+	}
+}
+
+type settingsDiagnosticMappingCase struct {
+	Input       string `json:"input"`
+	Output      string `json:"output"`
+	KeepSubject bool   `json:"keepSubject"`
+	Blocking    bool   `json:"blocking"`
+}
+
+func loadSettingsDiagnosticMapping(t *testing.T) []settingsDiagnosticMappingCase {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "settings_diagnostic_mapping.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []settingsDiagnosticMappingCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
+func TestMapConfigDiagnosticContract(t *testing.T) {
+	cases := loadSettingsDiagnosticMapping(t)
+	if len(cases) != 28 {
+		t.Fatalf("mapping rows = %d, want 27 upstream codes plus unknown", len(cases))
+	}
+	if got := cases[len(cases)-1].Input; got != "certified_future_code" {
+		t.Fatalf("last mapping input = %q, want unknown-future sentinel", got)
+	}
+
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		if seen[tc.Input] {
+			t.Fatalf("duplicate mapping input %q", tc.Input)
+		}
+		seen[tc.Input] = true
+		t.Run(tc.Input, func(t *testing.T) {
+			got := mapConfigDiagnostic(config.Diagnostic{
+				Code:        config.ErrorCode(tc.Input),
+				SubjectKind: config.SubjectProvider,
+				Subject:     "p1",
+			})
+			wantKind, wantName := "", ""
+			if tc.KeepSubject {
+				wantKind, wantName = "provider", "p1"
+			}
+			if got.Code != tc.Output || got.SubjectKind != wantKind ||
+				got.SubjectName != wantName || got.Blocking != tc.Blocking {
+				t.Fatalf("mapConfigDiagnostic = %+v, want code=%q kind=%q name=%q blocking=%v",
+					got, tc.Output, wantKind, wantName, tc.Blocking)
+			}
+		})
+	}
+}
+
+func TestMapConfigDiagnosticSubjectKinds(t *testing.T) {
+	cases := []struct {
+		name     string
+		kind     config.SubjectKind
+		wantKind string
+		wantName string
+	}{
+		{name: "none", kind: config.SubjectNone},
+		{name: "provider", kind: config.SubjectProvider, wantKind: "provider", wantName: "subject"},
+		{name: "role", kind: config.SubjectRole, wantKind: "role", wantName: "subject"},
+		{name: "use_case", kind: config.SubjectUseCase, wantKind: "use_case", wantName: "subject"},
+		{name: "unknown", kind: config.SubjectKind("future_kind")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapConfigDiagnostic(config.Diagnostic{
+				Code: config.CodeModelInvalid, SubjectKind: tc.kind, Subject: "subject",
+			})
+			if got.Code != codeModelInvalid || got.SubjectKind != tc.wantKind ||
+				got.SubjectName != tc.wantName || !got.Blocking {
+				t.Fatalf("mapConfigDiagnostic = %+v", got)
+			}
+		})
+	}
+}
+
+func TestSettingsDiagnosticCodesSliceAOrder(t *testing.T) {
+	want := []string{
+		"config_missing", "json_invalid", "config_invalid",
+		"agent_role_missing", "agent_capabilities_insufficient",
+		"provider_endpoint_unsupported", "projection_limited",
+		"duplicate_keys", "provider_required", "provider_name_invalid",
+		"provider_endpoint_invalid", "provider_format_invalid",
+		"slot_policy_invalid", "model_invalid", "think_invalid",
+		"provider_not_found", "defaults_invalid", "key_reference_malformed",
+		"key_reference_unavailable", "selector_conflict",
+		"identifier_not_editable",
+	}
+	if fmt.Sprint(settingsDiagnosticCodes) != fmt.Sprint(want) {
+		t.Fatalf("diagnostic codes = %v, want %v", settingsDiagnosticCodes, want)
+	}
+}
+
+func TestSettingsProjectionOracleAcceptsSliceADiagnostics(t *testing.T) {
+	p := emptyProjection("limited", originUserConfig)
+	p.Diagnostics = []Diagnostic{
+		{Code: codeDefaultsInvalid, SubjectKind: "use_case", SubjectName: "agent", Blocking: true},
+		{Code: codeIdentifierNotEditable},
+	}
+	if err := validateSettingsProjection(p); err != nil {
+		t.Fatalf("Slice-A diagnostics rejected: %v", err)
+	}
+}
+
+func TestProjectionUsesTypedLoadDiagnostic(t *testing.T) {
+	loaded := loadedAgentConfig{
+		Origin: originUserConfig,
+		ConfigDiagnostic: config.Diagnostic{
+			Code:        config.CodeKeyReferenceUnavailable,
+			SubjectKind: config.SubjectProvider,
+			Subject:     "hosted",
+		},
+		HasConfigDiagnostic: true,
+	}
+	p := buildSettingsProjection(loaded,
+		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
+	if p.State != "invalid" || len(p.Diagnostics) != 1 {
+		t.Fatalf("projection = %+v", p)
+	}
+	d := p.Diagnostics[0]
+	if d.Code != codeKeyReferenceUnavailable || d.SubjectKind != "provider" ||
+		d.SubjectName != "hosted" || !d.Blocking {
+		t.Fatalf("diagnostic = %+v", d)
+	}
+}
+
+func TestProjectionForcesTypedLoadDiagnosticBlocking(t *testing.T) {
+	loaded := loadedAgentConfig{
+		Origin: originUserConfig,
+		ConfigDiagnostic: config.Diagnostic{
+			Code:        config.CodeDuplicateKeys,
+			SubjectKind: config.SubjectProvider,
+			Subject:     "local",
+		},
+		HasConfigDiagnostic: true,
+	}
+	p := buildSettingsProjection(loaded,
+		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
+	if len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != codeDuplicateKeys ||
+		!p.Diagnostics[0].Blocking {
+		t.Fatalf("diagnostics = %+v", p.Diagnostics)
+	}
+}
+
+func TestProjectionUnknownDiagnosticFailsClosed(t *testing.T) {
+	loaded := loadedAgentConfig{
+		Origin: originUserConfig,
+		ConfigDiagnostic: config.Diagnostic{
+			Code:        config.ErrorCode("certified_future_code"),
+			SubjectKind: config.SubjectUseCase,
+			Subject:     "agent",
+		},
+		HasConfigDiagnostic: true,
+	}
+	p := buildSettingsProjection(loaded,
+		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
+	if len(p.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", p.Diagnostics)
+	}
+	d := p.Diagnostics[0]
+	if d.Code != codeConfigInvalid || d.SubjectKind != "" ||
+		d.SubjectName != "" || !d.Blocking {
+		t.Fatalf("diagnostic = %+v", d)
 	}
 }
