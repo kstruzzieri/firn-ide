@@ -293,7 +293,7 @@ describe('cross-language contract corpus', () => {
   const corpusDir = path.resolve(__dirname, '../../../../internal/ai/testdata/settings_contract');
   const files = fs.readdirSync(corpusDir).filter((f) => f.endsWith('.json'));
   it('corpus exists', () => {
-    expect(files.length).toBeGreaterThanOrEqual(15);
+    expect(files.length).toBeGreaterThanOrEqual(100);
   });
   it.each(files)('%s parses to its recorded verdict', (file) => {
     const entry = JSON.parse(fs.readFileSync(path.join(corpusDir, file), 'utf8')) as {

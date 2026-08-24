@@ -219,7 +219,8 @@ func TestProjectionSanitizedCollisionWithheld(t *testing.T) {
 	cfg := projectionConfig()
 	cfg.Defaults = map[string]string{"a\u202d": "agent-m", "a\u202e": "agent-m"}
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
-	if p.State != "limited" || p.Editable || len(p.Routes)+len(p.Models)+len(p.Providers) != 0 {
+	if p.State != "limited" || p.Editable || len(p.Routes)+len(p.Models)+len(p.Providers) != 0 ||
+		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
 		t.Fatalf("sanitized collision projection = %+v", p)
 	}
 }
@@ -1274,6 +1275,38 @@ func TestProjectionUsesTypedLoadDiagnostic(t *testing.T) {
 	if d.Code != codeKeyReferenceUnavailable || d.SubjectKind != "provider" ||
 		d.SubjectName != "hosted" || !d.Blocking {
 		t.Fatalf("diagnostic = %+v", d)
+	}
+}
+
+// TestProjectionLoadErrorDiagnosticSubjectBounded: the load-error/typed-
+// diagnostic path is the only appendDiagnostic site that historically skipped
+// boundSubject. An oversized subject (from a future go-llm upstream — today's
+// pinned version truncates well under the bound, but nothing asserts that)
+// must never cross the boundary unbounded.
+func TestProjectionLoadErrorDiagnosticSubjectBounded(t *testing.T) {
+	loaded := loadedAgentConfig{
+		Origin: originUserConfig,
+		ConfigDiagnostic: config.Diagnostic{
+			Code:        config.CodeKeyReferenceUnavailable,
+			SubjectKind: config.SubjectProvider,
+			Subject:     strings.Repeat("s", 300),
+		},
+		HasConfigDiagnostic: true,
+	}
+	p := buildSettingsProjection(loaded,
+		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
+	if len(p.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", p.Diagnostics)
+	}
+	d := p.Diagnostics[0]
+	// boundSubject's actual behavior for an over-limit subject: drop it
+	// entirely (SubjectKind/SubjectName both cleared), not truncate it.
+	if d.Code != codeKeyReferenceUnavailable || d.SubjectKind != "" ||
+		d.SubjectName != "" || !d.Blocking {
+		t.Fatalf("diagnostic = %+v", d)
+	}
+	if err := validateSettingsProjection(p); err != nil {
+		t.Fatalf("oversized-subject diagnostic rejected by the oracle: %v", err)
 	}
 }
 

@@ -321,7 +321,7 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		if loaded.HasConfigDiagnostic {
 			d := mapConfigDiagnostic(loaded.ConfigDiagnostic)
 			d.Blocking = true
-			p.Diagnostics = append(p.Diagnostics, d)
+			p.Diagnostics = append(p.Diagnostics, boundSubject(d))
 			return p
 		}
 		code := codeConfigInvalid
