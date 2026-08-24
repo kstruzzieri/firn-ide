@@ -7,9 +7,14 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
 }));
 import { ReloadGolemSettings } from '../../../../wailsjs/go/main/App';
 
+const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
 const readyProjection = {
   state: 'ready',
   sourceOrigin: 'user_config',
+  revision: testRevision,
+  readOnly: false,
+  editable: true,
   routes: [{ useCase: 'agent', role: 'agent-m' }],
   models: [
     {
@@ -18,7 +23,14 @@ const readyProjection = {
       provider: 'hosted',
       type: 'dense',
       effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call'],
+        knownCaps: ['chat', 'generate', 'stream', 'embed', 'tool_call', 'thinking', 'insert'],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
       thinkMode: 'auto',
+      routedUseCases: ['agent'],
+      removable: false,
     },
   ],
   providers: [
@@ -36,6 +48,9 @@ const readyProjection = {
 const limitedProjection = {
   state: 'limited',
   sourceOrigin: 'working_directory',
+  revision: testRevision,
+  readOnly: false,
+  editable: true,
   routes: [],
   models: [],
   providers: [],
@@ -158,6 +173,8 @@ describe('GolemConfiguration', () => {
       projection: {
         state: 'missing',
         sourceOrigin: 'none',
+        readOnly: false,
+        editable: false,
         routes: [],
         models: [],
         providers: [],
@@ -174,6 +191,8 @@ describe('GolemConfiguration', () => {
       projection: {
         state: 'invalid',
         sourceOrigin: 'env',
+        readOnly: false,
+        editable: false,
         routes: [],
         models: [],
         providers: [],
@@ -230,6 +249,31 @@ describe('GolemConfiguration', () => {
     expect(screen.getByText('Blocking')).toBeInTheDocument();
     expect(screen.getByText('Notice')).toBeInTheDocument();
     expect(screen.getByText('wire-model')).toBeInTheDocument();
+  });
+
+  it('keeps duplicate-key Limited entities visible and labels the notice', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        state: 'limited',
+        readOnly: true,
+        diagnostics: [
+          {
+            code: 'duplicate_keys',
+            subjectKind: 'provider',
+            subjectName: 'hosted',
+            blocking: false,
+          },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+    expect(await screen.findByText('wire-model')).toBeInTheDocument();
+    expect(
+      screen.getByText('Duplicate JSON keys make this configuration read-only.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Notice')).toBeInTheDocument();
   });
 
   it('moves focus to the heading on mount', async () => {

@@ -238,6 +238,8 @@ beforeEach(() => {
     projection: {
       state: 'missing',
       sourceOrigin: 'none',
+      readOnly: false,
+      editable: false,
       routes: [],
       models: [],
       providers: [],
@@ -1595,6 +1597,8 @@ describe('configuration view', () => {
 
     expect(useGolemStore.getState().golemView).toBe('configuration');
     expect(await screen.findByRole('heading', { name: /configuration/i })).toBeInTheDocument();
+    expect(await screen.findByText(/No models\.json was found/)).toBeInTheDocument();
+    expect(screen.queryByText('Golem returned an unexpected response.')).not.toBeInTheDocument();
   });
 
   it('offers Review configuration from the unavailable state', async () => {

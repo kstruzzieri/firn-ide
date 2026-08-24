@@ -346,11 +346,17 @@ func fixtureConfigLoader(t *testing.T, cfgJSON string) func() (loadedAgentConfig
 	}
 	source := canonicalPath(t, path)
 	return func() (loadedAgentConfig, error) {
-		cfg, err := config.Load(source)
+		doc, err := config.LoadDocument(source)
 		if err != nil {
-			return loadedAgentConfig{}, fmt.Errorf("%w: fixture failed to load: %v", ErrAgentConfigInvalid, err)
+			return loadedAgentConfig{},
+				fmt.Errorf("%w: fixture failed to load", ErrAgentConfigInvalid)
 		}
-		return loadedAgentConfig{Config: cfg, SourcePath: source, LexicalPath: source, Origin: originUserConfig}, nil
+		d, readOnly := doc.ReadOnly()
+		return loadedAgentConfig{
+			Config: doc.Config(), SourcePath: source, LexicalPath: source,
+			Origin: originUserConfig, Revision: doc.Revision(),
+			ReadOnly: readOnly, ReadOnlyDiagnostic: d,
+		}, nil
 	}
 }
 

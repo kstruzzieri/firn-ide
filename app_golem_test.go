@@ -334,6 +334,7 @@ func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 		reflect.TypeOf(ai.SettingsReloadResult{}),
 		reflect.TypeOf(ai.RouteProjection{}),
 		reflect.TypeOf(ai.ModelProjection{}),
+		reflect.TypeOf(ai.CapabilityFacts{}),
 		reflect.TypeOf(ai.ProviderProjection{}),
 		reflect.TypeOf(ai.Diagnostic{}),
 	} {

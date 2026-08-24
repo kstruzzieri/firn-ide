@@ -10,15 +10,31 @@ import {
 const validProjection = (): Record<string, unknown> => ({
   state: 'ready',
   sourceOrigin: 'user_config',
-  routes: [{ useCase: 'agent', role: 'agent-m' }],
+  revision: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  readOnly: false,
+  editable: true,
+  routes: [
+    { useCase: 'agent', role: 'agent-m' },
+    { useCase: 'chat', role: 'agent-m' },
+  ],
   models: [
     {
       role: 'agent-m',
       modelName: 'wire-model',
       provider: 'hosted',
       type: 'dense',
+      parameters: '7b',
+      contextWindow: 32768,
+      dimensions: 1536,
       effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call'],
+        knownCaps: ['chat', 'generate', 'stream', 'embed', 'tool_call', 'thinking', 'insert'],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
       thinkMode: '',
+      routedUseCases: ['agent', 'chat'],
+      removable: false,
     },
   ],
   providers: [
@@ -30,7 +46,7 @@ const validProjection = (): Record<string, unknown> => ({
       credentialState: 'available',
     },
   ],
-  diagnostics: [{ code: 'agent_role_missing', subjectKind: '', subjectName: '', blocking: true }],
+  diagnostics: [],
 });
 
 type SettingsDiagnosticMappingCase = {
@@ -127,7 +143,7 @@ describe('parseSettingsProjection', () => {
     [
       'unknown diagnostic code',
       (v: Record<string, unknown>) => {
-        (v.diagnostics as Record<string, unknown>[])[0].code = 'future_code';
+        v.diagnostics = [{ code: 'future_code', subjectKind: '', subjectName: '', blocking: true }];
       },
     ],
     [
@@ -184,12 +200,12 @@ describe('parseSettingsProjection', () => {
     expect(() => parseSettingsProjection(value)).toThrow(GolemContractError);
   });
 
-  it('accepts explicit empty useCase and role (go-llm permits empty map keys)', () => {
+  it('rejects empty route and model identities', () => {
     const value = validProjection();
     (value.routes as Record<string, unknown>[])[0].useCase = '';
     (value.routes as Record<string, unknown>[])[0].role = '';
     (value.models as Record<string, unknown>[])[0].role = '';
-    expect(() => parseSettingsProjection(value)).not.toThrow();
+    expect(() => parseSettingsProjection(value)).toThrow(GolemContractError);
   });
 
   it('accepts an identifier at exactly 256 bytes, multibyte included', () => {
@@ -198,18 +214,19 @@ describe('parseSettingsProjection', () => {
     expect(() => parseSettingsProjection(value)).not.toThrow();
   });
 
-  it('accepts 257 diagnostics (worst case) and rejects 258', () => {
-    const diag = {
-      code: 'provider_endpoint_unsupported',
-      subjectKind: 'provider',
-      subjectName: 'p',
-      blocking: false,
-    };
+  it('accepts 257 unique diagnostics and rejects 258', () => {
+    const makeDiagnostics = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        code: 'provider_endpoint_unsupported',
+        subjectKind: 'provider',
+        subjectName: `p${index.toString().padStart(3, '0')}`,
+        blocking: false,
+      }));
     const at = validProjection();
-    at.diagnostics = Array.from({ length: 257 }, () => ({ ...diag }));
+    at.diagnostics = makeDiagnostics(257);
     expect(() => parseSettingsProjection(at)).not.toThrow();
     const over = validProjection();
-    over.diagnostics = Array.from({ length: 258 }, () => ({ ...diag }));
+    over.diagnostics = makeDiagnostics(258);
     expect(() => parseSettingsProjection(over)).toThrow(GolemContractError);
   });
 

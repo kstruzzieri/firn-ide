@@ -15,12 +15,15 @@
         "modelName": "wire-model",
         "provider": "hosted",
         "type": "dense",
-        "effectiveCapabilities": [
-          "chat",
-          "stream",
-          "tool_call"
-        ],
-        "thinkMode": ""
+        "effectiveCapabilities": ["chat", "stream", "tool_call"],
+        "thinkMode": "",
+        "capabilityFacts": {
+          "caps": ["chat", "stream", "tool_call"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": ["chat", "stream", "tool_call"],
+        "routedUseCases": [],
+        "removable": true
       }
     ],
     "providers": [
@@ -32,6 +35,9 @@
         "credentialState": "none"
       }
     ],
-    "diagnostics": []
+    "diagnostics": [],
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "readOnly": false,
+    "editable": true
   }
 }

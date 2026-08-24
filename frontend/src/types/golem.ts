@@ -478,25 +478,41 @@ export type CapabilityName =
   | 'thinking'
   | 'insert';
 
+export type ModelType = 'dense' | 'moe' | 'embedding';
+export type ThinkMode = '' | 'none' | 'always' | 'toggle' | 'auto';
+export type APIFormat = 'ollama' | 'openai-compat';
+
 export interface RouteProjection {
   useCase: string;
   role: string;
+}
+
+export interface CapabilityFacts {
+  caps: CapabilityName[];
+  knownCaps: CapabilityName[];
 }
 
 export interface ModelProjection {
   role: string;
   modelName: string;
   provider: string;
-  type: string;
+  type: ModelType;
+  parameters?: string;
+  contextWindow?: number;
+  dimensions?: number;
   effectiveCapabilities: CapabilityName[];
-  thinkMode: string;
+  capabilityFacts: CapabilityFacts;
+  exposedCapabilities: CapabilityName[];
+  thinkMode: ThinkMode;
+  routedUseCases: string[];
+  removable: boolean;
 }
 
 export interface ProviderProjection {
   name: string;
   endpoint: string;
   classification: ProviderClassification;
-  apiFormat: string;
+  apiFormat: APIFormat;
   credentialState: CredentialState;
 }
 
@@ -510,6 +526,9 @@ export interface SettingsDiagnostic {
 export interface SettingsProjection {
   state: SettingsState;
   sourceOrigin: SettingsSourceOrigin;
+  revision?: string;
+  readOnly: boolean;
+  editable: boolean;
   routes: RouteProjection[];
   models: ModelProjection[];
   providers: ProviderProjection[];
@@ -596,24 +615,62 @@ const isBoundedString = (value: unknown, maxBytes: number): value is string =>
 const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
   Object.keys(value).every((key) => allowed.includes(key));
 
-// Identifier spoofing guard: C0/C1 controls plus the bidi/format runes that
-// can reorder or hide characters (soft hyphen, zero-widths, LRM/RLM, bidi
-// embeddings/overrides, word joiner..invisible operators, bidi isolates,
-// BOM/ZWNBSP). JS regexes cannot express the full Unicode Cf category, so the
-// contract is this EXPLICIT list — it MUST stay identical to
-// forbiddenIdentifierRunes in internal/ai/settings_test.go, or a corpus
-// fixture could split verdicts between the two oracles. The Go builder scrubs
-// the broader Cc/Cf categories to U+FFFD, which is safe: producer stricter
-// than contract.
-const FORBIDDEN_IDENTIFIER_RUNES =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
+const MODEL_TYPES: readonly ModelType[] = ['dense', 'moe', 'embedding'];
+const THINK_MODES: readonly ThinkMode[] = ['', 'none', 'always', 'toggle', 'auto'];
+const API_FORMATS: readonly APIFormat[] = ['ollama', 'openai-compat'];
+const REVISION = /^[0-9a-f]{64}$/;
+const MAX_MODEL_NUMBER = 2147483647;
+// Identifier spoofing guard: every Unicode Cc (control) and Cf (format) rune
+// -- including bidi overrides/isolates and zero-widths that can reorder or
+// hide characters. Unicode property escapes close the full Cc/Cf category
+// that an explicit enumerated range table cannot express; this MUST stay
+// identical to contractIdentifier's rune check in internal/ai/settings_test.go,
+// or a corpus fixture with an exotic Cf rune could split verdicts between the
+// two oracles. The Go builder scrubs the same categories to U+FFFD, which is
+// safe: producer stricter than contract.
+const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
 
 const isCleanIdentifier = (value: unknown, maxBytes: number): value is string =>
   isBoundedString(value, maxBytes) && !FORBIDDEN_IDENTIFIER_RUNES.test(value);
 
+const isIdentifier = (value: unknown): value is string =>
+  isCleanIdentifier(value, MAX_IDENTIFIER_BYTES) && value !== '';
+
 const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
   isString(value) && (allowed as readonly string[]).includes(value);
+
+// compareString orders by emitted UTF-8 byte value, matching Go's `<` on
+// strings -- never String.length/localeCompare, whose UTF-16 code-unit order
+// disagrees with Go on non-BMP characters (see accept-utf8-order-nonbmp.json).
+const compareString = (a: string, b: string): number => {
+  const left = utf8Encoder.encode(a);
+  const right = utf8Encoder.encode(b);
+  const shared = Math.min(left.length, right.length);
+  for (let i = 0; i < shared; i += 1) {
+    if (left[i] !== right[i]) return left[i] - right[i];
+  }
+  return left.length - right.length;
+};
+
+function isStrictlyOrdered<T>(values: readonly T[], compare: (a: T, b: T) => number): boolean {
+  for (let i = 1; i < values.length; i += 1) {
+    if (compare(values[i - 1], values[i]) >= 0) return false;
+  }
+  return true;
+}
+
+function isCanonicalCapabilities(values: readonly CapabilityName[]): boolean {
+  let previous = -1;
+  for (const value of values) {
+    const index = CAPABILITY_NAMES.indexOf(value);
+    if (index <= previous) return false;
+    previous = index;
+  }
+  return true;
+}
+
+const isOptionalModelNumber = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_MODEL_NUMBER;
 
 function readCappedArray<T>(
   value: unknown,
@@ -633,11 +690,28 @@ function readCappedArray<T>(
 function readRoute(value: unknown): RouteProjection | null {
   if (!isRecord(value)) return null;
   if (!hasOnlyKeys(value, ['useCase', 'role'])) return null;
-  // Explicit empty useCase/role stay legal: go-llm permits empty map keys and
-  // the Go oracle mirrors that; only providers reject empty names.
-  if (!isCleanIdentifier(value.useCase, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isCleanIdentifier(value.role, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isIdentifier(value.useCase)) return null;
+  if (!isIdentifier(value.role)) return null;
   return { useCase: value.useCase, role: value.role };
+}
+
+function readCapabilityFacts(value: unknown): CapabilityFacts | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['caps', 'knownCaps'])) return null;
+  const caps = readCappedArray(value.caps, CAPABILITY_NAMES.length, (cap) =>
+    isOneOf(cap, CAPABILITY_NAMES) ? cap : null
+  );
+  const knownCaps = readCappedArray(value.knownCaps, CAPABILITY_NAMES.length, (cap) =>
+    isOneOf(cap, CAPABILITY_NAMES) ? cap : null
+  );
+  if (
+    caps === null ||
+    knownCaps === null ||
+    !isCanonicalCapabilities(caps) ||
+    !isCanonicalCapabilities(knownCaps) ||
+    caps.some((cap) => !knownCaps.includes(cap))
+  )
+    return null;
+  return { caps, knownCaps };
 }
 
 function readModel(value: unknown): ModelProjection | null {
@@ -648,22 +722,77 @@ function readModel(value: unknown): ModelProjection | null {
       'modelName',
       'provider',
       'type',
+      'parameters',
+      'contextWindow',
+      'dimensions',
       'effectiveCapabilities',
+      'capabilityFacts',
+      'exposedCapabilities',
       'thinkMode',
+      'routedUseCases',
+      'removable',
     ])
   )
     return null;
-  const { role, modelName, provider, type, effectiveCapabilities, thinkMode } = value;
-  if (!isCleanIdentifier(role, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isCleanIdentifier(modelName, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isCleanIdentifier(provider, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isCleanIdentifier(type, MAX_IDENTIFIER_BYTES)) return null;
-  if (!isCleanIdentifier(thinkMode, MAX_IDENTIFIER_BYTES)) return null;
-  const caps = readCappedArray(effectiveCapabilities, CAPABILITY_NAMES.length, (c) =>
-    isOneOf(c, CAPABILITY_NAMES) ? c : null
+
+  const { role, modelName, provider, type, thinkMode, removable } = value;
+  if (
+    !isIdentifier(role) ||
+    !isIdentifier(modelName) ||
+    !isIdentifier(provider) ||
+    !isOneOf(type, MODEL_TYPES) ||
+    !isOneOf(thinkMode, THINK_MODES) ||
+    typeof removable !== 'boolean'
+  )
+    return null;
+
+  const hasParameters = Object.hasOwn(value, 'parameters');
+  const hasContextWindow = Object.hasOwn(value, 'contextWindow');
+  const hasDimensions = Object.hasOwn(value, 'dimensions');
+  if (hasParameters && !isIdentifier(value.parameters)) return null;
+  if (hasContextWindow && !isOptionalModelNumber(value.contextWindow)) return null;
+  if (hasDimensions && !isOptionalModelNumber(value.dimensions)) return null;
+
+  const effectiveCapabilities = readCappedArray(
+    value.effectiveCapabilities,
+    CAPABILITY_NAMES.length,
+    (cap) => (isOneOf(cap, CAPABILITY_NAMES) ? cap : null)
   );
-  if (caps === null) return null;
-  return { role, modelName, provider, type, effectiveCapabilities: caps, thinkMode };
+  const exposedCapabilities = readCappedArray(
+    value.exposedCapabilities,
+    CAPABILITY_NAMES.length,
+    (cap) => (isOneOf(cap, CAPABILITY_NAMES) ? cap : null)
+  );
+  const capabilityFacts = readCapabilityFacts(value.capabilityFacts);
+  const routedUseCases = readCappedArray(value.routedUseCases, MAX_PROJECTION_ENTRIES, (useCase) =>
+    isIdentifier(useCase) ? useCase : null
+  );
+  if (
+    effectiveCapabilities === null ||
+    exposedCapabilities === null ||
+    capabilityFacts === null ||
+    routedUseCases === null ||
+    !isCanonicalCapabilities(effectiveCapabilities) ||
+    !isCanonicalCapabilities(exposedCapabilities) ||
+    !isStrictlyOrdered(routedUseCases, compareString)
+  )
+    return null;
+
+  return {
+    role,
+    modelName,
+    provider,
+    type,
+    ...(hasParameters ? { parameters: value.parameters as string } : {}),
+    ...(hasContextWindow ? { contextWindow: value.contextWindow as number } : {}),
+    ...(hasDimensions ? { dimensions: value.dimensions as number } : {}),
+    effectiveCapabilities,
+    capabilityFacts,
+    exposedCapabilities,
+    thinkMode,
+    routedUseCases,
+    removable,
+  };
 }
 
 function readProvider(value: unknown): ProviderProjection | null {
@@ -671,12 +800,12 @@ function readProvider(value: unknown): ProviderProjection | null {
   if (!hasOnlyKeys(value, ['name', 'endpoint', 'classification', 'apiFormat', 'credentialState']))
     return null;
   const { name, endpoint, classification, apiFormat, credentialState } = value;
-  if (!isCleanIdentifier(name, MAX_IDENTIFIER_BYTES) || name === '') return null;
+  if (!isIdentifier(name)) return null;
   // Endpoint is not an identifier: NormalizeEndpoint's URL parse constrains it
   // on the Go side, so only the byte bound applies here.
   if (!isBoundedString(endpoint, MAX_ENDPOINT_BYTES)) return null;
   if (!isOneOf(classification, CLASSIFICATIONS)) return null;
-  if (!isCleanIdentifier(apiFormat, MAX_IDENTIFIER_BYTES)) return null;
+  if (!isOneOf(apiFormat, API_FORMATS)) return null;
   if (!isOneOf(credentialState, CREDENTIAL_STATES)) return null;
   return { name, endpoint, classification, apiFormat, credentialState };
 }
@@ -695,20 +824,67 @@ function readSettingsDiagnostic(value: unknown): SettingsDiagnostic | null {
 export function parseSettingsProjection(value: unknown): SettingsProjection {
   if (!isRecord(value)) return contractError();
   if (
-    !hasOnlyKeys(value, ['state', 'sourceOrigin', 'routes', 'models', 'providers', 'diagnostics'])
+    !hasOnlyKeys(value, [
+      'state',
+      'sourceOrigin',
+      'revision',
+      'readOnly',
+      'editable',
+      'routes',
+      'models',
+      'providers',
+      'diagnostics',
+    ])
   )
     return contractError();
-  if (!isOneOf(value.state, SETTINGS_STATES)) return contractError();
-  if (!isOneOf(value.sourceOrigin, SOURCE_ORIGINS)) return contractError();
+  if (
+    !isOneOf(value.state, SETTINGS_STATES) ||
+    !isOneOf(value.sourceOrigin, SOURCE_ORIGINS) ||
+    typeof value.readOnly !== 'boolean' ||
+    typeof value.editable !== 'boolean'
+  )
+    return contractError();
+
+  const loaded = value.state === 'ready' || value.state === 'limited';
+  const hasRevision = Object.hasOwn(value, 'revision');
+  if (
+    loaded !== hasRevision ||
+    (loaded && (typeof value.revision !== 'string' || !REVISION.test(value.revision)))
+  )
+    return contractError();
+  if (!loaded && (value.readOnly || value.editable)) return contractError();
+  if (value.state === 'ready' && (value.readOnly || !value.editable)) return contractError();
+
   const routes = readCappedArray(value.routes, MAX_PROJECTION_ENTRIES, readRoute);
   const models = readCappedArray(value.models, MAX_PROJECTION_ENTRIES, readModel);
   const providers = readCappedArray(value.providers, MAX_PROJECTION_ENTRIES, readProvider);
   const diagnostics = readCappedArray(value.diagnostics, MAX_DIAGNOSTICS, readSettingsDiagnostic);
   if (routes === null || models === null || providers === null || diagnostics === null)
     return contractError();
+  if (!loaded && (routes.length !== 0 || models.length !== 0 || providers.length !== 0))
+    return contractError();
+
+  const routeOrder = (a: RouteProjection, b: RouteProjection): number =>
+    compareString(a.useCase, b.useCase);
+  const diagnosticOrder = (a: SettingsDiagnostic, b: SettingsDiagnostic): number =>
+    (a.blocking === b.blocking ? 0 : a.blocking ? -1 : 1) ||
+    compareString(a.code, b.code) ||
+    compareString(a.subjectKind, b.subjectKind) ||
+    compareString(a.subjectName, b.subjectName);
+  if (
+    !isStrictlyOrdered(routes, routeOrder) ||
+    !isStrictlyOrdered(models, (a, b) => compareString(a.role, b.role)) ||
+    !isStrictlyOrdered(providers, (a, b) => compareString(a.name, b.name)) ||
+    !isStrictlyOrdered(diagnostics, diagnosticOrder)
+  )
+    return contractError();
+
   return {
     state: value.state,
     sourceOrigin: value.sourceOrigin,
+    ...(loaded ? { revision: value.revision as string } : {}),
+    readOnly: value.readOnly,
+    editable: value.editable,
     routes,
     models,
     providers,

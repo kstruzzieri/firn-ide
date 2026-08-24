@@ -260,7 +260,7 @@ function ConfigurationBody({
                 </div>
                 <div className={styles.cardMeta}>
                   <span className={styles.providerName}>{m.provider}</span>
-                  {m.type !== '' && <span className={styles.metaChip}>{m.type}</span>}
+                  <span className={styles.metaChip}>{m.type}</span>
                   {m.thinkMode !== '' && (
                     <span className={styles.metaChip}>think: {m.thinkMode}</span>
                   )}
