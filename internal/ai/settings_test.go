@@ -180,11 +180,11 @@ func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	cfg := projectionConfig()
 	m := cfg.Models["agent-m"]
 	delete(cfg.Models, "agent-m")
-	cfg.Models["agent‮"] = m
-	cfg.Defaults["agent"] = "agent‮"
+	cfg.Models["agent\u202e"] = m
+	cfg.Defaults["agent"] = "agent\u202e"
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	if p.State != "limited" || p.Editable || len(p.Models) != 1 ||
-		p.Models[0].Role != "agent�" ||
+		p.Models[0].Role != "agent\ufffd" ||
 		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
 		t.Fatalf("unsafe identifier projection = %+v", p)
 	}
@@ -193,11 +193,11 @@ func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 func TestProjectionUnsafeParametersLimited(t *testing.T) {
 	cfg := projectionConfig()
 	model := cfg.Models["agent-m"]
-	model.Parameters = "7b؀"
+	model.Parameters = "7b\u0600"
 	cfg.Models["agent-m"] = model
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	projected := projectedModel(t, p, "agent-m")
-	if p.State != "limited" || p.Editable || projected.Parameters != "7b�" ||
+	if p.State != "limited" || p.Editable || projected.Parameters != "7b\ufffd" ||
 		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
 		t.Fatalf("unsafe parameters projection = %+v", p)
 	}
@@ -217,7 +217,7 @@ func TestProjectionEmptyIdentityWithheld(t *testing.T) {
 
 func TestProjectionSanitizedCollisionWithheld(t *testing.T) {
 	cfg := projectionConfig()
-	cfg.Defaults = map[string]string{"a‭": "agent-m", "a‮": "agent-m"}
+	cfg.Defaults = map[string]string{"a\u202d": "agent-m", "a\u202e": "agent-m"}
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	if p.State != "limited" || p.Editable || len(p.Routes)+len(p.Models)+len(p.Providers) != 0 {
 		t.Fatalf("sanitized collision projection = %+v", p)
@@ -227,8 +227,8 @@ func TestProjectionSanitizedCollisionWithheld(t *testing.T) {
 func TestProjectionSanitizedModelSelectorCollisionWithheld(t *testing.T) {
 	cfg := projectionConfig()
 	cfg.Models = map[string]config.ModelConfig{
-		"alpha": {Name: "m‭", Provider: "hosted", Type: "dense"},
-		"beta":  {Name: "m‮", Provider: "hosted", Type: "dense"},
+		"alpha": {Name: "m\u202d", Provider: "hosted", Type: "dense"},
+		"beta":  {Name: "m\u202e", Provider: "hosted", Type: "dense"},
 	}
 	cfg.Defaults = map[string]string{"agent": "alpha"}
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
