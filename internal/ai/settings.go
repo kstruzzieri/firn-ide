@@ -21,8 +21,20 @@ const (
 	maxProjectionEntries       = 256
 	maxProjectionIdentifierLen = 256
 	maxProjectionEndpointLen   = 1024
-	// maxProjectionDiagnostics is the worst case the builder can emit: one
-	// provider_endpoint_unsupported per provider plus one agent diagnostic.
+	// maxProjectionDiagnostics is the contract cap (fixed by the TS validator
+	// and the shared corpus — never raise it without a breaking-change
+	// review). appendDiagnostic always emits, in order, at most one
+	// agent/document-state diagnostic (agentRouteDiagnostics or
+	// selectedAgentBlockingDiagnostic), then the readOnly diagnostic, then
+	// the not-editable diagnostic, BEFORE the up-to-maxProjectionEntries
+	// per-provider provider_endpoint_unsupported notices. The builder can
+	// therefore want up to maxProjectionEntries+3 entries; appendDiagnostic
+	// silently drops whatever doesn't fit past the cap. That's safe: a
+	// blocking agent/readOnly/not-editable diagnostic always lands within
+	// the first few appends and is never the one truncated, and a dropped
+	// non-blocking provider notice is cosmetic — that provider's row still
+	// projects (classification "unknown", endpoint ""), just without its
+	// own diagnostic line.
 	maxProjectionDiagnostics = maxProjectionEntries + 1
 )
 
@@ -143,8 +155,11 @@ type ModelProjection struct {
 
 // ProviderProjection is one provider. Endpoint is the NormalizeEndpoint
 // canonical form, "" when not derivable (Classification then "unknown").
-// CredentialState is presence, not a usability promise; reference_unavailable
-// becomes reachable only with the Phase 2 document layer.
+// CredentialState is presence, not a usability promise. reference_unavailable
+// is not producible by the current loader (an unresolved ${ENV} key
+// reference hard-fails the whole document load, so no provider ever reaches
+// this projection with a dangling reference); it is retained because the
+// spec closes the enum.
 type ProviderProjection struct {
 	Name            string `json:"name"`
 	Endpoint        string `json:"endpoint"`
@@ -313,6 +328,13 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
 	if loadErr != nil {
 		if errors.Is(loadErr, ErrAgentConfigMissing) {
+			p := emptyProjection("missing", originNone)
+			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
+			return p
+		}
+		if loaded.HasConfigDiagnostic && loaded.ConfigDiagnostic.Code == config.CodeConfigNotFound {
+			// mapConfigDiagnostic maps this code to codeConfigMissing; emitting
+			// it under state "invalid" would be a self-contradicting pair.
 			p := emptyProjection("missing", originNone)
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
@@ -666,13 +688,12 @@ func selectedAgentProvider(cfg *config.Config) string {
 	return m.Provider
 }
 
-// selectedAgentBlockingDiagnostic returns the single most relevant blocking
-// diagnostic for the agent route, with its subject bounded (dropped when over
-// the identifier limit). Used by the limited path only.
+// selectedAgentBlockingDiagnostic returns the agent provider's endpoint
+// diagnostic, with its subject bounded (dropped when over the identifier
+// limit). The caller only reaches this after agentRouteDiagnostics(cfg) has
+// already returned empty, so it never needs to re-check the role/capability
+// diagnostics agentRouteDiagnostics itself covers.
 func selectedAgentBlockingDiagnostic(cfg *config.Config) (Diagnostic, bool) {
-	if ds := agentRouteDiagnostics(cfg); len(ds) > 0 {
-		return boundSubject(ds[0]), true
-	}
 	if name := selectedAgentProvider(cfg); name != "" {
 		if pc := cfg.Provider(name); pc != nil {
 			if _, _, err := NormalizeEndpoint(pc.BaseURL); err != nil {

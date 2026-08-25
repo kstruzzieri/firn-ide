@@ -801,9 +801,12 @@ function readProvider(value: unknown): ProviderProjection | null {
     return null;
   const { name, endpoint, classification, apiFormat, credentialState } = value;
   if (!isIdentifier(name)) return null;
-  // Endpoint is not an identifier: NormalizeEndpoint's URL parse constrains it
-  // on the Go side, so only the byte bound applies here.
+  // Endpoint is not an identifier (so an empty endpoint stays valid), but its
+  // host must still be free of Cc/Cf runes -- NormalizeEndpoint's net/url
+  // parse only rejects bytes below 0x80 in the host, not control/format
+  // runes above it.
   if (!isBoundedString(endpoint, MAX_ENDPOINT_BYTES)) return null;
+  if (endpoint !== '' && FORBIDDEN_IDENTIFIER_RUNES.test(endpoint)) return null;
   if (!isOneOf(classification, CLASSIFICATIONS)) return null;
   if (!isOneOf(apiFormat, API_FORMATS)) return null;
   if (!isOneOf(credentialState, CREDENTIAL_STATES)) return null;

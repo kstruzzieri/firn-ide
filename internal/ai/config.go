@@ -13,20 +13,23 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
 )
 
 // ErrAgentConfigMissing reports that no go-llm configuration source exists at
-// any discovery location. Raw causes are logged host-side only; returned error
-// strings never contain the selected source path or config bytes.
+// any discovery location. Returned error strings never contain the selected
+// source path or config bytes; loadDefaultAgentConfig logs at most a fixed
+// string or a diagnostic code host-side, never the raw cause.
 var ErrAgentConfigMissing = errors.New("agent configuration missing")
 
 // ErrAgentConfigInvalid reports that a discovered configuration source could
-// not be read, parsed, validated, or resolved to a usable agent target. Raw
-// causes are logged host-side only; returned error strings never contain the
-// selected source path or config bytes.
+// not be read, parsed, validated, or resolved to a usable agent target.
+// Returned error strings never contain the selected source path or config
+// bytes; loadDefaultAgentConfig logs at most a fixed string or a diagnostic
+// code host-side, never the raw cause.
 var ErrAgentConfigInvalid = errors.New("agent configuration invalid")
 
 // errConfigJSONSyntax marks a load failure whose root cause is malformed JSON
@@ -93,6 +96,9 @@ func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 		if d, ok := config.DiagnosticOf(err); ok {
 			loaded.ConfigDiagnostic = d
 			loaded.HasConfigDiagnostic = true
+			log.Printf("ai: agent config load failed: code=%s", d.Code)
+		} else {
+			log.Print("ai: agent config load failed")
 		}
 		var syntaxErr *json.SyntaxError
 		if errors.As(err, &syntaxErr) {
@@ -289,6 +295,9 @@ func NormalizeEndpoint(raw string) (canonical string, local bool, err error) {
 		return "", false, errors.New("endpoint must not carry a query")
 	}
 	host := strings.ToLower(u.Hostname())
+	if strings.ContainsFunc(host, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) }) {
+		return "", false, errors.New("endpoint host must not carry control or format characters")
+	}
 	if host == "" {
 		return "", false, errors.New("endpoint must include a host")
 	}

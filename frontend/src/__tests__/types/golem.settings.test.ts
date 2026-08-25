@@ -297,9 +297,12 @@ describe('cross-language contract corpus', () => {
   });
   it.each(files)('%s parses to its recorded verdict', (file) => {
     const entry = JSON.parse(fs.readFileSync(path.join(corpusDir, file), 'utf8')) as {
-      verdict: 'accept' | 'reject';
+      verdict: string;
       projection: unknown;
     };
+    if (entry.verdict !== 'accept' && entry.verdict !== 'reject') {
+      throw new Error(`${file}: unknown verdict ${JSON.stringify(entry.verdict)}`);
+    }
     if (entry.verdict === 'accept') {
       expect(() => parseSettingsProjection(entry.projection)).not.toThrow();
     } else {

@@ -359,6 +359,37 @@ func TestBuildSettingsProjectionAgentEndpointBlocks(t *testing.T) {
 	}
 }
 
+// TestBuildSettingsProjectionBidiEndpointHostUnsupported: a Cc/Cf rune in the
+// endpoint HOST (e.g. an RLO) is not rejected by net/url -- it only rejects
+// bytes below 0x80 in the host -- so NormalizeEndpoint must reject it itself.
+// The provider must still project (classification "unknown", endpoint ""),
+// carrying a blocking provider_endpoint_unsupported since it's the agent
+// route's provider.
+func TestBuildSettingsProjectionBidiEndpointHostUnsupported(t *testing.T) {
+	bad := strings.Replace(settingsFixtureJSON,
+		`"hosted": {"base_url": "https://api.example.com:8443/v1/",`,
+		`"hosted": {"base_url": "https://ex\u202eample.com/",`, 1)
+	p := buildSettingsProjection(loadFixture(t, bad), nil)
+	var hosted *ProviderProjection
+	for i := range p.Providers {
+		if p.Providers[i].Name == "hosted" {
+			hosted = &p.Providers[i]
+		}
+	}
+	if hosted == nil || hosted.Classification != "unknown" || hosted.Endpoint != "" {
+		t.Fatalf("bidi-host provider projection = %+v", p.Providers)
+	}
+	blocking := false
+	for _, d := range p.Diagnostics {
+		if d.Code == "provider_endpoint_unsupported" && d.SubjectName == "hosted" && d.Blocking {
+			blocking = true
+		}
+	}
+	if !blocking {
+		t.Fatalf("bidi-host agent-route endpoint failure must block: %+v", p.Diagnostics)
+	}
+}
+
 func TestBuildSettingsProjectionAgentRoleDiagnostics(t *testing.T) {
 	t.Run("no agent default", func(t *testing.T) {
 		j := strings.Replace(settingsFixtureJSON, `"agent": "agent-m", `, "", 1)
@@ -815,6 +846,9 @@ func validateSettingsProjection(p SettingsProjection) error {
 	for i, projectedProvider := range p.Providers {
 		if !contractIdentifier(projectedProvider.Name) ||
 			len(projectedProvider.Endpoint) > maxProjectionEndpointLen ||
+			(projectedProvider.Endpoint != "" && strings.ContainsFunc(projectedProvider.Endpoint, func(r rune) bool {
+				return unicode.In(r, unicode.Cc, unicode.Cf)
+			})) ||
 			!classifications[projectedProvider.Classification] ||
 			!apiFormats[projectedProvider.APIFormat] ||
 			!credentials[projectedProvider.CredentialState] {
@@ -1324,6 +1358,27 @@ func TestProjectionForcesTypedLoadDiagnosticBlocking(t *testing.T) {
 		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
 	if len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != codeDuplicateKeys ||
 		!p.Diagnostics[0].Blocking {
+		t.Fatalf("diagnostics = %+v", p.Diagnostics)
+	}
+}
+
+// TestProjectionLoadErrorConfigNotFoundProjectsAsMissing: mapConfigDiagnostic
+// maps config.CodeConfigNotFound to codeConfigMissing, so a load-error branch
+// that always emits state "invalid" would produce a self-contradicting
+// invalid/config_missing pair. A typed config_not_found diagnostic must
+// project as the Missing document, not Invalid.
+func TestProjectionLoadErrorConfigNotFoundProjectsAsMissing(t *testing.T) {
+	loaded := loadedAgentConfig{
+		Origin:              originUserConfig,
+		ConfigDiagnostic:    config.Diagnostic{Code: config.CodeConfigNotFound},
+		HasConfigDiagnostic: true,
+	}
+	p := buildSettingsProjection(loaded,
+		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
+	if p.State != "missing" || p.SourceOrigin != "none" {
+		t.Fatalf("projection = %+v", p)
+	}
+	if len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != codeConfigMissing || !p.Diagnostics[0].Blocking {
 		t.Fatalf("diagnostics = %+v", p.Diagnostics)
 	}
 }

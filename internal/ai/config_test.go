@@ -338,8 +338,14 @@ func TestLoadDefaultAgentConfigDoesNotLogFailureDetails(t *testing.T) {
 	if !errors.Is(err, ErrAgentConfigInvalid) {
 		t.Fatalf("load error = %v", err)
 	}
-	if logs.Len() != 0 {
-		t.Fatalf("LoadDocument failure was logged: %q", logs.String())
+	// A bounded, code-only line is logged host-side — never the raw error,
+	// the source path, or a secret/dir marker.
+	wantLog := "ai: agent config load failed: code=key_reference_unavailable\n"
+	if got := logs.String(); got != wantLog {
+		t.Fatalf("LoadDocument failure log = %q, want %q", got, wantLog)
+	}
+	if strings.Contains(logs.String(), marker) || strings.Contains(logs.String(), dir) {
+		t.Fatalf("LoadDocument failure log leaks details: %q", logs.String())
 	}
 	if strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), dir) {
 		t.Fatalf("returned error leaks load details: %q", err)
@@ -651,11 +657,18 @@ func TestNormalizeEndpointRejections(t *testing.T) {
 		"http://[fe80::1%25en0]:11434", // IPv6 zone ID: no consent identity
 		"/relative/path",
 		"example.com",
+		"http://ex\u202eample.com", // RLO
+		"http://ex\u200fample.com", // RLM
+		"http://ex\u200bample.com", // zero-width space
 	}
 	for _, raw := range rejects {
 		if got, _, err := NormalizeEndpoint(raw); err == nil {
 			t.Errorf("NormalizeEndpoint(%q) = %q, want error", raw, got)
 		}
+	}
+	// A clean host must still normalize once the Cc/Cf host check is added.
+	if got, _, err := NormalizeEndpoint("http://example.com"); err != nil || got != "http://example.com" {
+		t.Fatalf("clean host regressed: got %q, err %v", got, err)
 	}
 }
 
