@@ -54,6 +54,10 @@ export function GetAllRunProfiles() {
   return window['go']['main']['App']['GetAllRunProfiles']();
 }
 
+export function GetGolemSettings() {
+  return window['go']['main']['App']['GetGolemSettings']();
+}
+
 export function GetGolemStatus(arg1) {
   return window['go']['main']['App']['GetGolemStatus'](arg1);
 }
@@ -260,6 +264,10 @@ export function ReadDirectoryShallow(arg1, arg2) {
 
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
+}
+
+export function ReloadGolemSettings() {
+  return window['go']['main']['App']['ReloadGolemSettings']();
 }
 
 export function ResizeTerminal(arg1, arg2, arg3) {

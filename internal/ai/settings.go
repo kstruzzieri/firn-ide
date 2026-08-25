@@ -1,0 +1,415 @@
+package ai
+
+import (
+	"errors"
+	"sort"
+	"strings"
+	"unicode"
+
+	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/provider"
+)
+
+// Response bounds for the settings projection (mirrored exactly by the
+// frontend validators and the testdata/settings_contract corpus). All string
+// limits are UTF-8 BYTE counts — the TypeScript mirror measures
+// TextEncoder-encoded byte length, never UTF-16 code units — so the two
+// validators agree on every input. Exceeding a bound never redefines go-llm
+// validity: the runtime target still resolves, the projection is withheld as
+// state "limited" instead.
+const (
+	maxProjectionEntries       = 256
+	maxProjectionIdentifierLen = 256
+	maxProjectionEndpointLen   = 1024
+	// maxProjectionDiagnostics is the worst case the builder can emit: one
+	// provider_endpoint_unsupported per provider plus one agent diagnostic.
+	maxProjectionDiagnostics = maxProjectionEntries + 1
+)
+
+// Phase 1 diagnostic-code allowlist. The frontend validator mirrors this list
+// byte-for-byte; grow both sides in the same change.
+const (
+	codeConfigMissing               = "config_missing"
+	codeJSONInvalid                 = "json_invalid"
+	codeConfigInvalid               = "config_invalid"
+	codeAgentRoleMissing            = "agent_role_missing"
+	codeAgentCapsInsufficient       = "agent_capabilities_insufficient"
+	codeProviderEndpointUnsupported = "provider_endpoint_unsupported"
+	codeProjectionLimited           = "projection_limited"
+)
+
+// settingsDiagnosticCodes enumerates every code the builder can emit, in the
+// contract's canonical order.
+var settingsDiagnosticCodes = []string{
+	codeConfigMissing,
+	codeJSONInvalid,
+	codeConfigInvalid,
+	codeAgentRoleMissing,
+	codeAgentCapsInsufficient,
+	codeProviderEndpointUnsupported,
+	codeProjectionLimited,
+}
+
+// SettingsProjection is the Wails-facing read-only view of the effective Golem
+// configuration. It never carries filesystem paths, raw JSON, API keys,
+// environment variable names, or raw go-llm error text.
+type SettingsProjection struct {
+	State        string               `json:"state"`        // missing | invalid | limited | ready
+	SourceOrigin string               `json:"sourceOrigin"` // none | env | working_directory | user_config | legacy
+	Routes       []RouteProjection    `json:"routes"`
+	Models       []ModelProjection    `json:"models"`
+	Providers    []ProviderProjection `json:"providers"`
+	Diagnostics  []Diagnostic         `json:"diagnostics"`
+}
+
+// SettingsReloadResult is the Wails-facing reload outcome. Busy means the
+// idle barrier rejected the reload and Projection is the unchanged current
+// snapshot's.
+type SettingsReloadResult struct {
+	Busy       bool               `json:"busy"`
+	Projection SettingsProjection `json:"projection"`
+}
+
+// RouteProjection is one defaults.* entry: use case -> model role.
+type RouteProjection struct {
+	UseCase string `json:"useCase"`
+	Role    string `json:"role"`
+}
+
+// ModelProjection is one models-map entry. Role is the map key (a role name);
+// ModelName is the provider's model ID — different namespaces, both shown.
+type ModelProjection struct {
+	Role                  string   `json:"role"`
+	ModelName             string   `json:"modelName"`
+	Provider              string   `json:"provider"`
+	Type                  string   `json:"type"`
+	EffectiveCapabilities []string `json:"effectiveCapabilities"`
+	ThinkMode             string   `json:"thinkMode"`
+}
+
+// ProviderProjection is one provider. Endpoint is the NormalizeEndpoint
+// canonical form, "" when not derivable (Classification then "unknown").
+// CredentialState is presence, not a usability promise; reference_unavailable
+// becomes reachable only with the Phase 2 document layer.
+type ProviderProjection struct {
+	Name            string `json:"name"`
+	Endpoint        string `json:"endpoint"`
+	Classification  string `json:"classification"` // local | remote | unknown
+	APIFormat       string `json:"apiFormat"`
+	CredentialState string `json:"credentialState"` // none | available | reference_unavailable
+}
+
+// Diagnostic is one allowlisted configuration finding. SubjectName is a
+// length-bounded role/model/provider name; never a path or value.
+type Diagnostic struct {
+	Code        string `json:"code"`
+	SubjectKind string `json:"subjectKind"` // "" | role | model | provider
+	SubjectName string `json:"subjectName"`
+	Blocking    bool   `json:"blocking"`
+}
+
+// sanitizeIdentifier replaces control and bidirectional-format runes with
+// U+FFFD before an identifier crosses the boundary: a config key carrying
+// RLO/LRO or C0/C1 controls could otherwise visually spoof diagnostic and
+// model names in the UI. Category Cc and Cf cover both.
+func sanitizeIdentifier(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.In(r, unicode.Cc, unicode.Cf) {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
+}
+
+// sanitizeProjectionIdentifiers scrubs every projected identifier in place —
+// the one pass every build path funnels through, so no emit site can forget
+// it. Endpoints are excluded: NormalizeEndpoint's URL parse already
+// constrains them, and effectiveCapabilities come from the canonical
+// vocabulary. Bounds were measured on the sanitized form
+// (exceedsProjectionBounds, boundSubject), so the scrub can never push a
+// field over a limit.
+func sanitizeProjectionIdentifiers(p SettingsProjection) SettingsProjection {
+	for i := range p.Routes {
+		r := &p.Routes[i]
+		r.UseCase, r.Role = sanitizeIdentifier(r.UseCase), sanitizeIdentifier(r.Role)
+	}
+	for i := range p.Models {
+		m := &p.Models[i]
+		m.Role = sanitizeIdentifier(m.Role)
+		m.ModelName = sanitizeIdentifier(m.ModelName)
+		m.Provider = sanitizeIdentifier(m.Provider)
+		m.Type = sanitizeIdentifier(m.Type)
+		m.ThinkMode = sanitizeIdentifier(m.ThinkMode)
+	}
+	for i := range p.Providers {
+		pr := &p.Providers[i]
+		pr.Name, pr.APIFormat = sanitizeIdentifier(pr.Name), sanitizeIdentifier(pr.APIFormat)
+	}
+	for i := range p.Diagnostics {
+		p.Diagnostics[i].SubjectName = sanitizeIdentifier(p.Diagnostics[i].SubjectName)
+	}
+	return p
+}
+
+// projectedOrigin maps a backend sourceOrigin onto the boundary vocabulary
+// explicitly — the sourceOrigin contract forbids raw pass-through, so an
+// unknown or zero value collapses to "none" instead of leaking a new string
+// into the frontend enum.
+func projectedOrigin(origin sourceOrigin) string {
+	switch origin {
+	case originEnv, originWorkingDirectory, originUserConfig, originLegacy:
+		return string(origin)
+	default:
+		return string(originNone)
+	}
+}
+
+// emptyProjection returns a projection with empty (non-nil) collections so
+// the boundary never serializes null where the contract says array.
+func emptyProjection(state string, origin sourceOrigin) SettingsProjection {
+	return SettingsProjection{
+		State:        state,
+		SourceOrigin: projectedOrigin(origin),
+		Routes:       []RouteProjection{},
+		Models:       []ModelProjection{},
+		Providers:    []ProviderProjection{},
+		Diagnostics:  []Diagnostic{},
+	}
+}
+
+// buildSettingsProjection maps one load outcome onto the safe projection.
+// Pure: no I/O, no service state. loadErr non-nil means loaded.Config is nil.
+// Every path funnels through sanitizeProjectionIdentifiers so no identifier
+// can carry a control or bidi-format rune across the boundary.
+func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
+	return sanitizeProjectionIdentifiers(assembleSettingsProjection(loaded, loadErr))
+}
+
+// assembleSettingsProjection builds the projection from raw config values;
+// buildSettingsProjection sanitizes what it returns.
+func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
+	if loadErr != nil {
+		if errors.Is(loadErr, ErrAgentConfigMissing) {
+			p := emptyProjection("missing", originNone)
+			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
+			return p
+		}
+		p := emptyProjection("invalid", loaded.Origin)
+		code := codeConfigInvalid
+		if errors.Is(loadErr, errConfigJSONSyntax) {
+			code = codeJSONInvalid
+		}
+		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: code, Blocking: true})
+		return p
+	}
+
+	cfg := loaded.Config
+	if cfg == nil {
+		// Contract slip (loadErr == nil implies Config != nil): degrade to the
+		// invalid projection rather than panicking a Wails call.
+		p := emptyProjection("invalid", loaded.Origin)
+		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigInvalid, Blocking: true})
+		return p
+	}
+	if exceedsProjectionBounds(cfg) {
+		p := emptyProjection("limited", loaded.Origin)
+		// A limited projection must not conceal an unusable agent route: keep
+		// at most one bounded blocking agent diagnostic (spec 3.2 amendment).
+		if d, ok := selectedAgentBlockingDiagnostic(cfg); ok {
+			p.Diagnostics = append(p.Diagnostics, d)
+		}
+		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeProjectionLimited})
+		sortDiagnostics(p.Diagnostics)
+		return p
+	}
+
+	p := emptyProjection("ready", loaded.Origin)
+
+	for useCase, role := range cfg.Defaults {
+		p.Routes = append(p.Routes, RouteProjection{UseCase: useCase, Role: role})
+	}
+	sort.Slice(p.Routes, func(i, j int) bool { return p.Routes[i].UseCase < p.Routes[j].UseCase })
+
+	for role, m := range cfg.Models {
+		p.Models = append(p.Models, ModelProjection{
+			Role:                  role,
+			ModelName:             m.Name,
+			Provider:              m.Provider,
+			Type:                  m.Type,
+			EffectiveCapabilities: canonicalizeCapabilities(m.ResolvedCapabilities()),
+			ThinkMode:             m.ThinkMode,
+		})
+	}
+	sort.Slice(p.Models, func(i, j int) bool { return p.Models[i].Role < p.Models[j].Role })
+
+	agentProvider := selectedAgentProvider(cfg)
+	for name, pc := range cfg.Providers {
+		row := ProviderProjection{Name: name, APIFormat: pc.APIFormat, CredentialState: "none"}
+		if pc.APIKey != "" {
+			// Post-Load the key is expanded, so presence implies the ${ENV}
+			// reference (if any) resolved. reference_unavailable is Phase 2.
+			row.CredentialState = "available"
+		}
+		endpoint, local, err := NormalizeEndpoint(pc.BaseURL)
+		switch {
+		case err != nil:
+			row.Classification = "unknown"
+			p.Diagnostics = append(p.Diagnostics, Diagnostic{
+				Code:        codeProviderEndpointUnsupported,
+				SubjectKind: "provider",
+				SubjectName: name,
+				Blocking:    name == agentProvider,
+			})
+		case local:
+			row.Endpoint, row.Classification = endpoint, "local"
+		default:
+			row.Endpoint, row.Classification = endpoint, "remote"
+		}
+		p.Providers = append(p.Providers, row)
+	}
+	sort.Slice(p.Providers, func(i, j int) bool { return p.Providers[i].Name < p.Providers[j].Name })
+
+	p.Diagnostics = append(p.Diagnostics, agentRouteDiagnostics(cfg)...)
+	sortDiagnostics(p.Diagnostics)
+	return p
+}
+
+// exceedsProjectionBounds reports whether any collection, identifier, or
+// derived endpoint is over the response bounds. Identifier bounds are
+// measured on the SANITIZED form (sanitize-then-bound): sanitizeIdentifier
+// maps every scrubbed rune to U+FFFD (3 UTF-8 bytes), which can grow a
+// 1-byte control past the limit, and what the ready path emits is the
+// sanitized value — so the bound must be checked on exactly that. Endpoints
+// are never sanitized and are measured as derived.
+func exceedsProjectionBounds(cfg *config.Config) bool {
+	if len(cfg.Defaults) > maxProjectionEntries ||
+		len(cfg.Models) > maxProjectionEntries ||
+		len(cfg.Providers) > maxProjectionEntries {
+		return true
+	}
+	over := func(s string) bool { return len(sanitizeIdentifier(s)) > maxProjectionIdentifierLen }
+	for useCase, role := range cfg.Defaults {
+		if over(useCase) || over(role) {
+			return true
+		}
+	}
+	for role, m := range cfg.Models {
+		if over(role) || over(m.Name) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
+			return true
+		}
+	}
+	for name, pc := range cfg.Providers {
+		if over(name) || over(pc.APIFormat) {
+			return true
+		}
+		if endpoint, _, err := NormalizeEndpoint(pc.BaseURL); err == nil && len(endpoint) > maxProjectionEndpointLen {
+			return true
+		}
+	}
+	return false
+}
+
+// selectedAgentProvider names the provider on the agent route, "" when the
+// route is incomplete.
+func selectedAgentProvider(cfg *config.Config) string {
+	role, ok := cfg.RoleForUseCase("agent")
+	if !ok {
+		return ""
+	}
+	m := cfg.RoleConfig(role)
+	if m == nil {
+		return ""
+	}
+	return m.Provider
+}
+
+// selectedAgentBlockingDiagnostic returns the single most relevant blocking
+// diagnostic for the agent route, with its subject bounded (dropped when over
+// the identifier limit). Used by the limited path only.
+func selectedAgentBlockingDiagnostic(cfg *config.Config) (Diagnostic, bool) {
+	if ds := agentRouteDiagnostics(cfg); len(ds) > 0 {
+		return boundSubject(ds[0]), true
+	}
+	if name := selectedAgentProvider(cfg); name != "" {
+		if pc := cfg.Provider(name); pc != nil {
+			if _, _, err := NormalizeEndpoint(pc.BaseURL); err != nil {
+				return boundSubject(Diagnostic{
+					Code:        codeProviderEndpointUnsupported,
+					SubjectKind: "provider",
+					SubjectName: name,
+					Blocking:    true,
+				}), true
+			}
+		}
+	}
+	return Diagnostic{}, false
+}
+
+// boundSubject drops the subject when its SANITIZED form is over the
+// identifier bound — the scrub can grow a raw in-bound name past the limit,
+// and the sanitized value is what gets emitted (sanitize-then-bound, same
+// order as exceedsProjectionBounds).
+func boundSubject(d Diagnostic) Diagnostic {
+	if len(sanitizeIdentifier(d.SubjectName)) > maxProjectionIdentifierLen {
+		d.SubjectKind = ""
+		d.SubjectName = ""
+	}
+	return d
+}
+
+// agentRouteDiagnostics re-states ResolveAgentTarget's role/capability checks
+// as diagnostics. Endpoint problems are reported per provider by the caller.
+func agentRouteDiagnostics(cfg *config.Config) []Diagnostic {
+	role, ok := cfg.RoleForUseCase("agent")
+	if !ok {
+		return []Diagnostic{{Code: codeAgentRoleMissing, Blocking: true}}
+	}
+	m := cfg.RoleConfig(role)
+	if m == nil || m.Provider == "" || cfg.Provider(m.Provider) == nil {
+		return []Diagnostic{{Code: codeAgentRoleMissing, SubjectKind: "role", SubjectName: role, Blocking: true}}
+	}
+	caps, err := provider.ParseCapsStrict(m.ResolvedCapabilities())
+	if err != nil {
+		// Unreachable post-Load (validate rejects unknown capabilities); the
+		// coarse load-failure path owns that case. Guard anyway.
+		return []Diagnostic{{Code: codeAgentCapsInsufficient, SubjectKind: "model", SubjectName: role, Blocking: true}}
+	}
+	if !caps.Has(requiredAgentCaps) {
+		return []Diagnostic{{Code: codeAgentCapsInsufficient, SubjectKind: "model", SubjectName: role, Blocking: true}}
+	}
+	return nil
+}
+
+// canonicalizeCapabilities lowercases, deduplicates, and orders tokens by the
+// canonical vocabulary; ResolvedCapabilities preserves user case/order/dups,
+// which must not leak shape into the contract.
+func canonicalizeCapabilities(tokens []string) []string {
+	caps, err := provider.ParseCapsStrict(tokens)
+	if err != nil {
+		return []string{} // unreachable post-Load validation; render no chips
+	}
+	out := make([]string, 0, len(provider.CanonicalCapabilityNames))
+	for _, name := range provider.CanonicalCapabilityNames {
+		bit, err := provider.ParseCapsStrict([]string{name})
+		if err != nil {
+			continue
+		}
+		if caps.Has(bit) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// sortDiagnostics: blocking first, then code, then subject name.
+func sortDiagnostics(ds []Diagnostic) {
+	sort.Slice(ds, func(i, j int) bool {
+		if ds[i].Blocking != ds[j].Blocking {
+			return ds[i].Blocking
+		}
+		if ds[i].Code != ds[j].Code {
+			return ds[i].Code < ds[j].Code
+		}
+		return ds[i].SubjectName < ds[j].SubjectName
+	})
+}

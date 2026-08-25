@@ -381,6 +381,8 @@ Bind: []interface{}{
 | `App.GetGolemStatus(req)` | `window.go.main.App.GetGolemStatus(req)` | `Promise<ai.Status>` |
 | `App.RunGolemTurn(req)` | `window.go.main.App.RunGolemTurn(req)` | `Promise<ai.TurnAdmission>` |
 | `App.CancelGolemRun(identity)` | `window.go.main.App.CancelGolemRun(identity)` | `Promise<boolean>` |
+| `App.GetGolemSettings()` | `window.go.main.App.GetGolemSettings()` | `Promise<ai.SettingsProjection>` |
+| `App.ReloadGolemSettings()` | `window.go.main.App.ReloadGolemSettings()` | `Promise<ai.SettingsReloadResult>` |
 
 The Golem surface is deliberately narrow. `GetWorkspaceInfo` is the only call
 that takes a path: it binds the repository, returns the canonical root the
@@ -391,6 +393,19 @@ redirect the repository root or the destination. Every error they return is a
 fixed public message; the raw cause is logged host-side only. Run output
 arrives asynchronously on the `golem:event`, `golem:run-status`, and
 `golem:status-changed` events.
+
+`GetGolemSettings` and `ReloadGolemSettings` are a separate, deliberately
+scoped read-only surface: both take no input, so nothing a caller supplies can
+influence configuration discovery. The returned `SettingsProjection` carries
+only an allowlisted set of diagnostic codes paired with safe subject names
+(a role, model, or provider identifier) — never the raw go-llm error text.
+Configuration source paths (the discovered `models.json` location) never
+cross this boundary either, matching the run-path's own protection; the fixed
+eight-message error seal that `SanitizeError` applies to run-path failures is
+unchanged by this addition. `ReloadGolemSettings` rebuilds the effective
+snapshot only under an idle barrier — every conversation must be fully idle,
+or the call reports `busy: true` with the unchanged current projection — so a
+reload can never observe or interrupt an in-flight run.
 
 ### Adding New Bindings
 

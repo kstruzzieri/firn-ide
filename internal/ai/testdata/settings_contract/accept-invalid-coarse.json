@@ -1,0 +1,11 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "invalid",
+    "sourceOrigin": "legacy",
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [{"code": "config_invalid", "subjectKind": "", "subjectName": "", "blocking": true}]
+  }
+}

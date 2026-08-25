@@ -350,7 +350,7 @@ func fixtureConfigLoader(t *testing.T, cfgJSON string) func() (loadedAgentConfig
 		if err != nil {
 			return loadedAgentConfig{}, fmt.Errorf("%w: fixture failed to load: %v", ErrAgentConfigInvalid, err)
 		}
-		return loadedAgentConfig{Config: cfg, SourcePath: source}, nil
+		return loadedAgentConfig{Config: cfg, SourcePath: source, LexicalPath: source, Origin: originUserConfig}, nil
 	}
 }
 
@@ -969,7 +969,7 @@ func TestServiceStatusShape(t *testing.T) {
 		h2 := newServiceHarness(t, "http://127.0.0.1:1")
 		repoID2, _ := h2.bind(t)
 		h2.svc.loadConfig = func() (loadedAgentConfig, error) {
-			return loadedAgentConfig{}, fmt.Errorf("%w: no config at /home/user/cfg-path-marker key=%s", ErrAgentConfigMissing, svcKeyMarker)
+			return loadedAgentConfig{Origin: originNone}, fmt.Errorf("%w: no config at /home/user/cfg-path-marker key=%s", ErrAgentConfigMissing, svcKeyMarker)
 		}
 		st, err := h2.svc.Status(StatusRequest{RepoEpoch: repoID2.RepoEpoch, WorkspaceID: "project"})
 		if err != nil {
@@ -3709,4 +3709,367 @@ func TestServiceExternalConfigSourceNormal(t *testing.T) {
 			t.Fatal("different-volume source was protected; want a no-op")
 		}
 	}
+}
+
+// TestSnapshotSharedAcrossConversations: one loadConfig call serves every
+// conversation — the process-wide snapshot is the single configuration truth.
+func TestSnapshotSharedAcrossConversations(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	loads := 0
+	inner := h.svc.loadConfig
+	h.svc.loadConfig = func() (loadedAgentConfig, error) {
+		loads++
+		return inner()
+	}
+	repoID, _ := h.bind(t)
+	for _, ws := range []string{"project", "frontend"} {
+		st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: ws})
+		if err != nil || !st.Available {
+			t.Fatalf("Status(%s) = %+v, %v", ws, st, err)
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("loadConfig calls = %d, want 1 (snapshot shared across conversations)", loads)
+	}
+}
+
+// TestSettingsSnapshotProtectedPerBinding (P0, adapted from
+// TestServiceRepoLocalConfigSourceProtected): a snapshot loaded BEFORE any
+// binding exists is not thereby authorized — the binding that later publishes
+// its target must protect the source, and the real built-in tools behind that
+// binding's guard must deny the config file and both key markers.
+func TestSettingsSnapshotProtectedPerBinding(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	endpoint, requests := startLocalCountingServer(t)
+	repo := newRepo(t)
+	const cfgName = "golem-keys.conf"
+	writeFile(t, filepath.Join(repo, cfgName), agentConfigJSON(endpoint))
+	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
+
+	rec := &emitRecorder{}
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	// Production loadConfig stays installed: discovery resolves the repo-local
+	// $GO_LLM_CONFIG source.
+	f := &fakeFactory{}
+	svc.newRunner = f.factory()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	// Snapshot loads with NO binding, and the projection leaks nothing.
+	p, err := svc.Settings()
+	if err != nil {
+		t.Fatalf("Settings before bind: %v", err)
+	}
+	if p.State != "ready" {
+		t.Fatalf("state = %q", p.State)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{repo, cfgName, svcKeyMarker, svcSpareKeyMarker} {
+		if strings.Contains(string(raw), marker) {
+			t.Fatalf("pre-binding settings leak %q", marker)
+		}
+	}
+
+	// The binding that then publishes the target must protect the source.
+	repoID, _, err := svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	adm, err := svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project")))
+	if err != nil || adm.State != "accepted" {
+		t.Fatalf("StartTurn = %+v, %v", adm, err)
+	}
+	waitUntil(t, "drain", func() bool { return activeRunCount(svc) == 0 })
+	if got := atomic.LoadInt32(requests); got != 0 {
+		t.Fatalf("provider saw %d request(s)", got)
+	}
+	call := f.call(t, 0)
+	assertBuiltinToolsProtectConfig(t, "settings-then-bind", call.root, call.guard, cfgName)
+}
+
+func TestSettingsReturnsProjection(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	p, err := h.svc.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.State != "ready" || len(p.Providers) == 0 {
+		t.Fatalf("%+v", p)
+	}
+}
+
+func TestReloadSettingsSwapsSnapshotWhenIdle(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	if _, err := h.svc.Settings(); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON("http://localhost:9091"))
+	res, err := h.svc.ReloadSettings()
+	if err != nil || res.Busy {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	found := false
+	for _, pr := range res.Projection.Providers {
+		if pr.Endpoint == "http://localhost:9091" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("reload did not adopt the new endpoint: %+v", res.Projection.Providers)
+	}
+	if got := h.rec.count(EventGolemStatusChanged); got != 1 {
+		t.Fatalf("status-changed emissions = %d, want 1", got)
+	}
+}
+
+// TestReloadSettingsRecoversFromMissingConfig: a latched load failure is
+// recoverable through reload — the snapshot rebuild is unconditional.
+func TestReloadSettingsRecoversFromMissingConfig(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	h.svc.loadConfig = func() (loadedAgentConfig, error) {
+		return loadedAgentConfig{Origin: originNone}, fmt.Errorf("%w: nothing found", ErrAgentConfigMissing)
+	}
+	p, err := h.svc.Settings()
+	if err != nil || p.State != "missing" {
+		t.Fatalf("p=%+v err=%v", p, err)
+	}
+	h.svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON("http://localhost:8080"))
+	res, err := h.svc.ReloadSettings()
+	if err != nil || res.Busy || res.Projection.State != "ready" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	repoID, _ := h.bind(t)
+	st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
+	if err != nil || !st.Available {
+		t.Fatalf("post-recovery Status = %+v, %v", st, err)
+	}
+}
+
+// TestReloadSettingsBusyStates: running and canceling conversations both
+// block reload; the current snapshot returns unchanged and nothing emits.
+func TestReloadSettingsBusyStates(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	repoID, _ := h.bind(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	h.factory.setRun(func(ctx context.Context, _ golem.Turn, _ golem.EventSink) (agent.Result, error) {
+		close(started)
+		<-release // survives ctx cancellation: keeps the conv in canceling
+		return agent.Result{}, nil
+	})
+	id := runIdentityFor(repoID, "project")
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	before := h.rec.count(EventGolemStatusChanged)
+
+	res, err := h.svc.ReloadSettings() // running
+	if err != nil || !res.Busy {
+		t.Fatalf("running: res=%+v err=%v", res, err)
+	}
+	if ok, err := h.svc.Cancel(id); err != nil || !ok {
+		t.Fatalf("Cancel: %v %v", ok, err)
+	}
+	res, err = h.svc.ReloadSettings() // canceling
+	if err != nil || !res.Busy {
+		t.Fatalf("canceling: res=%+v err=%v", res, err)
+	}
+	if got := h.rec.count(EventGolemStatusChanged); got != before {
+		t.Fatalf("busy reloads must not emit (before=%d after=%d)", before, got)
+	}
+
+	close(release)
+	drainRuns(t, h.svc)
+	res, err = h.svc.ReloadSettings() // idle again
+	if err != nil || res.Busy {
+		t.Fatalf("idle: res=%+v err=%v", res, err)
+	}
+}
+
+// TestReloadSettingsConsentBarrier: an unexpired pending consent challenge is
+// busy; an expired one is dropped by the barrier and reload proceeds.
+func TestReloadSettingsConsentBarrier(t *testing.T) {
+	h := newServiceHarness(t, "http://192.0.2.1:1") // TEST-NET: Remote, never dialed pre-consent
+	repoID, _ := h.bind(t)
+	clk := &fakeClock{t: time.Now()}
+	h.svc.now = clk.Now
+	adm, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project")))
+	if err != nil || adm.State != "needs_consent" {
+		t.Fatalf("adm=%+v err=%v", adm, err)
+	}
+	res, err := h.svc.ReloadSettings()
+	if err != nil || !res.Busy {
+		t.Fatalf("pending consent must be busy: res=%+v err=%v", res, err)
+	}
+	clk.advance(consentChallengeTTL + time.Minute)
+	res, err = h.svc.ReloadSettings()
+	if err != nil || res.Busy {
+		t.Fatalf("expired challenge must not block: res=%+v err=%v", res, err)
+	}
+}
+
+// TestReloadClosesIdleRunnerUnderWriter: reload closes the cached idle runner
+// BEFORE releasing the binding writer, so a following admission constructs
+// the replacement only after full quiescence.
+func TestReloadClosesIdleRunnerUnderWriter(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatal(err)
+	}
+	drainRuns(t, h.svc)
+	if h.factory.callCount() != 1 {
+		t.Fatalf("factory calls = %d", h.factory.callCount())
+	}
+	first := h.factory.call(t, 0).runner
+
+	res, err := h.svc.ReloadSettings()
+	if err != nil || res.Busy {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if first.closedCount() != 1 {
+		t.Fatalf("idle runner closed %d times, want 1 (closed before reload returned)", first.closedCount())
+	}
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project"))); err != nil {
+		t.Fatal(err)
+	}
+	drainRuns(t, h.svc)
+	if h.factory.callCount() != 2 {
+		t.Fatalf("factory calls = %d, want a fresh runner after reload", h.factory.callCount())
+	}
+}
+
+// parkedReload starts a ReloadSettings whose loadConfig is parked, returning
+// the entered signal, the release, and the result channel.
+func parkedReload(t *testing.T, h *svcHarness, nextEndpoint string) (entered chan struct{}, release chan struct{}, done chan SettingsReloadResult) {
+	t.Helper()
+	entered = make(chan struct{})
+	release = make(chan struct{})
+	done = make(chan SettingsReloadResult, 1)
+	next := fixtureConfigLoader(t, agentConfigJSON(nextEndpoint))
+	h.svc.loadConfig = func() (loadedAgentConfig, error) {
+		close(entered)
+		<-release
+		return next()
+	}
+	go func() {
+		res, err := h.svc.ReloadSettings()
+		if err != nil {
+			t.Errorf("ReloadSettings: %v", err)
+		}
+		done <- res
+	}()
+	return entered, release, done
+}
+
+// TestReloadSettingsBlocksAdmissionUntilSwap: an admission arriving during a
+// reload waits on the binding gate and then uses the NEW snapshot.
+func TestReloadSettingsBlocksAdmissionUntilSwap(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	repoID, _ := h.bind(t)
+	if _, err := h.svc.Settings(); err != nil {
+		t.Fatal(err)
+	}
+	entered, release, done := parkedReload(t, h, "http://localhost:9091")
+	<-entered
+	assertBindingWriterBlocked(t, h.svc, "reload holds the writer")
+	admitted := make(chan error, 1)
+	go func() {
+		_, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(repoID, "project")))
+		admitted <- err
+	}()
+	select {
+	case err := <-admitted:
+		t.Fatalf("StartTurn completed during the parked reload: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	res := <-done
+	if res.Busy {
+		t.Fatal("reload reported busy")
+	}
+	if err := <-admitted; err != nil {
+		t.Fatalf("StartTurn after reload: %v", err)
+	}
+	drainRuns(t, h.svc)
+	if got := h.factory.call(t, 0).target.destination.Endpoint; got != "http://localhost:9091" {
+		t.Fatalf("admitted turn used a stale snapshot endpoint: %s", got)
+	}
+}
+
+// TestSettingsReadBlocksDuringReload: a Settings read arriving during a
+// reload waits for the swap and returns the NEW projection.
+func TestSettingsReadBlocksDuringReload(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	if _, err := h.svc.Settings(); err != nil {
+		t.Fatal(err)
+	}
+	entered, release, done := parkedReload(t, h, "http://localhost:9091")
+	<-entered
+	read := make(chan SettingsProjection, 1)
+	go func() {
+		p, err := h.svc.Settings()
+		if err != nil {
+			t.Errorf("Settings: %v", err)
+		}
+		read <- p
+	}()
+	select {
+	case <-read:
+		t.Fatal("Settings returned while the reload writer was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	p := <-read
+	found := false
+	for _, pr := range p.Providers {
+		if pr.Endpoint == "http://localhost:9091" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("blocked read returned the old projection: %+v", p.Providers)
+	}
+}
+
+// TestReloadSettingsVersusClose: Close cannot complete while a reload is
+// mid-flight (waitgroup + gate), and both finish cleanly.
+func TestReloadSettingsVersusClose(t *testing.T) {
+	rec := &emitRecorder{}
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON("http://localhost:8080"))
+	svc.newRunner = (&fakeFactory{}).factory()
+	h := &svcHarness{svc: svc, rec: rec}
+	if _, err := svc.Settings(); err != nil {
+		t.Fatal(err)
+	}
+	entered, release, done := parkedReload(t, h, "http://localhost:9091")
+	<-entered
+	closed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		closed <- svc.Close(ctx)
+	}()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned during the parked reload: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-closed; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	<-done // reload completed (it held the gate first); no panic, no leak
 }

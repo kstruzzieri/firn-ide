@@ -1,0 +1,196 @@
+/*
+ * Task 9 (#263 Phase 1) — read-only Golem configuration view.
+ * Reuses GolemPanel.module.css's design tokens (colors/spacing) so the view
+ * reads as the same surface, not a bolted-on settings page.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 8px;
+  overflow-y: auto;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Focus ring comes from the app-wide :focus-visible rule; nothing suppressed here. */
+.heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.headerActions {
+  display: flex;
+  gap: 6px;
+}
+
+.sectionHeading {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sourceLine {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.sourceOrigin {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.errorBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--status-error);
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.busyNotice {
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--status-warning);
+  border-radius: 5px;
+  color: var(--status-warning);
+  font-size: 11px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.diagnosticList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostic,
+.diagnosticBlocking {
+  padding: 4px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* Blocking gets an accent border; the "Blocking"/"Notice" text label carries
+   the actual signal so severity never rests on color alone. */
+.diagnosticBlocking {
+  border-color: var(--status-error);
+}
+
+.diagnosticSeverity {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.subject {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  font-size: 11px;
+}
+
+.table th,
+.table td {
+  padding: 3px 8px;
+  border: 1px solid var(--surface-border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.table th {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.table td {
+  color: var(--text-secondary);
+}
+
+.entityList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entityRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+}
+
+.entityName {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.entityDetail {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.capabilityChip {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.endpoint {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}

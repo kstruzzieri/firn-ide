@@ -610,6 +610,7 @@ const initialState = () => ({
   // Preserve today's panel: Golem is opt-in, and once chosen it stays chosen
   // for the rest of the process.
   panelMode: 'runs' as GolemStoreState['panelMode'],
+  golemView: 'chat' as GolemStoreState['golemView'],
   composerFocusRevision: 0,
 });
 
@@ -1089,6 +1090,10 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         composerFocusRevision:
           mode === 'golem' ? state.composerFocusRevision + 1 : state.composerFocusRevision,
       }));
+    },
+
+    setGolemView(view: GolemStoreState['golemView']) {
+      set({ golemView: view });
     },
 
     setDraft(conversationId: string, value: string) {

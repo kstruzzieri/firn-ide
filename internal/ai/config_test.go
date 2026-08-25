@@ -514,3 +514,189 @@ func TestNormalizeEndpointRejections(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverAgentConfigSourceReportsOrigin(t *testing.T) {
+	t.Run("env override", func(t *testing.T) {
+		sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+		p := filepath.Join(t.TempDir(), "models.json")
+		if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GO_LLM_CONFIG", p)
+		src, origin, err := discoverAgentConfigSource()
+		if err != nil || src != p || origin != originEnv {
+			t.Fatalf("got src=%q origin=%q err=%v; want %q %q nil", src, origin, err, p, originEnv)
+		}
+	})
+
+	t.Run("env set but empty", func(t *testing.T) {
+		sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+		t.Setenv("GO_LLM_CONFIG", "")
+		_, origin, err := discoverAgentConfigSource()
+		if !errors.Is(err, ErrAgentConfigInvalid) || origin != originEnv {
+			t.Fatalf("got origin=%q err=%v; want %q ErrAgentConfigInvalid", origin, err, originEnv)
+		}
+	})
+
+	t.Run("working directory", func(t *testing.T) {
+		sandboxAgentConfigEnv(t)
+		wd := t.TempDir()
+		t.Chdir(wd)
+		if err := os.WriteFile(filepath.Join(wd, "models.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		src, origin, err := discoverAgentConfigSource()
+		if err != nil || src != "models.json" || origin != originWorkingDirectory {
+			t.Fatalf("got src=%q origin=%q err=%v", src, origin, err)
+		}
+	})
+
+	t.Run("user config dir", func(t *testing.T) {
+		sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+		cfgDir, err := os.UserConfigDir() // resolves under the sandboxed home
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(cfgDir, "go-llm", "models.json")
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		src, origin, err := discoverAgentConfigSource()
+		if err != nil || src != p || origin != originUserConfig {
+			t.Fatalf("got src=%q origin=%q err=%v; want %q %q", src, origin, err, p, originUserConfig)
+		}
+	})
+
+	t.Run("legacy home config", func(t *testing.T) {
+		home := sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+		// Point XDG somewhere empty so the user-config branch misses and only
+		// ~/.config (legacy) hits. On darwin UserConfigDir is HOME/Library/...
+		// which the sandbox also leaves empty, so the same setup holds.
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "empty-xdg"))
+		p := filepath.Join(home, ".config", "go-llm", "models.json")
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		src, origin, err := discoverAgentConfigSource()
+		if err != nil || src != p || origin != originLegacy {
+			t.Fatalf("got src=%q origin=%q err=%v; want %q %q", src, origin, err, p, originLegacy)
+		}
+	})
+
+	t.Run("missing everywhere", func(t *testing.T) {
+		sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+		_, origin, err := discoverAgentConfigSource()
+		if !errors.Is(err, ErrAgentConfigMissing) || origin != originNone {
+			t.Fatalf("got origin=%q err=%v; want %q ErrAgentConfigMissing", origin, err, originNone)
+		}
+	})
+}
+
+func TestLoadDefaultAgentConfigClassifiesJSONSyntax(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	p := filepath.Join(dir, "models.json")
+	if err := os.WriteFile(p, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", p)
+	loaded, err := loadDefaultAgentConfig()
+	if !errors.Is(err, ErrAgentConfigInvalid) {
+		t.Fatalf("want ErrAgentConfigInvalid, got %v", err)
+	}
+	if !errors.Is(err, errConfigJSONSyntax) {
+		t.Fatalf("want errConfigJSONSyntax in chain, got %v", err)
+	}
+	if loaded.Origin != originEnv || loaded.LexicalPath != p {
+		t.Fatalf("partial loadedAgentConfig missing origin/lexical: %+v", loaded)
+	}
+	if loaded.SourcePath != canonicalPath(t, p) {
+		t.Fatalf("SourcePath = %q, want the canonicalized source even on load failure", loaded.SourcePath)
+	}
+	if strings.Contains(err.Error(), p) || strings.Contains(err.Error(), dir) {
+		t.Fatalf("error text leaks path: %q", err.Error())
+	}
+}
+
+func TestLoadDefaultAgentConfigTypeMismatchStaysCoarse(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	p := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(p, []byte(`{"providers": 3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", p)
+	_, err := loadDefaultAgentConfig()
+	if !errors.Is(err, ErrAgentConfigInvalid) || errors.Is(err, errConfigJSONSyntax) {
+		t.Fatalf("type mismatch must be coarse without the JSON-syntax sentinel: %v", err)
+	}
+}
+
+func TestLoadDefaultAgentConfigUnsetEnvKeyStaysCoarse(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	unsetenv(t, "FIRN_TEST_UNSET_KEY_263")
+	p := filepath.Join(t.TempDir(), "models.json")
+	cfg := `{
+  "providers": {"h": {"base_url": "http://localhost:1", "api_key": "${FIRN_TEST_UNSET_KEY_263}"}},
+  "models": {"agent-m": {"name": "m", "provider": "h", "type": "dense", "capabilities": ["chat","stream","tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+	if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", p)
+	loaded, err := loadDefaultAgentConfig()
+	if !errors.Is(err, ErrAgentConfigInvalid) || errors.Is(err, errConfigJSONSyntax) {
+		t.Fatalf("unset ${ENV} must be coarse config-invalid: %v", err)
+	}
+	if strings.Contains(err.Error(), "FIRN_TEST_UNSET_KEY_263") {
+		t.Fatalf("error text leaks the env var name: %q", err.Error())
+	}
+	if loaded.Origin != originEnv {
+		t.Fatalf("partial origin = %q", loaded.Origin)
+	}
+}
+
+func TestLoadDefaultAgentConfigResolvesSymlinkKeepingLexical(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	realDir := t.TempDir()
+	real := filepath.Join(realDir, "real-models.json")
+	cfg := `{
+  "providers": {"h": {"base_url": "http://localhost:1"}},
+  "models": {"agent-m": {"name": "m", "provider": "h", "type": "dense", "capabilities": ["chat","stream","tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+	if err := os.WriteFile(real, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "models.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+	t.Setenv("GO_LLM_CONFIG", link)
+	loaded, err := loadDefaultAgentConfig()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.LexicalPath != link {
+		t.Fatalf("LexicalPath = %q, want the pre-resolution path %q", loaded.LexicalPath, link)
+	}
+	want := canonicalPath(t, real)
+	if loaded.SourcePath != want {
+		t.Fatalf("SourcePath = %q, want resolved %q", loaded.SourcePath, want)
+	}
+}

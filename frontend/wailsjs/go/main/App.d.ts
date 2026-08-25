@@ -36,6 +36,8 @@ export function DetectWorkspaces(arg1:string):Promise<Array<workspace.WorkspaceD
 
 export function GetAllRunProfiles():Promise<Array<runprofile.RunProfile>>;
 
+export function GetGolemSettings():Promise<ai.SettingsProjection>;
+
 export function GetGolemStatus(arg1:ai.StatusRequest):Promise<ai.Status>;
 
 export function GetLSPStatus():Promise<Array<lsp.ServerStatus>>;
@@ -139,6 +141,8 @@ export function ReadDirectory(arg1:string):Promise<Array<filesystem.FileEntry>>;
 export function ReadDirectoryShallow(arg1:string,arg2:string):Promise<Array<filesystem.FileEntry>>;
 
 export function ReadFile(arg1:string):Promise<filesystem.FileContent>;
+
+export function ReloadGolemSettings():Promise<ai.SettingsReloadResult>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 

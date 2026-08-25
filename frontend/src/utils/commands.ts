@@ -97,6 +97,15 @@ export function showGolem(conversationId?: string): void {
   const golem = useGolemStore.getState();
   if (conversationId) golem.selectConversation(conversationId);
   golem.setPanelMode('golem');
+  golem.setGolemView('chat');
+  openRightPanel();
+}
+
+/** Opens the Golem panel directly on the read-only configuration view. */
+export function showGolemConfiguration(): void {
+  const golem = useGolemStore.getState();
+  golem.setPanelMode('golem');
+  golem.setGolemView('configuration');
   openRightPanel();
 }
 
@@ -222,6 +231,12 @@ export const createCommands = (openFolder: () => void): Command[] => [
     keywords: ['ai', 'chat'],
     shortcut: '⌘⇧I',
     run: () => showGolem(),
+  },
+  {
+    id: 'golem-configuration',
+    title: 'Golem: Configuration',
+    keywords: ['settings', 'models', 'providers', 'config', 'ai'],
+    run: showGolemConfiguration,
   },
   {
     id: 'show-structure',

@@ -249,9 +249,10 @@ func TestGolemStatusNeverReturnsARepositoryRoot(t *testing.T) {
 	}
 }
 
-// The three Golem methods carry ai structs verbatim and take no path or
-// endpoint: a caller must not be able to redirect the repository root or the
-// provider endpoint through the Wails surface.
+// The six Golem methods — GetWorkspaceInfo plus the three that carry ai
+// structs verbatim, and the two zero-input settings methods — must never let
+// a caller redirect the repository root or the provider endpoint through the
+// Wails surface.
 func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 	appType := reflect.TypeOf(&App{})
 	errorType := reflect.TypeOf((*error)(nil)).Elem()
@@ -299,10 +300,73 @@ func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 			}
 		}
 	}
+
+	// The two settings methods take no input at all: nothing a caller supplies
+	// can influence discovery, and the projection is the only output.
+	zeroInput := []struct {
+		method string
+		out    reflect.Type
+	}{
+		{"GetGolemSettings", reflect.TypeOf(ai.SettingsProjection{})},
+		{"ReloadGolemSettings", reflect.TypeOf(ai.SettingsReloadResult{})},
+	}
+	for _, tc := range zeroInput {
+		method, ok := appType.MethodByName(tc.method)
+		if !ok {
+			t.Errorf("App has no method %s", tc.method)
+			continue
+		}
+		signature := method.Type
+		if signature.NumIn() != 1 {
+			t.Errorf("%s takes arguments (%v); it must take none", tc.method, signature)
+			continue
+		}
+		if signature.NumOut() != 2 || signature.Out(0) != tc.out || signature.Out(1) != errorType {
+			t.Errorf("%s returns %v, want (%v, error)", tc.method, signature, tc.out)
+		}
+	}
+
+	// Settings RESPONSE types may expose endpoints (like ProviderDestination)
+	// but never paths, roots, keys, or tokens.
+	forbiddenResponse := []string{"path", "root", "dir", "key", "token"}
+	for _, responseType := range []reflect.Type{
+		reflect.TypeOf(ai.SettingsProjection{}),
+		reflect.TypeOf(ai.SettingsReloadResult{}),
+		reflect.TypeOf(ai.RouteProjection{}),
+		reflect.TypeOf(ai.ModelProjection{}),
+		reflect.TypeOf(ai.ProviderProjection{}),
+		reflect.TypeOf(ai.Diagnostic{}),
+	} {
+		for i := range responseType.NumField() {
+			name := strings.ToLower(responseType.Field(i).Name)
+			for _, bad := range forbiddenResponse {
+				if strings.Contains(name, bad) {
+					t.Errorf("%s.%s would carry a %s across the settings boundary",
+						responseType.Name(), responseType.Field(i).Name, bad)
+				}
+			}
+		}
+	}
 }
 
-// Every error the four Wails methods return is a fixed public projection: no
-// absolute root, no config or consent path, no credential text.
+// The two settings methods share the same pre-startup guard as the other
+// Golem-bound methods: no service means the fixed unavailable projection, not
+// a nil-pointer panic.
+func TestGolemSettingsMethodsUninitializedService(t *testing.T) {
+	app := &App{}
+	if _, err := app.GetGolemSettings(); err == nil || err.Error() != "Golem is unavailable." {
+		t.Fatalf("GetGolemSettings uninitialized = %v", err)
+	}
+	if _, err := app.ReloadGolemSettings(); err == nil || err.Error() != "Golem is unavailable." {
+		t.Fatalf("ReloadGolemSettings uninitialized = %v", err)
+	}
+}
+
+// Every error each of these four struct-carrying Wails methods returns is a
+// fixed public projection: no absolute root, no config or consent path, no
+// credential text. The two zero-input settings methods carry the same
+// guarantee, checked separately above and by the golemError-routing tests
+// below.
 func TestGolemWailsMethodsReturnOnlyFixedPublicErrors(t *testing.T) {
 	app := newGolemApp(t)
 	leaky := filepath.Join(t.TempDir(), golemMarker, "no-such-repository")
@@ -497,15 +561,18 @@ func TestGolemErrorProjectsRawCausesToFixedMessages(t *testing.T) {
 // would change no message — the seal would simply be gone the first time an
 // App-constructed cause appeared. This pins it structurally, including the
 // branch that no reachable input exercises. The method list is derived from
-// the source, so a fifth bound method is covered the day it is written.
+// the source, so every aiService-touching method is covered the day it is
+// written — six today, more tomorrow.
 func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 	fset, files := golemPackageFiles(t)
 
 	methods := golemWailsMethods(files)
-	// The plan freezes four bound Golem methods. Fewer means the derivation
-	// itself broke, and everything below it would pass vacuously.
+	// The plan freezes six bound Golem methods today (the four struct-carrying
+	// methods plus the two zero-input settings methods). The floor stays at 4:
+	// fewer than that means the derivation itself broke, and everything below
+	// it would pass vacuously.
 	if len(methods) < 4 {
-		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least the four the plan freezes",
+		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 4 (six expected today)",
 			len(methods), golemSortedNames(methods))
 	}
 

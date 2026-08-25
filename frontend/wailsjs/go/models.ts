@@ -142,8 +142,154 @@ export namespace ai {
 	        this.conversationId = source["conversationId"];
 	    }
 	}
+	export class Diagnostic {
+	    code: string;
+	    subjectKind: string;
+	    subjectName: string;
+	    blocking: boolean;
 
+	    static createFrom(source: any = {}) {
+	        return new Diagnostic(source);
+	    }
 
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.subjectKind = source["subjectKind"];
+	        this.subjectName = source["subjectName"];
+	        this.blocking = source["blocking"];
+	    }
+	}
+	export class ModelProjection {
+	    role: string;
+	    modelName: string;
+	    provider: string;
+	    type: string;
+	    effectiveCapabilities: string[];
+	    thinkMode: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ModelProjection(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.role = source["role"];
+	        this.modelName = source["modelName"];
+	        this.provider = source["provider"];
+	        this.type = source["type"];
+	        this.effectiveCapabilities = source["effectiveCapabilities"];
+	        this.thinkMode = source["thinkMode"];
+	    }
+	}
+
+	export class ProviderProjection {
+	    name: string;
+	    endpoint: string;
+	    classification: string;
+	    apiFormat: string;
+	    credentialState: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ProviderProjection(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.endpoint = source["endpoint"];
+	        this.classification = source["classification"];
+	        this.apiFormat = source["apiFormat"];
+	        this.credentialState = source["credentialState"];
+	    }
+	}
+	export class RouteProjection {
+	    useCase: string;
+	    role: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RouteProjection(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.useCase = source["useCase"];
+	        this.role = source["role"];
+	    }
+	}
+
+	export class SettingsProjection {
+	    state: string;
+	    sourceOrigin: string;
+	    routes: RouteProjection[];
+	    models: ModelProjection[];
+	    providers: ProviderProjection[];
+	    diagnostics: Diagnostic[];
+
+	    static createFrom(source: any = {}) {
+	        return new SettingsProjection(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.sourceOrigin = source["sourceOrigin"];
+	        this.routes = this.convertValues(source["routes"], RouteProjection);
+	        this.models = this.convertValues(source["models"], ModelProjection);
+	        this.providers = this.convertValues(source["providers"], ProviderProjection);
+	        this.diagnostics = this.convertValues(source["diagnostics"], Diagnostic);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SettingsReloadResult {
+	    busy: boolean;
+	    projection: SettingsProjection;
+
+	    static createFrom(source: any = {}) {
+	        return new SettingsReloadResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.busy = source["busy"];
+	        this.projection = this.convertValues(source["projection"], SettingsProjection);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Status {
 	    available: boolean;
 	    workspaceLabel: string;
