@@ -298,6 +298,14 @@ func NormalizeEndpoint(raw string) (canonical string, local bool, err error) {
 	if strings.ContainsFunc(host, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) }) {
 		return "", false, errors.New("endpoint host must not carry control or format characters")
 	}
+	// A non-ASCII host (Cyrillic/fullwidth/ideographic-dot homoglyphs, etc.)
+	// is never resolvable as-is and a confusable one could visually spoof a
+	// trusted domain in the consent prompt or config view. Reject it outright
+	// rather than rendering it — an internationalized host must be supplied
+	// as its ASCII punycode form (xn--...), which passes through unchanged.
+	if strings.ContainsFunc(host, func(r rune) bool { return r > unicode.MaxASCII }) {
+		return "", false, errors.New("endpoint host must be ASCII; use punycode for internationalized hosts")
+	}
 	if host == "" {
 		return "", false, errors.New("endpoint must include a host")
 	}
@@ -312,7 +320,13 @@ func NormalizeEndpoint(raw string) (canonical string, local bool, err error) {
 		hostPart = "[" + host + "]"
 	}
 	port := u.Port()
-	defaultPort := map[string]string{"http": "80", "https": "443"}[scheme]
+	var defaultPort string
+	switch scheme {
+	case "http":
+		defaultPort = "80"
+	case "https":
+		defaultPort = "443"
+	}
 	if port != "" && port != defaultPort {
 		hostPart += ":" + port
 	}

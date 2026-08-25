@@ -92,6 +92,18 @@ func projectionHasDiagnostic(p SettingsProjection, code string, blocking bool) b
 	return false
 }
 
+// projectionDiagnostic returns the first diagnostic with the given code,
+// regardless of Blocking, so a test can assert on its full shape (subject,
+// blocking) in one place.
+func projectionDiagnostic(p SettingsProjection, code string) (Diagnostic, bool) {
+	for _, d := range p.Diagnostics {
+		if d.Code == code {
+			return d, true
+		}
+	}
+	return Diagnostic{}, false
+}
+
 func TestProjectionDocumentStateInvariants(t *testing.T) {
 	ready := buildSettingsProjection(projectionLoaded(projectionConfig()), nil)
 	if ready.State != "ready" || ready.Revision != testSettingsRevision ||
@@ -118,6 +130,26 @@ func TestProjectionDocumentStateInvariants(t *testing.T) {
 		if p.Revision != "" || p.ReadOnly || p.Editable {
 			t.Fatalf("%s document facts = %+v", name, p)
 		}
+	}
+}
+
+// TestProjectionReadOnlyDiagnosticNeverBlocks: an unknown future read-only
+// code fails closed onto {config_invalid, Blocking:true} inside
+// mapConfigDiagnostic (a deliberate choice for the LOAD-failure path, where
+// blocking is correct). Rendered as-is over a LIVE, successfully loaded
+// document, that same Blocking:true would read as "rejected while loading"
+// for a document that in fact loaded fine and whose entities still project.
+func TestProjectionReadOnlyDiagnosticNeverBlocks(t *testing.T) {
+	loaded := projectionLoaded(projectionConfig())
+	loaded.ReadOnly = true
+	loaded.ReadOnlyDiagnostic = config.Diagnostic{Code: config.ErrorCode("future_read_only_reason")}
+	p := buildSettingsProjection(loaded, nil)
+	if p.State != "limited" || len(p.Models) != 1 {
+		t.Fatalf("read-only unknown-code projection = %+v", p)
+	}
+	d, ok := projectionDiagnostic(p, codeConfigInvalid)
+	if !ok || d.Blocking {
+		t.Fatalf("read-only diagnostic must never block a live document: %+v", p.Diagnostics)
 	}
 }
 
@@ -184,9 +216,12 @@ func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	cfg.Defaults["agent"] = "agent\u202e"
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	if p.State != "limited" || p.Editable || len(p.Models) != 1 ||
-		p.Models[0].Role != "agent\ufffd" ||
-		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
+		p.Models[0].Role != "agent\ufffd" {
 		t.Fatalf("unsafe identifier projection = %+v", p)
+	}
+	d, ok := projectionDiagnostic(p, codeIdentifierNotEditable)
+	if !ok || d.Blocking || d.SubjectKind != "role" || d.SubjectName != "agent\ufffd" {
+		t.Fatalf("unsafe identifier diagnostic must name the offending role: %+v", d)
 	}
 }
 
@@ -197,9 +232,12 @@ func TestProjectionUnsafeParametersLimited(t *testing.T) {
 	cfg.Models["agent-m"] = model
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	projected := projectedModel(t, p, "agent-m")
-	if p.State != "limited" || p.Editable || projected.Parameters != "7b\ufffd" ||
-		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
+	if p.State != "limited" || p.Editable || projected.Parameters != "7b\ufffd" {
 		t.Fatalf("unsafe parameters projection = %+v", p)
+	}
+	d, ok := projectionDiagnostic(p, codeIdentifierNotEditable)
+	if !ok || d.Blocking || d.SubjectKind != "model" || d.SubjectName != "7b\ufffd" {
+		t.Fatalf("unsafe parameters diagnostic must name the offending model: %+v", d)
 	}
 }
 
@@ -219,9 +257,12 @@ func TestProjectionSanitizedCollisionWithheld(t *testing.T) {
 	cfg := projectionConfig()
 	cfg.Defaults = map[string]string{"a\u202d": "agent-m", "a\u202e": "agent-m"}
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
-	if p.State != "limited" || p.Editable || len(p.Routes)+len(p.Models)+len(p.Providers) != 0 ||
-		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
+	if p.State != "limited" || p.Editable || len(p.Routes)+len(p.Models)+len(p.Providers) != 0 {
 		t.Fatalf("sanitized collision projection = %+v", p)
+	}
+	d, ok := projectionDiagnostic(p, codeIdentifierNotEditable)
+	if !ok || d.Blocking || d.SubjectKind != "use_case" || d.SubjectName != "a\ufffd" {
+		t.Fatalf("sanitized collision diagnostic must name the offending use case: %+v", d)
 	}
 }
 
@@ -234,9 +275,12 @@ func TestProjectionSanitizedModelSelectorCollisionWithheld(t *testing.T) {
 	cfg.Defaults = map[string]string{"agent": "alpha"}
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	if p.State != "limited" || p.Editable ||
-		len(p.Routes)+len(p.Models)+len(p.Providers) != 0 ||
-		!projectionHasDiagnostic(p, codeIdentifierNotEditable, false) {
+		len(p.Routes)+len(p.Models)+len(p.Providers) != 0 {
 		t.Fatalf("sanitized selector collision projection = %+v", p)
+	}
+	d, ok := projectionDiagnostic(p, codeIdentifierNotEditable)
+	if !ok || d.Blocking || d.SubjectKind != "model" || d.SubjectName != "m\ufffd" {
+		t.Fatalf("sanitized selector collision diagnostic must name the offending model: %+v", d)
 	}
 }
 
@@ -264,6 +308,24 @@ func TestProjectionNewBounds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestProjectionFallbackCountBounded: exceedsProjectionBounds only checked
+// each fallback entry's byte length, never the COUNT of entries. A model
+// with hundreds of (even duplicated) fallbacks is unbounded work every
+// projection build, including under the bindingGate write lock.
+func TestProjectionFallbackCountBounded(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Fallbacks = make([]string, maxProjectionEntries+1)
+	for i := range m.Fallbacks {
+		m.Fallbacks[i] = "agent-m" // duplicates: the COUNT alone must bound this
+	}
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if p.State != "limited" || !projectionHasDiagnostic(p, codeProjectionLimited, false) {
+		t.Fatalf("fallback-count projection = %+v", p)
 	}
 }
 
@@ -847,7 +909,7 @@ func validateSettingsProjection(p SettingsProjection) error {
 		if !contractIdentifier(projectedProvider.Name) ||
 			len(projectedProvider.Endpoint) > maxProjectionEndpointLen ||
 			(projectedProvider.Endpoint != "" && strings.ContainsFunc(projectedProvider.Endpoint, func(r rune) bool {
-				return unicode.In(r, unicode.Cc, unicode.Cf)
+				return unicode.In(r, unicode.Cc, unicode.Cf) || r > unicode.MaxASCII
 			})) ||
 			!classifications[projectedProvider.Classification] ||
 			!apiFormats[projectedProvider.APIFormat] ||

@@ -165,6 +165,12 @@ describe('parseSettingsProjection', () => {
       },
     ],
     [
+      'non-ASCII endpoint host',
+      (v: Record<string, unknown>) => {
+        (v.providers as Record<string, unknown>[])[0].endpoint = 'http://ex\u0430mple.com';
+      },
+    ],
+    [
       'identifier over byte bound via multibyte',
       (v: Record<string, unknown>) => {
         (v.routes as Record<string, unknown>[])[0].role = 'é'.repeat(129); // 258 UTF-8 bytes

@@ -364,7 +364,7 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 	}
 	p := emptyProjection("ready", loaded.Origin)
 	p.Revision, p.ReadOnly = loaded.Revision, loaded.ReadOnly
-	editable, withhold := projectionIdentityStatus(cfg)
+	editable, withhold, offenseKind, offenseSubject := projectionIdentityStatus(cfg)
 	p.Editable = editable
 
 	appendDiagnostic := func(d Diagnostic) {
@@ -382,10 +382,20 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		}
 	}
 	if loaded.ReadOnly {
-		appendDiagnostic(mapConfigDiagnostic(loaded.ReadOnlyDiagnostic))
+		// mapConfigDiagnostic fails an unknown future code closed onto
+		// {config_invalid, Blocking:true} — correct for the load-FAILURE path,
+		// but this is a successfully loaded, live document; force the mirror
+		// image of that deliberate choice so an unreviewed read-only reason
+		// never renders as "rejected while loading" over entities that did
+		// load and still project.
+		d := mapConfigDiagnostic(loaded.ReadOnlyDiagnostic)
+		d.Blocking = false
+		appendDiagnostic(d)
 	}
 	if !p.Editable {
-		appendDiagnostic(Diagnostic{Code: codeIdentifierNotEditable})
+		appendDiagnostic(Diagnostic{
+			Code: codeIdentifierNotEditable, SubjectKind: offenseKind, SubjectName: offenseSubject,
+		})
 	}
 	if withhold {
 		p.State = "limited"
@@ -405,9 +415,11 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 	routed, referenced := roleUsage(cfg)
 	for role, m := range cfg.Models {
 		effective := canonicalizeCapabilities(m.ResolvedCapabilities())
-		exposed := append([]string{}, effective...)
+		var exposed []string
 		if override, ok := overrides[modelSelector{provider: m.Provider, model: m.Name}]; ok {
 			exposed = append([]string{}, override...)
+		} else {
+			exposed = append([]string{}, effective...)
 		}
 		p.Models = append(p.Models, ModelProjection{
 			Role: role, ModelName: m.Name, Provider: m.Provider, Type: m.Type,
@@ -477,18 +489,38 @@ type modelSelector struct {
 // selectors become the same sanitized selector — any of these would let a
 // future write target the wrong entity. An absent optional parameter is
 // valid and never sets either flag.
-func projectionIdentityStatus(cfg *config.Config) (editable, withhold bool) {
+//
+// offenseKind/offenseSubject name the FIRST identity that made editable
+// false, so the emitted diagnostic isn't a dead end: offenseKind is one of
+// "use_case"/"role"/"model"/"provider" per the namespace being inspected
+// ("model" covers both model-name and parameters offenses), and
+// offenseSubject is that identity's sanitized, bounded form (safe to emit
+// as-is). A collision necessarily involves at least one individually
+// malformed raw value (two clean values can never sanitize to the same
+// string), so it is always named this way too — no separate instrumentation
+// needed. An empty-required-identity offense has nothing to name: both stay
+// unset for it.
+func projectionIdentityStatus(cfg *config.Config) (editable, withhold bool, offenseKind, offenseSubject string) {
 	editable = true
-	inspect := func(value string, required bool) {
+	offenseRecorded := false
+	recordOffense := func(kind, subject string) {
+		if !offenseRecorded {
+			offenseKind, offenseSubject, offenseRecorded = kind, subject, true
+		}
+	}
+	inspect := func(kind, value string, required bool) {
 		if required && value == "" {
 			editable, withhold = false, true
+			recordOffense(kind, "") // nothing to name
+			return
 		}
 		if sanitizeIdentifier(value) != value {
 			editable = false
+			recordOffense(kind, sanitizeIdentifier(value))
 		}
 	}
-	addTarget := func(namespace map[string]string, value string) {
-		inspect(value, true)
+	addTarget := func(kind string, namespace map[string]string, value string) {
+		inspect(kind, value, true)
 		emitted := sanitizeIdentifier(value)
 		if raw, ok := namespace[emitted]; ok && raw != value {
 			withhold = true
@@ -512,25 +544,25 @@ func projectionIdentityStatus(cfg *config.Config) (editable, withhold bool) {
 		modelSelectors[emitted] = raw
 	}
 	for useCase, role := range cfg.Defaults {
-		addTarget(useCases, useCase)
-		addTarget(roles, role)
+		addTarget("use_case", useCases, useCase)
+		addTarget("role", roles, role)
 	}
 	for role, m := range cfg.Models {
-		addTarget(roles, role)
-		inspect(m.Name, true)
-		addTarget(providers, m.Provider)
+		addTarget("role", roles, role)
+		inspect("model", m.Name, true)
+		addTarget("provider", providers, m.Provider)
 		addModelSelector(m.Provider, m.Name)
 		if m.Parameters != "" {
-			inspect(m.Parameters, false)
+			inspect("model", m.Parameters, false)
 		}
 		for _, fallback := range m.Fallbacks {
-			addTarget(roles, fallback)
+			addTarget("role", roles, fallback)
 		}
 	}
 	for name := range cfg.Providers {
-		addTarget(providers, name)
+		addTarget("provider", providers, name)
 	}
-	return editable, withhold
+	return editable, withhold, offenseKind, offenseSubject
 }
 
 // selectorCapabilityOverrides groups sorted roles by (provider, model name)
@@ -655,6 +687,9 @@ func exceedsProjectionBounds(cfg *config.Config) bool {
 		}
 		if m.ContextWindow < 0 || m.ContextWindow > 2147483647 ||
 			m.Dimensions < 0 || m.Dimensions > 2147483647 {
+			return true
+		}
+		if len(m.Fallbacks) > maxProjectionEntries {
 			return true
 		}
 		for _, fallback := range m.Fallbacks {

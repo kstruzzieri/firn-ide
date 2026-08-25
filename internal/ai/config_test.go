@@ -640,6 +640,33 @@ func TestNormalizeEndpointEquivalence(t *testing.T) {
 	}
 }
 
+// TestNormalizeEndpointPathEscapingFixedPoint: a raw bidi/control rune in the
+// PATH (not the host) is not rejected by NormalizeEndpoint -- only the host
+// is guarded -- but url.EscapedPath percent-escapes it, so the canonical
+// output never carries the raw rune and that escaped form is a fixed point
+// under re-normalization (the same "canonical must be a fixed point"
+// invariant TestNormalizeEndpointCanonicalForms pins for hosts).
+func TestNormalizeEndpointPathEscapingFixedPoint(t *testing.T) {
+	raw := "http://example.com/agent\u202em"
+	canonical, _, err := NormalizeEndpoint(raw)
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	if strings.ContainsRune(canonical, '\u202e') {
+		t.Fatalf("canonical endpoint carries a raw bidi rune in the path: %q", canonical)
+	}
+	if !strings.Contains(canonical, "%") {
+		t.Fatalf("canonical endpoint did not percent-escape the path rune: %q", canonical)
+	}
+	again, _, err := NormalizeEndpoint(canonical)
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint rejected its own canonical output: %v", err)
+	}
+	if again != canonical {
+		t.Fatalf("canonical %q is not a fixed point: re-normalized to %q", canonical, again)
+	}
+}
+
 func TestNormalizeEndpointRejections(t *testing.T) {
 	rejects := []string{
 		"",
@@ -660,11 +687,21 @@ func TestNormalizeEndpointRejections(t *testing.T) {
 		"http://ex\u202eample.com", // RLO
 		"http://ex\u200fample.com", // RLM
 		"http://ex\u200bample.com", // zero-width space
+		"http://ex\u0430mple.com",  // Cyrillic "a" homoglyph
+		"http://\uff45xample.com",  // fullwidth "e" homoglyph
+		"http://example\u3002com",  // ideographic full stop as a dot lookalike
 	}
 	for _, raw := range rejects {
 		if got, _, err := NormalizeEndpoint(raw); err == nil {
 			t.Errorf("NormalizeEndpoint(%q) = %q, want error", raw, got)
 		}
+	}
+	// A punycode-encoded internationalized host is plain ASCII and must still
+	// be accepted -- the guard rejects non-ASCII runes, not non-Latin scripts.
+	if got, _, err := NormalizeEndpoint("http://xn--e1aybc.example.com"); err != nil {
+		t.Fatalf("punycode host rejected: %v", err)
+	} else if got != "http://xn--e1aybc.example.com" {
+		t.Fatalf("punycode host canonicalized wrong: %q", got)
 	}
 	// A clean host must still normalize once the Cc/Cf host check is added.
 	if got, _, err := NormalizeEndpoint("http://example.com"); err != nil || got != "http://example.com" {

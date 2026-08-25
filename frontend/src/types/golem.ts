@@ -630,6 +630,15 @@ const MAX_MODEL_NUMBER = 2147483647;
 // safe: producer stricter than contract.
 const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
 
+// A canonical endpoint is always plain ASCII: NormalizeEndpoint rejects a
+// non-ASCII host outright (Cyrillic/fullwidth/ideographic-dot homoglyphs
+// included -- a confusable host could spoof a trusted domain, and a
+// non-ASCII host is never resolvable as-is; internationalized hosts must be
+// supplied as their punycode form) and percent-escapes any non-ASCII byte in
+// the path. This is defense-in-depth on the reader's side of a boundary the
+// producer already closes.
+const NON_ASCII_RUNE = /[^\x20-\x7E]/;
+
 const isCleanIdentifier = (value: unknown, maxBytes: number): value is string =>
   isBoundedString(value, maxBytes) && !FORBIDDEN_IDENTIFIER_RUNES.test(value);
 
@@ -801,12 +810,15 @@ function readProvider(value: unknown): ProviderProjection | null {
     return null;
   const { name, endpoint, classification, apiFormat, credentialState } = value;
   if (!isIdentifier(name)) return null;
-  // Endpoint is not an identifier (so an empty endpoint stays valid), but its
-  // host must still be free of Cc/Cf runes -- NormalizeEndpoint's net/url
-  // parse only rejects bytes below 0x80 in the host, not control/format
-  // runes above it.
+  // Endpoint is not an identifier (so an empty endpoint stays valid), but a
+  // non-empty one must still be free of Cc/Cf runes and fully ASCII -- see
+  // NON_ASCII_RUNE above for why the producer already guarantees this.
   if (!isBoundedString(endpoint, MAX_ENDPOINT_BYTES)) return null;
-  if (endpoint !== '' && FORBIDDEN_IDENTIFIER_RUNES.test(endpoint)) return null;
+  if (
+    endpoint !== '' &&
+    (FORBIDDEN_IDENTIFIER_RUNES.test(endpoint) || NON_ASCII_RUNE.test(endpoint))
+  )
+    return null;
   if (!isOneOf(classification, CLASSIFICATIONS)) return null;
   if (!isOneOf(apiFormat, API_FORMATS)) return null;
   if (!isOneOf(credentialState, CREDENTIAL_STATES)) return null;
