@@ -848,6 +848,11 @@ func TestLoadDefaultAgentConfigTypeMismatchStaysCoarse(t *testing.T) {
 		loaded.ConfigDiagnostic.Subject != "" {
 		t.Fatalf("ConfigDiagnostic = %+v", loaded.ConfigDiagnostic)
 	}
+	projection := buildSettingsProjection(loaded, err)
+	if projection.State != "invalid" || len(projection.Diagnostics) != 1 ||
+		projection.Diagnostics[0].Code != codeConfigInvalid || !projection.Diagnostics[0].Blocking {
+		t.Fatalf("buildSettingsProjection(type mismatch) = %+v, want invalid config_invalid", projection)
+	}
 }
 
 func TestLoadDefaultAgentConfigUnsetEnvKeyStaysCoarse(t *testing.T) {

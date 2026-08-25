@@ -34,12 +34,11 @@
 
 /*
  * Full-bleed elevated strip like the panel header, sticky so the state verdict
- * stays in view while long model/provider lists scroll beneath it. top: -8px
- * cancels the root padding so the strip pins to the true panel edge.
+ * stays in view while long model/provider lists scroll beneath it.
  */
 .masthead {
   position: sticky;
-  top: -8px;
+  top: 0;
   z-index: 1;
   display: flex;
   flex-direction: column;

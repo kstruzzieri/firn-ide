@@ -342,6 +342,10 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		p := emptyProjection("invalid", loaded.Origin)
 		if loaded.HasConfigDiagnostic {
 			d := mapConfigDiagnostic(loaded.ConfigDiagnostic)
+			if loaded.ConfigDiagnostic.Code == config.CodeParseError &&
+				!errors.Is(loadErr, errConfigJSONSyntax) {
+				d.Code = codeConfigInvalid
+			}
 			d.Blocking = true
 			p.Diagnostics = append(p.Diagnostics, boundSubject(d))
 			return p
@@ -543,11 +547,23 @@ func projectionIdentityStatus(cfg *config.Config) (editable, withhold bool, offe
 		}
 		modelSelectors[emitted] = raw
 	}
-	for useCase, role := range cfg.Defaults {
+	defaultKeys := make([]string, 0, len(cfg.Defaults))
+	for useCase := range cfg.Defaults {
+		defaultKeys = append(defaultKeys, useCase)
+	}
+	sort.Strings(defaultKeys)
+	for _, useCase := range defaultKeys {
+		role := cfg.Defaults[useCase]
 		addTarget("use_case", useCases, useCase)
 		addTarget("role", roles, role)
 	}
-	for role, m := range cfg.Models {
+	modelRoles := make([]string, 0, len(cfg.Models))
+	for role := range cfg.Models {
+		modelRoles = append(modelRoles, role)
+	}
+	sort.Strings(modelRoles)
+	for _, role := range modelRoles {
+		m := cfg.Models[role]
 		addTarget("role", roles, role)
 		inspect("model", m.Name, true)
 		addTarget("provider", providers, m.Provider)
@@ -555,11 +571,20 @@ func projectionIdentityStatus(cfg *config.Config) (editable, withhold bool, offe
 		if m.Parameters != "" {
 			inspect("model", m.Parameters, false)
 		}
-		for _, fallback := range m.Fallbacks {
+		fallbacks := m.Fallbacks
+		if len(fallbacks) > maxProjectionEntries {
+			fallbacks = fallbacks[:maxProjectionEntries]
+		}
+		for _, fallback := range fallbacks {
 			addTarget("role", roles, fallback)
 		}
 	}
+	providerNames := make([]string, 0, len(cfg.Providers))
 	for name := range cfg.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
+	for _, name := range providerNames {
 		addTarget("provider", providers, name)
 	}
 	return editable, withhold, offenseKind, offenseSubject

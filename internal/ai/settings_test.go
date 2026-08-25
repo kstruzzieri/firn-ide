@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -225,6 +226,22 @@ func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	}
 }
 
+func TestProjectionIdentityDiagnosticDeterministic(t *testing.T) {
+	cfg := projectionConfig()
+	cfg.Defaults = map[string]string{
+		"charlie\u202e": "agent-m",
+		"alpha\u202e":   "agent-m",
+		"bravo\u202e":   "agent-m",
+	}
+	for build := 0; build < 64; build++ {
+		p := buildSettingsProjection(projectionLoaded(cfg), nil)
+		d, ok := projectionDiagnostic(p, codeIdentifierNotEditable)
+		if !ok || d.SubjectKind != "use_case" || d.SubjectName != "alpha\ufffd" {
+			t.Fatalf("buildSettingsProjection(unsafe identities) diagnostic = %+v, want use_case alpha�", d)
+		}
+	}
+}
+
 func TestProjectionUnsafeParametersLimited(t *testing.T) {
 	cfg := projectionConfig()
 	model := cfg.Models["agent-m"]
@@ -322,10 +339,14 @@ func TestProjectionFallbackCountBounded(t *testing.T) {
 	for i := range m.Fallbacks {
 		m.Fallbacks[i] = "agent-m" // duplicates: the COUNT alone must bound this
 	}
+	m.Fallbacks[maxProjectionEntries] = "late\u202e"
 	cfg.Models["agent-m"] = m
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	if p.State != "limited" || !projectionHasDiagnostic(p, codeProjectionLimited, false) {
 		t.Fatalf("fallback-count projection = %+v", p)
+	}
+	if d, ok := projectionDiagnostic(p, codeIdentifierNotEditable); ok {
+		t.Fatalf("buildSettingsProjection(oversized fallbacks) inspected the capped tail: %+v", d)
 	}
 }
 
@@ -888,14 +909,11 @@ func validateSettingsProjection(p SettingsProjection) error {
 				return fmt.Errorf("model[%d] routed use case %q", i, useCase)
 			}
 		}
-		known := make(map[string]bool, len(model.CapabilityFacts.KnownCaps))
-		for _, capability := range model.CapabilityFacts.KnownCaps {
-			known[capability] = true
+		if !slices.Equal(model.CapabilityFacts.Caps, model.EffectiveCapabilities) {
+			return fmt.Errorf("model[%d] capability facts disagree with effective capabilities", i)
 		}
-		for _, capability := range model.CapabilityFacts.Caps {
-			if !known[capability] {
-				return fmt.Errorf("model[%d] caps not subset of knownCaps", i)
-			}
+		if !slices.Equal(model.CapabilityFacts.KnownCaps, provider.CanonicalCapabilityNames) {
+			return fmt.Errorf("model[%d] known capability vocabulary is incomplete", i)
 		}
 		if i > 0 && p.Models[i-1].Role >= model.Role {
 			return fmt.Errorf("models are not unique canonical role order")
@@ -934,6 +952,13 @@ func validateSettingsProjection(p SettingsProjection) error {
 		if i > 0 && !diagnosticBefore(p.Diagnostics[i-1], diagnostic) {
 			return fmt.Errorf("diagnostics are not unique canonical order")
 		}
+	}
+	limitedHasCause := p.ReadOnly || !p.Editable
+	for _, diagnostic := range p.Diagnostics {
+		limitedHasCause = limitedHasCause || diagnostic.Code == codeProjectionLimited
+	}
+	if p.State == "limited" && !limitedHasCause {
+		return fmt.Errorf("limited projection has no limiting cause")
 	}
 	return nil
 }

@@ -717,7 +717,7 @@ function readCapabilityFacts(value: unknown): CapabilityFacts | null {
     knownCaps === null ||
     !isCanonicalCapabilities(caps) ||
     !isCanonicalCapabilities(knownCaps) ||
-    caps.some((cap) => !knownCaps.includes(cap))
+    knownCaps.length !== CAPABILITY_NAMES.length
   )
     return null;
   return { caps, knownCaps };
@@ -783,6 +783,8 @@ function readModel(value: unknown): ModelProjection | null {
     routedUseCases === null ||
     !isCanonicalCapabilities(effectiveCapabilities) ||
     !isCanonicalCapabilities(exposedCapabilities) ||
+    capabilityFacts.caps.length !== effectiveCapabilities.length ||
+    capabilityFacts.caps.some((cap, index) => cap !== effectiveCapabilities[index]) ||
     !isStrictlyOrdered(routedUseCases, compareString)
   )
     return null;
@@ -878,6 +880,11 @@ export function parseSettingsProjection(value: unknown): SettingsProjection {
     return contractError();
   if (!loaded && (routes.length !== 0 || models.length !== 0 || providers.length !== 0))
     return contractError();
+  const limitedHasCause =
+    value.readOnly ||
+    !value.editable ||
+    diagnostics.some((diagnostic) => diagnostic.code === 'projection_limited');
+  if (value.state === 'limited' && !limitedHasCause) return contractError();
 
   const routeOrder = (a: RouteProjection, b: RouteProjection): number =>
     compareString(a.useCase, b.useCase);

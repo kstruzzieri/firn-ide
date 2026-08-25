@@ -78,7 +78,7 @@ describe('GolemConfiguration', () => {
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findByText('wire-model')).toBeInTheDocument();
     expect(screen.getByText('https://api.example.com:8443/v1')).toBeInTheDocument();
-    expect(screen.getByText(/User configuration directory/)).toBeInTheDocument();
+    expect(screen.getByText('User configuration directory')).toBeInTheDocument();
     expect(screen.getByText('Remote')).toBeInTheDocument();
     expect(ReloadGolemSettings).toHaveBeenCalledTimes(1);
   });
@@ -90,7 +90,33 @@ describe('GolemConfiguration', () => {
     });
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findByText('wire-model')).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument();
+  });
+
+  it('announces configuration state changes after Refresh', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('wire-model');
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Configuration Ready. Source User configuration directory.');
+
+    (ReloadGolemSettings as jest.Mock).mockResolvedValueOnce({
+      busy: false,
+      projection: {
+        state: 'invalid',
+        sourceOrigin: 'env',
+        readOnly: false,
+        editable: false,
+        routes: [],
+        models: [],
+        providers: [],
+        diagnostics: [{ code: 'json_invalid', subjectKind: '', subjectName: '', blocking: true }],
+      },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
+
+    await waitFor(() =>
+      expect(status).toHaveTextContent('Configuration Invalid. Source Environment override.')
+    );
   });
 
   it('explicit Refresh while busy shows the inline busy notice', async () => {
@@ -101,7 +127,7 @@ describe('GolemConfiguration', () => {
       projection: readyProjection,
     });
     await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
-    expect(await screen.findByRole('status')).toHaveTextContent(/Golem is busy/);
+    expect(await screen.findByText(/Golem is busy/)).toHaveAttribute('role', 'status');
   });
 
   it('disables Refresh while a request is in flight and re-enables after', async () => {
@@ -226,6 +252,7 @@ describe('GolemConfiguration', () => {
       projection: {
         ...readyProjection,
         state: 'limited',
+        readOnly: true,
         diagnostics: [
           {
             code: 'key_reference_unavailable',

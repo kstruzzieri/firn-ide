@@ -149,6 +149,12 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
         )}
       </header>
 
+      <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+        {phase.kind === 'ready'
+          ? `Configuration ${STATE_LABEL[phase.projection.state]}. Source ${ORIGIN_LABEL[phase.projection.sourceOrigin]}.`
+          : ''}
+      </div>
+
       {phase.kind === 'loading' && (
         <p className={styles.loading}>
           <span className={styles.loadingDot} aria-hidden="true" />
