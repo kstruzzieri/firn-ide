@@ -93,8 +93,15 @@ export interface RoutingCardProps {
   routes: RouteProjection[];
   models: ModelProjection[];
   providers: ProviderProjection[];
-  /** The draft, for the staged view and for the editor's candidate projection. */
+  /** The raw draft: its source, and the base the editor's preview stages onto. */
   draft: Draft;
+  /**
+   * The draft's changes AS PROJECTED (`projectDraft().changes`) — never
+   * `draft.changes`. A selector group is rebuilt from its last authority, so
+   * the raw change a row was staged with can differ from the one Apply sends;
+   * painting the raw one would show the user a request that does not exist.
+   */
+  changes: readonly Change[];
   /** Route-identity row markers from `projectDraft`. */
   rows: ReadonlyMap<string, RowMarkers>;
   /** Role-identity row markers from `projectDraft`. */
@@ -111,6 +118,7 @@ export function RoutingCard({
   models,
   providers,
   draft,
+  changes,
   rows,
   roleRows,
   diagnostics,
@@ -144,7 +152,7 @@ export function RoutingCard({
   const base = { routes, models };
 
   const stagedFor = (useCase: string): Change | undefined =>
-    draft.changes.find((change) => changeStableID(change) === `route:${useCase}`);
+    changes.find((change) => changeStableID(change) === `route:${useCase}`);
 
   const rowDiagnostics = (useCase: string) =>
     diagnostics.filter(

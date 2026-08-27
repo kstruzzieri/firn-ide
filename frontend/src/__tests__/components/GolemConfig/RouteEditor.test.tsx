@@ -7,7 +7,15 @@ import {
   type RoutingCardProps,
 } from '../../../components/GolemConfig/RoutingCard';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
-import { cleanDraft, stageChange, KeyVault, type Change } from '../../../types/golemConfig';
+import {
+  buildApplyRequest,
+  cleanDraft,
+  projectDraft,
+  stageChange,
+  KeyVault,
+  type Change,
+  type RouteChange,
+} from '../../../types/golemConfig';
 import {
   CAPABILITY_NAMES,
   type ModelProjection,
@@ -67,11 +75,17 @@ const draftWith = (...changes: Change[]) =>
 function renderRouting(over: Partial<RoutingCardProps> = {}) {
   const onStage = jest.fn();
   const onUnstagedChange = jest.fn();
+  const routes = over.routes ?? [{ useCase: 'chat', role: 'chat-role' }];
+  const models = over.models ?? [model(), other];
+  const draft = over.draft ?? cleanDraft(testRevision);
   const props: RoutingCardProps = {
-    routes: [{ useCase: 'chat', role: 'chat-role' }],
-    models: [model(), other],
+    routes,
+    models,
     providers: [providerRow()],
-    draft: cleanDraft(testRevision),
+    draft,
+    // Exactly what the workspace hands over: the COALESCED changes, so every
+    // test below exercises the same values Apply would send.
+    changes: projectDraft({ routes, models }, draft).changes,
     rows: new Map(),
     roleRows: new Map(),
     diagnostics: [],
@@ -266,6 +280,9 @@ describe('RouteEditor', () => {
     await pickModel('gpt-5');
     await stage();
 
+    // `other` exposes exactly what it declares — no selector override exists —
+    // so this is §4.5's "declared caps arrive checked" case, and the seed is
+    // the full declared set.
     expect(onStage).toHaveBeenCalledWith(
       [
         {
@@ -283,6 +300,118 @@ describe('RouteEditor', () => {
       ],
       []
     );
+  });
+
+  it('paints the row and seeds the editor from the coalesced change, not the raw staging', async () => {
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'summarize', role: 'summarize-role' },
+    ];
+    const models = [
+      model(),
+      model({
+        role: 'summarize-role',
+        modelName: 'gpt-5',
+        effectiveCapabilities: ['chat', 'stream', 'thinking'],
+        capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ['chat', 'stream', 'thinking'],
+        thinkMode: 'auto',
+        routedUseCases: ['summarize'],
+      }),
+    ];
+    const modelFacts = { provider: 'hosted', model: 'gpt-5', type: 'dense' as const };
+    const capabilityFacts = {
+      caps: ['chat', 'stream', 'thinking'] as const,
+      knownCaps: [...CAPABILITY_NAMES],
+    };
+    // Two use cases staged onto ONE selector with differing selector-scoped
+    // fields. §3.3 rebuilds the group from its LAST authority, so `chat`'s own
+    // staging is not what Apply sends.
+    const draft = draftWith(
+      {
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts,
+        capabilityFacts: { ...capabilityFacts, caps: [...capabilityFacts.caps] },
+        exposedCaps: ['chat', 'stream', 'thinking'],
+        thinkMode: 'auto',
+        confirmUnknown: true,
+      },
+      {
+        kind: 'route',
+        useCase: 'summarize',
+        modelFacts,
+        capabilityFacts: { ...capabilityFacts, caps: [...capabilityFacts.caps] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+        confirmUnknown: true,
+      }
+    );
+
+    renderRouting({ routes, models, draft });
+
+    // The row paints the authority's think mode, not the one chat was staged with.
+    const row = routeCells('chat');
+    expect(within(row).getByText('gpt-5')).toBeInTheDocument();
+    expect(within(row).queryByText('auto')).not.toBeInTheDocument();
+    expect(within(row).getByText('—')).toBeInTheDocument();
+
+    // The reopened editor agrees with the row.
+    await openRoute('chat');
+    const caps = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from gpt-5',
+    });
+    expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
+    expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+
+    // …and so does the request.
+    const request = buildApplyRequest({ routes, models }, draft, vault(), 'apply');
+    const staged = request.changes.find(
+      (change): change is RouteChange => change.kind === 'route' && change.useCase === 'chat'
+    );
+    expect(staged?.exposedCaps).toEqual(['chat', 'stream']);
+    expect(staged?.thinkMode).toBe('');
+  });
+
+  it('seeds a retarget from the selector persisted exposure, not the declared set', async () => {
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        model(),
+        model({
+          role: 'summarize-role',
+          modelName: 'gpt-5',
+          // Declares four capabilities…
+          effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          // …but the selector override `summarize` authored exposes two.
+          exposedCapabilities: ['chat', 'stream'],
+          routedUseCases: ['summarize'],
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+
+    const caps = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from gpt-5',
+    });
+    expect(within(caps).getByLabelText('chat')).toBeChecked();
+    expect(within(caps).getByLabelText('chat')).toBeDisabled(); // floor, locked on
+    expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
+    expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
+
+    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await stage();
+    // Staging must not re-widen what `summarize` narrowed: the override is
+    // selector-wide, so a wider set here would rewrite the sibling's contract.
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream']);
   });
 
   it('discloses that a shared role forks and leaves its siblings alone', async () => {
@@ -675,6 +804,53 @@ describe('GolemConfigWorkspace route editing', () => {
     expect(
       within(screen.getByTestId('route-row-summarize')).getByText('Modified')
     ).toBeInTheDocument();
+  });
+
+  it('repaints a sibling row when a later staging becomes the selector authority', async () => {
+    const shared = model({
+      role: 'summarize-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'thinking'],
+      capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['chat', 'stream', 'thinking'],
+      thinkMode: 'auto',
+      routedUseCases: ['summarize'],
+    });
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        routes: [
+          { useCase: 'chat', role: 'chat-role' },
+          { useCase: 'summarize', role: 'summarize-role' },
+        ],
+        models: [model(), shared],
+      },
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('route-row-chat');
+
+    // Stage chat onto the summarize selector, keeping `thinking` and Auto.
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await stage();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(within(screen.getByTestId('route-row-chat')).getByText('auto')).toBeInTheDocument();
+
+    // Now narrow the SAME selector from the summarize row. That staging becomes
+    // the group's authority, so chat's row must follow it rather than keep
+    // showing the values it was staged with.
+    await openRoute('summarize');
+    await userEvent.click(screen.getByLabelText('thinking'));
+    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await stage();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(
+      within(screen.getByTestId('route-row-chat')).queryByText('auto')
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
   });
 
   it('keeps a route diagnostic on its row and the rest on the page', async () => {

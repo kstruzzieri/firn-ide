@@ -236,10 +236,26 @@ export function RouteEditor({
       ? { caps: canonicalCaps([...manual.caps, ...floor]), knownCaps: [...CAPABILITY_NAMES] }
       : (defined?.capabilityFacts ?? null);
 
-  // Choosing a different model re-seeds the checklist from ITS facts. Keyed on
-  // the declaration, not the half-typed name, so a keystroke never discards an
-  // exposure the user has already adjusted. (Render-phase state adjustment: the
-  // React "derive state from props" pattern.)
+  /**
+   * What arrives checked for a selection. §4.5's "declared caps arrive checked"
+   * governs a selector Firn has never persisted an exposure for — a manual
+   * declaration. A DEFINED model's `exposedCapabilities` already IS that
+   * answer: the projection reports the selector override when one exists and
+   * the declared set when it does not. Reading it here keeps all three seeding
+   * paths (staged, applied, freshly chosen) on one notion of "offered", so
+   * retargeting onto a model whose selector another use case narrowed cannot
+   * silently re-widen that sibling's persisted contract through
+   * `SetRoleOverrides`.
+   */
+  const offeredCaps = canonicalCaps([
+    ...(defined?.exposedCapabilities ?? capabilityFacts?.caps ?? []),
+    ...floor,
+  ]);
+
+  // Choosing a different model re-seeds the checklist from ITS exposure. Keyed
+  // on the declaration, not the half-typed name, so a keystroke never discards
+  // an exposure the user has already adjusted. (Render-phase state adjustment:
+  // the React "derive state from props" pattern.)
   const factsKey =
     manual !== null
       ? `manual\u0000${manual.caps.join(',')}`
@@ -247,7 +263,7 @@ export function RouteEditor({
   const [seenKey, setSeenKey] = useState(factsKey);
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
-    setExposed(canonicalCaps([...(capabilityFacts?.caps ?? []), ...floor]));
+    setExposed(offeredCaps);
     setThink(manual === null ? (defined?.thinkMode ?? '') : '');
     setAckDrops(false);
     setAckUnknown(false);

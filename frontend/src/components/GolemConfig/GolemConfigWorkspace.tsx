@@ -326,6 +326,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               models={projection.models}
               providers={projection.providers}
               draft={draft}
+              // The COALESCED changes, never `draft.changes`: a row and a
+              // reopened editor must show the selector-wide truth Apply sends
+              // (§3.3), which is rebuilt from each group's last authority.
+              changes={projected.changes}
               rows={projected.routeRows}
               roleRows={projected.roleRows}
               diagnostics={projection.diagnostics}
