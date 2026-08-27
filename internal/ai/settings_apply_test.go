@@ -6,15 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"firn/internal/filesystem"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/profiles"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -905,7 +908,7 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 	if keys == nil {
 		keys = map[string]string{}
 	}
-	prepared, result := prepareSettingsApply(SettingsApplyRequest{
+	prepared, result := prepareSettingsApply(context.Background(), SettingsApplyRequest{
 		TargetRevision: revision, Source: source, Changes: tc.changes, Keys: keys,
 	}, mode)
 
@@ -1558,7 +1561,7 @@ func TestPrepareProfileSourceRevisionsAreIndependent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prepared, result := prepareSettingsApply(
+			prepared, result := prepareSettingsApply(context.Background(),
 				profileSourceRequest(tc.target, tc.source, changes, nil), applyModeExisting)
 			if tc.wantConflict == "" {
 				if result != nil {
@@ -1602,7 +1605,7 @@ func TestPrepareProfileApplyClearsCredentialsUnlessReplaced(t *testing.T) {
 	stageUserProfile(t, "staged", keyedProfileJSON)
 
 	const replacement = "sk-restaged-literal"
-	prepared, result := prepareSettingsApply(profileSourceRequest(
+	prepared, result := prepareSettingsApply(context.Background(), profileSourceRequest(
 		targetRevision, profileBodyRevision(keyedProfileJSON),
 		[]Change{{Kind: changeKindProviderKeySet, Name: "literal"}},
 		map[string]string{"literal": replacement}), applyModeExisting)
@@ -1655,7 +1658,7 @@ func TestPrepareProfileSourceStoreUnsafe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "profiles"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prepared, result := prepareSettingsApply(profileSourceRequest(
+	prepared, result := prepareSettingsApply(context.Background(), profileSourceRequest(
 		targetRevision, strings.Repeat("d", 64),
 		[]Change{{Kind: changeKindProviderRemove, Name: "unused"}}, nil), applyModeExisting)
 	if prepared != nil {
@@ -1675,7 +1678,7 @@ func TestPrepareProfileSourceStoreUnsafe(t *testing.T) {
 // independent path.
 func TestLoadGolemProfileCurated(t *testing.T) {
 	sandboxAgentConfigEnv(t)
-	result := LoadGolemProfile("curated/local")
+	result := LoadGolemProfile(context.Background(), "curated/local")
 	if err := validateGolemProfileLoadResult(result); err != nil {
 		t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
 	}
@@ -1723,7 +1726,7 @@ func TestLoadGolemProfileScrubsEveryCredentialForm(t *testing.T) {
 		t.Fatal("an ambient parse of an unset reference must fail")
 	}
 
-	result := LoadGolemProfile("user/keyed")
+	result := LoadGolemProfile(context.Background(), "user/keyed")
 	if err := validateGolemProfileLoadResult(result); err != nil {
 		t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
 	}
@@ -1746,7 +1749,7 @@ func TestLoadGolemProfileLimitedDraft(t *testing.T) {
 	sandboxAgentConfigEnv(t)
 	stageUserProfile(t, "unwritable", unwritableProfileJSON)
 
-	result := LoadGolemProfile("user/unwritable")
+	result := LoadGolemProfile(context.Background(), "user/unwritable")
 	if err := validateGolemProfileLoadResult(result); err != nil {
 		t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
 	}
@@ -1819,7 +1822,7 @@ func TestLoadGolemProfileDiagnostics(t *testing.T) {
 			if tc.stage != nil {
 				tc.stage(t)
 			}
-			result := LoadGolemProfile(tc.id)
+			result := LoadGolemProfile(context.Background(), tc.id)
 			if err := validateGolemProfileLoadResult(result); err != nil {
 				t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
 			}
@@ -1855,7 +1858,7 @@ func TestPrepareGeneratesDistinctRoleNames(t *testing.T) {
 
 	stageApplyTarget(t, applyTargetConfigJSON)
 	revision := stagedTargetRevision(t)
-	prepared, result := prepareSettingsApply(SettingsApplyRequest{
+	prepared, result := prepareSettingsApply(context.Background(), SettingsApplyRequest{
 		TargetRevision: &revision, Source: ApplySource{Kind: applySourceApplied},
 		Changes: []Change{
 			confirmUnknown(routeChange(first, "ollama", "one", "chat", "stream"), first),
@@ -1922,7 +1925,7 @@ func TestPrepareTargetsTheCanonicalActiveSource(t *testing.T) {
 		Changes: []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
 		Keys:    map[string]string{},
 	}
-	prepared, result := prepareSettingsApply(request, applyModeExisting)
+	prepared, result := prepareSettingsApply(context.Background(), request, applyModeExisting)
 	if result != nil {
 		t.Fatalf("prepare refused: %+v", *result)
 	}
@@ -1941,7 +1944,7 @@ func TestPrepareTargetsTheCanonicalActiveSource(t *testing.T) {
 	if err := os.Symlink(other, link); err != nil {
 		t.Fatal(err)
 	}
-	swapped, result := prepareSettingsApply(request, applyModeExisting)
+	swapped, result := prepareSettingsApply(context.Background(), request, applyModeExisting)
 	if swapped != nil || result == nil || result.Status != "conflict" || result.Conflict != "target" {
 		t.Fatalf("swapped source prepared %v with result %+v", swapped != nil, result)
 	}
@@ -1981,5 +1984,870 @@ func TestFirnUseCaseFloorsAreOneTable(t *testing.T) {
 	// The agent floor has exactly one definition: the run path's own constant.
 	if firnUseCaseFloors["agent"] != requiredAgentCaps {
 		t.Fatal("the agent floor diverged from requiredAgentCaps")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Settings writes (spec §5.2 Call 1, Call 2, and Step S). Every row drives the
+// real Service against a real target file: the idle barrier, the consent
+// store, the save, and the snapshot publication ARE the behaviour under test,
+// so nothing below fakes them.
+// ---------------------------------------------------------------------------
+
+// remoteAgentTargetJSON is the shared write fixture with the agent ALREADY
+// routed at the remote provider, so an unrelated edit leaves the resolved
+// destination unchanged.
+var remoteAgentTargetJSON = strings.Replace(applyTargetConfigJSON, `"agent": "solo"`, `"agent": "shared"`, 1)
+
+// remoteProfileJSON is a credential-free profile whose agent route is remote:
+// applying it changes the destination, which is what makes it a consent case.
+const remoteProfileJSON = `{
+  "providers": {"remote": {"base_url": "https://api.example.com/v1", "api_format": "openai-compat"}},
+  "models": {"agent-m": {"name": "profile-remote-model", "provider": "remote", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+
+const applyRemoteEndpoint = "https://api.example.com/v1"
+
+// remoteApplyDestination is the destination the remote route change below
+// resolves to — the consent identity a matrix row can pre-grant.
+func remoteApplyDestination() ProviderDestination {
+	return ProviderDestination{
+		Provider: "remote", Model: "apply-remote-model", Endpoint: applyRemoteEndpoint,
+		Classification: "remote", Digest: destinationDigest("remote", applyRemoteEndpoint),
+	}
+}
+
+// remoteAgentRoute retargets the agent use case at a model NO other role uses,
+// so the change needs no unknown-use-case acknowledgement and the only thing
+// it changes is where agent traffic would go.
+func remoteAgentRoute() Change {
+	return routeChange(useCaseAgent, "remote", "apply-remote-model", "chat", "stream", "tool_call")
+}
+
+func localAgentRoute() Change {
+	return routeChange(useCaseAgent, "ollama", "apply-local-model", "chat", "stream", "tool_call")
+}
+
+type applyHarness struct {
+	svc  *Service
+	rec  *emitRecorder
+	path string // the staged target ("" for a Create sandbox)
+}
+
+// newApplyHarness stages body as the active target — body "" leaves the
+// sandbox empty for Create — and builds a Service on the REAL discovery path.
+func newApplyHarness(t *testing.T, body string) *applyHarness {
+	t.Helper()
+	return newApplyHarnessWithConsent(t, body, filepath.Join(t.TempDir(), "consent", "grants.json"))
+}
+
+// newApplyHarnessWithConsent is newApplyHarness with an explicit consent path;
+// an empty one makes every Grant fail, which is the uncertain-outcome case.
+func newApplyHarnessWithConsent(t *testing.T, body, consentPath string) *applyHarness {
+	t.Helper()
+	h := &applyHarness{rec: &emitRecorder{}}
+	if body == "" {
+		sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+	} else {
+		h.path = stageApplyTarget(t, body)
+	}
+	h.svc = NewService(context.Background(), filesystem.NewOS(), consentPath, h.rec.emit)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := h.svc.Close(ctx); err != nil {
+			t.Errorf("cleanup Close: %v", err)
+		}
+	})
+	return h
+}
+
+// request builds an applied-source request against the target's CURRENT
+// revision — the shape the frontend sends and, unchanged, resends on Confirm.
+func (h *applyHarness) request(t *testing.T, changes ...Change) SettingsApplyRequest {
+	t.Helper()
+	req := SettingsApplyRequest{
+		Source: ApplySource{Kind: applySourceApplied}, Changes: changes, Keys: map[string]string{},
+	}
+	if h.path != "" {
+		req.TargetRevision = stringPtr(stagedTargetRevision(t))
+	}
+	return req
+}
+
+func (h *applyHarness) targetBytes(t *testing.T) []byte {
+	t.Helper()
+	raw, _ := readTargetBytes(t, h.path)
+	return raw
+}
+
+// challenge runs Call 1 and returns the issued token, failing the test if the
+// call did anything other than ask for consent.
+func (h *applyHarness) challenge(t *testing.T, req SettingsApplyRequest) string {
+	t.Helper()
+	res, err := h.svc.ApplySettings(req)
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if err := validateSettingsApplyResult(res); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+	}
+	if res.Status != "consent_required" {
+		t.Fatalf("status = %q, want consent_required (%+v)", res.Status, res)
+	}
+	return res.Challenge.Token
+}
+
+func (h *applyHarness) confirm(t *testing.T, token string, req SettingsApplyRequest) SettingsApplyResult {
+	t.Helper()
+	res, err := h.svc.ConfirmSettingsApply(ConfirmSettingsApplyRequest{ChallengeToken: token, Request: req})
+	if err != nil {
+		t.Fatalf("ConfirmSettingsApply: %v", err)
+	}
+	if err := validateSettingsApplyResult(res); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+	}
+	return res
+}
+
+// pendingRecord reaches into the challenge map so a test can assert what the
+// backend retained — and, for the destination-mismatch row, move it.
+func (h *applyHarness) pendingRecord(t *testing.T, token string) *settingsChallengeRecord {
+	t.Helper()
+	h.svc.challengeMu.Lock()
+	defer h.svc.challengeMu.Unlock()
+	rec, ok := h.svc.pendingApplies[token]
+	if !ok {
+		t.Fatal("no pending challenge record for the issued token")
+	}
+	return rec
+}
+
+// markConversationBusy puts one conversation into a non-idle state, which is
+// exactly what the idle barrier refuses.
+func markConversationBusy(svc *Service, id string, state convState) {
+	conv := svc.conversationFor(id)
+	conv.mu.Lock()
+	conv.state = state
+	conv.mu.Unlock()
+}
+
+// TestApplySettingsConsentMatrix: only a CHANGED, ungranted, remote agent
+// destination takes a challenge. Everything else — unchanged, local, or
+// already granted — publishes straight through, and the challenge itself
+// writes nothing.
+func TestApplySettingsConsentMatrix(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		change     Change
+		grant      bool
+		wantStatus string
+	}{
+		{
+			name: "unchanged remote destination skips the challenge",
+			body: remoteAgentTargetJSON,
+			change: Change{Kind: changeKindProviderAdd, Name: "extra",
+				Endpoint: stringPtr("http://localhost:11700")},
+			wantStatus: "applied",
+		},
+		{name: "local destination skips the challenge", change: localAgentRoute(), wantStatus: "applied"},
+		{name: "already granted remote destination skips the challenge", change: remoteAgentRoute(),
+			grant: true, wantStatus: "applied"},
+		{name: "changed ungranted remote destination challenges", change: remoteAgentRoute(),
+			wantStatus: "consent_required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := tc.body
+			if body == "" {
+				body = applyTargetConfigJSON
+			}
+			h := newApplyHarness(t, body)
+			if tc.grant {
+				if err := h.svc.consent.Grant(remoteApplyDestination()); err != nil {
+					t.Fatalf("seed grant: %v", err)
+				}
+			}
+			before := h.targetBytes(t)
+			res, err := h.svc.ApplySettings(h.request(t, tc.change))
+			if err != nil {
+				t.Fatalf("ApplySettings: %v", err)
+			}
+			if err := validateSettingsApplyResult(res); err != nil {
+				t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+			}
+			if res.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q (%+v)", res.Status, tc.wantStatus, res)
+			}
+			after := h.targetBytes(t)
+			if tc.wantStatus == "consent_required" {
+				if !bytes.Equal(before, after) {
+					t.Fatal("consent_required wrote to the target")
+				}
+				if h.svc.consent.Has(remoteApplyDestination().Digest) {
+					t.Fatal("consent_required recorded a grant")
+				}
+				return
+			}
+			if bytes.Equal(before, after) {
+				t.Fatal("an applied result left the target unchanged")
+			}
+			if !tc.grant && h.svc.consent.Has(remoteApplyDestination().Digest) {
+				t.Fatal("a skipped challenge granted a destination anyway")
+			}
+		})
+	}
+}
+
+// TestConfirmSettingsApplyPublishes: Call 2 resends the full request, records
+// the grant, publishes, and consumes the token exactly once.
+func TestConfirmSettingsApplyPublishes(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+	before := h.targetBytes(t)
+	beforeEmits := h.rec.count(EventGolemStatusChanged)
+
+	res := h.confirm(t, token, req)
+	if res.Status != "applied" || res.Warning != "" {
+		t.Fatalf("confirm = %+v, want applied", res)
+	}
+	if res.Projection == nil || res.Projection.Revision == stagedTargetRevisionOf(before) {
+		t.Fatalf("projection did not advance: %+v", res.Projection)
+	}
+	if bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("confirm published nothing")
+	}
+	if !h.svc.consent.Has(remoteApplyDestination().Digest) {
+		t.Fatal("confirm did not record the grant")
+	}
+	if got := h.rec.count(EventGolemStatusChanged); got != beforeEmits+1 {
+		t.Fatalf("status-changed emits = %d, want %d", got, beforeEmits+1)
+	}
+	// The published snapshot is the one every other caller now reads.
+	settings, err := h.svc.Settings()
+	if err != nil {
+		t.Fatalf("Settings: %v", err)
+	}
+	if settings.Revision != res.Projection.Revision {
+		t.Fatalf("snapshot revision %q != published %q", settings.Revision, res.Projection.Revision)
+	}
+
+	// Single use: the token is gone, and that verdict beats the stale target
+	// revision the same request now carries.
+	published := h.targetBytes(t)
+	again := h.confirm(t, token, req)
+	if again.Status != "conflict" || again.Conflict != "challenge" ||
+		again.ConsentOutcome != consentUnchanged {
+		t.Fatalf("replayed confirm = %+v, want conflict:challenge", again)
+	}
+	if !bytes.Equal(published, h.targetBytes(t)) {
+		t.Fatal("a replayed confirm wrote again")
+	}
+}
+
+// stagedTargetRevisionOf is the independent revision oracle for raw bytes.
+func stagedTargetRevisionOf(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// TestConfirmSettingsApplyMismatches: every way Call 2 can stop describing
+// what the user approved refuses the write, and each one consumes the token.
+func TestConfirmSettingsApplyMismatches(t *testing.T) {
+	t.Run("request digest", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		req := h.request(t, remoteAgentRoute())
+		token := h.challenge(t, req)
+		before := h.targetBytes(t)
+		// A valid request that is not the approved one.
+		tampered := h.request(t, remoteAgentRoute(),
+			Change{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")})
+		res := h.confirm(t, token, tampered)
+		if res.Status != "conflict" || res.Conflict != "challenge" {
+			t.Fatalf("res = %+v, want conflict:challenge", res)
+		}
+		if !bytes.Equal(before, h.targetBytes(t)) {
+			t.Fatal("a mismatched confirm wrote to the target")
+		}
+		if h.svc.consent.Has(remoteApplyDestination().Digest) {
+			t.Fatal("a mismatched confirm granted the destination")
+		}
+	})
+
+	t.Run("target identity", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		req := h.request(t, remoteAgentRoute())
+		token := h.challenge(t, req)
+		// Same bytes, therefore the same revision — a different FILE. Only the
+		// target-identity digest can catch this.
+		moved := writeAgentConfigBody(t, applyTargetConfigJSON)
+		t.Setenv("GO_LLM_CONFIG", moved)
+		res := h.confirm(t, token, req)
+		if res.Status != "conflict" || res.Conflict != "challenge" {
+			t.Fatalf("res = %+v, want conflict:challenge", res)
+		}
+		if raw, _ := readTargetBytes(t, moved); !bytes.Equal([]byte(applyTargetConfigJSON), raw) {
+			t.Fatal("a moved target was written anyway")
+		}
+	})
+
+	t.Run("destination", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		req := h.request(t, remoteAgentRoute())
+		token := h.challenge(t, req)
+		before := h.targetBytes(t)
+		// The recorded destination is what the user saw; move it and the fresh
+		// resolution no longer matches what was approved.
+		rec := h.pendingRecord(t, token)
+		h.svc.challengeMu.Lock()
+		rec.post.Model = "some-other-model"
+		h.svc.challengeMu.Unlock()
+		res := h.confirm(t, token, req)
+		if res.Status != "conflict" || res.Conflict != "challenge" {
+			t.Fatalf("res = %+v, want conflict:challenge", res)
+		}
+		if !bytes.Equal(before, h.targetBytes(t)) {
+			t.Fatal("a destination mismatch wrote to the target")
+		}
+	})
+
+	t.Run("profile source", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		stageUserProfile(t, "staged", remoteProfileJSON)
+		req := h.request(t, Change{Kind: changeKindProviderAdd, Name: "extra",
+			Endpoint: stringPtr("http://localhost:11700")})
+		req.Source = ApplySource{Kind: applySourceProfile, ProfileID: "user/staged",
+			SourceRevision: profileBodyRevision(remoteProfileJSON)}
+		token := h.challenge(t, req)
+		before := h.targetBytes(t)
+		stageUserProfile(t, "staged", strings.Replace(remoteProfileJSON,
+			"profile-remote-model", "profile-moved-model", 1))
+		res := h.confirm(t, token, req)
+		if res.Status != "conflict" || res.Conflict != "profile_source" ||
+			res.ConsentOutcome != consentUnchanged {
+			t.Fatalf("res = %+v, want conflict:profile_source/unchanged", res)
+		}
+		if !bytes.Equal(before, h.targetBytes(t)) {
+			t.Fatal("a moved profile source wrote to the target")
+		}
+		// The token was consumed by that terminal result.
+		replay := h.confirm(t, token, req)
+		if replay.Conflict != "challenge" {
+			t.Fatalf("replay = %+v, want conflict:challenge", replay)
+		}
+	})
+}
+
+// TestSettingsChallengeExpires: the existing 10-minute TTL invalidates the
+// token, and an expired confirmation writes nothing.
+func TestSettingsChallengeExpires(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	clk := &fakeClock{t: time.Now()}
+	h.svc.now = clk.Now
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+	before := h.targetBytes(t)
+
+	clk.advance(consentChallengeTTL + time.Minute)
+	res := h.confirm(t, token, req)
+	if res.Status != "conflict" || res.Conflict != "challenge" {
+		t.Fatalf("res = %+v, want conflict:challenge", res)
+	}
+	if !bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("an expired confirmation wrote to the target")
+	}
+}
+
+// TestCancelSettingsApply: cancel is idempotent, invalidates the token, and
+// never writes.
+func TestCancelSettingsApply(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+	before := h.targetBytes(t)
+
+	for _, call := range []string{"first", "second"} {
+		res := h.svc.CancelSettingsApply(token)
+		if err := validateCancelSettingsApplyResult(res); err != nil {
+			t.Fatalf("%s cancel: %v (%+v)", call, err, res)
+		}
+	}
+	// An unknown token is already cancelled.
+	if res := h.svc.CancelSettingsApply("never-issued"); res.Status != "cancelled" {
+		t.Fatalf("unknown-token cancel = %+v", res)
+	}
+	res := h.confirm(t, token, req)
+	if res.Status != "conflict" || res.Conflict != "challenge" {
+		t.Fatalf("confirm after cancel = %+v, want conflict:challenge", res)
+	}
+	if !bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("cancel or a cancelled confirmation wrote to the target")
+	}
+}
+
+// TestCancelSettingsApplyIgnoresTheIdleBarrier (Amendment 9): cancel takes the
+// settings-challenge mutex and nothing else, so it returns immediately even
+// while a turn holds the barrier.
+func TestCancelSettingsApplyIgnoresTheIdleBarrier(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+
+	h.svc.bindingGate.Lock() // stands in for a turn holding the barrier
+	done := make(chan CancelSettingsApplyResult, 1)
+	go func() { done <- h.svc.CancelSettingsApply(token) }()
+	select {
+	case res := <-done:
+		if res.Status != "cancelled" {
+			t.Errorf("cancel = %+v", res)
+		}
+	case <-time.After(5 * time.Second):
+		h.svc.bindingGate.Unlock()
+		t.Fatal("cancel blocked on the idle barrier")
+	}
+	h.svc.bindingGate.Unlock()
+
+	res := h.confirm(t, token, req)
+	if res.Conflict != "challenge" {
+		t.Fatalf("confirm after barrier cancel = %+v", res)
+	}
+}
+
+// TestSettingsWriteBusyRetainsTheToken: busy is the one nonterminal
+// confirmation result, so the same token still works once the barrier clears.
+func TestSettingsWriteBusyRetainsTheToken(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+	before := h.targetBytes(t)
+
+	markConversationBusy(h.svc, "busy-conversation", stateRunning)
+	res := h.confirm(t, token, req)
+	if res.Status != "busy" {
+		t.Fatalf("busy confirm = %+v", res)
+	}
+	applyRes, err := h.svc.ApplySettings(h.request(t, localAgentRoute()))
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if applyRes.Status != "busy" {
+		t.Fatalf("busy apply = %+v", applyRes)
+	}
+	if !bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("a busy result wrote to the target")
+	}
+
+	markConversationBusy(h.svc, "busy-conversation", stateIdle)
+	res = h.confirm(t, token, req)
+	if res.Status != "applied" {
+		t.Fatalf("retried confirm = %+v, want applied", res)
+	}
+}
+
+// TestSettingsChallengeRetainsNothingSecret: the record holds only the token,
+// expiry, operation, two digests, and the two destinations. Key values are
+// outside the consent identity entirely, so a rotated key still confirms.
+func TestSettingsChallengeRetainsNothingSecret(t *testing.T) {
+	const staged = "sk-staged-secret"
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute(), Change{Kind: changeKindProviderKeySet, Name: "remote"})
+	req.Keys = map[string]string{"remote": staged}
+	res, err := h.svc.ApplySettings(req)
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if err := validateSettingsApplyResult(res); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+	}
+	if res.Status != "consent_required" {
+		t.Fatalf("status = %q, want consent_required", res.Status)
+	}
+	token := res.Challenge.Token
+	challengeRaw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal challenge result: %v", err)
+	}
+	for _, forbidden := range []string{staged, "sk-live-secret", h.path} {
+		if strings.Contains(string(challengeRaw), forbidden) {
+			t.Fatalf("challenge result carries %q: %s", forbidden, challengeRaw)
+		}
+	}
+
+	// The destination identity is deliberately retained (§5.2); a key value,
+	// the request, the document, and the target path are not.
+	dump := fmt.Sprintf("%+v", *h.pendingRecord(t, token))
+	for _, forbidden := range []string{staged, "sk-live-secret", h.path, "provider-key-set"} {
+		if strings.Contains(dump, forbidden) {
+			t.Fatalf("challenge record retains %q: %s", forbidden, dump)
+		}
+	}
+
+	// The resend rotates the key value; the consent identity cannot notice.
+	rotated := req
+	rotated.Keys = map[string]string{"remote": "sk-rotated-secret"}
+	res = h.confirm(t, token, rotated)
+	if res.Status != "applied" {
+		t.Fatalf("rotated-key confirm = %+v, want applied", res)
+	}
+	published := h.targetBytes(t)
+	if !bytes.Contains(published, []byte("sk-rotated-secret")) {
+		t.Fatal("the rotated key was not applied")
+	}
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	for _, forbidden := range []string{staged, "sk-rotated-secret", "sk-live-secret", h.path} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("result carries %q: %s", forbidden, raw)
+		}
+	}
+}
+
+// TestConfirmSettingsApplyGrantOutcomes: a grant failure blocks the save and
+// reports `uncertain`; a save failure AFTER a durable grant still reports that
+// the approval was recorded.
+func TestConfirmSettingsApplyGrantOutcomes(t *testing.T) {
+	t.Run("grant failure blocks the write", func(t *testing.T) {
+		// No consent path at all: Has is false and Grant always fails.
+		h := newApplyHarnessWithConsent(t, applyTargetConfigJSON, "")
+		req := h.request(t, remoteAgentRoute())
+		token := h.challenge(t, req)
+		before := h.targetBytes(t)
+
+		res := h.confirm(t, token, req)
+		if res.Status != "diagnostics" || res.ConsentOutcome != consentUncertain {
+			t.Fatalf("res = %+v, want diagnostics/uncertain", res)
+		}
+		if len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeConsentStoreFailed {
+			t.Fatalf("diagnostics = %+v", res.Diagnostics)
+		}
+		if !bytes.Equal(before, h.targetBytes(t)) {
+			t.Fatal("a failed grant still published the configuration")
+		}
+	})
+
+	t.Run("save failure after a recorded grant", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		req := h.request(t, remoteAgentRoute())
+		token := h.challenge(t, req)
+		before := h.targetBytes(t)
+
+		dir := filepath.Dir(h.path)
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatalf("chmod target dir: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+		res := h.confirm(t, token, req)
+		if res.Status != "diagnostics" || res.ConsentOutcome != consentRecorded {
+			t.Fatalf("res = %+v, want diagnostics/recorded", res)
+		}
+		if len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeConfigSaveFailed {
+			t.Fatalf("diagnostics = %+v", res.Diagnostics)
+		}
+		if !h.svc.consent.Has(remoteApplyDestination().Digest) {
+			t.Fatal("the grant was not durable")
+		}
+		if !bytes.Equal(before, h.targetBytes(t)) {
+			t.Fatal("a failed save changed the target")
+		}
+	})
+}
+
+// TestSaveOutcomeClassification: the three save-layer codes never reach
+// actionDiagnostics — §5.6 turns them into a conflict, an applied warning, and
+// a config_save_failed diagnostic respectively.
+func TestSaveOutcomeClassification(t *testing.T) {
+	cases := []struct {
+		name        string
+		err         error
+		wantWarning string
+		wantStatus  string
+		wantCode    string
+	}{
+		{name: "published", err: nil},
+		{name: "durability uncertain",
+			err:         fmt.Errorf("wrapped: %w", config.ErrDurabilityUncertain),
+			wantWarning: "durability_uncertain"},
+		{name: "revision conflict", err: fmt.Errorf("wrapped: %w", config.ErrRevisionConflict),
+			wantStatus: "conflict"},
+		{name: "target exists", err: targetExistsError(t), wantStatus: "conflict"},
+		{name: "io", err: errors.New("disk on fire"), wantStatus: "diagnostics",
+			wantCode: codeConfigSaveFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			warning, refusal := saveOutcome(tc.err)
+			if warning != tc.wantWarning {
+				t.Fatalf("warning = %q, want %q", warning, tc.wantWarning)
+			}
+			if tc.wantStatus == "" {
+				if refusal != nil {
+					t.Fatalf("refusal = %+v, want none", *refusal)
+				}
+				return
+			}
+			if refusal == nil {
+				t.Fatalf("no refusal, want %q", tc.wantStatus)
+			}
+			if err := validateSettingsApplyResult(*refusal); err != nil {
+				t.Fatalf("refusal is not contract-valid: %v (%+v)", err, *refusal)
+			}
+			if refusal.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", refusal.Status, tc.wantStatus)
+			}
+			if refusal.Status == "conflict" && refusal.Conflict != "target" {
+				t.Fatalf("conflict = %q, want target", refusal.Conflict)
+			}
+			if tc.wantCode != "" &&
+				(len(refusal.Diagnostics) != 1 || refusal.Diagnostics[0].Code != tc.wantCode) {
+				t.Fatalf("diagnostics = %+v, want %q", refusal.Diagnostics, tc.wantCode)
+			}
+		})
+	}
+}
+
+// targetExistsError produces a real upstream target_exists failure rather than
+// a hand-built one, so the classification is pinned to the API's own error.
+func targetExistsError(t *testing.T) error {
+	t.Helper()
+	doc, err := config.NewDocument(config.BootstrapSpec{
+		ProviderName: "ollama",
+		Provider:     config.ProviderSpec{BaseURL: "http://localhost:11434"},
+		Role:         "agent-m",
+		Model: config.ModelSpec{Name: "m", Type: "dense",
+			Capabilities: []string{"chat", "stream", "tool_call"}},
+	}, config.DocumentOptions{})
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	path := writeAgentConfigBody(t, applyTargetConfigJSON)
+	err = doc.SaveNew(path)
+	if err == nil {
+		t.Fatal("SaveNew over an existing file must fail")
+	}
+	return err
+}
+
+// TestSettingsWritePublicationRetiresRunners: the barrier is held through save,
+// snapshot publication, AND runner retirement, so no cached runner survives a
+// configuration change.
+func TestSettingsWritePublicationRetiresRunners(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	runner := &fakeRunner{}
+	conv := h.svc.conversationFor("cached-runner")
+	conv.mu.Lock()
+	conv.runner = &runnerRecord{runner: runner}
+	conv.mu.Unlock()
+
+	res, err := h.svc.ApplySettings(h.request(t, localAgentRoute()))
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("res = %+v, want applied", res)
+	}
+	if runner.closedCount() != 1 {
+		t.Fatalf("cached runner closed %d times, want 1", runner.closedCount())
+	}
+	conv.mu.Lock()
+	cached := conv.runner
+	conv.mu.Unlock()
+	if cached != nil {
+		t.Fatal("a retired runner is still cached")
+	}
+}
+
+// TestCreateSettingsPublishesTheBootstrapTarget: Create establishes the user
+// config destination itself and relies on SaveNew for create-only 0600.
+func TestCreateSettingsPublishesTheBootstrapTarget(t *testing.T) {
+	h := newApplyHarness(t, "")
+	res, err := h.svc.CreateSettings(bootstrapRequest())
+	if err != nil {
+		t.Fatalf("CreateSettings: %v", err)
+	}
+	if err := validateSettingsApplyResult(res); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("res = %+v, want applied", res)
+	}
+	path := mustCreateTargetPath(t)
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("created target: %v", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("created target mode = %v", info.Mode())
+	}
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("created parent: %v", err)
+	}
+	if parent.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("created parent mode = %v", parent.Mode())
+	}
+	if res.Projection.State != "ready" || res.Projection.SourceOrigin != "user_config" {
+		t.Fatalf("projection = %+v", *res.Projection)
+	}
+}
+
+// TestCreateSettingsRefusesUnsafeTargets: a target discovery cannot see is
+// still a target, and a parent that is not a real private directory is not a
+// place Firn establishes a configuration.
+func TestCreateSettingsRefusesUnsafeTargets(t *testing.T) {
+	t.Run("existing target discovery cannot see", func(t *testing.T) {
+		h := newApplyHarness(t, "")
+		path := mustCreateTargetPath(t)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("parent: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(t.TempDir(), "absent.json"), path); err != nil {
+			t.Fatalf("symlink: %v", err)
+		}
+		res, err := h.svc.CreateSettings(bootstrapRequest())
+		if err != nil {
+			t.Fatalf("CreateSettings: %v", err)
+		}
+		if err := validateSettingsApplyResult(res); err != nil {
+			t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+		}
+		if res.Status != "conflict" || res.Conflict != "target" {
+			t.Fatalf("res = %+v, want conflict:target", res)
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("the dangling symlink was replaced: %v %v", info, err)
+		}
+	})
+
+	t.Run("symlinked parent", func(t *testing.T) {
+		h := newApplyHarness(t, "")
+		path := mustCreateTargetPath(t)
+		elsewhere := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(filepath.Dir(path)), 0o700); err != nil {
+			t.Fatalf("grandparent: %v", err)
+		}
+		if err := os.Symlink(elsewhere, filepath.Dir(path)); err != nil {
+			t.Fatalf("symlink: %v", err)
+		}
+		res, err := h.svc.CreateSettings(bootstrapRequest())
+		if err != nil {
+			t.Fatalf("CreateSettings: %v", err)
+		}
+		if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+			res.Diagnostics[0].Code != codeConfigSaveFailed {
+			t.Fatalf("res = %+v, want config_save_failed diagnostics", res)
+		}
+		if _, err := os.Lstat(filepath.Join(elsewhere, "models.json")); err == nil {
+			t.Fatal("a configuration was written through the symlinked parent")
+		}
+	})
+}
+
+// bootstrapRequest is the fixed blank bootstrap: one provider plus the agent
+// route that references it, which is exactly what NewDocument consumes.
+func bootstrapRequest() SettingsApplyRequest {
+	return SettingsApplyRequest{
+		Source: ApplySource{Kind: applySourceBlank},
+		Changes: []Change{
+			{Kind: changeKindProviderAdd, Name: "ollama", Endpoint: stringPtr("http://localhost:11434")},
+			routeChange(useCaseAgent, "ollama", "bootstrap-model", "chat", "stream", "tool_call"),
+		},
+		Keys: map[string]string{},
+	}
+}
+
+func mustCreateTargetPath(t *testing.T) string {
+	t.Helper()
+	path, err := createTargetPath()
+	if err != nil {
+		t.Fatalf("create target path: %v", err)
+	}
+	return path
+}
+
+// TestReloadSettingsDoesNotConsumeASettingsChallenge: reload is not a consent
+// decision — only Cancel, expiry, or a terminal Confirm invalidates a token.
+func TestReloadSettingsDoesNotConsumeASettingsChallenge(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+
+	res, err := h.svc.ReloadSettings()
+	if err != nil || res.Busy {
+		t.Fatalf("ReloadSettings: %+v %v", res, err)
+	}
+	confirmed := h.confirm(t, token, req)
+	if confirmed.Status != "applied" {
+		t.Fatalf("confirm after reload = %+v, want applied", confirmed)
+	}
+}
+
+// TestSettingsWriteConcurrency: Apply, Confirm, Reload, Cancel, and Close run
+// simultaneously. The barrier must serialize them into contract-valid results
+// with no torn target — the race detector checks the rest.
+func TestSettingsWriteConcurrency(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	req := h.request(t, remoteAgentRoute())
+	token := h.challenge(t, req)
+
+	other := h.request(t, localAgentRoute()) // built here: no t call runs in a goroutine
+	var wg sync.WaitGroup
+	results := make(chan SettingsApplyResult, 2)
+	start := make(chan struct{}) // release all five at once
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		<-start
+		res, err := h.svc.ApplySettings(other)
+		if err == nil {
+			results <- res
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		res, err := h.svc.ConfirmSettingsApply(ConfirmSettingsApplyRequest{ChallengeToken: token, Request: req})
+		if err == nil {
+			results <- res
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, _ = h.svc.ReloadSettings()
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		h.svc.CancelSettingsApply(token)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := h.svc.Close(ctx); err != nil {
+			t.Errorf("concurrent Close: %v", err)
+		}
+	}()
+	close(start)
+	wg.Wait()
+	close(results)
+	for res := range results {
+		if err := validateSettingsApplyResult(res); err != nil {
+			t.Fatalf("concurrent result is not contract-valid: %v (%+v)", err, res)
+		}
+	}
+	// Whatever landed, the target is one complete document.
+	if _, err := loadDefaultAgentConfig(); err != nil {
+		t.Fatalf("target no longer loads: %v", err)
 	}
 }

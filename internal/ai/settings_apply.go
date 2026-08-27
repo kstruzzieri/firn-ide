@@ -3,10 +3,15 @@ package ai
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -602,13 +607,13 @@ var profileStoreCodes = map[profiles.ErrorCode]string{
 // otherwise a §5.6 profile diagnostic code; a read-only document is
 // config_invalid, because the scrub is a mutation and a document that refuses
 // every mutation cannot be sanitized at all.
-func loadProfileDocument(id string) (doc *config.Document, revision string, code string) {
+func loadProfileDocument(ctx context.Context, id string) (doc *config.Document, revision string, code string) {
 	store, err := profiles.DefaultStoreWithOptions(profileStoreOptions())
 	if err != nil {
 		// The user config directory could not be resolved; there is no store.
 		return nil, "", "io"
 	}
-	doc, err = store.Load(context.Background(), profiles.ID(id))
+	doc, err = store.Load(ctx, profiles.ID(id))
 	if err != nil {
 		mapped, ok := profileStoreCodes[profiles.CodeOf(err)]
 		if !ok {
@@ -627,8 +632,8 @@ func loadProfileDocument(id string) (doc *config.Document, revision string, code
 // preview plus the provenance a profile-origin Apply must send back. Slice B
 // calls it only for the fixed curated bootstrap; the loader itself is the one
 // profile-loading path, so Slice C's selector adds no second one.
-func LoadGolemProfile(id string) GolemProfileLoadResult {
-	doc, revision, code := loadProfileDocument(id)
+func LoadGolemProfile(ctx context.Context, id string) GolemProfileLoadResult {
+	doc, revision, code := loadProfileDocument(ctx, id)
 	if code != "" {
 		d := ProfileDiagnostic{Code: code}
 		// The id rides along only when it is one — an id the contract rejects
@@ -656,8 +661,8 @@ func LoadGolemProfile(id string) GolemProfileLoadResult {
 // the target's), and refuse a source Firn cannot write from. The staged changes
 // then run against the scrubbed document, so a profile Apply clears every
 // active credential unless the same request restages a literal replacement.
-func profileSourceDocument(req SettingsApplyRequest) (*config.Document, map[string]bool, *SettingsApplyResult) {
-	doc, revision, code := loadProfileDocument(req.Source.ProfileID)
+func profileSourceDocument(ctx context.Context, req SettingsApplyRequest) (*config.Document, map[string]bool, *SettingsApplyResult) {
+	doc, revision, code := loadProfileDocument(ctx, req.Source.ProfileID)
 	switch code {
 	case "":
 	case "invalid_id":
@@ -1003,8 +1008,7 @@ func validateRouteChange(change Change) error {
 // token plus the complete original request, revalidated in the mode the
 // challenge was issued for.
 func validateConfirmSettingsApplyRequest(req ConfirmSettingsApplyRequest, mode applyMode) error {
-	if req.ChallengeToken == "" || len(req.ChallengeToken) > maxChallengeTokenBytes ||
-		sanitizeIdentifier(req.ChallengeToken) != req.ChallengeToken {
+	if !validChallengeTokenShape(req.ChallengeToken) {
 		return errApplyInvalidField
 	}
 	return validateSettingsApplyRequest(req.Request, mode)
@@ -1024,20 +1028,46 @@ func validateConfirmSettingsApplyRequest(req ConfirmSettingsApplyRequest, mode a
 // validation paths from drifting.
 // ---------------------------------------------------------------------------
 
-// consentUnchanged is the consent outcome before any grant is attempted;
-// preparation never grants, so it is the only one this file can report.
-const consentUnchanged = "unchanged"
+// The §5.6 consent outcomes. `unchanged` is the value before any new Grant is
+// attempted — preparation never grants, so it is the only one preparation can
+// report. `recorded` follows a successful Grant and `uncertain` a failed one,
+// whose atomic writer may have renamed bytes before failing.
+const (
+	consentUnchanged = "unchanged"
+	consentRecorded  = "recorded"
+	consentUncertain = "uncertain"
+)
 
 // settingsWriteTarget is the authorized identity of the file a prepared write
 // would replace: the canonical (symlink-free) path the document was actually
 // read from, the discovery branch that selected it, and the revision that was
 // compared. The path is backend-only and never crosses the Wails boundary
-// (§5.4). Create leaves it empty — establishing a new destination belongs to
-// the save step.
+// (§5.4). Create carries the fixed bootstrap destination with no revision —
+// there is no document to compare against yet.
 type settingsWriteTarget struct {
 	path     string
 	origin   sourceOrigin
 	revision string
+}
+
+// identityDigest is the canonical identity of the file a write would publish:
+// the discovery branch plus the canonical path, and nothing else. A consent
+// challenge retains this digest instead of the path, so a token issued for one
+// file can never authorize a write to another — and no path is retained.
+func (t settingsWriteTarget) identityDigest() string {
+	return sha256Hex([]byte(string(t.origin) + "\x00" + t.path))
+}
+
+// createTargetPath is the fixed Create destination. Create is offered only for
+// config_missing, which under the current discovery order means $GO_LLM_CONFIG
+// is unset and no candidate exists — so the file to establish is always the
+// platform user config location (§5.2).
+func createTargetPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "go-llm", "models.json"), nil
 }
 
 // preparedSettingsApply is one non-writing preparation outcome: the complete
@@ -1050,7 +1080,7 @@ type preparedSettingsApply struct {
 	prior  *config.Config
 }
 
-func prepareSettingsApply(req SettingsApplyRequest, mode applyMode) (*preparedSettingsApply, *SettingsApplyResult) {
+func prepareSettingsApply(ctx context.Context, req SettingsApplyRequest, mode applyMode) (*preparedSettingsApply, *SettingsApplyResult) {
 	// The request is the trust boundary and Confirm resends it in full, so
 	// both entry points revalidate here rather than trusting Call 1's verdict.
 	if err := validateSettingsApplyRequest(req, mode); err != nil {
@@ -1064,7 +1094,7 @@ func prepareSettingsApply(req SettingsApplyRequest, mode applyMode) (*preparedSe
 	if active != nil {
 		prior = active.Config() // pre-mutation snapshot; Config returns a copy
 	}
-	doc, consumed, result := applySourceDocument(req, active)
+	doc, consumed, result := applySourceDocument(ctx, req, active)
 	if result != nil {
 		return nil, result
 	}
@@ -1095,7 +1125,16 @@ func loadApplyTarget(mode applyMode, wantRevision *string) (settingsWriteTarget,
 		// readable or not — is the Create race, and an unreadable one was never
 		// safely reloaded, so it carries no projection.
 		if errors.Is(err, ErrAgentConfigMissing) {
-			return settingsWriteTarget{origin: originNone}, nil, nil
+			// Nothing was discovered, so the recomputed state is `missing` and
+			// the recomputed origin is `none` — the only pair Create is offered
+			// for. Under that discovery outcome the destination is fixed
+			// (§5.2); resolving it here is what gives the write a canonical
+			// target identity to bind consent to.
+			path, perr := createTargetPath()
+			if perr != nil {
+				return settingsWriteTarget{}, nil, blockingDiagnostics(Diagnostic{Code: codeConfigSaveFailed})
+			}
+			return settingsWriteTarget{path: path, origin: originNone}, nil, nil
 		}
 		if err != nil {
 			return settingsWriteTarget{}, nil, conflictTarget(nil)
@@ -1143,7 +1182,7 @@ func targetPathExists(path string) bool {
 
 // applySourceDocument produces the document the staged changes run against and
 // the stable ids of any change the source itself already consumed.
-func applySourceDocument(req SettingsApplyRequest, active *config.Document) (*config.Document, map[string]bool, *SettingsApplyResult) {
+func applySourceDocument(ctx context.Context, req SettingsApplyRequest, active *config.Document) (*config.Document, map[string]bool, *SettingsApplyResult) {
 	switch req.Source.Kind {
 	case applySourceApplied:
 		if active == nil {
@@ -1155,7 +1194,7 @@ func applySourceDocument(req SettingsApplyRequest, active *config.Document) (*co
 	case applySourceBlank:
 		return blankSourceDocument(req)
 	case applySourceProfile:
-		return profileSourceDocument(req)
+		return profileSourceDocument(ctx, req)
 	}
 	return nil, nil, blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
 }
@@ -1758,6 +1797,141 @@ func derefInt(value *int) int {
 		return 0
 	}
 	return *value
+}
+
+// ---------------------------------------------------------------------------
+// Consent identity (spec §5.2). A challenge is only as safe as what Call 2
+// recomputes and compares, so every value below is derived from a fresh
+// preparation — never from anything the frontend sent back or the backend
+// stored.
+// ---------------------------------------------------------------------------
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// newChallengeToken is the cryptographically random, single-use, opaque token.
+// rand.Text is base32 (26 chars, ~130 bits): inside the §5.6 byte bound and
+// already a safe Identifier, so it needs no escaping to reach the UI.
+func newChallengeToken() string { return rand.Text() }
+
+// validChallengeTokenShape is the §5.6 token rule, checked before the token is
+// used to look anything up: opaque, 1..256 UTF-8 bytes, control-free.
+func validChallengeTokenShape(token string) bool {
+	return token != "" && len(token) <= maxChallengeTokenBytes &&
+		sanitizeIdentifier(token) == token
+}
+
+// constantTimeEqual compares two fixed-shape identity strings without leaking
+// how far they matched.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// agentDestination resolves where the agent traffic of one configuration would
+// go, or the zero destination when there is none to resolve: a document whose
+// agent route is missing or ineligible has no egress at all, so there is
+// nothing to consent to. Only the destination survives — the resolved target's
+// API key is discarded with the rest of it.
+func agentDestination(cfg *config.Config) ProviderDestination {
+	if cfg == nil {
+		return ProviderDestination{}
+	}
+	target, err := ResolveAgentTarget(cfg)
+	if err != nil {
+		return ProviderDestination{}
+	}
+	return target.destination
+}
+
+// consentChangesEgress reports whether a write would open egress the user has
+// not already faced: a resolvable REMOTE destination that is not identical to
+// the one the target resolves today. An unchanged destination, a local one, or
+// none at all proceeds directly to the save (§5.2).
+func consentChangesEgress(pre, post ProviderDestination) bool {
+	return post.Classification == "remote" && pre != post
+}
+
+// canonicalApplyDigest is the consent identity of one staged write: the
+// operation kind, the target revision, the profile provenance, every
+// non-secret change field in stable-identity order, the provider names key
+// operations touch, the backend target-identity digest, and the pre/post
+// destinations. Key VALUES are deliberately excluded — approving a destination
+// is not approving a secret, and §5.4 forbids retaining one — so a resend that
+// rotates a key still matches the challenge it answers.
+func canonicalApplyDigest(req SettingsApplyRequest, mode applyMode, targetDigest string, pre, post ProviderDestination) string {
+	changes := append([]Change(nil), req.Changes...)
+	slices.SortFunc(changes, func(a, b Change) int {
+		return strings.Compare(changeStableID(a), changeStableID(b))
+	})
+	keyNames := make([]string, 0, len(req.Keys))
+	for name := range req.Keys {
+		keyNames = append(keyNames, name)
+	}
+	slices.Sort(keyNames)
+	raw, err := json.Marshal(struct {
+		Operation      int                 `json:"operation"`
+		TargetRevision string              `json:"targetRevision"`
+		Source         ApplySource         `json:"source"`
+		Changes        []Change            `json:"changes"`
+		KeyNames       []string            `json:"keyNames"`
+		TargetDigest   string              `json:"targetDigest"`
+		Pre            ProviderDestination `json:"pre"`
+		Post           ProviderDestination `json:"post"`
+	}{
+		Operation: int(mode), TargetRevision: derefString(req.TargetRevision), Source: req.Source,
+		Changes: changes, KeyNames: keyNames, TargetDigest: targetDigest, Pre: pre, Post: post,
+	})
+	if err != nil {
+		// Unreachable: every member above is a plain JSON value. Fail closed
+		// with a digest no recomputation can reproduce, never with a constant
+		// two failing sides would agree on.
+		return sha256Hex([]byte(newChallengeToken()))
+	}
+	return sha256Hex(raw)
+}
+
+// saveOutcome classifies one Step-S save. It returns the applied warning when
+// the bytes are live and otherwise the exact §5.6 refusal. The three
+// save-layer codes are mapped HERE and never through actionDiagnostics, which
+// has no case for them and would fall through to config_invalid: a revision
+// conflict and a Create race are conflicts, and durability uncertainty is a
+// warning on a published write, never a failure.
+func saveOutcome(err error) (warning string, refusal *SettingsApplyResult) {
+	if err == nil {
+		return "", nil
+	}
+	if errors.Is(err, config.ErrDurabilityUncertain) {
+		return "durability_uncertain", nil
+	}
+	if d, ok := config.DiagnosticOf(err); ok {
+		switch d.Code {
+		case config.CodeRevisionConflict, config.CodeTargetExists:
+			// The target moved under a write that had already passed every
+			// preparation gate. It carries no projection: nothing was reloaded.
+			return "", conflictTarget(nil)
+		}
+	}
+	return "", blockingDiagnostics(Diagnostic{Code: codeConfigSaveFailed})
+}
+
+// conflictChallenge reports that the consent challenge no longer authorizes
+// this write: the token is absent, expired, cancelled, already consumed, or
+// the fresh preparation no longer matches what the user approved. It never
+// carries a projection — the active target may not have moved at all.
+func conflictChallenge(outcome string) *SettingsApplyResult {
+	return &SettingsApplyResult{Status: "conflict", Conflict: "challenge", ConsentOutcome: outcome}
+}
+
+// withConsentOutcome stamps the grant outcome onto the two result variants
+// §5.6 lets carry one. A failure AFTER a durable grant must still say the
+// approval was recorded; the other variants are all reached before any grant.
+func withConsentOutcome(r *SettingsApplyResult, outcome string) *SettingsApplyResult {
+	if r.Status == "conflict" || r.Status == "diagnostics" {
+		r.ConsentOutcome = outcome
+	}
+	return r
 }
 
 // ---------------------------------------------------------------------------
