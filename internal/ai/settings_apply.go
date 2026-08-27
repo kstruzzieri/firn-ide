@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -946,30 +947,62 @@ func prepareSettingsApply(req SettingsApplyRequest, mode applyMode) (*preparedSe
 // now: go-llm's own ReadOnly and Firn's identity-safety editable, which is
 // exactly what "state is not ready" means. A cached snapshot is never
 // consulted, so a UI that was bypassed cannot smuggle a stale gate through.
+// A target that moved out from under the draft splits three ways (§5.6): it is
+// gone, or a Create found one where there was none -> conflict:'target'; it is
+// newly unreadable -> config_invalid; it is newly read-only or carries an
+// identifier Firn cannot write -> limited. Only the conflict raised on a target
+// that DID reload safely may carry a projection.
 func loadApplyTarget(mode applyMode, wantRevision *string) (settingsWriteTarget, *config.Document, *SettingsApplyResult) {
 	doc, loaded, err := loadAgentConfigDocument()
 	if mode == applyModeCreate {
-		// Create is offered only for config_missing. Anything else — a target
-		// that appeared, or one that no longer reads — means the world moved
-		// under the draft.
+		// Create is offered only for config_missing. A target that appeared —
+		// readable or not — is the Create race, and an unreadable one was never
+		// safely reloaded, so it carries no projection.
 		if errors.Is(err, ErrAgentConfigMissing) {
 			return settingsWriteTarget{origin: originNone}, nil, nil
 		}
-		return settingsWriteTarget{}, nil, conflictTarget(loaded, err)
+		if err != nil {
+			return settingsWriteTarget{}, nil, conflictTarget(nil)
+		}
+		projection := buildSettingsProjection(loaded, nil)
+		return settingsWriteTarget{}, nil, conflictTarget(&projection)
 	}
 	if err != nil {
-		return settingsWriteTarget{}, nil, conflictTarget(loaded, err)
-	}
-	if wantRevision == nil || *wantRevision != loaded.Revision {
-		return settingsWriteTarget{}, nil, conflictTarget(loaded, nil)
+		// Gone or moved. Existence is the honest test, not the sentinel: a set
+		// $GO_LLM_CONFIG naming a deleted file fails discovery as "invalid",
+		// because the override always decides the source.
+		if errors.Is(err, ErrAgentConfigMissing) || !targetPathExists(loaded.LexicalPath) {
+			return settingsWriteTarget{}, nil, conflictTarget(nil)
+		}
+		// Newly invalid: the draft was built on a document that no longer
+		// parses or validates. Not a conflict — there is nothing to reconcile
+		// against until the file is repaired externally.
+		return settingsWriteTarget{}, nil, blockingDiagnostics(Diagnostic{Code: codeConfigInvalid})
 	}
 	projection := buildSettingsProjection(loaded, nil)
+	if wantRevision == nil || *wantRevision != loaded.Revision {
+		return settingsWriteTarget{}, nil, conflictTarget(&projection)
+	}
+	// Both write gates, recomputed on the document as it is right now: go-llm's
+	// own ReadOnly and Firn's identity-safety editable, which together are what
+	// "state is not ready" means. A cached snapshot is never consulted, so a UI
+	// that was bypassed cannot smuggle a stale gate through.
 	if projection.State != "ready" {
 		return settingsWriteTarget{}, nil, limitedResult(projection.Diagnostics)
 	}
 	return settingsWriteTarget{
 		path: loaded.SourcePath, origin: loaded.Origin, revision: loaded.Revision,
 	}, doc, nil
+}
+
+// targetPathExists reports whether the discovered source is still there at all.
+// The lexical path is classification-only — it is never written to.
+func targetPathExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 // applySourceDocument produces the document the staged changes run against and
@@ -1150,27 +1183,47 @@ func planRouteChanges(base *config.Config, changes []Change, consumed map[string
 }
 
 // verifyRouteConfirmations checks the request's unknown-use-case
-// acknowledgement against the set Firn derives itself: every default this
+// acknowledgement against the set Firn derives itself: every default the
 // mutation affects that has no Firn capability floor. The frontend cannot be
 // trusted to compute it, and a mismatch means the user was shown a different
 // set than the one about to change.
+//
+// The required set is derived PER SELECTOR, not per use case (§3.3: the field
+// is selector-scoped and must be byte-identical across every staged route on
+// one provider+model). Deriving it per use case would make a legitimate
+// request unsatisfiable — two floorless use cases staged onto one model would
+// each require their own value while the selector check requires one shared
+// value.
 func verifyRouteConfirmations(base *config.Config, routed map[string][]string, plans []routePlan) *SettingsApplyResult {
+	affected := map[modelSelector]map[string]bool{}
 	for _, plan := range plans {
-		affected := map[string]bool{plan.change.UseCase: true}
+		group, ok := affected[plan.selector]
+		if !ok {
+			group = map[string]bool{}
+			affected[plan.selector] = group
+		}
+		group[plan.change.UseCase] = true
 		for role := range gateRolesFor(base, plan) {
 			for _, useCase := range routed[role] {
-				affected[useCase] = true
+				group[useCase] = true
 			}
 		}
-		unknown := make([]string, 0, len(affected))
-		for useCase := range affected {
+	}
+	unknown := map[modelSelector][]string{}
+	for selector, group := range affected {
+		names := make([]string, 0, len(group))
+		for useCase := range group {
 			if _, ok := firnUseCaseFloors[useCase]; !ok {
-				unknown = append(unknown, useCase)
+				names = append(names, useCase)
 			}
 		}
-		slices.Sort(unknown)
-		if !slices.Equal(unknown, plan.change.ConfirmUnknownUseCases) ||
-			(len(unknown) > 0 && !plan.change.ConfirmUnknown) {
+		slices.Sort(names)
+		unknown[selector] = names
+	}
+	for _, plan := range plans {
+		required := unknown[plan.selector]
+		if !slices.Equal(required, plan.change.ConfirmUnknownUseCases) ||
+			(len(required) > 0 && !plan.change.ConfirmUnknown) {
 			return blockingDiagnostics(Diagnostic{
 				Code: codeEligibilityUnknown, SubjectKind: "use_case", SubjectName: plan.change.UseCase,
 			})
@@ -1279,6 +1332,13 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 		return result
 	}
 	for _, change := range stagedChanges(req.Changes, consumed, changeKindRouteUnassign) {
+		// The agent route is Firn's own run path: §4.3 never offers Unassign
+		// for it, and §5.2 makes the backend enforce that independently of the
+		// reducer. go-llm deliberately leaves the floor host-side, so this is
+		// the only gate between a bypassed UI and an unrunnable configuration.
+		if change.UseCase == useCaseAgent {
+			return blockingDiagnostics(Diagnostic{Code: codeAgentRoleMissing})
+		}
 		if err := doc.UnbindUseCase(change.UseCase); err != nil {
 			return actionDiagnostics(err)
 		}
@@ -1385,8 +1445,11 @@ func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest) *Sett
 			})
 		}
 	}
+	// §5.6: the post-mutation document is projected here, and a result that
+	// would exceed a projection bound returns `limited` before consent/save —
+	// the same status the load-time bound check returns, for the same reason.
 	if exceedsProjectionBounds(cfg) {
-		return blockingDiagnostics(Diagnostic{Code: codeProjectionLimited})
+		return limitedResult([]Diagnostic{{Code: codeProjectionLimited}})
 	}
 	return nil
 }
@@ -1589,14 +1652,13 @@ func limitedResult(ds []Diagnostic) *SettingsApplyResult {
 	return &SettingsApplyResult{Status: "limited", Diagnostics: out}
 }
 
-// conflictTarget reports that the active target moved: it no longer loads, it
-// appeared where Create expected nothing, or its revision is not the one the
-// draft was built on. The freshly loaded projection rides along so the UI can
-// recover without a second call.
-func conflictTarget(loaded loadedAgentConfig, loadErr error) *SettingsApplyResult {
-	projection := buildSettingsProjection(loaded, loadErr)
+// conflictTarget reports that the active target moved: it is gone, it appeared
+// where Create expected nothing, or its revision is not the one the draft was
+// built on. A projection rides along ONLY when the target was safely reloaded
+// (§5.6), so the UI can recover without a second call; otherwise it is nil.
+func conflictTarget(projection *SettingsProjection) *SettingsApplyResult {
 	return &SettingsApplyResult{
-		Status: "conflict", Conflict: "target", Projection: &projection,
+		Status: "conflict", Conflict: "target", Projection: projection,
 		ConsentOutcome: consentUnchanged,
 	}
 }

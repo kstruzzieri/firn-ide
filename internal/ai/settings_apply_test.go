@@ -725,18 +725,39 @@ func confirmUnknown(change Change, useCases ...string) Change {
 
 func stringPtr(value string) *string { return &value }
 
+// readTargetBytes reports the target file's content and whether it exists at
+// all, so a row that deletes the target can still assert nothing was written.
+func readTargetBytes(t *testing.T, path string) ([]byte, bool) {
+	t.Helper()
+	if path == "" {
+		return nil, false
+	}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false
+	}
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	return raw, true
+}
+
 type prepareCase struct {
-	name       string
-	document   string // "" => applyTargetConfigJSON
-	create     bool
-	revision   *string // "" => the staged target's own revision
-	source     *ApplySource
-	changes    []Change
-	keys       map[string]string
-	wantStatus string // "" => prepared, no result
-	wantCodes  []string
-	wantDrops  []ChangeDropSet
-	check      func(t *testing.T, cfg *config.Config)
+	name     string
+	document string // "" => applyTargetConfigJSON
+	create   bool
+	revision *string // "" => the staged target's own revision
+	source   *ApplySource
+	changes  []Change
+	keys     map[string]string
+	// disturb runs after the draft's revision is captured and before prepare:
+	// it is how a row makes the target move under the request.
+	disturb          func(t *testing.T, path string)
+	wantStatus       string // "" => prepared, no result
+	wantCodes        []string
+	wantDrops        []ChangeDropSet
+	wantNoProjection bool
+	check            func(t *testing.T, cfg *config.Config)
 }
 
 func runPrepareCase(t *testing.T, tc prepareCase) {
@@ -756,14 +777,10 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 			revision = stringPtr(stagedTargetRevision(t))
 		}
 	}
-	var before []byte
-	if path != "" {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read target: %v", err)
-		}
-		before = raw
+	if tc.disturb != nil {
+		tc.disturb(t, path)
 	}
+	before, hadTarget := readTargetBytes(t, path)
 
 	source := ApplySource{Kind: applySourceApplied}
 	if tc.source != nil {
@@ -777,14 +794,8 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 		TargetRevision: revision, Source: source, Changes: tc.changes, Keys: keys,
 	}, mode)
 
-	if path != "" {
-		after, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("re-read target: %v", err)
-		}
-		if !bytes.Equal(before, after) {
-			t.Fatal("preparation wrote to the target file")
-		}
+	if after, stillThere := readTargetBytes(t, path); stillThere != hadTarget || !bytes.Equal(before, after) {
+		t.Fatal("preparation wrote to the target file")
 	}
 
 	if tc.wantStatus == "" {
@@ -830,6 +841,10 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 				t.Fatalf("drops[%d] = %+v, want %+v", i, got, want)
 			}
 		}
+	}
+	// A conflict may carry a projection only when the target reloaded safely.
+	if tc.wantNoProjection && result.Projection != nil {
+		t.Fatalf("result carries a projection for a target that was not safely reloaded: %+v", *result)
 	}
 }
 
@@ -1141,11 +1156,74 @@ func TestPrepareSettingsApply(t *testing.T) {
 			wantCodes:  []string{codeIdentifierNotEditable},
 		},
 		{
+			// §5.6: a post-mutation document over a projection bound returns
+			// limited before consent/save — the same status the load-time
+			// bound check returns.
 			name:       "post-mutation projection overflow",
 			document:   manyProviderConfigJSON(maxProjectionEntries),
 			changes:    []Change{{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")}},
-			wantStatus: "diagnostics",
+			wantStatus: "limited",
 			wantCodes:  []string{codeProjectionLimited},
+		},
+		{
+			// The target parsed when the draft was built and does not now:
+			// there is nothing to reconcile against, so it is not a conflict.
+			name:    "target became unreadable",
+			changes: []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+			disturb: func(t *testing.T, path string) {
+				if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeConfigInvalid},
+		},
+		{
+			name:    "target disappeared",
+			changes: []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+			disturb: func(t *testing.T, path string) {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantStatus:       "conflict",
+			wantNoProjection: true,
+		},
+		{
+			// §4.3 never offers Unassign for the agent route and §5.2 makes the
+			// backend enforce that independently of the reducer.
+			name:       "the agent route cannot be unassigned",
+			changes:    []Change{{Kind: changeKindRouteUnassign, UseCase: "agent"}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeAgentRoleMissing},
+		},
+		{
+			// §3.3 scopes the confirmation to the SELECTOR: two floorless use
+			// cases staged onto one model share one required set, and a
+			// per-use-case set would make the request unsatisfiable.
+			name: "two floorless use cases on one selector",
+			changes: []Change{
+				confirmUnknown(routeChange("vision", "ollama", "multi-model", "chat", "stream"), "audio", "vision"),
+				confirmUnknown(routeChange("audio", "ollama", "multi-model", "chat", "stream"), "audio", "vision"),
+			},
+			check: func(t *testing.T, cfg *config.Config) {
+				vision, audio := cfg.Defaults["vision"], cfg.Defaults["audio"]
+				if vision != "vision-m" || audio != "audio-m" {
+					t.Fatalf("defaults = %v", cfg.Defaults)
+				}
+				if cfg.Models[vision].Name != "multi-model" || cfg.Models[audio].Name != "multi-model" {
+					t.Fatalf("models = %v", cfg.Models)
+				}
+			},
+		},
+		{
+			name: "per-use-case confirmation on a shared selector is refused",
+			changes: []Change{
+				confirmUnknown(routeChange("vision", "ollama", "multi-model", "chat", "stream"), "vision"),
+				confirmUnknown(routeChange("audio", "ollama", "multi-model", "chat", "stream"), "audio"),
+			},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityUnknown},
 		},
 		{
 			name:   "profile source is not available yet",
