@@ -2,9 +2,14 @@
  * Providers section card (#263 spec §4.1, mockup v10): a header bar with an
  * accent edge over separated row strips. Read-only in Slice B Task 7 — the row
  * editor and "Add provider" arrive with the write path.
+ *
+ * Strips are list items, matching the dock readout's `ul`/`li` rows, so each row
+ * has a boundary in the accessibility tree; Tasks 8/9 hang an editor form off
+ * one, which a list item takes without argument.
  */
 
 import type { ProviderProjection } from '../../types/golem';
+import { Cell } from './Cell';
 import styles from './GolemConfig.module.css';
 import { StatusText, type StatusTone } from './StatusText';
 
@@ -40,40 +45,41 @@ export function ProvidersCard({ providers }: { providers: ProviderProjection[] }
           </p>
         ) : (
           <>
+            {/* Decorative: every cell below names its own column. */}
             <div className={`${styles.columns} ${styles.providerGrid}`} aria-hidden="true">
               <span>Provider</span>
               <span>Endpoint</span>
               <span>Type</span>
               <span>API key</span>
             </div>
-            {providers.map((provider) => {
-              const credential = CREDENTIAL[provider.credentialState];
-              return (
-                <div
-                  key={provider.name}
-                  data-testid={`provider-row-${provider.name}`}
-                  className={`${styles.strip} ${styles.providerGrid}`}
-                >
-                  <span className={styles.identifier} data-label="Provider">
-                    {provider.name}
-                  </span>
-                  <span className={styles.value} data-label="Endpoint">
-                    {provider.endpoint === '' ? (
-                      <span className={styles.absent}>no endpoint</span>
-                    ) : (
-                      provider.endpoint
-                    )}
-                  </span>
-                  <span className={styles.meta} data-label="Type">
-                    {CLASSIFICATION_LABEL[provider.classification]}
-                    <span className={styles.metaSub}>{provider.apiFormat}</span>
-                  </span>
-                  <span data-label="API key">
-                    <StatusText tone={credential.tone}>{credential.label}</StatusText>
-                  </span>
-                </div>
-              );
-            })}
+            <ul className={styles.rows} aria-label="Providers">
+              {providers.map((provider) => {
+                const credential = CREDENTIAL[provider.credentialState];
+                return (
+                  <li
+                    key={provider.name}
+                    data-testid={`provider-row-${provider.name}`}
+                    className={`${styles.strip} ${styles.providerGrid}`}
+                  >
+                    <Cell label="Provider" className={styles.identifier}>
+                      {provider.name}
+                    </Cell>
+                    <Cell label="Endpoint" className={styles.value}>
+                      {/* Meaningful, not inert: an empty endpoint is the whole
+                          misconfiguration signal, so it keeps readable copy. */}
+                      {provider.endpoint === '' ? 'no endpoint' : provider.endpoint}
+                    </Cell>
+                    <Cell label="Type" className={styles.meta}>
+                      {CLASSIFICATION_LABEL[provider.classification]}
+                      <span className={styles.metaSub}>{provider.apiFormat}</span>
+                    </Cell>
+                    <Cell label="API key">
+                      <StatusText tone={credential.tone}>{credential.label}</StatusText>
+                    </Cell>
+                  </li>
+                );
+              })}
+            </ul>
           </>
         )}
       </div>

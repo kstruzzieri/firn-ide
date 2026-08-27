@@ -14,12 +14,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
 import golemIcon from '../../assets/branding/golem-icon.svg';
-import { useGolemStore } from '../../stores/golemStore';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,
   type SettingsProjection,
 } from '../../types/golem';
+import { focusConfigTab } from '../../utils/editorSurface';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfiguration.module.css';
 
@@ -98,11 +98,7 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
           <div className={styles.headerActions}>
             {/* The dock's one new affordance (spec §3.1): the editing surface is
                 the app-global workspace tab; this readout stays read-only. */}
-            <button
-              type="button"
-              className={styles.headerButton}
-              onClick={() => useGolemStore.getState().openConfigTab()}
-            >
+            <button type="button" className={styles.headerButton} onClick={focusConfigTab}>
               Open configuration
             </button>
             <button

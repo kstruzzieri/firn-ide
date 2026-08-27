@@ -14,3 +14,21 @@ export function focusEditorSurface(focus: EditorFocus): void {
   useGitStore.getState().setEditorFocus(focus);
   useGolemStore.getState().setConfigTabFocused(false);
 }
+
+/**
+ * The other direction, and the reason exclusivity has to be bidirectional: the
+ * git store's `openDiff`/`openMergeResolution` set `diffFocused`/`mergeFocused`
+ * directly, and `openDiff` only ever raises the flag (gitStore
+ * `diffFocused: focus ? true : state.diffFocused`). A flag left true while the
+ * configuration tab is selected makes the next open a no-op edge, so the diff
+ * would swap sessions invisibly behind this surface. Selecting the configuration
+ * tab therefore parks the git-side focus back on `file`.
+ *
+ * Every entry point to the tab — the tab itself, the palette command, and the
+ * dock's "Open configuration" — goes through here rather than calling
+ * `openConfigTab` directly.
+ */
+export function focusConfigTab(): void {
+  useGolemStore.getState().openConfigTab();
+  useGitStore.getState().setEditorFocus('file');
+}

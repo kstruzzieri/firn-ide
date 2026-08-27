@@ -7,6 +7,7 @@ import {
 } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { navigateToEditorLocation } from './editorNavigation';
+import { focusConfigTab } from './editorSurface';
 import { startProfile, restartProfile } from './profileActions';
 import { resolveEffectiveRunTargetId } from './resolveEffectiveRunTarget';
 import { getVisualState } from './visualState';
@@ -107,7 +108,7 @@ export function showGolem(conversationId?: string): void {
  * CTA still open the read-only dock readout; this command owns the workspace.
  */
 export function showGolemConfiguration(): void {
-  useGolemStore.getState().openConfigTab();
+  focusConfigTab();
 }
 
 const currentEditorLocation = (

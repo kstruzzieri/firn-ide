@@ -1099,6 +1099,10 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     },
 
     // One app-global tab: opening an already-open tab only re-focuses it.
+    // Reach it through `focusConfigTab` in utils/editorSurface, never directly:
+    // selecting this tab must also park the git store's editor focus, or a diff
+    // or merge re-opened afterwards only re-raises an already-true flag and
+    // lands invisibly behind this surface.
     openConfigTab() {
       set({ configTabOpen: true, configTabFocused: true });
     },

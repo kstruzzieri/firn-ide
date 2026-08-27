@@ -29,7 +29,7 @@ import { GolemConfigWorkspace } from '../GolemConfig/GolemConfigWorkspace';
 import { useGolemStore } from '../../stores/golemStore';
 import { formatShortcut, isMac } from '../../utils/platform';
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
-import { focusEditorSurface } from '../../utils/editorSurface';
+import { focusConfigTab, focusEditorSurface } from '../../utils/editorSurface';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { GitDiffView } from './GitDiffView';
 import { MergeResolutionView } from './MergeResolutionView';
@@ -432,7 +432,7 @@ export function Editor() {
           <div
             className={`${styles.tab} ${showConfig ? styles.active : ''}`}
             title={'Golem Configuration\nApplies to every workspace'}
-            onClick={() => useGolemStore.getState().openConfigTab()}
+            onClick={focusConfigTab}
           >
             <div
               id="tab-golem-config"
@@ -441,9 +441,7 @@ export function Editor() {
               tabIndex={showConfig ? 0 : -1}
               aria-selected={showConfig}
               aria-controls="editor-tabpanel"
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, () => useGolemStore.getState().openConfigTab())
-              }
+              onKeyDown={(event) => handleTabKeyDown(event, focusConfigTab)}
             >
               <SettingsIcon className={styles.tabIcon} aria-hidden="true" />
               <span className={styles.tabName}>Golem Configuration</span>

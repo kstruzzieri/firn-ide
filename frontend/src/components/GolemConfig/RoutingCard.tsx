@@ -5,9 +5,14 @@
  * in Slice B Task 7: the row editor, the filtered picker, and Remove for
  * `removable` defined models arrive with the write path, so the trailing Edit
  * column is absent rather than rendered inert.
+ *
+ * Strips are list items, matching the dock readout's `ul`/`li` rows, so each row
+ * has a boundary in the accessibility tree; Tasks 8/9 hang an editor form off
+ * one, which a list item takes without argument.
  */
 
 import type { CapabilityName, ModelProjection, RouteProjection } from '../../types/golem';
+import { Cell } from './Cell';
 import styles from './GolemConfig.module.css';
 import { StatusText, type StatusTone } from './StatusText';
 
@@ -58,6 +63,7 @@ export function RoutingCard({
           </p>
         ) : (
           <>
+            {/* Decorative: every cell below names its own column. */}
             <div className={`${styles.columns} ${styles.routeGrid}`} aria-hidden="true">
               <span>Use case</span>
               <span>Provider</span>
@@ -65,72 +71,75 @@ export function RoutingCard({
               <span>Think</span>
               <span>Status</span>
             </div>
-            {routes.map((route) => {
-              const model = byRole.get(route.role);
-              const status = routeStatus(model, route.useCase);
-              return (
-                <div
-                  key={route.useCase}
-                  data-testid={`route-row-${route.useCase}`}
-                  className={`${styles.strip} ${styles.routeGrid}`}
-                >
-                  <span className={styles.useCase} data-label="Use case">
-                    {route.useCase}
-                  </span>
-                  <span className={styles.meta} data-label="Provider">
-                    {model ? model.provider : <span className={styles.absent}>—</span>}
-                  </span>
-                  <span className={styles.value} data-label="Model">
-                    {model ? (
-                      model.modelName
-                    ) : (
-                      // The role a broken route still names is the only lead a
-                      // reader has for repairing it externally.
-                      <span className={styles.absent}>role {route.role} has no model</span>
-                    )}
-                  </span>
-                  <span className={styles.meta} data-label="Think">
-                    {model && model.thinkMode !== '' ? (
-                      model.thinkMode
-                    ) : (
-                      <span className={styles.absent}>—</span>
-                    )}
-                  </span>
-                  <span data-label="Status">
-                    <StatusText tone={status.tone}>{status.label}</StatusText>
-                  </span>
-                </div>
-              );
-            })}
+            <ul className={styles.rows} aria-label="Model routing">
+              {routes.map((route) => {
+                const model = byRole.get(route.role);
+                const status = routeStatus(model, route.useCase);
+                return (
+                  <li
+                    key={route.useCase}
+                    data-testid={`route-row-${route.useCase}`}
+                    className={`${styles.strip} ${styles.routeGrid}`}
+                  >
+                    <Cell label="Use case" className={styles.useCase}>
+                      {route.useCase}
+                    </Cell>
+                    <Cell label="Provider" className={styles.meta}>
+                      {model ? model.provider : <span className={styles.absent}>—</span>}
+                    </Cell>
+                    <Cell label="Model" className={styles.value}>
+                      {/* The role a broken route still names is the only lead a
+                          reader has for repairing it externally, so it is
+                          meaningful copy rather than an inert placeholder. */}
+                      {model ? model.modelName : `role ${route.role} has no model`}
+                    </Cell>
+                    <Cell label="Think" className={styles.meta}>
+                      {model && model.thinkMode !== '' ? (
+                        model.thinkMode
+                      ) : (
+                        <span className={styles.absent}>—</span>
+                      )}
+                    </Cell>
+                    <Cell label="Status">
+                      <StatusText tone={status.tone}>{status.label}</StatusText>
+                    </Cell>
+                  </li>
+                );
+              })}
+            </ul>
           </>
         )}
 
         {unrouted.length > 0 && (
           <>
-            <h4 className={styles.subgroup}>Defined models</h4>
+            <h4 id="golem-config-defined-models" className={styles.subgroup}>
+              Defined models
+            </h4>
             <p className={styles.empty}>Defined in the file but not routed to any use case.</p>
             <div className={`${styles.columns} ${styles.definedGrid}`} aria-hidden="true">
               <span>Role</span>
               <span>Provider</span>
               <span>Model</span>
             </div>
-            {unrouted.map((model) => (
-              <div
-                key={model.role}
-                data-testid={`defined-model-row-${model.role}`}
-                className={`${styles.strip} ${styles.definedGrid}`}
-              >
-                <span className={styles.identifier} data-label="Role">
-                  {model.role}
-                </span>
-                <span className={styles.meta} data-label="Provider">
-                  {model.provider}
-                </span>
-                <span className={styles.value} data-label="Model">
-                  {model.modelName}
-                </span>
-              </div>
-            ))}
+            <ul className={styles.rows} aria-labelledby="golem-config-defined-models">
+              {unrouted.map((model) => (
+                <li
+                  key={model.role}
+                  data-testid={`defined-model-row-${model.role}`}
+                  className={`${styles.strip} ${styles.definedGrid}`}
+                >
+                  <Cell label="Role" className={styles.identifier}>
+                    {model.role}
+                  </Cell>
+                  <Cell label="Provider" className={styles.meta}>
+                    {model.provider}
+                  </Cell>
+                  <Cell label="Model" className={styles.value}>
+                    {model.modelName}
+                  </Cell>
+                </li>
+              ))}
+            </ul>
           </>
         )}
       </div>

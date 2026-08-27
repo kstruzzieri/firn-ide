@@ -2,6 +2,8 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { useIDEStore } from '../stores/ideStore';
 import { useGitStore, type DiffSession, type MergeSession } from '../stores/gitStore';
 import { __resetGolemStore, useGolemStore } from '../stores/golemStore';
+import { showGolemConfiguration } from '../utils/commands';
+import { focusConfigTab } from '../utils/editorSurface';
 
 jest.mock('../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: jest.fn(),
@@ -100,6 +102,8 @@ const diffSession = {
   hunks: [],
 } as unknown as DiffSession;
 
+const otherDiffSession = { ...diffSession, path: 'src/b.ts', absPath: '/repo/src/b.ts' };
+
 const mergeSession = {
   kind: 'sides',
   path: 'clash.go',
@@ -115,6 +119,12 @@ const mergeSession = {
   epoch: 1,
   fileWriteRevision: 1,
   stages: { path: 'clash.go', binary: true },
+} as unknown as MergeSession;
+
+const otherMergeSession = {
+  ...mergeSession,
+  path: 'other.go',
+  absPath: '/repo/other.go',
 } as unknown as MergeSession;
 
 const configTab = () => screen.getByRole('tab', { name: 'Golem Configuration' });
@@ -308,7 +318,7 @@ describe('Editor Welcome Screen', () => {
     expect(screen.getByText('Open File')).toBeInTheDocument();
 
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
 
     expect(screen.queryByText('Open File')).not.toBeInTheDocument();
@@ -343,14 +353,14 @@ describe('Golem configuration tab (#263 Slice B)', () => {
     render(<Editor />);
 
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
     act(() => {
       // A file tab takes focus back, then the palette/dock re-opens.
       fireEvent.click(screen.getByRole('tab', { name: /a\.ts/i }));
     });
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
 
     expect(screen.getAllByRole('tab', { name: 'Golem Configuration' })).toHaveLength(1);
@@ -361,7 +371,7 @@ describe('Golem configuration tab (#263 Slice B)', () => {
   it('carries the specified tab id, label, and tablist name', () => {
     render(<Editor />);
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
 
     expect(configTab()).toHaveAttribute('id', 'tab-golem-config');
@@ -373,7 +383,7 @@ describe('Golem configuration tab (#263 Slice B)', () => {
     useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
     render(<Editor />);
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
 
     const fileTab = screen.getByRole('tab', { name: /a\.ts/i });
@@ -398,7 +408,7 @@ describe('Golem configuration tab (#263 Slice B)', () => {
     useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
     render(<Editor />);
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
     expect(screen.getByTestId('codemirror-mock')).not.toBeVisible();
 
@@ -433,7 +443,7 @@ describe('Golem configuration tab (#263 Slice B)', () => {
     useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
     render(<Editor />);
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Golem Configuration' }));
@@ -445,31 +455,98 @@ describe('Golem configuration tab (#263 Slice B)', () => {
 
     // The surface's own Close is the same clean teardown.
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Close configuration' }));
     expect(screen.queryByTestId('golem-config-mock')).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('tab', { name: /a\.ts/i })).toHaveFocus());
   });
 
-  it('stays open and selected across a workspace switch', () => {
+  // gitStore.openDiff only ever RAISES diffFocused (`focus ? true : state.…`),
+  // so a second diff opened while the flag is already true is no rising edge at
+  // all. Without the configuration tab also parking the git-side focus, the
+  // session swaps behind this surface and the Git-panel click is dead.
+  it('reveals a diff opened from the Git panel while a diff was already focused', () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
+    render(<Editor />);
+
+    act(() => {
+      useGitStore.setState({ diffSession, diffFocused: true });
+    });
+    expect(screen.getByTestId('diff-mock')).toBeVisible();
+
+    act(() => {
+      showGolemConfiguration(); // the palette command, not the raw store action
+    });
+    expect(screen.getByTestId('golem-config-mock')).toBeVisible();
+
+    act(() => {
+      // Another file's diff row: openDiff swaps the session and re-raises the
+      // already-true focus flag.
+      useGitStore.setState({ diffSession: otherDiffSession, diffFocused: true });
+    });
+
+    expect(screen.getByTestId('diff-mock')).toBeVisible();
+    expect(screen.getByTestId('golem-config-mock')).not.toBeVisible();
+    expect(configTab()).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('reveals a merge re-opened while a merge was already focused', () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
+    render(<Editor />);
+
+    act(() => {
+      useGitStore.setState({ mergeSession, mergeFocused: true });
+    });
+    expect(screen.getByTestId('merge-mock')).toBeVisible();
+
+    act(() => {
+      focusConfigTab();
+    });
+    expect(screen.getByTestId('golem-config-mock')).toBeVisible();
+
+    act(() => {
+      // The conflict queue advancing: openMergeResolution replaces the session
+      // and re-asserts mergeFocused: true.
+      useGitStore.setState({ mergeSession: otherMergeSession, mergeFocused: true });
+    });
+
+    expect(screen.getByTestId('merge-mock')).toBeVisible();
+    expect(screen.getByTestId('golem-config-mock')).not.toBeVisible();
+    expect(configTab()).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('stays open and mounted across a workspace switch, selection following the restored file', () => {
     useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
     render(<Editor />);
     act(() => {
-      useGolemStore.getState().openConfigTab();
+      focusConfigTab();
     });
 
     act(() => {
-      // Opening another project retires that workspace's editors; the app-global
-      // configuration surface is not one of them.
+      // Opening another project retires that workspace's editors...
       useIDEStore.setState({
         workspace: { name: 'other', path: '/other' },
         openFiles: [],
         activeFileId: null,
       });
     });
-
-    expect(configTab()).toHaveAttribute('aria-selected', 'true');
+    // ...and the app-global surface survives, showing while nothing else can.
     expect(screen.getByTestId('golem-config-mock')).toBeVisible();
+
+    act(() => {
+      // Then the new workspace restores its own layout, which activates a file
+      // and so runs the real focusEditorSurface('file') path.
+      useIDEStore.setState({ openFiles: [openFile('f2', 'b.ts')] });
+      useIDEStore.getState().setActiveFile('f2');
+    });
+
+    // The contract is open + mounted (spec §3.1/§4.6a); selection legitimately
+    // follows the restored file.
+    expect(useGolemStore.getState().configTabOpen).toBe(true);
+    expect(configTab()).toBeInTheDocument();
+    expect(screen.getByTestId('golem-config-mock')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /b\.ts/i })).toHaveAttribute('aria-selected', 'true');
+    expect(configTab()).toHaveAttribute('aria-selected', 'false');
   });
 });

@@ -112,6 +112,58 @@ describe('GolemConfigWorkspace', () => {
     expect(within(row).getByText('Ready')).toBeInTheDocument();
   });
 
+  it('gives every strip a row boundary and names each column inside it', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+
+    const providerRow = await screen.findByTestId('provider-row-llama-swap');
+    const providers = screen.getByRole('list', { name: 'Providers' });
+    expect(within(providers).getAllByRole('listitem')).toEqual([providerRow]);
+    for (const column of ['Provider', 'Endpoint', 'Type', 'API key']) {
+      expect(within(providerRow).getByText(column)).toBeInTheDocument();
+    }
+
+    const routeRow = screen.getByTestId('route-row-agent');
+    const routes = screen.getByRole('list', { name: 'Model routing' });
+    expect(within(routes).getAllByRole('listitem')).toEqual([routeRow]);
+    for (const column of ['Use case', 'Provider', 'Model', 'Think', 'Status']) {
+      expect(within(routeRow).getByText(column)).toBeInTheDocument();
+    }
+
+    // The visible header row is decorative, so the per-cell labels are the only
+    // column names the accessibility tree carries — no double announcement.
+    expect(providers.previousElementSibling).toHaveAttribute('aria-hidden', 'true');
+    expect(routes.previousElementSibling).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('keeps meaningful placeholder copy off the disabled-contrast class', async () => {
+    resolve({
+      ...readyProjection,
+      routes: [
+        { useCase: 'agent', role: 'agent-m' },
+        { useCase: 'embedding', role: 'ghost' },
+      ],
+      providers: [
+        {
+          name: 'llama-swap',
+          endpoint: '',
+          classification: 'unknown',
+          apiFormat: 'openai-compat',
+          credentialState: 'none',
+        },
+      ],
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+
+    // `.absent` is --text-disabled (2.50:1 on the strip) and is reserved for the
+    // bare em-dash. Both of these are the reader's only lead on what is wrong,
+    // so they must sit on a class that clears the §4.7 floor.
+    const providerRow = await screen.findByTestId('provider-row-llama-swap');
+    expect(within(providerRow).getByText('no endpoint')).toHaveClass('value');
+
+    const routeRow = screen.getByTestId('route-row-embedding');
+    expect(within(routeRow).getByText('role ghost has no model')).toHaveClass('value');
+  });
+
   it('marks a route with no resolvable model as No model', async () => {
     resolve({
       ...readyProjection,
