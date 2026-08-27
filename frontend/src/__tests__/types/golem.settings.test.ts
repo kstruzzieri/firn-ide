@@ -34,6 +34,8 @@ const validProjection = (): Record<string, unknown> => ({
       exposedCapabilities: ['chat', 'stream', 'tool_call'],
       thinkMode: '',
       routedUseCases: ['agent', 'chat'],
+      hasThinkTags: false,
+      hasSlots: false,
       removable: false,
     },
   ],
@@ -189,6 +191,27 @@ describe('parseSettingsProjection', () => {
       },
     ],
     [
+      'a missing hidden-fact flag',
+      (v: Record<string, unknown>) => {
+        delete (v.models as Record<string, unknown>[])[0].hasThinkTags;
+      },
+    ],
+    [
+      'a non-boolean hidden-fact flag',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].hasSlots = 'true';
+      },
+    ],
+    [
+      'a capability outside knownCaps',
+      (v: Record<string, unknown>) => {
+        const model = (v.models as Record<string, unknown>[])[0];
+        model.capabilityFacts = { caps: ['chat'], knownCaps: ['chat', 'stream'] };
+        model.effectiveCapabilities = ['chat'];
+        model.exposedCapabilities = ['chat', 'embed'];
+      },
+    ],
+    [
       'bidi override in an identifier',
       (v: Record<string, unknown>) => {
         (v.routes as Record<string, unknown>[])[0].role = 'agent\u202Em'; // RLO
@@ -243,10 +266,22 @@ describe('parseSettingsProjection', () => {
 });
 
 describe('settings diagnostic mapping contract', () => {
-  it('contains 27 pinned upstream codes plus the unknown-future case', () => {
-    expect(settingsDiagnosticMappingCases).toHaveLength(28);
+  it('contains 31 pinned upstream codes plus the unknown-future case', () => {
+    expect(settingsDiagnosticMappingCases).toHaveLength(32);
     expect(settingsDiagnosticMappingCases.at(-1)?.input).toBe('certified_future_code');
-    expect(new Set(settingsDiagnosticMappingCases.map(({ input }) => input)).size).toBe(28);
+    expect(new Set(settingsDiagnosticMappingCases.map(({ input }) => input)).size).toBe(32);
+    // The role-lifecycle slice (#462) took the upstream vocabulary from 27 to
+    // 31; all four action codes fail closed onto config_invalid at load.
+    for (const code of [
+      'role_exists',
+      'role_in_use',
+      'use_case_not_found',
+      'drop_confirmation_required',
+    ]) {
+      expect(settingsDiagnosticMappingCases.find((row) => row.input === code)?.output).toBe(
+        'config_invalid'
+      );
+    }
   });
 
   it.each(settingsDiagnosticMappingCases)(

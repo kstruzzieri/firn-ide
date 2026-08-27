@@ -1058,7 +1058,7 @@ func (s *Service) Settings() (SettingsProjection, error) {
 	if s.isClosing() {
 		return SettingsProjection{}, s.publicErr("settings", fmt.Errorf("%w: settings rejected", errServiceClosing))
 	}
-	return s.snapshotOrBuild().projection, nil
+	return s.snapshotOrBuild().projection.clone(), nil
 }
 
 // ReloadSettings rebuilds the effective snapshot under the idle barrier:
@@ -1097,7 +1097,7 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 		}
 	}
 	if busy {
-		cur := s.snapshotOrBuild().projection
+		cur := s.snapshotOrBuild().projection.clone()
 		s.bindingGate.Unlock()
 		return SettingsReloadResult{Busy: true, Projection: cur}, nil
 	}
@@ -1126,7 +1126,7 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 	s.bindingGate.Unlock()
 
 	s.emit(EventGolemStatusChanged)
-	return SettingsReloadResult{Busy: false, Projection: sn.projection}, nil
+	return SettingsReloadResult{Busy: false, Projection: sn.projection.clone()}, nil
 }
 
 // Close shuts the service down. The first call marks `closing` under

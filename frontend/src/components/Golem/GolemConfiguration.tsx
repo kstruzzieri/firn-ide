@@ -22,8 +22,9 @@ import {
 } from '../../types/golem';
 import styles from './GolemConfiguration.module.css';
 
-/** Total map over the closed Slice A code set; the validator guarantees
- * membership, so no fallback branch exists to rot. */
+/** Total map over the closed code set; the validator guarantees membership, so
+ * no fallback branch exists to rot. Copy is verbatim from spec §5.6 — the
+ * write/action codes below reach this map through apply results, not loads. */
 const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
   config_missing: 'No models.json was found at any discovery location.',
   json_invalid: 'The configuration file is not valid JSON.',
@@ -47,6 +48,16 @@ const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
   selector_conflict: 'Models sharing a provider/model selector disagree.',
   identifier_not_editable:
     'An identifier is empty or contains unsafe control characters; edit the file externally.',
+  invalid_argument: 'A staged change is invalid.',
+  role_not_found: 'That model route no longer exists.',
+  provider_exists: 'A provider with that name already exists.',
+  provider_in_use: 'This provider is still used by a model.',
+  eligibility_ineligible: 'This model does not meet every affected use-case requirement.',
+  eligibility_unknown: 'Model eligibility is still unverified.',
+  key_value_invalid: 'API keys must be non-empty literal values.',
+  profile_source_unavailable: 'The selected profile could not be loaded.',
+  consent_store_failed: 'Destination approval may have been saved; configuration was not applied.',
+  config_save_failed: 'Configuration could not be saved.',
 };
 
 const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {

@@ -121,6 +121,20 @@
     "keepSubject": false,
     "blocking": true
   },
+  { "input": "role_exists", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  { "input": "role_in_use", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  {
+    "input": "use_case_not_found",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "drop_confirmation_required",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
   {
     "input": "certified_future_code",
     "output": "config_invalid",

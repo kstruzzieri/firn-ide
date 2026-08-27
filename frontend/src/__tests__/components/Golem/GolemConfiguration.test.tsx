@@ -30,6 +30,8 @@ const readyProjection = {
       exposedCapabilities: ['chat', 'stream', 'tool_call'],
       thinkMode: 'auto',
       routedUseCases: ['agent'],
+      hasThinkTags: false,
+      hasSlots: false,
       removable: false,
     },
   ],

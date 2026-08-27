@@ -17,6 +17,8 @@
         },
         "exposedCapabilities": ["chat", "stream", "tool_call"],
         "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": true
       }
     ],

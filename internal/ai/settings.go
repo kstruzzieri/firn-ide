@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -62,6 +63,20 @@ const (
 	codeKeyReferenceUnavailable     = "key_reference_unavailable"
 	codeSelectorConflict            = "selector_conflict"
 	codeIdentifierNotEditable       = "identifier_not_editable"
+	// Slice B write/action codes. They never arise from a load — the apply
+	// pipeline maps upstream action failures onto them — but they share one
+	// vocabulary with the projection because they share one SettingsDiagnostic
+	// type across the boundary (spec §5.6).
+	codeInvalidArgument          = "invalid_argument"
+	codeRoleNotFound             = "role_not_found"
+	codeProviderExists           = "provider_exists"
+	codeProviderInUse            = "provider_in_use"
+	codeEligibilityIneligible    = "eligibility_ineligible"
+	codeEligibilityUnknown       = "eligibility_unknown"
+	codeKeyValueInvalid          = "key_value_invalid"
+	codeProfileSourceUnavailable = "profile_source_unavailable"
+	codeConsentStoreFailed       = "consent_store_failed"
+	codeConfigSaveFailed         = "config_save_failed"
 )
 
 // settingsDiagnosticCodes enumerates every code the builder can emit, in the
@@ -88,6 +103,16 @@ var settingsDiagnosticCodes = []string{
 	codeKeyReferenceUnavailable,
 	codeSelectorConflict,
 	codeIdentifierNotEditable,
+	codeInvalidArgument,
+	codeRoleNotFound,
+	codeProviderExists,
+	codeProviderInUse,
+	codeEligibilityIneligible,
+	codeEligibilityUnknown,
+	codeKeyValueInvalid,
+	codeProfileSourceUnavailable,
+	codeConsentStoreFailed,
+	codeConfigSaveFailed,
 }
 
 // SettingsProjection is the Wails-facing read-only view of the effective Golem
@@ -137,6 +162,10 @@ type RouteProjection struct {
 // mutation would actually apply (selectorCapabilityOverrides). RoutedUseCases
 // lists every use case reaching this role (directly or through a fallback
 // chain); Removable is true when nothing references it.
+//
+// HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
+// these authored, model-specific members, so the editor has to disclose the
+// loss before staging. The values themselves never cross the boundary.
 type ModelProjection struct {
 	Role                  string          `json:"role"`
 	ModelName             string          `json:"modelName"`
@@ -150,7 +179,30 @@ type ModelProjection struct {
 	ExposedCapabilities   []string        `json:"exposedCapabilities"`
 	ThinkMode             string          `json:"thinkMode"`
 	RoutedUseCases        []string        `json:"routedUseCases"`
+	HasThinkTags          bool            `json:"hasThinkTags"`
+	HasSlots              bool            `json:"hasSlots"`
 	Removable             bool            `json:"removable"`
+}
+
+// clone deep-copies every slice a projection owns. Settings() and
+// ReloadSettings() hand their value to the Wails layer, which may keep or edit
+// it; without this, one caller's edit would rewrite the cached snapshot that
+// the next caller reads.
+func (p SettingsProjection) clone() SettingsProjection {
+	out := p
+	out.Routes = slices.Clone(p.Routes)
+	out.Providers = slices.Clone(p.Providers)
+	out.Diagnostics = slices.Clone(p.Diagnostics)
+	out.Models = slices.Clone(p.Models)
+	for i := range out.Models {
+		m := &out.Models[i]
+		m.EffectiveCapabilities = slices.Clone(m.EffectiveCapabilities)
+		m.ExposedCapabilities = slices.Clone(m.ExposedCapabilities)
+		m.RoutedUseCases = slices.Clone(m.RoutedUseCases)
+		m.CapabilityFacts.Caps = slices.Clone(m.CapabilityFacts.Caps)
+		m.CapabilityFacts.KnownCaps = slices.Clone(m.CapabilityFacts.KnownCaps)
+	}
+	return out
 }
 
 // ProviderProjection is one provider. Endpoint is the NormalizeEndpoint
@@ -327,15 +379,19 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 // buildSettingsProjection sanitizes what it returns.
 func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
 	if loadErr != nil {
+		// The origin is the discovery branch that SELECTED a source, not a
+		// claim that the source loaded: a target named by $GO_LLM_CONFIG that
+		// is not there is still the env target, and the masthead has to name
+		// it. A discovery that matched nothing already reports originNone.
 		if errors.Is(loadErr, ErrAgentConfigMissing) {
-			p := emptyProjection("missing", originNone)
+			p := emptyProjection("missing", loaded.Origin)
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
 		}
 		if loaded.HasConfigDiagnostic && loaded.ConfigDiagnostic.Code == config.CodeConfigNotFound {
 			// mapConfigDiagnostic maps this code to codeConfigMissing; emitting
 			// it under state "invalid" would be a self-contradicting pair.
-			p := emptyProjection("missing", originNone)
+			p := emptyProjection("missing", loaded.Origin)
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
 		}
@@ -435,6 +491,8 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 			},
 			ExposedCapabilities: exposed, ThinkMode: m.ThinkMode,
 			RoutedUseCases: append([]string{}, routed[role]...),
+			HasThinkTags:   m.ThinkTags != nil,
+			HasSlots:       m.Slots != 0,
 			Removable:      !referenced[role],
 		})
 	}
