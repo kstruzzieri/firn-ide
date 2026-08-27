@@ -1,52 +1,155 @@
 /**
- * Model routing section card (#263 spec §4.1/§4.2, mockup v10).
+ * Model routing section card (#263 spec §4.1/§4.2/§4.3, mockup v10).
  *
- * One strip per use case, joined to the model its role resolves to. Read-only
- * in Slice B Task 7: the row editor, the filtered picker, and Remove for
- * `removable` defined models arrive with the write path, so the trailing Edit
- * column is absent rather than rendered inert.
+ * One strip per use case, joined to the model its role resolves to, and a
+ * subgroup for models the file defines but nothing routes.
+ *
+ * The row list is the union of Firn's KNOWN use cases and the ones this file
+ * authors: a known use case with no route is an offer ("Assign"), not an
+ * omission, and an authored use case Firn has no floor for is still a row.
+ *
+ * A row shows what is WAITING for Apply, not only what is applied: a staged
+ * route change paints its own model, and a staged unassign paints none. Without
+ * that a new assignment would read as "No model" until the write landed.
  *
  * Strips are list items, matching the dock readout's `ul`/`li` rows, so each row
- * has a boundary in the accessibility tree; Tasks 8/9 hang an editor form off
- * one, which a list item takes without argument.
+ * has a boundary in the accessibility tree — and so the editor's `fieldset`,
+ * which a `role="row"` would forbid, has a legal home.
  */
 
-import type { CapabilityName, ModelProjection, RouteProjection } from '../../types/golem';
+import { useState } from 'react';
+import {
+  compareString,
+  type CapabilityName,
+  type ModelProjection,
+  type ProviderProjection,
+  type RouteProjection,
+  type SettingsDiagnostic,
+  type ThinkMode,
+} from '../../types/golem';
+import {
+  USE_CASE_FLOORS,
+  changeStableID,
+  meetsUseCaseFloor,
+  type Change,
+  type Draft,
+  type RowMarkers,
+} from '../../types/golemConfig';
+import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { Cell } from './Cell';
 import styles from './GolemConfig.module.css';
+import { RouteEditor } from './RouteEditor';
 import { StatusText, type StatusTone } from './StatusText';
 
 /**
- * Firn-owned use-case floors (spec §4.5), mirroring runtime enforcement. The
- * defaults key for embeddings is `embedding`; `embed` is its capability token.
- * A use case outside this table has no Firn floor to check.
+ * Editor gate keys. NUL is a Cc rune, so no identifier reaching this surface
+ * can collide with one — including the provider names sharing the same set.
  */
-const USE_CASE_FLOORS: Record<string, readonly CapabilityName[]> = {
-  agent: ['chat', 'stream', 'tool_call'],
-  chat: ['chat', 'stream'],
-  embedding: ['embed'],
-};
+export const routeRowKey = (useCase: string): string => `\u0000route\u0000${useCase}`;
 
-/** Row state for a read-only paint: the draft states (Modified, Key staged,
- * Needs review) and the inventory state (Unverified) belong to later slices. */
-function routeStatus(model: ModelProjection | undefined, useCase: string) {
-  if (!model) return { label: 'No model', tone: 'dim' as StatusTone };
-  const floor = USE_CASE_FLOORS[useCase];
-  const meetsFloor = !floor || floor.every((cap) => model.exposedCapabilities.includes(cap));
-  return meetsFloor
-    ? { label: 'Ready', tone: 'ok' as StatusTone }
-    : { label: 'Incompatible', tone: 'bad' as StatusTone };
+/** Firn's known use cases plus the ones this configuration authors. */
+export function routeUseCases(routes: readonly RouteProjection[]): string[] {
+  const names = new Set<string>([...USE_CASE_FLOORS.keys()]);
+  for (const route of routes) names.add(route.useCase);
+  return [...names].sort(compareString);
+}
+
+/**
+ * True while this diagnostic belongs to a route row rather than the page. The
+ * workspace calls this to decide what NOT to render above the cards, so both
+ * answers come from one rule.
+ */
+export const routingOwnsDiagnostic = (
+  routes: readonly RouteProjection[],
+  diagnostic: SettingsDiagnostic
+): boolean =>
+  diagnostic.subjectKind === 'use_case' && routeUseCases(routes).includes(diagnostic.subjectName);
+
+/** What a row paints: the staged intent when there is one, else the applied truth. */
+interface RouteView {
+  provider: string;
+  model: string;
+  think: ThinkMode;
+  caps: readonly CapabilityName[];
+}
+
+function routeStatus(
+  view: RouteView | null,
+  useCase: string,
+  markers: RowMarkers | undefined,
+  sourceReplaced: boolean
+): { label: string; tone: StatusTone } {
+  // §3.3: No model and Incompatible take precedence over Modified.
+  if (view === null) return { label: 'No model', tone: 'dim' };
+  if (!meetsUseCaseFloor(useCase, view.caps)) return { label: 'Incompatible', tone: 'bad' };
+  if (markers?.needsReview === true) return { label: 'Needs review', tone: 'warn' };
+  // A profile or blank source has nothing applied underneath it, so every
+  // populated row is a pending change.
+  if (markers?.modified === true || sourceReplaced) return { label: 'Modified', tone: 'warn' };
+  return { label: 'Ready', tone: 'ok' };
+}
+
+export interface RoutingCardProps {
+  routes: RouteProjection[];
+  models: ModelProjection[];
+  providers: ProviderProjection[];
+  /** The draft, for the staged view and for the editor's candidate projection. */
+  draft: Draft;
+  /** Route-identity row markers from `projectDraft`. */
+  rows: ReadonlyMap<string, RowMarkers>;
+  /** Role-identity row markers from `projectDraft`. */
+  roleRows: ReadonlyMap<string, RowMarkers>;
+  diagnostics: readonly SettingsDiagnostic[];
+  /** False while the document is Limited, Invalid, or otherwise unwritable. */
+  editable: boolean;
+  onStage: (changes: Change[], drop: string[]) => void;
+  onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
 }
 
 export function RoutingCard({
   routes,
   models,
-}: {
-  routes: RouteProjection[];
-  models: ModelProjection[];
-}) {
+  providers,
+  draft,
+  rows,
+  roleRows,
+  diagnostics,
+  editable,
+  onStage,
+  onUnstagedChange,
+}: RoutingCardProps) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+
+  // More than one row may be expanded at once: collapsing one to open another
+  // would silently discard unstaged fields (§4.6a forbids that).
+  const toggle = (useCase: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(useCase)) next.add(useCase);
+      return next;
+    });
+
+  const close = (useCase: string) =>
+    setOpen((current) => {
+      if (!current.has(useCase)) return current;
+      const next = new Set(current);
+      next.delete(useCase);
+      return next;
+    });
+
   const byRole = new Map(models.map((model) => [model.role, model]));
+  const byUseCase = new Map(routes.map((route) => [route.useCase, route.role]));
   const unrouted = models.filter((model) => model.routedUseCases.length === 0);
+  const sourceReplaced = draft.source.kind !== 'applied';
+  const base = { routes, models };
+
+  const stagedFor = (useCase: string): Change | undefined =>
+    draft.changes.find((change) => changeStableID(change) === `route:${useCase}`);
+
+  const rowDiagnostics = (useCase: string) =>
+    diagnostics.filter(
+      (diagnostic) => diagnostic.subjectKind === 'use_case' && diagnostic.subjectName === useCase
+    );
 
   return (
     <section className={styles.card} aria-labelledby="golem-config-routing">
@@ -57,88 +160,197 @@ export function RoutingCard({
         <span className={styles.hint}>assign a model to each use case</span>
       </div>
       <div className={styles.cardBody}>
-        {routes.length === 0 ? (
+        {/* §4.6 bootstrap: an empty section names its prerequisite. The rows
+            below still list every known use case, so the offer is visible. */}
+        {models.length === 0 && (
           <p className={styles.empty}>
             Add a provider, then assign a model to each use case — nothing is routed yet.
           </p>
-        ) : (
-          <>
-            {/* Decorative: every cell below names its own column. */}
-            <div className={`${styles.columns} ${styles.routeGrid}`} aria-hidden="true">
-              <span>Use case</span>
-              <span>Provider</span>
-              <span>Model</span>
-              <span>Think</span>
-              <span>Status</span>
-            </div>
-            <ul className={styles.rows} aria-label="Model routing">
-              {routes.map((route) => {
-                const model = byRole.get(route.role);
-                const status = routeStatus(model, route.useCase);
-                return (
-                  <li
-                    key={route.useCase}
-                    data-testid={`route-row-${route.useCase}`}
-                    className={`${styles.strip} ${styles.routeGrid}`}
-                  >
-                    <Cell label="Use case" className={styles.useCase}>
-                      {route.useCase}
-                    </Cell>
-                    <Cell label="Provider" className={styles.meta}>
-                      {model ? model.provider : <span className={styles.absent}>—</span>}
-                    </Cell>
-                    <Cell label="Model" className={styles.value}>
-                      {/* The role a broken route still names is the only lead a
-                          reader has for repairing it externally, so it is
-                          meaningful copy rather than an inert placeholder. */}
-                      {model ? model.modelName : `role ${route.role} has no model`}
-                    </Cell>
-                    <Cell label="Think" className={styles.meta}>
-                      {model && model.thinkMode !== '' ? (
-                        model.thinkMode
-                      ) : (
-                        <span className={styles.absent}>—</span>
-                      )}
-                    </Cell>
-                    <Cell label="Status">
-                      <StatusText tone={status.tone}>{status.label}</StatusText>
-                    </Cell>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
         )}
+        {/* Decorative: every cell below names its own column. */}
+        <div className={`${styles.columns} ${styles.routeGrid}`} aria-hidden="true">
+          <span>Use case</span>
+          <span>Provider</span>
+          <span>Model</span>
+          <span>Think</span>
+          <span>Status</span>
+          <span />
+        </div>
+        <ul className={styles.rows} aria-label="Model routing">
+          {routeUseCases(routes).map((useCase, index) => {
+            const role = byUseCase.get(useCase) ?? null;
+            const applied = role === null ? null : (byRole.get(role) ?? null);
+            const staged = stagedFor(useCase);
+            const view: RouteView | null =
+              staged?.kind === 'route'
+                ? {
+                    provider: staged.modelFacts.provider,
+                    model: staged.modelFacts.model,
+                    think: staged.thinkMode,
+                    caps: staged.exposedCaps,
+                  }
+                : staged?.kind === 'route-unassign' || applied === null
+                  ? null
+                  : {
+                      provider: applied.provider,
+                      model: applied.modelName,
+                      think: applied.thinkMode,
+                      caps: applied.exposedCapabilities,
+                    };
+            const markers = rows.get(useCase);
+            const status = routeStatus(view, useCase, markers, sourceReplaced);
+            const expanded = open.has(useCase);
+            const editorId = `golem-route-editor-${index}`;
+            const notices = rowDiagnostics(useCase);
+
+            return (
+              <li key={useCase} data-testid={`route-row-${useCase}`} className={styles.row}>
+                <div
+                  className={`${styles.strip} ${styles.routeGrid}`}
+                  data-expanded={expanded || undefined}
+                >
+                  <Cell label="Use case" className={styles.useCase}>
+                    {useCase}
+                  </Cell>
+                  <Cell label="Provider" className={styles.meta}>
+                    {view ? view.provider : <span className={styles.absent}>—</span>}
+                  </Cell>
+                  <Cell label="Model" className={styles.value}>
+                    {/* The role a broken route still names is the only lead a
+                        reader has for repairing it externally, so it is
+                        meaningful copy rather than an inert placeholder. */}
+                    {view ? (
+                      view.model
+                    ) : role !== null && staged?.kind !== 'route-unassign' ? (
+                      `role ${role} has no model`
+                    ) : (
+                      <span className={styles.absent}>—</span>
+                    )}
+                  </Cell>
+                  <Cell label="Think" className={styles.meta}>
+                    {view && view.think !== '' ? (
+                      view.think
+                    ) : (
+                      <span className={styles.absent}>—</span>
+                    )}
+                  </Cell>
+                  <Cell label="Status">
+                    {expanded ? (
+                      <StatusText tone="dim">editing…</StatusText>
+                    ) : (
+                      <StatusText tone={status.tone}>{status.label}</StatusText>
+                    )}
+                  </Cell>
+                  <span className={styles.rowActions}>
+                    {editable && (
+                      <button
+                        type="button"
+                        className={styles.button}
+                        aria-expanded={expanded}
+                        aria-controls={editorId}
+                        onClick={() => toggle(useCase)}
+                      >
+                        {role === null ? 'Assign' : 'Edit'}
+                        <span className={styles.srOnly}>{` route ${useCase}`}</span>
+                      </button>
+                    )}
+                  </span>
+                </div>
+
+                {notices.map((diagnostic, position) => (
+                  <p
+                    key={`${diagnostic.code}-${position}`}
+                    className={styles.rowDiagnostic}
+                    data-blocking={diagnostic.blocking || undefined}
+                  >
+                    {
+                      formatSettingsDiagnostic(
+                        diagnostic.code,
+                        diagnostic.subjectKind,
+                        diagnostic.subjectName
+                      ).text
+                    }
+                  </p>
+                ))}
+
+                {expanded && (
+                  <RouteEditor
+                    id={editorId}
+                    useCase={useCase}
+                    role={role}
+                    current={applied}
+                    providers={providers}
+                    models={models}
+                    base={base}
+                    draft={draft}
+                    staged={staged}
+                    rowKey={routeRowKey(useCase)}
+                    onStage={onStage}
+                    onClose={() => close(useCase)}
+                    onUnstagedChange={onUnstagedChange}
+                  />
+                )}
+              </li>
+            );
+          })}
+        </ul>
 
         {unrouted.length > 0 && (
           <>
             <h4 id="golem-config-defined-models" className={styles.subgroup}>
               Defined models
             </h4>
-            <p className={styles.empty}>Defined in the file but not routed to any use case.</p>
+            <p className={styles.empty}>
+              Defined in the file but not routed to any use case — directly or through a fallback.
+            </p>
             <div className={`${styles.columns} ${styles.definedGrid}`} aria-hidden="true">
               <span>Role</span>
               <span>Provider</span>
               <span>Model</span>
+              <span />
             </div>
             <ul className={styles.rows} aria-labelledby="golem-config-defined-models">
-              {unrouted.map((model) => (
-                <li
-                  key={model.role}
-                  data-testid={`defined-model-row-${model.role}`}
-                  className={`${styles.strip} ${styles.definedGrid}`}
-                >
-                  <Cell label="Role" className={styles.identifier}>
-                    {model.role}
-                  </Cell>
-                  <Cell label="Provider" className={styles.meta}>
-                    {model.provider}
-                  </Cell>
-                  <Cell label="Model" className={styles.value}>
-                    {model.modelName}
-                  </Cell>
-                </li>
-              ))}
+              {unrouted.map((model) => {
+                const markers = roleRows.get(model.role);
+                return (
+                  <li
+                    key={model.role}
+                    data-testid={`defined-model-row-${model.role}`}
+                    className={`${styles.strip} ${styles.definedGrid}`}
+                  >
+                    <Cell label="Role" className={styles.identifier}>
+                      {model.role}
+                    </Cell>
+                    <Cell label="Provider" className={styles.meta}>
+                      {model.provider}
+                    </Cell>
+                    <Cell label="Model" className={styles.value}>
+                      {model.modelName}
+                    </Cell>
+                    <span className={styles.rowActions}>
+                      {markers?.needsReview === true && (
+                        <StatusText tone="warn">Needs review</StatusText>
+                      )}
+                      {markers?.needsReview !== true && markers?.modified === true && (
+                        <StatusText tone="warn">Modified</StatusText>
+                      )}
+                      {/* §5.2b: removal is guarded backend-side and offered only
+                          for a role the projection reports as unreferenced —
+                          fallback targets included. */}
+                      {editable && model.removable && (
+                        <button
+                          type="button"
+                          className={`${styles.button} ${styles.quiet}`}
+                          onClick={() => onStage([{ kind: 'role-remove', role: model.role }], [])}
+                        >
+                          Remove
+                          <span className={styles.srOnly}>{` model role ${model.role}`}</span>
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </>
         )}

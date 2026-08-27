@@ -124,7 +124,13 @@ describe('GolemConfigWorkspace', () => {
 
     const routeRow = screen.getByTestId('route-row-agent');
     const routes = screen.getByRole('list', { name: 'Model routing' });
-    expect(within(routes).getAllByRole('listitem')).toEqual([routeRow]);
+    // §4.1: the rows are Firn's known use cases plus the authored ones, so a
+    // known use case with no route is an offer rather than an omission.
+    expect(within(routes).getAllByRole('listitem')).toEqual([
+      routeRow,
+      screen.getByTestId('route-row-chat'),
+      screen.getByTestId('route-row-embedding'),
+    ]);
     for (const column of ['Use case', 'Provider', 'Model', 'Think', 'Status']) {
       expect(within(routeRow).getByText(column)).toBeInTheDocument();
     }
@@ -280,8 +286,16 @@ describe('GolemConfigWorkspace', () => {
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
 
+    // The provider named `agent` has no row here, so its diagnostic stays on
+    // the page and must carry its kind. The use case DOES have a row, and
+    // §4.3 puts its diagnostic there — which is the same disambiguation by a
+    // different route: neither reader ever sees a bare "agent".
     expect(await screen.findByText('provider agent')).toBeInTheDocument();
-    expect(screen.getByText('use case agent')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('route-row-agent')).getByText(
+        'The agent model must support chat, stream, and tool_call.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('shows the busy notice for an explicit Refresh only', async () => {

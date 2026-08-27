@@ -1064,8 +1064,13 @@ const selectorKey = (provider: string, model: string): string => `${provider}\u0
 /**
  * Mirrors internal/ai's sameModelFacts: an absent optional fact is the zero
  * value on both sides (the projection omits empty and zero facts).
+ *
+ * Exported for RouteEditor, which asks the same question the backend's
+ * planRouteChanges asks — "is this a real retarget, or a selector override?" —
+ * to decide whether hidden model-specific fields are about to be dropped. One
+ * definition of the comparison, not two.
  */
-const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boolean =>
+export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boolean =>
   model.provider === facts.provider &&
   model.modelName === facts.model &&
   model.type === facts.type &&

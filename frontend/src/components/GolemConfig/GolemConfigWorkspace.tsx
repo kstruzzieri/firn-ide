@@ -36,7 +36,7 @@ import {
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
 import { ProvidersCard } from './ProvidersCard';
-import { RoutingCard } from './RoutingCard';
+import { RoutingCard, routingOwnsDiagnostic } from './RoutingCard';
 import { StatusText, type StatusTone } from './StatusText';
 
 const STATE_LABEL: Record<SettingsProjection['state'], string> = {
@@ -182,12 +182,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     [projection, draft]
   );
 
-  // A diagnostic about a provider that has a row belongs inside that row
-  // (§4.3b); one naming an entity this projection does not show stays here,
-  // where it is still readable.
+  // A diagnostic about a provider or a use case that has a row belongs inside
+  // that row (§4.3b, §4.3); one naming an entity this projection does not show
+  // stays here, where it is still readable.
   const providerRows = new Set(projection?.providers.map((entry) => entry.name) ?? []);
   const ownedByRow = (diagnostic: SettingsDiagnostic): boolean =>
-    diagnostic.subjectKind === 'provider' && providerRows.has(diagnostic.subjectName);
+    (diagnostic.subjectKind === 'provider' && providerRows.has(diagnostic.subjectName)) ||
+    routingOwnsDiagnostic(projection?.routes ?? [], diagnostic);
   const pageDiagnostics = projection?.diagnostics.filter((entry) => !ownedByRow(entry)) ?? [];
 
   const changeCount = draftChangeCount(draft);
@@ -304,7 +305,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               // once, at mount, but stages against the live projection, so a
               // Refresh that moved the revision would otherwise let a stale
               // endpoint be re-staged as if the user had authored it.
-              key={`${draftEpoch}:${projection.revision ?? ''}`}
+              key={`providers-${draftEpoch}:${projection.revision ?? ''}`}
               providers={projection.providers}
               usedProviders={usedProviders}
               changes={draft.changes}
@@ -315,7 +316,23 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               onStage={stage}
               onUnstagedChange={noteUnstaged}
             />
-            <RoutingCard routes={projection.routes} models={projection.models} />
+            <RoutingCard
+              // Same remount rule as the providers card: an open route editor
+              // derives its fields at mount but stages against the live
+              // projection, so a Refresh that moved the revision must not let a
+              // stale model read back as the user's choice.
+              key={`routing-${draftEpoch}:${projection.revision ?? ''}`}
+              routes={projection.routes}
+              models={projection.models}
+              providers={projection.providers}
+              draft={draft}
+              rows={projected.routeRows}
+              roleRows={projected.roleRows}
+              diagnostics={projection.diagnostics}
+              editable={canEdit}
+              onStage={stage}
+              onUnstagedChange={noteUnstaged}
+            />
 
             {isDraftDirty(draft) && (
               <div className={styles.draftBar} data-testid="golem-config-draft">
