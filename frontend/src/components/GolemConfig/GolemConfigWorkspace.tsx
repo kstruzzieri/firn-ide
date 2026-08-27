@@ -784,8 +784,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   // A provider a defined model still references cannot be removed.
   const usedProviders = body?.models.map((entry) => entry.provider) ?? [];
-  // A staged provider-add has no strip, but a route must still be able to name
-  // it — the blank builder is exactly one provider-add plus one route (§5.2).
+  // Providers this draft is creating, projected from the staged adds. The
+  // providers card renders one strip each so they can be reopened, corrected,
+  // and unstaged; the routing card needs them because a route must be able to
+  // name one — the blank builder is exactly one provider-add plus one route
+  // (§5.2), and neither half exists in the document yet.
   const stagedProviders: ProviderProjection[] = draft.changes
     .filter((change) => change.kind === 'provider-add')
     .map((change) => ({

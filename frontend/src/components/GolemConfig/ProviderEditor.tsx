@@ -179,6 +179,16 @@ export function ProviderEditor({
 }: ProviderEditorProps) {
   const adding = provider === null;
   const stagedRemoval = staged?.kind === 'provider-remove';
+  /**
+   * A provider-add already in the draft, editing from its own strip. The name
+   * is that change's stable identity (§3.3), so it is fixed here for exactly
+   * the reason an applied provider's is: editing it in place would mean
+   * creating a SECOND provider while the first one stayed staged, and the key
+   * value could not follow — the vault deliberately has no read, so a rename
+   * cannot carry the secret across. Renaming is unstage plus re-add.
+   */
+  const stagedAdd = staged?.kind === 'provider-add' ? staged : null;
+  const nameFixed = provider !== null || stagedAdd !== null;
 
   // Reopening shows what is waiting for Apply, not the applied document
   // underneath it — except the key, which is deliberately unrecoverable.
@@ -277,12 +287,16 @@ export function ProviderEditor({
   return (
     <fieldset className={styles.editor} id={id} tabIndex={-1}>
       <legend className={styles.editorLegend}>
-        {adding ? 'Add a provider' : `Edit provider ${provider.name}`}
+        {provider !== null
+          ? `Edit provider ${provider.name}`
+          : stagedAdd !== null
+            ? `Staged provider ${stagedAdd.name}`
+            : 'Add a provider'}
       </legend>
 
       <div className={styles.editorGrid}>
         <div className={styles.field}>
-          {adding ? (
+          {!nameFixed ? (
             <>
               <label className={styles.fieldLabel} htmlFor={`${id}-name`}>
                 Provider name
@@ -299,9 +313,11 @@ export function ProviderEditor({
           ) : (
             <>
               <span className={styles.fieldLabel}>Provider name</span>
-              <span className={styles.identifier}>{provider.name}</span>
+              <span className={styles.identifier}>{fields.name}</span>
               <span className={styles.fieldHint}>
-                The name cannot be changed. To rename, remove this provider and add it again.
+                {provider !== null
+                  ? 'The name cannot be changed. To rename, remove this provider and add it again.'
+                  : 'The name cannot be changed. To rename, unstage this provider and add it again.'}
               </span>
             </>
           )}

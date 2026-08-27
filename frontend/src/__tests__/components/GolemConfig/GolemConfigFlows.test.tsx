@@ -1005,10 +1005,13 @@ describe('bootstrap CTAs', () => {
     expect(within(row).getByText('http://127.0.0.1:11434/v1')).toBeInTheDocument();
     expect(within(row).getByText('Modified')).toBeInTheDocument();
 
-    // Reopening seeds from the staged change, and its own name is not a
-    // collision with itself.
+    // Reopening seeds from the staged change. The name is that change's stable
+    // identity, so it is fixed here exactly as it is on an applied row: editing
+    // it in place would create a SECOND provider while the first stayed staged.
     await userEvent.click(within(row).getByRole('button', { name: 'Edit provider local' }));
-    expect(screen.getByLabelText('Provider name')).toHaveValue('local');
+    expect(screen.getByRole('group', { name: 'Staged provider local' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Provider name')).not.toBeInTheDocument();
+    expect(screen.getByText(/unstage this provider and add it again/)).toBeVisible();
     const endpoint = screen.getByLabelText('Endpoint');
     expect(endpoint).toHaveValue('http://127.0.0.1:11434/v1');
 
@@ -1017,11 +1020,16 @@ describe('bootstrap CTAs', () => {
     await stage();
     await cancelEditor();
 
-    // Still ONE change on the provider identity, carrying the correction.
+    // Still ONE change on the provider identity, carrying the correction, and
+    // exactly one strip — no fork into a second provider.
     expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
     expect(
       within(screen.getByTestId('provider-row-local')).getByText('http://127.0.0.1:9292/v1')
     ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('list', { name: 'Providers' })).getAllByRole('listitem')
+    ).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /→ new provider$/ })).toHaveLength(1);
   });
 
   it('unstages a provider-add from its own strip', async () => {
@@ -1065,7 +1073,7 @@ describe('bootstrap CTAs', () => {
 
     // The chip lands on that strip, which reopens on the STAGED values.
     await userEvent.click(screen.getByRole('button', { name: 'local → new provider' }));
-    expect(screen.getByLabelText('Provider name')).toHaveValue('local');
+    expect(screen.getByRole('group', { name: 'Staged provider local' })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
     await userEvent.click(
@@ -1075,7 +1083,7 @@ describe('bootstrap CTAs', () => {
     );
 
     await screen.findByRole('button', { name: 'source → curated/local' });
-    expect(screen.queryByLabelText('Provider name')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Staged provider local' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
   });
 

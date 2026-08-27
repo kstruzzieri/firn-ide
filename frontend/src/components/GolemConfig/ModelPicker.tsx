@@ -59,8 +59,12 @@ export interface ModelPickerProps {
   floor: readonly CapabilityName[];
   /** Every model defined for the chosen provider. */
   models: readonly ModelProjection[];
-  /** The chosen model's name, `''` when nothing is chosen. */
-  selected: string;
+  /**
+   * The chosen model, or null. The MODEL, not its name: two options can share a
+   * name while declaring different facts, and a single-select listbox must mark
+   * exactly one of them selected.
+   */
+  selected: ModelProjection | null;
   /** Non-null while the manual fieldset has replaced the combobox. */
   manual: ManualModel | null;
   onSelect: (model: ModelProjection) => void;
@@ -302,7 +306,7 @@ export function ModelPicker({
         // Present only while an option is actually active (§4.7).
         {...(open && active >= 0 ? { 'aria-activedescendant': `${id}-option-${active}` } : {})}
         // Closed, the field reads as the current value; open, it is the filter.
-        value={open ? query : selected}
+        value={open ? query : (selected?.modelName ?? '')}
         onClick={() => {
           if (!open) openList(-1);
         }}
@@ -362,8 +366,10 @@ export function ModelPicker({
         type="button"
         className={`${styles.button} ${styles.quiet}`}
         onClick={() => {
-          setOpen(false);
-          setActiveIndex(-1);
+          // The third exit, through the one path: the manual fieldset REPLACES
+          // the combobox, so the anchor it was measured against is about to
+          // stop existing. Focus stays where the click put it.
+          close(false);
           onManual({ model: '', type: '', caps: canonicalCaps(floor) });
         }}
       >
@@ -398,7 +404,7 @@ export function ModelPicker({
                       role="option"
                       id={`${id}-option-${index}`}
                       tabIndex={-1}
-                      aria-selected={model.modelName === selected}
+                      aria-selected={selected !== null && factsKey(model) === factsKey(selected)}
                       data-active={index === active || undefined}
                       className={styles.pickerOption}
                       // The pointer must not take focus off the input.

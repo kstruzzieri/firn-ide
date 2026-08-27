@@ -444,7 +444,7 @@ export function RouteEditor({
               id={id}
               floor={floor}
               models={providerModels}
-              selected={defined?.modelName ?? ''}
+              selected={defined}
               manual={manual}
               onSelect={(model) => {
                 setDefined(model);

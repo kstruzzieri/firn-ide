@@ -44,7 +44,7 @@ function renderPicker(over: Partial<ModelPickerProps> = {}) {
     id: 'route-editor-chat',
     floor: ['chat', 'stream'] as readonly CapabilityName[],
     models: [model(), agentModel, embedModel],
-    selected: '',
+    selected: null,
     manual: null,
     onSelect,
     onManual,
@@ -107,6 +107,21 @@ describe('ModelPicker combobox contract', () => {
 
     await userEvent.click(options[1]);
     expect(onSelect).toHaveBeenCalledWith(large);
+  });
+
+  // A single-select listbox marks exactly one option selected. Keying that on
+  // the bare name would announce both halves of a divergent-fact pair.
+  it('marks only the chosen one of two same-named options selected', async () => {
+    const small = model({ role: 'small-role', parameters: '7b', contextWindow: 8192 });
+    const large = model({ role: 'large-role', parameters: '70b', contextWindow: 131072 });
+    renderPicker({ models: [small, large], selected: large });
+    await open();
+
+    const options = within(screen.getByRole('listbox')).getAllByRole('option');
+    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual([
+      'false',
+      'true',
+    ]);
   });
 
   it('collapses two roles that declare byte-identical facts', async () => {
@@ -205,7 +220,7 @@ describe('ModelPicker combobox contract', () => {
   });
 
   it('marks the chosen model as the selected option', async () => {
-    renderPicker({ selected: 'gpt-5' });
+    renderPicker({ selected: agentModel });
     await open();
     expect(screen.getByRole('option', { name: /gpt-5-mini/ })).toHaveAttribute(
       'aria-selected',
@@ -292,7 +307,7 @@ describe('ModelPicker manual entry', () => {
           id="route-editor-chat"
           floor={['chat', 'stream']}
           models={[model()]}
-          selected=""
+          selected={null}
           manual={null}
           onSelect={jest.fn()}
           onManual={onManual}
