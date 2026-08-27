@@ -6,8 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/provider"
 )
 
 // ---------------------------------------------------------------------------
@@ -631,5 +637,753 @@ func TestApplyRequestKeyValueRules(t *testing.T) {
 				t.Fatalf("validKeyValue(%d bytes) = %v, want %v", len(tc.value), got, tc.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Preparation pipeline (spec §5.2 Call 1). Every row runs against a REAL
+// document loaded from a real file: the pipeline's whole job is to produce the
+// exact document a later save would write, so a hand-built fake would prove
+// nothing about upstream's mutation semantics. Every row also asserts the
+// target file is byte-identical afterwards — preparation never writes.
+// ---------------------------------------------------------------------------
+
+// applyTargetConfigJSON is the shared write fixture.
+//   - "shared" is routed by two use cases and carries the projection-hidden
+//     slots + think_tags, so retargeting it must fork AND confirm both drops;
+//   - "solo" is routed by one use case, so retargeting it stays in place;
+//   - "pinned" is routed by one use case AND carries the hidden fields, the
+//     one shape upstream has no drop gate for (SetRoleModel just clears them);
+//   - "orphan" is unrouted and is the only reference to provider "spare",
+//     so removing both proves removals run role-before-provider;
+//   - "unused" is referenced by nothing and is removable on its own.
+const applyTargetConfigJSON = `{
+  "providers": {
+    "ollama": {"base_url": "http://localhost:11434"},
+    "remote": {"base_url": "https://api.example.com/v1", "api_format": "openai-compat",
+               "api_key": "sk-live-secret", "timeout": "90s", "slot_discovery": true},
+    "spare": {"base_url": "http://localhost:11500"},
+    "unused": {"base_url": "http://localhost:11600"}
+  },
+  "models": {
+    "shared": {"name": "shared-model", "provider": "remote", "type": "dense",
+               "capabilities": ["chat", "stream", "tool_call"], "slots": 2,
+               "think_mode": "toggle", "think_tags": {"open": "<a>", "close": "</a>"}},
+    "solo": {"name": "solo-model", "provider": "ollama", "type": "dense",
+             "capabilities": ["chat", "stream", "tool_call"]},
+    "pinned": {"name": "pinned-model", "provider": "remote", "type": "dense",
+               "capabilities": ["chat", "stream", "tool_call"], "slots": 3,
+               "think_tags": {"open": "<b>", "close": "</b>"}},
+    "orphan": {"name": "orphan-model", "provider": "spare", "type": "dense",
+               "capabilities": ["chat", "stream"]}
+  },
+  "defaults": {"agent": "solo", "chat": "shared", "summarize": "shared", "verify": "pinned"}
+}`
+
+// stageApplyTarget makes body the active target and returns its path.
+func stageApplyTarget(t *testing.T, body string) string {
+	t.Helper()
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	path := writeAgentConfigBody(t, body)
+	t.Setenv("GO_LLM_CONFIG", path)
+	return path
+}
+
+func stagedTargetRevision(t *testing.T) string {
+	t.Helper()
+	loaded, err := loadDefaultAgentConfig()
+	if err != nil {
+		t.Fatalf("stage target: %v", err)
+	}
+	return loaded.Revision
+}
+
+// canonicalCaps orders capability names the way the request contract requires.
+func canonicalCaps(names ...string) []string { return canonicalizeCapabilities(names) }
+
+// routeChange builds a valid route change with the model facts of a dense
+// model and matching capability facts; rows override what they exercise.
+func routeChange(useCase, providerName, modelName string, caps ...string) Change {
+	ordered := canonicalCaps(caps...)
+	return Change{
+		Kind: changeKindRoute, UseCase: useCase,
+		ModelFacts:      &ModelFacts{Provider: providerName, Model: modelName, Type: "dense"},
+		CapabilityFacts: &CapabilityFacts{Caps: ordered, KnownCaps: append([]string{}, provider.CanonicalCapabilityNames...)},
+		ExposedCaps:     ordered,
+	}
+}
+
+// confirmUnknown marks a route change as acknowledging the use cases Firn has
+// no capability floor for.
+func confirmUnknown(change Change, useCases ...string) Change {
+	change.ConfirmUnknown = true
+	change.ConfirmUnknownUseCases = append([]string{}, useCases...)
+	slices.Sort(change.ConfirmUnknownUseCases)
+	return change
+}
+
+func stringPtr(value string) *string { return &value }
+
+type prepareCase struct {
+	name       string
+	document   string // "" => applyTargetConfigJSON
+	create     bool
+	revision   *string // "" => the staged target's own revision
+	source     *ApplySource
+	changes    []Change
+	keys       map[string]string
+	wantStatus string // "" => prepared, no result
+	wantCodes  []string
+	wantDrops  []ChangeDropSet
+	check      func(t *testing.T, cfg *config.Config)
+}
+
+func runPrepareCase(t *testing.T, tc prepareCase) {
+	t.Helper()
+	body := tc.document
+	if body == "" {
+		body = applyTargetConfigJSON
+	}
+	mode, revision, path := applyModeExisting, tc.revision, ""
+	if tc.create {
+		mode = applyModeCreate
+		sandboxAgentConfigEnv(t)
+		t.Chdir(t.TempDir())
+	} else {
+		path = stageApplyTarget(t, body)
+		if revision == nil {
+			revision = stringPtr(stagedTargetRevision(t))
+		}
+	}
+	var before []byte
+	if path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read target: %v", err)
+		}
+		before = raw
+	}
+
+	source := ApplySource{Kind: applySourceApplied}
+	if tc.source != nil {
+		source = *tc.source
+	}
+	keys := tc.keys
+	if keys == nil {
+		keys = map[string]string{}
+	}
+	prepared, result := prepareSettingsApply(SettingsApplyRequest{
+		TargetRevision: revision, Source: source, Changes: tc.changes, Keys: keys,
+	}, mode)
+
+	if path != "" {
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("re-read target: %v", err)
+		}
+		if !bytes.Equal(before, after) {
+			t.Fatal("preparation wrote to the target file")
+		}
+	}
+
+	if tc.wantStatus == "" {
+		if result != nil {
+			t.Fatalf("prepare refused: %+v", *result)
+		}
+		if prepared == nil || prepared.doc == nil {
+			t.Fatal("prepare returned no document")
+		}
+		if tc.check != nil {
+			tc.check(t, prepared.doc.Config())
+		}
+		return
+	}
+	if prepared != nil {
+		t.Fatalf("prepare returned a document when it must return %q", tc.wantStatus)
+	}
+	if result == nil {
+		t.Fatalf("prepare accepted a request that must return %q", tc.wantStatus)
+	}
+	if err := validateSettingsApplyResult(*result); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, *result)
+	}
+	if result.Status != tc.wantStatus {
+		t.Fatalf("status = %q, want %q (%+v)", result.Status, tc.wantStatus, *result)
+	}
+	if tc.wantCodes != nil {
+		codes := make([]string, 0, len(result.Diagnostics))
+		for _, d := range result.Diagnostics {
+			codes = append(codes, d.Code)
+		}
+		if !slices.Equal(codes, tc.wantCodes) {
+			t.Fatalf("diagnostic codes = %v, want %v", codes, tc.wantCodes)
+		}
+	}
+	if tc.wantDrops != nil {
+		if len(result.Drops) != len(tc.wantDrops) {
+			t.Fatalf("drops = %+v, want %+v", result.Drops, tc.wantDrops)
+		}
+		for i, want := range tc.wantDrops {
+			got := result.Drops[i]
+			if got.ChangeID != want.ChangeID || !slices.Equal(got.Fields, want.Fields) {
+				t.Fatalf("drops[%d] = %+v, want %+v", i, got, want)
+			}
+		}
+	}
+}
+
+func TestPrepareSettingsApply(t *testing.T) {
+	cases := []prepareCase{
+		{
+			name:    "provider add",
+			changes: []Change{{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")}},
+			check: func(t *testing.T, cfg *config.Config) {
+				if got := cfg.Providers["extra"].BaseURL; got != "http://localhost:11700" {
+					t.Fatalf("added provider base url = %q", got)
+				}
+			},
+		},
+		{
+			// UpdateProvider replaces the whole authored value, so an endpoint
+			// edit that did not start from AuthoredProvider would silently drop
+			// the format, the timeout, and the stored key.
+			name: "provider update overlays the authored value",
+			changes: []Change{{Kind: changeKindProviderUpdate, Name: "remote",
+				Endpoint: stringPtr("https://api2.example.com/v1")}},
+			check: func(t *testing.T, cfg *config.Config) {
+				p := cfg.Providers["remote"]
+				if p.BaseURL != "https://api2.example.com/v1" || p.APIFormat != "openai-compat" ||
+					p.APIKey != "sk-live-secret" || p.Timeout.Duration != 90*time.Second {
+					t.Fatalf("updated provider = %+v", p)
+				}
+			},
+		},
+		{
+			name:    "provider remove",
+			changes: []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+			check: func(t *testing.T, cfg *config.Config) {
+				if _, ok := cfg.Providers["unused"]; ok {
+					t.Fatal("removed provider still present")
+				}
+			},
+		},
+		{
+			name:    "literal key set",
+			changes: []Change{{Kind: changeKindProviderKeySet, Name: "ollama"}},
+			keys:    map[string]string{"ollama": "sk-new-value"},
+			check: func(t *testing.T, cfg *config.Config) {
+				if got := cfg.Providers["ollama"].APIKey; got != "sk-new-value" {
+					t.Fatalf("provider key = %q", got)
+				}
+			},
+		},
+		{
+			name:    "key clear",
+			changes: []Change{{Kind: changeKindProviderKeyClear, Name: "remote"}},
+			check: func(t *testing.T, cfg *config.Config) {
+				if got := cfg.Providers["remote"].APIKey; got != "" {
+					t.Fatalf("cleared provider key = %q", got)
+				}
+			},
+		},
+		{
+			// "solo" serves only the agent route, so the retarget stays in the
+			// same role and creates nothing.
+			name:    "unique-role retarget",
+			changes: []Change{routeChange("agent", "remote", "other-model", "chat", "stream", "tool_call")},
+			check: func(t *testing.T, cfg *config.Config) {
+				if cfg.Defaults["agent"] != "solo" || len(cfg.Models) != 4 {
+					t.Fatalf("defaults/models = %v / %d roles", cfg.Defaults, len(cfg.Models))
+				}
+				m := cfg.Models["solo"]
+				if m.Name != "other-model" || m.Provider != "remote" {
+					t.Fatalf("retargeted role = %+v", m)
+				}
+			},
+		},
+		{
+			// "shared" also serves summarize, so retargeting chat must fork the
+			// complete authored role and leave the sibling route untouched.
+			name: "shared-role fork",
+			changes: []Change{func() Change {
+				c := confirmUnknown(routeChange("chat", "ollama", "fork-model", "chat", "stream"), "summarize")
+				c.ConfirmDrops = []string{dropFieldSlots, dropFieldThinkTags}
+				return c
+			}()},
+			check: func(t *testing.T, cfg *config.Config) {
+				if cfg.Defaults["chat"] != "chat-m" || cfg.Defaults["summarize"] != "shared" {
+					t.Fatalf("defaults = %v", cfg.Defaults)
+				}
+				forked := cfg.Models["chat-m"]
+				if forked.Name != "fork-model" || forked.Provider != "ollama" ||
+					forked.ThinkTags != nil || forked.Slots != 0 {
+					t.Fatalf("forked role = %+v", forked)
+				}
+				source := cfg.Models["shared"]
+				if source.Name != "shared-model" || source.ThinkTags == nil || source.Slots != 2 {
+					t.Fatalf("source role changed: %+v", source)
+				}
+			},
+		},
+		{
+			name: "new-role assignment",
+			changes: []Change{confirmUnknown(
+				routeChange("vision", "ollama", "vision-model", "chat", "stream"), "vision")},
+			check: func(t *testing.T, cfg *config.Config) {
+				if cfg.Defaults["vision"] != "vision-m" || cfg.Models["vision-m"].Name != "vision-model" {
+					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
+				}
+			},
+		},
+		{
+			// Firn derives the affected defaults outside its floor table; a
+			// request that does not confirm exactly that set is stale.
+			name:       "unknown use case not confirmed",
+			changes:    []Change{routeChange("vision", "ollama", "vision-model", "chat", "stream")},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityUnknown},
+		},
+		{
+			name: "unknown use-case confirmation must be exact",
+			changes: []Change{confirmUnknown(
+				routeChange("vision", "ollama", "vision-model", "chat", "stream"), "summarize", "vision")},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityUnknown},
+		},
+		{
+			// A real retarget drops the source role's projection-hidden fields;
+			// without the exact confirmation nothing may mutate.
+			name:       "drop confirmation required",
+			changes:    []Change{confirmUnknown(routeChange("chat", "ollama", "fork-model", "chat", "stream"), "summarize")},
+			wantStatus: "drop_confirmation_required",
+			wantDrops: []ChangeDropSet{{ChangeID: identityRoute + ":chat",
+				Fields: []string{dropFieldSlots, dropFieldThinkTags}}},
+		},
+		{
+			name: "partial drop confirmation is refused",
+			changes: []Change{func() Change {
+				c := confirmUnknown(routeChange("chat", "ollama", "fork-model", "chat", "stream"), "summarize")
+				c.ConfirmDrops = []string{dropFieldThinkTags}
+				return c
+			}()},
+			wantStatus: "drop_confirmation_required",
+			wantDrops: []ChangeDropSet{{ChangeID: identityRoute + ":chat",
+				Fields: []string{dropFieldSlots, dropFieldThinkTags}}},
+		},
+		{
+			// A unique-role retarget has no upstream drop gate at all —
+			// SetRoleModel simply clears the omitted fields — so Firn's own
+			// pre-check is the only thing between the user and the loss.
+			name:       "unique-role retarget still requires the drop confirmation",
+			changes:    []Change{confirmUnknown(routeChange("verify", "ollama", "verify-model", "chat", "stream"), "verify")},
+			wantStatus: "drop_confirmation_required",
+			wantDrops: []ChangeDropSet{{ChangeID: identityRoute + ":verify",
+				Fields: []string{dropFieldSlots, dropFieldThinkTags}}},
+		},
+		{
+			name: "unique-role retarget with the exact drops",
+			changes: []Change{func() Change {
+				c := confirmUnknown(routeChange("verify", "ollama", "verify-model", "chat", "stream"), "verify")
+				c.ConfirmDrops = []string{dropFieldSlots, dropFieldThinkTags}
+				return c
+			}()},
+			check: func(t *testing.T, cfg *config.Config) {
+				m := cfg.Models["pinned"]
+				if cfg.Defaults["verify"] != "pinned" || m.Name != "verify-model" ||
+					m.Slots != 0 || m.ThinkTags != nil {
+					t.Fatalf("retargeted role = %+v (defaults %v)", m, cfg.Defaults)
+				}
+			},
+		},
+		{
+			// Nothing is dropped, so a stale confirmation cannot be expressed
+			// as a drop set and the request is simply invalid.
+			name: "drop confirmation without a drop",
+			changes: []Change{func() Change {
+				c := routeChange("agent", "remote", "other-model", "chat", "stream", "tool_call")
+				c.ConfirmDrops = []string{dropFieldThinkTags}
+				return c
+			}()},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeInvalidArgument},
+		},
+		{
+			// Both use cases keep the selector and only change the exposed
+			// contract, so exactly one selector-wide override runs and the
+			// projection-hidden fields survive (SetRoleModel would clear them).
+			name: "selector override coalescing",
+			changes: []Change{
+				func() Change {
+					c := confirmUnknown(routeChange("chat", "remote", "shared-model", "chat", "stream"), "summarize")
+					c.ThinkMode = "none"
+					return c
+				}(),
+				func() Change {
+					c := confirmUnknown(routeChange("summarize", "remote", "shared-model", "chat", "stream"), "summarize")
+					c.ThinkMode = "none"
+					return c
+				}(),
+			},
+			check: func(t *testing.T, cfg *config.Config) {
+				m := cfg.Models["shared"]
+				if !slices.Equal(m.Capabilities, []string{"chat", "stream"}) || m.ThinkMode != "none" {
+					t.Fatalf("override = %+v", m)
+				}
+				if m.ThinkTags == nil || m.Slots != 2 {
+					t.Fatalf("override cleared hidden fields: %+v", m)
+				}
+				if cfg.Defaults["chat"] != "shared" || cfg.Defaults["summarize"] != "shared" {
+					t.Fatalf("defaults = %v", cfg.Defaults)
+				}
+			},
+		},
+		{
+			name: "selector-scoped fields must agree",
+			changes: []Change{
+				confirmUnknown(routeChange("chat", "remote", "shared-model", "chat", "stream"), "summarize"),
+				confirmUnknown(routeChange("summarize", "remote", "shared-model", "chat", "stream", "tool_call"), "summarize"),
+			},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeSelectorConflict},
+		},
+		{
+			// The chat floor is chat+stream; carving stream off breaks a live
+			// route and must be refused before any mutation.
+			name: "floor rejection",
+			changes: []Change{
+				confirmUnknown(routeChange("chat", "remote", "shared-model", "chat"), "summarize"),
+				confirmUnknown(routeChange("summarize", "remote", "shared-model", "chat"), "summarize"),
+			},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityIneligible},
+		},
+		{
+			name: "unassign then guarded remove",
+			changes: []Change{
+				{Kind: changeKindRouteUnassign, UseCase: "chat"},
+				{Kind: changeKindRouteUnassign, UseCase: "summarize"},
+				{Kind: changeKindRoleRemove, Role: "shared"},
+			},
+			check: func(t *testing.T, cfg *config.Config) {
+				if _, ok := cfg.Defaults["chat"]; ok {
+					t.Fatal("chat is still routed")
+				}
+				if _, ok := cfg.Models["shared"]; ok {
+					t.Fatal("removed role still present")
+				}
+			},
+		},
+		{
+			name:       "role removal stays guarded",
+			changes:    []Change{{Kind: changeKindRoleRemove, Role: "shared"}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeInvalidArgument},
+		},
+		{
+			name:       "unassigning an unbound use case is refused",
+			changes:    []Change{{Kind: changeKindRouteUnassign, UseCase: "vision"}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeRoleNotFound},
+		},
+		{
+			name:       "duplicate provider target",
+			changes:    []Change{{Kind: changeKindProviderAdd, Name: "ollama", Endpoint: stringPtr("http://localhost:11434")}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeProviderExists},
+		},
+		{
+			// Removals run role-before-provider and additions run
+			// provider-before-role: staged in the exact reverse order, the
+			// request still applies.
+			name: "mutation ordering",
+			changes: []Change{
+				{Kind: changeKindProviderRemove, Name: "spare"},
+				{Kind: changeKindRoleRemove, Role: "orphan"},
+				{Kind: changeKindProviderKeySet, Name: "extra"},
+				confirmUnknown(routeChange("vision", "extra", "vision-model", "chat", "stream"), "vision"),
+				{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")},
+			},
+			keys: map[string]string{"extra": "sk-extra"},
+			check: func(t *testing.T, cfg *config.Config) {
+				if _, ok := cfg.Providers["spare"]; ok {
+					t.Fatal("spare provider survived")
+				}
+				if _, ok := cfg.Models["orphan"]; ok {
+					t.Fatal("orphan role survived")
+				}
+				if cfg.Providers["extra"].APIKey != "sk-extra" || cfg.Defaults["vision"] != "vision-m" {
+					t.Fatalf("providers = %v, defaults = %v", cfg.Providers, cfg.Defaults)
+				}
+			},
+		},
+		{
+			name:       "stale target revision",
+			revision:   stringPtr(strings.Repeat("a", 64)),
+			changes:    []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+			wantStatus: "conflict",
+		},
+		{
+			name:       "read-only target",
+			document:   duplicateProviderDocumentJSON,
+			changes:    []Change{{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")}},
+			wantStatus: "limited",
+			wantCodes:  []string{codeDuplicateKeys},
+		},
+		{
+			// A bidi-format rune in a role key: go-llm still runs this
+			// document, but Firn cannot represent it as a writable Identifier.
+			name: "target with an unwritable identifier",
+			document: strings.Replace(applyTargetConfigJSON, `"orphan": {`,
+				`"orph\u202ean": {`, 1),
+			changes:    []Change{{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")}},
+			wantStatus: "limited",
+			wantCodes:  []string{codeIdentifierNotEditable},
+		},
+		{
+			name:       "post-mutation projection overflow",
+			document:   manyProviderConfigJSON(maxProjectionEntries),
+			changes:    []Change{{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeProjectionLimited},
+		},
+		{
+			name:   "profile source is not available yet",
+			source: &ApplySource{Kind: applySourceProfile, ProfileID: "curated/local", SourceRevision: strings.Repeat("b", 64)},
+			changes: []Change{{Kind: changeKindProviderAdd, Name: "extra",
+				Endpoint: stringPtr("http://localhost:11700")}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeProfileSourceUnavailable},
+		},
+		{
+			name:   "blank create seeds one provider and the agent route",
+			create: true,
+			source: &ApplySource{Kind: applySourceBlank},
+			changes: []Change{
+				{Kind: changeKindProviderAdd, Name: "ollama", Endpoint: stringPtr("http://localhost:11434")},
+				routeChange("agent", "ollama", "seed-model", "chat", "stream", "tool_call"),
+			},
+			check: func(t *testing.T, cfg *config.Config) {
+				if len(cfg.Providers) != 1 || cfg.Providers["ollama"].BaseURL != "http://localhost:11434" {
+					t.Fatalf("providers = %v", cfg.Providers)
+				}
+				if cfg.Defaults["agent"] != "agent-m" || cfg.Models["agent-m"].Name != "seed-model" {
+					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
+				}
+			},
+		},
+		{
+			// The two seed changes are consumed by the bootstrap; every other
+			// change still runs exactly once, in the normal order.
+			name:   "blank create applies the remaining changes once",
+			create: true,
+			source: &ApplySource{Kind: applySourceBlank},
+			changes: []Change{
+				{Kind: changeKindProviderAdd, Name: "ollama", Endpoint: stringPtr("http://localhost:11434")},
+				{Kind: changeKindProviderAdd, Name: "second", Endpoint: stringPtr("https://api.example.com/v1")},
+				{Kind: changeKindProviderKeySet, Name: "second"},
+				routeChange("agent", "ollama", "seed-model", "chat", "stream", "tool_call"),
+			},
+			keys: map[string]string{"second": "sk-second"},
+			check: func(t *testing.T, cfg *config.Config) {
+				if len(cfg.Providers) != 2 || cfg.Providers["second"].APIKey != "sk-second" {
+					t.Fatalf("providers = %v", cfg.Providers)
+				}
+				if len(cfg.Models) != 1 || cfg.Defaults["agent"] != "agent-m" {
+					t.Fatalf("models = %v, defaults = %v", cfg.Models, cfg.Defaults)
+				}
+			},
+		},
+		{
+			name:   "blank create without an agent route",
+			create: true,
+			source: &ApplySource{Kind: applySourceBlank},
+			changes: []Change{
+				{Kind: changeKindProviderAdd, Name: "ollama", Endpoint: stringPtr("http://localhost:11434")},
+				confirmUnknown(routeChange("vision", "ollama", "seed-model", "chat", "stream"), "vision"),
+			},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeAgentRoleMissing},
+		},
+		{
+			name:       "blank create without the seed provider",
+			create:     true,
+			source:     &ApplySource{Kind: applySourceBlank},
+			changes:    []Change{routeChange("agent", "ollama", "seed-model", "chat", "stream", "tool_call")},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeProviderNotFound},
+		},
+		{
+			// NewDocument guarantees schema validity only; the agent floor is
+			// Firn's and is checked on the finished document.
+			name:   "blank create floor rejection",
+			create: true,
+			source: &ApplySource{Kind: applySourceBlank},
+			changes: []Change{
+				{Kind: changeKindProviderAdd, Name: "ollama", Endpoint: stringPtr("http://localhost:11434")},
+				routeChange("agent", "ollama", "seed-model", "chat", "stream"),
+			},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityIneligible},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { runPrepareCase(t, tc) })
+	}
+}
+
+// manyProviderConfigJSON builds a document with count providers — the exact
+// projection ceiling, so one more provider overflows it.
+func manyProviderConfigJSON(count int) string {
+	var b strings.Builder
+	b.WriteString(`{"providers": {"ollama": {"base_url": "http://localhost:11434"}`)
+	for i := 1; i < count; i++ {
+		fmt.Fprintf(&b, `, "p%03d": {"base_url": "http://localhost:%d"}`, i, 12000+i)
+	}
+	b.WriteString(`}, "models": {"agent-m": {"name": "m", "provider": "ollama", "type": "dense",` +
+		` "capabilities": ["chat", "stream", "tool_call"]}}, "defaults": {"agent": "agent-m"}}`)
+	return b.String()
+}
+
+// TestPrepareGeneratesDistinctRoleNames: two new routes in one request never
+// collide, including when the 256-byte trim makes their use-case prefixes
+// identical (amendment 10 — candidates dedupe against authored roles UNION
+// every name generated earlier in the same batch).
+func TestPrepareGeneratesDistinctRoleNames(t *testing.T) {
+	long := func(suffix string) string {
+		return strings.Repeat("u", maxProjectionIdentifierLen-len(suffix)) + suffix
+	}
+	first, second := long("ab"), long("cd")
+	// A multi-byte use case forces the prefix trim onto a rune boundary.
+	multibyte := strings.Repeat("…", 85) + "x" // 256 bytes
+
+	stageApplyTarget(t, applyTargetConfigJSON)
+	revision := stagedTargetRevision(t)
+	prepared, result := prepareSettingsApply(SettingsApplyRequest{
+		TargetRevision: &revision, Source: ApplySource{Kind: applySourceApplied},
+		Changes: []Change{
+			confirmUnknown(routeChange(first, "ollama", "one", "chat", "stream"), first),
+			confirmUnknown(routeChange(second, "ollama", "two", "chat", "stream"), second),
+			confirmUnknown(routeChange(multibyte, "ollama", "three", "chat", "stream"), multibyte),
+		},
+		Keys: map[string]string{},
+	}, applyModeExisting)
+	if result != nil {
+		t.Fatalf("prepare refused: %+v", *result)
+	}
+	cfg := prepared.doc.Config()
+	names := map[string]bool{}
+	for _, useCase := range []string{first, second, multibyte} {
+		role, ok := cfg.Defaults[useCase]
+		if !ok {
+			t.Fatalf("use case %q was not bound", truncateForLog(useCase))
+		}
+		if names[role] {
+			t.Fatalf("role %q was generated twice", truncateForLog(role))
+		}
+		names[role] = true
+		if len(role) > maxProjectionIdentifierLen || !utf8.ValidString(role) {
+			t.Fatalf("generated role is %d bytes, valid utf8 = %v", len(role), utf8.ValidString(role))
+		}
+		if _, ok := cfg.Models[role]; !ok {
+			t.Fatalf("generated role %q has no model", truncateForLog(role))
+		}
+	}
+}
+
+func truncateForLog(value string) string {
+	if len(value) <= 24 {
+		return value
+	}
+	return value[:24] + "..."
+}
+
+// TestPrepareTargetsTheCanonicalActiveSource: discovery data is lexical and
+// classification-only. The prepared target is the canonical file the document
+// was actually read from, and a revision captured before a symlink swap can
+// never authorize a write to the file the link now names.
+func TestPrepareTargetsTheCanonicalActiveSource(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.json")
+	if err := os.WriteFile(real, []byte(applyTargetConfigJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other.json")
+	if err := os.WriteFile(other, []byte(duplicateProviderDocumentJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", link)
+	revision := stagedTargetRevision(t)
+
+	request := SettingsApplyRequest{
+		TargetRevision: &revision, Source: ApplySource{Kind: applySourceApplied},
+		Changes: []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+		Keys:    map[string]string{},
+	}
+	prepared, result := prepareSettingsApply(request, applyModeExisting)
+	if result != nil {
+		t.Fatalf("prepare refused: %+v", *result)
+	}
+	if want := canonicalPath(t, real); prepared.target.path != want {
+		t.Fatalf("prepared target = %q, want the canonical source %q", prepared.target.path, want)
+	}
+	if prepared.target.revision != revision || prepared.target.origin != originEnv {
+		t.Fatalf("prepared target metadata = %+v", prepared.target)
+	}
+
+	// The lexical path now names a different document: the captured revision
+	// belongs to a file this request may no longer write.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, link); err != nil {
+		t.Fatal(err)
+	}
+	swapped, result := prepareSettingsApply(request, applyModeExisting)
+	if swapped != nil || result == nil || result.Status != "conflict" || result.Conflict != "target" {
+		t.Fatalf("swapped source prepared %v with result %+v", swapped != nil, result)
+	}
+}
+
+// TestFirnUseCaseFloorsAreOneTable: the floor table is the single Go source of
+// truth and the shared fixture the TypeScript mirror is tested against; drift
+// on either side is a contract break.
+func TestFirnUseCaseFloorsAreOneTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "settings_use_case_floors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		UseCase      string   `json:"useCase"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(firnUseCaseFloors) {
+		t.Fatalf("fixture has %d rows, table has %d", len(rows), len(firnUseCaseFloors))
+	}
+	for _, row := range rows {
+		floor, ok := firnUseCaseFloors[row.UseCase]
+		if !ok {
+			t.Fatalf("fixture use case %q is not in the table", row.UseCase)
+		}
+		want, err := provider.ParseCapsStrict(row.Capabilities)
+		if err != nil {
+			t.Fatalf("fixture capabilities %v: %v", row.Capabilities, err)
+		}
+		if floor != want {
+			t.Fatalf("floor for %q = %v, fixture says %v", row.UseCase, floor.Names(), row.Capabilities)
+		}
+	}
+	// The agent floor has exactly one definition: the run path's own constant.
+	if firnUseCaseFloors["agent"] != requiredAgentCaps {
+		t.Fatal("the agent floor diverged from requiredAgentCaps")
 	}
 }

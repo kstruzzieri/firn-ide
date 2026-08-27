@@ -115,6 +115,23 @@ var settingsDiagnosticCodes = []string{
 	codeConfigSaveFailed,
 }
 
+// firnUseCaseFloors is THE Firn capability floor table: the minimum a model
+// must support for a use case Firn itself drives. It is the one Go source of
+// truth (testdata/settings_use_case_floors.json is the same table, shared with
+// the TypeScript mirror), and the agent row is the run path's own constant so
+// a write can never accept a model the runtime would then refuse. A use case
+// absent from this table has no Firn requirement — upstream's eligibility gate
+// evaluates it as unknown, and the request must confirm it explicitly
+// (§3.3 confirmUnknownUseCases).
+var firnUseCaseFloors = map[string]provider.Capability{
+	useCaseAgent: requiredAgentCaps,
+	"chat":       provider.CapChat | provider.CapStream,
+	"embedding":  provider.CapEmbed,
+}
+
+// useCaseAgent is the one use case Firn's own run path resolves.
+const useCaseAgent = "agent"
+
 // SettingsProjection is the Wails-facing read-only view of the effective Golem
 // configuration. It never carries filesystem paths, raw JSON, API keys,
 // environment variable names, or raw go-llm error text. Revision is present
@@ -795,7 +812,7 @@ func exceedsProjectionBounds(cfg *config.Config) bool {
 // selectedAgentProvider names the provider on the agent route, "" when the
 // route is incomplete.
 func selectedAgentProvider(cfg *config.Config) string {
-	role, ok := cfg.RoleForUseCase("agent")
+	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {
 		return ""
 	}
@@ -842,7 +859,7 @@ func boundSubject(d Diagnostic) Diagnostic {
 // agentRouteDiagnostics re-states ResolveAgentTarget's role/capability checks
 // as diagnostics. Endpoint problems are reported per provider by the caller.
 func agentRouteDiagnostics(cfg *config.Config) []Diagnostic {
-	role, ok := cfg.RoleForUseCase("agent")
+	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {
 		return []Diagnostic{{Code: codeAgentRoleMissing, Blocking: true}}
 	}
