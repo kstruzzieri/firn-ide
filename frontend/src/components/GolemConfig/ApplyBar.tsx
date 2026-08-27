@@ -68,8 +68,18 @@ export interface ApplyBarProps {
   count: number;
   /** Why Apply is unavailable, or null when it is available. */
   blocked: string | null;
-  /** True while a settings write owns the surface: nothing here may move. */
+  /**
+   * True while a settings write or a pending consent challenge owns the
+   * request: the chips and Apply are frozen, because the visible request is
+   * what the challenge token is bound to (§3.3, §4.6a).
+   */
   locked: boolean;
+  /**
+   * Discard's own lock, deliberately narrower than `locked`: §3.3 has Discard
+   * invalidate a pending challenge, which makes it one of §4.6a's
+   * cancel-then-transition paths rather than an edit of a frozen request.
+   */
+  discardLocked: boolean;
   onApply: () => void;
   onDiscard: () => void;
   /** Opens and focuses the editor behind a change chip. */
@@ -84,6 +94,7 @@ export function ApplyBar({
   count,
   blocked,
   locked,
+  discardLocked,
   onApply,
   onDiscard,
   onOpenChange,
@@ -121,7 +132,7 @@ export function ApplyBar({
       <button
         type="button"
         className={`${styles.button} ${styles.quiet}`}
-        disabled={locked}
+        disabled={discardLocked}
         onClick={onDiscard}
       >
         Discard

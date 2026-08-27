@@ -537,8 +537,12 @@ export function parseSettingsApplyRequest(value: unknown, mode: ApplyMode): Sett
   if (mode === 'create' && source.kind === 'applied') return contractError();
 
   const changes = readCappedArray(value.changes, MAX_PROJECTION_ENTRIES, readChange);
-  // A write with no change is not a write.
-  if (changes === null || changes.length === 0) return contractError();
+  if (changes === null) return contractError();
+  // An empty change set is a write only from a profile source: the loaded,
+  // scrubbed profile document IS the change (§3.3 makes a source replacement
+  // dirty on its own). An applied source with no change asks for nothing, and a
+  // blank one cannot form a BootstrapSpec. Mirrors internal/ai's rule exactly.
+  if (changes.length === 0 && source.kind !== 'profile') return contractError();
 
   const rawKeys = value.keys;
   if (!isRecord(rawKeys) || Object.keys(rawKeys).length > MAX_PROJECTION_ENTRIES)

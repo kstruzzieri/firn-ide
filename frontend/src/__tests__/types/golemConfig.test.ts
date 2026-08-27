@@ -130,6 +130,35 @@ describe('parseSettingsApplyRequest', () => {
     expect(() => parseSettingsApplyRequest(request, 'apply')).toThrow(GolemContractError);
   });
 
+  // An empty change set is source-conditional: only a profile source carries a
+  // document of its own, so only it is a write with no staged mutation. The Go
+  // validator applies the identical rule to byte-identical fixtures.
+  it.each([
+    ['applied', 'apply', { kind: 'applied' }, false],
+    ['blank', 'create', { kind: 'blank' }, false],
+    [
+      'profile',
+      'apply',
+      { kind: 'profile', profileId: 'curated/local', sourceRevision: 'a'.repeat(64) },
+      true,
+    ],
+    [
+      'profile',
+      'create',
+      { kind: 'profile', profileId: 'curated/local', sourceRevision: 'a'.repeat(64) },
+      true,
+    ],
+  ] as const)('%s source with no changes on %s', (_kind, mode, source, accepted) => {
+    const request = minimalRequest();
+    request.source = source;
+    request.changes = [];
+    request.keys = {};
+    if (mode === 'create') delete request.targetRevision;
+    const parse = () => parseSettingsApplyRequest(request, mode);
+    if (accepted) expect(parse).not.toThrow();
+    else expect(parse).toThrow(GolemContractError);
+  });
+
   it('rejects the applied source on create', () => {
     const request = minimalRequest();
     delete request.targetRevision;

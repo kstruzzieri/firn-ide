@@ -230,6 +230,24 @@ describe('Apply bar', () => {
     expect(screen.getByRole('group', { name: 'Edit provider hosted' })).toHaveFocus();
   });
 
+  // A chip click is a one-shot request. Every draft reset remounts the cards,
+  // and a request left standing would be replayed by that fresh mount.
+  it('does not replay a chip click when the draft resets', async () => {
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+    await stageKey();
+    await userEvent.click(screen.getByRole('button', { name: 'hosted → new API key' }));
+    expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
+
+    await clickApply();
+    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+    expect(document.body).toHaveFocus();
+  });
+
   it('blocks Apply while an editor holds unstaged fields', async () => {
     await mountWorkspace();
     await stageKey();
@@ -338,6 +356,31 @@ describe('terminal apply results', () => {
       ],
       keys: {},
     });
+  });
+
+  // The conflict panel is the only way back from a conflict, so a reload that
+  // did not land must not take it away — that would strand the draft with
+  // `Needs review` rows and no action at all.
+  it('keeps the conflict panel when the review reload comes back busy', async () => {
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await stageEndpoint();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+
+    reload(readyProjection, true);
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    expect(await screen.findByRole('button', { name: 'Reload & review draft' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Discard draft' })).toBeInTheDocument();
+
+    reload({ ...readyProjection, revision: movedRevision });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Reload & review draft' })
+      ).not.toBeInTheDocument()
+    );
+    expect(screen.getByText(`rev ${movedRevision.slice(0, 12)}`)).toBeInTheDocument();
   });
 
   it('reloads cleanly when a conflict is discarded', async () => {
@@ -539,6 +582,55 @@ describe('nonterminal apply results', () => {
     const row = screen.getByTestId('provider-row-hosted');
     expect(within(row).getByText('Modified')).toBeInTheDocument();
     expect(within(row).queryByText('Key staged')).not.toBeInTheDocument();
+  });
+
+  // §4.6a: while challenged, the only enabled draft actions are Confirm,
+  // Cancel, and the cancel-then-transition paths. Everything the request is
+  // made of is frozen, because the token is bound to that exact request.
+  it('freezes every editing action while a challenge is pending', async () => {
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted → new API key' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Edit provider hosted' })).not.toBeInTheDocument();
+    // The panel's own actions, and the cancel-then-transition paths, stay live.
+    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeEnabled();
+  });
+
+  // §3.3: Discard "invalidates a pending settings challenge" — it must never
+  // abandon a token the backend still honours.
+  it('cancels the pending challenge before Discard clears the draft', async () => {
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('challenge-token-1'));
+    await waitFor(() => expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the draft and the challenge when Discard cannot cancel the token', async () => {
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    (CancelGolemSettingsApply as jest.Mock).mockRejectedValue('gone');
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByText(/could not be cancelled/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeInTheDocument();
+    expect(screen.getByTestId('golem-config-draft')).toBeInTheDocument();
   });
 
   it('keeps the challenge when its cancellation fails', async () => {
@@ -765,6 +857,44 @@ describe('bootstrap CTAs', () => {
     expect(await screen.findByTestId('provider-row-hosted')).toBeInTheDocument();
     expect(within(screen.getByTestId('route-row-chat')).getByText('Modified')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'source → curated/local' })).toBeInTheDocument();
+  });
+
+  // The curated bootstrap end to end. The loaded, scrubbed profile document IS
+  // the change, so zero staged mutations is a complete write — no gate, no
+  // "stage something first".
+  it('applies a curated profile with no staged changes and records its provenance', async () => {
+    (CreateGolemSettings as jest.Mock).mockResolvedValue({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('golem-config-masthead');
+    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByRole('button', { name: 'source → curated/local' });
+
+    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    expect(applyButton).toBeEnabled();
+    expect(screen.queryByText(/Stage at least one change/)).not.toBeInTheDocument();
+
+    await userEvent.click(applyButton);
+    await waitFor(() => expect(CreateGolemSettings).toHaveBeenCalledTimes(1));
+    expect((CreateGolemSettings as jest.Mock).mock.calls[0][0]).toEqual({
+      source: {
+        kind: 'profile',
+        profileId: 'curated/local',
+        sourceRevision: profileRevision,
+      },
+      changes: [],
+      keys: {},
+    });
+
+    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(JSON.parse(window.localStorage.getItem(ACTIVE_PROFILE_KEY) ?? 'null')).toEqual({
+      version: 1,
+      profileId: 'curated/local',
+      appliedRevision: movedRevision,
+    });
   });
 
   it('creates from a blank builder once the bootstrap inputs are complete', async () => {

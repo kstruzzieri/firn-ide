@@ -142,7 +142,6 @@ const UNSTAGED_GATE =
   'Apply is unavailable while an editor has unstaged changes. Stage or cancel them first.';
 const REVIEW_GATE =
   'Apply is unavailable until every change marked Needs review is re-staged or discarded.';
-const EMPTY_GATE = 'Stage at least one change — a new source on its own is not a write.';
 const BOOTSTRAP_GATE =
   'A blank configuration needs one provider and an agent route that meets chat, stream, and tool_call.';
 
@@ -321,6 +320,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       pendingRequestRef.current = null;
       setDraftEpoch((current) => current + 1);
       setSourceOpen(false);
+      // The epoch bump remounts both cards, and a focus request left standing
+      // would be replayed by the fresh mount — re-expanding a row and stealing
+      // focus on a draft that no longer holds that change.
+      setFocusRequest(null);
     }
     setOutcome({ ...NO_OUTCOME, ...next });
   };
@@ -445,7 +448,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     return () => registerConfigCloseHandler(null);
   }, []);
 
-  const discard = () => {
+  /**
+   * §3.3: Discard "invalidates a pending settings challenge", which makes it
+   * one of §4.6a's cancel-then-transition paths — the token dies before the
+   * draft does, and a failed cancellation keeps the surface exactly as it is
+   * rather than abandoning a token the backend still honours. It needs no
+   * confirmation of its own: pressing Discard IS the confirmation.
+   */
+  const discard = async () => {
+    if (!(await cancelChallenge())) return;
     settle({ kind: 'discard' });
     setPreview(null);
     setSourceError('');
@@ -467,13 +478,14 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // Sources (§4.6 bootstrap, §5.3)
   // -------------------------------------------------------------------------
 
-  const adoptProfile = async (profileId: string, keepDraft: boolean): Promise<void> => {
+  /** Resolves true only when the preview actually landed. */
+  const adoptProfile = async (profileId: string, keepDraft: boolean): Promise<boolean> => {
     setSourceError('');
     try {
       const result = parseGolemProfileLoadResult(await LoadGolemProfile(profileId));
       if (result.status === 'diagnostics') {
         setSourceError(formatProfileDiagnostic(result.diagnostics[0]));
-        return;
+        return false;
       }
       const source = {
         kind: 'profile' as const,
@@ -491,8 +503,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       // back a stale model as if the user had chosen it.
       setDraftEpoch((current) => current + 1);
       if (!keepDraft) setOutcome(NO_OUTCOME);
+      return true;
     } catch (err) {
       setSourceError(boundedGolemMessage(err));
+      return false;
     }
   };
 
@@ -675,21 +689,31 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setOutcome(NO_OUTCOME);
   };
 
+  /**
+   * The conflict panel is the only way back from a conflict, so it survives a
+   * reload that did not land — a busy or failed reload leaves the draft
+   * stranded with `Needs review` rows and no action otherwise. Same shape as
+   * `recover`: clear the outcome only once the reload actually succeeded.
+   */
   const reviewConflict = async () => {
     const kind = outcome.conflict;
-    setOutcome(NO_OUTCOME);
     if (kind === 'profile_source') {
       const source = draftRef.current.source;
-      if (source.kind === 'profile') await adoptProfile(source.profileId, true);
+      if (source.kind !== 'profile') return;
+      if (await adoptProfile(source.profileId, true)) setOutcome(NO_OUTCOME);
       return;
     }
-    // A `challenge` conflict has nothing left to reload: the token is spent and
-    // the draft is already waiting for review.
-    if (kind === 'target') await load(true);
+    if (kind === 'target') {
+      if (await load(true)) setOutcome(NO_OUTCOME);
+      return;
+    }
+    // A `challenge` conflict has nothing to reload: the token is spent and the
+    // draft is already waiting for review.
+    setOutcome(NO_OUTCOME);
   };
 
   const discardConflict = async () => {
-    discard();
+    await discard();
     await load(true);
   };
 
@@ -704,7 +728,14 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // -------------------------------------------------------------------------
 
   const recovery = outcome.unknown;
-  const locked = sending || recovery;
+  /**
+   * §4.6a: while challenged, the only enabled draft actions are Confirm,
+   * Cancel, and the cancel-then-transition paths (Discard, Refresh, source
+   * switch, tab close, quit). Everything the request is made of — editors,
+   * chips, Apply, the bootstrap CTAs — is frozen, because the visible request
+   * is what the challenge token is bound to.
+   */
+  const locked = sending || recovery || outcome.challenge !== null;
   const changeCount = draftChangeCount(draft);
   // Editing needs a document that is both loaded and writable. A profile or
   // blank source supplies its own: the draft is layered on THAT preview.
@@ -737,6 +768,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     routingOwnsDiagnostic(body?.routes ?? [], diagnostic);
   const pageDiagnostics = diagnostics.filter((entry) => !ownedByRow(entry));
 
+  // A profile source with no row changes is a complete write on its own — the
+  // loaded, scrubbed profile document is the change — so nothing gates it here.
   const blocked =
     unstagedEditors.size > 0
       ? UNSTAGED_GATE
@@ -744,11 +777,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         ? REVIEW_GATE
         : draft.source.kind === 'blank' && !bootstrapComplete(projected.changes)
           ? BOOTSTRAP_GATE
-          : // The transport refuses an empty change set whatever the source is,
-            // so a bare source replacement is not yet a write (§5.6).
-            projected.changes.length === 0
-            ? EMPTY_GATE
-            : null;
+          : null;
 
   return (
     <div className={styles.root}>
@@ -1078,8 +1107,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 count={changeCount}
                 blocked={blocked}
                 locked={locked}
+                discardLocked={sending || recovery}
                 onApply={apply}
-                onDiscard={discard}
+                onDiscard={() => void discard()}
                 onOpenChange={(changeId) =>
                   setFocusRequest((current) => ({ changeId, nonce: (current?.nonce ?? 0) + 1 }))
                 }

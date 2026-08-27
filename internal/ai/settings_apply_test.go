@@ -1643,6 +1643,84 @@ func TestPrepareProfileApplyClearsCredentialsUnlessReplaced(t *testing.T) {
 	}
 }
 
+// TestPrepareProfileSourceWithNoChangesPublishesTheScrubbedProfile: the whole
+// curated bootstrap. A profile source with ZERO staged changes is a well-formed
+// write — the loaded, scrubbed document is the change — so the pipeline must
+// carry it end to end: the source loads, the credential scrub runs, the floor
+// and projection-bound checks run on the result, and the published bytes are
+// the profile with every key form gone.
+func TestPrepareProfileSourceWithNoChangesPublishesTheScrubbedProfile(t *testing.T) {
+	stageApplyTarget(t, applyTargetConfigJSON)
+	targetRevision := stagedTargetRevision(t)
+	t.Setenv(profileSetEnvName, profileAmbientSecret)
+	unsetenv(t, profileUnsetEnvName)
+	stageUserProfile(t, "staged", keyedProfileJSON)
+
+	prepared, result := prepareSettingsApply(context.Background(), profileSourceRequest(
+		targetRevision, profileBodyRevision(keyedProfileJSON), nil, nil), applyModeExisting)
+	if result != nil {
+		t.Fatalf("a zero-change profile apply is a write, not a refusal: %+v", *result)
+	}
+	cfg := prepared.doc.Config()
+	// The profile's own shape survived: this is the profile document, not the
+	// active target it replaces.
+	if _, ok := cfg.Providers["literal"]; !ok {
+		t.Fatalf("prepared document is not the profile: providers = %v", cfg.Providers)
+	}
+	for name, p := range cfg.Providers {
+		if p.APIKey != "" {
+			t.Fatalf("provider %q kept a credential (%d bytes) through a zero-change apply", name, len(p.APIKey))
+		}
+	}
+
+	published := filepath.Join(t.TempDir(), "models.json")
+	if err := prepared.doc.SaveNew(published); err != nil {
+		t.Fatalf("publish prepared document: %v", err)
+	}
+	raw, err := os.ReadFile(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		profileEnvSentinel, profileAmbientSecret, profileLiteralSecret,
+		profileSetEnvName, profileUnsetEnvName, "api_key", "${",
+	} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("published bytes carry %q:\n%s", forbidden, raw)
+		}
+	}
+}
+
+// TestApplyRequestEmptyChangesBySource: the empty change set is source-
+// conditional. Only a profile source carries a document of its own.
+func TestApplyRequestEmptyChangesBySource(t *testing.T) {
+	cases := []struct {
+		name   string
+		mode   applyMode
+		source ApplySource
+		want   bool
+	}{
+		{"applied", applyModeExisting, ApplySource{Kind: applySourceApplied}, false},
+		{"blank", applyModeCreate, ApplySource{Kind: applySourceBlank}, false},
+		{"profile apply", applyModeExisting, ApplySource{Kind: applySourceProfile,
+			ProfileID: "curated/local", SourceRevision: strings.Repeat("a", 64)}, true},
+		{"profile create", applyModeCreate, ApplySource{Kind: applySourceProfile,
+			ProfileID: "curated/local", SourceRevision: strings.Repeat("a", 64)}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := SettingsApplyRequest{Source: tc.source, Changes: []Change{}, Keys: map[string]string{}}
+			if tc.mode == applyModeExisting {
+				req.TargetRevision = stringPtr(strings.Repeat("b", 64))
+			}
+			err := validateSettingsApplyRequest(req, tc.mode)
+			if (err == nil) != tc.want {
+				t.Fatalf("validate(empty changes, %s) err = %v, want accepted = %v", tc.name, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestPrepareProfileSourceStoreUnsafe: an unsafe or unreadable profile STORE is
 // what `profile_source_unavailable` is reserved for (§5.6) — not a missing
 // profile, which is a conflict, and not invalid content, which is config_invalid.

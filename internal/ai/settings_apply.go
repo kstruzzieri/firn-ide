@@ -813,8 +813,16 @@ func validateSettingsApplyRequest(req SettingsApplyRequest, mode applyMode) erro
 			return errApplyRevision
 		}
 	}
-	// A write with no change is not a write. Both collections are non-null.
-	if len(req.Changes) == 0 || len(req.Changes) > maxProjectionEntries {
+	// Both collections are non-null and bounded.
+	if len(req.Changes) > maxProjectionEntries {
+		return errApplyBounds
+	}
+	// An empty change set is a write only from a profile source: the loaded,
+	// scrubbed profile document IS the change (§3.3 makes a source replacement
+	// dirty on its own, and §5.2's "apply all remaining mutations" is
+	// well-formed at zero). An applied source with no change asks for nothing,
+	// and a blank one cannot form a BootstrapSpec.
+	if len(req.Changes) == 0 && req.Source.Kind != applySourceProfile {
 		return errApplyBounds
 	}
 	if req.Keys == nil || len(req.Keys) > maxProjectionEntries {
