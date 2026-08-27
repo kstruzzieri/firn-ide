@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useIDEStore } from '../stores/ideStore';
 import {
+  CancelBeforeClose,
   ConfirmBeforeCloseReady,
   SaveWorkspaceState,
   LoadWorkspaceState,
@@ -303,7 +304,8 @@ function restoreActiveWorkspaceId(activeWorkspaceId: string): void {
  */
 export function useWorkspacePersistence(
   beforeClose?: () => Promise<void>,
-  drainHistory: () => Promise<void> = drainRunHistoryForClose
+  drainHistory: () => Promise<void> = drainRunHistoryForClose,
+  closeGuard?: () => Promise<boolean>
 ) {
   const workspace = useIDEStore((state) => state.workspace);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -481,10 +483,30 @@ export function useWorkspacePersistence(
     };
   }, [flushSave]);
 
-  // Listen for app:beforeclose event from Go backend
+  // Listen for app:beforeclose event from Go backend. The backend is now
+  // waiting in `awaiting_frontend` and has torn down nothing, so this handler
+  // owns the decision: confirm and let the app quit, or cancel and leave it
+  // exactly as it was.
   useEffect(() => {
+    // abandonClose returns the backend to idle. A transport failure is
+    // reported, never thrown: the backend backstop is the remaining net.
+    const abandonClose = async () => {
+      try {
+        await CancelBeforeClose();
+      } catch (err) {
+        console.error('Failed to cancel app close:', err);
+      }
+    };
+
     const handleBeforeClose = async () => {
       try {
+        // The guard settles anything that must not be interrupted — an
+        // in-flight settings write, an unsaved draft, staged secrets — and
+        // answers whether the close may proceed at all.
+        if (closeGuard && !(await closeGuard())) {
+          await abandonClose();
+          return;
+        }
         await Promise.all([
           flushSave(undefined, { includeTreeSnapshot: true }),
           beforeClose?.() ?? Promise.resolve(),
@@ -495,8 +517,11 @@ export function useWorkspacePersistence(
             }),
         ]);
       } catch (err) {
-        console.error('Failed to flush editor state before close:', err);
-        return; // let the backend deadline expire rather than approve data loss
+        // Never approve data loss — and never leave the window wedged behind
+        // an unanswered handshake either.
+        console.error('Failed to prepare for app close:', err);
+        await abandonClose();
+        return;
       }
       try {
         await ConfirmBeforeCloseReady();
@@ -509,7 +534,7 @@ export function useWorkspacePersistence(
       void handleBeforeClose();
     });
     return cancel;
-  }, [beforeClose, drainHistory, flushSave]);
+  }, [beforeClose, closeGuard, drainHistory, flushSave]);
 
   // Cleanup timer on unmount
   useEffect(() => {

@@ -568,12 +568,12 @@ func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 	fset, files := golemPackageFiles(t)
 
 	methods := golemWailsMethods(files)
-	// The plan freezes six bound Golem methods today (the four struct-carrying
-	// methods plus the two zero-input settings methods). The floor stays at 4:
-	// fewer than that means the derivation itself broke, and everything below
-	// it would pass vacuously.
-	if len(methods) < 4 {
-		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 4 (six expected today)",
+	// Eleven bound Golem methods today: the four struct-carrying chat methods,
+	// the two zero-input settings reads, and the five §5.2 write-side bindings.
+	// The floor stays below that on purpose — fewer than six means the
+	// derivation itself broke, and everything below it would pass vacuously.
+	if len(methods) < 6 {
+		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 6 (eleven expected today)",
 			len(methods), golemSortedNames(methods))
 	}
 
@@ -838,16 +838,17 @@ func TestGolemCloseAIServiceClosesAdmissionAndToleratesNoService(t *testing.T) {
 	app.closeAIService() // idempotent
 }
 
-// beforeClose owns the shutdown fan-out, and its runtime.Quit call makes it
-// unrunnable outside a live Wails app, so the concurrency shape is asserted
-// structurally — the same approach the existing beforeClose contract test uses.
+// startCloseDrain owns the shutdown fan-out. Search cancellation and the LSP
+// shutdown have no idle-state observable, so the shape of the drain — and the
+// fact that beforeClose alone starts none of it — is asserted structurally,
+// alongside the behavioural §5.5 rows in app_test.go.
 func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
 	fset, files := golemPackageFiles(t)
-	beforeClose := golemFuncDecl(t, files, "beforeClose")
+	drain := golemFuncDecl(t, files, "startCloseDrain")
 
 	// Each worker is a goroutine that closes its own done channel.
 	closedInGoroutines := map[string]bool{}
-	ast.Inspect(beforeClose.Body, func(node ast.Node) bool {
+	ast.Inspect(drain.Body, func(node ast.Node) bool {
 		goStatement, ok := node.(*ast.GoStmt)
 		if !ok {
 			return true
@@ -869,21 +870,33 @@ func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
 	})
 	for _, worker := range []string{"runnerDone", "lspDone", "aiDone"} {
 		if !closedInGoroutines[worker] {
-			t.Errorf("beforeClose has no goroutine closing %s; want three concurrent shutdown workers", worker)
+			t.Errorf("startCloseDrain has no goroutine closing %s; want three concurrent shutdown workers", worker)
 		}
 	}
 
-	// The AI worker runs the service shutdown, not something else.
-	if !golemCallsFunction(beforeClose.Body, "closeAIService") {
-		t.Error("beforeClose never calls closeAIService")
+	// The AI worker runs the service shutdown, not something else, and the
+	// drain is also what cancels in-flight searches and closes run admission.
+	for _, teardown := range []string{"closeAIService", "CancelAll", "beginRunShutdown"} {
+		if !golemCallsFunction(drain.Body, teardown) {
+			t.Errorf("startCloseDrain never calls %s", teardown)
+		}
+	}
+
+	// §5.5: the first close only asks the frontend. Nothing it does may reach
+	// the teardown, which is exactly what a cancelled handshake relies on.
+	beforeClose := golemFuncDecl(t, files, "beforeClose")
+	for _, teardown := range []string{"closeAIService", "CancelAll", "beginRunShutdown", "StopAllWithReason", "ShutdownAll"} {
+		if golemCallsFunction(beforeClose.Body, teardown) {
+			t.Errorf("beforeClose calls %s directly; awaiting_frontend must start no teardown", teardown)
+		}
 	}
 
 	// The outer deadline stays at two seconds and drains every worker channel.
-	source := golemNodeText(t, fset, beforeClose)
+	source := golemNodeText(t, fset, drain)
 	if !strings.Contains(source, "2 * time.Second") {
-		t.Error("beforeClose no longer bounds shutdown with the 2 s outer deadline")
+		t.Error("startCloseDrain no longer bounds shutdown with the 2 s outer deadline")
 	}
-	for _, channel := range []string{"closeReadyCh", "runnerDoneCh", "lspDoneCh", "aiDoneCh"} {
+	for _, channel := range []string{"runnerDoneCh", "lspDoneCh", "aiDoneCh"} {
 		// Declared, tested in the loop condition, and selected on.
 		if strings.Count(source, channel) < 3 {
 			t.Errorf("%s is not declared, tested in the loop condition, and selected on", channel)
@@ -1077,6 +1090,434 @@ func assertNoGolemLeak(t *testing.T, text string, forbidden ...string) {
 	for _, secret := range forbidden {
 		if secret != "" && strings.Contains(text, secret) {
 			t.Errorf("%q leaked %q", text, secret)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Settings writes (spec §5.2/§5.5/§5.6): the five write-side bindings.
+// ---------------------------------------------------------------------------
+
+// golemTargetConfigJSON is a valid, floor-satisfying local target: the agent
+// role carries every agent-floor capability, so a write against it is refused
+// for contract reasons only — never because the fixture was unusable.
+const golemTargetConfigJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {"agent": {"name": "agent-model", "provider": "ollama", "type": "dense",
+                       "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent", "chat": "agent"}
+}`
+
+// golemNoRevision is a well-formed revision that cannot be the staged target's,
+// so an Apply carrying it is refused before any mutation.
+const golemNoRevision = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// stageGolemTarget makes body the active go-llm target for this test, with
+// every other discovery location pointed at a throwaway home first.
+func stageGolemTarget(t *testing.T, body string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write models.json: %v", err)
+	}
+	t.Setenv("GO_LLM_CONFIG", path)
+	return path
+}
+
+// newGolemAppWithTarget is newGolemApp against a staged configuration target
+// instead of the deliberately empty one.
+func newGolemAppWithTarget(t *testing.T, body string) (*App, string) {
+	t.Helper()
+	path := stageGolemTarget(t, body)
+	app := NewApp()
+	app.emitFn = func(string, ...any) {}
+	app.startup(context.Background())
+	if app.aiService == nil {
+		t.Fatal("startup did not create the Golem service")
+	}
+	t.Cleanup(app.closeAIService)
+	return app, path
+}
+
+// The five write-side bindings carry the ai contract types unchanged: nothing
+// in app.go may widen, narrow, or re-shape what the frontend sends or sees.
+func TestGolemSettingsWriteMethodSignatures(t *testing.T) {
+	appType := reflect.TypeOf(&App{})
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	for _, tc := range []struct {
+		method string
+		in     reflect.Type
+		out    reflect.Type
+	}{
+		{"ApplyGolemSettings", reflect.TypeOf(ai.SettingsApplyRequest{}), reflect.TypeOf(ai.SettingsApplyResult{})},
+		{"CreateGolemSettings", reflect.TypeOf(ai.SettingsApplyRequest{}), reflect.TypeOf(ai.SettingsApplyResult{})},
+		{"ConfirmGolemSettingsApply", reflect.TypeOf(ai.ConfirmSettingsApplyRequest{}), reflect.TypeOf(ai.SettingsApplyResult{})},
+		// Cancel's input IS the opaque challenge token; its result is the single
+		// idempotent success variant.
+		{"CancelGolemSettingsApply", reflect.TypeOf(""), reflect.TypeOf(ai.CancelSettingsApplyResult{})},
+		{"LoadGolemProfile", reflect.TypeOf(""), reflect.TypeOf(ai.GolemProfileLoadResult{})},
+	} {
+		method, ok := appType.MethodByName(tc.method)
+		if !ok {
+			t.Errorf("App has no method %s", tc.method)
+			continue
+		}
+		signature := method.Type
+		if signature.NumIn() != 2 || signature.In(1) != tc.in {
+			t.Errorf("%s takes %v, want exactly (%v)", tc.method, signature, tc.in)
+			continue
+		}
+		if signature.NumOut() != 2 || signature.Out(0) != tc.out || signature.Out(1) != errorType {
+			t.Errorf("%s returns %v, want (%v, error)", tc.method, signature, tc.out)
+		}
+	}
+}
+
+// golemBoundaryFields walks every field reachable from a boundary type and
+// returns them as "Type.Field". Pointers, slices, arrays, and maps are
+// followed, so a key or a path added three levels down is still seen.
+func golemBoundaryFields(root reflect.Type) []string {
+	seen := map[reflect.Type]bool{}
+	var fields []string
+	var walk func(reflect.Type)
+	walk = func(typ reflect.Type) {
+		for typ.Kind() == reflect.Ptr || typ.Kind() == reflect.Slice ||
+			typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
+			typ = typ.Elem()
+		}
+		if typ.Kind() != reflect.Struct || seen[typ] {
+			return
+		}
+		seen[typ] = true
+		for i := range typ.NumField() {
+			field := typ.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			fields = append(fields, typ.Name()+"."+field.Name)
+			walk(field.Type)
+		}
+	}
+	walk(root)
+	return fields
+}
+
+// Per-type allowlists, not a blanket substring ban. Endpoints are projected on
+// purpose (§5.4) and the request-only key map is the one way a credential ever
+// travels, so the contract is stated as the EXACT set of fields allowed to
+// carry each sensitive word — anything else, anywhere in the reachable graph,
+// is a leak.
+func TestGolemWriteBoundaryPerTypeAllowlists(t *testing.T) {
+	// Every type that crosses the boundary in either direction, including the
+	// run-path event/status records that must never gain a key.
+	roots := []reflect.Type{
+		reflect.TypeOf(ai.SettingsApplyRequest{}),
+		reflect.TypeOf(ai.ConfirmSettingsApplyRequest{}),
+		reflect.TypeOf(ai.SettingsApplyResult{}),
+		reflect.TypeOf(ai.CancelSettingsApplyResult{}),
+		reflect.TypeOf(ai.GolemProfileLoadResult{}),
+		reflect.TypeOf(ai.SettingsProjection{}),
+		reflect.TypeOf(ai.SettingsReloadResult{}),
+		reflect.TypeOf(ai.Status{}),
+		reflect.TypeOf(ai.TurnAdmission{}),
+		reflect.TypeOf(ai.RelayedEvent{}),
+		reflect.TypeOf(ai.RunStatusEvent{}),
+		reflect.TypeOf(WorkspaceInfo{}),
+	}
+	found := map[string]bool{}
+	for _, root := range roots {
+		for _, field := range golemBoundaryFields(root) {
+			found[field] = true
+		}
+	}
+	if len(found) < 40 {
+		t.Fatalf("walked only %d boundary fields; the walker broke and every check below is vacuous", len(found))
+	}
+
+	allowed := map[string]map[string]bool{
+		// No CONFIGURATION location crosses in either direction. The one
+		// exception is the repository root the user themselves opened, which
+		// GetWorkspaceInfo has always echoed back canonicalized; it is the
+		// workspace the frontend already holds, never a config or consent path.
+		"path": {"WorkspaceInfo.Path": true},
+		"root": {},
+		"dir":  {},
+		// Keys cross frontend→backend only, inside the one request map.
+		// WorkspaceInfo.RepoKey is a SHA-256 digest of that root — an identity,
+		// never a credential (TestGetWorkspaceInfo… pins its digest shape).
+		"key": {"SettingsApplyRequest.Keys": true, "WorkspaceInfo.RepoKey": true},
+		// Tokens live in the challenge the backend issues, the Confirm request
+		// that resends it, and nowhere else. Cancel takes its token as a bare
+		// string argument, pinned by the signature test above.
+		"token": {"ApplyChallenge.Token": true, "ConfirmSettingsApplyRequest.ChallengeToken": true},
+		// Endpoints are projected deliberately (§5.4).
+		"endpoint": {
+			"Change.Endpoint":              true,
+			"ProviderProjection.Endpoint":  true,
+			"ApplyDestination.Endpoint":    true,
+			"ProviderDestination.Endpoint": true,
+		},
+	}
+	for word, allowlist := range allowed {
+		for field := range found {
+			name := strings.ToLower(field[strings.Index(field, ".")+1:])
+			if !strings.Contains(name, word) || allowlist[field] {
+				continue
+			}
+			t.Errorf("%s carries %q across the Golem boundary; it is not on the %q allowlist", field, word, word)
+		}
+		// An allowlist entry that no longer names a real field would silently
+		// stop protecting anything.
+		for field := range allowlist {
+			if !found[field] {
+				t.Errorf("allowlist entry %s (%q) is not a reachable boundary field", field, word)
+			}
+		}
+	}
+}
+
+// golemBindingParamType returns the exact type Wails decodes this binding's
+// argument into. Wails builds each argument with reflect.New on the BOUND
+// METHOD's own parameter type and json.Unmarshal's the raw frontend JSON into
+// it (wails v2 internal/binding/boundMethod.go, ParseArgs). Deriving the type
+// from the method rather than naming it is what makes the decode assertions
+// below a proof about the real boundary instead of about a hand-picked struct.
+func golemBindingParamType(t *testing.T, method string) reflect.Type {
+	t.Helper()
+	bound, ok := reflect.TypeOf(&App{}).MethodByName(method)
+	if !ok {
+		t.Fatalf("App has no method %s", method)
+	}
+	if bound.Type.NumIn() != 2 {
+		t.Fatalf("%s takes %d arguments; the decode proof assumes exactly one", method, bound.Type.NumIn()-1)
+	}
+	return bound.Type.In(1)
+}
+
+// golemDecodeBindingArg mirrors ParseArgs for one argument.
+func golemDecodeBindingArg(t *testing.T, method, raw string) (reflect.Value, error) {
+	t.Helper()
+	inputValue := reflect.New(golemBindingParamType(t, method))
+	if err := json.Unmarshal([]byte(raw), inputValue.Interface()); err != nil {
+		return reflect.Value{}, err
+	}
+	return inputValue.Elem(), nil
+}
+
+// golemCallBinding decodes raw frontend JSON the way Wails does and then
+// invokes the bound method through reflection, as BoundMethod.Call does.
+func golemCallBinding(t *testing.T, app *App, method, raw string) (any, error) {
+	t.Helper()
+	arg, err := golemDecodeBindingArg(t, method, raw)
+	if err != nil {
+		t.Fatalf("%s: the boundary rejected a valid request: %v", method, err)
+	}
+	out := reflect.ValueOf(app).MethodByName(method).Call([]reflect.Value{arg})
+	if len(out) != 2 {
+		t.Fatalf("%s returned %d values, want (result, error)", method, len(out))
+	}
+	var callErr error
+	if !out[1].IsNil() {
+		callErr = out[1].Interface().(error)
+	}
+	return out[0].Interface(), callErr
+}
+
+// The request types the Wails bindings decode into are the strict ones: an
+// unknown field anywhere in the request is rejected by the decode step itself,
+// before the method ever runs. The rows walk the nesting because each variant
+// decodes through its own strict struct.
+func TestGolemWriteBindingsRejectUnknownFieldsAtTheBoundary(t *testing.T) {
+	app, _ := newGolemAppWithTarget(t, golemTargetConfigJSON)
+	revision := golemStagedRevision(t, app)
+	valid := golemApplyRequestJSON(revision, golemMarker)
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		raw    string
+	}{
+		{"top-level unknown member", "ApplyGolemSettings",
+			`{"targetRevision":"` + revision + `","source":{"kind":"applied"},"changes":[],"keys":{},"sneak":1}`},
+		{"unknown member inside the source union", "ApplyGolemSettings",
+			`{"targetRevision":"` + revision + `","source":{"kind":"applied","profileId":"curated/local"},"changes":[],"keys":{}}`},
+		{"unknown member inside a change", "ApplyGolemSettings",
+			`{"targetRevision":"` + revision + `","source":{"kind":"applied"},` +
+				`"changes":[{"kind":"provider-key-set","name":"extra","value":"` + golemMarker + `"}],"keys":{}}`},
+		{"unknown member on the create request", "CreateGolemSettings",
+			`{"source":{"kind":"blank"},"changes":[],"keys":{},"targetPath":"/tmp/models.json"}`},
+		{"unknown member on the confirm wrapper", "ConfirmGolemSettingsApply",
+			`{"challengeToken":"tok","request":` + valid + `,"replay":true}`},
+		{"unknown member inside the confirmed request", "ConfirmGolemSettingsApply",
+			`{"challengeToken":"tok","request":{"targetRevision":"` + revision +
+				`","source":{"kind":"applied"},"changes":[],"keys":{},"sneak":1}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := golemDecodeBindingArg(t, tc.method, tc.raw); err == nil {
+				t.Fatalf("%s accepted an unknown field: %s", tc.method, tc.raw)
+			}
+		})
+	}
+
+	// The same decode path accepts the contract-valid request, so the rows
+	// above fail on the unknown member and not on the fixture.
+	for _, method := range []string{"ApplyGolemSettings", "CreateGolemSettings"} {
+		if _, err := golemDecodeBindingArg(t, method, valid); err != nil {
+			t.Fatalf("%s rejected the contract-valid request: %v", method, err)
+		}
+	}
+	if _, err := golemDecodeBindingArg(t, "ConfirmGolemSettingsApply",
+		`{"challengeToken":"tok","request":`+valid+`}`); err != nil {
+		t.Fatalf("ConfirmGolemSettingsApply rejected the contract-valid request: %v", err)
+	}
+}
+
+// golemStagedRevision reads the active target's revision the way the frontend
+// does: from the read-only projection.
+func golemStagedRevision(t *testing.T, app *App) string {
+	t.Helper()
+	projection, err := app.GetGolemSettings()
+	if err != nil {
+		t.Fatalf("GetGolemSettings: %v", err)
+	}
+	if projection.State != "ready" || projection.Revision == "" {
+		t.Fatalf("staged target projected as %+v, want a ready document with a revision", projection)
+	}
+	return projection.Revision
+}
+
+// golemApplyRequestJSON is the frontend's wire form of "add a local provider
+// and set its API key" — the one request shape that legitimately carries a
+// credential across the boundary.
+func golemApplyRequestJSON(revision, key string) string {
+	return `{"targetRevision":"` + revision + `","source":{"kind":"applied"},"changes":[` +
+		`{"kind":"provider-add","name":"extra","endpoint":"http://localhost:11700"},` +
+		`{"kind":"provider-key-set","name":"extra"}],"keys":{"extra":"` + key + `"}}`
+}
+
+// A key crosses frontend→backend, is applied, and never comes back: not in the
+// result, not in the host log. The applied row also proves the binding really
+// publishes, so the refused row's "no bytes written" is not vacuous.
+func TestGolemWriteBindingsApplyKeysWithoutEchoingThem(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		revision   func(t *testing.T, app *App) string
+		wantStatus string
+		wantWrite  bool
+	}{
+		{"a published apply", golemStagedRevision, "applied", true},
+		{
+			name:       "a refused apply writes nothing",
+			revision:   func(*testing.T, *App) string { return golemNoRevision },
+			wantStatus: "conflict",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, path := newGolemAppWithTarget(t, golemTargetConfigJSON)
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read staged target: %v", err)
+			}
+			logged := captureGolemLog(t)
+
+			out, callErr := golemCallBinding(t, app, "ApplyGolemSettings",
+				golemApplyRequestJSON(tc.revision(t, app), golemMarker))
+			if callErr != nil {
+				t.Fatalf("ApplyGolemSettings: %v", callErr)
+			}
+			result, ok := out.(ai.SettingsApplyResult)
+			if !ok {
+				t.Fatalf("result type = %T, want ai.SettingsApplyResult", out)
+			}
+			if result.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q (%+v)", result.Status, tc.wantStatus, result)
+			}
+
+			encoded, marshalErr := json.Marshal(result)
+			if marshalErr != nil {
+				t.Fatalf("marshal result: %v", marshalErr)
+			}
+			assertNoGolemLeak(t, string(encoded), path)
+			assertNoGolemLeak(t, logged())
+
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("re-read staged target: %v", err)
+			}
+			if wrote := !bytes.Equal(before, after); wrote != tc.wantWrite {
+				t.Fatalf("target written = %v, want %v", wrote, tc.wantWrite)
+			}
+			if tc.wantWrite && !bytes.Contains(after, []byte(golemMarker)) {
+				t.Fatal("the applied key never reached the configuration; the leak assertions above are vacuous")
+			}
+		})
+	}
+}
+
+// Cancel is idempotent through the binding and never reflects the token it was
+// handed; an unknown token is already cancelled.
+func TestGolemCancelSettingsApplyIsIdempotent(t *testing.T) {
+	app, _ := newGolemAppWithTarget(t, golemTargetConfigJSON)
+	for range 2 {
+		result, err := app.CancelGolemSettingsApply("never-issued-" + golemMarker)
+		if err != nil {
+			t.Fatalf("CancelGolemSettingsApply: %v", err)
+		}
+		if result.Status != "cancelled" {
+			t.Fatalf("status = %q, want cancelled", result.Status)
+		}
+		encoded, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			t.Fatalf("marshal result: %v", marshalErr)
+		}
+		assertNoGolemLeak(t, string(encoded))
+	}
+}
+
+// LoadGolemProfile returns the closed §5.6 domain result, never a raw store
+// error, and never a path.
+func TestGolemLoadProfileReturnsAClosedResult(t *testing.T) {
+	app, _ := newGolemAppWithTarget(t, golemTargetConfigJSON)
+	for _, id := range []string{"user/does-not-exist", "not a profile id", "curated/local"} {
+		result, err := app.LoadGolemProfile(id)
+		if err != nil {
+			t.Fatalf("LoadGolemProfile(%q): %v", id, err)
+		}
+		if result.Status != "loaded" && result.Status != "diagnostics" {
+			t.Fatalf("LoadGolemProfile(%q) status = %q, want loaded or diagnostics", id, result.Status)
+		}
+		encoded, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			t.Fatalf("marshal result: %v", marshalErr)
+		}
+		assertNoGolemLeak(t, string(encoded))
+	}
+}
+
+// The write bindings share the pre-startup guard: no service means the fixed
+// unavailable projection, not a nil-pointer panic.
+func TestGolemWriteMethodsUninitializedService(t *testing.T) {
+	app := &App{}
+	calls := map[string]func() error{
+		"ApplyGolemSettings":        func() error { _, err := app.ApplyGolemSettings(ai.SettingsApplyRequest{}); return err },
+		"CreateGolemSettings":       func() error { _, err := app.CreateGolemSettings(ai.SettingsApplyRequest{}); return err },
+		"ConfirmGolemSettingsApply": func() error { _, err := app.ConfirmGolemSettingsApply(ai.ConfirmSettingsApplyRequest{}); return err },
+		"CancelGolemSettingsApply":  func() error { _, err := app.CancelGolemSettingsApply("tok"); return err },
+		"LoadGolemProfile":          func() error { _, err := app.LoadGolemProfile("curated/local"); return err },
+	}
+	for name, call := range calls {
+		err := call()
+		if err == nil {
+			t.Errorf("%s uninitialized returned nil, want a rejection", name)
+			continue
+		}
+		if err.Error() != "Golem is unavailable." {
+			t.Errorf("%s uninitialized = %q, want the fixed unavailable message", name, err.Error())
 		}
 	}
 }

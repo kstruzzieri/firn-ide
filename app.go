@@ -40,7 +40,10 @@ type App struct {
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
 	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
-	emitFn          func(event string, data ...any)
+	emitFn func(event string, data ...any)
+	// quitFn lets tests observe the drain's final quit, which cannot run
+	// outside a live Wails application. nil in production → runtime.Quit.
+	quitFn          func()
 	executor        *runprofile.Executor
 	osFS            filesystem.FileSystem
 	workspaceStore  *workspace.Store
@@ -53,10 +56,16 @@ type App struct {
 	// firnDir is the ~/.firn state root, or "" when no home/config directory
 	// is available. An empty firnDir must never become a relative path: state
 	// that needs it is simply unavailable.
-	firnDir     string
-	closeMu     sync.Mutex
-	isClosing   bool
-	runShutdown bool
+	firnDir string
+	closeMu sync.Mutex
+	// closePhase is the spec §5.5 close machine. Guarded by closeMu.
+	closePhase closeState
+	// closeBackstopTimer forces the drain when the frontend never answers.
+	// Guarded by closeMu; nil outside awaiting_frontend.
+	closeBackstopTimer *time.Timer
+	// closeBackstopOverride shortens the backstop for tests. Zero = production.
+	closeBackstopOverride time.Duration
+	runShutdown           bool
 	// activeHistoryWorkspace and activeHistoryEpoch mirror the successfully
 	// loaded profile workspace for shutdown capture. Guarded by closeMu.
 	activeHistoryWorkspace string
@@ -66,8 +75,30 @@ type App struct {
 	// closeMu.
 	shutdownHistoryWorkspace string
 	shutdownHistoryEpoch     uint64
-	closeReady               chan struct{}
 }
+
+// closeState is the spec §5.5 app-close state machine. The first OS close
+// enters awaiting_frontend and changes nothing else; only the frontend's
+// answer (or one of the amendment-11 escape hatches) enters draining, which is
+// the single state where teardown, the two-second deadline, and Quit happen.
+type closeState int
+
+const (
+	closeIdle closeState = iota
+	closeAwaitingFrontend
+	closeDraining
+)
+
+// closeHandshakeBackstop bounds awaiting_frontend for a renderer that never
+// answers. It is deliberately long: the handshake can be sitting on a modal
+// dirty-draft prompt, and a short timer would force-quit over the user's
+// unanswered question. The escape hatch for an impatient user is their second
+// close request, not a stopwatch.
+const closeHandshakeBackstop = 60 * time.Second
+
+// closeLogPrefix starts every host-side close-machine log line, so the
+// fallbacks below are greppable and the tests can observe the production value.
+const closeLogPrefix = "app: close "
 
 // NewApp creates and returns a new App instance.
 func NewApp() *App {
@@ -183,25 +214,106 @@ func (a *App) wireLSPProvisioners() {
 	})
 }
 
-// beforeClose is called by Wails before the application window closes.
-// On the first call it prevents close, emits an event so the frontend can
-// perform a final state save, and concurrently stops any running profiles.
-// Both must complete (or a 2-second deadline expires) before the app quits.
-// When the forced quit triggers OnBeforeClose again, the isClosing flag
-// is already set so it returns false immediately, allowing the close.
+// beforeClose is called by Wails before the application window closes. It is
+// the OS edge of the §5.5 machine:
+//
+//   - idle: enter awaiting_frontend, emit one app:beforeclose, arm the
+//     backstop, and prevent the close. No teardown, no deadline — the frontend
+//     may still finish a settings write, resolve an unsaved draft, or cancel.
+//   - awaiting_frontend: a second close request is the user asking again
+//     (amendment 11), so it forces the drain. It emits no second event.
+//   - draining: allow the close so the drain's own Quit can finish.
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	a.closeMu.Lock()
-	if a.isClosing {
+	switch a.closePhase {
+	case closeDraining:
+		a.closeMu.Unlock()
+		return false
+	case closeAwaitingFrontend:
+		a.closeMu.Unlock()
+		a.enterCloseDrain("second close request")
+		return true
+	default:
+		a.closePhase = closeAwaitingFrontend
+		a.closeBackstopTimer = time.AfterFunc(a.backstopDelay(), func() {
+			a.enterCloseDrain("frontend never answered")
+		})
+		a.closeMu.Unlock()
+		a.emit("app:beforeclose")
+		return true
+	}
+}
+
+// backstopDelay is the production backstop unless a test shortened it.
+func (a *App) backstopDelay() time.Duration {
+	if a.closeBackstopOverride > 0 {
+		return a.closeBackstopOverride
+	}
+	return closeHandshakeBackstop
+}
+
+// ConfirmBeforeCloseReady signals that the frontend finished its close
+// preparation — settings writes settled, secrets cleared, state flushed — and
+// the app may tear down. It is the only ordinary way into draining, it starts
+// the teardown exactly once, and it is a no-op when no close is pending.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ConfirmBeforeCloseReady() {
+	// No reason: this is the handshake completing normally, not a fallback.
+	a.enterCloseDrain("")
+}
+
+// CancelBeforeClose abandons a pending close and returns the machine to idle.
+// Nothing has been torn down at this point, so there is nothing to restore:
+// run admission, searches, the Golem service, and the language servers were
+// never touched. Idempotent, and a no-op once draining has begun.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CancelBeforeClose() {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+	if a.closePhase != closeAwaitingFrontend {
+		return
+	}
+	a.closePhase = closeIdle
+	a.stopCloseBackstopLocked()
+}
+
+// enterCloseDrain moves awaiting_frontend → draining exactly once and starts
+// the teardown. It reports whether this call is the one that started it, which
+// is what makes confirm/second-close/backstop races harmless.
+//
+// A non-empty reason is one of the amendment-11 fallbacks, host-logged before
+// the teardown begins — both so the record survives a crash mid-drain, and so
+// only the call that actually forced the transition writes a line.
+func (a *App) enterCloseDrain(reason string) bool {
+	a.closeMu.Lock()
+	if a.closePhase != closeAwaitingFrontend {
 		a.closeMu.Unlock()
 		return false
 	}
-	a.isClosing = true
-	a.closeReady = make(chan struct{})
-	closeReady := a.closeReady
+	a.closePhase = closeDraining
+	a.stopCloseBackstopLocked()
 	a.closeMu.Unlock()
+	if reason != "" {
+		log.Printf(closeLogPrefix+"draining without the frontend handshake: %s", reason)
+	}
+	a.startCloseDrain()
+	return true
+}
 
+// stopCloseBackstopLocked disarms the backstop. The caller holds closeMu.
+func (a *App) stopCloseBackstopLocked() {
+	if a.closeBackstopTimer != nil {
+		a.closeBackstopTimer.Stop()
+		a.closeBackstopTimer = nil
+	}
+}
+
+// startCloseDrain runs the shutdown fan-out and quits. Runner cleanup, LSP
+// shutdown, and the Golem service close run concurrently, bounded by a
+// two-second outer deadline; the frontend has already flushed by the time the
+// machine reaches this state.
+func (a *App) startCloseDrain() {
 	a.beginRunShutdown()
-	runtime.EventsEmit(a.ctx, "app:beforeclose")
 
 	// Cancel any in-flight workspace searches before the runner/LSP shutdown
 	// goroutines run. CancelAll is synchronous (it only signals contexts; the
@@ -212,7 +324,6 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	}
 
 	go func() {
-		// Wait for frontend state flush, runner cleanup, and LSP shutdown, bounded by 2s.
 		runnerDone := make(chan struct{})
 		go func() {
 			if a.executor != nil {
@@ -236,15 +347,12 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 		}()
 
 		deadline := time.After(2 * time.Second)
-		closeReadyCh := closeReady
 		runnerDoneCh := runnerDone
 		lspDoneCh := lspDone
 		aiDoneCh := aiDone
 
-		for closeReadyCh != nil || runnerDoneCh != nil || lspDoneCh != nil || aiDoneCh != nil {
+		for runnerDoneCh != nil || lspDoneCh != nil || aiDoneCh != nil {
 			select {
-			case <-closeReadyCh:
-				closeReadyCh = nil
 			case <-runnerDoneCh:
 				runnerDoneCh = nil
 			case <-lspDoneCh:
@@ -252,20 +360,27 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 			case <-aiDoneCh:
 				aiDoneCh = nil
 			case <-deadline:
-				runtime.Quit(a.ctx)
+				a.quit()
 				return
 			}
 		}
 
-		runtime.Quit(a.ctx)
+		a.quit()
 	}()
-
-	return true
 }
 
-// closeAIService shuts the Golem service down inside beforeClose's budget. It
-// is idempotent and a no-op before startup, so a second close (or a close that
-// races the shutdown drain) costs nothing.
+// quit ends the application, or routes to quitFn when set (tests).
+func (a *App) quit() {
+	if a.quitFn != nil {
+		a.quitFn()
+		return
+	}
+	runtime.Quit(a.ctx)
+}
+
+// closeAIService shuts the Golem service down inside the close drain's budget.
+// It is idempotent and a no-op before startup, so a second close (or a close
+// that races the shutdown drain) costs nothing.
 func (a *App) closeAIService() {
 	if a.aiService == nil {
 		return
@@ -453,6 +568,79 @@ func (a *App) ReloadGolemSettings() (ai.SettingsReloadResult, error) {
 		return ai.SettingsReloadResult{}, a.golemError(err)
 	}
 	return result, nil
+}
+
+// ApplyGolemSettings is Call 1 of the §5.2 write handshake against the existing
+// configuration target. The request carries the staged changes and, for
+// provider-key operations, the literal key values; those are applied and
+// dropped, and never appear in the result, an event, or a log line. Every
+// outcome — including a refusal — is a closed §5.6 domain result; only a
+// missing service is an error.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ApplyGolemSettings(req ai.SettingsApplyRequest) (ai.SettingsApplyResult, error) {
+	if a.aiService == nil {
+		return ai.SettingsApplyResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.ApplySettings(req)
+	if err != nil {
+		return ai.SettingsApplyResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
+// CreateGolemSettings is Call 1 for a missing target: the backend derives the
+// destination itself, so no path crosses the boundary in either direction.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CreateGolemSettings(req ai.SettingsApplyRequest) (ai.SettingsApplyResult, error) {
+	if a.aiService == nil {
+		return ai.SettingsApplyResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.CreateSettings(req)
+	if err != nil {
+		return ai.SettingsApplyResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
+// ConfirmGolemSettingsApply is Call 2: the frontend resends the complete
+// request alongside the opaque challenge token, because Call 1 retained none of
+// it. One binding serves both entry points — the operation kind comes from the
+// challenge record, not from the caller.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ConfirmGolemSettingsApply(req ai.ConfirmSettingsApplyRequest) (ai.SettingsApplyResult, error) {
+	if a.aiService == nil {
+		return ai.SettingsApplyResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.ConfirmSettingsApply(req)
+	if err != nil {
+		return ai.SettingsApplyResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
+// CancelGolemSettingsApply invalidates one issued challenge. It is idempotent:
+// an absent, expired, or already consumed token is already cancelled, so the
+// single success variant is the only domain outcome.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) CancelGolemSettingsApply(challengeToken string) (ai.CancelSettingsApplyResult, error) {
+	if a.aiService == nil {
+		return ai.CancelSettingsApplyResult{}, a.golemError(errGolemUnavailable)
+	}
+	return a.aiService.CancelSettingsApply(challengeToken), nil
+}
+
+// LoadGolemProfile returns one profile's credential-free draft preview plus the
+// provenance a profile-origin Apply must send back. The loader clears every
+// provider key before anything reads the document, so no profile secret can
+// reach this result. The service guard is the same one the other Golem
+// bindings use: a profile draft is useless without a service to apply it to,
+// and a.ctx exists exactly when that service does.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) LoadGolemProfile(profileID string) (ai.GolemProfileLoadResult, error) {
+	if a.aiService == nil {
+		return ai.GolemProfileLoadResult{}, a.golemError(errGolemUnavailable)
+	}
+	return ai.LoadGolemProfile(a.ctx, profileID), nil
 }
 
 // ReadDirectory reads a directory and returns its contents as a tree structure.
@@ -1120,24 +1308,6 @@ func (a *App) GetRunStatus(profileID string) runprofile.RunStatus {
 		return runprofile.RunStatus{RunIdentity: runprofile.RunIdentity{ProfileID: profileID}, State: runprofile.RunStateIdle}
 	}
 	return a.executor.GetStatus(profileID)
-}
-
-// ConfirmBeforeCloseReady signals that the frontend finished its final flush
-// and the app can proceed with shutdown immediately.
-// This is exposed to the frontend via Wails bindings.
-func (a *App) ConfirmBeforeCloseReady() {
-	a.closeMu.Lock()
-	defer a.closeMu.Unlock()
-
-	if a.closeReady == nil {
-		return
-	}
-
-	select {
-	case <-a.closeReady:
-	default:
-		close(a.closeReady)
-	}
 }
 
 // --- LSP bindings ---
