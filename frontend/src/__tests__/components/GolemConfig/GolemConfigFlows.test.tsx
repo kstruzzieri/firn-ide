@@ -211,8 +211,16 @@ describe('Apply bar', () => {
   it('appears only when the draft is dirty and names each change as a chip', async () => {
     await mountWorkspace();
     expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('golem-config-masthead')).queryByText('Modified')
+    ).not.toBeInTheDocument();
 
     await stageKey();
+    // §4.2: the masthead keeps the document's verdict and overlays the draft's.
+    const masthead = screen.getByTestId('golem-config-masthead');
+    expect(within(masthead).getByText('Ready')).toBeInTheDocument();
+    expect(within(masthead).getByText('Modified')).toBeInTheDocument();
+
     const bar = screen.getByTestId('golem-config-draft');
     expect(within(bar).getByText('1 change waiting for Apply')).toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: 'hosted → new API key' })).toBeEnabled();
@@ -383,6 +391,33 @@ describe('terminal apply results', () => {
     expect(screen.getByText(`rev ${movedRevision.slice(0, 12)}`)).toBeInTheDocument();
   });
 
+  // A challenge conflict is not a moved document: the approval simply stopped
+  // matching the request. There is nothing to reload, so the panel says so and
+  // its action hands the retained rows back for re-staging.
+  it('names a challenge conflict for what it is and returns to the draft', async () => {
+    applyReturns({ status: 'conflict', conflict: 'challenge', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await stageEndpoint();
+    await clickApply();
+
+    expect(
+      await screen.findByText(/destination approval no longer matches this request/)
+    ).toBeVisible();
+    expect(screen.queryByText(/The configuration moved/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload & review draft' })).not.toBeInTheDocument();
+
+    const reloads = (ReloadGolemSettings as jest.Mock).mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Return to draft' }));
+    await waitFor(() =>
+      expect(screen.queryByText(/destination approval no longer matches/)).not.toBeInTheDocument()
+    );
+    // Nothing to reload: the panel dismissed and the draft is back under review.
+    expect(ReloadGolemSettings).toHaveBeenCalledTimes(reloads);
+    expect(
+      within(screen.getByTestId('provider-row-hosted')).getByText('Needs review')
+    ).toBeInTheDocument();
+  });
+
   it('reloads cleanly when a conflict is discarded', async () => {
     applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
     await mountWorkspace();
@@ -497,6 +532,63 @@ describe('nonterminal apply results', () => {
       },
     });
     expect(await screen.findByText('Configuration applied.')).toBeVisible();
+  });
+
+  // §5.2: Busy is the only nonterminal confirmation result, and it "leaves the
+  // token and key refs retryable". Losing the challenge here would send the
+  // user back through Call 1 to re-approve a destination already approved.
+  it('keeps the challenge when a Confirm comes back busy and retries the same token', async () => {
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    (ConfirmGolemSettingsApply as jest.Mock).mockResolvedValueOnce({ status: 'busy' });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+
+    expect(await screen.findByText(/Nothing was written; retry when idle/)).toBeVisible();
+    // The consent panel is still standing on the same destination.
+    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeEnabled();
+
+    (ConfirmGolemSettingsApply as jest.Mock).mockResolvedValueOnce({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(ConfirmGolemSettingsApply).toHaveBeenCalledTimes(2));
+    expect(lastConfirm().challengeToken).toBe('challenge-token-1');
+    // Retry went back through Call 2, never Call 1.
+    expect(ApplyGolemSettings).toHaveBeenCalledTimes(1);
+  });
+
+  // The retained request is what Retry resends, so it must stay immutable: an
+  // edit made beside the Retry button would be invisible to the resend and then
+  // erased by the settle of a write that never carried it.
+  it('freezes the draft while a busy request is still retryable', async () => {
+    applyReturns({ status: 'busy' });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Retry' });
+
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted → new API key' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Edit provider hosted' })).not.toBeInTheDocument();
+    // The ways out stay open.
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+
+    // Retry resends exactly what was retained, and the draft unlocks only when
+    // that request settles.
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(lastApply()).toEqual((ApplyGolemSettings as jest.Mock).mock.calls[0][0]);
+    expect(screen.getByRole('button', { name: 'Edit provider hosted' })).toBeEnabled();
   });
 
   it('retries a busy result with the same request and keys', async () => {
@@ -895,6 +987,35 @@ describe('bootstrap CTAs', () => {
       profileId: 'curated/local',
       appliedRevision: movedRevision,
     });
+  });
+
+  // Same one-shot rule as a draft reset, different trigger: a source switch
+  // remounts the cards too, so a standing chip request must not ride along.
+  it('does not replay a chip click across a bootstrap source switch', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('golem-config-masthead');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    await userEvent.type(screen.getByLabelText('Provider name'), 'local');
+    await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
+    await stage();
+    await cancelEditor();
+
+    // The staged add has no strip, so its chip is the only handle it has.
+    await userEvent.click(screen.getByRole('button', { name: 'local → new provider' }));
+    expect(screen.getByLabelText('Provider name')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Discard & switch',
+      })
+    );
+
+    await screen.findByRole('button', { name: 'source → curated/local' });
+    expect(screen.queryByLabelText('Provider name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
   });
 
   it('creates from a blank builder once the bootstrap inputs are complete', async () => {

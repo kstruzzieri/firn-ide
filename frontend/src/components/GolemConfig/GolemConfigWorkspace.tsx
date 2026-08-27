@@ -142,6 +142,16 @@ const UNSTAGED_GATE =
   'Apply is unavailable while an editor has unstaged changes. Stage or cancel them first.';
 const REVIEW_GATE =
   'Apply is unavailable until every change marked Needs review is re-staged or discarded.';
+/** A `target` or `profile_source` conflict: a document moved under the draft. */
+const DOCUMENT_CONFLICT =
+  'The configuration moved while this draft was open, so nothing was written. Reload and re-stage each retained change against the fresh document, or discard the draft.';
+/**
+ * A `challenge` conflict is a different animal: nothing moved, the approval
+ * simply no longer matches the request it was granted for. The token is spent
+ * either way (§4.6a), so there is nothing to reload — only a draft to re-stage.
+ */
+const CHALLENGE_CONFLICT =
+  'The destination approval no longer matches this request, so nothing was written and the approval was cancelled. Re-stage each retained change, then apply again to approve the destination once more.';
 const BOOTSTRAP_GATE =
   'A blank configuration needs one provider and an agent route that meets chat, stream, and tool_call.';
 
@@ -313,17 +323,24 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * request; every other event drops both and remounts the editors, because a
    * reset draft must not leave an editor holding fields staged against it.
    */
+  /**
+   * Remounts both cards, and clears the per-mount UI state that only made sense
+   * for the document they were showing. A focus request left standing would be
+   * REPLAYED by the fresh mount — re-expanding a row and stealing focus — so
+   * every epoch bump goes through here rather than bumping the counter alone.
+   */
+  const resetCards = (): void => {
+    setDraftEpoch((current) => current + 1);
+    setFocusRequest(null);
+    setSourceOpen(false);
+  };
+
   const settle = (event: DraftEvent, next: Partial<WriteOutcome> = {}): void => {
     recordApplyProvenance(draftRef.current.source, event);
     setDraft((current) => settleDraft(current, event, vault));
     if (!retainsKeys(event)) {
       pendingRequestRef.current = null;
-      setDraftEpoch((current) => current + 1);
-      setSourceOpen(false);
-      // The epoch bump remounts both cards, and a focus request left standing
-      // would be replayed by the fresh mount — re-expanding a row and stealing
-      // focus on a draft that no longer holds that change.
-      setFocusRequest(null);
+      resetCards();
     }
     setOutcome({ ...NO_OUTCOME, ...next });
   };
@@ -501,7 +518,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       // Either way the document the editors derive from has just been replaced,
       // so they re-derive: a row reopened against the old preview would read
       // back a stale model as if the user had chosen it.
-      setDraftEpoch((current) => current + 1);
+      resetCards();
       if (!keepDraft) setOutcome(NO_OUTCOME);
       return true;
     } catch (err) {
@@ -534,7 +551,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setSourceError('');
     setPreview(BLANK_PREVIEW);
     setDraft((current) => replaceSource(current, { kind: 'blank' }, vault));
-    setDraftEpoch((current) => current + 1);
+    resetCards();
     setOutcome(NO_OUTCOME);
   };
 
@@ -580,7 +597,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         );
         return;
       case 'busy':
-        settle({ kind: 'result', result }, { busy: true, notice: BUSY_NOTICE });
+        // §5.2: Busy is the only NONTERMINAL confirmation result — it leaves the
+        // token and the key refs retryable. Carrying the challenge forward is
+        // what makes that true on this side: drop it and the panel vanishes,
+        // Retry falls back to Call 1, and the user re-approves a destination
+        // the backend has already been asked about.
+        settle(
+          { kind: 'result', result },
+          { busy: true, challenge: outcomeRef.current.challenge, notice: BUSY_NOTICE }
+        );
         return;
       case 'limited':
         settle(
@@ -707,8 +732,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       if (await load(true)) setOutcome(NO_OUTCOME);
       return;
     }
-    // A `challenge` conflict has nothing to reload: the token is spent and the
-    // draft is already waiting for review.
+    // A `challenge` conflict has nothing to reload — no document moved, and the
+    // token is already spent — so `Return to draft` dismisses the panel and
+    // hands the retained `Needs review` rows back for re-staging. The next
+    // Apply mints a fresh challenge, which is exactly the recovery §4.6a wants.
     setOutcome(NO_OUTCOME);
   };
 
@@ -734,8 +761,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * switch, tab close, quit). Everything the request is made of — editors,
    * chips, Apply, the bootstrap CTAs — is frozen, because the visible request
    * is what the challenge token is bound to.
+   *
+   * A Busy result holds the surface for the same reason: §5.2 keeps that exact
+   * request retryable, and Retry resends the RETAINED bytes. An edit made
+   * beside the Retry button would be invisible to it and then erased by the
+   * settle of a write that never carried it. Locking the request is one
+   * condition in one place; clearing the retained request on every draft
+   * mutation would be the same invariant restated at every mutation site.
    */
-  const locked = sending || recovery || outcome.challenge !== null;
+  const locked = sending || recovery || outcome.busy || outcome.challenge !== null;
   const changeCount = draftChangeCount(draft);
   // Editing needs a document that is both loaded and writable. A profile or
   // blank source supplies its own: the draft is layered on THAT preview.
@@ -791,6 +825,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <StatusText tone={STATE_TONE[projection.state]}>
                 {STATE_LABEL[projection.state]}
               </StatusText>
+              {/* §4.2: the projection state is the document's; a dirty draft
+                  overlays `Modified` beside it, in the same dot+text grammar
+                  the rows use, so one vocabulary reads at both scales. */}
+              {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
               <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
               {projection.revision !== undefined && (
                 <span className={styles.revision} title={projection.revision}>
@@ -978,9 +1016,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             {outcome.conflict !== null && (
               <div className={styles.panel} role="alert" data-blocking="true">
                 <p className={styles.panelText}>
-                  The configuration moved while this draft was open, so nothing was written. Reload
-                  and re-stage each retained change against the fresh document, or discard the
-                  draft.
+                  {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
                 </p>
                 <div className={styles.panelActions}>
                   <button
@@ -989,7 +1025,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     disabled={sending || inFlight}
                     onClick={() => void reviewConflict()}
                   >
-                    Reload &amp; review draft
+                    {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
                   </button>
                   <button
                     type="button"

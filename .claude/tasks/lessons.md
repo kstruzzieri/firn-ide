@@ -139,3 +139,36 @@ This applies even to "small" work (like the cleanup commit) — once the first c
 **What happened:** The first Command Palette checkpoint used the handoff baseline after `develop` had advanced, omitted row shortcut chips, did not specify key-event containment, and accepted native-dialog testability without retaining the executable jsdom probe as a design constraint.
 
 **Lesson:** Before implementation, compare the feature branch to current `develop`, search every displayed and handled shortcut owner, trace bubbling into global listeners, and execute a capability probe in the actual test runtime. Keep production on the native platform API when supported, but isolate any missing jsdom behavior in a test-only shim.
+
+## Issue #263 Slice B (2026-08-27)
+
+### 14. Regenerating Wails bindings reformatted 4.5k lines of `models.ts`
+
+**What happened:** `wails generate module` rewrote `frontend/wailsjs/go/models.ts` in the
+generator's own style. The committed baseline is Prettier-formatted, so the regen showed up
+as a ~4,500-line reformat sitting on top of the handful of real new types — unreviewable, and
+guaranteed to recur on the next regen.
+
+**Lesson — the convention to follow every time bindings are regenerated:**
+
+```bash
+wails generate module                                   # regenerate
+cd frontend && ./node_modules/.bin/prettier --write \
+  --ignore-path /dev/null wailsjs/go/models.ts          # ONLY models.ts
+```
+
+Four rules, each load-bearing:
+
+1. **Only `models.ts`.** `App.d.ts` and `App.js` stay exactly as the generator emits them;
+   their committed baseline is raw generator output, so formatting them starts the same
+   churn in two more files.
+2. **`--ignore-path /dev/null`.** `frontend/.prettierignore` excludes `wailsjs/`, so without
+   this flag Prettier silently no-ops and the reformat lands in the diff anyway.
+3. **Run it from `frontend/`, never the repo root.** A root-level Prettier invocation picks up
+   a different config resolution and reformats files outside `wailsjs/`.
+4. **Modes stay `0644`.** The generator sometimes emits `0755`; `git diff` shows that as a
+   mode change on an otherwise-untouched file.
+
+The general shape: when a generator's output is committed in a *post-processed* form, the
+post-processing step is part of the generation procedure, not a cleanup someone remembers.
+Write it down next to the generate command or it gets re-litigated as a review finding.
