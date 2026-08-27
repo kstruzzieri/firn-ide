@@ -1,16 +1,28 @@
 /**
- * Providers section card (#263 spec §4.1, mockup v10): a header bar with an
- * accent edge over separated row strips. Read-only in Slice B Task 7 — the row
- * editor and "Add provider" arrive with the write path.
+ * Providers section card (#263 spec §4.1/§4.3b, mockup v10): a header bar with
+ * an accent edge over separated row strips, each of which expands in place into
+ * its editor.
  *
  * Strips are list items, matching the dock readout's `ul`/`li` rows, so each row
- * has a boundary in the accessibility tree; Tasks 8/9 hang an editor form off
- * one, which a list item takes without argument.
+ * has a boundary in the accessibility tree — and so the editor's `fieldset`,
+ * which a `role="row"` would forbid, has a legal home.
+ *
+ * The card owns which rows are expanded and nothing else: the draft, the key
+ * vault, and every staged change live at the workspace root (spec §3.2).
  */
 
-import type { ProviderProjection } from '../../types/golem';
+import { useState } from 'react';
+import type { ProviderProjection, SettingsDiagnostic } from '../../types/golem';
+import {
+  changeStableID,
+  type Change,
+  type KeyVault,
+  type RowMarkers,
+} from '../../types/golemConfig';
+import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { Cell } from './Cell';
 import styles from './GolemConfig.module.css';
+import { ProviderEditor } from './ProviderEditor';
 import { StatusText, type StatusTone } from './StatusText';
 
 const CLASSIFICATION_LABEL: Record<ProviderProjection['classification'], string> = {
@@ -28,7 +40,74 @@ const CREDENTIAL: Record<
   reference_unavailable: { label: 'Key reference unavailable', tone: 'bad' },
 };
 
-export function ProvidersCard({ providers }: { providers: ProviderProjection[] }) {
+/**
+ * The add editor's gate key. A provider name can never collide with it: NUL is
+ * a Cc rune, and every identifier that reaches this surface is Cc/Cf-free.
+ */
+const ADD_ROW_KEY = '\u0000add';
+const ADD_EDITOR_ID = 'golem-provider-add';
+
+export interface ProvidersCardProps {
+  providers: ProviderProjection[];
+  /** Providers a defined model still references; removal is refused for these. */
+  usedProviders: readonly string[];
+  /** Staged changes, so a reopened editor shows what is waiting for Apply. */
+  changes: readonly Change[];
+  /** Provider-identity row markers from `projectDraft`. */
+  rows: ReadonlyMap<string, RowMarkers>;
+  /** Diagnostics already scoped to provider rows by the workspace. */
+  diagnostics: readonly SettingsDiagnostic[];
+  vault: KeyVault;
+  /** False while the document is Limited, Invalid, or otherwise unwritable. */
+  editable: boolean;
+  onStage: (changes: Change[], drop: string[]) => void;
+  onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
+}
+
+export function ProvidersCard({
+  providers,
+  usedProviders,
+  changes,
+  rows,
+  diagnostics,
+  vault,
+  editable,
+  onStage,
+  onUnstagedChange,
+}: ProvidersCardProps) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+
+  // More than one row may be expanded at once: collapsing one to open another
+  // would silently discard unstaged fields (§4.6a forbids that).
+  const toggle = (rowKey: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(rowKey)) next.add(rowKey);
+      return next;
+    });
+
+  const close = (rowKey: string) =>
+    setOpen((current) => {
+      if (!current.has(rowKey)) return current;
+      const next = new Set(current);
+      next.delete(rowKey);
+      return next;
+    });
+
+  const stagedFor = (identity: string): Change | undefined =>
+    changes.find((change) => changeStableID(change) === identity);
+
+  // Applied names plus names already staged for creation: both would collide.
+  const takenNames = [
+    ...providers.map((entry) => entry.name),
+    ...changes.filter((change) => change.kind === 'provider-add').map((change) => change.name),
+  ];
+
+  const rowDiagnostics = (name: string) =>
+    diagnostics.filter(
+      (diagnostic) => diagnostic.subjectKind === 'provider' && diagnostic.subjectName === name
+    );
+
   return (
     <section className={styles.card} aria-labelledby="golem-config-providers">
       <div className={styles.cardHead}>
@@ -36,6 +115,20 @@ export function ProvidersCard({ providers }: { providers: ProviderProjection[] }
           Providers
         </h3>
         <span className={styles.hint}>where models run — add these first</span>
+        {editable && (
+          <>
+            <span className={styles.grow} />
+            <button
+              type="button"
+              className={styles.button}
+              aria-expanded={open.has(ADD_ROW_KEY)}
+              aria-controls={ADD_EDITOR_ID}
+              onClick={() => toggle(ADD_ROW_KEY)}
+            >
+              Add provider
+            </button>
+          </>
+        )}
       </div>
       <div className={styles.cardBody}>
         {providers.length === 0 ? (
@@ -51,38 +144,122 @@ export function ProvidersCard({ providers }: { providers: ProviderProjection[] }
               <span>Endpoint</span>
               <span>Type</span>
               <span>API key</span>
+              <span />
             </div>
             <ul className={styles.rows} aria-label="Providers">
-              {providers.map((provider) => {
+              {providers.map((provider, index) => {
                 const credential = CREDENTIAL[provider.credentialState];
+                const markers = rows.get(provider.name);
+                const expanded = open.has(provider.name);
+                const editorId = `golem-provider-editor-${index}`;
+                const notices = rowDiagnostics(provider.name);
                 return (
                   <li
                     key={provider.name}
                     data-testid={`provider-row-${provider.name}`}
-                    className={`${styles.strip} ${styles.providerGrid}`}
+                    className={styles.row}
                   >
-                    <Cell label="Provider" className={styles.identifier}>
-                      {provider.name}
-                    </Cell>
-                    <Cell label="Endpoint" className={styles.value}>
-                      {/* Meaningful, not inert: an empty endpoint is the whole
-                          misconfiguration signal, so it keeps readable copy. */}
-                      {provider.endpoint === '' ? 'no endpoint' : provider.endpoint}
-                    </Cell>
-                    <Cell label="Type" className={styles.meta}>
-                      {CLASSIFICATION_LABEL[provider.classification]}
-                      <span className={styles.metaSub}>{provider.apiFormat}</span>
-                    </Cell>
-                    <Cell label="API key">
-                      <StatusText tone={credential.tone}>{credential.label}</StatusText>
-                    </Cell>
+                    <div
+                      className={`${styles.strip} ${styles.providerGrid}`}
+                      data-expanded={expanded || undefined}
+                    >
+                      <Cell label="Provider" className={styles.identifier}>
+                        {provider.name}
+                      </Cell>
+                      <Cell label="Endpoint" className={styles.value}>
+                        {/* Meaningful, not inert: an empty endpoint is the whole
+                            misconfiguration signal, so it keeps readable copy. */}
+                        {provider.endpoint === '' ? 'no endpoint' : provider.endpoint}
+                      </Cell>
+                      <Cell label="Type" className={styles.meta}>
+                        {CLASSIFICATION_LABEL[provider.classification]}
+                        <span className={styles.metaSub}>{provider.apiFormat}</span>
+                      </Cell>
+                      <Cell label="API key">
+                        {markers?.keyStaged === true ? (
+                          <StatusText tone="warn">Key staged</StatusText>
+                        ) : (
+                          <StatusText tone={credential.tone}>{credential.label}</StatusText>
+                        )}
+                      </Cell>
+                      <span className={styles.rowActions}>
+                        <RowStatus expanded={expanded} markers={markers} />
+                        {editable && (
+                          <button
+                            type="button"
+                            className={styles.button}
+                            aria-expanded={expanded}
+                            aria-controls={editorId}
+                            onClick={() => toggle(provider.name)}
+                          >
+                            Edit
+                            <span className={styles.srOnly}>{` provider ${provider.name}`}</span>
+                          </button>
+                        )}
+                      </span>
+                    </div>
+
+                    {notices.map((diagnostic, position) => (
+                      <p
+                        key={`${diagnostic.code}-${position}`}
+                        className={styles.rowDiagnostic}
+                        data-blocking={diagnostic.blocking || undefined}
+                      >
+                        {
+                          formatSettingsDiagnostic(
+                            diagnostic.code,
+                            diagnostic.subjectKind,
+                            diagnostic.subjectName
+                          ).text
+                        }
+                      </p>
+                    ))}
+
+                    {expanded && (
+                      <ProviderEditor
+                        id={editorId}
+                        provider={provider}
+                        staged={stagedFor(`provider:${provider.name}`)}
+                        stagedKey={stagedFor(`provider-key:${provider.name}`)}
+                        takenNames={takenNames}
+                        inUse={usedProviders.includes(provider.name)}
+                        vault={vault}
+                        rowKey={provider.name}
+                        onStage={onStage}
+                        onClose={() => close(provider.name)}
+                        onUnstagedChange={onUnstagedChange}
+                      />
+                    )}
                   </li>
                 );
               })}
             </ul>
           </>
         )}
+
+        {open.has(ADD_ROW_KEY) && (
+          <ProviderEditor
+            id={ADD_EDITOR_ID}
+            provider={null}
+            takenNames={takenNames}
+            inUse={false}
+            vault={vault}
+            rowKey={ADD_ROW_KEY}
+            onStage={onStage}
+            onClose={() => close(ADD_ROW_KEY)}
+            onUnstagedChange={onUnstagedChange}
+          />
+        )}
       </div>
     </section>
   );
+}
+
+/** §4.2: an open row reports only that it is being edited. */
+function RowStatus({ expanded, markers }: { expanded: boolean; markers?: RowMarkers }) {
+  if (expanded) return <StatusText tone="dim">editing…</StatusText>;
+  if (markers === undefined) return null;
+  if (markers.needsReview) return <StatusText tone="warn">Needs review</StatusText>;
+  if (markers.modified) return <StatusText tone="warn">Modified</StatusText>;
+  return null;
 }

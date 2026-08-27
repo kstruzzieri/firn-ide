@@ -217,6 +217,13 @@
   list-style: none;
 }
 
+/* A row is its strip plus whatever the strip owns: its diagnostics and, while
+   it is expanded, its editor. */
+.row {
+  display: flex;
+  flex-direction: column;
+}
+
 .strip {
   display: grid;
   gap: 14px;
@@ -245,8 +252,165 @@
   border: 0;
 }
 
+/* The expanded strip and its editor read as one surface with an accent edge. */
+.strip[data-expanded] {
+  border-color: var(--accent);
+  border-bottom-color: var(--surface-border-subtle);
+  border-radius: 8px 8px 0 0;
+}
+
 .providerGrid {
-  grid-template-columns: 130px 1fr 110px 150px;
+  grid-template-columns: 130px 1fr 110px 150px auto;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ── row editor ─────────────────────────────────────────────────────────── */
+
+.editor {
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--accent);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background-color: var(--surface-frame);
+}
+
+.editorLegend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.fieldHint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--palette-red);
+  overflow-wrap: anywhere;
+}
+
+.input {
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--palette-red);
+}
+
+.input:disabled {
+  opacity: 0.5;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.editorFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.primary {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--surface-base);
+}
+
+.rowDiagnostic {
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid var(--surface-border-subtle);
+  border-left: 3px solid var(--status-warning);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background-color: var(--surface-panel);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.rowDiagnostic[data-blocking] {
+  border-left-color: var(--palette-red);
+}
+
+/* ── draft bar ──────────────────────────────────────────────────────────── */
+
+.draftBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 1px solid var(--surface-border);
+  border-left: 3px solid var(--status-warning);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.draftCount {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.draftBlocked {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .routeGrid {
@@ -429,6 +593,14 @@
   .definedGrid {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .rowActions {
+    justify-content: flex-start;
+  }
+
+  .editorGrid {
+    grid-template-columns: 1fr;
   }
 
   /* The column header row is gone, so each cell's own label becomes visible. */

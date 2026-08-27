@@ -239,8 +239,12 @@ const isProfileID = (value: unknown): value is string =>
 const isEndpoint = (value: unknown): value is string =>
   isBoundedString(value, MAX_ENDPOINT_BYTES) && value !== '' && !NON_ASCII_RUNE.test(value);
 
-/** Literal-only: `${` is refused even though go-llm would expand it. */
-const isKeyValue = (value: unknown): value is string =>
+/**
+ * Literal-only: `${` is refused even though go-llm would expand it. Exported
+ * for ProviderEditor, which must reach this verdict BEFORE the vault is
+ * touched (plan amendment 12) — one definition of the rule, not two.
+ */
+export const isKeyValue = (value: unknown): value is string =>
   typeof value === 'string' &&
   value !== '' &&
   utf8Length(value) <= MAX_KEY_VALUE_BYTES &&

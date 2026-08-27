@@ -13,13 +13,26 @@
  * settings calls read one process-wide snapshot.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,
+  type SettingsDiagnostic,
   type SettingsProjection,
 } from '../../types/golem';
+import {
+  KeyVault,
+  cleanDraft,
+  draftChangeCount,
+  isDraftDirty,
+  projectDraft,
+  setTargetRevision,
+  settleDraft,
+  stageChange,
+  unstageChange,
+  type Change,
+} from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
 import { ProvidersCard } from './ProvidersCard';
@@ -76,6 +89,17 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const generation = useRef(0);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
+  // The draft and the pending key VALUES live here and nowhere else (§3.2):
+  // the values in a plain ref, reachable only through the KeyVault facade, so
+  // they never enter React state, a store, or anything serializable.
+  const keyRefs = useRef(new Map<string, string>());
+  const vault = useMemo(() => new KeyVault(keyRefs.current), []);
+  const [draft, setDraft] = useState(cleanDraft);
+  /** Editors holding fields the user has not staged (§4.2: Apply is blocked). */
+  const [unstagedEditors, setUnstagedEditors] = useState<ReadonlySet<string>>(new Set());
+  /** Bumped by every draft reset, to remount the cards and their editors. */
+  const [draftEpoch, setDraftEpoch] = useState(0);
+
   const load = useCallback(async (explicit: boolean) => {
     const gen = ++generation.current;
     setInFlight(true);
@@ -89,6 +113,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         // explicit Refresh action surfaces the notice.
         busyNotice: explicit && result.busy,
       });
+      // The draft targets whichever revision the document is on now; a dirty
+      // reload prompt and conflict review are Task 10's.
+      setDraft((current) => setTargetRevision(current, result.projection.revision));
     } catch (err) {
       if (gen !== generation.current) return;
       setPhase({ kind: 'error', message: boundedGolemMessage(err) });
@@ -110,7 +137,65 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     headingRef.current?.focus();
   }, []);
 
+  // Teardown is terminal for keys (§3.2). It goes through the same reducer
+  // table as every other outcome, so "were the values dropped?" has one answer.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  useEffect(
+    () => () => {
+      settleDraft(draftRef.current, { kind: 'teardown' }, vault);
+    },
+    [vault]
+  );
+
+  const stage = useCallback(
+    (changes: Change[], drop: string[]) => {
+      setDraft((current) => {
+        const cleared = drop.reduce((next, id) => unstageChange(next, id, vault), current);
+        return changes.reduce((next, change) => stageChange(next, change, vault), cleared);
+      });
+    },
+    [vault]
+  );
+
+  const noteUnstaged = useCallback((rowKey: string, unstaged: boolean) => {
+    setUnstagedEditors((current) => {
+      if (current.has(rowKey) === unstaged) return current; // no render, no churn
+      const next = new Set(current);
+      if (unstaged) next.add(rowKey);
+      else next.delete(rowKey);
+      return next;
+    });
+  }, []);
+
+  const discard = useCallback(() => {
+    setDraft((current) => settleDraft(current, { kind: 'discard' }, vault));
+    // §3.3: Discard also resets the editors. Remounting the card is the whole
+    // reset — open rows collapse and no editor keeps fields it staged against
+    // a draft that no longer exists.
+    setDraftEpoch((current) => current + 1);
+  }, [vault]);
+
   const projection = phase.kind === 'ready' ? phase.projection : null;
+  const projected = useMemo(
+    () => projectDraft(projection ?? { routes: [], models: [] }, draft),
+    [projection, draft]
+  );
+
+  // A diagnostic about a provider that has a row belongs inside that row
+  // (§4.3b); one naming an entity this projection does not show stays here,
+  // where it is still readable.
+  const providerRows = new Set(projection?.providers.map((entry) => entry.name) ?? []);
+  const ownedByRow = (diagnostic: SettingsDiagnostic): boolean =>
+    diagnostic.subjectKind === 'provider' && providerRows.has(diagnostic.subjectName);
+  const pageDiagnostics = projection?.diagnostics.filter((entry) => !ownedByRow(entry)) ?? [];
+
+  const changeCount = draftChangeCount(draft);
+  // Editing needs a document that is both loaded and writable; Limited and
+  // Invalid say so in their own notice above (§4.6).
+  const canEdit = projection?.state === 'ready' && projection.editable && !projection.readOnly;
+  // A provider a defined model still references cannot be removed.
+  const usedProviders = projection?.models.map((entry) => entry.provider) ?? [];
 
   return (
     <div className={styles.root}>
@@ -181,9 +266,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <p className={styles.notice}>{EDITING_UNAVAILABLE[projection.state]}</p>
             )}
 
-            {projection.diagnostics.length > 0 && (
+            {pageDiagnostics.length > 0 && (
               <ul className={styles.diagnostics} aria-label="Configuration diagnostics">
-                {projection.diagnostics.map((diagnostic, index) => {
+                {pageDiagnostics.map((diagnostic, index) => {
                   const { text, subject } = formatSettingsDiagnostic(
                     diagnostic.code,
                     diagnostic.subjectKind,
@@ -213,8 +298,44 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </ul>
             )}
 
-            <ProvidersCard providers={projection.providers} />
+            <ProvidersCard
+              key={draftEpoch}
+              providers={projection.providers}
+              usedProviders={usedProviders}
+              changes={draft.changes}
+              rows={projected.providerRows}
+              diagnostics={projection.diagnostics}
+              vault={vault}
+              editable={canEdit}
+              onStage={stage}
+              onUnstagedChange={noteUnstaged}
+            />
             <RoutingCard routes={projection.routes} models={projection.models} />
+
+            {isDraftDirty(draft) && (
+              <div className={styles.draftBar} data-testid="golem-config-draft">
+                <span className={styles.draftCount}>
+                  {`${changeCount} change${changeCount === 1 ? '' : 's'} waiting for Apply`}
+                </span>
+                <span className={styles.grow} />
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.quiet}`}
+                  onClick={discard}
+                >
+                  Discard
+                </button>
+                {/* Task 10 turns this bar into the full Apply surface (chips,
+                    Apply, in-flight locking). The gate itself is stated now
+                    because it is what an open editor is holding open (§4.2). */}
+                {unstagedEditors.size > 0 && (
+                  <p className={styles.draftBlocked}>
+                    Apply is unavailable while an editor has unstaged changes. Stage or cancel them
+                    first.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

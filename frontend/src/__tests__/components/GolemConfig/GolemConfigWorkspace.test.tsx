@@ -360,12 +360,15 @@ describe('GolemConfigWorkspace', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('renders no Apply bar and no editing controls in the read-only first paint', async () => {
+  it('renders no draft bar until something is staged', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByTestId('provider-row-llama-swap');
 
+    // The editors themselves are Task 8's and are present; what a clean draft
+    // must not show is the Apply/Discard surface over an empty change set.
+    expect(screen.getByRole('button', { name: 'Edit provider llama-swap' })).toBeInTheDocument();
+    expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /apply/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
   });
 });
