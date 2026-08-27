@@ -299,7 +299,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             )}
 
             <ProvidersCard
-              key={draftEpoch}
+              // Remount on every draft reset AND on every document the open
+              // editors could be diffing against: an editor derives its fields
+              // once, at mount, but stages against the live projection, so a
+              // Refresh that moved the revision would otherwise let a stale
+              // endpoint be re-staged as if the user had authored it.
+              key={`${draftEpoch}:${projection.revision ?? ''}`}
               providers={projection.providers}
               usedProviders={usedProviders}
               changes={draft.changes}

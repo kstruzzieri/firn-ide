@@ -73,7 +73,8 @@ export interface StagedProviderChanges {
  */
 export function providerChanges(
   applied: ProviderProjection | null,
-  fields: ProviderFields
+  fields: ProviderFields,
+  stagedKey?: Change
 ): StagedProviderChanges {
   const name = applied?.name ?? fields.name;
   const changes: Change[] = [];
@@ -96,7 +97,12 @@ export function providerChanges(
 
   if (fields.keyValue !== '') changes.push({ kind: 'provider-key-set', name });
   else if (fields.clearKey) changes.push({ kind: 'provider-key-clear', name });
-  else if (applied !== null) drop.push(`provider-key:${name}`);
+  // An empty password field cannot mean "revert my key": it is empty after
+  // every successful stage, so dropping the identity here would silently
+  // delete both the staged key-set and its vault value on the next stage from
+  // this editor. An unchecked Clear box, by contrast, IS the revert.
+  else if (applied !== null && stagedKey?.kind !== 'provider-key-set')
+    drop.push(`provider-key:${name}`);
 
   return { changes, drop };
 }
@@ -243,7 +249,7 @@ export function ProviderEditor({
     setProblems(found);
     if (found.name !== undefined || found.endpoint !== undefined || found.key !== undefined) return;
 
-    const { changes, drop } = providerChanges(provider, fields);
+    const { changes, drop } = providerChanges(provider, fields, stagedKey);
     if (fields.keyValue !== '') vault.set(name, fields.keyValue);
     onStage(changes, drop);
 

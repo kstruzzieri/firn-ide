@@ -8,7 +8,7 @@ import * as ProviderEditorModule from '../../../components/GolemConfig/ProviderE
 import { providerChanges } from '../../../components/GolemConfig/ProviderEditor';
 import * as RoutingCardModule from '../../../components/GolemConfig/RoutingCard';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
-import { KeyVault } from '../../../types/golemConfig';
+import { KeyVault, type Change } from '../../../types/golemConfig';
 import type { ProviderProjection } from '../../../types/golem';
 
 jest.mock('../../../../wailsjs/go/main/App', () => ({
@@ -17,6 +17,8 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
 import { ReloadGolemSettings } from '../../../../wailsjs/go/main/App';
 
 const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+/** A second, later document: any other 64-hex CAS token. */
+const movedRevision = 'f'.repeat(64);
 
 const provider = (over: Partial<ProviderProjection> = {}): ProviderProjection => ({
   name: 'llama-swap',
@@ -61,6 +63,26 @@ const openEditor = async (name = 'llama-swap') =>
 const stage = async () =>
   await userEvent.click(screen.getByRole('button', { name: 'Stage change' }));
 
+/**
+ * Records exactly what an editor hands to `onStage`, by delegating to the real
+ * component with a wrapped callback. Nothing else can see the change a row
+ * produced once the workspace owns the draft.
+ */
+function captureStagedChanges(): Change[][] {
+  const seen: Change[][] = [];
+  const real = ProviderEditorModule.ProviderEditor;
+  jest.spyOn(ProviderEditorModule, 'ProviderEditor').mockImplementation((props) =>
+    real({
+      ...props,
+      onStage: (changes, drop) => {
+        seen.push(changes);
+        props.onStage(changes, drop);
+      },
+    })
+  );
+  return seen;
+}
+
 // ---------------------------------------------------------------------------
 // The change builder: what Apply actually receives.
 // ---------------------------------------------------------------------------
@@ -94,6 +116,27 @@ describe('providerChanges', () => {
 
   it('stages nothing and drops both identities when no field changed', () => {
     expect(providerChanges(provider(), fields)).toEqual({
+      changes: [],
+      drop: ['provider:llama-swap', 'provider-key:llama-swap'],
+    });
+  });
+
+  it('never drops a key-set already staged: the field is empty after every stage', () => {
+    const stagedKey = { kind: 'provider-key-set', name: 'llama-swap' } as const;
+    expect(
+      providerChanges(provider(), { ...fields, endpoint: 'http://127.0.0.1:8080/v1' }, stagedKey)
+    ).toEqual({
+      changes: [
+        { kind: 'provider-update', name: 'llama-swap', endpoint: 'http://127.0.0.1:8080/v1' },
+      ],
+      drop: [],
+    });
+  });
+
+  it('does drop a staged key-clear once the box is unchecked — that IS the revert', () => {
+    expect(
+      providerChanges(provider(), fields, { kind: 'provider-key-clear', name: 'llama-swap' })
+    ).toEqual({
       changes: [],
       drop: ['provider:llama-swap', 'provider-key:llama-swap'],
     });
@@ -459,6 +502,63 @@ describe('GolemConfigWorkspace provider editing', () => {
       screen.queryByText(/Apply is unavailable while an editor has unstaged changes/)
     ).not.toBeInTheDocument();
     expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+  });
+
+  it('keeps a staged key when the same editor then stages another field', async () => {
+    const editor = jest.spyOn(ProviderEditorModule, 'ProviderEditor');
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('provider-row-llama-swap');
+
+    await openEditor();
+    await userEvent.type(screen.getByLabelText('New API key'), 'sk-live-value');
+    await stage();
+    const vault = editor.mock.calls[0][0].vault;
+    expect(vault.has('llama-swap')).toBe(true);
+
+    // The password field is empty again — which must not read as "revert it".
+    const endpoint = screen.getByLabelText('Endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'http://127.0.0.1:8080/v1');
+    await stage();
+
+    expect(vault.has('llama-swap')).toBe(true);
+    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('provider-row-llama-swap')).getByText('Key staged')
+    ).toBeInTheDocument();
+  });
+
+  it('re-derives an open editor when Refresh moves the document', async () => {
+    const stagedByEditor = captureStagedChanges();
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('provider-row-llama-swap');
+
+    await openEditor();
+    await userEvent.type(screen.getByLabelText('Endpoint'), '-stale');
+
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        revision: movedRevision,
+        providers: [hosted, provider({ endpoint: 'http://127.0.0.1:7000/v1' })],
+      },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText('http://127.0.0.1:7000/v1');
+
+    // The editor mounted against the old document is gone, and so is the
+    // unstaged value it was holding.
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+
+    await openEditor();
+    expect(screen.getByLabelText('Endpoint')).toHaveValue('http://127.0.0.1:7000/v1');
+
+    await userEvent.selectOptions(screen.getByLabelText('API format'), 'ollama');
+    await stage();
+    expect(stagedByEditor).toEqual([
+      [{ kind: 'provider-update', name: 'llama-swap', apiFormat: 'ollama' }],
+    ]);
   });
 
   it('marks the row and drops every staged key through the terminal path on Discard', async () => {
