@@ -1691,6 +1691,51 @@ func TestPrepareProfileSourceWithNoChangesPublishesTheScrubbedProfile(t *testing
 	}
 }
 
+// TestPrepareRefusesABadKeyValueByItsOwnCode: the UI pre-checks key values, so
+// a request still carrying a bad one bypassed it — and gets the code that says
+// what is wrong rather than the opaque catch-all.
+func TestPrepareRefusesABadKeyValueByItsOwnCode(t *testing.T) {
+	stageApplyTarget(t, applyTargetConfigJSON)
+	targetRevision := stagedTargetRevision(t)
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"interpolation", "${OPENAI_API_KEY}"},
+		{"empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared, result := prepareSettingsApply(context.Background(), SettingsApplyRequest{
+				TargetRevision: stringPtr(targetRevision),
+				Source:         ApplySource{Kind: applySourceApplied},
+				Changes:        []Change{{Kind: changeKindProviderKeySet, Name: "ollama"}},
+				Keys:           map[string]string{"ollama": tc.value},
+			}, applyModeExisting)
+			if prepared != nil {
+				t.Fatal("a refused request must not produce a document")
+			}
+			if err := validateSettingsApplyResult(*result); err != nil {
+				t.Fatalf("result is not contract-valid: %v (%+v)", err, *result)
+			}
+			if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+				result.Diagnostics[0].Code != codeKeyValueInvalid {
+				t.Fatalf("result = %+v, want a single key_value_invalid", *result)
+			}
+		})
+	}
+
+	// Every other boundary break stays deliberately opaque.
+	_, result := prepareSettingsApply(context.Background(), SettingsApplyRequest{
+		TargetRevision: stringPtr(targetRevision),
+		Source:         ApplySource{Kind: applySourceApplied},
+		Changes:        []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+		Keys:           map[string]string{"ollama": "sk-stray"},
+	}, applyModeExisting)
+	if result.Diagnostics[0].Code != codeInvalidArgument {
+		t.Fatalf("a stray key entry = %+v, want invalid_argument", *result)
+	}
+}
+
 // TestApplyRequestEmptyChangesBySource: the empty change set is source-
 // conditional. Only a profile source carries a document of its own.
 func TestApplyRequestEmptyChangesBySource(t *testing.T) {

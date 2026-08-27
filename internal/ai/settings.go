@@ -63,10 +63,12 @@ const (
 	codeKeyReferenceUnavailable     = "key_reference_unavailable"
 	codeSelectorConflict            = "selector_conflict"
 	codeIdentifierNotEditable       = "identifier_not_editable"
-	// Slice B write/action codes. They never arise from a load — the apply
-	// pipeline maps upstream action failures onto them — but they share one
-	// vocabulary with the projection because they share one SettingsDiagnostic
-	// type across the boundary (spec §5.6).
+	// Slice B write/action codes. They never arise from a load: the apply
+	// pipeline maps upstream action failures onto them, and request validation
+	// maps its one caller-actionable break — a key value that is empty or not a
+	// literal — onto codeKeyValueInvalid. They share one vocabulary with the
+	// projection because they share one SettingsDiagnostic type across the
+	// boundary (spec §5.6).
 	codeInvalidArgument          = "invalid_argument"
 	codeRoleNotFound             = "role_not_found"
 	codeProviderExists           = "provider_exists"

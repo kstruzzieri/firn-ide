@@ -1092,7 +1092,16 @@ func prepareSettingsApply(ctx context.Context, req SettingsApplyRequest, mode ap
 	// The request is the trust boundary and Confirm resends it in full, so
 	// both entry points revalidate here rather than trusting Call 1's verdict.
 	if err := validateSettingsApplyRequest(req, mode); err != nil {
-		return nil, blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
+		// A bad key VALUE earns its own code. The editor pre-checks the rule, so
+		// a request that still carries one came from a caller that bypassed the
+		// UI, and "API keys must be non-empty literal values" is the answer they
+		// need. Every other boundary break stays the deliberately opaque
+		// invalid_argument: the request is a trust boundary, not a linter.
+		code := codeInvalidArgument
+		if errors.Is(err, errApplyKeyValue) {
+			code = codeKeyValueInvalid
+		}
+		return nil, blockingDiagnostics(Diagnostic{Code: code})
 	}
 	target, active, result := loadApplyTarget(mode, req.TargetRevision)
 	if result != nil {

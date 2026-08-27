@@ -48,6 +48,9 @@ const CREDENTIAL: Record<
 const ADD_ROW_KEY = '\u0000add';
 const ADD_EDITOR_ID = 'golem-provider-add';
 
+const appliedEditorID = (index: number): string => `golem-provider-editor-${index}`;
+const stagedEditorID = (index: number): string => `golem-provider-staged-editor-${index}`;
+
 export interface ProvidersCardProps {
   providers: ProviderProjection[];
   /** Providers a defined model still references; removal is refused for these. */
@@ -58,6 +61,13 @@ export interface ProvidersCardProps {
   rows: ReadonlyMap<string, RowMarkers>;
   /** Diagnostics already scoped to provider rows by the workspace. */
   diagnostics: readonly SettingsDiagnostic[];
+  /**
+   * Providers this draft is CREATING, projected from the staged `provider-add`
+   * changes. They get real strips: a staged add has nothing applied underneath
+   * it, so without one there is no way to reopen it, correct it, or take it
+   * back short of discarding the whole draft (§4.3b).
+   */
+  stagedProviders?: readonly ProviderProjection[];
   vault: KeyVault;
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
@@ -73,6 +83,7 @@ export function ProvidersCard({
   changes,
   rows,
   diagnostics,
+  stagedProviders = [],
   vault,
   editable,
   focusRequest = null,
@@ -102,19 +113,26 @@ export function ProvidersCard({
 
   // Two effects, because the editor does not exist until the open state has
   // committed: the first expands the row, the second focuses what that commit
-  // mounted. A provider with no applied strip is a staged add, so its chip
-  // resolves to the add editor — the only handle that change has (§4.3b).
+  // mounted. Applied and staged providers both have strips, so a chip lands on
+  // its own row; only a name with neither falls back to the add form.
   useEffect(() => {
     if (focusRequest === null) return;
     const separator = focusRequest.changeId.indexOf(':');
     const namespace = focusRequest.changeId.slice(0, separator);
     if (namespace !== 'provider' && namespace !== 'provider-key') return;
     const name = focusRequest.changeId.slice(separator + 1);
-    const index = providers.findIndex((entry) => entry.name === name);
-    const rowKey = index < 0 ? ADD_ROW_KEY : name;
+    const applied = providers.findIndex((entry) => entry.name === name);
+    const staged = stagedProviders.findIndex((entry) => entry.name === name);
+    const editorId =
+      applied >= 0
+        ? appliedEditorID(applied)
+        : staged >= 0
+          ? stagedEditorID(staged)
+          : ADD_EDITOR_ID;
+    const rowKey = applied < 0 && staged < 0 ? ADD_ROW_KEY : name;
     setOpen((current) => (current.has(rowKey) ? current : new Set(current).add(rowKey)));
-    setPendingFocus({ editorId: index < 0 ? ADD_EDITOR_ID : `golem-provider-editor-${index}` });
-    // Providers are stable for the life of one card mount (the workspace
+    setPendingFocus({ editorId });
+    // Both lists are stable for the life of one card mount (the workspace
     // remounts it when the document moves), so the request alone drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest]);
@@ -139,6 +157,25 @@ export function ProvidersCard({
       (diagnostic) => diagnostic.subjectKind === 'provider' && diagnostic.subjectName === name
     );
 
+  /**
+   * Applied strips first, then the ones this draft is creating. A staged add
+   * carries `applied: null`, which is what makes its editor produce a
+   * `provider-add` rather than an update — and what makes reopening it seed
+   * from the staged change instead of a document row that does not exist.
+   */
+  const strips = [
+    ...providers.map((provider, index) => ({
+      provider,
+      applied: provider,
+      editorId: appliedEditorID(index),
+    })),
+    ...stagedProviders.map((provider, index) => ({
+      provider,
+      applied: null,
+      editorId: stagedEditorID(index),
+    })),
+  ];
+
   return (
     <section className={styles.card} aria-labelledby="golem-config-providers">
       <div className={styles.cardHead}>
@@ -162,7 +199,7 @@ export function ProvidersCard({
         )}
       </div>
       <div className={styles.cardBody}>
-        {providers.length === 0 ? (
+        {strips.length === 0 ? (
           <p className={styles.empty}>
             Add a provider first — a provider is the endpoint a model actually runs on, and nothing
             can be routed until one exists.
@@ -178,11 +215,10 @@ export function ProvidersCard({
               <span />
             </div>
             <ul className={styles.rows} aria-label="Providers">
-              {providers.map((provider, index) => {
+              {strips.map(({ provider, applied, editorId }) => {
                 const credential = CREDENTIAL[provider.credentialState];
                 const markers = rows.get(provider.name);
                 const expanded = open.has(provider.name);
-                const editorId = `golem-provider-editor-${index}`;
                 const notices = rowDiagnostics(provider.name);
                 return (
                   <li
@@ -227,6 +263,25 @@ export function ProvidersCard({
                             <span className={styles.srOnly}>{` provider ${provider.name}`}</span>
                           </button>
                         )}
+                        {/* A staged add has nothing applied to revert TO, so
+                            taking it back is unstaging it — the key operation
+                            it may carry goes with it (§3.3). */}
+                        {editable && applied === null && (
+                          <button
+                            type="button"
+                            className={`${styles.button} ${styles.quiet}`}
+                            onClick={() => {
+                              close(provider.name);
+                              onStage(
+                                [],
+                                [`provider:${provider.name}`, `provider-key:${provider.name}`]
+                              );
+                            }}
+                          >
+                            Unstage
+                            <span className={styles.srOnly}>{` provider ${provider.name}`}</span>
+                          </button>
+                        )}
                       </span>
                     </div>
 
@@ -249,7 +304,7 @@ export function ProvidersCard({
                     {expanded && (
                       <ProviderEditor
                         id={editorId}
-                        provider={provider}
+                        provider={applied}
                         staged={stagedFor(`provider:${provider.name}`)}
                         stagedKey={stagedFor(`provider-key:${provider.name}`)}
                         takenNames={takenNames}
@@ -276,7 +331,13 @@ export function ProvidersCard({
             inUse={false}
             vault={vault}
             rowKey={ADD_ROW_KEY}
-            onStage={onStage}
+            // Staging hands the change to its own strip above, so the blank
+            // form closes rather than lingering as a second copy of a provider
+            // that now exists in the draft.
+            onStage={(changes, drop) => {
+              onStage(changes, drop);
+              close(ADD_ROW_KEY);
+            }}
             onClose={() => close(ADD_ROW_KEY)}
             onUnstagedChange={onUnstagedChange}
           />

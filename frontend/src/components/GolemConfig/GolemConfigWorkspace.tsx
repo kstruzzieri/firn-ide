@@ -471,12 +471,16 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * draft does, and a failed cancellation keeps the surface exactly as it is
    * rather than abandoning a token the backend still honours. It needs no
    * confirmation of its own: pressing Discard IS the confirmation.
+   *
+   * Resolves false when the challenge could not be cancelled and the draft was
+   * therefore left standing, so a caller that chains work onto it can stop.
    */
-  const discard = async () => {
-    if (!(await cancelChallenge())) return;
+  const discard = async (): Promise<boolean> => {
+    if (!(await cancelChallenge())) return false;
     settle({ kind: 'discard' });
     setPreview(null);
     setSourceError('');
+    return true;
   };
 
   const refresh = async () => {
@@ -740,8 +744,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   };
 
   const discardConflict = async () => {
-    await discard();
-    await load(true);
+    // A discard that could not cancel its challenge left the draft standing;
+    // reloading on top of it would show a fresh document under changes the user
+    // still holds.
+    if (await discard()) await load(true);
   };
 
   const recover = async () => {
@@ -1107,6 +1113,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               changes={draft.changes}
               rows={projected.providerRows}
               diagnostics={diagnostics}
+              stagedProviders={stagedProviders}
               vault={vault}
               editable={canEdit}
               focusRequest={focusRequest}

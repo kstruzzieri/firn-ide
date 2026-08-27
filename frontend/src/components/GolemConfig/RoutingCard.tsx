@@ -384,17 +384,31 @@ export function RoutingCard({
                       )}
                       {/* §5.2b: removal is guarded backend-side and offered only
                           for a role the projection reports as unreferenced —
-                          fallback targets included. */}
-                      {editable && model.removable && (
-                        <button
-                          type="button"
-                          className={`${styles.button} ${styles.quiet}`}
-                          onClick={() => onStage([{ kind: 'role-remove', role: model.role }], [])}
-                        >
-                          Remove
-                          <span className={styles.srOnly}>{` model role ${model.role}`}</span>
-                        </button>
-                      )}
+                          fallback targets included. Once staged, the same
+                          control takes it back: re-pressing Remove would only
+                          re-stage the identity it already holds, which is no
+                          undo at all. */}
+                      {editable &&
+                        model.removable &&
+                        (markers?.modified === true ? (
+                          <button
+                            type="button"
+                            className={`${styles.button} ${styles.quiet}`}
+                            onClick={() => onStage([], [`role:${model.role}`])}
+                          >
+                            Unstage removal
+                            <span className={styles.srOnly}>{` of model role ${model.role}`}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className={`${styles.button} ${styles.quiet}`}
+                            onClick={() => onStage([{ kind: 'role-remove', role: model.role }], [])}
+                          >
+                            Remove
+                            <span className={styles.srOnly}>{` model role ${model.role}`}</span>
+                          </button>
+                        ))}
                     </span>
                   </li>
                 );

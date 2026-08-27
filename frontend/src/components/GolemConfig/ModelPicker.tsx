@@ -72,6 +72,36 @@ interface PopupPos {
   left: number;
 }
 
+/**
+ * The exact tuple `sameModelFacts` compares, flattened. An absent optional fact
+ * is its zero value on both sides, matching the projection (which omits empty
+ * and zero facts) and the backend comparison. NUL cannot occur inside any of
+ * these values, so it separates the fields unambiguously.
+ */
+const factsKey = (model: ModelProjection): string =>
+  [
+    model.provider,
+    model.modelName,
+    model.type,
+    model.parameters ?? '',
+    model.contextWindow ?? 0,
+    model.dimensions ?? 0,
+  ].join('\u0000');
+
+/**
+ * What tells two same-named models apart in the list. Only rendered when a name
+ * is actually ambiguous, so the ordinary case stays a bare model id.
+ */
+const factsLabel = (model: ModelProjection): string =>
+  [
+    model.parameters,
+    model.contextWindow === undefined ? undefined : `${model.contextWindow} ctx`,
+    model.dimensions === undefined ? undefined : `${model.dimensions} dim`,
+    model.type,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(' · ');
+
 export function ModelPicker({
   id,
   floor,
@@ -92,10 +122,14 @@ export function ModelPicker({
   const listboxId = `${id}-listbox`;
   const inputId = `${id}-model`;
 
-  // One row per selector: several roles may point at the same provider+model,
-  // and the picker chooses a MODEL, not a role.
+  // One row per distinct set of MODEL FACTS, not per name. Several roles may
+  // point at the same provider+model, and the picker chooses a model rather
+  // than a role — but two roles can also share a name while declaring different
+  // facts, and those are different choices: `sameModelFacts` (the comparison
+  // the backend re-runs) says so, and collapsing them would silently stage the
+  // first role's numbers for whichever the user thought they clicked.
   const unique = models.filter(
-    (model, index) => models.findIndex((other) => other.modelName === model.modelName) === index
+    (model, index) => models.findIndex((other) => factsKey(other) === factsKey(model)) === index
   );
   const eligible = unique.filter((model) =>
     floor.every((cap) => model.exposedCapabilities.includes(cap))
@@ -136,6 +170,7 @@ export function ModelPicker({
       if (wrapRef.current?.contains(target) || popupRef.current?.contains(target)) return;
       setOpen(false);
       setActiveIndex(-1);
+      setPos(null); // same stale-anchor rule as `close`
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -235,6 +270,11 @@ export function ModelPicker({
   const close = (focusInput: boolean) => {
     setOpen(false);
     setActiveIndex(-1);
+    // Drop the anchor with the popup. Keeping it means the next open paints one
+    // frame at the OLD coordinates before the layout effect re-measures — a
+    // visible jump whenever the row has moved since (a strip expanded above it,
+    // the page scrolled, the window resized).
+    setPos(null);
     if (focusInput) inputRef.current?.focus();
   };
 
@@ -345,28 +385,42 @@ export function ModelPicker({
           >
             <p className={styles.pickerFilter}>{filterLabel}</p>
             <ul id={listboxId} role="listbox" aria-label="Models" className={styles.pickerList}>
-              {matches.map((model, index) => (
-                <li key={model.modelName}>
-                  <button
-                    type="button"
-                    role="option"
-                    id={`${id}-option-${index}`}
-                    tabIndex={-1}
-                    aria-selected={model.modelName === selected}
-                    data-active={index === active || undefined}
-                    className={styles.pickerOption}
-                    // The pointer must not take focus off the input.
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => choose(model)}
-                  >
-                    <span className={styles.pickerName}>{model.modelName}</span>
-                    {' — '}
-                    <span className={styles.pickerCaps}>
-                      {model.exposedCapabilities.join(' · ')}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {matches.map((model, index) => {
+                // Two options can now share a name while declaring different
+                // facts. When they do, the facts ARE the choice, so they are
+                // named; an unambiguous name stays a bare model id.
+                const ambiguous =
+                  matches.filter((other) => other.modelName === model.modelName).length > 1;
+                return (
+                  <li key={factsKey(model)}>
+                    <button
+                      type="button"
+                      role="option"
+                      id={`${id}-option-${index}`}
+                      tabIndex={-1}
+                      aria-selected={model.modelName === selected}
+                      data-active={index === active || undefined}
+                      className={styles.pickerOption}
+                      // The pointer must not take focus off the input.
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => choose(model)}
+                    >
+                      <span className={styles.pickerName}>{model.modelName}</span>
+                      {ambiguous && (
+                        <>
+                          {' ('}
+                          <span className={styles.pickerCaps}>{factsLabel(model)}</span>
+                          {')'}
+                        </>
+                      )}
+                      {' — '}
+                      <span className={styles.pickerCaps}>
+                        {model.exposedCapabilities.join(' · ')}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
             {matches.length === 0 && (
               <p className={styles.empty}>

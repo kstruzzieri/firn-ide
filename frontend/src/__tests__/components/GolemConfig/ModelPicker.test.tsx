@@ -89,6 +89,36 @@ describe('ModelPicker combobox contract', () => {
     expect(screen.getByText(/1 model hidden/)).toBeInTheDocument();
   });
 
+  // Two roles may share a model NAME while declaring different facts. Those are
+  // different choices — `sameModelFacts` says so, and it is the comparison the
+  // backend re-runs — so collapsing them would stage the first role's numbers
+  // for whichever the user thought they clicked.
+  it('keeps same-named models apart when their facts differ, and says how', async () => {
+    const small = model({ role: 'small-role', parameters: '7b', contextWindow: 8192 });
+    const large = model({ role: 'large-role', parameters: '70b', contextWindow: 131072 });
+    const { onSelect } = renderPicker({ models: [small, large] });
+    await open();
+
+    const options = within(screen.getByRole('listbox')).getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'gpt-5-mini (7b · 8192 ctx · dense) — chat · stream',
+      'gpt-5-mini (70b · 131072 ctx · dense) — chat · stream',
+    ]);
+
+    await userEvent.click(options[1]);
+    expect(onSelect).toHaveBeenCalledWith(large);
+  });
+
+  it('collapses two roles that declare byte-identical facts', async () => {
+    const first = model({ role: 'first-role', parameters: '7b' });
+    const second = model({ role: 'second-role', parameters: '7b' });
+    renderPicker({ models: [first, second] });
+    await open();
+
+    const options = within(screen.getByRole('listbox')).getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['gpt-5-mini — chat · stream']);
+  });
+
   it('names the empty filter when the use case has no Firn floor', async () => {
     renderPicker({ floor: [] });
     await open();

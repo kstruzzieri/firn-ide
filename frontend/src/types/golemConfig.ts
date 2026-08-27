@@ -641,8 +641,12 @@ function readResultDiagnostics(value: unknown, blockingOnly: boolean): SettingsD
 
 export function parseSettingsApplyResult(value: unknown): SettingsApplyResult {
   if (!isRecord(value) || typeof value.status !== 'string') return contractError();
+  // Own properties only: a plain object inherits `toString`, `constructor` and
+  // friends, so an unguarded lookup would answer a FUNCTION for
+  // `status: "toString"` and then throw a TypeError on the spread below —
+  // a crash where the contract calls for a refusal.
+  if (!Object.hasOwn(RESULT_MEMBERS, value.status)) return contractError();
   const members = RESULT_MEMBERS[value.status];
-  if (members === undefined) return contractError();
   if (!hasOnlyKeys(value, ['status', ...members])) return contractError();
 
   switch (value.status) {

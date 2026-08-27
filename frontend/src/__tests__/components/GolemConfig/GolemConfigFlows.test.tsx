@@ -989,6 +989,67 @@ describe('bootstrap CTAs', () => {
     });
   });
 
+  // A staged provider-add has no applied row underneath it, so its own strip is
+  // the whole handle: reopen it, correct it, or take it back.
+  it('reopens a staged provider-add on its staged values and re-stages a correction', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('golem-config-masthead');
+    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    await userEvent.type(screen.getByLabelText('Provider name'), 'local');
+    await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
+    await stage();
+
+    const row = screen.getByTestId('provider-row-local');
+    expect(within(row).getByText('http://127.0.0.1:11434/v1')).toBeInTheDocument();
+    expect(within(row).getByText('Modified')).toBeInTheDocument();
+
+    // Reopening seeds from the staged change, and its own name is not a
+    // collision with itself.
+    await userEvent.click(within(row).getByRole('button', { name: 'Edit provider local' }));
+    expect(screen.getByLabelText('Provider name')).toHaveValue('local');
+    const endpoint = screen.getByLabelText('Endpoint');
+    expect(endpoint).toHaveValue('http://127.0.0.1:11434/v1');
+
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'http://127.0.0.1:9292/v1');
+    await stage();
+    await cancelEditor();
+
+    // Still ONE change on the provider identity, carrying the correction.
+    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('provider-row-local')).getByText('http://127.0.0.1:9292/v1')
+    ).toBeInTheDocument();
+  });
+
+  it('unstages a provider-add from its own strip', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('golem-config-masthead');
+    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    await userEvent.type(screen.getByLabelText('Provider name'), 'local');
+    await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
+    await userEvent.type(screen.getByLabelText('New API key'), KEY);
+    await stage();
+    expect(screen.getByRole('button', { name: 'local → new API key' })).toBeInTheDocument();
+
+    await userEvent.click(
+      within(screen.getByTestId('provider-row-local')).getByRole('button', {
+        name: 'Unstage provider local',
+      })
+    );
+
+    // The provider AND the key operation it carried are both gone — no full
+    // Discard required.
+    expect(screen.queryByTestId('provider-row-local')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'local → new provider' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'local → new API key' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument(); // the source
+  });
+
   // Same one-shot rule as a draft reset, different trigger: a source switch
   // remounts the cards too, so a standing chip request must not ride along.
   it('does not replay a chip click across a bootstrap source switch', async () => {
@@ -999,12 +1060,12 @@ describe('bootstrap CTAs', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
+    // Staging hands the add to its own strip and closes the blank form.
     await stage();
-    await cancelEditor();
 
-    // The staged add has no strip, so its chip is the only handle it has.
+    // The chip lands on that strip, which reopens on the STAGED values.
     await userEvent.click(screen.getByRole('button', { name: 'local → new provider' }));
-    expect(screen.getByLabelText('Provider name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Provider name')).toHaveValue('local');
 
     await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
     await userEvent.click(
@@ -1033,8 +1094,7 @@ describe('bootstrap CTAs', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
-    await stage();
-    await cancelEditor();
+    await stage(); // the add form closes; the staged provider now has a strip
 
     await openRoute('agent', 'Assign');
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'local');

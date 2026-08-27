@@ -246,6 +246,22 @@ describe('RoutingCard defined models', () => {
       within(screen.getByTestId('defined-model-row-other-role')).getByText('Modified')
     ).toBeInTheDocument();
   });
+
+  // Re-pressing Remove would only re-stage the identity it already holds, so a
+  // staged removal swaps the control for its undo.
+  it('offers the staged removal an undo instead of a re-stage', async () => {
+    const { onStage } = renderRouting({
+      roleRows: new Map([['other-role', { modified: true, keyStaged: false, needsReview: false }]]),
+    });
+    expect(
+      screen.queryByRole('button', { name: 'Remove model role other-role' })
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Unstage removal of model role other-role' })
+    );
+    expect(onStage).toHaveBeenCalledWith([], ['role:other-role']);
+  });
 });
 
 // ---------------------------------------------------------------------------
