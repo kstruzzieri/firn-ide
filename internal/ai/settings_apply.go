@@ -2,6 +2,7 @@ package ai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/profiles"
 	"github.com/kstruzzieri/go-llm/provider"
 )
 
@@ -552,6 +554,140 @@ type GolemProfileLoadResult struct {
 }
 
 // ---------------------------------------------------------------------------
+// Profile source (§5.3). One loader serves both the preview and the Apply, so
+// no caller can ever hold a profile Document that has not been scrubbed.
+// ---------------------------------------------------------------------------
+
+// profileEnvSentinel is the fixed, non-secret value the profile loader
+// substitutes for EVERY ${NAME} api_key reference a profile authors. Its whole
+// purpose is to let a reference PARSE — an unresolved one is refused during
+// construction, and a profile Firn cannot even open is a profile Firn cannot
+// preview or sanitize. The document is scrubbed before anything reads it back,
+// so the substituted value is never projected, saved, or applied. It is
+// deliberately not os.LookupEnv: reading the real variable would materialize a
+// live secret Firn has no use for (§5.3 — "without obtaining a secret"), and
+// the expansion is discarded either way. Malformed references still fail:
+// go-llm rejects them before the lookup runs.
+const profileEnvSentinel = "firn-profile-env-sentinel"
+
+// profileStoreOptions is the §5.3 sanitization seam threaded into every profile
+// Document the store parses.
+func profileStoreOptions() config.DocumentOptions {
+	return config.DocumentOptions{
+		LookupEnv: func(string) (string, bool) { return profileEnvSentinel, true },
+	}
+}
+
+// profileStoreCodes maps the store's bounded error vocabulary onto the §5.6
+// profile diagnostic codes, which are deliberately like-named. The two codes a
+// save resolves differently — conflict becomes a conflict result and
+// durability_uncertain becomes a warning — are absent here, so anything
+// unmapped (including a raw context cancellation, for which CodeOf reports
+// nothing) falls through to "io" rather than inventing copy.
+var profileStoreCodes = map[profiles.ErrorCode]string{
+	profiles.CodeInvalidID:       "invalid_id",
+	profiles.CodeNotFound:        "not_found",
+	profiles.CodeCuratedReadOnly: "curated_read_only",
+	profiles.CodeStoreUnsafe:     "store_unsafe",
+	profiles.CodeIO:              "io",
+	profiles.CodeConfigInvalid:   "config_invalid",
+}
+
+// loadProfileDocument freshly loads one profile and returns it already stripped
+// of every provider credential, together with the RAW source revision captured
+// before the scrub. Load and scrub are one step on purpose: no caller can
+// obtain a profile Document whose keys are still present, so the §5.3 ordering
+// rule (clear before any Config()/projection access) cannot be violated by a
+// future caller that forgets it. The returned code is "" on success and
+// otherwise a §5.6 profile diagnostic code; a read-only document is
+// config_invalid, because the scrub is a mutation and a document that refuses
+// every mutation cannot be sanitized at all.
+func loadProfileDocument(id string) (doc *config.Document, revision string, code string) {
+	store, err := profiles.DefaultStoreWithOptions(profileStoreOptions())
+	if err != nil {
+		// The user config directory could not be resolved; there is no store.
+		return nil, "", "io"
+	}
+	doc, err = store.Load(context.Background(), profiles.ID(id))
+	if err != nil {
+		mapped, ok := profileStoreCodes[profiles.CodeOf(err)]
+		if !ok {
+			mapped = "io"
+		}
+		return nil, "", mapped
+	}
+	revision = doc.Revision()
+	if err := doc.ClearAllProviderAPIKeys(); err != nil {
+		return nil, "", "config_invalid"
+	}
+	return doc, revision, ""
+}
+
+// LoadGolemProfile returns the §5.6 closed load result: a credential-free draft
+// preview plus the provenance a profile-origin Apply must send back. Slice B
+// calls it only for the fixed curated bootstrap; the loader itself is the one
+// profile-loading path, so Slice C's selector adds no second one.
+func LoadGolemProfile(id string) GolemProfileLoadResult {
+	doc, revision, code := loadProfileDocument(id)
+	if code != "" {
+		d := ProfileDiagnostic{Code: code}
+		// The id rides along only when it is one — an id the contract rejects
+		// is exactly the one that must not be echoed as a ProfileID.
+		if validProfileID(id) {
+			d.ProfileID = id
+		}
+		return GolemProfileLoadResult{Status: "diagnostics", Diagnostics: []ProfileDiagnostic{d}}
+	}
+	// First read of the document, and it is already scrubbed. ReadOnly stays
+	// false by construction: a read-only document could not have been scrubbed.
+	p := buildSettingsProjection(loadedAgentConfig{Config: doc.Config(), Revision: revision}, nil)
+	return GolemProfileLoadResult{
+		Status: "loaded", ProfileID: id, SourceRevision: revision,
+		Projection: &ProfileDraftProjection{
+			State: p.State, ReadOnly: p.ReadOnly, Editable: p.Editable,
+			Routes: p.Routes, Models: p.Models, Providers: p.Providers,
+			Diagnostics: p.Diagnostics,
+		},
+	}
+}
+
+// profileSourceDocument is the profile branch of the shared preparation
+// pipeline: repeat the load, compare the source's OWN revision (independent of
+// the target's), and refuse a source Firn cannot write from. The staged changes
+// then run against the scrubbed document, so a profile Apply clears every
+// active credential unless the same request restages a literal replacement.
+func profileSourceDocument(req SettingsApplyRequest) (*config.Document, map[string]bool, *SettingsApplyResult) {
+	doc, revision, code := loadProfileDocument(req.Source.ProfileID)
+	switch code {
+	case "":
+	case "invalid_id":
+		// Unreachable while validateApplySource and the store share one id
+		// shape, but §5.6 names the mapping, so it is stated rather than
+		// collapsed into the unavailable bucket.
+		return nil, nil, blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
+	case "not_found":
+		return nil, nil, conflictProfileSource()
+	case "config_invalid":
+		return nil, nil, blockingDiagnostics(Diagnostic{Code: codeConfigInvalid})
+	default:
+		// store_unsafe, io, and anything unmapped: the store itself, not the
+		// profile, is what failed.
+		return nil, nil, blockingDiagnostics(Diagnostic{Code: codeProfileSourceUnavailable})
+	}
+	if revision != req.Source.SourceRevision {
+		return nil, nil, conflictProfileSource()
+	}
+	// The source carries every mutation this Apply makes, so it faces the same
+	// two write gates the active target faces (§5.2) — recomputed here on the
+	// document as it is right now, never on what the draft preview reported.
+	p := buildSettingsProjection(loadedAgentConfig{Config: doc.Config(), Revision: revision}, nil)
+	if p.State != "ready" {
+		return nil, nil, limitedResult(p.Diagnostics)
+	}
+	return doc, nil, nil
+}
+
+// ---------------------------------------------------------------------------
 // Shared predicates
 // ---------------------------------------------------------------------------
 
@@ -1019,10 +1155,7 @@ func applySourceDocument(req SettingsApplyRequest, active *config.Document) (*co
 	case applySourceBlank:
 		return blankSourceDocument(req)
 	case applySourceProfile:
-		// The profile branch (fresh Store.Load, revision check, credential
-		// scrub) is not wired yet. Refuse loudly: falling through to the
-		// applied document would silently write the wrong configuration.
-		return nil, nil, blockingDiagnostics(Diagnostic{Code: codeProfileSourceUnavailable})
+		return profileSourceDocument(req)
 	}
 	return nil, nil, blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
 }
@@ -1660,6 +1793,16 @@ func conflictTarget(projection *SettingsProjection) *SettingsApplyResult {
 	return &SettingsApplyResult{
 		Status: "conflict", Conflict: "target", Projection: projection,
 		ConsentOutcome: consentUnchanged,
+	}
+}
+
+// conflictProfileSource reports that the profile the draft was built on is gone
+// or has moved. It never carries a projection: the moved document is the
+// SOURCE, and the active target's projection would not help the UI reconcile
+// it — the frontend reloads the profile instead.
+func conflictProfileSource() *SettingsApplyResult {
+	return &SettingsApplyResult{
+		Status: "conflict", Conflict: "profile_source", ConsentOutcome: consentUnchanged,
 	}
 }
 

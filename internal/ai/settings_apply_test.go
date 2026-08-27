@@ -2,6 +2,9 @@ package ai
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/profiles"
 	"github.com/kstruzzieri/go-llm/provider"
 )
 
@@ -690,6 +694,106 @@ func stageApplyTarget(t *testing.T, body string) string {
 	return path
 }
 
+// Profile fixtures. keyedProfileJSON carries all three authored api_key forms
+// at once — a literal, a reference to an ambient-SET variable, and a reference
+// to an ambient-UNSET one — because §5.3 promises every one of them is gone
+// before the document is ever projected or applied.
+const (
+	profileSetEnvName    = "FIRN_PROFILE_SET_KEY"
+	profileUnsetEnvName  = "FIRN_PROFILE_UNSET_KEY"
+	profileAmbientSecret = "sk-ambient-secret"
+	profileLiteralSecret = "sk-profile-literal"
+)
+
+const keyedProfileJSON = `{
+  "providers": {
+    "literal": {"base_url": "https://api.example.com/v1", "api_format": "openai-compat",
+      "api_key": "sk-profile-literal"},
+    "resolved": {"base_url": "https://api.example.net/v1", "api_format": "openai-compat",
+      "api_key": "${FIRN_PROFILE_SET_KEY}"},
+    "unset": {"base_url": "https://api.example.org/v1", "api_format": "openai-compat",
+      "api_key": "${FIRN_PROFILE_UNSET_KEY}"},
+    "local": {"base_url": "http://localhost:11434"}
+  },
+  "models": {"agent-m": {"name": "profile-model", "provider": "local", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+
+// malformedRefProfileJSON has an unterminated reference: the sentinel resolves
+// every syntactically valid NAME, and a malformed reference must still fail.
+const malformedRefProfileJSON = `{
+  "providers": {"broken": {"base_url": "https://api.example.com/v1", "api_key": "${OPEN"}},
+  "models": {"agent-m": {"name": "m", "provider": "broken", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+
+// unwritableProfileJSON adds an unreferenced provider whose name carries a
+// bidi-format rune: go-llm runs the document, but Firn cannot represent that
+// name as a writable Identifier. The draft is therefore limited, and an Apply
+// from it is refused before any mutation by the same gate the active target
+// faces (§5.2 — readOnly || !editable, recomputed on both).
+var unwritableProfileJSON = strings.Replace(keyedProfileJSON,
+	`"local": {"base_url": "http://localhost:11434"}`,
+	`"local": {"base_url": "http://localhost:11434"},`+"\n    "+
+		`"spa\u202ere": {"base_url": "http://localhost:11500"}`, 1)
+
+// profileBodyRevision is the independent revision oracle: a Document's revision
+// is the sha256 of the bytes it was loaded from, so the fixture body alone
+// decides what a caller must send back as sourceRevision.
+func profileBodyRevision(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+// userProfileStoreRoot is the go-llm store root under the sandboxed config
+// environment — the same directory the profile loader resolves for itself.
+func userProfileStoreRoot(t *testing.T) string {
+	t.Helper()
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("user config dir: %v", err)
+	}
+	return filepath.Join(base, "go-llm")
+}
+
+// stageUserProfile writes body as the user profile "user/<slug>". The mode
+// matters: the store refuses a group- or world-accessible profiles directory.
+func stageUserProfile(t *testing.T, slug, body string) {
+	t.Helper()
+	dir := filepath.Join(userProfileStoreRoot(t), "profiles")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("stage profile dir: %v", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("stage profile dir mode: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, slug+".json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("stage profile: %v", err)
+	}
+}
+
+// assertNoCredentialLeak marshals a boundary value and scans it for every
+// string the profile path must never emit: the loader's own sentinel, either
+// fixture secret, both environment variable NAMES, and the authored member
+// that carries a key at all.
+func assertNoCredentialLeak(t *testing.T, what string, value any) {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", what, err)
+	}
+	for _, forbidden := range []string{
+		profileEnvSentinel, profileAmbientSecret, profileLiteralSecret,
+		profileSetEnvName, profileUnsetEnvName, "api_key", "${",
+	} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("%s carries %q: %s", what, forbidden, raw)
+		}
+	}
+}
+
 func stagedTargetRevision(t *testing.T) string {
 	t.Helper()
 	loaded, err := loadDefaultAgentConfig()
@@ -750,10 +854,15 @@ type prepareCase struct {
 	source   *ApplySource
 	changes  []Change
 	keys     map[string]string
+	// profile, when set, is staged as the user profile "user/staged". A
+	// profile-source row that leaves SourceRevision empty gets the staged
+	// body's real revision; a row proving the CAS check sets its own.
+	profile string
 	// disturb runs after the draft's revision is captured and before prepare:
 	// it is how a row makes the target move under the request.
 	disturb          func(t *testing.T, path string)
 	wantStatus       string // "" => prepared, no result
+	wantConflict     string
 	wantCodes        []string
 	wantDrops        []ChangeDropSet
 	wantNoProjection bool
@@ -777,6 +886,9 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 			revision = stringPtr(stagedTargetRevision(t))
 		}
 	}
+	if tc.profile != "" {
+		stageUserProfile(t, "staged", tc.profile)
+	}
 	if tc.disturb != nil {
 		tc.disturb(t, path)
 	}
@@ -785,6 +897,9 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 	source := ApplySource{Kind: applySourceApplied}
 	if tc.source != nil {
 		source = *tc.source
+	}
+	if source.Kind == applySourceProfile && source.SourceRevision == "" {
+		source.SourceRevision = profileBodyRevision(tc.profile)
 	}
 	keys := tc.keys
 	if keys == nil {
@@ -841,6 +956,9 @@ func runPrepareCase(t *testing.T, tc prepareCase) {
 				t.Fatalf("drops[%d] = %+v, want %+v", i, got, want)
 			}
 		}
+	}
+	if tc.wantConflict != "" && result.Conflict != tc.wantConflict {
+		t.Fatalf("conflict = %q, want %q (%+v)", result.Conflict, tc.wantConflict, *result)
 	}
 	// A conflict may carry a projection only when the target reloaded safely.
 	if tc.wantNoProjection && result.Projection != nil {
@@ -1226,12 +1344,83 @@ func TestPrepareSettingsApply(t *testing.T) {
 			wantCodes:  []string{codeEligibilityUnknown},
 		},
 		{
-			name:   "profile source is not available yet",
-			source: &ApplySource{Kind: applySourceProfile, ProfileID: "curated/local", SourceRevision: strings.Repeat("b", 64)},
-			changes: []Change{{Kind: changeKindProviderAdd, Name: "extra",
-				Endpoint: stringPtr("http://localhost:11700")}},
+			// The prepared document is the PROFILE's, scrubbed of every key
+			// form — the active target supplies only the write identity.
+			name:    "profile source replaces the document credential-free",
+			profile: keyedProfileJSON,
+			source:  &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged"},
+			changes: []Change{{Kind: changeKindProviderRemove, Name: "unset"}},
+			check: func(t *testing.T, cfg *config.Config) {
+				if _, ok := cfg.Providers["remote"]; ok {
+					t.Fatalf("the active target leaked into the source: %v", cfg.Providers)
+				}
+				if _, ok := cfg.Providers["unset"]; ok {
+					t.Fatal("staged provider removal did not run against the profile")
+				}
+				if cfg.Defaults["agent"] != "agent-m" || cfg.Models["agent-m"].Name != "profile-model" {
+					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
+				}
+				for name, p := range cfg.Providers {
+					if p.APIKey != "" {
+						t.Fatalf("provider %q kept a credential", name)
+					}
+				}
+			},
+		},
+		{
+			name:    "stale profile source revision",
+			profile: keyedProfileJSON,
+			source: &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged",
+				SourceRevision: strings.Repeat("b", 64)},
+			changes:          []Change{{Kind: changeKindProviderRemove, Name: "unset"}},
+			wantStatus:       "conflict",
+			wantConflict:     "profile_source",
+			wantNoProjection: true,
+		},
+		{
+			name: "missing profile source",
+			source: &ApplySource{Kind: applySourceProfile, ProfileID: "user/absent",
+				SourceRevision: strings.Repeat("c", 64)},
+			changes:          []Change{{Kind: changeKindProviderRemove, Name: "unset"}},
+			wantStatus:       "conflict",
+			wantConflict:     "profile_source",
+			wantNoProjection: true,
+		},
+		{
+			name:       "invalid profile content",
+			profile:    `{"providers": {}}`,
+			source:     &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged"},
+			changes:    []Change{{Kind: changeKindProviderRemove, Name: "unset"}},
 			wantStatus: "diagnostics",
-			wantCodes:  []string{codeProfileSourceUnavailable},
+			wantCodes:  []string{codeConfigInvalid},
+		},
+		{
+			// A duplicate-key profile loads but refuses every mutation, and the
+			// scrub is the first mutation an Apply owes it.
+			name:       "read-only profile source",
+			profile:    duplicateProviderDocumentJSON,
+			source:     &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged"},
+			changes:    []Change{{Kind: changeKindProviderRemove, Name: "unused"}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeConfigInvalid},
+		},
+		{
+			name:       "malformed key reference in a profile source",
+			profile:    malformedRefProfileJSON,
+			source:     &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged"},
+			changes:    []Change{{Kind: changeKindProviderAdd, Name: "extra", Endpoint: stringPtr("http://localhost:11700")}},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeConfigInvalid},
+		},
+		{
+			// The source faces the write gate too: a UI that offered this
+			// profile anyway is refused before the first mutation.
+			name:       "profile source with an unwritable identifier",
+			profile:    unwritableProfileJSON,
+			source:     &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged"},
+			changes:    []Change{{Kind: changeKindProviderRemove, Name: "unset"}},
+			wantStatus: "limited",
+			wantCodes:  []string{codeIdentifierNotEditable},
 		},
 		{
 			name:   "blank create seeds one provider and the agent route",
@@ -1321,6 +1510,335 @@ func manyProviderConfigJSON(count int) string {
 	b.WriteString(`}, "models": {"agent-m": {"name": "m", "provider": "ollama", "type": "dense",` +
 		` "capabilities": ["chat", "stream", "tool_call"]}}, "defaults": {"agent": "agent-m"}}`)
 	return b.String()
+}
+
+// profileSourceRequest is one profile-origin Apply against the staged target.
+func profileSourceRequest(targetRevision, sourceRevision string, changes []Change,
+	keys map[string]string) SettingsApplyRequest {
+	if keys == nil {
+		keys = map[string]string{}
+	}
+	return SettingsApplyRequest{
+		TargetRevision: stringPtr(targetRevision),
+		Source: ApplySource{Kind: applySourceProfile, ProfileID: "user/staged",
+			SourceRevision: sourceRevision},
+		Changes: changes, Keys: keys,
+	}
+}
+
+// TestPrepareProfileSourceRevisionsAreIndependent: §5.3 keeps the active
+// target's CAS token and the profile source's separate. Neither is accepted in
+// the other's slot, and the conflict names the document that actually moved.
+func TestPrepareProfileSourceRevisionsAreIndependent(t *testing.T) {
+	stageApplyTarget(t, applyTargetConfigJSON)
+	targetRevision := stagedTargetRevision(t)
+	stageUserProfile(t, "staged", keyedProfileJSON)
+	sourceRevision := profileBodyRevision(keyedProfileJSON)
+	if targetRevision == sourceRevision {
+		t.Fatal("fixture: the two documents must have different revisions")
+	}
+	changes := []Change{{Kind: changeKindProviderRemove, Name: "unset"}}
+
+	cases := []struct {
+		name             string
+		target, source   string
+		wantConflict     string
+		wantNoProjection bool
+	}{
+		{name: "each token in its own slot", target: targetRevision, source: sourceRevision},
+		{
+			name:   "the source token does not satisfy the target",
+			target: sourceRevision, source: sourceRevision, wantConflict: "target",
+		},
+		{
+			name:   "the target token does not satisfy the source",
+			target: targetRevision, source: targetRevision, wantConflict: "profile_source",
+			wantNoProjection: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared, result := prepareSettingsApply(
+				profileSourceRequest(tc.target, tc.source, changes, nil), applyModeExisting)
+			if tc.wantConflict == "" {
+				if result != nil {
+					t.Fatalf("prepare refused a matching pair: %+v", *result)
+				}
+				if prepared == nil || prepared.target.revision != targetRevision {
+					t.Fatalf("prepared target = %+v", prepared)
+				}
+				return
+			}
+			if prepared != nil {
+				t.Fatal("a conflicted request must not produce a document")
+			}
+			if result == nil {
+				t.Fatal("prepare accepted a mismatched revision")
+			}
+			if err := validateSettingsApplyResult(*result); err != nil {
+				t.Fatalf("result is not contract-valid: %v (%+v)", err, *result)
+			}
+			if result.Status != "conflict" || result.Conflict != tc.wantConflict {
+				t.Fatalf("result = %+v, want conflict %q", *result, tc.wantConflict)
+			}
+			if tc.wantNoProjection && result.Projection != nil {
+				t.Fatalf("profile-source conflict carries an active-target projection: %+v", *result)
+			}
+			assertNoCredentialLeak(t, "conflict result", *result)
+		})
+	}
+}
+
+// TestPrepareProfileApplyClearsCredentialsUnlessReplaced is the §5.3 hard rule
+// in both directions: a profile Apply erases every active credential, and the
+// only key that survives is one the SAME request restages literally. The
+// assertion runs on the bytes an Apply would publish, not just the effective
+// view, because the authored document is what reaches disk.
+func TestPrepareProfileApplyClearsCredentialsUnlessReplaced(t *testing.T) {
+	stageApplyTarget(t, applyTargetConfigJSON)
+	targetRevision := stagedTargetRevision(t)
+	t.Setenv(profileSetEnvName, profileAmbientSecret)
+	unsetenv(t, profileUnsetEnvName)
+	stageUserProfile(t, "staged", keyedProfileJSON)
+
+	const replacement = "sk-restaged-literal"
+	prepared, result := prepareSettingsApply(profileSourceRequest(
+		targetRevision, profileBodyRevision(keyedProfileJSON),
+		[]Change{{Kind: changeKindProviderKeySet, Name: "literal"}},
+		map[string]string{"literal": replacement}), applyModeExisting)
+	if result != nil {
+		t.Fatalf("prepare refused: %+v", *result)
+	}
+	cfg := prepared.doc.Config()
+	if got := cfg.Providers["literal"].APIKey; got != replacement {
+		t.Fatalf("restaged key = %q, want the request's literal", got)
+	}
+	for _, name := range []string{"resolved", "unset", "local"} {
+		if got := cfg.Providers[name].APIKey; got != "" {
+			t.Fatalf("provider %q kept a credential (%d bytes) the request did not restage", name, len(got))
+		}
+	}
+
+	published := filepath.Join(t.TempDir(), "models.json")
+	if err := prepared.doc.SaveNew(published); err != nil {
+		t.Fatalf("publish prepared document: %v", err)
+	}
+	raw, err := os.ReadFile(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		profileEnvSentinel, profileAmbientSecret, profileLiteralSecret,
+		profileSetEnvName, profileUnsetEnvName, "${",
+	} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("published bytes carry %q:\n%s", forbidden, raw)
+		}
+	}
+	if strings.Count(string(raw), "api_key") != 1 || !strings.Contains(string(raw), replacement) {
+		t.Fatalf("published bytes must carry exactly the restaged key:\n%s", raw)
+	}
+}
+
+// TestPrepareProfileSourceStoreUnsafe: an unsafe or unreadable profile STORE is
+// what `profile_source_unavailable` is reserved for (§5.6) — not a missing
+// profile, which is a conflict, and not invalid content, which is config_invalid.
+func TestPrepareProfileSourceStoreUnsafe(t *testing.T) {
+	stageApplyTarget(t, applyTargetConfigJSON)
+	targetRevision := stagedTargetRevision(t)
+	root := userProfileStoreRoot(t)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file where the profiles directory belongs: unsafe on every
+	// platform, and it needs no symlink privileges to stage.
+	if err := os.WriteFile(filepath.Join(root, "profiles"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepared, result := prepareSettingsApply(profileSourceRequest(
+		targetRevision, strings.Repeat("d", 64),
+		[]Change{{Kind: changeKindProviderRemove, Name: "unused"}}, nil), applyModeExisting)
+	if prepared != nil {
+		t.Fatal("an unsafe store must not produce a document")
+	}
+	if err := validateSettingsApplyResult(*result); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, *result)
+	}
+	if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+		result.Diagnostics[0].Code != codeProfileSourceUnavailable {
+		t.Fatalf("result = %+v", *result)
+	}
+}
+
+// TestLoadGolemProfileCurated: the fixed curated bootstrap Slice B ships. The
+// revision is the catalog's own digest of the embedded bytes, reached by an
+// independent path.
+func TestLoadGolemProfileCurated(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	result := LoadGolemProfile("curated/local")
+	if err := validateGolemProfileLoadResult(result); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
+	}
+	if result.Status != "loaded" || result.ProfileID != "curated/local" {
+		t.Fatalf("result = %+v", result)
+	}
+	infos, err := profiles.NewStore(t.TempDir()).List(context.Background())
+	if err != nil {
+		t.Fatalf("catalog list: %v", err)
+	}
+	var want string
+	for _, info := range infos {
+		if info.ID == "curated/local" {
+			want = info.Revision
+		}
+	}
+	if want == "" {
+		t.Fatal("the catalog no longer carries curated/local")
+	}
+	if result.SourceRevision != want {
+		t.Fatalf("sourceRevision = %q, want the catalog digest %q", result.SourceRevision, want)
+	}
+	if result.Projection.State != "ready" || result.Projection.ReadOnly || !result.Projection.Editable {
+		t.Fatalf("draft = %+v", *result.Projection)
+	}
+	if len(result.Projection.Providers) == 0 || len(result.Projection.Routes) == 0 {
+		t.Fatalf("draft carries no document: %+v", *result.Projection)
+	}
+	assertNoCredentialLeak(t, "curated load result", result)
+}
+
+// TestLoadGolemProfileScrubsEveryCredentialForm: the sentinel lets an
+// ambient-UNSET reference parse, and the scrub then erases the literal, the
+// resolved reference, and the sentinel alike before anything is projected.
+func TestLoadGolemProfileScrubsEveryCredentialForm(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Setenv(profileSetEnvName, profileAmbientSecret)
+	unsetenv(t, profileUnsetEnvName)
+	stageUserProfile(t, "keyed", keyedProfileJSON)
+
+	// Without the loader's fixed lookup these same bytes refuse at parse: the
+	// sentinel is the only reason an unset reference is loadable at all.
+	if _, err := config.ParseDocument([]byte(keyedProfileJSON),
+		config.Origin{Source: config.OriginProfile}, config.DocumentOptions{}); err == nil {
+		t.Fatal("an ambient parse of an unset reference must fail")
+	}
+
+	result := LoadGolemProfile("user/keyed")
+	if err := validateGolemProfileLoadResult(result); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
+	}
+	if result.Status != "loaded" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.SourceRevision != profileBodyRevision(keyedProfileJSON) {
+		t.Fatalf("sourceRevision = %q, want the raw source digest", result.SourceRevision)
+	}
+	if len(result.Projection.Providers) != 4 {
+		t.Fatalf("draft providers = %+v", result.Projection.Providers)
+	}
+	assertNoCredentialLeak(t, "profile load result", result)
+}
+
+// TestLoadGolemProfileLimitedDraft: a draft is 'limited' or 'ready' and never
+// anything else, and an identifier Firn cannot write is a preview it may still
+// show — the refusal belongs to the Apply, not to the preview.
+func TestLoadGolemProfileLimitedDraft(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	stageUserProfile(t, "unwritable", unwritableProfileJSON)
+
+	result := LoadGolemProfile("user/unwritable")
+	if err := validateGolemProfileLoadResult(result); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
+	}
+	if result.Status != "loaded" {
+		t.Fatalf("result = %+v", result)
+	}
+	draft := *result.Projection
+	if draft.State != "limited" || draft.Editable {
+		t.Fatalf("draft = %+v", draft)
+	}
+	if len(draft.Diagnostics) != 1 || draft.Diagnostics[0].Code != codeIdentifierNotEditable {
+		t.Fatalf("draft diagnostics = %+v", draft.Diagnostics)
+	}
+	assertNoCredentialLeak(t, "limited draft result", result)
+}
+
+// TestLoadGolemProfileDiagnostics maps every store and content failure onto the
+// closed §5.6 profile vocabulary. No filesystem path crosses.
+func TestLoadGolemProfileDiagnostics(t *testing.T) {
+	cases := []struct {
+		name     string
+		stage    func(t *testing.T)
+		id       string
+		wantCode string
+		wantNoID bool
+	}{
+		{name: "malformed id", id: "curated/Local", wantCode: "invalid_id", wantNoID: true},
+		{name: "unnamespaced id", id: "local", wantCode: "invalid_id", wantNoID: true},
+		{name: "unknown curated profile", id: "curated/absent", wantCode: "not_found"},
+		{name: "unknown user profile", id: "user/absent", wantCode: "not_found"},
+		{
+			name:     "invalid profile content",
+			stage:    func(t *testing.T) { stageUserProfile(t, "broken", `{"providers": {}}`) },
+			id:       "user/broken",
+			wantCode: "config_invalid",
+		},
+		{
+			name:     "malformed key reference",
+			stage:    func(t *testing.T) { stageUserProfile(t, "broken", malformedRefProfileJSON) },
+			id:       "user/broken",
+			wantCode: "config_invalid",
+		},
+		{
+			// It loads, but every mutation is refused — including the scrub the
+			// preview owes it, so no draft can be built from it.
+			name:     "read-only profile",
+			stage:    func(t *testing.T) { stageUserProfile(t, "broken", duplicateProviderDocumentJSON) },
+			id:       "user/broken",
+			wantCode: "config_invalid",
+		},
+		{
+			name: "unsafe profile store",
+			stage: func(t *testing.T) {
+				root := userProfileStoreRoot(t)
+				if err := os.MkdirAll(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "profiles"),
+					[]byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			id:       "user/anything",
+			wantCode: "store_unsafe",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxAgentConfigEnv(t)
+			if tc.stage != nil {
+				tc.stage(t)
+			}
+			result := LoadGolemProfile(tc.id)
+			if err := validateGolemProfileLoadResult(result); err != nil {
+				t.Fatalf("result is not contract-valid: %v (%+v)", err, result)
+			}
+			if result.Status != "diagnostics" || len(result.Diagnostics) != 1 {
+				t.Fatalf("result = %+v", result)
+			}
+			d := result.Diagnostics[0]
+			if d.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", d.Code, tc.wantCode)
+			}
+			wantID := tc.id
+			if tc.wantNoID {
+				wantID = ""
+			}
+			if d.ProfileID != wantID {
+				t.Fatalf("profileId = %q, want %q", d.ProfileID, wantID)
+			}
+		})
+	}
 }
 
 // TestPrepareGeneratesDistinctRoleNames: two new routes in one request never
