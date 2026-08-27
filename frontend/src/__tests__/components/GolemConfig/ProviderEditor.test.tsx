@@ -57,6 +57,23 @@ function renderCard(over: Partial<ProvidersCardProps> = {}) {
   return { ...view, keys, onStage, onUnstagedChange };
 }
 
+// jsdom ships <dialog> without its modal methods, and the workspace's §4.6a
+// confirmation is a real one.
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute('open');
+    },
+  });
+});
+
 const openEditor = async (name = 'llama-swap') =>
   await userEvent.click(screen.getByRole('button', { name: `Edit provider ${name}` }));
 
@@ -544,7 +561,14 @@ describe('GolemConfigWorkspace provider editing', () => {
         providers: [hosted, provider({ endpoint: 'http://127.0.0.1:7000/v1' })],
       },
     });
+    // The open editor holds unstaged fields, so Refresh is a destructive
+    // transition and asks first (§4.6a).
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Discard & reload',
+      })
+    );
     await screen.findByText('http://127.0.0.1:7000/v1');
 
     // The editor mounted against the old document is gone, and so is the

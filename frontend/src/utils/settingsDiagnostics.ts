@@ -9,6 +9,7 @@
  */
 
 import type { DiagnosticSubjectKind, SettingsDiagnosticCode } from '../types/golem';
+import type { ProfileDiagnostic } from '../types/golemConfig';
 
 /** Total map over the closed code set; the validator guarantees membership, so
  * no fallback branch exists to rot. Copy is verbatim from spec §5.6 — the
@@ -82,3 +83,25 @@ export function formatSettingsDiagnostic(
           : `${SUBJECT_KIND_LABEL[subjectKind]} ${subjectName}`,
   };
 }
+
+/**
+ * The profile-store vocabulary reuses the ONE copy map above, on exactly the
+ * §5.6 mapping the apply path already uses for a profile-origin write: an
+ * invalid id is an invalid argument, unreadable content is invalid content, and
+ * every other store failure is "the selected profile could not be loaded".
+ * Nothing here invents a second sentence for the same condition.
+ */
+const PROFILE_DIAGNOSTIC_CODE: Record<ProfileDiagnostic['code'], SettingsDiagnosticCode> = {
+  invalid_id: 'invalid_argument',
+  not_found: 'profile_source_unavailable',
+  curated_read_only: 'profile_source_unavailable',
+  store_unsafe: 'profile_source_unavailable',
+  io: 'profile_source_unavailable',
+  profile_limit: 'profile_source_unavailable',
+  config_invalid: 'config_invalid',
+  active_config_invalid: 'config_invalid',
+};
+
+/** One bounded sentence for the first profile diagnostic a load reported. */
+export const formatProfileDiagnostic = (diagnostic: ProfileDiagnostic): string =>
+  DIAGNOSTIC_TEXT[PROFILE_DIAGNOSTIC_CODE[diagnostic.code]];

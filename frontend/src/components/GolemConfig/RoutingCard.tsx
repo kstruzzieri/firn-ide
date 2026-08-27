@@ -17,7 +17,7 @@
  * which a `role="row"` would forbid, has a legal home.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   compareString,
   type CapabilityName,
@@ -36,6 +36,7 @@ import {
   type RowMarkers,
 } from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
+import type { EditorFocusRequest } from './ApplyBar';
 import { Cell } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
@@ -109,9 +110,14 @@ export interface RoutingCardProps {
   diagnostics: readonly SettingsDiagnostic[];
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
+  /** The Apply bar asking for one of this card's editors (§3.3 chips). */
+  focusRequest?: EditorFocusRequest | null;
   onStage: (changes: Change[], drop: string[]) => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
 }
+
+/** The DOM id of a defined-model row: a `role-remove` chip's only target. */
+const definedRowId = (role: string): string => `golem-defined-row-${role}`;
 
 export function RoutingCard({
   routes,
@@ -123,10 +129,13 @@ export function RoutingCard({
   roleRows,
   diagnostics,
   editable,
+  focusRequest = null,
   onStage,
   onUnstagedChange,
 }: RoutingCardProps) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  /** A fresh object per request, so a repeated chip click focuses again. */
+  const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
 
   // More than one row may be expanded at once: collapsing one to open another
   // would silently discard unstaged fields (§4.6a forbids that).
@@ -144,6 +153,35 @@ export function RoutingCard({
       next.delete(useCase);
       return next;
     });
+
+  // Two effects, because the editor does not exist until the open state has
+  // committed: the first expands the row, the second focuses what that commit
+  // mounted. A `role-remove` chip has no editor at all, so it lands on the
+  // defined-model row itself.
+  useEffect(() => {
+    if (focusRequest === null) return;
+    const separator = focusRequest.changeId.indexOf(':');
+    const namespace = focusRequest.changeId.slice(0, separator);
+    const name = focusRequest.changeId.slice(separator + 1);
+    if (namespace === 'role') {
+      setPendingFocus({ elementId: definedRowId(name) });
+      return;
+    }
+    if (namespace !== 'route') return;
+    const index = routeUseCases(routes).indexOf(name);
+    if (index < 0) return;
+    setOpen((current) => (current.has(name) ? current : new Set(current).add(name)));
+    setPendingFocus({ elementId: `golem-route-editor-${index}` });
+    // Routes are stable for the life of one card mount (the workspace remounts
+    // it when the document moves), so the request alone drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest]);
+
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    document.getElementById(pendingFocus.elementId)?.focus();
+    setPendingFocus(null);
+  }, [pendingFocus]);
 
   const byRole = new Map(models.map((model) => [model.role, model]));
   const byUseCase = new Map(routes.map((route) => [route.useCase, route.role]));
@@ -323,6 +361,8 @@ export function RoutingCard({
                 return (
                   <li
                     key={model.role}
+                    id={definedRowId(model.role)}
+                    tabIndex={-1}
                     data-testid={`defined-model-row-${model.role}`}
                     className={`${styles.strip} ${styles.definedGrid}`}
                   >

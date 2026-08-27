@@ -398,8 +398,9 @@ export function RouteEditor({
       ? `Capabilities exposed to ${useCase}`
       : `Capabilities exposed to ${useCase} — from ${facts.model}`;
 
+  // tabIndex is how an Apply-bar chip focuses the editor it names (§3.3).
   return (
-    <fieldset className={styles.editor} id={id}>
+    <fieldset className={styles.editor} id={id} tabIndex={-1}>
       <legend className={styles.editorLegend}>{`Route ${useCase}`}</legend>
 
       {refusal !== '' && (

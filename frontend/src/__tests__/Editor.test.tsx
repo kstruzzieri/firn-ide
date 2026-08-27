@@ -448,7 +448,11 @@ describe('Golem configuration tab (#263 Slice B)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Golem Configuration' }));
 
-    expect(screen.queryByRole('tab', { name: 'Golem Configuration' })).not.toBeInTheDocument();
+    // Closing now asks the surface first (§4.6a). Nothing is mounted to answer
+    // here, so the guard resolves clean — one microtask later, not synchronously.
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: 'Golem Configuration' })).not.toBeInTheDocument()
+    );
     expect(screen.queryByTestId('golem-config-mock')).not.toBeInTheDocument();
     expect(useGolemStore.getState().configTabOpen).toBe(false);
     await waitFor(() => expect(screen.getByRole('tab', { name: /a\.ts/i })).toHaveFocus());
@@ -458,7 +462,7 @@ describe('Golem configuration tab (#263 Slice B)', () => {
       focusConfigTab();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Close configuration' }));
-    expect(screen.queryByTestId('golem-config-mock')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('golem-config-mock')).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole('tab', { name: /a\.ts/i })).toHaveFocus());
   });
 

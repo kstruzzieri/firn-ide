@@ -26,6 +26,7 @@ import {
 import { FileIcon } from '../FileExplorer/FileIcon';
 import { FolderOutlineIcon, GitBranchIcon, SettingsIcon } from '../icons';
 import { GolemConfigWorkspace } from '../GolemConfig/GolemConfigWorkspace';
+import { confirmConfigClose, hasUnsavedConfigWork } from '../GolemConfig/configCloseGuard';
 import { useGolemStore } from '../../stores/golemStore';
 import { formatShortcut, isMac } from '../../utils/platform';
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
@@ -237,11 +238,16 @@ export function Editor() {
     prevShowDiffRef.current = showDiff;
   }, [showDiff]);
 
-  // Closing the tab is always clean here: Task 7 paints read-only, so there is
-  // no draft to confirm away. The unsaved-work prompt lands with the write path.
+  // The one choke point for closing the configuration surface, so the §4.6a
+  // prompt cannot be routed around. A dirty surface is revealed first: the
+  // dialog it raises lives inside that pane, and a hidden pane cannot show one.
   const closeConfigTab = () => {
-    restoreFocusAfterCloseRef.current = true;
-    useGolemStore.getState().closeConfigTab();
+    if (hasUnsavedConfigWork()) focusConfigTab();
+    void confirmConfigClose('close').then((proceed) => {
+      if (!proceed) return;
+      restoreFocusAfterCloseRef.current = true;
+      useGolemStore.getState().closeConfigTab();
+    });
   };
 
   // Welcome screen when no editor surface at all is open

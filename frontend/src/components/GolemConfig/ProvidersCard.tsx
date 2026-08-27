@@ -11,7 +11,7 @@
  * vault, and every staged change live at the workspace root (spec §3.2).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ProviderProjection, SettingsDiagnostic } from '../../types/golem';
 import {
   changeStableID,
@@ -20,6 +20,7 @@ import {
   type RowMarkers,
 } from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
+import type { EditorFocusRequest } from './ApplyBar';
 import { Cell } from './Cell';
 import styles from './GolemConfig.module.css';
 import { ProviderEditor } from './ProviderEditor';
@@ -60,6 +61,8 @@ export interface ProvidersCardProps {
   vault: KeyVault;
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
+  /** The Apply bar asking for one of this card's editors (§3.3 chips). */
+  focusRequest?: EditorFocusRequest | null;
   onStage: (changes: Change[], drop: string[]) => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
 }
@@ -72,10 +75,13 @@ export function ProvidersCard({
   diagnostics,
   vault,
   editable,
+  focusRequest = null,
   onStage,
   onUnstagedChange,
 }: ProvidersCardProps) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  /** A fresh object per request, so a repeated chip click focuses again. */
+  const [pendingFocus, setPendingFocus] = useState<{ editorId: string } | null>(null);
 
   // More than one row may be expanded at once: collapsing one to open another
   // would silently discard unstaged fields (§4.6a forbids that).
@@ -93,6 +99,31 @@ export function ProvidersCard({
       next.delete(rowKey);
       return next;
     });
+
+  // Two effects, because the editor does not exist until the open state has
+  // committed: the first expands the row, the second focuses what that commit
+  // mounted. A provider with no applied strip is a staged add, so its chip
+  // resolves to the add editor — the only handle that change has (§4.3b).
+  useEffect(() => {
+    if (focusRequest === null) return;
+    const separator = focusRequest.changeId.indexOf(':');
+    const namespace = focusRequest.changeId.slice(0, separator);
+    if (namespace !== 'provider' && namespace !== 'provider-key') return;
+    const name = focusRequest.changeId.slice(separator + 1);
+    const index = providers.findIndex((entry) => entry.name === name);
+    const rowKey = index < 0 ? ADD_ROW_KEY : name;
+    setOpen((current) => (current.has(rowKey) ? current : new Set(current).add(rowKey)));
+    setPendingFocus({ editorId: index < 0 ? ADD_EDITOR_ID : `golem-provider-editor-${index}` });
+    // Providers are stable for the life of one card mount (the workspace
+    // remounts it when the document moves), so the request alone drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest]);
+
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    document.getElementById(pendingFocus.editorId)?.focus();
+    setPendingFocus(null);
+  }, [pendingFocus]);
 
   const stagedFor = (identity: string): Change | undefined =>
     changes.find((change) => changeStableID(change) === identity);

@@ -273,8 +273,9 @@ export function ProviderEditor({
       ? `${id}-${field}-hint`
       : `${id}-${field}-hint ${id}-${field}-error`;
 
+  // tabIndex is how an Apply-bar chip focuses the editor it names (§3.3).
   return (
-    <fieldset className={styles.editor} id={id}>
+    <fieldset className={styles.editor} id={id} tabIndex={-1}>
       <legend className={styles.editorLegend}>
         {adding ? 'Add a provider' : `Edit provider ${provider.name}`}
       </legend>

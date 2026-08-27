@@ -532,6 +532,125 @@
   color: var(--text-muted);
 }
 
+/* One chip per change, reading `target → effect`; each opens its editor. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chip {
+  padding: 2px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--status-warning);
+  color: var(--text-primary);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── result panels: consent, drops, conflict, recovery ──────────────────── */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--surface-border-subtle);
+  border-left: 3px solid var(--status-warning);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.panel[data-blocking] {
+  border-left-color: var(--palette-red);
+}
+
+.panelText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.destination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+
+.dropList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+}
+
+/* ── confirmation dialog (§4.6a) ────────────────────────────────────────── */
+
+.dialog {
+  max-width: 420px;
+  padding: 16px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialogTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dialogBody {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .routeGrid {
   grid-template-columns: 90px 120px 1fr 70px 120px auto;
 }
