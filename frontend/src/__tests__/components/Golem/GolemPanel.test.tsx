@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { useMemo, useState } from 'react';
 import { CommandPalette } from '../../../components/CommandPalette';
 import { GolemPanel } from '../../../components/Golem';
+import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 import { useIDEStore } from '../../../stores/ideStore';
 import { parseGolemStatus } from '../../../types/golem';
@@ -1631,27 +1632,30 @@ describe('configuration view', () => {
 // ── command palette focus interplay ──────────────────────────────────────────
 //
 // The command-palette test file (CommandPalette.test.tsx) renders the palette
-// in isolation with stub commands, so it cannot exercise this: the real
-// command palette closing must not steal focus back from the configuration
-// view it just opened. That composition only exists here, alongside the real
-// GolemPanel.
+// in isolation with stub commands, so it cannot exercise this: the real command
+// palette closing must not steal focus back from the configuration surface it
+// just opened. Since #263 Slice B that surface is the app-global workspace tab
+// the Editor mounts; this harness stands in for the Editor so the real palette
+// and the real workspace still meet somewhere.
 
 function PaletteAndPanelHarness() {
   const [open, setOpen] = useState(false);
   const commands = useMemo(() => createCommands(jest.fn()), []);
+  const configTabOpen = useGolemStore((state) => state.configTabOpen);
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}>
         Open palette
       </button>
       <GolemPanel />
+      {configTabOpen && <GolemConfigWorkspace onClose={() => {}} />}
       <CommandPalette open={open} commands={commands} onClose={() => setOpen(false)} />
     </>
   );
 }
 
-describe('configuration view and command palette focus interplay', () => {
-  it('lets the configuration view heading hold focus after the palette closes', async () => {
+describe('configuration workspace and command palette focus interplay', () => {
+  it('opens the app-global tab and lets its heading keep focus after the palette closes', async () => {
     hydrate();
     selectFocused();
     const user = userEvent.setup();
@@ -1662,9 +1666,11 @@ describe('configuration view and command palette focus interplay', () => {
     await user.type(combobox, 'configuration');
     await user.keyboard('{Enter}');
 
-    expect(useGolemStore.getState().golemView).toBe('configuration');
+    expect(useGolemStore.getState().configTabOpen).toBe(true);
+    // The dock is untouched: the workspace tab is the surface the palette owns.
+    expect(useGolemStore.getState().golemView).toBe('chat');
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: /configuration/i })).toHaveFocus()
+      expect(screen.getByRole('heading', { name: 'Golem Configuration' })).toHaveFocus()
     );
   });
 });

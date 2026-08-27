@@ -1,9 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfiguration } from '../../../components/Golem/GolemConfiguration';
+import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 
 jest.mock('../../../../wailsjs/go/main/App', () => ({
   ReloadGolemSettings: jest.fn(),
+  CancelGolemRun: jest.fn(),
+  RunGolemTurn: jest.fn(),
 }));
 import { ReloadGolemSettings } from '../../../../wailsjs/go/main/App';
 
@@ -300,8 +303,9 @@ describe('GolemConfiguration', () => {
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findByText('wire-model')).toBeInTheDocument();
     expect(
-      screen.getByText('Duplicate JSON keys make this configuration read-only.')
+      screen.getByText(/Duplicate JSON keys make this configuration read-only\./)
     ).toBeInTheDocument();
+    expect(screen.getByText('provider hosted')).toBeInTheDocument();
     expect(screen.getByText('Notice')).toBeInTheDocument();
   });
 
@@ -309,5 +313,44 @@ describe('GolemConfiguration', () => {
     render(<GolemConfiguration onClose={() => {}} />);
     await screen.findByText('wire-model');
     expect(screen.getByRole('heading', { name: /configuration/i })).toHaveFocus();
+  });
+
+  it('names the diagnostic subject by kind so identical names stay distinguishable', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        // Transport order is blocking, then code, then subject kind and name.
+        diagnostics: [
+          {
+            code: 'agent_capabilities_insufficient',
+            subjectKind: 'use_case',
+            subjectName: 'agent',
+            blocking: true,
+          },
+          {
+            code: 'provider_endpoint_unsupported',
+            subjectKind: 'provider',
+            subjectName: 'agent',
+            blocking: true,
+          },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    expect(await screen.findByText('provider agent')).toBeInTheDocument();
+    expect(screen.getByText('use case agent')).toBeInTheDocument();
+  });
+
+  it('opens the app-global configuration tab from the masthead', async () => {
+    __resetGolemStore();
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('wire-model');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open configuration' }));
+
+    expect(useGolemStore.getState().configTabOpen).toBe(true);
+    expect(useGolemStore.getState().configTabFocused).toBe(true);
   });
 });

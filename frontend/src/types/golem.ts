@@ -177,6 +177,17 @@ export interface GolemStoreState {
   panelMode: 'golem' | 'runs'; // initialize to 'runs'
   golemView: 'chat' | 'configuration'; // panel-level view; initialize to 'chat'
   setGolemView(view: GolemStoreState['golemView']): void;
+  /**
+   * The one app-global configuration tab (#263 spec §3.1). Only its open/focus
+   * flags live here: the draft and any pending API-key value stay inside the
+   * mounted workspace root, so no key value can ever reach a store. Both
+   * initialize to false, and focus is meaningless while the tab is closed.
+   */
+  configTabOpen: boolean;
+  configTabFocused: boolean;
+  openConfigTab(): void;
+  closeConfigTab(): void;
+  setConfigTabFocused(focused: boolean): void;
   composerFocusRevision: number;
   hydrateStatus(status: GolemStatus): void;
   invalidateBinding(): void;

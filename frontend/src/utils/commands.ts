@@ -101,12 +101,13 @@ export function showGolem(conversationId?: string): void {
   openRightPanel();
 }
 
-/** Opens the Golem panel directly on the read-only configuration view. */
+/**
+ * Opens — or refocuses — the one app-global Golem configuration tab in the
+ * editor area (#263 spec §3.1). The dock's gear and its "Review configuration"
+ * CTA still open the read-only dock readout; this command owns the workspace.
+ */
 export function showGolemConfiguration(): void {
-  const golem = useGolemStore.getState();
-  golem.setPanelMode('golem');
-  golem.setGolemView('configuration');
-  openRightPanel();
+  useGolemStore.getState().openConfigTab();
 }
 
 const currentEditorLocation = (

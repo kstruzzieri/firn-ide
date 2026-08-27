@@ -14,51 +14,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
 import golemIcon from '../../assets/branding/golem-icon.svg';
+import { useGolemStore } from '../../stores/golemStore';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,
-  type SettingsDiagnosticCode,
   type SettingsProjection,
 } from '../../types/golem';
+import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfiguration.module.css';
-
-/** Total map over the closed code set; the validator guarantees membership, so
- * no fallback branch exists to rot. Copy is verbatim from spec §5.6 — the
- * write/action codes below reach this map through apply results, not loads. */
-const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
-  config_missing: 'No models.json was found at any discovery location.',
-  json_invalid: 'The configuration file is not valid JSON.',
-  config_invalid: 'The configuration was rejected while loading.',
-  agent_role_missing: 'No usable agent role is configured.',
-  agent_capabilities_insufficient: 'The agent model must support chat, stream, and tool_call.',
-  provider_endpoint_unsupported: 'This provider endpoint is not a usable URL.',
-  projection_limited: 'Configuration is too large to display in full.',
-  duplicate_keys: 'Duplicate JSON keys make this configuration read-only.',
-  provider_required: 'At least one provider is required.',
-  provider_name_invalid: 'A provider name is invalid.',
-  provider_endpoint_invalid: 'A provider endpoint is invalid.',
-  provider_format_invalid: 'A provider API format is invalid.',
-  slot_policy_invalid: 'A provider slot policy is invalid.',
-  model_invalid: 'A model entry is invalid.',
-  think_invalid: 'A thinking configuration is invalid.',
-  provider_not_found: 'A model references a provider that does not exist.',
-  defaults_invalid: 'A default route is invalid.',
-  key_reference_malformed: 'An API-key environment reference is malformed.',
-  key_reference_unavailable: 'An API-key environment variable is unavailable.',
-  selector_conflict: 'Models sharing a provider/model selector disagree.',
-  identifier_not_editable:
-    'An identifier is empty or contains unsafe control characters; edit the file externally.',
-  invalid_argument: 'A staged change is invalid.',
-  role_not_found: 'That model route no longer exists.',
-  provider_exists: 'A provider with that name already exists.',
-  provider_in_use: 'This provider is still used by a model.',
-  eligibility_ineligible: 'This model does not meet every affected use-case requirement.',
-  eligibility_unknown: 'Model eligibility is still unverified.',
-  key_value_invalid: 'API keys must be non-empty literal values.',
-  profile_source_unavailable: 'The selected profile could not be loaded.',
-  consent_store_failed: 'Destination approval may have been saved; configuration was not applied.',
-  config_save_failed: 'Configuration could not be saved.',
-};
 
 const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {
   none: 'No configuration found',
@@ -133,6 +96,15 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
             Configuration
           </h2>
           <div className={styles.headerActions}>
+            {/* The dock's one new affordance (spec §3.1): the editing surface is
+                the app-global workspace tab; this readout stays read-only. */}
+            <button
+              type="button"
+              className={styles.headerButton}
+              onClick={() => useGolemStore.getState().openConfigTab()}
+            >
+              Open configuration
+            </button>
             <button
               type="button"
               className={styles.headerButton}
@@ -219,23 +191,33 @@ function ConfigurationBody({
         <section aria-label="Configuration diagnostics">
           <h3 className={styles.sectionHeading}>Diagnostics</h3>
           <ul className={styles.diagnosticList}>
-            {projection.diagnostics.map((d, i) => (
-              <li
-                key={`${d.code}-${d.subjectName}-${i}`}
-                className={styles.diagnosticRow}
-                data-blocking={d.blocking || undefined}
-              >
-                <span className={styles.diagnosticSeverity}>
-                  {d.blocking ? 'Blocking' : 'Notice'}
-                </span>
-                <span className={styles.diagnosticText}>
-                  {DIAGNOSTIC_TEXT[d.code]}
-                  {d.subjectName !== '' && (
-                    <span className={styles.subject}> — {d.subjectName}</span>
-                  )}
-                </span>
-              </li>
-            ))}
+            {projection.diagnostics.map((d, i) => {
+              const { text, subject } = formatSettingsDiagnostic(
+                d.code,
+                d.subjectKind,
+                d.subjectName
+              );
+              return (
+                <li
+                  key={`${d.code}-${d.subjectKind}-${d.subjectName}-${i}`}
+                  className={styles.diagnosticRow}
+                  data-blocking={d.blocking || undefined}
+                >
+                  <span className={styles.diagnosticSeverity}>
+                    {d.blocking ? 'Blocking' : 'Notice'}
+                  </span>
+                  <span className={styles.diagnosticText}>
+                    {text}
+                    {subject !== '' && (
+                      <>
+                        {' — '}
+                        <span className={styles.subject}>{subject}</span>
+                      </>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

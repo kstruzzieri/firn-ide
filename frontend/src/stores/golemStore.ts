@@ -611,6 +611,8 @@ const initialState = () => ({
   // for the rest of the process.
   panelMode: 'runs' as GolemStoreState['panelMode'],
   golemView: 'chat' as GolemStoreState['golemView'],
+  configTabOpen: false,
+  configTabFocused: false,
   composerFocusRevision: 0,
 });
 
@@ -1094,6 +1096,21 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
 
     setGolemView(view: GolemStoreState['golemView']) {
       set({ golemView: view });
+    },
+
+    // One app-global tab: opening an already-open tab only re-focuses it.
+    openConfigTab() {
+      set({ configTabOpen: true, configTabFocused: true });
+    },
+
+    closeConfigTab() {
+      set({ configTabOpen: false, configTabFocused: false });
+    },
+
+    setConfigTabFocused(focused: boolean) {
+      // A closed tab cannot hold editor focus; guarding here means no caller has
+      // to order its close against a competing surface's focus grab.
+      set((state) => ({ configTabFocused: focused && state.configTabOpen }));
     },
 
     setDraft(conversationId: string, value: string) {

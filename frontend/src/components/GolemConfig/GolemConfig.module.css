@@ -1,0 +1,417 @@
+/*
+ * Golem configuration workspace (#263 Slice B, spec §4, mockup v10).
+ *
+ * Grammar, verbatim from §4.7: only buttons are filled; status is a dot plus
+ * plain text, never a bordered pill; cards hold separated row strips; errors
+ * render inside the strip that owns them. Data is plain text with mono
+ * identifiers. Instructional copy never drops below --text-muted (6.71:1 on
+ * --surface-panel); --text-disabled is reserved for the inert em-dash placeholder
+ * and for status dots, which always carry a text label beside them.
+ *
+ * The v10 mockup's palette is this app's token set already (--base/--frame/
+ * --panel/--elevated/--hover/--border/--tp/--ts/--tm/--td/--accent/--teal/
+ * --warn/--red map 1:1 onto the tokens used below), so nothing is re-declared.
+ *
+ * Width: the page caps at 920px and the ROOT is the container. Below 720px of
+ * container width the column strips stack into label/value rows, so a narrow
+ * centre pane never scrolls horizontally — no viewport media query and no
+ * width prop is involved.
+ */
+
+.root {
+  container-type: inline-size;
+  container-name: golem-config;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.page {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background-color: var(--surface-base);
+  box-shadow: var(--shadow-panel);
+}
+
+/* ── masthead ───────────────────────────────────────────────────────────── */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--surface-border);
+  border-radius: 9px 9px 0 0;
+  background-color: var(--surface-elevated);
+}
+
+.title {
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.title:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.revision {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.source {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── buttons: the only filled elements on the page ──────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.quiet {
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+/* ── status: dot + text, never a bordered pill ──────────────────────────── */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.statusDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-disabled);
+}
+
+.status[data-tone='ok'] .statusDot {
+  background-color: var(--accent-go);
+}
+
+.status[data-tone='warn'] .statusDot {
+  background-color: var(--status-warning);
+}
+
+.status[data-tone='bad'] .statusDot {
+  background-color: var(--palette-red);
+}
+
+/* ── body + cards ───────────────────────────────────────────────────────── */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 18px 22px 22px;
+}
+
+.card {
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background-color: var(--surface-panel);
+}
+
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 10px 13px;
+  border-bottom: 1px solid var(--surface-border);
+  border-left: 3px solid var(--accent);
+  border-radius: 9px 9px 0 0;
+  background-color: var(--surface-hover);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 12px;
+}
+
+.columns {
+  display: grid;
+  gap: 14px;
+  padding: 2px 14px 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.strip {
+  display: grid;
+  gap: 14px;
+  align-items: center;
+  padding: 9px 14px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+  background-color: var(--surface-frame);
+}
+
+.providerGrid {
+  grid-template-columns: 130px 1fr 110px 150px;
+}
+
+.routeGrid {
+  grid-template-columns: 90px 130px 1fr 70px 130px;
+}
+
+.definedGrid {
+  grid-template-columns: 130px 130px 1fr;
+}
+
+.identifier {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.useCase {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.metaSub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Inert placeholder for an absent optional value; never carries meaning on its
+ * own, so --text-disabled is safe here. */
+.absent {
+  color: var(--text-disabled);
+}
+
+.subgroup {
+  margin: 10px 0 0;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.empty {
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* ── notices ────────────────────────────────────────────────────────────── */
+
+.notice {
+  margin: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--surface-border-subtle);
+  border-left: 3px solid var(--status-warning);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostic {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 14px;
+  border: 1px solid var(--surface-border-subtle);
+  border-left: 3px solid var(--text-disabled);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.diagnostic[data-blocking] {
+  border-left-color: var(--palette-red);
+}
+
+.severity {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.diagnosticText {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.subject {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.loading,
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 18px 22px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.error {
+  border-left: 3px solid var(--palette-red);
+}
+
+.errorText {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── narrow container: strips stack, nothing scrolls sideways ───────────── */
+
+@container golem-config (max-width: 720px) {
+  .root {
+    padding: 8px;
+  }
+
+  .columns {
+    display: none;
+  }
+
+  .providerGrid,
+  .routeGrid,
+  .definedGrid {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  /* The column header row is gone, so each cell names itself instead. */
+  .strip > [data-label]::before {
+    display: block;
+    content: attr(data-label);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .diagnostic {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

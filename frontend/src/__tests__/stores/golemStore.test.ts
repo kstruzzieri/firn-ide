@@ -2436,3 +2436,41 @@ describe('golemView navigation', () => {
     expect(useGolemStore.getState().golemView).toBe('chat');
   });
 });
+
+describe('configuration tab flags (#263 Slice B)', () => {
+  beforeEach(() => {
+    __resetGolemStore();
+  });
+
+  it('starts closed and unfocused', () => {
+    expect(useGolemStore.getState().configTabOpen).toBe(false);
+    expect(useGolemStore.getState().configTabFocused).toBe(false);
+  });
+
+  it('open focuses the single tab and reopening is idempotent', () => {
+    useGolemStore.getState().openConfigTab();
+    expect(useGolemStore.getState().configTabOpen).toBe(true);
+    expect(useGolemStore.getState().configTabFocused).toBe(true);
+
+    useGolemStore.getState().setConfigTabFocused(false);
+    useGolemStore.getState().openConfigTab();
+    expect(useGolemStore.getState()).toMatchObject({
+      configTabOpen: true,
+      configTabFocused: true,
+    });
+  });
+
+  it('close clears both flags', () => {
+    useGolemStore.getState().openConfigTab();
+    useGolemStore.getState().closeConfigTab();
+    expect(useGolemStore.getState()).toMatchObject({
+      configTabOpen: false,
+      configTabFocused: false,
+    });
+  });
+
+  it('never focuses a closed tab', () => {
+    useGolemStore.getState().setConfigTabFocused(true);
+    expect(useGolemStore.getState().configTabFocused).toBe(false);
+  });
+});

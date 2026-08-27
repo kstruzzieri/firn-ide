@@ -7,9 +7,9 @@
  */
 
 import { useIDEStore, type EditorFile, type EditorNavigationRequest } from '../stores/ideStore';
-import { useGitStore } from '../stores/gitStore';
 import { ReadFile } from '../../wailsjs/go/main/App';
 import { createEditorFile } from './editorFile';
+import { focusEditorSurface } from './editorSurface';
 import { flushWorkingTreeEdit } from './fileWrites';
 import { getFileNameFromPath, pathsReferToSameFile, toNativeLocalPath } from './lspUri';
 
@@ -51,7 +51,7 @@ export async function ensureEditorFileOpen(
   if (existing) {
     if (!shouldApplyNavigation(options)) return null;
     useIDEStore.getState().setActiveFile(existing.id);
-    useGitStore.getState().setEditorFocus('file');
+    focusEditorSurface('file');
     return existing;
   }
 
@@ -69,7 +69,7 @@ export async function ensureEditorFileOpen(
 
     const file = createEditorFile(localPath, content);
     useIDEStore.getState().openFile(file);
-    useGitStore.getState().setEditorFocus('file');
+    focusEditorSurface('file');
     return file;
   } catch (err) {
     if (!shouldApplyNavigation(options)) return null;
