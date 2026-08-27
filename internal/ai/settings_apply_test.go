@@ -31,11 +31,12 @@ func validChallengeToken(token string) bool {
 }
 
 // validChangeID checks the stable change identity carried by a drop set:
-// "<kind>:<identifier>". Nothing else is a change id, so a bare identifier or
-// an unknown kind prefix is a contract break, not a bounded string.
+// "<namespace>:<identifier>" over the four §3.3 namespaces. A bare identifier,
+// an unknown namespace, or a CHANGE KIND used as one ("provider-key-set:"
+// rather than "provider-key:") is a contract break, not a bounded string.
 func validChangeID(id string) bool {
-	kind, identity, ok := strings.Cut(id, ":")
-	return ok && changeKinds[kind] && validRequestIdentifier(identity)
+	namespace, identity, ok := strings.Cut(id, ":")
+	return ok && changeIdentityNamespaces[namespace] && validRequestIdentifier(identity)
 }
 
 func validateDropSets(drops []ChangeDropSet) error {

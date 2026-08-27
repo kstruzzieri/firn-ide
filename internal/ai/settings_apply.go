@@ -51,6 +51,22 @@ var changeKinds = map[string]bool{
 	changeKindProviderKeyClear: true, changeKindRoleRemove: true,
 }
 
+// Stable change-identity namespaces (spec §3.3). There are exactly four, and
+// they are NOT the change kinds: provider add/update/remove share one provider
+// identity, and key set/clear share the independent key identity, so an add and
+// a key operation on one provider can coexist.
+const (
+	identityRoute       = "route"
+	identityProvider    = "provider"
+	identityProviderKey = "provider-key"
+	identityRole        = "role"
+)
+
+var changeIdentityNamespaces = map[string]bool{
+	identityRoute: true, identityProvider: true,
+	identityProviderKey: true, identityRole: true,
+}
+
 // Apply source kinds.
 const (
 	applySourceApplied = "applied"
@@ -129,6 +145,38 @@ func (o optionalString) pointer() *string {
 	}
 	value := o.Value
 	return &value
+}
+
+// optionalStringSlice is the same guarantee for an optional ARRAY member.
+// Decoding null straight into a []string silently yields nil — indistinguishable
+// from an absent key — so the confirmation arrays would accept null in Go while
+// the frontend rejects it.
+type optionalStringSlice struct {
+	Values []string
+	Set    bool
+}
+
+func (o *optionalStringSlice) UnmarshalJSON(data []byte) error {
+	if isJSONNull(data) {
+		return errApplyNullField
+	}
+	if err := json.Unmarshal(data, &o.Values); err != nil {
+		return err
+	}
+	o.Set = true
+	return nil
+}
+
+// slice returns nil when absent and the decoded (never nil) array when present,
+// so an explicitly empty array stays distinguishable from an omitted one.
+func (o optionalStringSlice) slice() []string {
+	if !o.Set {
+		return nil
+	}
+	if o.Values == nil {
+		return []string{}
+	}
+	return o.Values
 }
 
 type optionalInt struct {
@@ -374,15 +422,15 @@ func (c *Change) UnmarshalJSON(data []byte) error {
 
 func (c *Change) unmarshalRoute(data []byte) error {
 	var wire struct {
-		Kind                   string           `json:"kind"`
-		UseCase                string           `json:"useCase"`
-		ModelFacts             *ModelFacts      `json:"modelFacts"`
-		CapabilityFacts        *CapabilityFacts `json:"capabilityFacts"`
-		ExposedCaps            []string         `json:"exposedCaps"`
-		ThinkMode              *string          `json:"thinkMode"`
-		ConfirmUnknown         *bool            `json:"confirmUnknown"`
-		ConfirmUnknownUseCases []string         `json:"confirmUnknownUseCases"`
-		ConfirmDrops           []string         `json:"confirmDrops"`
+		Kind                   string              `json:"kind"`
+		UseCase                string              `json:"useCase"`
+		ModelFacts             *ModelFacts         `json:"modelFacts"`
+		CapabilityFacts        *CapabilityFacts    `json:"capabilityFacts"`
+		ExposedCaps            []string            `json:"exposedCaps"`
+		ThinkMode              *string             `json:"thinkMode"`
+		ConfirmUnknown         *bool               `json:"confirmUnknown"`
+		ConfirmUnknownUseCases optionalStringSlice `json:"confirmUnknownUseCases"`
+		ConfirmDrops           optionalStringSlice `json:"confirmDrops"`
 	}
 	if err := strictUnmarshal(data, &wire); err != nil {
 		return err
@@ -398,8 +446,8 @@ func (c *Change) unmarshalRoute(data []byte) error {
 		ModelFacts: wire.ModelFacts, CapabilityFacts: wire.CapabilityFacts,
 		ExposedCaps: wire.ExposedCaps, ThinkMode: *wire.ThinkMode,
 		ConfirmUnknown:         *wire.ConfirmUnknown,
-		ConfirmUnknownUseCases: wire.ConfirmUnknownUseCases,
-		ConfirmDrops:           wire.ConfirmDrops,
+		ConfirmUnknownUseCases: wire.ConfirmUnknownUseCases.slice(),
+		ConfirmDrops:           wire.ConfirmDrops.slice(),
 	}
 	return nil
 }
@@ -458,7 +506,7 @@ type ApplyDestination struct {
 }
 
 // ChangeDropSet names one staged change and the model-specific fields a real
-// retarget would drop. ChangeID is the stable "<kind>:<identity>" form.
+// retarget would drop. ChangeID is the §3.3 stable identity (changeStableID).
 type ChangeDropSet struct {
 	ChangeID string   `json:"changeId"`
 	Fields   []string `json:"fields"`
@@ -643,12 +691,11 @@ func validateSettingsApplyRequest(req SettingsApplyRequest, mode applyMode) erro
 		if err := validateChange(change); err != nil {
 			return err
 		}
-		namespace, identity := changeIdentity(change)
-		token := namespace + "\x00" + identity
-		if identities[token] {
+		id := changeStableID(change)
+		if identities[id] {
 			return errApplyDuplicateChange
 		}
-		identities[token] = true
+		identities[id] = true
 		switch change.Kind {
 		case changeKindProviderRemove:
 			removedProviders[change.Name] = true
@@ -702,22 +749,25 @@ func validateApplySource(source ApplySource, mode applyMode) error {
 	return nil
 }
 
-// changeIdentity is the stable (namespace, identity) pair a change mutates.
-// Provider definition changes and provider key changes are separate
-// namespaces on purpose: adding a provider and setting its key in one Apply is
-// the normal flow, while two definition changes for one provider are not.
-func changeIdentity(change Change) (namespace, identity string) {
+// changeStableID is the §3.3 stable change identity — `<namespace>:<identity>`
+// over exactly the four namespaces above. It is the one identity vocabulary:
+// duplicate/contradiction detection keys on it, and the drop sets a preparation
+// pipeline reports name changes with it (one id per semantic target, never one
+// per change kind). Splitting on the FIRST ":" recovers the namespace exactly,
+// because no namespace contains one.
+func changeStableID(change Change) string {
 	switch change.Kind {
 	case changeKindRoute, changeKindRouteUnassign:
-		return "use_case", change.UseCase
+		return identityRoute + ":" + change.UseCase
 	case changeKindProviderAdd, changeKindProviderUpdate, changeKindProviderRemove:
-		return "provider", change.Name
+		return identityProvider + ":" + change.Name
 	case changeKindProviderKeySet, changeKindProviderKeyClear:
-		return "provider_key", change.Name
+		return identityProviderKey + ":" + change.Name
 	case changeKindRoleRemove:
-		return "role", change.Role
+		return identityRole + ":" + change.Role
 	}
-	return "unknown", change.Kind
+	// Unreachable: validateChange rejects an unknown kind first.
+	return ""
 }
 
 func validateChange(change Change) error {

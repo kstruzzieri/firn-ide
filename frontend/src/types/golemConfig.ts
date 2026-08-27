@@ -70,15 +70,18 @@ export type ChangeKind =
   | 'provider-key-clear'
   | 'role-remove';
 
-const CHANGE_KINDS: readonly ChangeKind[] = [
+/**
+ * Stable change-identity namespaces (§3.3). Exactly four, and they are NOT the
+ * change kinds: provider add/update/remove share one provider identity, and key
+ * set/clear share the independent key identity, so an add and a key operation
+ * on one provider can coexist.
+ */
+export type ChangeIdentityNamespace = 'route' | 'provider' | 'provider-key' | 'role';
+const IDENTITY_NAMESPACES: readonly ChangeIdentityNamespace[] = [
   'route',
-  'route-unassign',
-  'provider-add',
-  'provider-update',
-  'provider-remove',
-  'provider-key-set',
-  'provider-key-clear',
-  'role-remove',
+  'provider',
+  'provider-key',
+  'role',
 ];
 
 /** Model-specific members a real retarget drops (§5.2b). */
@@ -274,15 +277,19 @@ const readSortedIdentifiers = (value: unknown): string[] | null => {
 };
 
 /**
- * The stable change identity a drop set names: `<kind>:<identifier>`. A bare
- * identifier or an unknown kind prefix is a contract break.
+ * The stable change identity a drop set names: `<namespace>:<identifier>` over
+ * the four §3.3 namespaces. A bare identifier, an unknown namespace, or a
+ * change KIND used as one (`provider-key-set:` rather than `provider-key:`) is
+ * a contract break. Splitting on the first `:` recovers the namespace exactly,
+ * because no namespace contains one.
  */
 const isChangeID = (value: unknown): value is string => {
   if (typeof value !== 'string') return false;
   const separator = value.indexOf(':');
   if (separator < 0) return false;
   return (
-    isOneOf(value.slice(0, separator), CHANGE_KINDS) && isIdentifier(value.slice(separator + 1))
+    isOneOf(value.slice(0, separator), IDENTITY_NAMESPACES) &&
+    isIdentifier(value.slice(separator + 1))
   );
 };
 
@@ -463,25 +470,25 @@ function readChange(value: unknown): Change | null {
 }
 
 /**
- * The stable (namespace, identity) pair a change mutates. Provider definition
- * and provider key changes are separate namespaces on purpose: adding a
- * provider and setting its key in one Apply is the normal flow, while two
- * definition changes for one provider are not.
+ * The §3.3 stable change identity, `<namespace>:<identity>` — the one
+ * identity vocabulary, shared by duplicate detection here and by the drop-set
+ * change ids the backend reports. One id per semantic target, never one per
+ * change kind.
  */
-function changeIdentity(change: Change): string {
+export function changeStableID(change: Change): string {
   switch (change.kind) {
     case 'route':
     case 'route-unassign':
-      return `use_case ${change.useCase}`;
+      return `route:${change.useCase}`;
     case 'provider-add':
     case 'provider-update':
     case 'provider-remove':
-      return `provider ${change.name}`;
+      return `provider:${change.name}`;
     case 'provider-key-set':
     case 'provider-key-clear':
-      return `provider_key ${change.name}`;
+      return `provider-key:${change.name}`;
     case 'role-remove':
-      return `role ${change.role}`;
+      return `role:${change.role}`;
   }
 }
 
@@ -491,7 +498,7 @@ function changesAreConsistent(changes: readonly Change[], keys: Record<string, s
   const removedProviders = new Set<string>();
   const keyedProviders = new Set<string>();
   for (const change of changes) {
-    const identity = changeIdentity(change);
+    const identity = changeStableID(change);
     if (identities.has(identity)) return false;
     identities.add(identity);
     if (change.kind === 'provider-remove') removedProviders.add(change.name);
