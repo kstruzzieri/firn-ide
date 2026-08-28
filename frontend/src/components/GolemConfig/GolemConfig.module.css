@@ -801,6 +801,20 @@
   grid-template-columns: 90px 120px 1fr 70px 120px 76px;
 }
 
+/*
+ * THINK holds one short enumerated value, or an em-dash when there is none. Left
+ * ragged in a 70px column it lands under the first letters of its own header and
+ * reads as misaligned, so the column centres — header and values together, so
+ * `auto` and the placeholder sit in the same place.
+ */
+.routeGrid > *:nth-child(4) {
+  text-align: center;
+}
+
+.thinkCell {
+  align-items: center;
+}
+
 .definedGrid {
   grid-template-columns: 130px 130px 1fr 152px;
 }
@@ -962,6 +976,15 @@
 @container golem-config (max-width: 720px) {
   .root {
     padding: 8px;
+  }
+
+  /* Stacked rows have no column header to centre under. */
+  .routeGrid > *:nth-child(4) {
+    text-align: left;
+  }
+
+  .thinkCell {
+    align-items: flex-start;
   }
 
   .columns {

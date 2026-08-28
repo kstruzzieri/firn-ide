@@ -279,7 +279,7 @@ export function RoutingCard({
                       <span className={styles.absent}>—</span>
                     )}
                   </Cell>
-                  <Cell label="Think" className={styles.meta}>
+                  <Cell label="Think" className={`${styles.meta} ${styles.thinkCell}`}>
                     {view && view.think !== '' ? (
                       view.think
                     ) : (

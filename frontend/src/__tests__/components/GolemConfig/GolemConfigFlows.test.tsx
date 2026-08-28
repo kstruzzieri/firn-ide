@@ -615,7 +615,7 @@ describe('nonterminal apply results', () => {
     await openRoute('chat');
     await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
     await userEvent.click(screen.getByRole('option', { name: /^gpt-5 / }));
-    await userEvent.click(screen.getByLabelText('Remove them and stage this change'));
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
     await stage();
     await cancelEditor();
     await clickApply();

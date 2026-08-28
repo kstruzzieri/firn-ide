@@ -321,7 +321,7 @@ describe('RouteEditor', () => {
     const { onStage } = renderRouting();
     await openRoute('chat');
     expect(screen.queryByText(/also governs/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/leaves them on the current model/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/stays where it is|stay where they are/i)).not.toBeInTheDocument();
 
     await pickModel('gpt-5');
     await stage();
@@ -453,7 +453,7 @@ describe('RouteEditor', () => {
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
     expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
 
-    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     // Staging must not re-widen what `summarize` narrowed: the override is
     // selector-wide, so a wider set here would rewrite the sibling's contract.
@@ -469,8 +469,33 @@ describe('RouteEditor', () => {
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
     await openRoute('chat');
-    expect(screen.getByText(/Also routed through this role: summarize\./)).toBeInTheDocument();
-    expect(screen.getByText(/leaves them on the current model/i)).toBeInTheDocument();
+    expect(screen.getByText('summarize also uses this model.')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Picking a different model here moves only chat — summarize stays where it is.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  // The verb has to agree with the list, or a careful notice reads as machine
+  // output: "chat also uses" but "chat and completion also use".
+  it('agrees the disclosure verbs with more than one sibling', async () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+        { useCase: 'completion', role: 'chat-role' },
+      ],
+      models: [model({ routedUseCases: ['chat', 'completion', 'summarize'] }), other],
+    });
+    await openRoute('chat');
+
+    expect(screen.getByText('completion and summarize also use this model.')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Picking a different model here moves only chat — completion and summarize stay where they are.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('discloses the selector-wide reach of the change from the projected draft', async () => {
@@ -498,7 +523,7 @@ describe('RouteEditor', () => {
     // Staging chat onto the agent's selector makes the capability edit govern
     // the agent route too.
     await pickModel('gpt-5');
-    expect(screen.getByText('Also governs: agent.')).toBeInTheDocument();
+    expect(screen.getByText(/shared with agent/)).toBeInTheDocument();
   });
 
   it('requires the unknown-requirement acknowledgement and sets confirmUnknown', async () => {
@@ -515,12 +540,12 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
 
-    expect(screen.getByText(/outside Firn's known requirements: summarize/)).toBeInTheDocument();
+    expect(screen.getByText(/doesn't know what summarize needs/)).toBeInTheDocument();
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/requirements are unknown/i);
 
-    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     const staged = onStage.mock.calls[0][0][0];
     expect(staged.confirmUnknown).toBe(true);
@@ -725,23 +750,23 @@ describe('RouteEditor', () => {
     await openRoute('chat');
 
     // A fact about the fork: nothing is asked of the reader.
-    const sharedRole = screen.getByText(/Also routed through this role/).closest('div');
+    const sharedRole = screen.getByText(/also uses this model/).closest('div');
     expect(sharedRole).toHaveAttribute('data-tone', 'info');
 
     // Retargeting reaches the sibling use case and drops authored fields.
     await pickModel('gpt-5');
-    expect(screen.getByText(/Also governs/).closest('div')).toHaveAttribute('data-tone', 'caution');
-    expect(screen.getByText(/outside Firn's known requirements/).closest('div')).toHaveAttribute(
+    expect(screen.getByText(/shared with/).closest('div')).toHaveAttribute('data-tone', 'caution');
+    expect(screen.getByText(/doesn't know what/).closest('div')).toHaveAttribute(
       'data-tone',
       'caution'
     );
-    expect(screen.getByText(/Changing this model removes/).closest('div')).toHaveAttribute(
+    expect(screen.getByText(/set up by hand/).closest('div')).toHaveAttribute(
       'data-tone',
       'blocking'
     );
 
     // The acknowledgements inside those notices use the drawn indicator too.
-    const ack = screen.getByLabelText('Requirements unknown — apply anyway');
+    const ack = screen.getByLabelText('Apply anyway');
     expect(ack).toHaveClass('checkboxInput');
     expect(ack.nextElementSibling).toHaveClass('checkboxBox');
   });
@@ -775,18 +800,18 @@ describe('RouteEditor drop acknowledgement', () => {
   it('pre-sets the drop confirmations from the acknowledgement', async () => {
     const { onStage } = renderRouting(withHiddenFields);
     await openRoute('chat');
-    expect(screen.queryByText(/Changing this model removes/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/set up by hand/)).not.toBeInTheDocument();
 
     await pickModel('gpt-5');
     expect(
-      screen.getByText('Changing this model removes custom think tags / slot configuration.')
+      screen.getByText(/custom think tags and slot configuration set up by hand/)
     ).toBeInTheDocument();
 
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/confirm what this change removes/i);
 
-    await userEvent.click(screen.getByLabelText('Remove them and stage this change'));
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
     await stage();
     expect(onStage.mock.calls[0][0][0].confirmDrops).toEqual(['slots', 'think_tags']);
   });
@@ -795,9 +820,9 @@ describe('RouteEditor drop acknowledgement', () => {
     const { onStage } = renderRouting({ models: [model({ hasThinkTags: true }), other] });
     await openRoute('chat');
     await pickModel('gpt-5');
-    expect(screen.getByText('Changing this model removes custom think tags.')).toBeInTheDocument();
+    expect(screen.getByText(/custom think tags set up by hand/)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByLabelText('Remove them and stage this change'));
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
     await stage();
     expect(onStage.mock.calls[0][0][0].confirmDrops).toEqual(['think_tags']);
   });
@@ -806,9 +831,9 @@ describe('RouteEditor drop acknowledgement', () => {
     const { onStage } = renderRouting({ models: [model({ hasSlots: true }), other] });
     await openRoute('chat');
     await pickModel('gpt-5');
-    expect(screen.getByText('Changing this model removes slot configuration.')).toBeInTheDocument();
+    expect(screen.getByText(/slot configuration set up by hand/)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByLabelText('Remove them and stage this change'));
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
     await stage();
     expect(onStage.mock.calls[0][0][0].confirmDrops).toEqual(['slots']);
   });
@@ -818,8 +843,8 @@ describe('RouteEditor drop acknowledgement', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
 
-    expect(screen.queryByText(/Changing this model removes/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Remove them and stage this change')).not.toBeInTheDocument();
+    expect(screen.queryByText(/set up by hand/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Remove them and continue')).not.toBeInTheDocument();
 
     await stage();
     // Nothing is dropped, so a stale confirmation must not be sent at all.
@@ -832,7 +857,7 @@ describe('RouteEditor drop acknowledgement', () => {
     // Re-selecting the same model is a selector override, not a retarget.
     await pickModel('gpt-5-mini');
     await userEvent.click(screen.getByLabelText('generate'));
-    expect(screen.queryByText(/Changing this model removes/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/set up by hand/)).not.toBeInTheDocument();
   });
 });
 
@@ -905,7 +930,7 @@ describe('GolemConfigWorkspace route editing', () => {
     await userEvent.click(screen.getByLabelText('generate'));
     // The override reaches `summarize`, which has no Firn floor, so the
     // acknowledgement is what unlocks the stage.
-    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
@@ -942,7 +967,7 @@ describe('GolemConfigWorkspace route editing', () => {
     // Stage chat onto the summarize selector, keeping `thinking` and Auto.
     await openRoute('chat');
     await pickModel('gpt-5');
-    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(within(screen.getByTestId('route-row-chat')).getByText('auto')).toBeInTheDocument();
@@ -952,7 +977,7 @@ describe('GolemConfigWorkspace route editing', () => {
     // showing the values it was staged with.
     await openRoute('summarize');
     await userEvent.click(screen.getByLabelText('thinking'));
-    await userEvent.click(screen.getByLabelText('Requirements unknown — apply anyway'));
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 

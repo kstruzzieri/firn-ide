@@ -71,6 +71,20 @@ const THINK_LABEL: Record<ThinkMode, string> = {
 };
 
 /**
+ * Plain English for a list of use cases (NOT a hook — the `use` prefix would
+ * make the linter, and a reader, think it were one), with the verb that agrees with it:
+ * "chat also uses" but "chat and completion also use". Getting this wrong is
+ * the kind of thing that makes a careful notice read as machine output.
+ */
+const listUseCases = (useCases: readonly string[]): string =>
+  useCases.length <= 1
+    ? (useCases[0] ?? '')
+    : `${useCases.slice(0, -1).join(', ')} and ${useCases[useCases.length - 1]}`;
+
+const agrees = (useCases: readonly string[], singular: string, plural: string): string =>
+  useCases.length === 1 ? singular : plural;
+
+/**
  * Amendment 13 copy, one clause per hidden fact the current model carries.
  * Reading order is the amendment's; the drop SET stays in transport order
  * (`slots` before `think_tags`), which is what the backend compares against.
@@ -80,7 +94,7 @@ const dropNotice = (thinkTags: boolean, slots: boolean): string => {
     ...(thinkTags ? ['custom think tags'] : []),
     ...(slots ? ['slot configuration'] : []),
   ];
-  return `Changing this model removes ${names.join(' / ')}.`;
+  return `The current model has ${names.join(' and ')} set up by hand. Changing the model ${names.length === 1 ? 'removes it' : 'removes them'}.`;
 };
 
 export interface RouteEditorProps {
@@ -536,11 +550,10 @@ export function RouteEditor({
       {sharedRole.length > 0 && (
         <div className={styles.disclosure} data-tone="info">
           <p className={styles.disclosureText}>
-            {`Also routed through this role: ${sharedRole.join(', ')}.`}
+            {`${listUseCases(sharedRole)} also ${agrees(sharedRole, 'uses', 'use')} this model.`}
           </p>
           <p className={styles.disclosureText}>
-            Staging a different model here creates a separate route and leaves them on the current
-            model.
+            {`Picking a different model here moves only ${useCase} — ${listUseCases(sharedRole)} ${agrees(sharedRole, 'stays', 'stay')} where ${agrees(sharedRole, 'it is', 'they are')}.`}
           </p>
         </div>
       )}
@@ -548,10 +561,8 @@ export function RouteEditor({
       {/* This edit reaches past the row being edited. */}
       {alsoGoverns.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
-          <p className={styles.disclosureText}>{`Also governs: ${alsoGoverns.join(', ')}.`}</p>
           <p className={styles.disclosureText}>
-            Capabilities and think mode are stored per provider and model, so this edit is theirs
-            too.
+            {`These capability and think settings are shared with ${listUseCases(alsoGoverns)} — ${agrees(alsoGoverns, 'it uses', 'they use')} the same model, so this edit changes ${agrees(alsoGoverns, 'its', 'theirs')} too.`}
           </p>
         </div>
       )}
@@ -560,9 +571,8 @@ export function RouteEditor({
       {unknownUseCases.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {`These affected use cases are outside Firn's known requirements: ${unknownUseCases.join(', ')}.`}
+            {`Firn doesn't know what ${listUseCases(unknownUseCases)} ${agrees(unknownUseCases, 'needs', 'need')}, so it can't check that this model fits.`}
           </p>
-          <p className={styles.disclosureText}>Firn cannot check what they need.</p>
           <label className={styles.checkbox}>
             <input
               className={styles.checkboxInput}
@@ -574,7 +584,7 @@ export function RouteEditor({
               }}
             />
             <span className={styles.checkboxBox} aria-hidden="true" />
-            Requirements unknown — apply anyway
+            Apply anyway
           </label>
         </div>
       )}
@@ -585,8 +595,8 @@ export function RouteEditor({
             {dropNotice(current?.hasThinkTags === true, current?.hasSlots === true)}
           </p>
           <p className={styles.disclosureText}>
-            Those fields are authored in the file and are not shown here; Golem confirms the exact
-            set when you apply.
+            They live in the configuration file and are not shown here. Golem confirms exactly what
+            goes when you apply.
           </p>
           <label className={styles.checkbox}>
             <input
@@ -599,7 +609,7 @@ export function RouteEditor({
               }}
             />
             <span className={styles.checkboxBox} aria-hidden="true" />
-            Remove them and stage this change
+            Remove them and continue
           </label>
         </div>
       )}
