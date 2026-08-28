@@ -143,6 +143,92 @@ describe('GolemConfiguration', () => {
     expect(screen.queryByTestId('routed-spare-m')).not.toBeInTheDocument();
   });
 
+  // Keith's order: what runs the models, then what routes to them, then the
+  // models themselves.
+  it('reads Providers, then Roles, then Models', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('wire-model');
+
+    expect(
+      screen.getAllByRole('region').map((section) => section.getAttribute('aria-label'))
+    ).toEqual(['Providers', 'Role routing', 'Models']);
+  });
+
+  it.each([
+    ['providers', 'Providers'],
+    ['roles', 'Roles'],
+    ['models', 'Models'],
+  ])('collapses and reopens the %s section', async (id, label) => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('wire-model');
+
+    const section = screen.getByTestId(`section-${id}`) as HTMLDetailsElement;
+    expect(section.open).toBe(true); // every group starts expanded
+
+    await userEvent.click(within(section).getByText(label));
+    expect(section.open).toBe(false);
+
+    await userEvent.click(within(section).getByText(label));
+    expect(section.open).toBe(true);
+  });
+
+  it('collapses each provider group inside Models independently', async () => {
+    const base = readyProjection.models[0];
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        routes: [],
+        models: [
+          { ...base, role: 'a-hosted', provider: 'hosted', routedUseCases: [] },
+          { ...base, role: 'a-local', provider: 'zeta-local', routedUseCases: [] },
+        ],
+        providers: [
+          readyProjection.providers[0],
+          { ...readyProjection.providers[0], name: 'zeta-local' },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('a-hosted');
+
+    const hosted = screen.getByTestId('models-hosted') as HTMLDetailsElement;
+    const local = screen.getByTestId('models-zeta-local') as HTMLDetailsElement;
+
+    await userEvent.click(within(hosted).getByText('hosted'));
+    expect(hosted.open).toBe(false);
+    expect(local.open).toBe(true); // its sibling is untouched
+    expect(screen.getByTestId('section-models')).toHaveAttribute('open'); // so is the section
+  });
+
+  // Keyboard operability comes from using a real <summary> rather than a styled
+  // div: it is in the tab order, and the browser activates it on Enter/Space.
+  // jsdom implements the click activation but not that key synthesis, so the
+  // reachable-and-activatable half is what can honestly be asserted here.
+  it('makes every section toggle a real, focusable summary', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('wire-model');
+
+    for (const [id, label] of [
+      ['providers', 'Providers'],
+      ['roles', 'Roles'],
+      ['models', 'Models'],
+    ]) {
+      const section = screen.getByTestId(`section-${id}`);
+      const summary = within(section).getByText(label);
+      // A real summary, and the direct child of its details — which is what
+      // puts it in the tab order and binds Enter/Space to the toggle.
+      expect(summary.tagName).toBe('SUMMARY');
+      expect(summary.parentElement).toBe(section);
+      summary.focus();
+      expect(summary).toHaveFocus();
+    }
+
+    const providers = screen.getByTestId('section-providers') as HTMLDetailsElement;
+    await userEvent.click(within(providers).getByText('Providers'));
+    expect(providers.open).toBe(false);
+  });
+
   it('mount-reload busy renders the snapshot silently (no busy notice)', async () => {
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: true,

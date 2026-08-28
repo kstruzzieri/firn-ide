@@ -11,12 +11,14 @@
  * model → provider can be traced by colour between sections.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
 import golemIcon from '../../assets/branding/golem-icon.svg';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,
+  type ModelProjection,
+  type ProviderProjection,
   type SettingsProjection,
 } from '../../types/golem';
 import { focusConfigTab } from '../../utils/editorSurface';
@@ -226,94 +228,164 @@ function ConfigurationBody({
         </div>
       )}
 
+      {projection.providers.length > 0 && (
+        <section aria-label="Providers">
+          <Section id="providers" label="Providers" count={projection.providers.length}>
+            <ul className={styles.cardList}>
+              {projection.providers.map((p) => (
+                <li key={p.name} className={styles.card}>
+                  <div className={styles.cardHeader}>
+                    <span className={styles.providerName}>{p.name}</span>
+                    <span className={styles.badge} data-classification={p.classification}>
+                      {CLASSIFICATION_LABEL[p.classification]}
+                    </span>
+                  </div>
+                  {p.endpoint !== '' && <div className={styles.endpoint}>{p.endpoint}</div>}
+                  <div className={styles.cardMeta}>
+                    <span className={styles.metaChip}>{p.apiFormat}</span>
+                    <span className={styles.credential} data-credential={p.credentialState}>
+                      <span className={styles.credentialDot} aria-hidden="true" />
+                      {CREDENTIAL_LABEL[p.credentialState]}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        </section>
+      )}
+
       {projection.routes.length > 0 && (
         <section aria-label="Role routing">
-          <h3 className={styles.sectionHeading}>Roles</h3>
-          <ul className={styles.routeList}>
-            {projection.routes.map((r) => (
-              <li key={r.useCase} className={styles.routeRow}>
-                <span className={styles.routeUseCase}>{r.useCase}</span>
-                <span className={styles.srOnly}>routes to role</span>
-                <span className={styles.routeArrow} aria-hidden="true">
-                  →
-                </span>
-                <span className={styles.roleChip}>{r.role}</span>
-              </li>
-            ))}
-          </ul>
+          <Section id="roles" label="Roles" count={projection.routes.length}>
+            <ul className={styles.routeList}>
+              {projection.routes.map((r) => (
+                <li key={r.useCase} className={styles.routeRow}>
+                  <span className={styles.routeUseCase}>{r.useCase}</span>
+                  <span className={styles.srOnly}>routes to role</span>
+                  <span className={styles.routeArrow} aria-hidden="true">
+                    →
+                  </span>
+                  <span className={styles.roleChip}>{r.role}</span>
+                </li>
+              ))}
+            </ul>
+          </Section>
         </section>
       )}
 
       {projection.models.length > 0 && (
         <section aria-label="Models">
-          <h3 className={styles.sectionHeading}>Models</h3>
-          <ul className={styles.cardList}>
-            {orderModelsForDisplay(projection.models, projection.providers).map((m) => (
-              <li key={m.role} className={styles.card}>
-                <div className={styles.cardHeader}>
-                  <span className={styles.roleChip}>{m.role}</span>
-                  <span className={styles.modelName}>{m.modelName}</span>
-                </div>
-                <div className={styles.cardMeta}>
-                  <span className={styles.providerName}>{m.provider}</span>
-                  <span className={styles.metaChip}>{m.type}</span>
-                  {m.thinkMode !== '' && (
-                    <span className={styles.metaChip}>think: {m.thinkMode}</span>
-                  )}
-                </div>
-                {m.effectiveCapabilities.length > 0 && (
-                  <div className={styles.capabilityRow}>
-                    {m.effectiveCapabilities.map((c) => (
-                      <span key={c} className={styles.capabilityChip}>
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {/* What this model actually serves. An unrouted model shows
+          <Section id="models" label="Models" count={projection.models.length}>
+            {modelsByProvider(projection.models, projection.providers).map(([provider, group]) => (
+              <details
+                key={provider}
+                className={styles.subgroup}
+                data-testid={`models-${provider}`}
+                open
+              >
+                <summary className={styles.subgroupHeading}>
+                  <span className={styles.sectionChevron} aria-hidden="true">
+                    ▸
+                  </span>
+                  <span className={styles.providerName}>{provider}</span>
+                  <span className={styles.sectionCount}>{group.length}</span>
+                </summary>
+                <ul className={styles.cardList}>
+                  {group.map((m) => (
+                    <li key={m.role} className={styles.card}>
+                      <div className={styles.cardHeader}>
+                        <span className={styles.roleChip}>{m.role}</span>
+                        <span className={styles.modelName}>{m.modelName}</span>
+                      </div>
+                      {/* No provider chip here: the group header above says
+                          it once, for every card beneath it. */}
+                      <div className={styles.cardMeta}>
+                        <span className={styles.metaChip}>{m.type}</span>
+                        {m.thinkMode !== '' && (
+                          <span className={styles.metaChip}>think: {m.thinkMode}</span>
+                        )}
+                      </div>
+                      {m.effectiveCapabilities.length > 0 && (
+                        <div className={styles.capabilityRow}>
+                          {m.effectiveCapabilities.map((c) => (
+                            <span key={c} className={styles.capabilityChip}>
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* What this model actually serves. An unrouted model shows
                     nothing — "defined but not routed" stays the workspace's
                     distinction to draw, not a second empty row here. */}
-                {m.routedUseCases.length > 0 && (
-                  <div className={styles.capabilityRow} data-testid={`routed-${m.role}`}>
-                    <span className={styles.srOnly}>Routes</span>
-                    {m.routedUseCases.map((useCase) => (
-                      <span key={useCase} className={styles.capabilityChip}>
-                        {useCase}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </li>
+                      {m.routedUseCases.length > 0 && (
+                        <div className={styles.capabilityRow} data-testid={`routed-${m.role}`}>
+                          <span className={styles.srOnly}>Routes</span>
+                          {m.routedUseCases.map((useCase) => (
+                            <span key={useCase} className={styles.capabilityChip}>
+                              {useCase}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ))}
-          </ul>
-        </section>
-      )}
-
-      {projection.providers.length > 0 && (
-        <section aria-label="Providers">
-          <h3 className={styles.sectionHeading}>Providers</h3>
-          <ul className={styles.cardList}>
-            {projection.providers.map((p) => (
-              <li key={p.name} className={styles.card}>
-                <div className={styles.cardHeader}>
-                  <span className={styles.providerName}>{p.name}</span>
-                  <span className={styles.badge} data-classification={p.classification}>
-                    {CLASSIFICATION_LABEL[p.classification]}
-                  </span>
-                </div>
-                {p.endpoint !== '' && <div className={styles.endpoint}>{p.endpoint}</div>}
-                <div className={styles.cardMeta}>
-                  <span className={styles.metaChip}>{p.apiFormat}</span>
-                  <span className={styles.credential} data-credential={p.credentialState}>
-                    <span className={styles.credentialDot} aria-hidden="true" />
-                    {CREDENTIAL_LABEL[p.credentialState]}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
+          </Section>
         </section>
       )}
     </div>
   );
+}
+
+/**
+ * One collapsible readout section. `<details>` is the repo's section-collapse
+ * idiom (RunProfiles renders its detected group the same way), and it is the
+ * right one: the browser owns the expanded state, the keyboard behaviour, and
+ * hiding the collapsed content from the accessibility tree, so none of that can
+ * drift out of sync with a hand-rolled button.
+ */
+function Section({
+  id,
+  label,
+  count,
+  children,
+}: {
+  id: string;
+  label: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className={styles.section} data-testid={`section-${id}`} open>
+      <summary className={styles.sectionHeading}>
+        <span className={styles.sectionChevron} aria-hidden="true">
+          ▸
+        </span>
+        {label}
+        <span className={styles.sectionCount}>{count}</span>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+/**
+ * The ordered model list, split into its provider groups. Order comes from the
+ * one shared display rule, so the groups read in the providers section's own
+ * sequence and the rows inside them are role-alpha.
+ */
+function modelsByProvider(
+  models: readonly ModelProjection[],
+  providers: readonly ProviderProjection[]
+): [string, ModelProjection[]][] {
+  const groups = new Map<string, ModelProjection[]>();
+  for (const model of orderModelsForDisplay(models, providers)) {
+    const group = groups.get(model.provider);
+    if (group === undefined) groups.set(model.provider, [model]);
+    else group.push(model);
+  }
+  return [...groups];
 }

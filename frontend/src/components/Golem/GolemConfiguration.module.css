@@ -195,6 +195,75 @@
   background-color: var(--surface-border-subtle);
 }
 
+/* ── collapsible sections ───────────────────────────────────────────────────
+ *
+ * Native <details>, the idiom RunProfiles already uses. The browser owns the
+ * open state, the keyboard behaviour, and hiding collapsed content from the
+ * accessibility tree, so none of it can drift out of sync with the visuals.
+ * The readout's heading grammar is unchanged — the summary simply wears it.
+ */
+.section {
+  margin: 0;
+}
+
+/* The default disclosure triangle gives way to the chevron below. */
+summary.sectionHeading,
+summary.subgroupHeading {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.sectionHeading::-webkit-details-marker,
+summary.subgroupHeading::-webkit-details-marker {
+  display: none;
+}
+
+summary.sectionHeading:focus-visible,
+summary.subgroupHeading:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sectionChevron {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 9px;
+  transition: transform 120ms ease;
+}
+
+details[open] > .sectionHeading .sectionChevron,
+details[open] > .subgroupHeading .sectionChevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sectionChevron {
+    transition: none;
+  }
+}
+
+.sectionCount {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* A provider group inside Models: the same grammar, one step quieter. */
+.subgroup {
+  margin: 0 0 4px;
+}
+
+.subgroupHeading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  padding-left: 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
 .loading {
   display: flex;
   align-items: center;
