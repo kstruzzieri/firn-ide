@@ -275,14 +275,15 @@ details[open] > .subgroupHeading .sectionChevron {
  *
  * Content sits indented from the header that owns it, so the hierarchy reads
  * structurally rather than only through type weight. Proportional as asked,
- * capped so a wide dock does not push the cards into a gutter.
+ * capped so a wide dock does not push the cards into a gutter. Half the first
+ * pass: the two-level step stays visible, the gutter does not.
  */
 .section > *:not(summary) {
-  padding-left: min(20%, 24px);
+  padding-left: min(10%, 14px);
 }
 
 .subgroup > *:not(summary) {
-  padding-left: min(12%, 14px);
+  padding-left: min(6%, 8px);
 }
 
 .loading {
