@@ -368,7 +368,8 @@ export function ModelPicker({
         onClick={() => {
           // The third exit, through the one path: the manual fieldset REPLACES
           // the combobox, so the anchor it was measured against is about to
-          // stop existing. Focus stays where the click put it.
+          // stop existing — and so is the input, which is why focus is not
+          // pulled back to a control that is about to unmount.
           close(false);
           onManual({ model: '', type: '', caps: canonicalCaps(floor) });
         }}
