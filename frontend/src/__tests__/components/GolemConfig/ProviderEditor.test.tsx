@@ -77,8 +77,7 @@ beforeAll(() => {
 const openEditor = async (name = 'llama-swap') =>
   await userEvent.click(screen.getByRole('button', { name: `Edit provider ${name}` }));
 
-const stage = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Stage change' }));
+const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 
 /**
  * Records exactly what an editor hands to `onStage`, by delegating to the real
@@ -458,6 +457,17 @@ describe('ProviderEditor', () => {
     const row = screen.getByTestId('provider-row-llama-swap');
     expect(within(row).getByText('Modified')).toBeInTheDocument();
     expect(within(row).getByText('Key staged')).toBeInTheDocument();
+  });
+
+  // Same rule as the route editor: the row strip is the header, so the
+  // fieldset's name is present for assistive tech and out of the border line.
+  it('keeps the fieldset name out of the border line', async () => {
+    renderCard();
+    await openEditor();
+    const editor = screen.getByRole('group', { name: 'Edit provider llama-swap' });
+    const legend = editor.querySelector('legend');
+    expect(legend).toHaveTextContent('Edit provider llama-swap');
+    expect(legend).toHaveClass('srOnly');
   });
 
   it('offers no editing controls while the configuration is not editable', () => {

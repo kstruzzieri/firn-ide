@@ -230,7 +230,10 @@ export function ModelPicker({
           {CAPABILITY_NAMES.map((cap) => {
             const locked = floor.includes(cap);
             return (
-              <label key={cap} className={styles.checkbox}>
+              <label
+                key={cap}
+                className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+              >
                 <input
                   type="checkbox"
                   disabled={locked}
@@ -246,6 +249,12 @@ export function ModelPicker({
                   }
                 />
                 {cap}
+                {locked && (
+                  <>
+                    {' '}
+                    <span className={styles.requiredTag}>required</span>
+                  </>
+                )}
               </label>
             );
           })}

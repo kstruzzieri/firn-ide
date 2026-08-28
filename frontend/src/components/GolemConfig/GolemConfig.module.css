@@ -166,14 +166,18 @@
   background-color: var(--surface-panel);
 }
 
+/*
+ * No left accent bar. A 3px rule down one rounded edge reads as a stray sliver
+ * rather than structure; the header already separates itself with its own
+ * background and its bottom border.
+ */
 .cardHead {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px 10px 13px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--surface-border);
-  border-left: 3px solid var(--accent);
   border-radius: 9px 9px 0 0;
   background-color: var(--surface-hover);
 }
@@ -373,22 +377,63 @@
 .checkbox {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 11px;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   color: var(--text-secondary);
+}
+
+/*
+ * v9's capbox: the native control, tinted to the theme accent so a checked box
+ * is unmistakable on a dark surface. `accent-color` styles the real input, so
+ * the a11y floor (focus ring, keyboard, screen-reader state) is untouched.
+ */
+.checkbox input {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+}
+
+/* A capability the use-case floor requires: checked, disabled, and labelled. */
+.checkboxLocked {
+  color: var(--text-muted);
+}
+
+/*
+ * The mockup greys this to its --td. Here it names WHY a control is locked, so
+ * it is instructional copy and holds the §4.7 --text-muted floor instead.
+ */
+.requiredTag {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
 }
 
 .editorFooter {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .primary {
   border-color: var(--accent);
   background-color: var(--accent);
   color: var(--surface-base);
+  font-weight: 600;
+}
+
+/* v9's danger-quiet: destructive, and never the filled control on the page. */
+.danger {
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--palette-red);
+}
+
+.danger:hover:not(:disabled) {
+  border-color: var(--palette-red);
 }
 
 /* One side of the route editor: the picker column or the capability column. */
@@ -426,8 +471,7 @@
   gap: 6px;
   margin: 12px 0 0;
   padding: 8px 12px;
-  border: 1px solid var(--surface-border-subtle);
-  border-left: 3px solid var(--status-warning);
+  border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
   font-size: 12px;
@@ -436,7 +480,7 @@
 }
 
 .disclosure[data-blocking] {
-  border-left-color: var(--palette-red);
+  border-color: var(--palette-red);
 }
 
 .disclosureText {
@@ -513,8 +557,7 @@
 .rowDiagnostic {
   margin: 0;
   padding: 7px 14px;
-  border: 1px solid var(--surface-border-subtle);
-  border-left: 3px solid var(--status-warning);
+  border: 1px solid var(--surface-border);
   border-top: 0;
   border-radius: 0 0 8px 8px;
   background-color: var(--surface-panel);
@@ -524,7 +567,8 @@
 }
 
 .rowDiagnostic[data-blocking] {
-  border-left-color: var(--palette-red);
+  border-color: var(--palette-red);
+  border-top: 0;
 }
 
 /* ── draft bar ──────────────────────────────────────────────────────────── */
@@ -536,7 +580,6 @@
   gap: 12px;
   padding: 10px 16px;
   border: 1px solid var(--surface-border);
-  border-left: 3px solid var(--status-warning);
   border-radius: 8px;
   background-color: var(--surface-panel);
 }
@@ -598,14 +641,13 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 14px;
-  border: 1px solid var(--surface-border-subtle);
-  border-left: 3px solid var(--status-warning);
+  border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
 }
 
 .panel[data-blocking] {
-  border-left-color: var(--palette-red);
+  border-color: var(--palette-red);
 }
 
 .panelText {
@@ -752,8 +794,7 @@
 .notice {
   margin: 0;
   padding: 9px 14px;
-  border: 1px solid var(--surface-border-subtle);
-  border-left: 3px solid var(--status-warning);
+  border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
   font-size: 12px;
@@ -776,14 +817,13 @@
   gap: 10px;
   align-items: baseline;
   padding: 8px 14px;
-  border: 1px solid var(--surface-border-subtle);
-  border-left: 3px solid var(--text-disabled);
+  border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
 }
 
 .diagnostic[data-blocking] {
-  border-left-color: var(--palette-red);
+  border-color: var(--palette-red);
 }
 
 .severity {
@@ -819,7 +859,9 @@
 }
 
 .error {
-  border-left: 3px solid var(--palette-red);
+  border: 1px solid var(--palette-red);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
 }
 
 .errorText {

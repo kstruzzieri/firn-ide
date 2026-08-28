@@ -267,8 +267,11 @@ describe('ModelPicker manual entry', () => {
 
     const caps = within(manual).getByRole('group', { name: 'Capabilities this model supports' });
     for (const locked of ['chat', 'stream']) {
-      expect(within(caps).getByLabelText(locked)).toBeChecked();
-      expect(within(caps).getByLabelText(locked)).toBeDisabled();
+      // A locked box names WHY it is locked, so its accessible name carries the
+      // suffix the mockup renders beside it.
+      const box = within(caps).getByLabelText(`${locked} required`);
+      expect(box).toBeChecked();
+      expect(box).toBeDisabled();
     }
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
     expect(within(caps).getByLabelText('tool_call')).toBeEnabled();

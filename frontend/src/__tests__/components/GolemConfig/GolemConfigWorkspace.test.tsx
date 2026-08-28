@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
@@ -61,6 +63,20 @@ const emptyProjection = (state: string, sourceOrigin: string) => ({
 
 const resolve = (projection: unknown, busy = false) =>
   (ReloadGolemSettings as jest.Mock).mockResolvedValue({ busy, projection });
+
+// jsdom resolves no CSS from a module, so the one honest guard for a purely
+// visual rule is the stylesheet itself. Keith rejected the left-only accent bar
+// on rounded surfaces; severity now reads through a full border, and nothing
+// should quietly reintroduce a one-sided rule.
+describe('GolemConfig stylesheet', () => {
+  it('carries no left-only accent bars', () => {
+    const css = fs.readFileSync(
+      path.resolve(__dirname, '../../../components/GolemConfig/GolemConfig.module.css'),
+      'utf8'
+    );
+    expect(css).not.toMatch(/border-left(-color)?:/);
+  });
+});
 
 describe('GolemConfigWorkspace', () => {
   beforeEach(() => {

@@ -5,7 +5,7 @@
  * renaming is remove + add), Endpoint, API format, and a write-only API key.
  *
  * The key value lives in this component's state while it is typed and nowhere
- * else. **Stage change** validates it, hands it to the workspace-root KeyVault,
+ * else. **Done** validates it, hands it to the workspace-root KeyVault,
  * and clears the input; collapsing and reopening never brings it back, because
  * there is nothing to bring back. Clearing the vault is NOT this component's
  * job — that is the reducer's single terminal path (§3.2).
@@ -286,7 +286,10 @@ export function ProviderEditor({
   // tabIndex is how an Apply-bar chip focuses the editor it names (§3.3).
   return (
     <fieldset className={styles.editor} id={id} tabIndex={-1}>
-      <legend className={styles.editorLegend}>
+      {/* The row strip above IS the editor header (v9). A visible legend
+          would cut the border line and leave a gap across the top, so the
+          accessible name is sr-only. */}
+      <legend className={styles.srOnly}>
         {provider !== null
           ? `Edit provider ${provider.name}`
           : stagedAdd !== null
@@ -424,13 +427,15 @@ export function ProviderEditor({
           disabled={!unstaged}
           onClick={submit}
         >
-          Stage change
+          Done
         </button>
         <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
           Cancel
         </button>
+        {/* v9 right-aligns the destructive action away from Done/Cancel. */}
+        <span className={styles.grow} />
         {!adding && (
-          <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={remove}>
+          <button type="button" className={`${styles.button} ${styles.danger}`} onClick={remove}>
             Remove provider
           </button>
         )}

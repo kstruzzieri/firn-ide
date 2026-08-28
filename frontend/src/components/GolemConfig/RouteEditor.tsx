@@ -401,7 +401,10 @@ export function RouteEditor({
   // tabIndex is how an Apply-bar chip focuses the editor it names (§3.3).
   return (
     <fieldset className={styles.editor} id={id} tabIndex={-1}>
-      <legend className={styles.editorLegend}>{`Route ${useCase}`}</legend>
+      {/* The row strip above IS the editor header (v9): the use case and its
+          `editing…` status. A visible legend would cut the border line and
+          leave a gap across the top, so the accessible name is sr-only. */}
+      <legend className={styles.srOnly}>{`Route ${useCase}`}</legend>
 
       {refusal !== '' && (
         <p className={styles.fieldError} role="alert">
@@ -466,7 +469,10 @@ export function RouteEditor({
             {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
               const locked = floor.includes(cap);
               return (
-                <label key={cap} className={styles.checkbox}>
+                <label
+                  key={cap}
+                  className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                >
                   <input
                     type="checkbox"
                     disabled={locked}
@@ -483,6 +489,14 @@ export function RouteEditor({
                     }}
                   />
                   {cap}
+                  {/* v9 names the reason beside the locked control rather than
+                      leaving a disabled box to explain itself. */}
+                  {locked && (
+                    <>
+                      {' '}
+                      <span className={styles.requiredTag}>required</span>
+                    </>
+                  )}
                 </label>
               );
             })}
@@ -595,15 +609,17 @@ export function RouteEditor({
           onClick={submit}
           data-unstaged={unstaged || undefined}
         >
-          Stage change
+          Done
         </button>
         <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
           Cancel
         </button>
         {/* §4.3: optional use cases only. The agent route is Firn's own run
             path, and the backend refuses to unbind it independently (§5.2). */}
+        {/* v9 right-aligns the destructive action away from Done/Cancel. */}
+        <span className={styles.grow} />
         {role !== null && useCase !== 'agent' && (
-          <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={unassign}>
+          <button type="button" className={`${styles.button} ${styles.danger}`} onClick={unassign}>
             Unassign
           </button>
         )}

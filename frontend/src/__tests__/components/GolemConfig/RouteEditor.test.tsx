@@ -101,8 +101,7 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
 const openRoute = async (useCase: string, label = 'Edit') =>
   await userEvent.click(screen.getByRole('button', { name: `${label} route ${useCase}` }));
 
-const stage = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Stage change' }));
+const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 
 async function pickModel(name: string) {
   await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
@@ -282,8 +281,9 @@ describe('RouteEditor', () => {
     const caps = within(editor).getByRole('group', {
       name: 'Capabilities exposed to chat — from gpt-5-mini',
     });
-    expect(within(caps).getByLabelText('chat')).toBeChecked();
-    expect(within(caps).getByLabelText('chat')).toBeDisabled(); // floor cap, locked on
+    // A locked box names WHY it is locked (v9 renders `required` beside it).
+    expect(within(caps).getByLabelText('chat required')).toBeChecked();
+    expect(within(caps).getByLabelText('chat required')).toBeDisabled();
     expect(within(caps).getByLabelText('insert')).not.toBeChecked();
   });
 
@@ -418,8 +418,8 @@ describe('RouteEditor', () => {
     const caps = screen.getByRole('group', {
       name: 'Capabilities exposed to chat — from gpt-5',
     });
-    expect(within(caps).getByLabelText('chat')).toBeChecked();
-    expect(within(caps).getByLabelText('chat')).toBeDisabled(); // floor, locked on
+    expect(within(caps).getByLabelText('chat required')).toBeChecked();
+    expect(within(caps).getByLabelText('chat required')).toBeDisabled();
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
     expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
 
@@ -585,6 +585,18 @@ describe('RouteEditor', () => {
     renderRouting();
     await openRoute('embedding', 'Assign');
     expect(screen.queryByRole('button', { name: 'Unassign' })).not.toBeInTheDocument();
+  });
+
+  // v9's editor header is the row strip itself. A visible legend would sit in
+  // the fieldset's border line, cutting it and reserving a gap across the top;
+  // the accessible name still has to be there, so it is visually hidden.
+  it('keeps the fieldset name out of the border line', async () => {
+    renderRouting();
+    await openRoute('chat');
+    const editor = screen.getByRole('group', { name: 'Route chat' });
+    const legend = editor.querySelector('legend');
+    expect(legend).toHaveTextContent('Route chat');
+    expect(legend).toHaveClass('srOnly');
   });
 
   it('assigns a new role from complete manual facts and requires the type', async () => {

@@ -146,8 +146,7 @@ const openProvider = async (name = 'hosted') =>
   await userEvent.click(screen.getByRole('button', { name: `Edit provider ${name}` }));
 const openRoute = async (useCase: string, label = 'Edit') =>
   await userEvent.click(screen.getByRole('button', { name: `${label} route ${useCase}` }));
-const stage = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Stage change' }));
+const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 const cancelEditor = async () =>
   await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 const clickApply = async () => await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
