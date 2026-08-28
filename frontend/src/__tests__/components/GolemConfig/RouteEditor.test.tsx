@@ -710,6 +710,42 @@ describe('RouteEditor', () => {
     expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('gpt-5-mini');
   });
 
+  // Three notices stack under this editor and they mean three different things.
+  // A shared neutral outline made them indistinguishable; each now carries its
+  // own semantic tone, and no two intents share one look.
+  it('tones each disclosure by what it actually means', async () => {
+    const shared = model({ routedUseCases: ['chat', 'summarize'], hasThinkTags: true });
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [shared, other],
+    });
+    await openRoute('chat');
+
+    // A fact about the fork: nothing is asked of the reader.
+    const sharedRole = screen.getByText(/Also routed through this role/).closest('div');
+    expect(sharedRole).toHaveAttribute('data-tone', 'info');
+
+    // Retargeting reaches the sibling use case and drops authored fields.
+    await pickModel('gpt-5');
+    expect(screen.getByText(/Also governs/).closest('div')).toHaveAttribute('data-tone', 'caution');
+    expect(screen.getByText(/outside Firn's known requirements/).closest('div')).toHaveAttribute(
+      'data-tone',
+      'caution'
+    );
+    expect(screen.getByText(/Changing this model removes/).closest('div')).toHaveAttribute(
+      'data-tone',
+      'blocking'
+    );
+
+    // The acknowledgements inside those notices use the drawn indicator too.
+    const ack = screen.getByLabelText('Requirements unknown — apply anyway');
+    expect(ack).toHaveClass('checkboxInput');
+    expect(ack.nextElementSibling).toHaveClass('checkboxBox');
+  });
+
   it('reopens on the values already staged, not the applied ones', async () => {
     renderRouting({
       draft: draftWith({

@@ -69,12 +69,34 @@ const resolve = (projection: unknown, busy = false) =>
 // on rounded surfaces; severity now reads through a full border, and nothing
 // should quietly reintroduce a one-sided rule.
 describe('GolemConfig stylesheet', () => {
-  it('carries no left-only accent bars', () => {
-    const css = fs.readFileSync(
+  const css = () =>
+    fs.readFileSync(
       path.resolve(__dirname, '../../../components/GolemConfig/GolemConfig.module.css'),
       'utf8'
     );
-    expect(css).not.toMatch(/border-left(-color)?:/);
+
+  it('carries no left-only accent bars', () => {
+    expect(css()).not.toMatch(/border-left(-color)?:/);
+  });
+
+  // Each tone owns the whole outline in a full-strength semantic colour. A
+  // dimmed or partial treatment is what made three intents look alike.
+  it.each([
+    ['info', '--accent'],
+    ['caution', '--status-warning'],
+    ['blocking', '--palette-red'],
+  ])('gives the %s tone the %s outline on every notice surface', (tone, token) => {
+    const rule = css().match(new RegExp(`\\[data-tone='${tone}'\\][^}]*}`, 's'));
+    expect(rule?.[0]).toContain(`border-color: var(${token})`);
+    for (const surface of ['notice', 'disclosure', 'panel', 'rowDiagnostic', 'diagnostic']) {
+      expect(css()).toContain(`.${surface}[data-tone='${tone}']`);
+    }
+  });
+
+  // The old boolean is gone: a non-blocking diagnostic is a caution, not a
+  // neutral aside, so every surface reads through the one tone vocabulary.
+  it('no longer styles anything through the blocking boolean', () => {
+    expect(css()).not.toContain('data-blocking');
   });
 });
 

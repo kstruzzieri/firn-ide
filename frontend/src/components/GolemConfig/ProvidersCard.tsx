@@ -289,7 +289,7 @@ export function ProvidersCard({
                       <p
                         key={`${diagnostic.code}-${position}`}
                         className={styles.rowDiagnostic}
-                        data-blocking={diagnostic.blocking || undefined}
+                        data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
                       >
                         {
                           formatSettingsDiagnostic(

@@ -487,6 +487,48 @@
   border-color: var(--palette-red);
 }
 
+/* ── notice tones ───────────────────────────────────────────────────────────
+ *
+ * Every boxed notice on this surface carries a `data-tone`, and the tone owns
+ * the WHOLE outline plus a faint tint of the same hue. A neutral outline made
+ * three different intents — "here is a fact", "this reaches further than you
+ * think", "this will not proceed" — look identical, which is the one thing a
+ * notice must never do.
+ *
+ * info     — a fact the reader should know; nothing is required of them.
+ * caution  — this changes more than the row, or needs a decision before Apply.
+ * blocking — nothing was written, or nothing can be until this is resolved.
+ *
+ * Severity never rests on colour alone: each of these carries copy, and the
+ * page diagnostics also print the literal word Blocking or Notice.
+ */
+.notice[data-tone='info'],
+.disclosure[data-tone='info'],
+.panel[data-tone='info'],
+.rowDiagnostic[data-tone='info'],
+.diagnostic[data-tone='info'] {
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+}
+
+.notice[data-tone='caution'],
+.disclosure[data-tone='caution'],
+.panel[data-tone='caution'],
+.rowDiagnostic[data-tone='caution'],
+.diagnostic[data-tone='caution'] {
+  border-color: var(--status-warning);
+  background-color: color-mix(in srgb, var(--status-warning) 10%, var(--surface-panel));
+}
+
+.notice[data-tone='blocking'],
+.disclosure[data-tone='blocking'],
+.panel[data-tone='blocking'],
+.rowDiagnostic[data-tone='blocking'],
+.diagnostic[data-tone='blocking'] {
+  border-color: var(--palette-red);
+  background-color: color-mix(in srgb, var(--palette-red) 10%, var(--surface-panel));
+}
+
 /* One side of the route editor: the picker column or the capability column. */
 .column {
   display: flex;
@@ -528,10 +570,6 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
-}
-
-.disclosure[data-blocking] {
-  border-color: var(--palette-red);
 }
 
 .disclosureText {
@@ -617,11 +655,6 @@
   color: var(--text-secondary);
 }
 
-.rowDiagnostic[data-blocking] {
-  border-color: var(--palette-red);
-  border-top: 0;
-}
-
 /* ── draft bar ──────────────────────────────────────────────────────────── */
 
 .draftBar {
@@ -695,10 +728,6 @@
   border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
-}
-
-.panel[data-blocking] {
-  border-color: var(--palette-red);
 }
 
 .panelText {
@@ -871,10 +900,6 @@
   border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
-}
-
-.diagnostic[data-blocking] {
-  border-color: var(--palette-red);
 }
 
 .severity {

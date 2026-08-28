@@ -923,31 +923,33 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         {projection && body && (
           <div className={styles.body}>
             {phase.kind === 'ready' && phase.busyNotice && (
-              <p className={styles.notice} role="status">
+              <p className={styles.notice} data-tone="info" role="status">
                 Golem is busy — a run or pending consent prompt is active. Showing the configuration
                 currently in effect; refresh when idle.
               </p>
             )}
 
             {projection.state === 'missing' && preview === null && (
-              <p className={styles.notice}>
+              <p className={styles.notice} data-tone="info">
                 Start from the curated configuration or build a blank one — nothing is written until
                 you Apply.
               </p>
             )}
 
             {EDITING_UNAVAILABLE[projection.state] !== undefined && (
-              <p className={styles.notice}>{EDITING_UNAVAILABLE[projection.state]}</p>
+              <p className={styles.notice} data-tone="caution">
+                {EDITING_UNAVAILABLE[projection.state]}
+              </p>
             )}
 
             {sourceError !== '' && (
-              <p className={styles.notice} role="alert">
+              <p className={styles.notice} data-tone="blocking" role="alert">
                 {sourceError}
               </p>
             )}
 
             {recovery && (
-              <div className={styles.panel} role="alert" data-blocking="true">
+              <div className={styles.panel} data-tone="blocking" role="alert">
                 <p className={styles.panelText}>{OUTCOME_UNKNOWN}</p>
                 <p className={styles.panelText}>
                   Every retained change is waiting for review. Recover state reloads the active
@@ -957,7 +959,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             )}
 
             {outcome.challenge !== null && (
-              <div className={styles.panel} role="alert" data-blocking="true">
+              <div className={styles.panel} data-tone="caution" role="alert">
                 <p className={styles.panelText}>
                   Approve this destination before the configuration is written. This is a settings
                   approval, separate from run approval.
@@ -997,7 +999,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             )}
 
             {outcome.drops !== null && (
-              <div className={styles.panel} data-blocking="true">
+              <div className={styles.panel} data-tone="caution">
                 <p className={styles.panelText}>
                   These changes remove model-specific settings the file authors. Confirm the exact
                   set and the changes are re-staged with it; nothing is written until you Apply.
@@ -1023,7 +1025,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             )}
 
             {outcome.conflict !== null && (
-              <div className={styles.panel} role="alert" data-blocking="true">
+              <div className={styles.panel} data-tone="blocking" role="alert">
                 <p className={styles.panelText}>
                   {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
                 </p>
@@ -1074,7 +1076,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     <li
                       key={`${diagnostic.code}-${diagnostic.subjectKind}-${diagnostic.subjectName}-${index}`}
                       className={styles.diagnostic}
-                      data-blocking={diagnostic.blocking || undefined}
+                      data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
                     >
                       <span className={styles.severity}>
                         {diagnostic.blocking ? 'Blocking' : 'Notice'}
@@ -1095,7 +1097,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             )}
 
             {sourceOpen && draft.source.kind !== 'applied' && (
-              <div className={styles.panel}>
+              <div className={styles.panel} data-tone="info">
                 <p className={styles.panelText}>
                   {draft.source.kind === 'blank'
                     ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'

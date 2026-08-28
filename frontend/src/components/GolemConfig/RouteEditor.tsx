@@ -532,8 +532,9 @@ export function RouteEditor({
         </div>
       </div>
 
+      {/* A fact about what the backend will do; nothing is asked of the user. */}
       {sharedRole.length > 0 && (
-        <div className={styles.disclosure}>
+        <div className={styles.disclosure} data-tone="info">
           <p className={styles.disclosureText}>
             {`Also routed through this role: ${sharedRole.join(', ')}.`}
           </p>
@@ -544,8 +545,9 @@ export function RouteEditor({
         </div>
       )}
 
+      {/* This edit reaches past the row being edited. */}
       {alsoGoverns.length > 0 && (
-        <div className={styles.disclosure}>
+        <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>{`Also governs: ${alsoGoverns.join(', ')}.`}</p>
           <p className={styles.disclosureText}>
             Capabilities and think mode are stored per provider and model, so this edit is theirs
@@ -554,14 +556,16 @@ export function RouteEditor({
         </div>
       )}
 
+      {/* Staging is refused until this is acknowledged. */}
       {unknownUseCases.length > 0 && (
-        <div className={styles.disclosure}>
+        <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
             {`These affected use cases are outside Firn's known requirements: ${unknownUseCases.join(', ')}.`}
           </p>
           <p className={styles.disclosureText}>Firn cannot check what they need.</p>
           <label className={styles.checkbox}>
             <input
+              className={styles.checkboxInput}
               type="checkbox"
               checked={ackUnknown}
               onChange={(event) => {
@@ -569,13 +573,14 @@ export function RouteEditor({
                 clearRefusal();
               }}
             />
+            <span className={styles.checkboxBox} aria-hidden="true" />
             Requirements unknown — apply anyway
           </label>
         </div>
       )}
 
       {drops.length > 0 && (
-        <div className={styles.disclosure} data-blocking="true">
+        <div className={styles.disclosure} data-tone="blocking">
           <p className={styles.disclosureText}>
             {dropNotice(current?.hasThinkTags === true, current?.hasSlots === true)}
           </p>
@@ -585,6 +590,7 @@ export function RouteEditor({
           </p>
           <label className={styles.checkbox}>
             <input
+              className={styles.checkboxInput}
               type="checkbox"
               checked={ackDrops}
               onChange={(event) => {
@@ -592,6 +598,7 @@ export function RouteEditor({
                 clearRefusal();
               }}
             />
+            <span className={styles.checkboxBox} aria-hidden="true" />
             Remove them and stage this change
           </label>
         </div>
