@@ -43,7 +43,9 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: -8px -8px 0;
+  /* The trailing margin adds to .root gap: the readout needs real air between
+     the header instrument and the first section. */
+  margin: -8px -8px 10px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--surface-border-subtle);
   background-color: var(--surface-elevated);
@@ -178,7 +180,9 @@
 /* Section headings extend into a hairline rule — the readout's frame lines. */
 .sectionHeading {
   display: flex;
-  align-items: center;
+  /* Baseline, not centre: the count is mono and the label is the UI face, and
+     two different font metrics centred against each other read as a shift. */
+  align-items: baseline;
   gap: 6px;
   margin: 0 0 4px;
   color: var(--text-secondary);
@@ -191,6 +195,7 @@
 .sectionHeading::after {
   content: '';
   flex: 1;
+  align-self: center;
   height: 1px;
   background-color: var(--surface-border-subtle);
 }
@@ -226,8 +231,10 @@ summary.subgroupHeading:focus-visible {
 
 .sectionChevron {
   flex: none;
-  color: var(--text-muted);
-  font-size: 9px;
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
   transition: transform 120ms ease;
 }
 
@@ -247,6 +254,7 @@ details[open] > .subgroupHeading .sectionChevron {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
+  line-height: 1;
 }
 
 /* A provider group inside Models: the same grammar, one step quieter. */
@@ -256,12 +264,25 @@ details[open] > .subgroupHeading .sectionChevron {
 
 .subgroupHeading {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   margin: 0 0 4px;
-  padding-left: 2px;
   font-size: 10px;
   letter-spacing: 0.04em;
+}
+
+/* ── nesting ────────────────────────────────────────────────────────────────
+ *
+ * Content sits indented from the header that owns it, so the hierarchy reads
+ * structurally rather than only through type weight. Proportional as asked,
+ * capped so a wide dock does not push the cards into a gutter.
+ */
+.section > *:not(summary) {
+  padding-left: min(20%, 24px);
+}
+
+.subgroup > *:not(summary) {
+  padding-left: min(12%, 14px);
 }
 
 .loading {
@@ -441,7 +462,7 @@ details[open] > .subgroupHeading .sectionChevron {
   flex: none;
   color: var(--golem-accent);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 /* Role identity chip — the workspace-chip recipe in teal, reused verbatim so
