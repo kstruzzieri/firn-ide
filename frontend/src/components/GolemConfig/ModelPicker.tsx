@@ -31,7 +31,8 @@ import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
 
 /** The popup's CSS max-width; the anchor clamp keeps this span on-screen. */
-const POPUP_MAX_WIDTH = 340;
+/** The popup takes the input's width, but never narrows past readability. */
+const POPUP_MIN_WIDTH = 260;
 
 const TYPE_LABEL: Record<ModelType, string> = {
   dense: 'Dense',
@@ -75,6 +76,7 @@ export interface ModelPickerProps {
 interface PopupPos {
   top: number;
   left: number;
+  width: number;
 }
 
 /**
@@ -151,17 +153,21 @@ export function ModelPicker({
   const matches = eligible.filter((model) => model.modelName.toLowerCase().includes(needle));
   const active = matches.length > 0 ? Math.min(activeIndex, matches.length - 1) : -1;
 
-  // Anchor the fixed popup under the input, clamped so its widest possible span
-  // stays on-screen (BranchSwitcher's placement, verbatim).
+  // Anchor to the INPUT, not the field wrapper. The wrapper also holds the
+  // label, the hint paragraph and the manual-entry button, so its bottom edge is
+  // most of a column below the control — which is why the popup floated free of
+  // the input, over unrelated content. Matching its width attaches it visually.
   useLayoutEffect(() => {
     if (!open) return undefined;
     const place = () => {
-      const anchor = wrapRef.current;
+      const anchor = inputRef.current;
       if (!anchor) return;
       const rect = anchor.getBoundingClientRect();
+      const width = Math.max(rect.width, POPUP_MIN_WIDTH);
       setPos({
-        top: rect.bottom + 4,
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - POPUP_MAX_WIDTH - 8)),
+        top: rect.bottom + 2,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+        width,
       });
     };
     place();
@@ -407,7 +413,7 @@ export function ModelPicker({
             ref={popupRef}
             className={styles.pickerPopup}
             data-testid="model-popup"
-            style={{ position: 'fixed', top: pos.top, left: pos.left }}
+            style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
           >
             <p className={styles.pickerFilter}>{filterLabel}</p>
             <ul id={listboxId} role="listbox" aria-label="Models" className={styles.pickerList}>

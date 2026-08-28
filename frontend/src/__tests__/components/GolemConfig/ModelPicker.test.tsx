@@ -63,6 +63,30 @@ const combobox = () => screen.getByRole('combobox', { name: 'Model' });
 const open = async () => await userEvent.click(combobox());
 
 describe('ModelPicker combobox contract', () => {
+  // The popup used to anchor to the field WRAPPER, which also holds the label,
+  // the hint and the manual-entry button — so it opened most of a column below
+  // the control, floating over unrelated content. jsdom reports every rect as
+  // zero, so the anchor is stubbed and the resulting inline style is the proof.
+  it('anchors the popup to the input, at the input width', async () => {
+    renderPicker();
+    const input = combobox();
+    jest.spyOn(input, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+      bottom: 130,
+      left: 40,
+      right: 340,
+      width: 300,
+      height: 30,
+      x: 40,
+      y: 100,
+      toJSON: () => ({}),
+    });
+
+    await open();
+    const popup = screen.getByTestId('model-popup');
+    expect(popup).toHaveStyle({ top: '132px', left: '40px', width: '300px' });
+  });
+
   it('declares the combobox ARIA contract and names no active option while closed', () => {
     renderPicker();
     const input = combobox();

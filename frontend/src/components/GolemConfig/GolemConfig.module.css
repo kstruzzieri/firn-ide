@@ -350,8 +350,15 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * The provider select and the model input sit one above the other, so their
+ * boxes have to resolve identically. A select and an input with the same
+ * padding still differ by a couple of pixels — the select carries its own
+ * dropdown chrome — so the height and line box are stated rather than inferred.
+ */
 .input {
   min-width: 0;
+  min-height: 30px;
   padding: 5px 8px;
   border: 1px solid var(--surface-border);
   border-radius: 6px;
@@ -359,6 +366,7 @@
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 12px;
+  line-height: 1.4;
 }
 
 .input:focus-visible {
@@ -580,7 +588,7 @@
 
 .pickerPopup {
   z-index: 60;
-  width: 340px;
+  /* Width is set inline from the input it is anchored to. */
   max-width: calc(100vw - 16px);
   padding: 6px;
   border: 1px solid var(--surface-border);
