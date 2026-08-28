@@ -182,6 +182,17 @@ function ConfigurationBody({
   // broken route, and the Models section is where it is diagnosed.
   const modelForRole = new Map(projection.models.map((m) => [m.role, m.modelName]));
 
+  // A use case is PRIMARY for the role its route names, and a FALLBACK user of
+  // every other role its chain reaches. The projection carries the union in
+  // `routedUseCases`; the routes carry the primaries, so the difference is the
+  // fallback membership. Presentation only — no contract data is recomputed.
+  const primaryFor = (role: string): string[] =>
+    projection.routes.filter((r) => r.role === role).map((r) => r.useCase);
+  const fallbackFor = (m: ModelProjection): string[] => {
+    const primary = new Set(primaryFor(m.role));
+    return m.routedUseCases.filter((useCase) => !primary.has(useCase));
+  };
+
   return (
     <div className={styles.body}>
       {busyNotice && (
@@ -325,13 +336,29 @@ function ConfigurationBody({
                           ))}
                         </div>
                       )}
-                      {/* What this model actually serves. An unrouted model shows
-                    nothing — "defined but not routed" stays the workspace's
-                    distinction to draw, not a second empty row here. */}
-                      {m.routedUseCases.length > 0 && (
+                      {/*
+                       * `routedUseCases` is the fallback-AWARE union: it counts a use
+                       * case whose chain merely passes through this role. Shown as one
+                       * row it contradicts the Roles section, which names only the
+                       * primary. Split by what the routes actually say, so a card can
+                       * be primary for one use case and a fallback for another and say
+                       * so. An unrouted model shows neither row — "defined but not
+                       * routed" stays the workspace's distinction to draw.
+                       */}
+                      {primaryFor(m.role).length > 0 && (
                         <div className={styles.capabilityRow} data-testid={`routed-${m.role}`}>
                           <span className={styles.chipLabel}>routes:</span>
-                          {m.routedUseCases.map((useCase) => (
+                          {primaryFor(m.role).map((useCase) => (
+                            <span key={useCase} className={styles.useCaseChip}>
+                              {useCase}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {fallbackFor(m).length > 0 && (
+                        <div className={styles.capabilityRow} data-testid={`fallback-${m.role}`}>
+                          <span className={styles.chipLabel}>fallback for:</span>
+                          {fallbackFor(m).map((useCase) => (
                             <span key={useCase} className={styles.useCaseChip}>
                               {useCase}
                             </span>

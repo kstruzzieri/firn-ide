@@ -175,24 +175,76 @@ describe('GolemConfiguration', () => {
     expect(chevron(subgroup)).toHaveClass('sectionChevron');
   });
 
-  it('chips the use cases a model serves, and nothing for an unrouted one', async () => {
+  // `routedUseCases` is the fallback-aware union, so showing it as one row said
+  // a card routes a use case whose PRIMARY is some other role — contradicting
+  // the Roles section. The two memberships are now separate rows.
+  it('separates the use cases a role is primary for from the ones it backs up', async () => {
     const base = readyProjection.models[0];
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: false,
       projection: {
         ...readyProjection,
+        routes: [
+          { useCase: 'agent', role: 'fast-m' },
+          { useCase: 'chat', role: 'cloud-m' },
+        ],
         models: [
-          { ...base, role: 'agent-m', routedUseCases: ['agent', 'chat'] },
+          // Primary for chat, and reachable through agent's fallback chain.
+          { ...base, role: 'cloud-m', routedUseCases: ['agent', 'chat'] },
+          { ...base, role: 'fast-m', routedUseCases: ['agent'] },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    const routes = await screen.findByTestId('routed-cloud-m');
+    expect(within(routes).getByText('routes:')).toBeVisible();
+    expect(within(routes).getByText('chat')).toBeInTheDocument();
+    expect(within(routes).queryByText('agent')).not.toBeInTheDocument();
+
+    const fallback = screen.getByTestId('fallback-cloud-m');
+    expect(within(fallback).getByText('fallback for:')).toBeVisible();
+    expect(within(fallback).getByText('agent')).toBeInTheDocument();
+  });
+
+  it('gives a primary-only role no fallback row', async () => {
+    const base = readyProjection.models[0];
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        routes: [{ useCase: 'agent', role: 'fast-m' }],
+        models: [{ ...base, role: 'fast-m', routedUseCases: ['agent'] }],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    expect(within(await screen.findByTestId('routed-fast-m')).getByText('agent')).toBeVisible();
+    expect(screen.queryByTestId('fallback-fast-m')).not.toBeInTheDocument();
+  });
+
+  it('gives a fallback-only role no routes row, and an unrouted one neither', async () => {
+    const base = readyProjection.models[0];
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        routes: [{ useCase: 'agent', role: 'fast-m' }],
+        models: [
+          { ...base, role: 'backup-m', routedUseCases: ['agent'] },
+          { ...base, role: 'fast-m', routedUseCases: ['agent'] },
           { ...base, role: 'spare-m', routedUseCases: [] },
         ],
       },
     });
     render(<GolemConfiguration onClose={() => {}} />);
 
-    const routed = await screen.findByTestId('routed-agent-m');
-    expect(within(routed).getByText('agent')).toBeInTheDocument();
-    expect(within(routed).getByText('chat')).toBeInTheDocument();
+    const fallback = await screen.findByTestId('fallback-backup-m');
+    expect(within(fallback).getByText('agent')).toBeInTheDocument();
+    expect(screen.queryByTestId('routed-backup-m')).not.toBeInTheDocument();
+
     expect(screen.queryByTestId('routed-spare-m')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fallback-spare-m')).not.toBeInTheDocument();
   });
 
   // Keith's order: what runs the models, then what routes to them, then the
