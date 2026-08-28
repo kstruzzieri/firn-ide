@@ -197,10 +197,17 @@
   padding: 10px 12px 12px;
 }
 
+/*
+ * The header row and the strips below it are SEPARATE grids that must line up,
+ * so they share one template per card (.providerGrid / .routeGrid /
+ * .definedGrid) and one horizontal inset. The inset is 15px, not 14px, because
+ * a strip carries a 1px border and the header does not — with border-box that
+ * is 1px of content-box offset the header has to match.
+ */
 .columns {
   display: grid;
   gap: 14px;
-  padding: 2px 14px 0;
+  padding: 2px 15px 0;
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -259,12 +266,28 @@
   border-radius: 8px 8px 0 0;
 }
 
+/*
+ * Every template below ends in a FIXED actions track, never `auto`. An `auto`
+ * track sizes to its content, and the header's actions cell is empty while a
+ * strip's holds a status and one or two buttons — so `auto` resolved to 0 in
+ * the header and ~60-160px in the rows, and the `1fr` column swallowed the
+ * difference. That pushed every column AFTER the `1fr` to the right in the
+ * header only, which is exactly the drift Keith saw on THINK and STATUS.
+ *
+ * ponytail: a fixed reserve, sized to each card's ordinary row. The rare wide
+ * row (a staged provider's extra Unstage, a defined model's "Unstage removal"
+ * beside "Needs review") wraps inside .rowActions rather than widening the
+ * track. `grid-template-columns: subgrid` is the real fix and needs the header
+ * and the strips to share one grid container — a DOM change that would break
+ * the list semantics the rows carry, so it waits for a reason bigger than this.
+ */
 .providerGrid {
-  grid-template-columns: 130px 1fr 110px 150px auto;
+  grid-template-columns: 130px 1fr 110px 150px 172px;
 }
 
 .rowActions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
@@ -651,12 +674,13 @@
   gap: 8px;
 }
 
+/* Routing rows carry exactly one button (Edit or Assign): a narrow reserve. */
 .routeGrid {
-  grid-template-columns: 90px 120px 1fr 70px 120px auto;
+  grid-template-columns: 90px 120px 1fr 70px 120px 76px;
 }
 
 .definedGrid {
-  grid-template-columns: 130px 130px 1fr auto;
+  grid-template-columns: 130px 130px 1fr 152px;
 }
 
 .identifier {
