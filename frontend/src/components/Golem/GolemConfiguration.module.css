@@ -552,6 +552,43 @@ details[open] > .subgroupHeading .sectionChevron {
   gap: 6px;
 }
 
+/*
+ * Three kinds of badge sit on a model card and must not read alike:
+ *   fact  — what the model IS (type, think mode): an outlined square tag.
+ *   caps  — what it CAN do: the neutral pills below.
+ *   route — what it SERVES: teal pills behind a routes:/fallback for: label.
+ * Shape carries the distinction, so it survives a colour-blind reading.
+ */
+.factTag {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Standing: a role something routes to primarily is the working fleet and reads
+ * first; a fallback-only or unrouted one steps back without disappearing.
+ */
+.card[data-standing='primary'] {
+  border-color: var(--surface-border);
+  background-color: var(--surface-elevated);
+}
+
+.card[data-standing='quiet'] {
+  border-color: var(--surface-border-subtle);
+}
+
+.card[data-standing='quiet'] .modelName {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 .metaChip {
   padding: 1px 6px;
   border: 1px solid var(--surface-border-subtle);

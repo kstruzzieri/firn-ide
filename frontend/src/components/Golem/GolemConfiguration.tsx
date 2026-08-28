@@ -314,7 +314,14 @@ function ConfigurationBody({
                 </summary>
                 <ul className={styles.cardList}>
                   {group.map((m) => (
-                    <li key={m.role} className={styles.card}>
+                    <li
+                      key={m.role}
+                      className={styles.card}
+                      // The active fleet reads first: a role something routes to
+                      // primarily is emphasised, a fallback-only or unrouted one
+                      // steps back.
+                      data-standing={primaryFor(m.role).length > 0 ? 'primary' : 'quiet'}
+                    >
                       <div className={styles.cardHeader}>
                         <span className={styles.roleChip}>{m.role}</span>
                         <span className={styles.modelName}>{m.modelName}</span>
@@ -322,9 +329,11 @@ function ConfigurationBody({
                       {/* No provider chip here: the group header above says
                           it once, for every card beneath it. */}
                       <div className={styles.cardMeta}>
-                        <span className={styles.metaChip}>{m.type}</span>
+                        {/* Model FACTS are outlined tags, told apart at a glance
+                            from the capability pills and the routing chips. */}
+                        <span className={styles.factTag}>{m.type}</span>
                         {m.thinkMode !== '' && (
-                          <span className={styles.metaChip}>think: {m.thinkMode}</span>
+                          <span className={styles.factTag}>think: {m.thinkMode}</span>
                         )}
                       </div>
                       {m.effectiveCapabilities.length > 0 && (

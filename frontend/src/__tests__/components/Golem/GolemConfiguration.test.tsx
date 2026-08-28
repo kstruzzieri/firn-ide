@@ -247,6 +247,45 @@ describe('GolemConfiguration', () => {
     expect(screen.queryByTestId('fallback-spare-m')).not.toBeInTheDocument();
   });
 
+  // Three kinds of badge on one card must not read alike: facts are outlined
+  // tags, capabilities neutral pills, routing teal pills behind a label.
+  it('gives the three badge kinds on a model card three treatments', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    const routed = await screen.findByTestId('routed-agent-m');
+    const card = routed.closest('li') as HTMLElement;
+
+    expect(within(card).getByText('dense')).toHaveClass('factTag');
+    expect(within(card).getByText('think: auto')).toHaveClass('factTag');
+    expect(within(card).getByText('tool_call')).toHaveClass('capabilityChip');
+    expect(within(card).getByText('agent')).toHaveClass('useCaseChip');
+  });
+
+  it('emphasises a primary-route card over a fallback-only or unrouted one', async () => {
+    const base = readyProjection.models[0];
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        routes: [{ useCase: 'agent', role: 'fast-m' }],
+        models: [
+          { ...base, role: 'backup-m', routedUseCases: ['agent'] },
+          { ...base, role: 'fast-m', routedUseCases: ['agent'] },
+          { ...base, role: 'spare-m', routedUseCases: [] },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findAllByText('wire-model');
+
+    // The role chip identifies each card, scoped to Models — the Roles rows
+    // print the same role names.
+    const models = screen.getByRole('region', { name: 'Models' });
+    const cardFor = (role: string) => within(models).getByText(role).closest('li') as HTMLElement;
+    expect(cardFor('fast-m')).toHaveAttribute('data-standing', 'primary');
+    expect(cardFor('backup-m')).toHaveAttribute('data-standing', 'quiet');
+    expect(cardFor('spare-m')).toHaveAttribute('data-standing', 'quiet');
+  });
+
   // Keith's order: what runs the models, then what routes to them, then the
   // models themselves.
   it('reads Providers, then Roles, then Models', async () => {
