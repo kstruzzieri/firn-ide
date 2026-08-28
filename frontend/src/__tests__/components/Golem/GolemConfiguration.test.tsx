@@ -81,7 +81,7 @@ describe('GolemConfiguration', () => {
 
   it('reloads on mount and renders routes, models, providers', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
-    expect(await screen.findByText('wire-model')).toBeInTheDocument();
+    expect(await screen.findAllByText('wire-model')).not.toHaveLength(0);
     expect(screen.getByText('https://api.example.com:8443/v1')).toBeInTheDocument();
     expect(screen.getByText('User configuration directory')).toBeInTheDocument();
     expect(screen.getByText('Remote')).toBeInTheDocument();
@@ -123,6 +123,58 @@ describe('GolemConfiguration', () => {
     ).toEqual(['a-hosted', 'b-hosted', 'a-local', 'b-local']);
   });
 
+  // The ROLES/MODELS join, answered in place: the row names the model its role
+  // resolves to, in the same treatment the model card heads with.
+  it('names the resolved model on each roles row', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    const roles = await screen.findByRole('region', { name: 'Role routing' });
+    const row = within(roles).getByText('agent').closest('li') as HTMLElement;
+
+    expect(within(row).getByText('agent-m')).toHaveClass('roleChip');
+    expect(within(row).getByText('wire-model')).toHaveClass('modelName');
+  });
+
+  it('leaves the model off a roles row whose role resolves to nothing', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: { ...readyProjection, models: [], routes: [{ useCase: 'agent', role: 'ghost' }] },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    const roles = await screen.findByRole('region', { name: 'Role routing' });
+    const row = within(roles).getByText('agent').closest('li') as HTMLElement;
+    expect(within(row).getByText('ghost')).toBeInTheDocument();
+    expect(within(row).queryByText('wire-model')).not.toBeInTheDocument();
+  });
+
+  // Two chip rows on one card mean different things, so they must not look
+  // alike: capabilities stay neutral, routed use cases take the roles teal and
+  // a visible label rather than a screen-reader-only one.
+  it('tells the routed-use-case chips apart from the capability chips', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    const routed = await screen.findByTestId('routed-agent-m');
+
+    expect(within(routed).getByText('routes:')).toBeVisible();
+    expect(within(routed).getByText('agent')).toHaveClass('useCaseChip');
+
+    const card = routed.closest('li') as HTMLElement;
+    expect(within(card).getByText('tool_call')).toHaveClass('capabilityChip');
+  });
+
+  // Nesting is communicated by indent, not by shrinking the affordance: both
+  // levels share one chevron class, so they cannot drift apart in size.
+  it('gives the subgroup chevron the same treatment as the section chevron', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findAllByText('wire-model');
+
+    const section = screen.getByTestId('section-models');
+    const subgroup = screen.getByTestId('models-hosted');
+    const chevron = (el: HTMLElement) => el.querySelector('summary > span[aria-hidden="true"]');
+
+    expect(chevron(section)).toHaveClass('sectionChevron');
+    expect(chevron(subgroup)).toHaveClass('sectionChevron');
+  });
+
   it('chips the use cases a model serves, and nothing for an unrouted one', async () => {
     const base = readyProjection.models[0];
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
@@ -147,7 +199,7 @@ describe('GolemConfiguration', () => {
   // models themselves.
   it('reads Providers, then Roles, then Models', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
 
     expect(
       screen.getAllByRole('region').map((section) => section.getAttribute('aria-label'))
@@ -160,7 +212,7 @@ describe('GolemConfiguration', () => {
     ['models', 'Models'],
   ])('collapses and reopens the %s section', async (id, label) => {
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
 
     const section = screen.getByTestId(`section-${id}`) as HTMLDetailsElement;
     expect(section.open).toBe(true); // every group starts expanded
@@ -207,7 +259,7 @@ describe('GolemConfiguration', () => {
   // reachable-and-activatable half is what can honestly be asserted here.
   it('makes every section toggle a real, focusable summary', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
 
     for (const [id, label] of [
       ['providers', 'Providers'],
@@ -235,13 +287,13 @@ describe('GolemConfiguration', () => {
       projection: readyProjection,
     });
     render(<GolemConfiguration onClose={() => {}} />);
-    expect(await screen.findByText('wire-model')).toBeInTheDocument();
+    expect(await screen.findAllByText('wire-model')).not.toHaveLength(0);
     expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument();
   });
 
   it('announces configuration state changes after Refresh', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
     const status = screen.getByRole('status');
     expect(status).toHaveTextContent('Configuration Ready. Source User configuration directory.');
 
@@ -267,7 +319,7 @@ describe('GolemConfiguration', () => {
 
   it('explicit Refresh while busy shows the inline busy notice', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: true,
       projection: readyProjection,
@@ -288,7 +340,7 @@ describe('GolemConfiguration', () => {
     const refresh = await screen.findByRole('button', { name: /refresh/i });
     expect(refresh).toBeDisabled(); // mount request still pending
     resolveFirst({ busy: false, projection: readyProjection });
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
     expect(refresh).toBeEnabled();
   });
 
@@ -421,7 +473,7 @@ describe('GolemConfiguration', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('Blocking')).toBeInTheDocument();
     expect(screen.getByText('Notice')).toBeInTheDocument();
-    expect(screen.getByText('wire-model')).toBeInTheDocument();
+    expect(screen.getAllByText('wire-model')).not.toHaveLength(0);
   });
 
   it('keeps duplicate-key Limited entities visible and labels the notice', async () => {
@@ -442,7 +494,7 @@ describe('GolemConfiguration', () => {
       },
     });
     render(<GolemConfiguration onClose={() => {}} />);
-    expect(await screen.findByText('wire-model')).toBeInTheDocument();
+    expect(await screen.findAllByText('wire-model')).not.toHaveLength(0);
     expect(
       screen.getByText(/Duplicate JSON keys make this configuration read-only\./)
     ).toBeInTheDocument();
@@ -452,7 +504,7 @@ describe('GolemConfiguration', () => {
 
   it('moves focus to the heading on mount', async () => {
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
     expect(screen.getByRole('heading', { name: /configuration/i })).toHaveFocus();
   });
 
@@ -487,7 +539,7 @@ describe('GolemConfiguration', () => {
   it('opens the app-global configuration tab from the masthead', async () => {
     __resetGolemStore();
     render(<GolemConfiguration onClose={() => {}} />);
-    await screen.findByText('wire-model');
+    await screen.findAllByText('wire-model');
 
     await userEvent.click(screen.getByRole('button', { name: 'Open configuration' }));
 

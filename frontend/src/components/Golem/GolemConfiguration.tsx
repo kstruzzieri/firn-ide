@@ -177,6 +177,11 @@ function ConfigurationBody({
     projection.models.length === 0 &&
     projection.providers.length === 0;
 
+  // A route names a role; the model is what the reader actually wants. A role
+  // with no model stays absent rather than rendering a placeholder — that is a
+  // broken route, and the Models section is where it is diagnosed.
+  const modelForRole = new Map(projection.models.map((m) => [m.role, m.modelName]));
+
   return (
     <div className={styles.body}>
       {busyNotice && (
@@ -267,6 +272,11 @@ function ConfigurationBody({
                     →
                   </span>
                   <span className={styles.roleChip}>{r.role}</span>
+                  {/* The role resolved: the same model name the cards head with,
+                     so the ROLES/MODELS join reads without cross-referencing. */}
+                  {modelForRole.get(r.role) !== undefined && (
+                    <span className={styles.modelName}>{modelForRole.get(r.role)}</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -320,9 +330,9 @@ function ConfigurationBody({
                     distinction to draw, not a second empty row here. */}
                       {m.routedUseCases.length > 0 && (
                         <div className={styles.capabilityRow} data-testid={`routed-${m.role}`}>
-                          <span className={styles.srOnly}>Routes</span>
+                          <span className={styles.chipLabel}>routes:</span>
                           {m.routedUseCases.map((useCase) => (
-                            <span key={useCase} className={styles.capabilityChip}>
+                            <span key={useCase} className={styles.useCaseChip}>
                               {useCase}
                             </span>
                           ))}

@@ -568,6 +568,31 @@ details[open] > .subgroupHeading .sectionChevron {
   gap: 4px;
 }
 
+/*
+ * Two chip rows sit on a model card and they mean different things: what the
+ * model CAN do, and what it is actually wired to. The capability row stays
+ * neutral; the routed row takes the roles section teal and a visible micro-
+ * label, so the kinds are told apart at a glance and not only by reading them.
+ */
+.chipLabel {
+  flex: none;
+  align-self: center;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9px;
+}
+
+.useCaseChip {
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  color: var(--golem-teal);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .capabilityChip {
   padding: 1px 6px;
   border: 1px solid var(--surface-border);
