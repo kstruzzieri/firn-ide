@@ -296,6 +296,29 @@ describe('Apply bar', () => {
 // ---------------------------------------------------------------------------
 
 describe('terminal apply results', () => {
+  // On a real configuration the cards are screens tall and Apply sits at the
+  // bottom of the scroll container, so an outcome rendered ABOVE them lands out
+  // of view and the click reads as doing nothing. The result has to be adjacent
+  // to the control that caused it. jsdom has no layout, so the provable form of
+  // that is DOM order: every result surface follows both cards.
+  it('renders the outcome after the cards, beside the control that caused it', async () => {
+    applyReturns({ status: 'busy' });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+
+    const notice = await screen.findByText(/Nothing was written; retry when idle/);
+    const page = notice.closest(`[class*='body']`) as HTMLElement;
+    const order = (el: Element | null) =>
+      [...page.children].findIndex((child) => child === el || child.contains(el as Node));
+
+    const routing = screen.getByRole('list', { name: 'Model routing' });
+    expect(order(notice)).toBeGreaterThan(order(routing));
+    expect(order(screen.getByRole('button', { name: 'Retry' }))).toBeGreaterThan(order(routing));
+    // And the bar it belongs to is last.
+    expect(order(screen.getByTestId('golem-config-draft'))).toBeGreaterThan(order(notice));
+  });
+
   it('sends the whole request and clears the draft and keys once applied', async () => {
     applyReturns({
       status: 'applied',

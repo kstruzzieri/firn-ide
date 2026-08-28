@@ -958,6 +958,97 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {pageDiagnostics.length > 0 && (
+              <ul className={styles.diagnostics} aria-label="Configuration diagnostics">
+                {pageDiagnostics.map((diagnostic, index) => {
+                  const { text, subject } = formatSettingsDiagnostic(
+                    diagnostic.code,
+                    diagnostic.subjectKind,
+                    diagnostic.subjectName
+                  );
+                  return (
+                    <li
+                      key={`${diagnostic.code}-${diagnostic.subjectKind}-${diagnostic.subjectName}-${index}`}
+                      className={styles.diagnostic}
+                      data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
+                    >
+                      <span className={styles.severity}>
+                        {diagnostic.blocking ? 'Blocking' : 'Notice'}
+                      </span>
+                      <span className={styles.diagnosticText}>
+                        {text}
+                        {subject !== '' && (
+                          <>
+                            {' — '}
+                            <span className={styles.subject}>{subject}</span>
+                          </>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {sourceOpen && draft.source.kind !== 'applied' && (
+              <div className={styles.panel} data-tone="info">
+                <p className={styles.panelText}>
+                  {draft.source.kind === 'blank'
+                    ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'
+                    : `This draft comes from profile ${draft.source.profileId} at revision ${draft.source.sourceRevision.slice(0, REVISION_HEAD)}. Applying it replaces the active configuration, and every provider key it carries is cleared unless you stage a replacement.`}
+                </p>
+              </div>
+            )}
+
+            <ProvidersCard
+              // Remount on every draft reset AND on every document the open
+              // editors could be diffing against: an editor derives its fields
+              // once, at mount, but stages against the live projection, so a
+              // Refresh that moved the revision would otherwise let a stale
+              // endpoint be re-staged as if the user had authored it.
+              key={`providers-${draftEpoch}:${projection.revision ?? ''}`}
+              providers={body.providers}
+              usedProviders={usedProviders}
+              changes={draft.changes}
+              rows={projected.providerRows}
+              diagnostics={diagnostics}
+              stagedProviders={stagedProviders}
+              vault={vault}
+              editable={canEdit}
+              focusRequest={focusRequest}
+              onStage={stage}
+              onUnstagedChange={noteUnstaged}
+            />
+            <RoutingCard
+              // Same remount rule as the providers card: an open route editor
+              // derives its fields at mount but stages against the live
+              // projection, so a Refresh that moved the revision must not let a
+              // stale model read back as the user's choice.
+              key={`routing-${draftEpoch}:${projection.revision ?? ''}`}
+              routes={body.routes}
+              models={body.models}
+              providers={routableProviders}
+              draft={draft}
+              // The COALESCED changes, never `draft.changes`: a row and a
+              // reopened editor must show the selector-wide truth Apply sends
+              // (§3.3), which is rebuilt from each group's last authority.
+              changes={projected.changes}
+              rows={projected.routeRows}
+              roleRows={projected.roleRows}
+              diagnostics={diagnostics}
+              editable={canEdit}
+              focusRequest={focusRequest}
+              onStage={stage}
+              onUnstagedChange={noteUnstaged}
+            />
+
+            {/*
+             * The result of the last write, rendered where the control that
+             * caused it lives. Above the cards these sat one or two screens up:
+             * on a real configuration the Apply button is at the bottom of a
+             * scrolled page, so every outcome — applied, busy, conflict, or a
+             * local refusal — landed out of view and Apply read as doing nothing.
+             */}
             {outcome.challenge !== null && (
               <div className={styles.panel} data-tone="caution" role="alert">
                 <p className={styles.panelText}>
@@ -1063,90 +1154,6 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
             )}
-
-            {pageDiagnostics.length > 0 && (
-              <ul className={styles.diagnostics} aria-label="Configuration diagnostics">
-                {pageDiagnostics.map((diagnostic, index) => {
-                  const { text, subject } = formatSettingsDiagnostic(
-                    diagnostic.code,
-                    diagnostic.subjectKind,
-                    diagnostic.subjectName
-                  );
-                  return (
-                    <li
-                      key={`${diagnostic.code}-${diagnostic.subjectKind}-${diagnostic.subjectName}-${index}`}
-                      className={styles.diagnostic}
-                      data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
-                    >
-                      <span className={styles.severity}>
-                        {diagnostic.blocking ? 'Blocking' : 'Notice'}
-                      </span>
-                      <span className={styles.diagnosticText}>
-                        {text}
-                        {subject !== '' && (
-                          <>
-                            {' — '}
-                            <span className={styles.subject}>{subject}</span>
-                          </>
-                        )}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-
-            {sourceOpen && draft.source.kind !== 'applied' && (
-              <div className={styles.panel} data-tone="info">
-                <p className={styles.panelText}>
-                  {draft.source.kind === 'blank'
-                    ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'
-                    : `This draft comes from profile ${draft.source.profileId} at revision ${draft.source.sourceRevision.slice(0, REVISION_HEAD)}. Applying it replaces the active configuration, and every provider key it carries is cleared unless you stage a replacement.`}
-                </p>
-              </div>
-            )}
-
-            <ProvidersCard
-              // Remount on every draft reset AND on every document the open
-              // editors could be diffing against: an editor derives its fields
-              // once, at mount, but stages against the live projection, so a
-              // Refresh that moved the revision would otherwise let a stale
-              // endpoint be re-staged as if the user had authored it.
-              key={`providers-${draftEpoch}:${projection.revision ?? ''}`}
-              providers={body.providers}
-              usedProviders={usedProviders}
-              changes={draft.changes}
-              rows={projected.providerRows}
-              diagnostics={diagnostics}
-              stagedProviders={stagedProviders}
-              vault={vault}
-              editable={canEdit}
-              focusRequest={focusRequest}
-              onStage={stage}
-              onUnstagedChange={noteUnstaged}
-            />
-            <RoutingCard
-              // Same remount rule as the providers card: an open route editor
-              // derives its fields at mount but stages against the live
-              // projection, so a Refresh that moved the revision must not let a
-              // stale model read back as the user's choice.
-              key={`routing-${draftEpoch}:${projection.revision ?? ''}`}
-              routes={body.routes}
-              models={body.models}
-              providers={routableProviders}
-              draft={draft}
-              // The COALESCED changes, never `draft.changes`: a row and a
-              // reopened editor must show the selector-wide truth Apply sends
-              // (§3.3), which is rebuilt from each group's last authority.
-              changes={projected.changes}
-              rows={projected.routeRows}
-              roleRows={projected.roleRows}
-              diagnostics={diagnostics}
-              editable={canEdit}
-              focusRequest={focusRequest}
-              onStage={stage}
-              onUnstagedChange={noteUnstaged}
-            />
 
             {isDraftDirty(draft) && !recovery && (
               <ApplyBar
