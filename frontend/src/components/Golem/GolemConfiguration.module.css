@@ -24,7 +24,10 @@
   gap: 8px;
   height: 100%;
   min-height: 0;
-  padding: 8px;
+  /* No TOP padding: `top: 0` on the sticky masthead resolves to the scrollport
+     padding edge, so 8px here left a transparent band above it that scrolled
+     cards showed through. The masthead supplies its own top inset instead. */
+  padding: 0 8px 8px;
   overflow-y: auto;
   background-color: var(--surface-panel);
   color: var(--text-primary);
@@ -43,10 +46,11 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* The trailing margin adds to .root gap: the readout needs real air between
-     the header instrument and the first section. */
-  margin: -8px -8px 10px;
-  padding: 6px 10px;
+  /* Full-bleed across the scroll container, flush at its top edge. The
+     trailing margin adds to .root gap: the readout needs real air between the
+     header instrument and the first section. */
+  margin: 0 -8px 10px;
+  padding: 10px 10px 6px;
   border-bottom: 1px solid var(--surface-border-subtle);
   background-color: var(--surface-elevated);
 }
@@ -259,7 +263,7 @@ details[open] > .subgroupHeading .sectionChevron {
 
 /* A provider group inside Models: the same grammar, one step quieter. */
 .subgroup {
-  margin: 0 0 4px;
+  margin: 0 0 8px;
 }
 
 .subgroupHeading {
@@ -473,12 +477,15 @@ details[open] > .subgroupHeading .sectionChevron {
   min-width: 0;
   max-width: 100%;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  /* The leading identity on a card, so it outranks every other badge: full
+     teal edge, a fill you can see, and weight behind the text. */
+  border: 1px solid var(--golem-teal);
   border-radius: 5px;
-  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  background-color: color-mix(in srgb, var(--golem-teal) 24%, transparent);
   color: var(--golem-teal);
   font-family: var(--font-mono);
   font-size: 10px;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
@@ -576,8 +583,9 @@ details[open] > .subgroupHeading .sectionChevron {
  * first; a fallback-only or unrouted one steps back without disappearing.
  */
 .card[data-standing='primary'] {
-  border-color: var(--surface-border);
-  background-color: var(--surface-elevated);
+  border-color: var(--golem-accent);
+  background-color: var(--surface-hover);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--golem-accent) 25%, transparent);
 }
 
 .card[data-standing='quiet'] {
