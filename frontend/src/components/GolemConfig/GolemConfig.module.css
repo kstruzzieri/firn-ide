@@ -375,6 +375,7 @@
 }
 
 .checkbox {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -384,15 +385,65 @@
 }
 
 /*
- * v9's capbox: the native control, tinted to the theme accent so a checked box
- * is unmistakable on a dark surface. `accent-color` styles the real input, so
- * the a11y floor (focus ring, keyboard, screen-reader state) is untouched.
+ * A DRAWN indicator, not `accent-color`. The browser desaturates an
+ * accent-coloured native box, which at 13px left checked and unchecked barely
+ * distinguishable on this dark theme. The real input stays in the DOM,
+ * focusable and labelled — it is only made transparent, with a span drawn in
+ * its place — so keyboard, screen-reader state, and label clicks are untouched.
  */
-.checkbox input {
+.checkboxInput {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  opacity: 0;
+}
+
+.checkboxBox {
+  display: grid;
   flex: none;
-  width: 13px;
-  height: 13px;
-  accent-color: var(--accent);
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  background-color: var(--surface-base);
+}
+
+/* The tick: two borders of an empty box, rotated. Dark ink over the accent. */
+.checkboxBox::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid var(--surface-base);
+  border-width: 0 2px 2px 0;
+  opacity: 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.checkboxInput:checked + .checkboxBox {
+  border-color: var(--accent);
+  background-color: var(--accent);
+}
+
+.checkboxInput:checked + .checkboxBox::after {
+  opacity: 1;
+}
+
+/*
+ * Locked on by the use-case floor: still filled — it IS checked — but one step
+ * back from the live accent, so a required capability does not read as loudly
+ * as one the user chose.
+ */
+.checkboxInput:checked:disabled + .checkboxBox {
+  border-color: var(--accent-dark);
+  background-color: var(--accent-dark);
+}
+
+/* The input carries focus, so the drawn box has to show it. */
+.checkboxInput:focus-visible + .checkboxBox {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 /* A capability the use-case floor requires: checked, disabled, and labelled. */

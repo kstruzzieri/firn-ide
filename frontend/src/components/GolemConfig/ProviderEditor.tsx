@@ -398,11 +398,13 @@ export function ProviderEditor({
           {!adding && (
             <label className={styles.checkbox}>
               <input
+                className={styles.checkboxInput}
                 type="checkbox"
                 disabled={keyLocked}
                 checked={fields.clearKey}
                 onChange={(event) => patch({ clearKey: event.target.checked, keyValue: '' })}
               />
+              <span className={styles.checkboxBox} aria-hidden="true" />
               Clear the stored API key
             </label>
           )}

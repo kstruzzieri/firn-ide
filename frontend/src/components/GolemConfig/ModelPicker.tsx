@@ -27,6 +27,7 @@ import {
   type ModelProjection,
   type ModelType,
 } from '../../types/golem';
+import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
 
 /** The popup's CSS max-width; the anchor clamp keeps this span on-screen. */
@@ -132,8 +133,15 @@ export function ModelPicker({
   // facts, and those are different choices: `sameModelFacts` (the comparison
   // the backend re-runs) says so, and collapsing them would silently stage the
   // first role's numbers for whichever the user thought they clicked.
-  const unique = models.filter(
-    (model, index) => models.findIndex((other) => factsKey(other) === factsKey(model)) === index
+  //
+  // Ordered by the one shared display rule. The picker is scoped to a single
+  // provider today, so that reduces to role-alpha here; passing no provider list
+  // keeps it correct — and correctly grouped — if it ever lists across them.
+  const unique = orderModelsForDisplay(
+    models.filter(
+      (model, index) => models.findIndex((other) => factsKey(other) === factsKey(model)) === index
+    ),
+    []
   );
   const eligible = unique.filter((model) =>
     floor.every((cap) => model.exposedCapabilities.includes(cap))
@@ -235,6 +243,7 @@ export function ModelPicker({
                 className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
               >
                 <input
+                  className={styles.checkboxInput}
                   type="checkbox"
                   disabled={locked}
                   checked={locked || manual.caps.includes(cap)}
@@ -248,6 +257,7 @@ export function ModelPicker({
                     })
                   }
                 />
+                <span className={styles.checkboxBox} aria-hidden="true" />
                 {cap}
                 {locked && (
                   <>

@@ -81,9 +81,10 @@ describe('ModelPicker combobox contract', () => {
     const listbox = screen.getByRole('listbox');
     expect(listbox).toHaveAttribute('id', 'route-editor-chat-listbox');
     const options = within(listbox).getAllByRole('option');
+    // Role-alpha within the provider group: agent-role before chat-role.
     expect(options.map((option) => option.textContent)).toEqual([
-      'gpt-5-mini — chat · stream',
       'gpt-5 — chat · stream · tool_call',
+      'gpt-5-mini — chat · stream',
     ]);
     expect(screen.getByText('filter: chat · stream')).toBeInTheDocument();
     expect(screen.getByText(/1 model hidden/)).toBeInTheDocument();
@@ -99,13 +100,14 @@ describe('ModelPicker combobox contract', () => {
     const { onSelect } = renderPicker({ models: [small, large] });
     await open();
 
+    // Role-alpha: large-role before small-role.
     const options = within(screen.getByRole('listbox')).getAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual([
-      'gpt-5-mini (7b · 8192 ctx · dense) — chat · stream',
       'gpt-5-mini (70b · 131072 ctx · dense) — chat · stream',
+      'gpt-5-mini (7b · 8192 ctx · dense) — chat · stream',
     ]);
 
-    await userEvent.click(options[1]);
+    await userEvent.click(options[0]);
     expect(onSelect).toHaveBeenCalledWith(large);
   });
 
@@ -119,8 +121,8 @@ describe('ModelPicker combobox contract', () => {
 
     const options = within(screen.getByRole('listbox')).getAllByRole('option');
     expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual([
-      'false',
       'true',
+      'false',
     ]);
   });
 
@@ -174,7 +176,7 @@ describe('ModelPicker combobox contract', () => {
     await open();
     await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}');
 
-    expect(onSelect).toHaveBeenCalledWith(agentModel);
+    expect(onSelect).toHaveBeenCalledWith(model());
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     expect(combobox()).toHaveFocus();
   });

@@ -246,6 +246,36 @@ describe('RoutingCard defined models', () => {
     ).toBeInTheDocument();
   });
 
+  // The same reading order the dock's Models cards and the picker use: provider
+  // groups in the providers list's order, role-alpha within each.
+  it('groups the defined models by provider, role-alpha within', () => {
+    const unrouted = (role: string, provider: string) =>
+      model({ role, provider, routedUseCases: [], removable: false });
+    renderRouting({
+      routes: [],
+      // Transport order: ascending by role, so the providers interleave.
+      models: [
+        unrouted('a-hosted', 'hosted'),
+        unrouted('a-local', 'zeta-local'),
+        unrouted('b-hosted', 'hosted'),
+        unrouted('b-local', 'zeta-local'),
+      ],
+      providers: [providerRow(), providerRow({ name: 'zeta-local' })],
+    });
+
+    const defined = screen.getByRole('list', { name: 'Defined models' });
+    expect(
+      within(defined)
+        .getAllByRole('listitem')
+        .map((row) => row.getAttribute('data-testid'))
+    ).toEqual([
+      'defined-model-row-a-hosted',
+      'defined-model-row-b-hosted',
+      'defined-model-row-a-local',
+      'defined-model-row-b-local',
+    ]);
+  });
+
   // Re-pressing Remove would only re-stage the identity it already holds, so a
   // staged removal swaps the control for its undo.
   it('offers the staged removal an undo instead of a re-stage', async () => {
@@ -590,6 +620,21 @@ describe('RouteEditor', () => {
   // v9's editor header is the row strip itself. A visible legend would sit in
   // the fieldset's border line, cutting it and reserving a gap across the top;
   // the accessible name still has to be there, so it is visually hidden.
+  // The native box is drawn by the browser and desaturates the accent, so the
+  // real input is transparent and a span is drawn in its place. The input has
+  // to stay in the DOM, checkable and labelled.
+  it('draws its own capability indicator over a real, labelled input', async () => {
+    renderRouting();
+    await openRoute('chat');
+    const box = screen.getByLabelText('chat required');
+
+    expect(box).toBeChecked();
+    expect(box).toHaveClass('checkboxInput');
+    expect(box.nextElementSibling).toHaveClass('checkboxBox');
+    // Decorative: the input alone carries the state to assistive tech.
+    expect(box.nextElementSibling).toHaveAttribute('aria-hidden', 'true');
+  });
+
   it('keeps the fieldset name out of the border line', async () => {
     renderRouting();
     await openRoute('chat');

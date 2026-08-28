@@ -35,6 +35,7 @@ import {
   type Draft,
   type RowMarkers,
 } from '../../types/golemConfig';
+import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
 import { Cell } from './Cell';
@@ -185,7 +186,12 @@ export function RoutingCard({
 
   const byRole = new Map(models.map((model) => [model.role, model]));
   const byUseCase = new Map(routes.map((route) => [route.useCase, route.role]));
-  const unrouted = models.filter((model) => model.routedUseCases.length === 0);
+  // Grouped by provider in the providers card's own order, then role-alpha —
+  // the one reading order every model list on this surface shares.
+  const unrouted = orderModelsForDisplay(
+    models.filter((model) => model.routedUseCases.length === 0),
+    providers
+  );
   const sourceReplaced = draft.source.kind !== 'applied';
   const base = { routes, models };
 

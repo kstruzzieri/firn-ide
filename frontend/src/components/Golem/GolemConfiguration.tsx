@@ -20,6 +20,7 @@ import {
   type SettingsProjection,
 } from '../../types/golem';
 import { focusConfigTab } from '../../utils/editorSurface';
+import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfiguration.module.css';
 
@@ -247,7 +248,7 @@ function ConfigurationBody({
         <section aria-label="Models">
           <h3 className={styles.sectionHeading}>Models</h3>
           <ul className={styles.cardList}>
-            {projection.models.map((m) => (
+            {orderModelsForDisplay(projection.models, projection.providers).map((m) => (
               <li key={m.role} className={styles.card}>
                 <div className={styles.cardHeader}>
                   <span className={styles.roleChip}>{m.role}</span>
@@ -265,6 +266,19 @@ function ConfigurationBody({
                     {m.effectiveCapabilities.map((c) => (
                       <span key={c} className={styles.capabilityChip}>
                         {c}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* What this model actually serves. An unrouted model shows
+                    nothing — "defined but not routed" stays the workspace's
+                    distinction to draw, not a second empty row here. */}
+                {m.routedUseCases.length > 0 && (
+                  <div className={styles.capabilityRow} data-testid={`routed-${m.role}`}>
+                    <span className={styles.srOnly}>Routes</span>
+                    {m.routedUseCases.map((useCase) => (
+                      <span key={useCase} className={styles.capabilityChip}>
+                        {useCase}
                       </span>
                     ))}
                   </div>

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfiguration } from '../../../components/Golem/GolemConfiguration';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
@@ -86,6 +86,61 @@ describe('GolemConfiguration', () => {
     expect(screen.getByText('User configuration directory')).toBeInTheDocument();
     expect(screen.getByText('Remote')).toBeInTheDocument();
     expect(ReloadGolemSettings).toHaveBeenCalledTimes(1);
+  });
+
+  // Group by provider in the PROVIDERS list's own order, then role-alpha. The
+  // projection arrives in its contract order — ascending by role, interleaved
+  // across providers — so the rendered order proves a real render-time regroup.
+  // The same rule runs on the workspace's Defined models and the route picker.
+  it('groups model cards by provider in the providers order, role-alpha within', async () => {
+    const base = readyProjection.models[0];
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        routes: [],
+        // Transport order: ascending by role, so the providers interleave.
+        models: [
+          { ...base, role: 'a-hosted', provider: 'hosted', routedUseCases: [] },
+          { ...base, role: 'a-local', provider: 'zeta-local', routedUseCases: [] },
+          { ...base, role: 'b-hosted', provider: 'hosted', routedUseCases: [] },
+          { ...base, role: 'b-local', provider: 'zeta-local', routedUseCases: [] },
+        ],
+        providers: [
+          readyProjection.providers[0],
+          { ...readyProjection.providers[0], name: 'zeta-local' },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    await screen.findByText('a-hosted');
+    const models = screen.getByRole('region', { name: 'Models' });
+    expect(
+      within(models)
+        .getAllByRole('listitem')
+        .map((row) => row.querySelector('[class*="roleChip"]')?.textContent)
+    ).toEqual(['a-hosted', 'b-hosted', 'a-local', 'b-local']);
+  });
+
+  it('chips the use cases a model serves, and nothing for an unrouted one', async () => {
+    const base = readyProjection.models[0];
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        models: [
+          { ...base, role: 'agent-m', routedUseCases: ['agent', 'chat'] },
+          { ...base, role: 'spare-m', routedUseCases: [] },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    const routed = await screen.findByTestId('routed-agent-m');
+    expect(within(routed).getByText('agent')).toBeInTheDocument();
+    expect(within(routed).getByText('chat')).toBeInTheDocument();
+    expect(screen.queryByTestId('routed-spare-m')).not.toBeInTheDocument();
   });
 
   it('mount-reload busy renders the snapshot silently (no busy notice)', async () => {

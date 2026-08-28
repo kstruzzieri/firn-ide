@@ -474,6 +474,7 @@ export function RouteEditor({
                   className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
                 >
                   <input
+                    className={styles.checkboxInput}
                     type="checkbox"
                     disabled={locked}
                     checked={locked || exposed.includes(cap)}
@@ -488,6 +489,7 @@ export function RouteEditor({
                       clearRefusal();
                     }}
                   />
+                  <span className={styles.checkboxBox} aria-hidden="true" />
                   {cap}
                   {/* v9 names the reason beside the locked control rather than
                       leaving a disabled box to explain itself. */}
