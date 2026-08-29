@@ -396,6 +396,20 @@ describe('ModelBand stylesheet coverage', () => {
     );
     expect(missing).toEqual([]);
   });
+  // The grid is the one deliberate scroll region: bounded so the editor has a
+  // predictable height, with a partial third row as the scroll affordance. The
+  // strip must NOT be sticky — that overlaid the last card row and gave the
+  // band a second scroll context fighting the workspace scroll.
+  it('bounds the grid and leaves the strip in normal flow', () => {
+    const dir = path.resolve(__dirname, '../../../components/GolemConfig');
+    const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
+    const grid = css.match(/\.modelGrid \{[^}]*\}/s)?.[0] ?? '';
+    const detail = css.match(/\.detail \{[^}]*\}/s)?.[0] ?? '';
+
+    expect(grid).toMatch(/max-height:/);
+    expect(grid).toMatch(/overflow-y: auto/);
+    expect(detail).not.toMatch(/position: sticky/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -468,14 +482,20 @@ describe('ModelBand detail strip', () => {
     expect(within(strip()).getByText('gpt-5')).toBeVisible();
   });
 
-  it('scrolls the strip into view when the assignment changes', async () => {
-    const scrollIntoView = jest.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
+  // The strip is in normal flow and always visible; what can be out of sight
+  // is the assigned CARD, inside the bounded grid scroller.
+  it('scrolls the assigned card into view within the grid', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    };
     const { rerender, props } = renderBand();
-    expect(scrollIntoView).not.toHaveBeenCalled(); // never on first paint
+    expect(scrolled).toHaveLength(0); // never on first paint
 
     rerender(<ModelBand {...props} selected={agentModel} />);
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(scrolled).toHaveLength(1);
+    expect(scrolled[0]).toHaveAttribute('role', 'option');
+    expect(within(scrolled[0] as HTMLElement).getByText('gpt-5')).toBeVisible();
   });
 });
 

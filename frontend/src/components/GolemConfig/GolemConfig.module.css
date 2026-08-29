@@ -660,16 +660,32 @@
   min-width: 0;
 }
 
+/*
+ * Two card rows plus a peek of the third: the partial row is the affordance
+ * that says "this scrolls". Derived from the card height rather than a magic
+ * number, so tuning the card tunes the bound with it.
+ *
+ * This is the one deliberate scroll region in the editor. The strip below sits
+ * in normal flow — an earlier sticky strip overlaid the last card row and its
+ * implicit scroll fought the workspace's own.
+ */
 .modelGrid {
+  --golem-card-height: 52px;
+  --golem-grid-gap: 8px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 8px;
+  gap: var(--golem-grid-gap);
+  max-height: calc(2 * var(--golem-card-height) + 2 * var(--golem-grid-gap) + 20px);
+  overflow-y: auto;
+  /* Scrollbar treatment is the app-wide one in styles/reset.css. */
 }
 
 .modelCard {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 6px;
+  min-height: var(--golem-card-height, 52px);
   padding: 9px 11px;
   border: 1px solid var(--surface-border-subtle);
   border-radius: 8px;
@@ -813,13 +829,11 @@
  *
  * One surface below the grid in three states — declare form, dashed
  * placeholder, or readout — so it never jumps into existence and the grid never
- * reflows. Sticky at the container bottom, so browsing a long grid keeps the
- * readout of what you are choosing on screen.
+ * reflows. In NORMAL FLOW: it was sticky, which overlaid the last card row and
+ * gave the band a second scroll context fighting the workspace's. The grid is
+ * bounded instead, which keeps the strip permanently visible without either.
  */
 .detail {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   padding: 10px 14px 12px;
   border: 1px solid var(--surface-border);
   border-radius: 8px;

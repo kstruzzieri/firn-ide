@@ -178,7 +178,6 @@ export function ModelBand({
   /** True only for the render that follows a keyboard move. */
   const navigatedRef = useRef(false);
   const filterRef = useRef<HTMLInputElement>(null);
-  const stripRef = useRef<HTMLDivElement>(null);
 
   const gridId = `${id}-grid`;
 
@@ -286,7 +285,12 @@ export function ModelBand({
       paintedRef.current = true;
       return;
     }
-    stripRef.current?.scrollIntoView({ block: 'nearest' });
+    // The grid is the scroll region now, so this moves the GRID, not the page.
+    // Arrow navigation needs no equivalent: focusing a card scrolls its own
+    // scroller natively, and a second call would fight that.
+    gridRef.current
+      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest' });
   }, [assignedKey]);
 
   // Leaving the declare fieldset returns the caret to the filter it was opened
@@ -555,7 +559,6 @@ export function ModelBand({
        * readout — facts left, the exposure editor right of a hairline rule.
        */}
       <div
-        ref={stripRef}
         className={`${styles.detail} ${detailState === 'empty' ? styles.detailEmpty : ''}`}
         data-testid="model-detail"
         data-state={detailState}
