@@ -661,21 +661,27 @@
 }
 
 /*
- * Two card rows plus a peek of the third: the partial row is the affordance
+ * Four card rows plus a peek of the fifth: the partial row is the affordance
  * that says "this scrolls". Derived from the card height rather than a magic
- * number, so tuning the card tunes the bound with it.
+ * number, so tuning the card tunes the bound with it. The 20px peek spans the
+ * fourth inter-row gap plus a sliver of the fifth row's cards.
+ *
+ * The card height is the card's own two fixed lines — 18px padding + ~16px
+ * name line + 6px gap + ~17px metadata line + 2px border ≈ 59px, rounded up so
+ * the bound never clips the fourth row. The metadata row renders even when its
+ * facts are sparse, so every card resolves to the same height.
  *
  * This is the one deliberate scroll region in the editor. The strip below sits
  * in normal flow — an earlier sticky strip overlaid the last card row and its
  * implicit scroll fought the workspace's own.
  */
 .modelGrid {
-  --golem-card-height: 52px;
+  --golem-card-height: 60px;
   --golem-grid-gap: 8px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: var(--golem-grid-gap);
-  max-height: calc(2 * var(--golem-card-height) + 2 * var(--golem-grid-gap) + 20px);
+  max-height: calc(4 * var(--golem-card-height) + 3 * var(--golem-grid-gap) + 20px);
   overflow-y: auto;
   /* Scrollbar treatment is the app-wide one in styles/reset.css. */
 }
@@ -941,6 +947,46 @@
   flex-direction: column;
   gap: 4px;
   margin-top: 10px;
+}
+
+/*
+ * Mockup density inside the strip: the capability checklist flows as a
+ * wrapping row of columns instead of one tall column, and sheds the boxed
+ * chrome — the strip already draws the surface, and the stacked column was
+ * most of the strip's height. Engines lay a fieldset legend out either as a
+ * flex item (the full-basis rule gives it its own row) or pulled into the
+ * border area above the content; both read the same.
+ */
+.detail .capabilities {
+  flex-flow: row wrap;
+  gap: 6px 14px;
+  padding: 0;
+  border: 0;
+}
+
+.detail .capabilities > legend,
+.detail .capabilities > .fieldHint {
+  flex-basis: 100%;
+}
+
+/* Even columns, per the mockup's minmax(118px, 1fr) checkbox grid. */
+.detail .capabilities .checkbox {
+  flex: 0 0 auto;
+  min-width: 118px;
+}
+
+/* The think control inline, per the mockup: label beside a narrow select. */
+.detailExposure .field,
+.detailDeclaredExposure .field {
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.detailExposure .field select.input,
+.detailDeclaredExposure .field select.input {
+  flex: none;
+  width: 130px;
 }
 
 .hiddenLine {

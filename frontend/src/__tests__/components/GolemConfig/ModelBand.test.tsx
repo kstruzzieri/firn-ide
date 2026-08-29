@@ -89,18 +89,37 @@ const cardNamed = (name: string) =>
 // ---------------------------------------------------------------------------
 
 describe('ModelBand compact cards', () => {
-  it('shows name, type and context window, and never capability chips', () => {
+  it('shows name, type badge, params and context, and never capability chips', () => {
     renderBand({
-      models: [model({ contextWindow: 8192 })],
-      selected: model({ contextWindow: 8192 }),
+      models: [model({ parameters: '30B-A3B', contextWindow: 262144 })],
+      selected: model({ parameters: '30B-A3B', contextWindow: 262144 }),
     });
     const card = cardNamed('gpt-5-mini');
 
     expect(within(card).getByText('gpt-5-mini')).toBeVisible();
     expect(within(card).getByText('dense')).toBeVisible();
-    expect(within(card).getByText(/8192/)).toBeVisible();
+    // The metadata row after the badge, joined per the mockup.
+    expect(within(card).getByText('30B-A3B · 262144 ctx')).toBeVisible();
     // Even the assigned card stays compact.
     expect(within(card).queryByText('stream')).not.toBeInTheDocument();
+  });
+
+  it('omits an absent fact entirely — no dash, no unknown, no stray separator', () => {
+    // Context window undefined: the params segment stands alone.
+    renderBand({ models: [model({ parameters: '30B-A3B' })] });
+    const card = cardNamed('gpt-5-mini');
+
+    expect(within(card).getByText('30B-A3B')).toBeVisible();
+    expect(card.textContent).not.toMatch(/ctx|·|—|unknown/);
+  });
+
+  it('keeps the metadata row with no facts at all: the badge alone, no placeholder', () => {
+    renderBand({ models: [model()] });
+    const card = cardNamed('gpt-5-mini');
+
+    expect(within(card).getByText('dense')).toBeVisible();
+    // Name and badge only — nothing stands in for the absent facts.
+    expect(card.textContent).toBe('gpt-5-minidense');
   });
 });
 
@@ -397,18 +416,32 @@ describe('ModelBand stylesheet coverage', () => {
     expect(missing).toEqual([]);
   });
   // The grid is the one deliberate scroll region: bounded so the editor has a
-  // predictable height, with a partial third row as the scroll affordance. The
+  // predictable height, with a partial fifth row as the scroll affordance. The
   // strip must NOT be sticky — that overlaid the last card row and gave the
   // band a second scroll context fighting the workspace scroll.
-  it('bounds the grid and leaves the strip in normal flow', () => {
+  it('bounds the grid at four card rows and leaves the strip in normal flow', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
     const grid = css.match(/\.modelGrid \{[^}]*\}/s)?.[0] ?? '';
     const detail = css.match(/\.detail \{[^}]*\}/s)?.[0] ?? '';
 
-    expect(grid).toMatch(/max-height:/);
+    expect(grid).toMatch(
+      /max-height: calc\(4 \* var\(--golem-card-height\) \+ 3 \* var\(--golem-grid-gap\) \+ 20px\)/
+    );
     expect(grid).toMatch(/overflow-y: auto/);
     expect(detail).not.toMatch(/position: sticky/);
+  });
+
+  // Mockup density: inside the strip the capability checklist flows as a
+  // wrapping row of columns and sheds its boxed chrome — one tall column was
+  // most of the strip's height.
+  it('flows the strip checklist as wrapping columns, not one tall column', () => {
+    const dir = path.resolve(__dirname, '../../../components/GolemConfig');
+    const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
+    const rule = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
+
+    expect(rule).toMatch(/flex-flow: row wrap/);
+    expect(rule).toMatch(/border: 0/);
   });
 });
 
