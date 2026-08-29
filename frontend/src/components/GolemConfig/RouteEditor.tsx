@@ -50,7 +50,7 @@ import {
 } from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
-import { ModelPicker, canonicalCaps, type ManualModel } from './ModelPicker';
+import { ModelBand, canonicalCaps, type ManualModel } from './ModelBand';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -406,7 +406,6 @@ export function RouteEditor({
     onClose();
   };
 
-  const providerModels = models.filter((model) => model.provider === provider);
   const capsLegend =
     facts === null
       ? `Capabilities exposed to ${useCase}`
@@ -426,57 +425,38 @@ export function RouteEditor({
         </p>
       )}
 
+      {/* Variant 3: the band spans the editor, and the exposure editor moves
+          below it. Nothing overlays, so nothing can clip or drift. */}
+      <ModelBand
+        id={id}
+        useCase={useCase}
+        floor={floor}
+        models={models}
+        provider={provider}
+        providers={providers}
+        selected={defined}
+        manual={manual}
+        onProviderChange={(next) => {
+          setProvider(next);
+          setDefined(null);
+          setManual(null);
+          clearRefusal();
+        }}
+        onSelect={(model) => {
+          setDefined(model);
+          setManual(null);
+          clearRefusal();
+        }}
+        onManual={(next) => {
+          setManual(next);
+          if (next !== null) setDefined(null);
+          clearRefusal();
+        }}
+      />
+
+      <hr className={styles.bandSeparator} />
+
       <div className={styles.editorGrid}>
-        <div className={styles.column}>
-          <div className={styles.field}>
-            <label className={styles.fieldLabel} htmlFor={`${id}-provider`}>
-              Provider
-            </label>
-            <select
-              className={styles.input}
-              id={`${id}-provider`}
-              value={provider}
-              onChange={(event) => {
-                setProvider(event.target.value);
-                setDefined(null);
-                setManual(null);
-                clearRefusal();
-              }}
-            >
-              <option value="">Choose a provider</option>
-              {providers.map((entry) => (
-                <option key={entry.name} value={entry.name}>
-                  {entry.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {provider === '' ? (
-            <p className={styles.fieldHint}>
-              Choose a provider to see the models it can serve for {useCase}.
-            </p>
-          ) : (
-            <ModelPicker
-              id={id}
-              floor={floor}
-              models={providerModels}
-              selected={defined}
-              manual={manual}
-              onSelect={(model) => {
-                setDefined(model);
-                setManual(null);
-                clearRefusal();
-              }}
-              onManual={(next) => {
-                setManual(next);
-                if (next !== null) setDefined(null);
-                clearRefusal();
-              }}
-            />
-          )}
-        </div>
-
         <div className={styles.column}>
           <fieldset className={styles.capabilities}>
             <legend className={styles.fieldLabel}>{capsLegend}</legend>

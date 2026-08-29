@@ -149,6 +149,23 @@ const openRoute = async (useCase: string, label = 'Edit') =>
 const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 const cancelEditor = async () =>
   await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+/** Choose a model card in the band (the option is found by its NAME node). */
+async function pickModel(name: string) {
+  const card = within(screen.getByRole('listbox', { name: /Models/ }))
+    .getAllByRole('option')
+    .find((option) => within(option).queryByText(name) !== null);
+  if (card === undefined) throw new Error(`no model card named ${name}`);
+  await userEvent.click(card);
+}
+
+/** The declare path: type a name nothing matches, then take the declare card. */
+async function declareModel(name: string) {
+  const filter = screen.getByLabelText('Filter models');
+  await userEvent.clear(filter);
+  await userEvent.type(filter, name);
+  await userEvent.click(screen.getByRole('option', { name: new RegExp(`Declare "${name}"`) }));
+}
+
 const clickApply = async () => await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
 /** Stages one provider-key-set on `hosted`, the change every key assertion uses. */
@@ -636,8 +653,7 @@ describe('nonterminal apply results', () => {
 
     // A real retarget: a different model on the same provider.
     await openRoute('chat');
-    await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
-    await userEvent.click(screen.getByRole('option', { name: /^gpt-5 / }));
+    await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Remove them and continue'));
     await stage();
     await cancelEditor();
@@ -1128,8 +1144,8 @@ describe('bootstrap CTAs', () => {
 
     await openRoute('agent', 'Assign');
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'local');
-    await userEvent.click(screen.getByRole('button', { name: 'Enter a model manually' }));
-    await userEvent.type(screen.getByLabelText('Model name'), 'qwen3');
+    // No model exists on a brand-new provider: the declare card is the path.
+    await declareModel('qwen3');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
     await stage();
     await cancelEditor();

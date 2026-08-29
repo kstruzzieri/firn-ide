@@ -584,71 +584,203 @@
   margin: 0;
 }
 
-/* ── filtered picker popup (portaled; no ancestor can clip it) ───────────── */
-
-.pickerPopup {
-  z-index: 60;
-  /* Width is set inline from the input it is anchored to. */
-  max-width: calc(100vw - 16px);
-  padding: 6px;
-  border: 1px solid var(--surface-border);
-  border-radius: 8px;
-  background-color: var(--surface-elevated);
-  box-shadow: var(--shadow-panel);
+/* ── inline model band (revamp Variant 3) ───────────────────────────────────
+ *
+ * The editor grows instead of overlaying. Nothing here is positioned, so
+ * nothing can drift from its anchor or be clipped by an ancestor — the whole
+ * class of bug the portaled popup had.
+ */
+.band {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.pickerFilter {
-  margin: 0;
-  padding: 4px 8px 6px;
+.bandHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.bandFilter {
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
 
-.pickerList {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 260px;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
+/* Slice D's explicit "Refresh list" action lands here; empty today. */
+.bandRefreshSlot {
+  display: contents;
 }
 
-.pickerOption {
-  display: block;
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background-color: transparent;
-  color: var(--text-secondary);
+.bandRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.bandProvider {
+  flex: none;
+  width: 160px;
+}
+
+.bandRow input {
+  flex: 1;
+  min-width: 0;
+}
+
+.modelGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.modelCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+  background-color: var(--surface-base);
+  cursor: pointer;
+}
+
+.modelCard:hover {
+  background-color: var(--surface-hover);
+}
+
+/* The roving tabindex lands here, so the focus ring is the card itself. */
+.modelCard[data-active] {
+  border-color: var(--accent);
+}
+
+.modelCard:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.modelCardChosen {
+  border-color: var(--palette-cyan);
+  background-color: color-mix(in srgb, var(--palette-cyan) 10%, transparent);
+}
+
+.modelCardTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modelCardMark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--palette-cyan);
+}
+
+.modelCardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.modelCardFacts {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.modelCardDeclare {
+  border-style: dashed;
+  border-color: var(--surface-border);
+}
+
+.modelCardDeclare .modelName {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+/* Shown for its REASON, never chosen. */
+.modelCardBlocked {
+  cursor: default;
+}
+
+.modelCardBlocked:hover {
+  background-color: var(--surface-base);
+}
+
+.modelCardBlocked .modelName {
+  color: var(--text-muted);
+}
+
+.capChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.capChip {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* This capability is one the floor asked for. */
+.capChipFloor {
+  border-color: color-mix(in srgb, var(--palette-cyan) 45%, transparent);
+  color: var(--palette-cyan);
+}
+
+/* Exactly why a hidden model is hidden. */
+.capChipMissing {
+  border-color: var(--palette-red);
+  color: var(--palette-red);
+}
+
+.hiddenLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 11px;
   text-align: left;
   cursor: pointer;
 }
 
-.pickerOption:hover,
-.pickerOption[data-active] {
-  border-color: var(--accent);
-  background-color: var(--surface-hover);
+.hiddenLine:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
-.pickerName {
-  font-family: var(--font-mono);
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
+.hiddenCount {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
-.pickerCaps {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
+.hiddenToggle {
+  color: var(--accent);
+}
+
+/* The band sits above the exposure editor, separated by the variant's rule. */
+.bandSeparator {
+  width: 100%;
+  margin: 14px 0 2px;
+  border: 0;
+  border-top: 1px solid var(--surface-border-subtle);
 }
 
 .rowDiagnostic {

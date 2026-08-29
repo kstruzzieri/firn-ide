@@ -103,9 +103,21 @@ const openRoute = async (useCase: string, label = 'Edit') =>
 
 const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 
+/** Choose a model card in the band. Card text is name + type + facts, so the
+ *  card is found by its NAME node rather than its whole accessible name. */
 async function pickModel(name: string) {
-  await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
-  await userEvent.click(screen.getByRole('option', { name: new RegExp(`^${name} `) }));
+  const card = within(screen.getByRole('listbox', { name: /Models/ }))
+    .getAllByRole('option')
+    .find((option) => within(option).queryByText(name) !== null);
+  if (card === undefined) throw new Error(`no model card named ${name}`);
+  await userEvent.click(card);
+}
+
+/** The declare path: type a name nothing matches, then take the declare card. */
+async function declareModel(name: string) {
+  await userEvent.clear(screen.getByLabelText('Filter models'));
+  await userEvent.type(screen.getByLabelText('Filter models'), name);
+  await userEvent.click(screen.getByRole('option', { name: new RegExp(`Declare "${name}"`) }));
 }
 
 const routeCells = (useCase: string) => screen.getByTestId(`route-row-${useCase}`);
@@ -307,7 +319,11 @@ describe('RouteEditor', () => {
 
     const editor = screen.getByRole('group', { name: 'Route chat' });
     expect(within(editor).getByLabelText('Provider')).toHaveValue('hosted');
-    expect(within(editor).getByRole('combobox', { name: 'Model' })).toHaveValue('gpt-5-mini');
+    expect(
+      within(editor)
+        .getByRole('listbox', { name: /Models/ })
+        .querySelector('[aria-selected="true"]')
+    ).toHaveTextContent('gpt-5-mini');
     const caps = within(editor).getByRole('group', {
       name: 'Capabilities exposed to chat — from gpt-5-mini',
     });
@@ -678,10 +694,8 @@ describe('RouteEditor', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/Choose a provider/);
 
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
-    await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Enter a model manually' }));
-
-    await userEvent.type(screen.getByLabelText('Model name'), 'nomic-embed');
+    // The declare card carries the typed name into the facts editor.
+    await declareModel('nomic-embed');
     await stage();
     expect(screen.getByRole('alert')).toHaveTextContent(/model type is required/i);
     expect(onStage).not.toHaveBeenCalled();
@@ -711,8 +725,7 @@ describe('RouteEditor', () => {
     const { onStage } = renderRouting();
     await openRoute('embedding', 'Assign');
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
-    await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Enter a model manually' }));
+    await declareModel('hand-rolled');
     await userEvent.type(screen.getByLabelText('Model name'), 'a‮b');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
     await stage();
@@ -732,7 +745,11 @@ describe('RouteEditor', () => {
     expect(onStage).not.toHaveBeenCalled();
 
     await openRoute('chat');
-    expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('gpt-5-mini');
+    expect(
+      within(screen.getByRole('listbox', { name: /Models/ })).getByRole('option', {
+        selected: true,
+      })
+    ).toHaveTextContent('gpt-5-mini');
   });
 
   // Three notices stack under this editor and they mean three different things.
@@ -784,7 +801,11 @@ describe('RouteEditor', () => {
       }),
     });
     await openRoute('chat');
-    expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('gpt-5');
+    expect(
+      within(screen.getByRole('listbox', { name: /Models/ })).getByRole('option', {
+        selected: true,
+      })
+    ).toHaveTextContent('gpt-5');
   });
 });
 
