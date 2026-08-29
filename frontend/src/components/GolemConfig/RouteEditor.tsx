@@ -441,79 +441,81 @@ export function RouteEditor({
         selected={defined}
         manual={manual}
         exposure={
-          <>
-            <div className={styles.column}>
-              <fieldset className={styles.capabilities}>
-                <legend className={styles.fieldLabel}>{capsLegend}</legend>
-                {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
-                  const locked = floor.includes(cap);
-                  return (
-                    <label
-                      key={cap}
-                      className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-                    >
-                      <input
-                        className={styles.checkboxInput}
-                        type="checkbox"
-                        disabled={locked}
-                        checked={locked || exposed.includes(cap)}
-                        onChange={(event) => {
-                          setExposed((currentCaps) =>
-                            canonicalCaps(
-                              event.target.checked
-                                ? [...currentCaps, cap]
-                                : currentCaps.filter((other) => other !== cap)
-                            )
-                          );
-                          clearRefusal();
-                        }}
-                      />
-                      <span className={styles.checkboxBox} aria-hidden="true" />
-                      {cap}
-                      {/* v9 names the reason beside the locked control rather than
-                        leaving a disabled box to explain itself. */}
-                      {locked && (
-                        <>
-                          {' '}
-                          <span className={styles.requiredTag}>required</span>
-                        </>
-                      )}
-                    </label>
-                  );
-                })}
-                <span className={styles.fieldHint}>
-                  What this route may use. The capabilities {useCase} requires are checked and
-                  locked.
-                </span>
-              </fieldset>
-            </div>
-
-            {/* The variant puts Think in its own column beside the capabilities. */}
-            {exposed.includes('thinking') && (
+          defined === null && manual === null ? undefined : (
+            <>
               <div className={styles.column}>
-                <div className={styles.field}>
-                  <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
-                    Think mode
-                  </label>
-                  <select
-                    className={styles.input}
-                    id={`${id}-think`}
-                    value={think}
-                    onChange={(event) => {
-                      setThink(event.target.value as ThinkMode);
-                      clearRefusal();
-                    }}
-                  >
-                    {THINK_MODES.map((mode) => (
-                      <option key={mode} value={mode}>
-                        {THINK_LABEL[mode]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <fieldset className={styles.capabilities}>
+                  <legend className={styles.fieldLabel}>{capsLegend}</legend>
+                  {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
+                    const locked = floor.includes(cap);
+                    return (
+                      <label
+                        key={cap}
+                        className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                      >
+                        <input
+                          className={styles.checkboxInput}
+                          type="checkbox"
+                          disabled={locked}
+                          checked={locked || exposed.includes(cap)}
+                          onChange={(event) => {
+                            setExposed((currentCaps) =>
+                              canonicalCaps(
+                                event.target.checked
+                                  ? [...currentCaps, cap]
+                                  : currentCaps.filter((other) => other !== cap)
+                              )
+                            );
+                            clearRefusal();
+                          }}
+                        />
+                        <span className={styles.checkboxBox} aria-hidden="true" />
+                        {cap}
+                        {/* v9 names the reason beside the locked control rather than
+                        leaving a disabled box to explain itself. */}
+                        {locked && (
+                          <>
+                            {' '}
+                            <span className={styles.requiredTag}>required</span>
+                          </>
+                        )}
+                      </label>
+                    );
+                  })}
+                  <span className={styles.fieldHint}>
+                    What this route may use. The capabilities {useCase} requires are checked and
+                    locked.
+                  </span>
+                </fieldset>
               </div>
-            )}
-          </>
+
+              {/* Think sits under the capabilities inside the strip's exposure half. */}
+              {exposed.includes('thinking') && (
+                <div className={styles.column}>
+                  <div className={styles.field}>
+                    <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
+                      Think mode
+                    </label>
+                    <select
+                      className={styles.input}
+                      id={`${id}-think`}
+                      value={think}
+                      onChange={(event) => {
+                        setThink(event.target.value as ThinkMode);
+                        clearRefusal();
+                      }}
+                    >
+                      {THINK_MODES.map((mode) => (
+                        <option key={mode} value={mode}>
+                          {THINK_LABEL[mode]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </>
+          )
         }
         onProviderChange={(next) => {
           setProvider(next);

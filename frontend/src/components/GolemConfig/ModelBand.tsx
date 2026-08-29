@@ -1,15 +1,21 @@
 /**
- * The inline model band (#263 spec §4.4/§4.7, picker revamp Variant 3).
+ * The inline model band (#263 spec §4.4/§4.7, picker revamp v2 Treatment 1).
  *
  * The editor row GROWS instead of overlaying: provider select, filter field and
- * a card grid sit full width above the exposure editor. Nothing floats, nothing
- * clips, nothing needs a portal — the models, the declare path and the
- * hidden-by-floor set are all permanently visible surfaces. That replaces the
- * combobox-plus-portal picker, whose popup could not stay attached to its input.
+ * a card grid, then one master-detail strip. Nothing floats, nothing clips,
+ * nothing needs a portal — the models, the declare path and the hidden-by-floor
+ * set are all permanently visible surfaces.
  *
- * Cards are COMPACT by default (name, type, context window). Choosing one
- * expands it in place to show its declared capabilities and collapses whichever
- * was open before, so the band stays readable at dozens of models.
+ * Cards are uniformly COMPACT and never expand: name, type, one facts line. The
+ * strip below owns everything else, so a grid row can never inflate and the
+ * geometry never moves under the cursor. It has three states — the declare
+ * form, a one-line placeholder, or the readout (facts left, exposure editor
+ * right of a hairline) — so the surface never jumps into existence.
+ *
+ * Arrowing the grid PREVIEWS the focused card in the strip's left half without
+ * assigning it; the exposure editor on the right always belongs to what is
+ * actually selected, because editing exposure you have not chosen would stage a
+ * lie.
  *
  * Everything here is a filter and a pre-check. The backend independently
  * re-derives eligibility and refuses a model that does not meet the affected
@@ -438,6 +444,7 @@ export function ModelBand({
           onChange={(event) => {
             setQuery(event.target.value);
             setActive(0);
+            setPreviewing(false);
           }}
         />
       </div>
@@ -449,6 +456,11 @@ export function ModelBand({
         aria-label={`Models for ${useCase}`}
         className={styles.modelGrid}
         onKeyDown={onGridKeyDown}
+        onBlur={(event) => {
+          // Card-to-card moves stay inside the grid; only leaving it entirely
+          // ends the preview.
+          if (!event.currentTarget.contains(event.relatedTarget)) setPreviewing(false);
+        }}
       >
         {matches.map((row, index) => {
           const chosen = sameModel(selected, row.model);
@@ -544,7 +556,7 @@ export function ModelBand({
        */}
       <div
         ref={stripRef}
-        className={`${styles.detail} ${detail === null ? styles.detailEmpty : ''}`}
+        className={`${styles.detail} ${detailState === 'empty' ? styles.detailEmpty : ''}`}
         data-testid="model-detail"
         data-state={detailState}
       >
@@ -560,6 +572,9 @@ export function ModelBand({
               </span>
             </div>
             {declareForm}
+            {exposure !== undefined && (
+              <div className={styles.detailDeclaredExposure}>{exposure}</div>
+            )}
           </>
         ) : detail === null ? (
           'No model assigned. Select a card above — its facts and the exposure editor land here, together.'
@@ -578,7 +593,7 @@ export function ModelBand({
               <span className={styles.detailOwner}>{`from ${detail.provider}`}</span>
             </div>
 
-            <div className={styles.detailBody}>
+            <div className={styles.detailBody} data-split={exposure !== undefined || undefined}>
               <div>
                 <div className={styles.detailStats}>
                   <span className={styles.detailStat}>
@@ -614,13 +629,12 @@ export function ModelBand({
               </div>
 
               {/*
-               * The editor is bound to the SELECTION, never to a preview: the
-               * left half may be showing another model's facts read-only, but
-               * editing exposure you have not chosen would stage a lie.
+               * Bound to the SELECTION (or the hand declaration), never to a
+               * preview: the left half may be showing another model's facts
+               * read-only, but editing exposure you have not chosen would stage
+               * a lie. The owner decides whether there is anything to expose.
                */}
-              {selected !== null && exposure !== undefined && (
-                <div className={styles.detailExposure}>{exposure}</div>
-              )}
+              {exposure !== undefined && <div className={styles.detailExposure}>{exposure}</div>}
             </div>
           </>
         )}

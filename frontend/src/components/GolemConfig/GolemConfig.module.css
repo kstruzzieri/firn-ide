@@ -590,11 +590,12 @@
   margin: 0;
 }
 
-/* ── inline model band (revamp Variant 3) ───────────────────────────────────
+/* ── inline model band (revamp v2, Treatment 1) ─────────────────────────────
  *
- * The editor grows instead of overlaying. Nothing here is positioned, so
+ * The editor grows instead of overlaying, and nothing here is positioned, so
  * nothing can drift from its anchor or be clipped by an ancestor — the whole
- * class of bug the portaled popup had.
+ * class of bug the portaled popup had. Cards stay uniformly compact; the
+ * master-detail strip below the grid owns every fact beyond name and type.
  */
 .band {
   display: flex;
@@ -871,15 +872,28 @@
 
 .detailBody {
   display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 0 20px;
   align-items: start;
+}
+
+/* Two halves only when there is a second half to show. */
+.detailBody[data-split] {
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
 }
 
 /* The hairline that separates read-only facts from the editable exposure. */
 .detailExposure {
   padding-left: 20px;
   border-left: 1px solid var(--surface-border-subtle);
+}
+
+/* The declaration's exposure editor, under its facts form rather than beside
+   it: the form already owns both columns. */
+.detailDeclaredExposure {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--surface-border-subtle);
 }
 
 .detailStats {
@@ -1275,6 +1289,19 @@
 /* ── narrow container: strips stack, nothing scrolls sideways ───────────── */
 
 @container golem-config (max-width: 720px) {
+  /* The strip stacks: facts over exposure, the hairline becoming a rule. */
+  .detailBody[data-split] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px 0;
+  }
+
+  .detailExposure {
+    padding-top: 10px;
+    padding-left: 0;
+    border-top: 1px solid var(--surface-border-subtle);
+    border-left: none;
+  }
+
   .root {
     padding: 8px;
   }

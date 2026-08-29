@@ -478,3 +478,81 @@ describe('ModelBand detail strip', () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The declare path is a first-class readout, not a dead end
+// ---------------------------------------------------------------------------
+
+describe('ModelBand declare readout', () => {
+  const strip = () => screen.getByTestId('model-detail');
+
+  it('gives a hand declaration the exposure editor too', () => {
+    // RouteEditor nulls the chosen model when a declaration is made, so gating
+    // the exposure half on `selected` deleted the checklist and the Think
+    // control from the entire declare path.
+    renderBand({
+      selected: null,
+      manual: { model: 'llama-4', type: 'dense', caps: ['chat', 'stream'] },
+      exposure: <div data-testid="exposure">think mode and the checklist</div>,
+    });
+
+    expect(within(strip()).getByTestId('exposure')).toBeVisible();
+  });
+
+  it('wears the solid surface while declaring, not the empty placeholder', () => {
+    renderBand({
+      selected: null,
+      manual: { model: 'llama-4', type: '', caps: ['chat', 'stream'] },
+    });
+
+    expect(strip()).toHaveAttribute('data-state', 'declaring');
+    expect(strip().className).not.toMatch(/detailEmpty/);
+    expect(within(strip()).getByText(/declare "llama-4"/)).toBeVisible();
+  });
+
+  it('gives the facts half the full width when there is no exposure half', () => {
+    renderBand({ selected: agentModel });
+    expect(within(strip()).getByText('gpt-5')).toBeVisible();
+    // No exposure node passed, so the strip must not leave 7/12 blank.
+    expect(strip().querySelector(`[class*='detailBody']`)).not.toHaveAttribute('data-split');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Preview must not outlive the grid
+// ---------------------------------------------------------------------------
+
+describe('ModelBand preview lifetime', () => {
+  const strip = () => screen.getByTestId('model-detail');
+
+  it('ends the preview when focus leaves the grid', async () => {
+    renderBand({ selected: agentModel });
+    cards()[0].focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+
+    // Tabbing or clicking out must not leave the hint over another model's
+    // facts while the checkboxes belong to the assignment.
+    await userEvent.click(screen.getByLabelText('Filter models'));
+    expect(strip()).toHaveAttribute('data-state', 'assigned');
+  });
+
+  it('ends the preview when the filter is typed', async () => {
+    renderBand({ selected: agentModel });
+    cards()[0].focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+
+    // The filter re-points the active index with no navigation at all.
+    await userEvent.type(screen.getByLabelText('Filter models'), 'g');
+    expect(strip()).toHaveAttribute('data-state', 'assigned');
+  });
+});
+
+describe('ModelBand click selection', () => {
+  it('selects the model when its card is clicked', async () => {
+    const { onSelect } = renderBand();
+    await userEvent.click(cardNamed('gpt-5-mini'));
+    expect(onSelect).toHaveBeenCalledWith(model());
+  });
+});

@@ -967,7 +967,8 @@ describe('bootstrap CTAs', () => {
 
   it('offers exactly the two fixed starting points and no profile picker', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    const masthead = await screen.findByTestId('golem-config-masthead');
+    await screen.findByRole('button', { name: 'Start from curated/local' });
+    const masthead = screen.getByTestId('golem-config-masthead');
 
     expect(
       within(masthead).getByRole('button', { name: 'Start from curated/local' })
@@ -979,9 +980,7 @@ describe('bootstrap CTAs', () => {
 
   it('loads the curated profile as the draft source and paints its rows as pending', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByTestId('golem-config-masthead');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
 
     expect(await screen.findByTestId('provider-row-hosted')).toBeInTheDocument();
@@ -998,8 +997,7 @@ describe('bootstrap CTAs', () => {
       projection: { ...readyProjection, revision: movedRevision },
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByTestId('golem-config-masthead');
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
     await screen.findByRole('button', { name: 'source → curated/local' });
 
     expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
@@ -1031,8 +1029,7 @@ describe('bootstrap CTAs', () => {
   // the whole handle: reopen it, correct it, or take it back.
   it('reopens a staged provider-add on its staged values and re-stages a correction', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByTestId('golem-config-masthead');
-    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
@@ -1072,8 +1069,7 @@ describe('bootstrap CTAs', () => {
 
   it('unstages a provider-add from its own strip', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByTestId('golem-config-masthead');
-    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
@@ -1100,9 +1096,7 @@ describe('bootstrap CTAs', () => {
   // remounts the cards too, so a standing chip request must not ride along.
   it('does not replay a chip click across a bootstrap source switch', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByTestId('golem-config-masthead');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
@@ -1128,9 +1122,7 @@ describe('bootstrap CTAs', () => {
   it('creates from a blank builder once the bootstrap inputs are complete', async () => {
     (CreateGolemSettings as jest.Mock).mockResolvedValue({ status: 'busy' });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByTestId('golem-config-masthead');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
     expect(
       await screen.findByRole('button', { name: 'source → blank configuration' })
     ).toBeVisible();
