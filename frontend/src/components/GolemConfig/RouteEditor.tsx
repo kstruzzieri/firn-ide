@@ -500,8 +500,11 @@ export function RouteEditor({
               What this route may use. The capabilities {useCase} requires are checked and locked.
             </span>
           </fieldset>
+        </div>
 
-          {exposed.includes('thinking') && (
+        {/* The variant puts Think in its own column beside the capabilities. */}
+        {exposed.includes('thinking') && (
+          <div className={styles.column}>
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
                 Think mode
@@ -522,8 +525,8 @@ export function RouteEditor({
                 ))}
               </select>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* A fact about what the backend will do; nothing is asked of the user. */}

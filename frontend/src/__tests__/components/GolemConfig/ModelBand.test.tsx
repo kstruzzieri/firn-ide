@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -133,9 +135,9 @@ describe('ModelBand keyboard navigation', () => {
     // Cards are role-alpha, so agent-role (gpt-5) leads and owns the tab stop.
     expect(cardNamed('gpt-5')).toHaveAttribute('tabindex', '0');
     await userEvent.keyboard('{ArrowRight}');
-    expect(cardNamed('gpt-5-mini')).toHaveAttribute('tabindex', '0');
+    expect(cardNamed('gpt-5-mini')).toHaveFocus();
     await userEvent.keyboard('{ArrowLeft}');
-    expect(cardNamed('gpt-5')).toHaveAttribute('tabindex', '0');
+    expect(cardNamed('gpt-5')).toHaveFocus();
 
     await userEvent.keyboard('{Enter}');
     expect(onSelect).toHaveBeenCalledWith(agentModel);
@@ -148,9 +150,9 @@ describe('ModelBand keyboard navigation', () => {
     // jsdom reports every offsetTop as 0, so the grid measures one column and a
     // row step is a single card. In a browser it is the real column count.
     await userEvent.keyboard('{ArrowDown}');
-    expect(cardNamed('gpt-5-mini')).toHaveAttribute('tabindex', '0');
+    expect(cardNamed('gpt-5-mini')).toHaveFocus();
     await userEvent.keyboard('{ArrowUp}');
-    expect(cardNamed('gpt-5')).toHaveAttribute('tabindex', '0');
+    expect(cardNamed('gpt-5')).toHaveFocus();
 
     await userEvent.keyboard('{Enter}');
     expect(onSelect).toHaveBeenCalledWith(agentModel);
@@ -161,11 +163,11 @@ describe('ModelBand keyboard navigation', () => {
     cards()[0].focus();
 
     await userEvent.keyboard('{ArrowLeft}{ArrowLeft}{ArrowLeft}');
-    expect(cardNamed('gpt-5')).toHaveAttribute('tabindex', '0');
+    expect(cardNamed('gpt-5')).toHaveFocus();
 
     await userEvent.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}');
     // Two eligible models here, so the last stop is the declare-free end.
-    expect(cards().at(-1)).toHaveAttribute('tabindex', '0');
+    expect(cards().at(-1)).toHaveFocus();
   });
 });
 
@@ -265,7 +267,10 @@ describe('ModelBand declare path', () => {
   it('renders the manual fields with the floor capabilities pre-checked and locked', () => {
     renderBand({ manual: { model: '', type: '', caps: ['chat', 'stream'] } });
 
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    // The fieldset sits BENEATH the grid, never replacing it: Done demands a
+    // provider, so its control has to stay on screen while declaring.
+    expect(screen.getByRole('listbox', { name: /Models/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('Provider')).toBeInTheDocument();
     const manual = screen.getByRole('group', { name: 'Enter a model manually' });
     expect(within(manual).getByLabelText('Model name')).toHaveValue('');
     expect(within(manual).getByLabelText('Type')).toHaveValue('');
@@ -334,5 +339,80 @@ describe('ModelBand provider', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'lan');
     expect(onProviderChange).toHaveBeenCalledWith('lan');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invariants the combobox picker guarded, restored on the band
+// ---------------------------------------------------------------------------
+
+describe('ModelBand row identity', () => {
+  // `models` is one entry per ROLE. Two roles naming the same model with
+  // byte-identical facts are one CHOICE, and rendering both gave two cards a
+  // shared React key and a shared answer to "is this the selected one".
+  it('collapses two roles that declare byte-identical facts', () => {
+    const first = model({ role: 'first-role', parameters: '7b' });
+    const second = model({ role: 'second-role', parameters: '7b' });
+    renderBand({ models: [first, second], selected: first });
+
+    expect(cards()).toHaveLength(1);
+    expect(cards().filter((card) => card.getAttribute('aria-selected') === 'true')).toHaveLength(1);
+  });
+
+  it('keeps the dedup in the row builder, where Slice D will union too', () => {
+    const rows = buildModelRows(
+      [model({ role: 'first-role' }), model({ role: 'second-role' })],
+      'hosted'
+    );
+    expect(rows).toHaveLength(1);
+  });
+});
+
+describe('ModelBand announcements', () => {
+  // The filter was silent to assistive tech once the old picker's live region
+  // went with it.
+  it('announces how many models the filter left', async () => {
+    renderBand();
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('2 models match this filter');
+
+    await userEvent.type(screen.getByLabelText('Filter models'), 'mini');
+    expect(status).toHaveTextContent('1 model match this filter');
+  });
+});
+
+describe('ModelBand Home and End', () => {
+  // §4.7 names Home/End beside the arrows.
+  it('jumps to the first and last card in the walk', async () => {
+    renderBand();
+    cards()[0].focus();
+
+    await userEvent.keyboard('{End}');
+    expect(cards().at(-1)).toHaveFocus();
+
+    await userEvent.keyboard('{Home}');
+    expect(cards()[0]).toHaveFocus();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural guard: jest maps CSS-module keys to themselves (identity-obj-proxy),
+// so a class that exists in NO stylesheet still "works" in these tests and
+// renders unstyled in the real build. This is the only place that catches it.
+// ---------------------------------------------------------------------------
+
+describe('ModelBand stylesheet coverage', () => {
+  it('resolves every styles.* reference against its own module', () => {
+    const dir = path.resolve(__dirname, '../../../components/GolemConfig');
+    const source = fs.readFileSync(path.join(dir, 'ModelBand.tsx'), 'utf8');
+    const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
+
+    const used = [...source.matchAll(/styles\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+    expect(used.length).toBeGreaterThan(10);
+
+    const missing = [...new Set(used)].filter(
+      (name) => !new RegExp(`\\.${name}[\\s,{:[]`).test(css)
+    );
+    expect(missing).toEqual([]);
   });
 });

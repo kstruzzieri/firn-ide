@@ -66,17 +66,6 @@ export interface ModelRow {
   provenance: ModelProvenance;
 }
 
-/**
- * The band's rows for one provider, in the shared display order. One builder,
- * so Slice D adds discovered models in a single place.
- */
-export function buildModelRows(models: readonly ModelProjection[], provider: string): ModelRow[] {
-  return orderModelsForDisplay(
-    models.filter((model) => model.provider === provider),
-    []
-  ).map((model) => ({ model, provenance: 'authored' as const }));
-}
-
 /** The tuple `sameModelFacts` compares, flattened — the identity of a card. */
 const rowKey = (model: ModelProjection): string =>
   [
@@ -87,6 +76,30 @@ const rowKey = (model: ModelProjection): string =>
     model.contextWindow ?? 0,
     model.dimensions ?? 0,
   ].join('\u0000');
+
+/**
+ * The band's rows for one provider, in the shared display order. One builder,
+ * so Slice D adds discovered models in a single place.
+ *
+ * `models` carries one entry per ROLE, so two roles naming the same model with
+ * byte-identical facts arrive twice. The band picks a MODEL, not a role, so
+ * they collapse to one card here — otherwise they would share a React key and
+ * both answer to `sameModel`, marking two cards selected at once.
+ */
+export function buildModelRows(models: readonly ModelProjection[], provider: string): ModelRow[] {
+  const seen = new Set<string>();
+  const unique = models.filter((model) => {
+    if (model.provider !== provider) return false;
+    const key = rowKey(model);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return orderModelsForDisplay(unique, []).map((model) => ({
+    model,
+    provenance: 'authored' as const,
+  }));
+}
 
 const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
   a !== null && rowKey(a) === rowKey(b);
@@ -150,6 +163,8 @@ export function ModelBand({
    */
   const [collapsed, setCollapsed] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  /** True only for the render that follows a keyboard move. */
+  const navigatedRef = useRef(false);
   const filterRef = useRef<HTMLInputElement>(null);
 
   const gridId = `${id}-grid`;
@@ -201,6 +216,17 @@ export function ModelBand({
     if (declaring) onManual({ model: query.trim(), type: '', caps: canonicalCaps(floor) });
   };
 
+  /** One edit of the hand-declared facts; null-safe because the fieldset only
+   *  renders while `manual` is non-null. */
+  const patch = (next: Partial<ManualModel>) => {
+    if (manual !== null) onManual({ ...manual, ...next });
+  };
+
+  const moveTo = (index: number) => {
+    navigatedRef.current = true;
+    setActive(Math.min(stops - 1, Math.max(0, index)));
+  };
+
   const onGridKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -212,110 +238,40 @@ export function ModelBand({
       if (activeIndex >= 0) chooseAt(activeIndex);
       return;
     }
+    if (stops === 0) return;
+    // §4.7 names Home/End alongside the arrows.
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      moveTo(event.key === 'Home' ? 0 : stops - 1);
+      return;
+    }
     const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: columns(), ArrowUp: -columns() }[
       event.key
     ];
-    if (step === undefined || stops === 0) return;
+    if (step === undefined) return;
     event.preventDefault();
-    setActive(Math.min(stops - 1, Math.max(0, activeIndex + step)));
+    moveTo(activeIndex + step);
   };
 
-  // The declare fieldset replaces the grid; leaving it returns the caret to the
-  // filter it was opened from (§4.4).
+  /**
+   * Roving focus: the active card IS the tab stop, so navigating has to move
+   * real focus with it — otherwise the focus ring sits on the card the user
+   * left, Tab re-enters the grid instead of leaving it, and a screen reader is
+   * told nothing. Guarded by the nav flag so first paint never steals focus.
+   */
+  useEffect(() => {
+    if (!navigatedRef.current) return;
+    navigatedRef.current = false;
+    gridRef.current?.querySelector<HTMLElement>('[data-active]')?.focus();
+  }, [activeIndex]);
+
+  // Leaving the declare fieldset returns the caret to the filter it was opened
+  // from (§4.4).
   const wasManual = useRef(manual !== null);
   useEffect(() => {
     if (wasManual.current && manual === null) filterRef.current?.focus();
     wasManual.current = manual !== null;
   }, [manual]);
-
-  if (manual !== null) {
-    const patch = (next: Partial<ManualModel>) => onManual({ ...manual, ...next });
-    return (
-      <fieldset className={styles.manual}>
-        <legend className={styles.editorLegend}>Enter a model manually</legend>
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={`${id}-manual-model`}>
-            Model name
-          </label>
-          <input
-            className={styles.input}
-            id={`${id}-manual-model`}
-            value={manual.model}
-            onChange={(event) => patch({ model: event.target.value })}
-          />
-        </div>
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={`${id}-manual-type`}>
-            Type
-          </label>
-          <select
-            className={styles.input}
-            id={`${id}-manual-type`}
-            value={manual.type}
-            onChange={(event) => patch({ type: event.target.value as ModelType })}
-          >
-            <option value="">Choose a type</option>
-            {MODEL_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {TYPE_LABEL[type]}
-              </option>
-            ))}
-          </select>
-          <span className={styles.fieldHint}>
-            Required. Golem stores the model type, and no inventory can supply it for a model you
-            enter by hand.
-          </span>
-        </div>
-        <fieldset className={styles.capabilities}>
-          <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
-          {CAPABILITY_NAMES.map((cap) => {
-            const locked = floor.includes(cap);
-            return (
-              <label
-                key={cap}
-                className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-              >
-                <input
-                  className={styles.checkboxInput}
-                  type="checkbox"
-                  disabled={locked}
-                  checked={locked || manual.caps.includes(cap)}
-                  onChange={(event) =>
-                    patch({
-                      caps: canonicalCaps(
-                        event.target.checked
-                          ? [...manual.caps, cap]
-                          : manual.caps.filter((other) => other !== cap)
-                      ),
-                    })
-                  }
-                />
-                <span className={styles.checkboxBox} aria-hidden="true" />
-                {cap}
-                {locked && (
-                  <>
-                    {' '}
-                    <span className={styles.requiredTag}>required</span>
-                  </>
-                )}
-              </label>
-            );
-          })}
-          <span className={styles.fieldHint}>
-            What you declare here is what Golem may use. The capabilities this use case requires are
-            checked and locked.
-          </span>
-        </fieldset>
-        <button
-          type="button"
-          className={`${styles.button} ${styles.quiet}`}
-          onClick={() => onManual(null)}
-        >
-          Back to the model list
-        </button>
-      </fieldset>
-    );
-  }
 
   const filterLabel = floor.length === 0 ? 'filter: none' : `filter: ${floor.join(' · ')}`;
 
@@ -385,7 +341,10 @@ export function ModelBand({
               data-active={index === activeIndex || undefined}
               data-provenance={row.provenance}
               className={`${styles.modelCard} ${chosen ? styles.modelCardChosen : ''}`}
-              onClick={() => choose(row.model)}
+              onClick={() => {
+                setActive(index);
+                choose(row.model);
+              }}
             >
               <span className={styles.modelCardTop}>
                 <span className={styles.modelName}>{row.model.modelName}</span>
@@ -420,7 +379,10 @@ export function ModelBand({
             tabIndex={matches.length === activeIndex ? 0 : -1}
             data-active={matches.length === activeIndex || undefined}
             className={`${styles.modelCard} ${styles.modelCardDeclare}`}
-            onClick={() => chooseAt(matches.length)}
+            onClick={() => {
+              setActive(matches.length);
+              chooseAt(matches.length);
+            }}
           >
             <span className={styles.modelName}>{`Declare "${query.trim()}"`}</span>
             <span className={styles.modelCardFacts}>no exact match — opens the facts editor</span>
@@ -456,10 +418,108 @@ export function ModelBand({
           ))}
       </div>
 
+      <span className={styles.srOnly} role="status" aria-live="polite">
+        {`${matches.length} model${matches.length === 1 ? '' : 's'} match this filter`}
+      </span>
+
       {matches.length === 0 && !declaring && (
         <p className={styles.fieldHint}>
           No defined model meets this filter. Type a name above to declare one by hand.
         </p>
+      )}
+
+      {/*
+       * In flow BENEATH the grid, never replacing it: the provider select and
+       * the filter stay reachable while declaring. Hiding them stranded a
+       * use case with no applied route — Done demands a provider that had no
+       * control on screen.
+       */}
+      {manual !== null && (
+        <div className={styles.bandFacts}>
+          <fieldset className={styles.manual}>
+            <legend className={styles.editorLegend}>Enter a model manually</legend>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor={`${id}-manual-model`}>
+                Model name
+              </label>
+              <input
+                className={styles.input}
+                id={`${id}-manual-model`}
+                value={manual.model}
+                onChange={(event) => patch({ model: event.target.value })}
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor={`${id}-manual-type`}>
+                Type
+              </label>
+              <select
+                className={styles.input}
+                id={`${id}-manual-type`}
+                value={manual.type}
+                onChange={(event) => patch({ type: event.target.value as ModelType })}
+              >
+                <option value="">Choose a type</option>
+                {MODEL_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {TYPE_LABEL[type]}
+                  </option>
+                ))}
+              </select>
+              <span className={styles.fieldHint}>
+                Required. Golem stores the model type, and no inventory can supply it for a model
+                you enter by hand.
+              </span>
+            </div>
+            <fieldset className={styles.capabilities}>
+              <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
+              {CAPABILITY_NAMES.map((cap) => {
+                const locked = floor.includes(cap);
+                return (
+                  <label
+                    key={cap}
+                    className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                  >
+                    <input
+                      className={styles.checkboxInput}
+                      type="checkbox"
+                      disabled={locked}
+                      checked={locked || manual.caps.includes(cap)}
+                      onChange={(event) =>
+                        patch({
+                          caps: canonicalCaps(
+                            event.target.checked
+                              ? [...manual.caps, cap]
+                              : manual.caps.filter((other) => other !== cap)
+                          ),
+                        })
+                      }
+                    />
+                    <span className={styles.checkboxBox} aria-hidden="true" />
+                    {cap}
+                    {locked && (
+                      <>
+                        {' '}
+                        <span className={styles.requiredTag}>required</span>
+                      </>
+                    )}
+                  </label>
+                );
+              })}
+              <span className={styles.fieldHint}>
+                What you declare here is what Golem may use. The capabilities this use case requires
+                are checked and locked.
+              </span>
+            </fieldset>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.quiet}`}
+              onClick={() => onManual(null)}
+            >
+              Back to the model list
+            </button>
+          </fieldset>
+        </div>
       )}
 
       {blocked.length > 0 && (
