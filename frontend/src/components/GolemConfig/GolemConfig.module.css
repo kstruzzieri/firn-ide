@@ -621,17 +621,32 @@
   display: contents;
 }
 
-/*
- * stretch, not center: .input sets a min-height FLOOR, and a <select> computes
- * taller than that floor on its own (it carries its own dropdown chrome), so
- * centring let the provider select and the filter sit at two different heights.
- * Stretching makes both fill one row height, which is parity by construction
- * rather than by matching two numbers that drift apart.
- */
 .bandRow {
   display: flex;
   gap: 10px;
-  align-items: stretch;
+  align-items: center;
+}
+
+/*
+ * Height parity by construction, per the mockup: both controls state the same
+ * height, and the select drops its native chrome for a drawn caret so it cannot
+ * compute taller than the input beside it. This replaces the earlier
+ * align-items:stretch patch, which equalised them only by accident of the row.
+ */
+.bandRow .input {
+  height: 30px;
+  min-height: 0;
+  padding: 0 10px;
+  line-height: 28px;
+}
+
+.bandRow select.input {
+  appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2390a0b6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
 }
 
 .bandProvider {
@@ -793,6 +808,113 @@
   color: var(--palette-red);
 }
 
+/* ── the master-detail strip (revamp v2, Treatment 1) ──────────────────────
+ *
+ * One surface below the grid in three states — declare form, dashed
+ * placeholder, or readout — so it never jumps into existence and the grid never
+ * reflows. Sticky at the container bottom, so browsing a long grid keeps the
+ * readout of what you are choosing on screen.
+ */
+.detail {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-frame);
+}
+
+.detailEmpty {
+  padding: 9px 14px;
+  border-style: dashed;
+  border-color: var(--surface-border-subtle);
+  background-color: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.detailName {
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* Names the owner explicitly, so the strip is never read as free-floating. */
+.detailOwner {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Previewing, not assigned: says how to commit instead of claiming a state. */
+.detailHint {
+  flex: none;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.detailBody {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 0 20px;
+  align-items: start;
+}
+
+/* The hairline that separates read-only facts from the editable exposure. */
+.detailExposure {
+  padding-left: 20px;
+  border-left: 1px solid var(--surface-border-subtle);
+}
+
+.detailStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+
+.detailStat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.detailStatKey {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.detailStatValue {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.detailDeclares {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
 .hiddenLine {
   display: flex;
   flex-wrap: wrap;
@@ -820,14 +942,6 @@
 
 .hiddenToggle {
   color: var(--accent);
-}
-
-/* The band sits above the exposure editor, separated by the variant's rule. */
-.bandSeparator {
-  width: 100%;
-  margin: 14px 0 2px;
-  border: 0;
-  border-top: 1px solid var(--surface-border-subtle);
 }
 
 .rowDiagnostic {

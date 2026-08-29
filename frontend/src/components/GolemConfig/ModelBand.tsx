@@ -16,7 +16,7 @@
  * requirements, so nothing below is authoritative.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   CAPABILITY_NAMES,
   MODEL_TYPES,
@@ -134,6 +134,12 @@ export interface ModelBandProps {
   selected: ModelProjection | null;
   /** Non-null while the declare fieldset is open. */
   manual: ManualModel | null;
+  /**
+   * The exposure editor for the SELECTED model (capabilities + think mode),
+   * owned by the route editor and placed in the strip's right half. Passing it
+   * as a node keeps the staging state where it already lives.
+   */
+  exposure?: ReactNode;
   onProviderChange: (provider: string) => void;
   onSelect: (model: ModelProjection) => void;
   onManual: (manual: ManualModel | null) => void;
@@ -148,6 +154,7 @@ export function ModelBand({
   providers,
   selected,
   manual,
+  exposure,
   onProviderChange,
   onSelect,
   onManual,
@@ -156,16 +163,16 @@ export function ModelBand({
   const [active, setActive] = useState(0);
   const [showHidden, setShowHidden] = useState(false);
   /**
-   * Only the CHOSEN card can be open, so the expansion is derived rather than
-   * stored: one flag says whether the user has collapsed it. Mirroring the
-   * selection into state instead would mean an effect that writes state during
-   * render — a cascading render, and two sources for one truth.
+   * Detail-follows-focus: arrowing through the grid previews the focused card
+   * in the strip without assigning it. Cards never expand — the strip is the
+   * only place facts are shown, so the grid geometry never moves.
    */
-  const [collapsed, setCollapsed] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   /** True only for the render that follows a keyboard move. */
   const navigatedRef = useRef(false);
   const filterRef = useRef<HTMLInputElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
 
   const gridId = `${id}-grid`;
 
@@ -203,7 +210,7 @@ export function ModelBand({
   };
 
   const choose = (model: ModelProjection) => {
-    setCollapsed(false);
+    setPreviewing(false);
     onSelect(model);
   };
 
@@ -224,13 +231,14 @@ export function ModelBand({
 
   const moveTo = (index: number) => {
     navigatedRef.current = true;
+    setPreviewing(true);
     setActive(Math.min(stops - 1, Math.max(0, index)));
   };
 
   const onGridKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault();
-      setCollapsed(true);
+      setPreviewing(false);
       return;
     }
     if (event.key === 'Enter' || event.key === ' ') {
@@ -265,6 +273,16 @@ export function ModelBand({
     gridRef.current?.querySelector<HTMLElement>('[data-active]')?.focus();
   }, [activeIndex]);
 
+  const assignedKey = selected === null ? null : rowKey(selected);
+  const paintedRef = useRef(false);
+  useEffect(() => {
+    if (!paintedRef.current) {
+      paintedRef.current = true;
+      return;
+    }
+    stripRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [assignedKey]);
+
   // Leaving the declare fieldset returns the caret to the filter it was opened
   // from (§4.4).
   const wasManual = useRef(manual !== null);
@@ -272,6 +290,110 @@ export function ModelBand({
     if (wasManual.current && manual === null) filterRef.current?.focus();
     wasManual.current = manual !== null;
   }, [manual]);
+
+  /**
+   * What the strip READS OUT. Preview follows keyboard focus, so the left half
+   * can describe a card the user is only walking past; the selection is what
+   * the exposure editor stays bound to.
+   */
+  const previewRow = previewing ? matches[activeIndex]?.model : undefined;
+  const detail = previewRow ?? selected;
+  const previewingOther = previewRow !== undefined && !sameModel(selected, previewRow);
+  const detailState =
+    manual !== null
+      ? 'declaring'
+      : detail === null || detail === undefined
+        ? 'empty'
+        : previewingOther
+          ? 'previewing'
+          : 'assigned';
+
+  const declareForm =
+    manual === null ? null : (
+      <fieldset className={styles.manual}>
+        <legend className={styles.editorLegend}>Enter a model manually</legend>
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor={`${id}-manual-model`}>
+            Model name
+          </label>
+          <input
+            className={styles.input}
+            id={`${id}-manual-model`}
+            value={manual.model}
+            onChange={(event) => patch({ model: event.target.value })}
+          />
+        </div>
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor={`${id}-manual-type`}>
+            Type
+          </label>
+          <select
+            className={styles.input}
+            id={`${id}-manual-type`}
+            value={manual.type}
+            onChange={(event) => patch({ type: event.target.value as ModelType })}
+          >
+            <option value="">Choose a type</option>
+            {MODEL_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {TYPE_LABEL[type]}
+              </option>
+            ))}
+          </select>
+          <span className={styles.fieldHint}>
+            Required. Golem stores the model type, and no inventory can supply it for a model you
+            enter by hand.
+          </span>
+        </div>
+        <fieldset className={styles.capabilities}>
+          <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
+          {CAPABILITY_NAMES.map((cap) => {
+            const locked = floor.includes(cap);
+            return (
+              <label
+                key={cap}
+                className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+              >
+                <input
+                  className={styles.checkboxInput}
+                  type="checkbox"
+                  disabled={locked}
+                  checked={locked || manual.caps.includes(cap)}
+                  onChange={(event) =>
+                    patch({
+                      caps: canonicalCaps(
+                        event.target.checked
+                          ? [...manual.caps, cap]
+                          : manual.caps.filter((other) => other !== cap)
+                      ),
+                    })
+                  }
+                />
+                <span className={styles.checkboxBox} aria-hidden="true" />
+                {cap}
+                {locked && (
+                  <>
+                    {' '}
+                    <span className={styles.requiredTag}>required</span>
+                  </>
+                )}
+              </label>
+            );
+          })}
+          <span className={styles.fieldHint}>
+            What you declare here is what Golem may use. The capabilities this use case requires are
+            checked and locked.
+          </span>
+        </fieldset>
+        <button
+          type="button"
+          className={`${styles.button} ${styles.quiet}`}
+          onClick={() => onManual(null)}
+        >
+          Back to the model list
+        </button>
+      </fieldset>
+    );
 
   const filterLabel = floor.length === 0 ? 'filter: none' : `filter: ${floor.join(' · ')}`;
 
@@ -330,7 +452,6 @@ export function ModelBand({
       >
         {matches.map((row, index) => {
           const chosen = sameModel(selected, row.model);
-          const open = chosen && !collapsed;
           return (
             <div
               key={rowKey(row.model)}
@@ -354,19 +475,6 @@ export function ModelBand({
                 <span className={styles.factTag}>{row.model.type}</span>
                 <span className={styles.modelCardFacts}>{factsLine(row.model)}</span>
               </span>
-              {/* Compact until chosen: the capabilities are the expansion. */}
-              {open && (
-                <span className={styles.capChips}>
-                  {row.model.exposedCapabilities.map((cap) => (
-                    <span
-                      key={cap}
-                      className={`${styles.capChip} ${floor.includes(cap) ? styles.capChipFloor : ''}`}
-                    >
-                      {cap}
-                    </span>
-                  ))}
-                </span>
-              )}
             </div>
           );
         })}
@@ -429,98 +537,94 @@ export function ModelBand({
       )}
 
       {/*
-       * In flow BENEATH the grid, never replacing it: the provider select and
-       * the filter stay reachable while declaring. Hiding them stranded a
-       * use case with no applied route — Done demands a provider that had no
-       * control on screen.
+       * The master-detail strip (Treatment 1). One surface below the grid, in
+       * three states, so the layout never jumps into existence and the grid
+       * never reflows: the declare form, a one-line dashed placeholder, or the
+       * readout — facts left, the exposure editor right of a hairline rule.
        */}
-      {manual !== null && (
-        <div className={styles.bandFacts}>
-          <fieldset className={styles.manual}>
-            <legend className={styles.editorLegend}>Enter a model manually</legend>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor={`${id}-manual-model`}>
-                Model name
-              </label>
-              <input
-                className={styles.input}
-                id={`${id}-manual-model`}
-                value={manual.model}
-                onChange={(event) => patch({ model: event.target.value })}
-              />
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor={`${id}-manual-type`}>
-                Type
-              </label>
-              <select
-                className={styles.input}
-                id={`${id}-manual-type`}
-                value={manual.type}
-                onChange={(event) => patch({ type: event.target.value as ModelType })}
-              >
-                <option value="">Choose a type</option>
-                {MODEL_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {TYPE_LABEL[type]}
-                  </option>
-                ))}
-              </select>
-              <span className={styles.fieldHint}>
-                Required. Golem stores the model type, and no inventory can supply it for a model
-                you enter by hand.
+      <div
+        ref={stripRef}
+        className={`${styles.detail} ${detail === null ? styles.detailEmpty : ''}`}
+        data-testid="model-detail"
+        data-state={detailState}
+      >
+        {manual !== null ? (
+          <>
+            <div className={styles.detailHead}>
+              <span className={styles.detailName}>
+                {`declare "${manual.model === '' ? '…' : manual.model}"`}
+              </span>
+              <span className={styles.grow} />
+              <span className={styles.detailOwner}>
+                {`on ${provider} — facts you assert, nothing detects them`}
               </span>
             </div>
-            <fieldset className={styles.capabilities}>
-              <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
-              {CAPABILITY_NAMES.map((cap) => {
-                const locked = floor.includes(cap);
-                return (
-                  <label
-                    key={cap}
-                    className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-                  >
-                    <input
-                      className={styles.checkboxInput}
-                      type="checkbox"
-                      disabled={locked}
-                      checked={locked || manual.caps.includes(cap)}
-                      onChange={(event) =>
-                        patch({
-                          caps: canonicalCaps(
-                            event.target.checked
-                              ? [...manual.caps, cap]
-                              : manual.caps.filter((other) => other !== cap)
-                          ),
-                        })
-                      }
-                    />
-                    <span className={styles.checkboxBox} aria-hidden="true" />
-                    {cap}
-                    {locked && (
-                      <>
-                        {' '}
-                        <span className={styles.requiredTag}>required</span>
-                      </>
-                    )}
-                  </label>
-                );
-              })}
-              <span className={styles.fieldHint}>
-                What you declare here is what Golem may use. The capabilities this use case requires
-                are checked and locked.
-              </span>
-            </fieldset>
-            <button
-              type="button"
-              className={`${styles.button} ${styles.quiet}`}
-              onClick={() => onManual(null)}
-            >
-              Back to the model list
-            </button>
-          </fieldset>
-        </div>
-      )}
+            {declareForm}
+          </>
+        ) : detail === null ? (
+          'No model assigned. Select a card above — its facts and the exposure editor land here, together.'
+        ) : (
+          <>
+            <div className={styles.detailHead}>
+              <span className={styles.detailName}>{detail.modelName}</span>
+              <span className={styles.factTag}>{detail.type}</span>
+              {/* ASSIGNED is the route's actual model; a preview says so instead. */}
+              {previewingOther ? (
+                <span className={styles.detailHint}>press Enter to choose</span>
+              ) : (
+                <span className={styles.modelCardMark}>assigned</span>
+              )}
+              <span className={styles.grow} />
+              <span className={styles.detailOwner}>{`from ${detail.provider}`}</span>
+            </div>
+
+            <div className={styles.detailBody}>
+              <div>
+                <div className={styles.detailStats}>
+                  <span className={styles.detailStat}>
+                    <span className={styles.detailStatKey}>type</span>
+                    <span className={styles.detailStatValue}>{TYPE_LABEL[detail.type]}</span>
+                  </span>
+                  {detail.parameters !== undefined && (
+                    <span className={styles.detailStat}>
+                      <span className={styles.detailStatKey}>params</span>
+                      <span className={styles.detailStatValue}>{detail.parameters}</span>
+                    </span>
+                  )}
+                  {detail.contextWindow !== undefined && (
+                    <span className={styles.detailStat}>
+                      <span className={styles.detailStatKey}>context</span>
+                      <span className={styles.detailStatValue}>{detail.contextWindow}</span>
+                    </span>
+                  )}
+                </div>
+                <div className={styles.detailDeclares}>
+                  <span className={styles.detailStatKey}>declares</span>
+                  <span className={styles.capChips}>
+                    {detail.exposedCapabilities.map((cap) => (
+                      <span
+                        key={cap}
+                        className={`${styles.capChip} ${floor.includes(cap) ? styles.capChipFloor : ''}`}
+                      >
+                        {cap}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              </div>
+
+              {/*
+               * The editor is bound to the SELECTION, never to a preview: the
+               * left half may be showing another model's facts read-only, but
+               * editing exposure you have not chosen would stage a lie.
+               */}
+              {selected !== null && exposure !== undefined && (
+                <div className={styles.detailExposure}>{exposure}</div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
       {blocked.length > 0 && (
         <button

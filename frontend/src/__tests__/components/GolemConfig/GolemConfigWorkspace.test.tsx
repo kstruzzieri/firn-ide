@@ -76,7 +76,10 @@ describe('GolemConfig stylesheet', () => {
     );
 
   it('carries no left-only accent bars', () => {
-    expect(css()).not.toMatch(/border-left(-color)?:/);
+    // The 3px bar down one rounded edge is the treatment Keith rejected. A 1px
+    // hairline dividing two halves of a grid is structure, not an accent, so
+    // the guard names the signature rather than banning the property.
+    expect(css()).not.toMatch(/border-left(-color)?:\s*(3px|var\(--(accent|status|palette))/);
   });
 
   // Each tone owns the whole outline in a full-strength semantic colour. A

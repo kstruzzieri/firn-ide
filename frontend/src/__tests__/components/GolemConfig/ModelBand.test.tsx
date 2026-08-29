@@ -71,55 +71,36 @@ function renderBand(over: Partial<ModelBandProps> = {}) {
   return { ...view, onSelect, onManual, onProviderChange, props };
 }
 
+// jsdom has no layout, so Element.scrollIntoView is undefined; the band calls
+// it to keep the strip on screen. Stubbing it here is also what lets the
+// scroll-mitigation test assert the call.
+beforeEach(() => {
+  Element.prototype.scrollIntoView = jest.fn();
+});
+
 const cards = () => within(screen.getByRole('listbox', { name: /Models/ })).getAllByRole('option');
 const cardNamed = (name: string) =>
   cards().find((card) => within(card).queryByText(name) !== null) as HTMLElement;
 
 // ---------------------------------------------------------------------------
-// Amendment A — compact by default, one card expanded at a time
+// Uniform compact cards, always. Treatment 1 removes in-cell expansion: the
+// detail strip owns every fact beyond name and type, so a grid row can never
+// inflate and the geometry never moves under the cursor.
 // ---------------------------------------------------------------------------
 
 describe('ModelBand compact cards', () => {
-  it('shows name, type and context window but no capability chips until selected', () => {
-    renderBand({ models: [model({ contextWindow: 8192 })] });
+  it('shows name, type and context window, and never capability chips', () => {
+    renderBand({
+      models: [model({ contextWindow: 8192 })],
+      selected: model({ contextWindow: 8192 }),
+    });
     const card = cardNamed('gpt-5-mini');
 
     expect(within(card).getByText('gpt-5-mini')).toBeVisible();
     expect(within(card).getByText('dense')).toBeVisible();
     expect(within(card).getByText(/8192/)).toBeVisible();
-    // The band stays compact at dozens of models: caps are the expansion.
+    // Even the assigned card stays compact.
     expect(within(card).queryByText('stream')).not.toBeInTheDocument();
-  });
-
-  it('expands the chosen card in place and collapses the previous one', async () => {
-    const { rerender, props } = renderBand();
-
-    await userEvent.click(cardNamed('gpt-5-mini'));
-    expect(props.onSelect).toHaveBeenCalledWith(model());
-    rerender(<ModelBand {...props} selected={model()} />);
-
-    const first = cardNamed('gpt-5-mini');
-    expect(first).toHaveAttribute('aria-selected', 'true');
-    expect(within(first).getByText('stream')).toBeVisible();
-
-    await userEvent.click(cardNamed('gpt-5'));
-    rerender(<ModelBand {...props} selected={agentModel} />);
-
-    expect(within(cardNamed('gpt-5')).getByText('tool_call')).toBeVisible();
-    expect(within(cardNamed('gpt-5-mini')).queryByText('stream')).not.toBeInTheDocument();
-  });
-
-  it('collapses the expansion on Escape without unselecting the model', async () => {
-    const { rerender, props } = renderBand();
-    await userEvent.click(cardNamed('gpt-5-mini'));
-    rerender(<ModelBand {...props} selected={model()} />);
-    expect(within(cardNamed('gpt-5-mini')).getByText('stream')).toBeVisible();
-
-    await userEvent.keyboard('{Escape}');
-
-    const card = cardNamed('gpt-5-mini');
-    expect(within(card).queryByText('stream')).not.toBeInTheDocument();
-    expect(card).toHaveAttribute('aria-selected', 'true'); // still the assignment
   });
 });
 
@@ -414,5 +395,86 @@ describe('ModelBand stylesheet coverage', () => {
       (name) => !new RegExp(`\\.${name}[\\s,{:[]`).test(css)
     );
     expect(missing).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Treatment 1: the master-detail strip, and preview-follows-focus
+// ---------------------------------------------------------------------------
+
+describe('ModelBand detail strip', () => {
+  const strip = () => screen.getByTestId('model-detail');
+
+  it('shows a one-line placeholder before anything is chosen', () => {
+    renderBand();
+    expect(strip()).toHaveTextContent(/No model assigned/);
+    expect(strip()).toHaveAttribute('data-state', 'empty');
+  });
+
+  it('names the selection and its provider, and marks it assigned', () => {
+    renderBand({ selected: agentModel });
+    expect(strip()).toHaveAttribute('data-state', 'assigned');
+    expect(within(strip()).getByText('gpt-5')).toBeVisible();
+    expect(within(strip()).getByText(/from hosted/)).toBeVisible();
+    expect(within(strip()).getByText('assigned')).toBeVisible();
+    // and the card carries the same mark
+    expect(within(cardNamed('gpt-5')).getByText('assigned')).toBeVisible();
+  });
+
+  it('never expands a card: capabilities live in the strip, not the cell', () => {
+    renderBand({ selected: agentModel });
+    expect(within(cardNamed('gpt-5')).queryByText('tool_call')).not.toBeInTheDocument();
+    expect(within(strip()).getByText('tool_call')).toBeVisible();
+  });
+
+  it('previews the focused card without changing the assignment', async () => {
+    const { onSelect } = renderBand({ selected: agentModel });
+    cards()[0].focus();
+    await userEvent.keyboard('{ArrowRight}');
+
+    // The strip follows focus, read-only, and says how to commit.
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+    expect(within(strip()).getByText('gpt-5-mini')).toBeVisible();
+    expect(within(strip()).getByText(/press Enter to choose/i)).toBeVisible();
+    expect(within(strip()).queryByText('assigned')).not.toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    // The card still marked assigned is the one that IS assigned.
+    expect(within(cardNamed('gpt-5')).getByText('assigned')).toBeVisible();
+  });
+
+  it('keeps the exposure editor bound to the selection while previewing', async () => {
+    renderBand({
+      selected: agentModel,
+      exposure: <div data-testid="exposure">exposure for the selection</div>,
+    });
+    expect(within(strip()).getByTestId('exposure')).toBeVisible();
+
+    cards()[0].focus();
+    await userEvent.keyboard('{ArrowRight}');
+    // Editing what you have not chosen would stage a lie.
+    expect(within(strip()).getByTestId('exposure')).toBeVisible();
+    expect(within(strip()).getByText('gpt-5-mini')).toBeVisible();
+  });
+
+  it('returns the preview to the selection on Escape', async () => {
+    renderBand({ selected: agentModel });
+    cards()[0].focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+
+    await userEvent.keyboard('{Escape}');
+    expect(strip()).toHaveAttribute('data-state', 'assigned');
+    expect(within(strip()).getByText('gpt-5')).toBeVisible();
+  });
+
+  it('scrolls the strip into view when the assignment changes', async () => {
+    const scrollIntoView = jest.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const { rerender, props } = renderBand();
+    expect(scrollIntoView).not.toHaveBeenCalled(); // never on first paint
+
+    rerender(<ModelBand {...props} selected={agentModel} />);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });
