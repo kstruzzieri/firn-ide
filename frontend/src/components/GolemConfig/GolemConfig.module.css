@@ -621,10 +621,17 @@
   display: contents;
 }
 
+/*
+ * stretch, not center: .input sets a min-height FLOOR, and a <select> computes
+ * taller than that floor on its own (it carries its own dropdown chrome), so
+ * centring let the provider select and the filter sit at two different heights.
+ * Stretching makes both fill one row height, which is parity by construction
+ * rather than by matching two numbers that drift apart.
+ */
 .bandRow {
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .bandProvider {
