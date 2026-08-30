@@ -535,14 +535,17 @@ export function RouteEditor({
         }}
       />
 
-      {/* A fact about what the backend will do; nothing is asked of the user. */}
+      {/* A fact about what the backend will do; nothing is asked of the user.
+          Names the mechanism — the model CHOICE belongs to this route alone —
+          so it cannot read as contradicting the capability notice below, whose
+          settings belong to the model and reach every route on it. */}
       {sharedRole.length > 0 && (
         <div className={styles.disclosure} data-tone="info">
           <p className={styles.disclosureText}>
-            {`${listUseCases(sharedRole)} also ${agrees(sharedRole, 'uses', 'use')} this model.`}
+            {`This model also serves ${listUseCases(sharedRole)}.`}
           </p>
           <p className={styles.disclosureText}>
-            {`Picking a different model here moves only ${useCase} — ${listUseCases(sharedRole)} ${agrees(sharedRole, 'stays', 'stay')} where ${agrees(sharedRole, 'it is', 'they are')}.`}
+            {`Choosing a different model here changes ${useCase} only; ${listUseCases(sharedRole)} ${agrees(sharedRole, 'keeps', 'keep')} using the current model.`}
           </p>
         </div>
       )}
@@ -551,7 +554,7 @@ export function RouteEditor({
       {alsoGoverns.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {`These capability and think settings are shared with ${listUseCases(alsoGoverns)} — ${agrees(alsoGoverns, 'it uses', 'they use')} the same model, so this edit changes ${agrees(alsoGoverns, 'its', 'theirs')} too.`}
+            {`Capability and think settings belong to the model itself. ${listUseCases(alsoGoverns)} ${agrees(alsoGoverns, 'uses', 'use')} this same model, so these changes apply to ${agrees(alsoGoverns, 'it', 'them')} as well.`}
           </p>
         </div>
       )}
@@ -560,7 +563,7 @@ export function RouteEditor({
       {unknownUseCases.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {`Firn doesn't know what ${listUseCases(unknownUseCases)} ${agrees(unknownUseCases, 'needs', 'need')}, so it can't check that this model fits.`}
+            {`Firn has no capability requirements on record for ${listUseCases(unknownUseCases)}, so it can't confirm this model suits ${agrees(unknownUseCases, 'it', 'them')}.`}
           </p>
           <label className={styles.checkbox}>
             <input

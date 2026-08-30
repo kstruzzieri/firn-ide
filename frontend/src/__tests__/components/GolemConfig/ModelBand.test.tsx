@@ -434,14 +434,18 @@ describe('ModelBand stylesheet coverage', () => {
 
   // Mockup density: inside the strip the capability checklist flows as a
   // wrapping row of columns and sheds its boxed chrome — one tall column was
-  // most of the strip's height.
-  it('flows the strip checklist as wrapping columns, not one tall column', () => {
+  // most of the strip's height. Its 4px row gap is the same overline-to-content
+  // rhythm the facts half uses, so the two sides of the hairline match.
+  it('flows the strip checklist as wrapping columns on the facts-half rhythm', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
     const rule = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
+    const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
 
     expect(rule).toMatch(/flex-flow: row wrap/);
     expect(rule).toMatch(/border: 0/);
+    expect(rule).toMatch(/gap: 4px 14px/);
+    expect(stat).toMatch(/gap: 4px/);
   });
 });
 

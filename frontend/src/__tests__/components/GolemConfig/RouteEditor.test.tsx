@@ -337,7 +337,7 @@ describe('RouteEditor', () => {
     const { onStage } = renderRouting();
     await openRoute('chat');
     expect(screen.queryByText(/also governs/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/stays where it is|stay where they are/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/keeps? using the current model/i)).not.toBeInTheDocument();
 
     await pickModel('gpt-5');
     await stage();
@@ -485,10 +485,10 @@ describe('RouteEditor', () => {
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
     await openRoute('chat');
-    expect(screen.getByText('summarize also uses this model.')).toBeInTheDocument();
+    expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Picking a different model here moves only chat — summarize stays where it is.'
+        'Choosing a different model here changes chat only; summarize keeps using the current model.'
       )
     ).toBeInTheDocument();
   });
@@ -506,10 +506,12 @@ describe('RouteEditor', () => {
     });
     await openRoute('chat');
 
-    expect(screen.getByText('completion and summarize also use this model.')).toBeInTheDocument();
+    expect(
+      screen.getByText('This model also serves completion and summarize.')
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Picking a different model here moves only chat — completion and summarize stay where they are.'
+        'Choosing a different model here changes chat only; completion and summarize keep using the current model.'
       )
     ).toBeInTheDocument();
   });
@@ -539,7 +541,9 @@ describe('RouteEditor', () => {
     // Staging chat onto the agent's selector makes the capability edit govern
     // the agent route too.
     await pickModel('gpt-5');
-    expect(screen.getByText(/shared with agent/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/agent uses this same model, so these changes apply/)
+    ).toBeInTheDocument();
   });
 
   it('requires the unknown-requirement acknowledgement and sets confirmUnknown', async () => {
@@ -556,7 +560,9 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
 
-    expect(screen.getByText(/doesn't know what summarize needs/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no capability requirements on record for summarize/)
+    ).toBeInTheDocument();
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/requirements are unknown/i);
@@ -767,13 +773,16 @@ describe('RouteEditor', () => {
     await openRoute('chat');
 
     // A fact about the fork: nothing is asked of the reader.
-    const sharedRole = screen.getByText(/also uses this model/).closest('div');
+    const sharedRole = screen.getByText(/This model also serves/).closest('div');
     expect(sharedRole).toHaveAttribute('data-tone', 'info');
 
     // Retargeting reaches the sibling use case and drops authored fields.
     await pickModel('gpt-5');
-    expect(screen.getByText(/shared with/).closest('div')).toHaveAttribute('data-tone', 'caution');
-    expect(screen.getByText(/doesn't know what/).closest('div')).toHaveAttribute(
+    expect(screen.getByText(/belong to the model itself/).closest('div')).toHaveAttribute(
+      'data-tone',
+      'caution'
+    );
+    expect(screen.getByText(/no capability requirements on record/).closest('div')).toHaveAttribute(
       'data-tone',
       'caution'
     );

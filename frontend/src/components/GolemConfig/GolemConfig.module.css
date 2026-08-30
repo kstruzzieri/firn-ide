@@ -922,10 +922,12 @@
   gap: 8px 22px;
 }
 
+/* One overline-to-content distance for the whole strip: these 4px are the
+   rhythm the DECLARES block and the checklist legend share. */
 .detailStat {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .detailStatKey {
@@ -953,13 +955,13 @@
  * Mockup density inside the strip: the capability checklist flows as a
  * wrapping row of columns instead of one tall column, and sheds the boxed
  * chrome — the strip already draws the surface, and the stacked column was
- * most of the strip's height. Engines lay a fieldset legend out either as a
- * flex item (the full-basis rule gives it its own row) or pulled into the
- * border area above the content; both read the same.
+ * most of the strip's height. The 4px row gap matches the overline-to-content
+ * rhythm of the facts half (.detailStat / .detailDeclares), so the legend sits
+ * over its checkboxes exactly as TYPE sits over its value across the hairline.
  */
 .detail .capabilities {
   flex-flow: row wrap;
-  gap: 6px 14px;
+  gap: 4px 14px;
   padding: 0;
   border: 0;
 }
@@ -967,6 +969,17 @@
 .detail .capabilities > legend,
 .detail .capabilities > .fieldHint {
   flex-basis: 100%;
+}
+
+/*
+ * Engines pull a fieldset legend into the border area, where it sits flush on
+ * the first checkbox row with no gap at all. A floated legend is exempt from
+ * that special-casing, and floats are inert inside a flex container — so this
+ * only forces the legend to lay out as a normal flex item, where the row gap
+ * above actually applies to it.
+ */
+.detail .capabilities > legend {
+  float: left;
 }
 
 /* Even columns, per the mockup's minmax(118px, 1fr) checkbox grid. */
