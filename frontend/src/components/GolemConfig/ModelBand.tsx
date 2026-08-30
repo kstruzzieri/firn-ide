@@ -31,6 +31,7 @@ import {
   type ModelType,
   type ProviderProjection,
 } from '../../types/golem';
+import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
 
@@ -113,15 +114,23 @@ const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
 /**
  * What a compact card says beside its type tag: the numbers that tell two
  * same-named models apart. The TYPE is its own tag, so it is not in here.
+ * Context reads human-scale ("256K ctx"); the exact count travels in the
+ * facts span's title. Dimensions stay raw — small numbers, different unit.
  */
 const factsLine = (model: ModelProjection): string =>
   [
     model.parameters,
-    model.contextWindow === undefined ? undefined : `${model.contextWindow} ctx`,
+    model.contextWindow === undefined
+      ? undefined
+      : `${formatContextWindow(model.contextWindow)} ctx`,
     model.dimensions === undefined ? undefined : `${model.dimensions} dim`,
   ]
     .filter((part): part is string => part !== undefined)
     .join(' · ');
+
+/** Hover detail wherever the abbreviated context renders: the exact count. */
+const contextTitle = (model: ModelProjection): string | undefined =>
+  model.contextWindow === undefined ? undefined : `${model.contextWindow} tokens`;
 
 const missingFloor = (model: ModelProjection, floor: readonly CapabilityName[]): CapabilityName[] =>
   floor.filter((cap) => !model.exposedCapabilities.includes(cap));
@@ -489,7 +498,9 @@ export function ModelBand({
               </span>
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
-                <span className={styles.modelCardFacts}>{factsLine(row.model)}</span>
+                <span className={styles.modelCardFacts} title={contextTitle(row.model)}>
+                  {factsLine(row.model)}
+                </span>
               </span>
             </div>
           );
@@ -529,7 +540,9 @@ export function ModelBand({
               </span>
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
-                <span className={styles.modelCardFacts}>{factsLine(row.model)}</span>
+                <span className={styles.modelCardFacts} title={contextTitle(row.model)}>
+                  {factsLine(row.model)}
+                </span>
               </span>
               <span className={styles.capChips}>
                 {missingFloor(row.model, floor).map((cap) => (
@@ -612,7 +625,9 @@ export function ModelBand({
                   {detail.contextWindow !== undefined && (
                     <span className={styles.detailStat}>
                       <span className={styles.detailStatKey}>context</span>
-                      <span className={styles.detailStatValue}>{detail.contextWindow}</span>
+                      <span className={styles.detailStatValue} title={contextTitle(detail)}>
+                        {formatContextWindow(detail.contextWindow)}
+                      </span>
                     </span>
                   )}
                 </div>

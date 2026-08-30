@@ -98,10 +98,26 @@ describe('ModelBand compact cards', () => {
 
     expect(within(card).getByText('gpt-5-mini')).toBeVisible();
     expect(within(card).getByText('dense')).toBeVisible();
-    // The metadata row after the badge, joined per the mockup.
-    expect(within(card).getByText('30B-A3B · 262144 ctx')).toBeVisible();
+    // The metadata row after the badge, joined per the mockup — the context
+    // human-scale, with the exact count on hover.
+    const facts = within(card).getByText('30B-A3B · 256K ctx');
+    expect(facts).toBeVisible();
+    expect(facts).toHaveAttribute('title', '262144 tokens');
     // Even the assigned card stays compact.
     expect(within(card).queryByText('stream')).not.toBeInTheDocument();
+  });
+
+  it('formats the detail readout context exactly like the card', () => {
+    renderBand({
+      models: [model({ contextWindow: 262144 })],
+      selected: model({ contextWindow: 262144 }),
+    });
+    const strip = screen.getByTestId('model-detail');
+
+    const value = within(strip).getByText('256K');
+    expect(value).toBeVisible();
+    expect(value).toHaveAttribute('title', '262144 tokens');
+    expect(within(strip).queryByText('262144')).not.toBeInTheDocument();
   });
 
   it('omits an absent fact entirely — no dash, no unknown, no stray separator', () => {
