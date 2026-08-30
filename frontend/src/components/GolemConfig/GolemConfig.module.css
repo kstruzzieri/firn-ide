@@ -387,22 +387,35 @@
 }
 
 /*
- * The provider select and the model input sit one above the other, so their
- * boxes have to resolve identically. A select and an input with the same
- * padding still differ by a couple of pixels — the select carries its own
- * dropdown chrome — so the height and line box are stated rather than inferred.
+ * One EXPLICIT control box for every single-line field on this surface, the
+ * mockup's .ctl rule verbatim: a min-height lets a <select>'s intrinsic
+ * metrics win over the text input beside it (the API-format select rendered
+ * shorter than Endpoint), so the height and line box are stated instead of
+ * inferred, and the select below drops its native chrome so nothing native
+ * can disagree. Every .input consumer is a single-line input or select —
+ * introduce a textarea and it needs its own class, not this one.
  */
 .input {
   min-width: 0;
-  min-height: 30px;
-  padding: 5px 8px;
+  height: 30px;
+  padding: 0 10px;
   border: 1px solid var(--surface-border);
   border-radius: 6px;
   background-color: var(--surface-base);
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 28px;
+}
+
+/* The drawn caret, so a select's box cannot compute taller than an input. */
+select.input {
+  appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2390a0b6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
 }
 
 .input:focus-visible {
@@ -658,28 +671,9 @@
   align-items: center;
 }
 
-/*
- * Height parity by construction, per the mockup: both controls state the same
- * height, and the select drops its native chrome for a drawn caret so it cannot
- * compute taller than the input beside it. This replaces the earlier
- * align-items:stretch patch, which equalised them only by accident of the row.
- */
-.bandRow .input {
-  height: 30px;
-  min-height: 0;
-  padding: 0 10px;
-  line-height: 28px;
-}
-
-.bandRow select.input {
-  appearance: none;
-  padding-right: 26px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2390a0b6'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 9px center;
-  cursor: pointer;
-}
-
+/* Height parity is the BASE .input rule now: the band's explicit-height fix
+   moved there when the provider editor's API-format select showed the same
+   select-vs-input drift, so every field on the surface shares one box. */
 .bandProvider {
   flex: none;
   width: 160px;

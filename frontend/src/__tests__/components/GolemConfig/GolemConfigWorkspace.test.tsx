@@ -113,6 +113,20 @@ describe('GolemConfig stylesheet', () => {
     expect(css()).toMatch(/\.strip\[data-expanded\] \.value \{[^}]*color: var\(--text-muted\)/s);
     expect(css()).toMatch(/\.strip\[data-expanded\] \.status \{[^}]*color: var\(--accent\)/s);
   });
+
+  // One control box for every single-line field, on the BASE class: a
+  // min-height let a select's intrinsic metrics beat the input beside it (the
+  // band provider select, then the API-format select), so the height is
+  // explicit and the select draws its own caret. A per-row copy of the rule
+  // is the drift this pins against.
+  it('normalizes selects and inputs to one explicit control box', () => {
+    const input = css().match(/^\.input \{[^}]*\}/m)?.[0] ?? '';
+    expect(input).toMatch(/height: 30px/);
+    expect(input).not.toMatch(/min-height/);
+
+    const select = css().match(/^select\.input \{[^}]*\}/m)?.[0] ?? '';
+    expect(select).toMatch(/appearance: none/);
+  });
 });
 
 describe('GolemConfigWorkspace', () => {
