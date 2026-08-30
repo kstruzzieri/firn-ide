@@ -254,6 +254,13 @@ export function RoutingCard({
             const expanded = open.has(useCase);
             const editorId = `golem-route-editor-${index}`;
             const notices = rowDiagnostics(useCase);
+            /**
+             * The routes this row's RESOLVED model also serves — the same
+             * derivation RouteEditor's `sharedRole` makes from the same
+             * `current` object, so the strip marker can never disagree with
+             * the notice inside the open editor.
+             */
+            const shared = (applied?.routedUseCases ?? []).filter((other) => other !== useCase);
 
             return (
               <li key={useCase} data-testid={`route-row-${useCase}`} className={styles.row}>
@@ -272,7 +279,18 @@ export function RoutingCard({
                         reader has for repairing it externally, so it is
                         meaningful copy rather than an inert placeholder. */}
                     {view ? (
-                      view.model
+                      <>
+                        {view.model}
+                        {/* The coupling, surfaced BEFORE the editor opens: a
+                            neutral fact, the sibling names one hover away.
+                            Hidden while the row is expanded — the editor's
+                            info notice tells the same fact in full. */}
+                        {!expanded && shared.length > 0 && (
+                          <span className={styles.sharedMarker} title={shared.join(', ')}>
+                            {`shared with ${shared.length} other${shared.length === 1 ? '' : 's'}`}
+                          </span>
+                        )}
+                      </>
                     ) : role !== null && staged?.kind !== 'route-unassign' ? (
                       `role ${role} has no model`
                     ) : (

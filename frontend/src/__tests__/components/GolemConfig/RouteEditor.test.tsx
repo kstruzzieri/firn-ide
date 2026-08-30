@@ -516,6 +516,61 @@ describe('RouteEditor', () => {
     ).toBeInTheDocument();
   });
 
+  // The coupling surfaces BEFORE the editor opens: a neutral strip marker
+  // derived from the same `routedUseCases` the in-editor notice reads, so the
+  // two can never disagree.
+  it('marks a strip whose model also serves other routes, naming them on hover', () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+        { useCase: 'completion', role: 'chat-role' },
+      ],
+      models: [model({ routedUseCases: ['chat', 'completion', 'summarize'] }), other],
+    });
+
+    const marker = within(routeCells('chat')).getByText('shared with 2 others');
+    expect(marker).toHaveAttribute('title', 'completion, summarize');
+    // The sibling rows carry their own markers, each naming its own others.
+    expect(within(routeCells('summarize')).getByText('shared with 2 others')).toHaveAttribute(
+      'title',
+      'chat, completion'
+    );
+  });
+
+  it('agrees the marker with a single sibling and marks nothing when unshared', () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
+    });
+    expect(within(routeCells('chat')).getByText('shared with 1 other')).toHaveAttribute(
+      'title',
+      'summarize'
+    );
+    // agent resolves to nothing here, and nothing else is shared.
+    expect(within(routeCells('agent')).queryByText(/shared with/)).not.toBeInTheDocument();
+  });
+
+  it('yields the marker to the editor notice while the row is open', async () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
+    });
+    expect(within(routeCells('chat')).getByText('shared with 1 other')).toBeInTheDocument();
+
+    await openRoute('chat');
+    // One coupling, told once: the marker hides and the info notice names the
+    // same sibling the marker's title named.
+    expect(within(routeCells('chat')).queryByText(/shared with 1 other/)).not.toBeInTheDocument();
+    expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
+  });
+
   it('discloses the selector-wide reach of the change from the projected draft', async () => {
     renderRouting({
       routes: [

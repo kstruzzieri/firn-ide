@@ -101,6 +101,18 @@ describe('GolemConfig stylesheet', () => {
   it('no longer styles anything through the blocking boolean', () => {
     expect(css()).not.toContain('data-blocking');
   });
+
+  // The open editor's masthead (the expanded strip): its own surface step, the
+  // use case promoted, the metadata demoted, the live state in accent. Whether
+  // the contrast READS is Keith's call — this pins that the knobs exist.
+  it('elevates the expanded strip into a masthead band', () => {
+    expect(css()).toMatch(
+      /\.strip\[data-expanded\] \{[^}]*background-color: var\(--surface-hover\)/s
+    );
+    expect(css()).toMatch(/\.strip\[data-expanded\] \.useCase \{[^}]*font-size: 13px/s);
+    expect(css()).toMatch(/\.strip\[data-expanded\] \.value \{[^}]*color: var\(--text-muted\)/s);
+    expect(css()).toMatch(/\.strip\[data-expanded\] \.status \{[^}]*color: var\(--accent\)/s);
+  });
 });
 
 describe('GolemConfigWorkspace', () => {

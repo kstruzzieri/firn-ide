@@ -263,11 +263,41 @@
   border: 0;
 }
 
-/* The expanded strip and its editor read as one surface with an accent edge. */
+/*
+ * The expanded strip is the open editor's MASTHEAD: the record's title bar,
+ * not another row of the editable surface below. It takes one surface step up
+ * from the strips' frame fill (the same header idiom .cardHead uses), keeps
+ * its full-width hairline beneath, and shares the editor's accent edge.
+ * Closed strips stay on the flat frame fill, so the open row is the one that
+ * pops.
+ */
 .strip[data-expanded] {
   border-color: var(--accent);
   border-bottom-color: var(--surface-border-subtle);
   border-radius: 8px 8px 0 0;
+  background-color: var(--surface-hover);
+}
+
+/* The record's identity leads the masthead — one size up from every other
+   cell in the row (weight is already 700 on the base class). */
+.strip[data-expanded] .useCase {
+  font-size: 13px;
+}
+
+/* The metadata trail (provider, model) steps back to secondary ink so the
+   name and the live state carry the row. .meta cells are muted already. */
+.strip[data-expanded] .value {
+  color: var(--text-muted);
+}
+
+/* The live-state signal: "editing…" reads in accent, dot and text, so the
+   eye lands on the state after the name. Copy still carries the meaning. */
+.strip[data-expanded] .status {
+  color: var(--accent);
+}
+
+.strip[data-expanded] .statusDot {
+  background-color: var(--accent);
 }
 
 /*
@@ -1242,6 +1272,19 @@
   font-size: 11px;
   color: var(--text-muted);
   overflow-wrap: anywhere;
+}
+
+/*
+ * A neutral fact under the model name: this route's resolved model also
+ * serves others. Muted ink, no tone — it is coupling information, not a
+ * warning; the sibling names ride the title attribute.
+ */
+.sharedMarker {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 /*
