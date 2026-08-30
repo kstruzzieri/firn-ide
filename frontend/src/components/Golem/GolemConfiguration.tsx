@@ -26,13 +26,30 @@ import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfiguration.module.css';
 
+/**
+ * Plain English for each discovery branch (internal/ai/config.go
+ * discoverAgentConfigSource): what file was used and where it came from,
+ * worded so a user knows which knob to turn. The projection carries no
+ * resolved path, so the vocabulary names the mechanism, not the file.
+ */
 const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {
-  none: 'No configuration found',
-  env: 'Environment override',
-  working_directory: 'Working directory models.json',
-  user_config: 'User configuration directory',
-  legacy: 'Legacy configuration directory',
+  none: 'No configuration file found',
+  env: 'models.json named by GO_LLM_CONFIG',
+  working_directory: 'models.json in the working directory',
+  user_config: 'models.json in the user configuration directory',
+  legacy: 'models.json in the legacy configuration directory',
 };
+
+/** Hover detail where the short label benefits from the longer mechanism. */
+const ORIGIN_DETAIL: Partial<Record<SettingsProjection['sourceOrigin'], string>> = {
+  env: 'The GO_LLM_CONFIG environment variable overrides default discovery and names the configuration file directly.',
+  user_config: 'go-llm/models.json inside the system user-configuration directory.',
+  legacy: '~/.config/go-llm/models.json — the older go-llm discovery location.',
+};
+
+/** A source origin this build does not know still renders honestly, as itself. */
+const originLabel = (origin: SettingsProjection['sourceOrigin']): string =>
+  (ORIGIN_LABEL as Partial<Record<string, string>>)[origin] ?? origin;
 
 const STATE_LABEL: Record<SettingsProjection['state'], string> = {
   ready: 'Ready',
@@ -119,13 +136,21 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
         </div>
         {phase.kind === 'ready' && (
           <div className={styles.stateRow}>
-            <span className={styles.statePill} data-state={phase.projection.state}>
-              <span className={styles.stateDot} aria-hidden="true" />
-              {STATE_LABEL[phase.projection.state]}
-            </span>
-            <span className={styles.sourceChip}>
+            {/* Quiet when healthy: a READY pill repeats what the visible data
+                already says, so only a non-ready state earns the instrument.
+                The live region below still announces every transition. */}
+            {phase.projection.state !== 'ready' && (
+              <span className={styles.statePill} data-state={phase.projection.state}>
+                <span className={styles.stateDot} aria-hidden="true" />
+                {STATE_LABEL[phase.projection.state]}
+              </span>
+            )}
+            <span
+              className={styles.sourceChip}
+              title={ORIGIN_DETAIL[phase.projection.sourceOrigin]}
+            >
               <span className={styles.sourceKey}>Source</span>
-              {ORIGIN_LABEL[phase.projection.sourceOrigin]}
+              {originLabel(phase.projection.sourceOrigin)}
             </span>
           </div>
         )}
@@ -133,7 +158,7 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
 
       <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
         {phase.kind === 'ready'
-          ? `Configuration ${STATE_LABEL[phase.projection.state]}. Source ${ORIGIN_LABEL[phase.projection.sourceOrigin]}.`
+          ? `Configuration ${STATE_LABEL[phase.projection.state]}. Source ${originLabel(phase.projection.sourceOrigin)}.`
           : ''}
       </div>
 

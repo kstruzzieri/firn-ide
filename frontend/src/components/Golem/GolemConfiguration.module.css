@@ -80,23 +80,32 @@
   gap: 6px;
 }
 
-/* The panel's secondary-button recipe; the panel surface reads inset against
-   the elevated masthead strip. */
+/* The workspace button grammar (GolemConfig .button), at dock scale: a real
+   border, a fill one step ABOVE the surface it sits on — the masthead is
+   --surface-elevated, so the raised step is --surface-hover — and the accent
+   border on hover. The earlier --surface-panel fill sat BELOW the masthead and
+   read as an inset chip rather than a button. */
 .headerButton {
   flex: none;
-  padding: 3px 9px;
+  padding: 4px 12px;
   border: 1px solid var(--surface-border);
-  border-radius: 5px;
-  background-color: var(--surface-panel);
+  border-radius: 6px;
+  background-color: var(--surface-hover);
   color: var(--text-primary);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
-  transition: background-color var(--transition);
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
 }
 
 .headerButton:hover:not(:disabled) {
-  background-color: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.headerButton:active:not(:disabled) {
+  background-color: var(--surface-panel);
 }
 
 .headerButton:disabled {
@@ -140,12 +149,8 @@
   background-color: currentColor;
 }
 
-.statePill[data-state='ready'] {
-  border-color: color-mix(in srgb, var(--golem-teal) 35%, transparent);
-  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
-  color: var(--golem-teal);
-}
-
+/* No ready variant: the pill is quiet-when-healthy and only renders for a
+   non-ready state, so a ready recipe would be dead CSS. */
 .statePill[data-state='limited'] {
   border-color: color-mix(in srgb, var(--status-warning) 35%, transparent);
   background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);

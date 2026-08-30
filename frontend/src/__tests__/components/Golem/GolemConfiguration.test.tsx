@@ -83,7 +83,7 @@ describe('GolemConfiguration', () => {
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findAllByText('wire-model')).not.toHaveLength(0);
     expect(screen.getByText('https://api.example.com:8443/v1')).toBeInTheDocument();
-    expect(screen.getByText('User configuration directory')).toBeInTheDocument();
+    expect(screen.getByText('models.json in the user configuration directory')).toBeInTheDocument();
     expect(screen.getByText('Remote')).toBeInTheDocument();
     expect(ReloadGolemSettings).toHaveBeenCalledTimes(1);
   });
@@ -386,7 +386,9 @@ describe('GolemConfiguration', () => {
     render(<GolemConfiguration onClose={() => {}} />);
     await screen.findAllByText('wire-model');
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('Configuration Ready. Source User configuration directory.');
+    expect(status).toHaveTextContent(
+      'Configuration Ready. Source models.json in the user configuration directory.'
+    );
 
     (ReloadGolemSettings as jest.Mock).mockResolvedValueOnce({
       busy: false,
@@ -404,8 +406,30 @@ describe('GolemConfiguration', () => {
     await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
 
     await waitFor(() =>
-      expect(status).toHaveTextContent('Configuration Invalid. Source Environment override.')
+      expect(status).toHaveTextContent(
+        'Configuration Invalid. Source models.json named by GO_LLM_CONFIG.'
+      )
     );
+    // The transition into a non-healthy state also surfaces the visible pill.
+    expect(screen.getByText('Invalid')).toBeInTheDocument();
+  });
+
+  // Quiet when healthy: a READY pill said nothing the visible data below did
+  // not already say. Non-ready states keep the instrument — they gate action.
+  it('renders no state pill while ready, and keeps it for a non-ready state', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findAllByText('wire-model');
+
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument();
+    // The source chip still anchors the row the pill vacated.
+    expect(screen.getByText('models.json in the user configuration directory')).toBeInTheDocument();
+
+    (ReloadGolemSettings as jest.Mock).mockResolvedValueOnce({
+      busy: false,
+      projection: limitedProjection,
+    });
+    await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
+    expect(await screen.findByText('Limited')).toBeInTheDocument();
   });
 
   it('explicit Refresh while busy shows the inline busy notice', async () => {
