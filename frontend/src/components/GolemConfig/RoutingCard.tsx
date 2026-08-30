@@ -255,12 +255,19 @@ export function RoutingCard({
             const editorId = `golem-route-editor-${index}`;
             const notices = rowDiagnostics(useCase);
             /**
-             * The routes this row's RESOLVED model also serves — the same
+             * The routes this row's APPLIED model also serves — the same
              * derivation RouteEditor's `sharedRole` makes from the same
              * `current` object, so the strip marker can never disagree with
-             * the notice inside the open editor.
+             * the notice inside the open editor. While a route change is
+             * staged the row's headline paints the STAGED model, and this
+             * coupling belongs to the model being replaced — describing the
+             * displayed model with the old model's marker would be a lie, so
+             * the marker is suppressed until the row shows the applied truth.
              */
-            const shared = (applied?.routedUseCases ?? []).filter((other) => other !== useCase);
+            const shared =
+              staged?.kind === 'route'
+                ? []
+                : (applied?.routedUseCases ?? []).filter((other) => other !== useCase);
 
             return (
               <li key={useCase} data-testid={`route-row-${useCase}`} className={styles.row}>

@@ -185,6 +185,24 @@ describe('ModelBand keyboard navigation', () => {
     // Two eligible models here, so the last stop is the declare-free end.
     expect(cards().at(-1)).toHaveFocus();
   });
+
+  it('never steals focus from the filter after a clamped step past the end', async () => {
+    renderBand();
+    cards()[0].focus();
+
+    // A real move consumes the focus flag; the clamped step at the end must
+    // not re-arm it — the stale flag used to fire on the filter's first
+    // keystroke (which resets the active index) and yank focus onto the grid.
+    await userEvent.keyboard('{ArrowRight}');
+    expect(cardNamed('gpt-5-mini')).toHaveFocus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(cardNamed('gpt-5-mini')).toHaveFocus();
+
+    const filter = screen.getByLabelText('Filter models');
+    await userEvent.click(filter);
+    await userEvent.type(filter, 'g');
+    expect(filter).toHaveFocus();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -234,8 +252,10 @@ describe('ModelBand floor filter', () => {
     expect(within(blocked).getByText('✕ stream')).toBeVisible();
     expect(within(blocked).getByText('not eligible for chat')).toBeVisible();
 
-    await userEvent.click(screen.getByRole('button', { name: /show them|hide them/ }));
+    // One hidden model: the toggle agrees in number — "it", not "them".
+    await userEvent.click(screen.getByRole('button', { name: /hide it/ }));
     expect(cards().some((card) => within(card).queryByText('nomic-embed') !== null)).toBe(false);
+    expect(screen.getByRole('button', { name: /show it/ })).toBeInTheDocument();
   });
 
   it('narrows the grid as the filter is typed', async () => {
@@ -393,7 +413,7 @@ describe('ModelBand announcements', () => {
     expect(status).toHaveTextContent('2 models match this filter');
 
     await userEvent.type(screen.getByLabelText('Filter models'), 'mini');
-    expect(status).toHaveTextContent('1 model match this filter');
+    expect(status).toHaveTextContent('1 model matches this filter');
   });
 });
 
@@ -418,18 +438,25 @@ describe('ModelBand Home and End', () => {
 // ---------------------------------------------------------------------------
 
 describe('ModelBand stylesheet coverage', () => {
-  it('resolves every styles.* reference against its own module', () => {
+  it('resolves every styles.* reference in the tree against the shared module', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
-    const source = fs.readFileSync(path.join(dir, 'ModelBand.tsx'), 'utf8');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
+    // Every component that imports the shared module, discovered rather than
+    // listed: a new consumer joins the guard the day it is written.
+    const sources = fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith('.tsx'))
+      .map((name) => [name, fs.readFileSync(path.join(dir, name), 'utf8')] as const)
+      .filter(([, source]) => source.includes("from './GolemConfig.module.css'"));
+    expect(sources.length).toBeGreaterThan(5);
 
-    const used = [...source.matchAll(/styles\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-    expect(used.length).toBeGreaterThan(10);
-
-    const missing = [...new Set(used)].filter(
-      (name) => !new RegExp(`\\.${name}[\\s,{:[]`).test(css)
-    );
-    expect(missing).toEqual([]);
+    for (const [name, source] of sources) {
+      const used = [...source.matchAll(/styles\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+      const missing = [...new Set(used)].filter(
+        (className) => !new RegExp(`\\.${className}[\\s,{:[]`).test(css)
+      );
+      expect({ file: name, missing }).toEqual({ file: name, missing: [] });
+    }
   });
   // The grid is the one deliberate scroll region: bounded so the editor has a
   // predictable height, with a partial fifth row as the scroll affordance. The

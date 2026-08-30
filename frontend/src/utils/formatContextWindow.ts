@@ -13,6 +13,10 @@ export function formatContextWindow(value: number): string {
   if (value < 1000) return `${value}`;
   if (value % 1048576 === 0) return `${value / 1048576}M`;
   if (value % 1000000 === 0) return `${value / 1000000}M`;
+  // At a million and above the unit is M, never a four-digit K: an inexact
+  // divisor reads as binary megatokens to one trimmed decimal, so 1572864 is
+  // "1.5M", not "1536K".
+  if (value >= 1000000) return `${(value / 1048576).toFixed(1).replace(/\.0$/, '')}M`;
   if (value % 1000 === 0) return `${value / 1000}K`;
   if (value % 1024 === 0) return `${value / 1024}K`;
   return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}K`;

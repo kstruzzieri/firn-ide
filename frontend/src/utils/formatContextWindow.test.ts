@@ -18,6 +18,11 @@ describe('formatContextWindow', () => {
     [131500, '131.5K'],
     [1500, '1.5K'],
     [32769, '32.8K'],
+    // At a million and above the unit is M, never a four-digit K.
+    [1572864, '1.5M'],
+    [2097152, '2M'],
+    [2000000, '2M'],
+    [1900000, '1.8M'],
     // Small values stay raw.
     [999, '999'],
     [8, '8'],

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfiguration } from '../../../components/Golem/GolemConfiguration';
@@ -660,5 +662,22 @@ describe('GolemConfiguration', () => {
 
     expect(useGolemStore.getState().configTabOpen).toBe(true);
     expect(useGolemStore.getState().configTabFocused).toBe(true);
+  });
+
+  // Mirrors the workspace guard: jest maps CSS-module keys to themselves
+  // (identity-obj-proxy), so a class that exists in NO stylesheet still
+  // "works" in these tests and renders unstyled in the real build.
+  it('resolves every styles.* reference against its own module', () => {
+    const dir = path.resolve(__dirname, '../../../components/Golem');
+    const source = fs.readFileSync(path.join(dir, 'GolemConfiguration.tsx'), 'utf8');
+    const css = fs.readFileSync(path.join(dir, 'GolemConfiguration.module.css'), 'utf8');
+
+    const used = [...source.matchAll(/styles\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+    expect(used.length).toBeGreaterThan(10);
+
+    const missing = [...new Set(used)].filter(
+      (className) => !new RegExp(`\\.${className}[\\s,{:[]`).test(css)
+    );
+    expect(missing).toEqual([]);
   });
 });

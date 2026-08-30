@@ -693,7 +693,10 @@ select.input {
  * The card height is the card's own two fixed lines — 18px padding + ~16px
  * name line + 6px gap + ~17px metadata line + 2px border ≈ 59px, rounded up so
  * the bound never clips the fourth row. The metadata row renders even when its
- * facts are sparse, so every card resolves to the same height.
+ * facts are sparse, so every card resolves to the same height — NOMINALLY: a
+ * long name wrapping to a second line or a blocked card's reason-chip row can
+ * exceed the token, so "four rows plus a peek" is the ordinary geometry, not
+ * a guarantee. The bound and its scroll behave the same either way.
  *
  * This is the one deliberate scroll region in the editor. The strip below sits
  * in normal flow — an earlier sticky strip overlaid the last card row and its

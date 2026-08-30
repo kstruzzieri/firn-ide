@@ -571,6 +571,37 @@ describe('RouteEditor', () => {
     expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
   });
 
+  it('suppresses the marker while a staged retarget paints a different model', () => {
+    // chat and summarize share chat-role; chat is staged onto gpt-5. The
+    // collapsed chat row paints the STAGED model, and the coupling belongs to
+    // the model being replaced — describing gpt-5 with the old model's marker
+    // would lie. The unstaged sibling keeps its marker.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
+      draft: draftWith({
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call', 'thinking'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+        confirmUnknown: true,
+      }),
+    });
+
+    const row = routeCells('chat');
+    expect(within(row).getByText('gpt-5')).toBeInTheDocument();
+    expect(within(row).queryByText(/shared with/)).not.toBeInTheDocument();
+    expect(within(routeCells('summarize')).getByText('shared with 1 other')).toBeInTheDocument();
+  });
+
   it('discloses the selector-wide reach of the change from the projected draft', async () => {
     renderRouting({
       routes: [

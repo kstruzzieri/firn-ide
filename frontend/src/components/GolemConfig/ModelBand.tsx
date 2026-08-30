@@ -244,9 +244,15 @@ export function ModelBand({
   };
 
   const moveTo = (index: number) => {
-    navigatedRef.current = true;
+    const next = Math.min(stops - 1, Math.max(0, index));
+    // Armed only for a REAL move: a step past either end clamps to the same
+    // index, the focus effect (keyed on activeIndex) never runs, and a flag
+    // left armed here would fire on the NEXT index change — typing the first
+    // character into the filter resets active to 0 — yanking focus onto the
+    // grid mid-keystroke.
+    if (next !== activeIndex) navigatedRef.current = true;
     setPreviewing(true);
-    setActive(Math.min(stops - 1, Math.max(0, index)));
+    setActive(next);
   };
 
   const onGridKeyDown = (event: React.KeyboardEvent) => {
@@ -556,7 +562,7 @@ export function ModelBand({
       </div>
 
       <span className={styles.srOnly} role="status" aria-live="polite">
-        {`${matches.length} model${matches.length === 1 ? '' : 's'} match this filter`}
+        {`${matches.length} model${matches.length === 1 ? ' matches' : 's match'} this filter`}
       </span>
 
       {matches.length === 0 && !declaring && (
@@ -668,7 +674,9 @@ export function ModelBand({
             {`${blocked.length} model${blocked.length === 1 ? '' : 's'}`}
           </span>
           {` do${blocked.length === 1 ? 'es' : ''} not meet ${floor.join(' · ')} — `}
-          <span className={styles.hiddenToggle}>{showHidden ? 'hide them' : 'show them'}</span>
+          <span className={styles.hiddenToggle}>
+            {`${showHidden ? 'hide' : 'show'} ${blocked.length === 1 ? 'it' : 'them'}`}
+          </span>
         </button>
       )}
     </div>
