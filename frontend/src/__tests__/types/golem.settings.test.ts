@@ -10,15 +10,31 @@ import {
 const validProjection = (): Record<string, unknown> => ({
   state: 'ready',
   sourceOrigin: 'user_config',
-  routes: [{ useCase: 'agent', role: 'agent-m' }],
+  revision: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  readOnly: false,
+  editable: true,
+  routes: [
+    { useCase: 'agent', role: 'agent-m' },
+    { useCase: 'chat', role: 'agent-m' },
+  ],
   models: [
     {
       role: 'agent-m',
       modelName: 'wire-model',
       provider: 'hosted',
       type: 'dense',
+      parameters: '7b',
+      contextWindow: 32768,
+      dimensions: 1536,
       effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call'],
+        knownCaps: ['chat', 'generate', 'stream', 'embed', 'tool_call', 'thinking', 'insert'],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
       thinkMode: '',
+      routedUseCases: ['agent', 'chat'],
+      removable: false,
     },
   ],
   providers: [
@@ -30,8 +46,22 @@ const validProjection = (): Record<string, unknown> => ({
       credentialState: 'available',
     },
   ],
-  diagnostics: [{ code: 'agent_role_missing', subjectKind: '', subjectName: '', blocking: true }],
+  diagnostics: [],
 });
+
+type SettingsDiagnosticMappingCase = {
+  input: string;
+  output: string;
+  keepSubject: boolean;
+  blocking: boolean;
+};
+
+const settingsDiagnosticMappingCases = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, '../../../../internal/ai/testdata/settings_diagnostic_mapping.json'),
+    'utf8'
+  )
+) as SettingsDiagnosticMappingCase[];
 
 describe('parseSettingsProjection', () => {
   it('accepts a full valid projection', () => {
@@ -113,7 +143,7 @@ describe('parseSettingsProjection', () => {
     [
       'unknown diagnostic code',
       (v: Record<string, unknown>) => {
-        (v.diagnostics as Record<string, unknown>[])[0].code = 'future_code';
+        v.diagnostics = [{ code: 'future_code', subjectKind: '', subjectName: '', blocking: true }];
       },
     ],
     [
@@ -132,6 +162,12 @@ describe('parseSettingsProjection', () => {
       'oversized endpoint',
       (v: Record<string, unknown>) => {
         (v.providers as Record<string, unknown>[])[0].endpoint = `http://h/${'a'.repeat(1024)}`;
+      },
+    ],
+    [
+      'non-ASCII endpoint host',
+      (v: Record<string, unknown>) => {
+        (v.providers as Record<string, unknown>[])[0].endpoint = 'http://ex\u0430mple.com';
       },
     ],
     [
@@ -170,12 +206,12 @@ describe('parseSettingsProjection', () => {
     expect(() => parseSettingsProjection(value)).toThrow(GolemContractError);
   });
 
-  it('accepts explicit empty useCase and role (go-llm permits empty map keys)', () => {
+  it('rejects empty route and model identities', () => {
     const value = validProjection();
     (value.routes as Record<string, unknown>[])[0].useCase = '';
     (value.routes as Record<string, unknown>[])[0].role = '';
     (value.models as Record<string, unknown>[])[0].role = '';
-    expect(() => parseSettingsProjection(value)).not.toThrow();
+    expect(() => parseSettingsProjection(value)).toThrow(GolemContractError);
   });
 
   it('accepts an identifier at exactly 256 bytes, multibyte included', () => {
@@ -184,24 +220,58 @@ describe('parseSettingsProjection', () => {
     expect(() => parseSettingsProjection(value)).not.toThrow();
   });
 
-  it('accepts 257 diagnostics (worst case) and rejects 258', () => {
-    const diag = {
-      code: 'provider_endpoint_unsupported',
-      subjectKind: 'provider',
-      subjectName: 'p',
-      blocking: false,
-    };
+  it('accepts 257 unique diagnostics and rejects 258', () => {
+    const makeDiagnostics = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        code: 'provider_endpoint_unsupported',
+        subjectKind: 'provider',
+        subjectName: `p${index.toString().padStart(3, '0')}`,
+        blocking: false,
+      }));
     const at = validProjection();
-    at.diagnostics = Array.from({ length: 257 }, () => ({ ...diag }));
+    at.diagnostics = makeDiagnostics(257);
     expect(() => parseSettingsProjection(at)).not.toThrow();
     const over = validProjection();
-    over.diagnostics = Array.from({ length: 258 }, () => ({ ...diag }));
+    over.diagnostics = makeDiagnostics(258);
     expect(() => parseSettingsProjection(over)).toThrow(GolemContractError);
   });
 
   it('treats empty collections as empty arrays', () => {
     const value = { ...validProjection(), routes: [], models: [], providers: [], diagnostics: [] };
     expect(parseSettingsProjection(value).routes).toEqual([]);
+  });
+});
+
+describe('settings diagnostic mapping contract', () => {
+  it('contains 27 pinned upstream codes plus the unknown-future case', () => {
+    expect(settingsDiagnosticMappingCases).toHaveLength(28);
+    expect(settingsDiagnosticMappingCases.at(-1)?.input).toBe('certified_future_code');
+    expect(new Set(settingsDiagnosticMappingCases.map(({ input }) => input)).size).toBe(28);
+  });
+
+  it.each(settingsDiagnosticMappingCases)(
+    '$input maps to a parseable $output diagnostic',
+    ({ output, keepSubject, blocking }) => {
+      const projection = validProjection();
+      projection.diagnostics = [
+        {
+          code: output,
+          subjectKind: keepSubject ? 'provider' : '',
+          subjectName: keepSubject ? 'p1' : '',
+          blocking,
+        },
+      ];
+      expect(() => parseSettingsProjection(projection)).not.toThrow();
+    }
+  );
+
+  it('accepts use_case and the Firn-owned identifier notice', () => {
+    const projection = validProjection();
+    projection.diagnostics = [
+      { code: 'defaults_invalid', subjectKind: 'use_case', subjectName: 'agent', blocking: true },
+      { code: 'identifier_not_editable', subjectKind: '', subjectName: '', blocking: false },
+    ];
+    expect(() => parseSettingsProjection(projection)).not.toThrow();
   });
 });
 
@@ -229,13 +299,16 @@ describe('cross-language contract corpus', () => {
   const corpusDir = path.resolve(__dirname, '../../../../internal/ai/testdata/settings_contract');
   const files = fs.readdirSync(corpusDir).filter((f) => f.endsWith('.json'));
   it('corpus exists', () => {
-    expect(files.length).toBeGreaterThanOrEqual(15);
+    expect(files.length).toBeGreaterThanOrEqual(100);
   });
   it.each(files)('%s parses to its recorded verdict', (file) => {
     const entry = JSON.parse(fs.readFileSync(path.join(corpusDir, file), 'utf8')) as {
-      verdict: 'accept' | 'reject';
+      verdict: string;
       projection: unknown;
     };
+    if (entry.verdict !== 'accept' && entry.verdict !== 'reject') {
+      throw new Error(`${file}: unknown verdict ${JSON.stringify(entry.verdict)}`);
+    }
     if (entry.verdict === 'accept') {
       expect(() => parseSettingsProjection(entry.projection)).not.toThrow();
     } else {

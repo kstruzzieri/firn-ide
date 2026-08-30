@@ -21,12 +21,24 @@ const (
 	maxProjectionEntries       = 256
 	maxProjectionIdentifierLen = 256
 	maxProjectionEndpointLen   = 1024
-	// maxProjectionDiagnostics is the worst case the builder can emit: one
-	// provider_endpoint_unsupported per provider plus one agent diagnostic.
+	// maxProjectionDiagnostics is the contract cap (fixed by the TS validator
+	// and the shared corpus — never raise it without a breaking-change
+	// review). appendDiagnostic always emits, in order, at most one
+	// agent/document-state diagnostic (agentRouteDiagnostics or
+	// selectedAgentBlockingDiagnostic), then the readOnly diagnostic, then
+	// the not-editable diagnostic, BEFORE the up-to-maxProjectionEntries
+	// per-provider provider_endpoint_unsupported notices. The builder can
+	// therefore want up to maxProjectionEntries+3 entries; appendDiagnostic
+	// silently drops whatever doesn't fit past the cap. That's safe: a
+	// blocking agent/readOnly/not-editable diagnostic always lands within
+	// the first few appends and is never the one truncated, and a dropped
+	// non-blocking provider notice is cosmetic — that provider's row still
+	// projects (classification "unknown", endpoint ""), just without its
+	// own diagnostic line.
 	maxProjectionDiagnostics = maxProjectionEntries + 1
 )
 
-// Phase 1 diagnostic-code allowlist. The frontend validator mirrors this list
+// Slice A diagnostic-code allowlist. The frontend validator mirrors this list
 // byte-for-byte; grow both sides in the same change.
 const (
 	codeConfigMissing               = "config_missing"
@@ -36,6 +48,20 @@ const (
 	codeAgentCapsInsufficient       = "agent_capabilities_insufficient"
 	codeProviderEndpointUnsupported = "provider_endpoint_unsupported"
 	codeProjectionLimited           = "projection_limited"
+	codeDuplicateKeys               = "duplicate_keys"
+	codeProviderRequired            = "provider_required"
+	codeProviderNameInvalid         = "provider_name_invalid"
+	codeProviderEndpointInvalid     = "provider_endpoint_invalid"
+	codeProviderFormatInvalid       = "provider_format_invalid"
+	codeSlotPolicyInvalid           = "slot_policy_invalid"
+	codeModelInvalid                = "model_invalid"
+	codeThinkInvalid                = "think_invalid"
+	codeProviderNotFound            = "provider_not_found"
+	codeDefaultsInvalid             = "defaults_invalid"
+	codeKeyReferenceMalformed       = "key_reference_malformed"
+	codeKeyReferenceUnavailable     = "key_reference_unavailable"
+	codeSelectorConflict            = "selector_conflict"
+	codeIdentifierNotEditable       = "identifier_not_editable"
 )
 
 // settingsDiagnosticCodes enumerates every code the builder can emit, in the
@@ -48,18 +74,46 @@ var settingsDiagnosticCodes = []string{
 	codeAgentCapsInsufficient,
 	codeProviderEndpointUnsupported,
 	codeProjectionLimited,
+	codeDuplicateKeys,
+	codeProviderRequired,
+	codeProviderNameInvalid,
+	codeProviderEndpointInvalid,
+	codeProviderFormatInvalid,
+	codeSlotPolicyInvalid,
+	codeModelInvalid,
+	codeThinkInvalid,
+	codeProviderNotFound,
+	codeDefaultsInvalid,
+	codeKeyReferenceMalformed,
+	codeKeyReferenceUnavailable,
+	codeSelectorConflict,
+	codeIdentifierNotEditable,
 }
 
 // SettingsProjection is the Wails-facing read-only view of the effective Golem
 // configuration. It never carries filesystem paths, raw JSON, API keys,
-// environment variable names, or raw go-llm error text.
+// environment variable names, or raw go-llm error text. Revision is present
+// only for Ready/Limited (a loaded document); ReadOnly is the go-llm document
+// fact, Editable is the Firn identity-safety fact — they can diverge (a
+// duplicate-only document is ReadOnly but still Editable).
 type SettingsProjection struct {
 	State        string               `json:"state"`        // missing | invalid | limited | ready
 	SourceOrigin string               `json:"sourceOrigin"` // none | env | working_directory | user_config | legacy
+	Revision     string               `json:"revision,omitempty"`
+	ReadOnly     bool                 `json:"readOnly"`
+	Editable     bool                 `json:"editable"`
 	Routes       []RouteProjection    `json:"routes"`
 	Models       []ModelProjection    `json:"models"`
 	Providers    []ProviderProjection `json:"providers"`
 	Diagnostics  []Diagnostic         `json:"diagnostics"`
+}
+
+// CapabilityFacts pairs a model's resolved capabilities with the full
+// canonical vocabulary, so the frontend can render both "has" and "could
+// have" without hard-coding the capability list.
+type CapabilityFacts struct {
+	Caps      []string `json:"caps"`
+	KnownCaps []string `json:"knownCaps"`
 }
 
 // SettingsReloadResult is the Wails-facing reload outcome. Busy means the
@@ -78,19 +132,34 @@ type RouteProjection struct {
 
 // ModelProjection is one models-map entry. Role is the map key (a role name);
 // ModelName is the provider's model ID — different namespaces, both shown.
+// EffectiveCapabilities/CapabilityFacts.Caps are this model's own canonical
+// ResolvedCapabilities(); ExposedCapabilities is what a selector-sharing
+// mutation would actually apply (selectorCapabilityOverrides). RoutedUseCases
+// lists every use case reaching this role (directly or through a fallback
+// chain); Removable is true when nothing references it.
 type ModelProjection struct {
-	Role                  string   `json:"role"`
-	ModelName             string   `json:"modelName"`
-	Provider              string   `json:"provider"`
-	Type                  string   `json:"type"`
-	EffectiveCapabilities []string `json:"effectiveCapabilities"`
-	ThinkMode             string   `json:"thinkMode"`
+	Role                  string          `json:"role"`
+	ModelName             string          `json:"modelName"`
+	Provider              string          `json:"provider"`
+	Type                  string          `json:"type"`
+	Parameters            string          `json:"parameters,omitempty"`
+	ContextWindow         int             `json:"contextWindow,omitempty"`
+	Dimensions            int             `json:"dimensions,omitempty"`
+	EffectiveCapabilities []string        `json:"effectiveCapabilities"`
+	CapabilityFacts       CapabilityFacts `json:"capabilityFacts"`
+	ExposedCapabilities   []string        `json:"exposedCapabilities"`
+	ThinkMode             string          `json:"thinkMode"`
+	RoutedUseCases        []string        `json:"routedUseCases"`
+	Removable             bool            `json:"removable"`
 }
 
 // ProviderProjection is one provider. Endpoint is the NormalizeEndpoint
 // canonical form, "" when not derivable (Classification then "unknown").
-// CredentialState is presence, not a usability promise; reference_unavailable
-// becomes reachable only with the Phase 2 document layer.
+// CredentialState is presence, not a usability promise. reference_unavailable
+// is not producible by the current loader (an unresolved ${ENV} key
+// reference hard-fails the whole document load, so no provider ever reaches
+// this projection with a dangling reference); it is retained because the
+// spec closes the enum.
 type ProviderProjection struct {
 	Name            string `json:"name"`
 	Endpoint        string `json:"endpoint"`
@@ -100,12 +169,77 @@ type ProviderProjection struct {
 }
 
 // Diagnostic is one allowlisted configuration finding. SubjectName is a
-// length-bounded role/model/provider name; never a path or value.
+// length-bounded role/model/provider/use_case name; never a path or value.
 type Diagnostic struct {
 	Code        string `json:"code"`
-	SubjectKind string `json:"subjectKind"` // "" | role | model | provider
+	SubjectKind string `json:"subjectKind"` // "" | role | model | provider | use_case
 	SubjectName string `json:"subjectName"`
 	Blocking    bool   `json:"blocking"`
+}
+
+// mapConfigDiagnostic maps a go-llm config.Diagnostic onto the closed Slice-A
+// Firn diagnostic vocabulary. Every upstream ErrorCode this pinned go-llm
+// version can emit (config/diagnostic.go) is listed explicitly; an unknown
+// code — a future upstream addition not yet reviewed — fails closed onto
+// codeConfigInvalid rather than leaking an unreviewed string across the
+// boundary. The mapping table lives in
+// testdata/settings_diagnostic_mapping.json and is shared with the frontend
+// test via the same fixture file.
+func mapConfigDiagnostic(d config.Diagnostic) Diagnostic {
+	subjectKind, subjectName := "", ""
+	switch d.SubjectKind {
+	case config.SubjectProvider:
+		subjectKind, subjectName = "provider", d.Subject
+	case config.SubjectRole:
+		subjectKind, subjectName = "role", d.Subject
+	case config.SubjectUseCase:
+		subjectKind, subjectName = "use_case", d.Subject
+	case config.SubjectNone:
+	}
+
+	switch d.Code {
+	case config.CodeConfigNotFound:
+		return Diagnostic{Code: codeConfigMissing, Blocking: true}
+	case config.CodeParseError:
+		return Diagnostic{Code: codeJSONInvalid, Blocking: true}
+	case config.CodeConfigDiscoveryInvalid, config.CodeIO, config.CodeRenderError:
+		return Diagnostic{Code: codeConfigInvalid, Blocking: true}
+	}
+
+	code, blocking := "", true
+	switch d.Code {
+	case config.CodeDuplicateKeys:
+		code, blocking = codeDuplicateKeys, false
+	case config.CodeProviderRequired:
+		code = codeProviderRequired
+	case config.CodeProviderNameInvalid:
+		code = codeProviderNameInvalid
+	case config.CodeProviderEndpointInvalid:
+		code = codeProviderEndpointInvalid
+	case config.CodeProviderFormatInvalid:
+		code = codeProviderFormatInvalid
+	case config.CodeSlotPolicyInvalid:
+		code = codeSlotPolicyInvalid
+	case config.CodeModelInvalid:
+		code = codeModelInvalid
+	case config.CodeThinkInvalid:
+		code = codeThinkInvalid
+	case config.CodeProviderNotFound:
+		code = codeProviderNotFound
+	case config.CodeDefaultsInvalid:
+		code = codeDefaultsInvalid
+	case config.CodeKeyReferenceMalformed:
+		code = codeKeyReferenceMalformed
+	case config.CodeKeyReferenceUnavailable:
+		code = codeKeyReferenceUnavailable
+	case config.CodeSelectorConflict:
+		code = codeSelectorConflict
+	default:
+		return Diagnostic{Code: codeConfigInvalid, Blocking: true}
+	}
+
+	return Diagnostic{Code: code, SubjectKind: subjectKind,
+		SubjectName: subjectName, Blocking: blocking}
 }
 
 // sanitizeIdentifier replaces control and bidirectional-format runes with
@@ -140,6 +274,10 @@ func sanitizeProjectionIdentifiers(p SettingsProjection) SettingsProjection {
 		m.Provider = sanitizeIdentifier(m.Provider)
 		m.Type = sanitizeIdentifier(m.Type)
 		m.ThinkMode = sanitizeIdentifier(m.ThinkMode)
+		m.Parameters = sanitizeIdentifier(m.Parameters)
+		for j := range m.RoutedUseCases {
+			m.RoutedUseCases[j] = sanitizeIdentifier(m.RoutedUseCases[j])
+		}
 	}
 	for i := range p.Providers {
 		pr := &p.Providers[i]
@@ -182,7 +320,7 @@ func emptyProjection(state string, origin sourceOrigin) SettingsProjection {
 // Every path funnels through sanitizeProjectionIdentifiers so no identifier
 // can carry a control or bidi-format rune across the boundary.
 func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
-	return sanitizeProjectionIdentifiers(assembleSettingsProjection(loaded, loadErr))
+	return finalizeSettingsProjection(assembleSettingsProjection(loaded, loadErr))
 }
 
 // assembleSettingsProjection builds the projection from raw config values;
@@ -194,7 +332,24 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
 		}
+		if loaded.HasConfigDiagnostic && loaded.ConfigDiagnostic.Code == config.CodeConfigNotFound {
+			// mapConfigDiagnostic maps this code to codeConfigMissing; emitting
+			// it under state "invalid" would be a self-contradicting pair.
+			p := emptyProjection("missing", originNone)
+			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
+			return p
+		}
 		p := emptyProjection("invalid", loaded.Origin)
+		if loaded.HasConfigDiagnostic {
+			d := mapConfigDiagnostic(loaded.ConfigDiagnostic)
+			if loaded.ConfigDiagnostic.Code == config.CodeParseError &&
+				!errors.Is(loadErr, errConfigJSONSyntax) {
+				d.Code = codeConfigInvalid
+			}
+			d.Blocking = true
+			p.Diagnostics = append(p.Diagnostics, boundSubject(d))
+			return p
+		}
 		code := codeConfigInvalid
 		if errors.Is(loadErr, errConfigJSONSyntax) {
 			code = codeJSONInvalid
@@ -211,54 +366,98 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigInvalid, Blocking: true})
 		return p
 	}
-	if exceedsProjectionBounds(cfg) {
-		p := emptyProjection("limited", loaded.Origin)
-		// A limited projection must not conceal an unusable agent route: keep
-		// at most one bounded blocking agent diagnostic (spec 3.2 amendment).
-		if d, ok := selectedAgentBlockingDiagnostic(cfg); ok {
-			p.Diagnostics = append(p.Diagnostics, d)
+	p := emptyProjection("ready", loaded.Origin)
+	p.Revision, p.ReadOnly = loaded.Revision, loaded.ReadOnly
+	editable, withhold, offenseKind, offenseSubject := projectionIdentityStatus(cfg)
+	p.Editable = editable
+
+	appendDiagnostic := func(d Diagnostic) {
+		if len(p.Diagnostics) < maxProjectionDiagnostics {
+			p.Diagnostics = append(p.Diagnostics, boundSubject(d))
 		}
-		p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeProjectionLimited})
-		sortDiagnostics(p.Diagnostics)
+	}
+	agentDiagnostics := agentRouteDiagnostics(cfg)
+	for _, d := range agentDiagnostics {
+		appendDiagnostic(d)
+	}
+	if len(agentDiagnostics) == 0 {
+		if d, ok := selectedAgentBlockingDiagnostic(cfg); ok {
+			appendDiagnostic(d)
+		}
+	}
+	if loaded.ReadOnly {
+		// mapConfigDiagnostic fails an unknown future code closed onto
+		// {config_invalid, Blocking:true} — correct for the load-FAILURE path,
+		// but this is a successfully loaded, live document; force the mirror
+		// image of that deliberate choice so an unreviewed read-only reason
+		// never renders as "rejected while loading" over entities that did
+		// load and still project.
+		d := mapConfigDiagnostic(loaded.ReadOnlyDiagnostic)
+		d.Blocking = false
+		appendDiagnostic(d)
+	}
+	if !p.Editable {
+		appendDiagnostic(Diagnostic{
+			Code: codeIdentifierNotEditable, SubjectKind: offenseKind, SubjectName: offenseSubject,
+		})
+	}
+	if withhold {
+		p.State = "limited"
 		return p
 	}
-
-	p := emptyProjection("ready", loaded.Origin)
+	if exceedsProjectionBounds(cfg) {
+		p.State = "limited"
+		appendDiagnostic(Diagnostic{Code: codeProjectionLimited})
+		return p
+	}
 
 	for useCase, role := range cfg.Defaults {
 		p.Routes = append(p.Routes, RouteProjection{UseCase: useCase, Role: role})
 	}
-	sort.Slice(p.Routes, func(i, j int) bool { return p.Routes[i].UseCase < p.Routes[j].UseCase })
 
+	overrides := selectorCapabilityOverrides(cfg)
+	routed, referenced := roleUsage(cfg)
 	for role, m := range cfg.Models {
+		effective := canonicalizeCapabilities(m.ResolvedCapabilities())
+		var exposed []string
+		if override, ok := overrides[modelSelector{provider: m.Provider, model: m.Name}]; ok {
+			exposed = append([]string{}, override...)
+		} else {
+			exposed = append([]string{}, effective...)
+		}
 		p.Models = append(p.Models, ModelProjection{
-			Role:                  role,
-			ModelName:             m.Name,
-			Provider:              m.Provider,
-			Type:                  m.Type,
-			EffectiveCapabilities: canonicalizeCapabilities(m.ResolvedCapabilities()),
-			ThinkMode:             m.ThinkMode,
+			Role: role, ModelName: m.Name, Provider: m.Provider, Type: m.Type,
+			Parameters: m.Parameters, ContextWindow: m.ContextWindow, Dimensions: m.Dimensions,
+			EffectiveCapabilities: append([]string{}, effective...),
+			CapabilityFacts: CapabilityFacts{
+				Caps:      append([]string{}, effective...),
+				KnownCaps: append([]string{}, provider.CanonicalCapabilityNames...),
+			},
+			ExposedCapabilities: exposed, ThinkMode: m.ThinkMode,
+			RoutedUseCases: append([]string{}, routed[role]...),
+			Removable:      !referenced[role],
 		})
 	}
-	sort.Slice(p.Models, func(i, j int) bool { return p.Models[i].Role < p.Models[j].Role })
 
+	providerNames := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
 	agentProvider := selectedAgentProvider(cfg)
-	for name, pc := range cfg.Providers {
+	for _, name := range providerNames {
+		pc := cfg.Providers[name]
 		row := ProviderProjection{Name: name, APIFormat: pc.APIFormat, CredentialState: "none"}
 		if pc.APIKey != "" {
-			// Post-Load the key is expanded, so presence implies the ${ENV}
-			// reference (if any) resolved. reference_unavailable is Phase 2.
 			row.CredentialState = "available"
 		}
 		endpoint, local, err := NormalizeEndpoint(pc.BaseURL)
 		switch {
 		case err != nil:
 			row.Classification = "unknown"
-			p.Diagnostics = append(p.Diagnostics, Diagnostic{
-				Code:        codeProviderEndpointUnsupported,
-				SubjectKind: "provider",
-				SubjectName: name,
-				Blocking:    name == agentProvider,
+			appendDiagnostic(Diagnostic{
+				Code: codeProviderEndpointUnsupported, SubjectKind: "provider",
+				SubjectName: name, Blocking: name == agentProvider,
 			})
 		case local:
 			row.Endpoint, row.Classification = endpoint, "local"
@@ -267,10 +466,221 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		}
 		p.Providers = append(p.Providers, row)
 	}
-	sort.Slice(p.Providers, func(i, j int) bool { return p.Providers[i].Name < p.Providers[j].Name })
+	if p.ReadOnly || !p.Editable {
+		p.State = "limited"
+	}
+	return p
+}
 
-	p.Diagnostics = append(p.Diagnostics, agentRouteDiagnostics(cfg)...)
+// modelSelector is the (provider, model name) pair that go-llm treats as one
+// mutation target: two roles sharing a selector must agree on any explicit
+// Capabilities value (validation guarantees it), but can still expose
+// different derived capabilities from their own ResolvedCapabilities().
+type modelSelector struct {
+	provider string
+	model    string
+}
+
+// projectionIdentityStatus inspects every identity go-llm treats as a
+// mutation target — defaults keys/role values, model role keys/model
+// names/provider names and references, fallback role names, provider map
+// keys, and only non-empty optional parameters. editable is false when a
+// required identity is empty or any inspected value changes under
+// sanitizeIdentifier (bidi/control spoofing); bounds stay centralized in
+// exceedsProjectionBounds. withhold is true for an empty required identity,
+// or when two distinct raw use cases, roles, or providers become equal after
+// sanitization, or when two distinct raw (provider, model name) mutation
+// selectors become the same sanitized selector — any of these would let a
+// future write target the wrong entity. An absent optional parameter is
+// valid and never sets either flag.
+//
+// offenseKind/offenseSubject name the FIRST identity that made editable
+// false, so the emitted diagnostic isn't a dead end: offenseKind is one of
+// "use_case"/"role"/"model"/"provider" per the namespace being inspected
+// ("model" covers both model-name and parameters offenses), and
+// offenseSubject is that identity's sanitized, bounded form (safe to emit
+// as-is). A collision necessarily involves at least one individually
+// malformed raw value (two clean values can never sanitize to the same
+// string), so it is always named this way too — no separate instrumentation
+// needed. An empty-required-identity offense has nothing to name: both stay
+// unset for it.
+func projectionIdentityStatus(cfg *config.Config) (editable, withhold bool, offenseKind, offenseSubject string) {
+	editable = true
+	offenseRecorded := false
+	recordOffense := func(kind, subject string) {
+		if !offenseRecorded {
+			offenseKind, offenseSubject, offenseRecorded = kind, subject, true
+		}
+	}
+	inspect := func(kind, value string, required bool) {
+		if required && value == "" {
+			editable, withhold = false, true
+			recordOffense(kind, "") // nothing to name
+			return
+		}
+		if sanitizeIdentifier(value) != value {
+			editable = false
+			recordOffense(kind, sanitizeIdentifier(value))
+		}
+	}
+	addTarget := func(kind string, namespace map[string]string, value string) {
+		inspect(kind, value, true)
+		emitted := sanitizeIdentifier(value)
+		if raw, ok := namespace[emitted]; ok && raw != value {
+			withhold = true
+		}
+		namespace[emitted] = value
+	}
+
+	useCases := map[string]string{}
+	roles := map[string]string{}
+	providers := map[string]string{}
+	modelSelectors := map[modelSelector]modelSelector{}
+	addModelSelector := func(providerName, modelName string) {
+		raw := modelSelector{provider: providerName, model: modelName}
+		emitted := modelSelector{
+			provider: sanitizeIdentifier(providerName),
+			model:    sanitizeIdentifier(modelName),
+		}
+		if previous, ok := modelSelectors[emitted]; ok && previous != raw {
+			withhold = true
+		}
+		modelSelectors[emitted] = raw
+	}
+	defaultKeys := make([]string, 0, len(cfg.Defaults))
+	for useCase := range cfg.Defaults {
+		defaultKeys = append(defaultKeys, useCase)
+	}
+	sort.Strings(defaultKeys)
+	for _, useCase := range defaultKeys {
+		role := cfg.Defaults[useCase]
+		addTarget("use_case", useCases, useCase)
+		addTarget("role", roles, role)
+	}
+	modelRoles := make([]string, 0, len(cfg.Models))
+	for role := range cfg.Models {
+		modelRoles = append(modelRoles, role)
+	}
+	sort.Strings(modelRoles)
+	for _, role := range modelRoles {
+		m := cfg.Models[role]
+		addTarget("role", roles, role)
+		inspect("model", m.Name, true)
+		addTarget("provider", providers, m.Provider)
+		addModelSelector(m.Provider, m.Name)
+		if m.Parameters != "" {
+			inspect("model", m.Parameters, false)
+		}
+		fallbacks := m.Fallbacks
+		if len(fallbacks) > maxProjectionEntries {
+			fallbacks = fallbacks[:maxProjectionEntries]
+		}
+		for _, fallback := range fallbacks {
+			addTarget("role", roles, fallback)
+		}
+	}
+	providerNames := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
+	for _, name := range providerNames {
+		addTarget("provider", providers, name)
+	}
+	return editable, withhold, offenseKind, offenseSubject
+}
+
+// selectorCapabilityOverrides groups sorted roles by (provider, model name)
+// selector and retains only the first non-empty explicit Capabilities value
+// (validation guarantees any other explicit value on the same selector
+// agrees). A role with no selector override projects its own
+// ResolvedCapabilities() as ExposedCapabilities instead. Every returned array
+// is canonical, copied, and non-nil.
+func selectorCapabilityOverrides(cfg *config.Config) map[modelSelector][]string {
+	roles := make([]string, 0, len(cfg.Models))
+	for role := range cfg.Models {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	overrides := make(map[modelSelector][]string)
+	for _, role := range roles {
+		m := cfg.Models[role]
+		if len(m.Capabilities) == 0 {
+			continue
+		}
+		selector := modelSelector{provider: m.Provider, model: m.Name}
+		if _, exists := overrides[selector]; !exists {
+			overrides[selector] = canonicalizeCapabilities(m.Capabilities)
+		}
+	}
+	return overrides
+}
+
+// roleUsage walks each sorted explicit default through role fallbacks,
+// first-seen per use case. routed[role] is the sorted, unique set of use
+// cases reaching role (directly or through a fallback chain). referenced
+// includes every default target and every fallback target, even inside an
+// orphan chain (a fallback target that is not itself a configured model) —
+// removable is !referenced[role].
+func roleUsage(cfg *config.Config) (map[string][]string, map[string]bool) {
+	routed := make(map[string][]string, len(cfg.Models))
+	referenced := make(map[string]bool, len(cfg.Models))
+	for _, m := range cfg.Models {
+		for _, fallback := range m.Fallbacks {
+			referenced[fallback] = true
+		}
+	}
+	useCases := make([]string, 0, len(cfg.Defaults))
+	for useCase := range cfg.Defaults {
+		useCases = append(useCases, useCase)
+	}
+	sort.Strings(useCases)
+	for _, useCase := range useCases {
+		seen := map[string]bool{}
+		var walk func(string)
+		walk = func(role string) {
+			if seen[role] {
+				return
+			}
+			seen[role], referenced[role] = true, true
+			m, ok := cfg.Models[role]
+			if !ok {
+				return
+			}
+			routed[role] = append(routed[role], useCase)
+			for _, fallback := range m.Fallbacks {
+				walk(fallback)
+			}
+		}
+		walk(cfg.Defaults[useCase])
+	}
+	return routed, referenced
+}
+
+// finalizeSettingsProjection is the single pass every build path funnels
+// through: sanitize every identifier, sort every entity/routed-use-case/
+// diagnostic array on its emitted value, and drop exact duplicate
+// diagnostics. It never deduplicates colliding entities — assembly's
+// identity-withhold check (projectionIdentityStatus) already withholds those
+// upstream.
+func finalizeSettingsProjection(p SettingsProjection) SettingsProjection {
+	p = sanitizeProjectionIdentifiers(p)
+	sort.Slice(p.Routes, func(i, j int) bool {
+		return p.Routes[i].UseCase < p.Routes[j].UseCase
+	})
+	sort.Slice(p.Models, func(i, j int) bool { return p.Models[i].Role < p.Models[j].Role })
+	for i := range p.Models {
+		sort.Strings(p.Models[i].RoutedUseCases)
+	}
+	sort.Slice(p.Providers, func(i, j int) bool { return p.Providers[i].Name < p.Providers[j].Name })
 	sortDiagnostics(p.Diagnostics)
+	unique := p.Diagnostics[:0]
+	for _, d := range p.Diagnostics {
+		if len(unique) == 0 || unique[len(unique)-1] != d {
+			unique = append(unique, d)
+		}
+	}
+	p.Diagnostics = unique
 	return p
 }
 
@@ -296,6 +706,21 @@ func exceedsProjectionBounds(cfg *config.Config) bool {
 	for role, m := range cfg.Models {
 		if over(role) || over(m.Name) || over(m.Provider) || over(m.Type) || over(m.ThinkMode) {
 			return true
+		}
+		if m.Parameters != "" && over(m.Parameters) {
+			return true
+		}
+		if m.ContextWindow < 0 || m.ContextWindow > 2147483647 ||
+			m.Dimensions < 0 || m.Dimensions > 2147483647 {
+			return true
+		}
+		if len(m.Fallbacks) > maxProjectionEntries {
+			return true
+		}
+		for _, fallback := range m.Fallbacks {
+			if over(fallback) {
+				return true
+			}
 		}
 	}
 	for name, pc := range cfg.Providers {
@@ -323,13 +748,12 @@ func selectedAgentProvider(cfg *config.Config) string {
 	return m.Provider
 }
 
-// selectedAgentBlockingDiagnostic returns the single most relevant blocking
-// diagnostic for the agent route, with its subject bounded (dropped when over
-// the identifier limit). Used by the limited path only.
+// selectedAgentBlockingDiagnostic returns the agent provider's endpoint
+// diagnostic, with its subject bounded (dropped when over the identifier
+// limit). The caller only reaches this after agentRouteDiagnostics(cfg) has
+// already returned empty, so it never needs to re-check the role/capability
+// diagnostics agentRouteDiagnostics itself covers.
 func selectedAgentBlockingDiagnostic(cfg *config.Config) (Diagnostic, bool) {
-	if ds := agentRouteDiagnostics(cfg); len(ds) > 0 {
-		return boundSubject(ds[0]), true
-	}
 	if name := selectedAgentProvider(cfg); name != "" {
 		if pc := cfg.Provider(name); pc != nil {
 			if _, _, err := NormalizeEndpoint(pc.BaseURL); err != nil {
@@ -401,7 +825,8 @@ func canonicalizeCapabilities(tokens []string) []string {
 	return out
 }
 
-// sortDiagnostics: blocking first, then code, then subject name.
+// sortDiagnostics: blocking first, then code, then subject kind, then subject
+// name — a deterministic tie-break across both subject fields.
 func sortDiagnostics(ds []Diagnostic) {
 	sort.Slice(ds, func(i, j int) bool {
 		if ds[i].Blocking != ds[j].Blocking {
@@ -409,6 +834,9 @@ func sortDiagnostics(ds []Diagnostic) {
 		}
 		if ds[i].Code != ds[j].Code {
 			return ds[i].Code < ds[j].Code
+		}
+		if ds[i].SubjectKind != ds[j].SubjectKind {
+			return ds[i].SubjectKind < ds[j].SubjectKind
 		}
 		return ds[i].SubjectName < ds[j].SubjectName
 	})

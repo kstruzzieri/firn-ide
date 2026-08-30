@@ -13,24 +13,27 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
 )
 
 // ErrAgentConfigMissing reports that no go-llm configuration source exists at
-// any discovery location. Raw causes are logged host-side only; returned error
-// strings never contain the selected source path or config bytes.
+// any discovery location. Returned error strings never contain the selected
+// source path or config bytes; loadDefaultAgentConfig logs at most a fixed
+// string or a diagnostic code host-side, never the raw cause.
 var ErrAgentConfigMissing = errors.New("agent configuration missing")
 
 // ErrAgentConfigInvalid reports that a discovered configuration source could
-// not be read, parsed, validated, or resolved to a usable agent target. Raw
-// causes are logged host-side only; returned error strings never contain the
-// selected source path or config bytes.
+// not be read, parsed, validated, or resolved to a usable agent target.
+// Returned error strings never contain the selected source path or config
+// bytes; loadDefaultAgentConfig logs at most a fixed string or a diagnostic
+// code host-side, never the raw cause.
 var ErrAgentConfigInvalid = errors.New("agent configuration invalid")
 
 // errConfigJSONSyntax marks a load failure whose root cause is malformed JSON
-// (errors.As *json.SyntaxError on config.Load's return). Backend-only: it is
+// (errors.As *json.SyntaxError on config.LoadDocument's return). Backend-only: it is
 // chained ALONGSIDE ErrAgentConfigInvalid so SanitizeError is unchanged and
 // the settings projection can classify json_invalid without string matching.
 var errConfigJSONSyntax = errors.New("agent configuration is not valid JSON")
@@ -50,24 +53,32 @@ const (
 )
 
 // loadedAgentConfig couples a validated go-llm config with the file it came
-// from. SourcePath (canonical) and LexicalPath (as discovered, pre-symlink
-// resolution) are backend-only and must never cross the Wails boundary. On a
-// load failure the Config is nil but Origin and the paths are still populated
-// as far as discovery got, so the settings projection can name the source
-// class without re-running discovery.
+// from and the document-level facts LoadDocument exposes. SourcePath
+// (canonical) and LexicalPath (as discovered, pre-symlink resolution) are
+// backend-only and must never cross the Wails boundary. On a load failure the
+// Config is nil but Origin and the paths are still populated as far as
+// discovery got, so the settings projection can name the source class
+// without re-running discovery. ConfigDiagnostic/ReadOnlyDiagnostic are
+// boundary-safe (config.DiagnosticOf): never a path, raw JSON, key value, or
+// go-llm error text.
 type loadedAgentConfig struct {
-	Config      *config.Config
-	SourcePath  string
-	LexicalPath string
-	Origin      sourceOrigin
+	Config              *config.Config
+	SourcePath          string
+	LexicalPath         string
+	Origin              sourceOrigin
+	Revision            string
+	ReadOnly            bool
+	ReadOnlyDiagnostic  config.Diagnostic
+	ConfigDiagnostic    config.Diagnostic
+	HasConfigDiagnostic bool
 }
 
 // loadDefaultAgentConfig discovers the go-llm provider config exactly the way
 // the pinned go-llm config.Default does — $GO_LLM_CONFIG, ./models.json, the
 // platform user config dir, then the legacy ~/.config path — without invoking
 // config.Default itself, because Firn needs the selected source path back.
-// The selected file is canonicalized and handed to config.Load exactly once.
-// No discovery step performs network I/O.
+// The selected file is canonicalized and handed to config.LoadDocument
+// exactly once. No discovery step performs network I/O.
 func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 	source, origin, err := discoverAgentConfigSource()
 	if err != nil {
@@ -76,20 +87,31 @@ func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 	loaded := loadedAgentConfig{LexicalPath: source, Origin: origin}
 	resolved, err := canonicalizeConfigSource(source)
 	if err != nil {
-		log.Printf("ai: agent config source rejected: %v", err)
+		log.Print("ai: agent config source rejected")
 		return loaded, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
 	loaded.SourcePath = resolved
-	cfg, err := config.Load(resolved)
+	doc, err := config.LoadDocument(resolved)
 	if err != nil {
-		log.Printf("ai: agent config load failed: %v", err)
+		if d, ok := config.DiagnosticOf(err); ok {
+			loaded.ConfigDiagnostic = d
+			loaded.HasConfigDiagnostic = true
+			log.Printf("ai: agent config load failed: code=%s", d.Code)
+		} else {
+			log.Print("ai: agent config load failed")
+		}
 		var syntaxErr *json.SyntaxError
 		if errors.As(err, &syntaxErr) {
 			return loaded, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax)
 		}
 		return loaded, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
 	}
-	loaded.Config = cfg
+	loaded.Config = doc.Config()
+	loaded.Revision = doc.Revision()
+	if d, ok := doc.ReadOnly(); ok {
+		loaded.ReadOnly = true
+		loaded.ReadOnlyDiagnostic = d
+	}
 	return loaded, nil
 }
 
@@ -273,6 +295,17 @@ func NormalizeEndpoint(raw string) (canonical string, local bool, err error) {
 		return "", false, errors.New("endpoint must not carry a query")
 	}
 	host := strings.ToLower(u.Hostname())
+	if strings.ContainsFunc(host, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) }) {
+		return "", false, errors.New("endpoint host must not carry control or format characters")
+	}
+	// A non-ASCII host (Cyrillic/fullwidth/ideographic-dot homoglyphs, etc.)
+	// is never resolvable as-is and a confusable one could visually spoof a
+	// trusted domain in the consent prompt or config view. Reject it outright
+	// rather than rendering it — an internationalized host must be supplied
+	// as its ASCII punycode form (xn--...), which passes through unchanged.
+	if strings.ContainsFunc(host, func(r rune) bool { return r > unicode.MaxASCII }) {
+		return "", false, errors.New("endpoint host must be ASCII; use punycode for internationalized hosts")
+	}
 	if host == "" {
 		return "", false, errors.New("endpoint must include a host")
 	}
@@ -287,7 +320,13 @@ func NormalizeEndpoint(raw string) (canonical string, local bool, err error) {
 		hostPart = "[" + host + "]"
 	}
 	port := u.Port()
-	defaultPort := map[string]string{"http": "80", "https": "443"}[scheme]
+	var defaultPort string
+	switch scheme {
+	case "http":
+		defaultPort = "80"
+	case "https":
+		defaultPort = "443"
+	}
 	if port != "" && port != defaultPort {
 		hostPart += ":" + port
 	}

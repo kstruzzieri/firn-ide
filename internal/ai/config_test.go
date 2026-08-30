@@ -1,11 +1,13 @@
 package ai
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +54,17 @@ func writeMinimalAgentConfig(t *testing.T, dir, name, modelName string) string {
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("writing config fixture: %v", err)
+	}
+	return path
+}
+
+// writeAgentConfigBody writes an arbitrary models.json body to a throwaway
+// fixture path.
+func writeAgentConfigBody(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write models.json: %v", err)
 	}
 	return path
 }
@@ -217,6 +230,143 @@ func TestLoadDefaultAgentConfigErrorsNeverNameTheSource(t *testing.T) {
 	msg := err.Error()
 	if strings.Contains(msg, bad) || strings.Contains(msg, dir) || strings.Contains(msg, "broken-models") {
 		t.Fatalf("error %q leaks the source path", msg)
+	}
+}
+
+const documentAgentJSON = `{
+  "providers": {"local": {"base_url": "http://localhost:11434"}},
+  "models": {"agent-m": {"name": "m", "provider": "local", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+
+const duplicateProviderDocumentJSON = `{
+  "providers": {
+    "local": {"base_url": "http://localhost:11434"},
+    "local": {"base_url": "http://localhost:11435"}
+  },
+  "models": {"agent-m": {"name": "m", "provider": "local", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+
+func TestLoadDefaultAgentConfigCapturesDocumentFacts(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	path := writeAgentConfigBody(t, documentAgentJSON)
+	t.Setenv("GO_LLM_CONFIG", path)
+
+	loaded, err := loadDefaultAgentConfig()
+	if err != nil {
+		t.Fatalf("loadDefaultAgentConfig: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRevision := sha256.Sum256(raw)
+	if loaded.Revision != hex.EncodeToString(wantRevision[:]) {
+		t.Fatalf("revision = %q", loaded.Revision)
+	}
+	if loaded.ReadOnly || loaded.HasConfigDiagnostic || loaded.Config == nil {
+		t.Fatalf("loaded facts = %+v", loaded)
+	}
+}
+
+func TestLoadDefaultAgentConfigCapturesReadOnlyDiagnostic(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("GO_LLM_CONFIG", writeAgentConfigBody(t, duplicateProviderDocumentJSON))
+
+	loaded, err := loadDefaultAgentConfig()
+	if err != nil {
+		t.Fatalf("duplicate-key document must load: %v", err)
+	}
+	if !loaded.ReadOnly ||
+		loaded.ReadOnlyDiagnostic.Code != config.CodeDuplicateKeys ||
+		loaded.ReadOnlyDiagnostic.SubjectKind != config.SubjectProvider ||
+		loaded.ReadOnlyDiagnostic.Subject != "local" {
+		t.Fatalf("read-only facts = %+v", loaded)
+	}
+}
+
+func TestLoadDefaultAgentConfigDoesNotLogFailureDetails(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+
+	const marker = "FIRN_LOAD_SECRET_MARKER"
+	unsetenv(t, marker)
+
+	var logs bytes.Buffer
+	previousOutput := log.Writer()
+	previousFlags := log.Flags()
+	previousPrefix := log.Prefix()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models-"+marker+".json")
+	body := `{
+  "providers": {
+    "h": {
+      "base_url": "http://localhost:1",
+      "api_key": "${FIRN_LOAD_SECRET_MARKER}"
+    }
+  },
+  "models": {
+    "agent-m": {
+      "name": "m",
+      "provider": "h",
+      "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]
+    }
+  },
+  "defaults": {"agent": "agent-m"}
+}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", path)
+
+	_, err := loadDefaultAgentConfig()
+	if !errors.Is(err, ErrAgentConfigInvalid) {
+		t.Fatalf("load error = %v", err)
+	}
+	// A bounded, code-only line is logged host-side — never the raw error,
+	// the source path, or a secret/dir marker.
+	wantLog := "ai: agent config load failed: code=key_reference_unavailable\n"
+	if got := logs.String(); got != wantLog {
+		t.Fatalf("LoadDocument failure log = %q, want %q", got, wantLog)
+	}
+	if strings.Contains(logs.String(), marker) || strings.Contains(logs.String(), dir) {
+		t.Fatalf("LoadDocument failure log leaks details: %q", logs.String())
+	}
+	if strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), dir) {
+		t.Fatalf("returned error leaks load details: %q", err)
+	}
+
+	missing := filepath.Join(dir, "missing-"+marker+".json")
+	t.Setenv("GO_LLM_CONFIG", missing)
+	_, err = loadDefaultAgentConfig()
+	if !errors.Is(err, ErrAgentConfigInvalid) {
+		t.Fatalf("source error = %v", err)
+	}
+
+	got := logs.String()
+	if !strings.Contains(got, "ai: agent config source rejected") {
+		t.Fatalf("fixed source-rejection log missing: %q", got)
+	}
+	if strings.Contains(got, marker) || strings.Contains(got, dir) {
+		t.Fatalf("source-rejection log leaks details: %q", got)
+	}
+	if strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), dir) {
+		t.Fatalf("returned source error leaks details: %q", err)
 	}
 }
 
@@ -490,6 +640,33 @@ func TestNormalizeEndpointEquivalence(t *testing.T) {
 	}
 }
 
+// TestNormalizeEndpointPathEscapingFixedPoint: a raw bidi/control rune in the
+// PATH (not the host) is not rejected by NormalizeEndpoint -- only the host
+// is guarded -- but url.EscapedPath percent-escapes it, so the canonical
+// output never carries the raw rune and that escaped form is a fixed point
+// under re-normalization (the same "canonical must be a fixed point"
+// invariant TestNormalizeEndpointCanonicalForms pins for hosts).
+func TestNormalizeEndpointPathEscapingFixedPoint(t *testing.T) {
+	raw := "http://example.com/agent\u202em"
+	canonical, _, err := NormalizeEndpoint(raw)
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	if strings.ContainsRune(canonical, '\u202e') {
+		t.Fatalf("canonical endpoint carries a raw bidi rune in the path: %q", canonical)
+	}
+	if !strings.Contains(canonical, "%") {
+		t.Fatalf("canonical endpoint did not percent-escape the path rune: %q", canonical)
+	}
+	again, _, err := NormalizeEndpoint(canonical)
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint rejected its own canonical output: %v", err)
+	}
+	if again != canonical {
+		t.Fatalf("canonical %q is not a fixed point: re-normalized to %q", canonical, again)
+	}
+}
+
 func TestNormalizeEndpointRejections(t *testing.T) {
 	rejects := []string{
 		"",
@@ -507,11 +684,28 @@ func TestNormalizeEndpointRejections(t *testing.T) {
 		"http://[fe80::1%25en0]:11434", // IPv6 zone ID: no consent identity
 		"/relative/path",
 		"example.com",
+		"http://ex\u202eample.com", // RLO
+		"http://ex\u200fample.com", // RLM
+		"http://ex\u200bample.com", // zero-width space
+		"http://ex\u0430mple.com",  // Cyrillic "a" homoglyph
+		"http://\uff45xample.com",  // fullwidth "e" homoglyph
+		"http://example\u3002com",  // ideographic full stop as a dot lookalike
 	}
 	for _, raw := range rejects {
 		if got, _, err := NormalizeEndpoint(raw); err == nil {
 			t.Errorf("NormalizeEndpoint(%q) = %q, want error", raw, got)
 		}
+	}
+	// A punycode-encoded internationalized host is plain ASCII and must still
+	// be accepted -- the guard rejects non-ASCII runes, not non-Latin scripts.
+	if got, _, err := NormalizeEndpoint("http://xn--e1aybc.example.com"); err != nil {
+		t.Fatalf("punycode host rejected: %v", err)
+	} else if got != "http://xn--e1aybc.example.com" {
+		t.Fatalf("punycode host canonicalized wrong: %q", got)
+	}
+	// A clean host must still normalize once the Cc/Cf host check is added.
+	if got, _, err := NormalizeEndpoint("http://example.com"); err != nil || got != "http://example.com" {
+		t.Fatalf("clean host regressed: got %q, err %v", got, err)
 	}
 }
 
@@ -628,6 +822,12 @@ func TestLoadDefaultAgentConfigClassifiesJSONSyntax(t *testing.T) {
 	if strings.Contains(err.Error(), p) || strings.Contains(err.Error(), dir) {
 		t.Fatalf("error text leaks path: %q", err.Error())
 	}
+	if !loaded.HasConfigDiagnostic ||
+		loaded.ConfigDiagnostic.Code != config.CodeParseError ||
+		loaded.ConfigDiagnostic.SubjectKind != config.SubjectNone ||
+		loaded.ConfigDiagnostic.Subject != "" {
+		t.Fatalf("ConfigDiagnostic = %+v", loaded.ConfigDiagnostic)
+	}
 }
 
 func TestLoadDefaultAgentConfigTypeMismatchStaysCoarse(t *testing.T) {
@@ -638,9 +838,20 @@ func TestLoadDefaultAgentConfigTypeMismatchStaysCoarse(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GO_LLM_CONFIG", p)
-	_, err := loadDefaultAgentConfig()
+	loaded, err := loadDefaultAgentConfig()
 	if !errors.Is(err, ErrAgentConfigInvalid) || errors.Is(err, errConfigJSONSyntax) {
 		t.Fatalf("type mismatch must be coarse without the JSON-syntax sentinel: %v", err)
+	}
+	if !loaded.HasConfigDiagnostic ||
+		loaded.ConfigDiagnostic.Code != config.CodeParseError ||
+		loaded.ConfigDiagnostic.SubjectKind != config.SubjectNone ||
+		loaded.ConfigDiagnostic.Subject != "" {
+		t.Fatalf("ConfigDiagnostic = %+v", loaded.ConfigDiagnostic)
+	}
+	projection := buildSettingsProjection(loaded, err)
+	if projection.State != "invalid" || len(projection.Diagnostics) != 1 ||
+		projection.Diagnostics[0].Code != codeConfigInvalid || !projection.Diagnostics[0].Blocking {
+		t.Fatalf("buildSettingsProjection(type mismatch) = %+v, want invalid config_invalid", projection)
 	}
 }
 
@@ -667,6 +878,12 @@ func TestLoadDefaultAgentConfigUnsetEnvKeyStaysCoarse(t *testing.T) {
 	}
 	if loaded.Origin != originEnv {
 		t.Fatalf("partial origin = %q", loaded.Origin)
+	}
+	if !loaded.HasConfigDiagnostic ||
+		loaded.ConfigDiagnostic.Code != config.CodeKeyReferenceUnavailable ||
+		loaded.ConfigDiagnostic.SubjectKind != config.SubjectProvider ||
+		loaded.ConfigDiagnostic.Subject != "h" {
+		t.Fatalf("ConfigDiagnostic = %+v", loaded.ConfigDiagnostic)
 	}
 }
 

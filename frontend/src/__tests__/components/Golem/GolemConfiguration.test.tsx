@@ -7,9 +7,14 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
 }));
 import { ReloadGolemSettings } from '../../../../wailsjs/go/main/App';
 
+const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
 const readyProjection = {
   state: 'ready',
   sourceOrigin: 'user_config',
+  revision: testRevision,
+  readOnly: false,
+  editable: true,
   routes: [{ useCase: 'agent', role: 'agent-m' }],
   models: [
     {
@@ -18,7 +23,14 @@ const readyProjection = {
       provider: 'hosted',
       type: 'dense',
       effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call'],
+        knownCaps: ['chat', 'generate', 'stream', 'embed', 'tool_call', 'thinking', 'insert'],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
       thinkMode: 'auto',
+      routedUseCases: ['agent'],
+      removable: false,
     },
   ],
   providers: [
@@ -36,6 +48,9 @@ const readyProjection = {
 const limitedProjection = {
   state: 'limited',
   sourceOrigin: 'working_directory',
+  revision: testRevision,
+  readOnly: false,
+  editable: true,
   routes: [],
   models: [],
   providers: [],
@@ -63,7 +78,7 @@ describe('GolemConfiguration', () => {
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findByText('wire-model')).toBeInTheDocument();
     expect(screen.getByText('https://api.example.com:8443/v1')).toBeInTheDocument();
-    expect(screen.getByText(/User configuration directory/)).toBeInTheDocument();
+    expect(screen.getByText('User configuration directory')).toBeInTheDocument();
     expect(screen.getByText('Remote')).toBeInTheDocument();
     expect(ReloadGolemSettings).toHaveBeenCalledTimes(1);
   });
@@ -75,7 +90,33 @@ describe('GolemConfiguration', () => {
     });
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findByText('wire-model')).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument();
+  });
+
+  it('announces configuration state changes after Refresh', async () => {
+    render(<GolemConfiguration onClose={() => {}} />);
+    await screen.findByText('wire-model');
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Configuration Ready. Source User configuration directory.');
+
+    (ReloadGolemSettings as jest.Mock).mockResolvedValueOnce({
+      busy: false,
+      projection: {
+        state: 'invalid',
+        sourceOrigin: 'env',
+        readOnly: false,
+        editable: false,
+        routes: [],
+        models: [],
+        providers: [],
+        diagnostics: [{ code: 'json_invalid', subjectKind: '', subjectName: '', blocking: true }],
+      },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
+
+    await waitFor(() =>
+      expect(status).toHaveTextContent('Configuration Invalid. Source Environment override.')
+    );
   });
 
   it('explicit Refresh while busy shows the inline busy notice', async () => {
@@ -86,7 +127,7 @@ describe('GolemConfiguration', () => {
       projection: readyProjection,
     });
     await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
-    expect(await screen.findByRole('status')).toHaveTextContent(/Golem is busy/);
+    expect(await screen.findByText(/Golem is busy/)).toHaveAttribute('role', 'status');
   });
 
   it('disables Refresh while a request is in flight and re-enables after', async () => {
@@ -158,6 +199,8 @@ describe('GolemConfiguration', () => {
       projection: {
         state: 'missing',
         sourceOrigin: 'none',
+        readOnly: false,
+        editable: false,
         routes: [],
         models: [],
         providers: [],
@@ -174,6 +217,8 @@ describe('GolemConfiguration', () => {
       projection: {
         state: 'invalid',
         sourceOrigin: 'env',
+        readOnly: false,
+        editable: false,
         routes: [],
         models: [],
         providers: [],
@@ -199,6 +244,63 @@ describe('GolemConfiguration', () => {
     });
     render(<GolemConfiguration onClose={() => {}} />);
     expect(await screen.findByText('Golem returned an unexpected response.')).toBeInTheDocument();
+  });
+
+  it('renders typed Slice-A diagnostics with exact copy and severity', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        state: 'limited',
+        readOnly: true,
+        diagnostics: [
+          {
+            code: 'key_reference_unavailable',
+            subjectKind: 'provider',
+            subjectName: '',
+            blocking: true,
+          },
+          { code: 'duplicate_keys', subjectKind: 'provider', subjectName: '', blocking: false },
+        ],
+      },
+    });
+
+    render(<GolemConfiguration onClose={() => {}} />);
+
+    expect(
+      await screen.findByText('An API-key environment variable is unavailable.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Duplicate JSON keys make this configuration read-only.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Blocking')).toBeInTheDocument();
+    expect(screen.getByText('Notice')).toBeInTheDocument();
+    expect(screen.getByText('wire-model')).toBeInTheDocument();
+  });
+
+  it('keeps duplicate-key Limited entities visible and labels the notice', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        ...readyProjection,
+        state: 'limited',
+        readOnly: true,
+        diagnostics: [
+          {
+            code: 'duplicate_keys',
+            subjectKind: 'provider',
+            subjectName: 'hosted',
+            blocking: false,
+          },
+        ],
+      },
+    });
+    render(<GolemConfiguration onClose={() => {}} />);
+    expect(await screen.findByText('wire-model')).toBeInTheDocument();
+    expect(
+      screen.getByText('Duplicate JSON keys make this configuration read-only.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Notice')).toBeInTheDocument();
   });
 
   it('moves focus to the heading on mount', async () => {
