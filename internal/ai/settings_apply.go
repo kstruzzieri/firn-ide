@@ -191,6 +191,39 @@ func (o optionalStringSlice) slice() []string {
 	return o.Values
 }
 
+// optionalChanges is the same guarantee for the request's changes member.
+// Decoding null straight into a []Change silently yields nil —
+// indistinguishable from an absent key — and the profile source's empty-set
+// exemption then accepted both, while the frontend mirror (readCappedArray)
+// rejects them. Null is refused here; absence survives as a nil slice for
+// validateSettingsApplyRequest to refuse, where absence is still visible.
+type optionalChanges struct {
+	Values []Change
+	Set    bool
+}
+
+func (o *optionalChanges) UnmarshalJSON(data []byte) error {
+	if isJSONNull(data) {
+		return errApplyNullField
+	}
+	if err := json.Unmarshal(data, &o.Values); err != nil {
+		return err
+	}
+	o.Set = true
+	return nil
+}
+
+// slice mirrors optionalStringSlice.slice: nil exactly when absent.
+func (o optionalChanges) slice() []Change {
+	if !o.Set {
+		return nil
+	}
+	if o.Values == nil {
+		return []Change{}
+	}
+	return o.Values
+}
+
 type optionalInt struct {
 	Value int
 	Set   bool
@@ -251,7 +284,7 @@ func (r *SettingsApplyRequest) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		TargetRevision optionalString    `json:"targetRevision"`
 		Source         ApplySource       `json:"source"`
-		Changes        []Change          `json:"changes"`
+		Changes        optionalChanges   `json:"changes"`
 		Keys           map[string]string `json:"keys"`
 	}
 	if err := strictUnmarshal(data, &wire); err != nil {
@@ -260,7 +293,7 @@ func (r *SettingsApplyRequest) UnmarshalJSON(data []byte) error {
 	*r = SettingsApplyRequest{
 		TargetRevision: wire.TargetRevision.pointer(),
 		Source:         wire.Source,
-		Changes:        wire.Changes,
+		Changes:        wire.Changes.slice(),
 		Keys:           wire.Keys,
 	}
 	return nil
@@ -813,8 +846,10 @@ func validateSettingsApplyRequest(req SettingsApplyRequest, mode applyMode) erro
 			return errApplyRevision
 		}
 	}
-	// Both collections are non-null and bounded.
-	if len(req.Changes) > maxProjectionEntries {
+	// Both collections are PRESENT, non-null, and bounded — the frontend
+	// mirror (readCappedArray) rejects a null or absent member, so a nil
+	// slice here is a missing member, never an empty set.
+	if req.Changes == nil || len(req.Changes) > maxProjectionEntries {
 		return errApplyBounds
 	}
 	// An empty change set is a write only from a profile source: the loaded,

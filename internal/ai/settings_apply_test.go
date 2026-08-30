@@ -1521,6 +1521,11 @@ func profileSourceRequest(targetRevision, sourceRevision string, changes []Chang
 	if keys == nil {
 		keys = map[string]string{}
 	}
+	// nil here means "zero staged changes", which the wire contract spells as
+	// an explicit empty array — a nil Changes is a MISSING member and refused.
+	if changes == nil {
+		changes = []Change{}
+	}
 	return SettingsApplyRequest{
 		TargetRevision: stringPtr(targetRevision),
 		Source: ApplySource{Kind: applySourceProfile, ProfileID: "user/staged",
