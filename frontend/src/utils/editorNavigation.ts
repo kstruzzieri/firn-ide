@@ -7,7 +7,7 @@
  */
 
 import { useIDEStore, type EditorFile, type EditorNavigationRequest } from '../stores/ideStore';
-import { ReadFile } from '../../wailsjs/go/main/App';
+import { ReadFile } from '../wails/bindings';
 import { createEditorFile } from './editorFile';
 import { focusEditorSurface } from './editorSurface';
 import { flushWorkingTreeEdit } from './fileWrites';

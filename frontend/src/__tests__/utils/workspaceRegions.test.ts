@@ -40,7 +40,7 @@ describe('relativePathFromRoot', () => {
 });
 
 import { createRegionAccentResolver } from '../../utils/workspaceRegions';
-import type { workspace } from '../../../wailsjs/go/models';
+import type { workspace } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
 
 function ws(partial: Partial<workspace.WorkspaceDef>): workspace.WorkspaceDef {

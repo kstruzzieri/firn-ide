@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { CancelGolemRun, RunGolemTurn } from '../../wailsjs/go/main/App';
+import { CancelGolemRun, RunGolemTurn } from '../wails/bindings';
 import {
   boundedGolemMessage as boundedMessage,
   GOLEM_UNAVAILABLE,

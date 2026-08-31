@@ -1,10 +1,10 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { WorkspaceSelector } from '../../components/Header/WorkspaceSelector';
 import { useIDEStore } from '../../stores/ideStore';
-import { EventsOn } from '../../../wailsjs/runtime/runtime';
-import type { workspace } from '../../../wailsjs/go/models';
+import { EventsOn } from '../../wails/runtime';
+import type { workspace } from '../../wails/bindings';
 
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn(() => jest.fn()),
 }));
 

@@ -1,4 +1,4 @@
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -37,8 +37,8 @@ import {
   GitWriteConflictResult,
   GitStageConflictResult,
   GitApplyConflictSide,
-} from '../../wailsjs/go/main/App';
-import type { git } from '../../wailsjs/go/models';
+} from '../wails/bindings';
+import type { git } from '../wails/bindings';
 import { useGitStore } from './gitStore';
 import { useIDEStore, type EditorFile } from './ideStore';
 import { writeFileSerialized } from '../utils/fileWrites';

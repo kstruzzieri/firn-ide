@@ -1,4 +1,4 @@
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitBranches: jest.fn(),
   GitCheckout: jest.fn(),
@@ -14,10 +14,10 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 }));
 
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
-import { GitCheckout, GitBranches } from '../../../wailsjs/go/main/App';
+import { GitCheckout, GitBranches } from '../../wails/bindings';
 import { BranchSwitcher } from './BranchSwitcher';
 import { useGitStore } from '../../stores/gitStore';
-import type { git } from '../../../wailsjs/go/models';
+import type { git } from '../../wails/bindings';
 
 const mockCheckout = GitCheckout as jest.MockedFunction<typeof GitCheckout>;
 

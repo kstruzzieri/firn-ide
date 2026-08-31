@@ -12,7 +12,7 @@
  * mirrors of `internal/ai.RelayedEvent` / `internal/ai.RunStatusEvent`.
  */
 
-import { ai } from '../../wailsjs/go/models';
+import { ai } from '../wails/bindings';
 
 export interface ConversationIdentity {
   repoEpoch: number;

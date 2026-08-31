@@ -3,15 +3,11 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { RunProfileForm } from '../../../components/RunProfiles/RunProfileForm';
 import { useIDEStore } from '../../../stores/ideStore';
-import {
-  SaveRunProfile,
-  DeleteRunProfile,
-  OpenFolderDialog,
-} from '../../../../wailsjs/go/main/App';
+import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../../wails/bindings';
 import type { RunProfile } from '../../../types/runProfile';
-import type { workspace } from '../../../../wailsjs/go/models';
+import type { workspace } from '../../../wails/bindings';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   SaveRunProfile: jest.fn(),
   DeleteRunProfile: jest.fn(),
   OpenFolderDialog: jest.fn(),

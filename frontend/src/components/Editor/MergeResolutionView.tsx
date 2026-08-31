@@ -12,7 +12,7 @@ import {
   type TextMergeSession,
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
-import { GitConflictStages, GitFileAtRev } from '../../../wailsjs/go/main/App';
+import { GitConflictStages, GitFileAtRev } from '../../wails/bindings';
 import styles from './MergeResolutionView.module.css';
 
 type BaseStrip =

@@ -13,7 +13,7 @@ const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolv
 const mockStopInstance = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestartInstance = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   StartRunProfile: (id: string) => mockStartProfile(id),
   StopRunProfile: (id: string) => mockStopProfile(id),
   RestartRunProfile: (id: string) => mockRestartProfile(id),

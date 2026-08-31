@@ -7,7 +7,7 @@ const mockLoadRunProfiles = jest.fn<Promise<void>, [string]>().mockResolvedValue
 const mockGetRunProfilesSnapshot = jest.fn().mockResolvedValue({ profiles: [], profileState: {} });
 const mockGetRunHistorySnapshot = jest.fn().mockResolvedValue({ version: 1, summaries: [] });
 const mockStartRunProfile = jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined);
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   LoadRunProfiles: mockLoadRunProfiles,
   GetRunProfilesSnapshot: mockGetRunProfilesSnapshot,
   GetRunHistorySnapshot: mockGetRunHistorySnapshot,
@@ -20,7 +20,7 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 const mockEventsOn = jest
   .fn<() => void, [string, (profiles: unknown) => void]>()
   .mockImplementation(() => jest.fn());
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: mockEventsOn,
 }));
 

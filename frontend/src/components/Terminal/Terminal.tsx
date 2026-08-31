@@ -37,13 +37,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { createShellIntegration } from './shellIntegration';
 import { XTERM_OPTIONS } from './xtermConfig';
-import {
-  CreateTerminal,
-  WriteTerminal,
-  CloseTerminal,
-  ResizeTerminal,
-} from '../../../wailsjs/go/main/App';
-import { EventsOn } from '../../../wailsjs/runtime';
+import { CreateTerminal, WriteTerminal, CloseTerminal, ResizeTerminal } from '../../wails/bindings';
+import { EventsOn } from '../../wails/runtime';
 
 const TERMINAL_TABS: Array<{
   id: TerminalTab;

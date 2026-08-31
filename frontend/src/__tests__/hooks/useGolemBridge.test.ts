@@ -12,7 +12,7 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { EventsOn } from '../../../wailsjs/runtime/runtime';
+import { EventsOn } from '../../wails/runtime';
 import { useGolemBridge } from '../../hooks/useGolemBridge';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
@@ -22,12 +22,16 @@ const mockGetGolemStatus = jest.fn();
 const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  GetWorkspaceInfo: (...args: unknown[]) => mockGetWorkspaceInfo(...args),
-  GetGolemStatus: (...args: unknown[]) => mockGetGolemStatus(...args),
-  RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
-  CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    GetWorkspaceInfo: (...args: unknown[]) => mockGetWorkspaceInfo(...args),
+    GetGolemStatus: (...args: unknown[]) => mockGetGolemStatus(...args),
+    RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
+    CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
+  };
+});
 
 const mockEventsOn = EventsOn as jest.MockedFunction<typeof EventsOn>;
 

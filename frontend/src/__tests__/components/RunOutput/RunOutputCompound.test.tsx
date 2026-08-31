@@ -9,7 +9,7 @@ import type { CompoundRun, RunOutput } from '../../../types/runOutput';
 
 const mockStop = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestart = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   StopRunProfile: (id: string) => mockStop(id),
   RestartRunProfile: (id: string) => mockRestart(id),
 }));

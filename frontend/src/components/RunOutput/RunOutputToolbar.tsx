@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ClearRunHistoryRecord } from '../../../wailsjs/go/main/App';
+import { ClearRunHistoryRecord } from '../../wails/bindings';
 import { enqueueClearAllRunHistory, trackRunHistoryClear } from '../../hooks/useRunOutput';
 import {
   compareRunHistorySummaries,

@@ -4,7 +4,7 @@ import { CommandPalette } from '../../components/CommandPalette';
 import type { Command } from '../../utils/commands';
 import { formatShortcut } from '../../utils/platform';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({}));
+jest.mock('../../wails/bindings', () => ({}));
 
 beforeAll(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {

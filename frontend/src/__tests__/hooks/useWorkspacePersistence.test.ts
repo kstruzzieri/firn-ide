@@ -1,6 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
-import { filesystem } from '../../../wailsjs/go/models';
 import {
   clearWorkspaceTreeCache,
   getCachedWorkspaceTree,
@@ -19,15 +18,19 @@ const mockReadFile = jest.fn();
 
 let beforeCloseHandler: (() => void) | null = null;
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  ConfirmBeforeCloseReady: mockConfirmBeforeCloseReady,
-  CancelBeforeClose: mockCancelBeforeClose,
-  SaveWorkspaceState: mockSaveWorkspaceState,
-  LoadWorkspaceState: mockLoadWorkspaceState,
-  ReadFile: mockReadFile,
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    ConfirmBeforeCloseReady: mockConfirmBeforeCloseReady,
+    CancelBeforeClose: mockCancelBeforeClose,
+    SaveWorkspaceState: mockSaveWorkspaceState,
+    LoadWorkspaceState: mockLoadWorkspaceState,
+    ReadFile: mockReadFile,
+  };
+});
 
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn((event: string, callback: () => void) => {
     if (event === 'app:beforeclose') {
       beforeCloseHandler = callback;
@@ -45,6 +48,7 @@ jest.mock('../../hooks/useEnsurePathLoaded', () => ({
   useEnsurePathLoaded: jest.fn(() => mockEnsurePathLoaded),
 }));
 
+import { filesystem } from '../../wails/bindings';
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 import { trackRunHistoryClear } from '../../hooks/useRunOutput';
 import { openWorkspaceByPath } from '../../utils/workspace';

@@ -1,8 +1,8 @@
 import { Compartment } from '@codemirror/state';
 import { hoverTooltip, type EditorView, type Tooltip } from '@codemirror/view';
 import { highlightTree, tagHighlighter, tags as t } from '@lezer/highlight';
-import { LSPHover, LSPDefinition } from '../../../../wailsjs/go/main/App';
-import { BrowserOpenURL, ClipboardSetText } from '../../../../wailsjs/runtime/runtime';
+import { LSPHover, LSPDefinition } from '../../../wails/bindings';
+import { BrowserOpenURL, ClipboardSetText } from '../../../wails/runtime';
 import { getLoadedLanguageSupport } from './languages';
 import { decodeLSPContent } from '../../../utils/lspContent';
 import { fileURIToPath } from '../../../utils/lspUri';

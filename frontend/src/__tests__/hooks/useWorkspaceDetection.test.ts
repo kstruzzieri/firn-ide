@@ -1,9 +1,9 @@
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useWorkspaceDetection } from '../../hooks/useWorkspaceDetection';
 import { useIDEStore } from '../../stores/ideStore';
-import { DetectWorkspaces } from '../../../wailsjs/go/main/App';
+import { DetectWorkspaces } from '../../wails/bindings';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   DetectWorkspaces: jest.fn(),
 }));
 

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { AppendRunHistoryRecord, ClearAllRunHistory } from '../../wailsjs/go/main/App';
-import { runhistory } from '../../wailsjs/go/models';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { AppendRunHistoryRecord, ClearAllRunHistory } from '../wails/bindings';
+import { runhistory } from '../wails/bindings';
+import { EventsOn } from '../wails/runtime';
 import { mergeRunHistoryArchiveMaps, useIDEStore } from '../stores/ideStore';
 import type {
   CompoundRunEvent,

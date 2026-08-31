@@ -2,11 +2,11 @@ const mockEventsOn = jest
   .fn<() => void, [string, (...args: unknown[]) => void]>()
   .mockImplementation(() => jest.fn());
 
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: mockEventsOn,
 }));
 
-jest.mock('../../../wailsjs/go/main/App', () => ({}));
+jest.mock('../../wails/bindings', () => ({}));
 
 import { renderHook } from '@testing-library/react';
 import { useRunOutputListener } from '../../hooks/useRunOutput';

@@ -14,7 +14,7 @@ const mockNavigateToEditorLocation = jest.fn();
 const mockStartProfile = jest.fn().mockResolvedValue(undefined);
 const mockRestartProfile = jest.fn().mockResolvedValue(undefined);
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (...args: unknown[]) => mockStartProfile(...args),
   RestartRunProfile: (...args: unknown[]) => mockRestartProfile(...args),
   StopRunProfile: jest.fn().mockResolvedValue(undefined),

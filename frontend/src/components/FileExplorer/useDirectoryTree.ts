@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { ReadDirectoryShallow } from '../../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../../wails/bindings';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
 import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 

@@ -1,8 +1,8 @@
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   WriteFile: jest.fn(),
 }));
 
-import { WriteFile } from '../../wailsjs/go/main/App';
+import { WriteFile } from '../wails/bindings';
 import {
   flushAllFileEdits,
   isWritableFormat,

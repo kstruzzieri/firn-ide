@@ -11,7 +11,7 @@ const mockOpenCommandPalette = jest.fn();
 const mockNavigateToEditorLocation = jest.fn();
 const mockStartProfile = jest.fn().mockResolvedValue(undefined);
 const mockRestartProfile = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   ReadDirectory: jest.fn().mockResolvedValue([]),
   StartRunProfile: (...a: unknown[]) => mockStartProfile(...a),
   RestartRunProfile: (...a: unknown[]) => mockRestartProfile(...a),
@@ -20,7 +20,7 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockEventsOn = jest.fn<any, [string, () => void]>().mockReturnValue(jest.fn());
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: (event: string, callback: () => void) => mockEventsOn(event, callback),
 }));

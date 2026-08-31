@@ -1,4 +1,4 @@
-import { WriteFile } from '../../wailsjs/go/main/App';
+import { WriteFile } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import { normalizePathForComparison, pathsReferToSameFile } from './lspUri';
 

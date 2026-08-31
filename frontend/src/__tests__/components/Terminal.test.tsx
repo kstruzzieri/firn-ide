@@ -13,23 +13,27 @@ import { useConflictProjectionSync } from '../../hooks/useProblemsProjection';
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
-import { git } from '../../../wailsjs/go/models';
+import { git } from '../../wails/bindings';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
 const mockGetRunHistoryRecord = jest.fn();
 const mockGitConflictState = jest.fn();
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  CreateTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
-  WriteTerminal: jest.fn(),
-  CloseTerminal: (...args: unknown[]) => mockCloseTerminal(...args),
-  ResizeTerminal: jest.fn(),
-  GetRunHistoryRecord: (...args: unknown[]) => mockGetRunHistoryRecord(...args),
-  GitConflictState: (...args: unknown[]) => mockGitConflictState(...args),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    CreateTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
+    WriteTerminal: jest.fn(),
+    CloseTerminal: (...args: unknown[]) => mockCloseTerminal(...args),
+    ResizeTerminal: jest.fn(),
+    GetRunHistoryRecord: (...args: unknown[]) => mockGetRunHistoryRecord(...args),
+    GitConflictState: (...args: unknown[]) => mockGitConflictState(...args),
+  };
+});
 
-jest.mock('../../../wailsjs/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn(() => jest.fn()),
 }));
 

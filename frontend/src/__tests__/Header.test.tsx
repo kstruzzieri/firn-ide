@@ -9,18 +9,18 @@ import { Header } from '../components/Header';
 import { useIDEStore } from '../stores/ideStore';
 import { formatShortcut } from '../utils/platform';
 
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
 
-jest.mock('../../wailsjs/runtime/runtime', () => ({
+jest.mock('../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: jest.fn(() => jest.fn()),
 }));
 
-import { OpenFolderDialog } from '../../wailsjs/go/main/App';
-import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
+import { OpenFolderDialog } from '../wails/bindings';
+import { WindowSetTitle } from '../wails/runtime';
 
 const renderHeader = (onOpenCommandPalette = jest.fn()) =>
   render(<Header onOpenCommandPalette={onOpenCommandPalette} />);

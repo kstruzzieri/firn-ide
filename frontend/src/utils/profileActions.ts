@@ -4,7 +4,7 @@ import {
   RestartRunProfile,
   StopRunInstance as stopRunInstanceBinding,
   RestartRunInstance as restartRunInstanceBinding,
-} from '../../wailsjs/go/main/App';
+} from '../wails/bindings';
 import { representativeRunInstanceId, useIDEStore } from '../stores/ideStore';
 
 const msg = (err: unknown): string => (err instanceof Error ? err.message : String(err));

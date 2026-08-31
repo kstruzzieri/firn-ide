@@ -9,7 +9,7 @@ import { useGitStore } from '../stores/gitStore';
 import { useIDEStore } from '../stores/ideStore';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { joinRepoPath } from '../utils/paths';
-import { GitConflictState } from '../../wailsjs/go/main/App';
+import { GitConflictState } from '../wails/bindings';
 
 type ConflictProjectionResult = ConflictDiagnosticSummary | { path: string; error: string } | null;
 

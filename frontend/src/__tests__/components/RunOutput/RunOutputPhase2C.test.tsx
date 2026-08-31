@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { runhistory } from '../../../../wailsjs/go/models';
+import { runhistory } from '../../../wails/bindings';
 import { RunOutputPanel } from '../../../components/RunOutput/RunOutputPanel';
 import { RunOutputTabs } from '../../../components/RunOutput/RunOutputTabs';
 import { RunOutputToolbar } from '../../../components/RunOutput/RunOutputToolbar';
@@ -18,20 +18,24 @@ const mockLoadRunProfiles = jest.fn<Promise<void>, [string]>(() => Promise.resol
 const mockGetRunProfilesSnapshot = jest.fn<Promise<unknown>, []>();
 const mockGetRunHistorySnapshot = jest.fn<Promise<runhistory.Snapshot>, []>();
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
-  StartRunProfile: (id: string) => mockStartProfile(id),
-  StopRunProfile: jest.fn(() => Promise.resolve()),
-  RestartRunProfile: jest.fn(() => Promise.resolve()),
-  StopRunInstance: (id: string) => mockStopInstance(id),
-  RestartRunInstance: (id: string) => mockRestartInstance(id),
-  ClearRunHistoryRecord: (id: string) => mockClearRunHistoryRecord(id),
-  ClearAllRunHistory: () => mockClearAllRunHistory(),
-  GetRunHistoryRecord: (id: string) => mockGetRunHistoryRecord(id),
-  LoadRunProfiles: (path: string) => mockLoadRunProfiles(path),
-  GetRunProfilesSnapshot: () => mockGetRunProfilesSnapshot(),
-  GetRunHistorySnapshot: () => mockGetRunHistorySnapshot(),
-}));
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../wails/bindings');
+  return {
+    ...actual,
+    StartRunProfile: (id: string) => mockStartProfile(id),
+    StopRunProfile: jest.fn(() => Promise.resolve()),
+    RestartRunProfile: jest.fn(() => Promise.resolve()),
+    StopRunInstance: (id: string) => mockStopInstance(id),
+    RestartRunInstance: (id: string) => mockRestartInstance(id),
+    ClearRunHistoryRecord: (id: string) => mockClearRunHistoryRecord(id),
+    ClearAllRunHistory: () => mockClearAllRunHistory(),
+    GetRunHistoryRecord: (id: string) => mockGetRunHistoryRecord(id),
+    LoadRunProfiles: (path: string) => mockLoadRunProfiles(path),
+    GetRunProfilesSnapshot: () => mockGetRunProfilesSnapshot(),
+    GetRunHistorySnapshot: () => mockGetRunHistorySnapshot(),
+  };
+});
+jest.mock('../../../wails/runtime', () => ({
   EventsOn: jest.fn(() => jest.fn()),
 }));
 

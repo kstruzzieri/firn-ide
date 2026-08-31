@@ -124,7 +124,7 @@ jest.mock('../../../components/Editor/codemirror', () => {
   };
 });
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   LSPRetryProvision: jest.fn().mockResolvedValue(undefined),
   LSPSetInterpreter: jest.fn().mockResolvedValue(undefined),
   LSPClearInterpreter: jest.fn().mockResolvedValue(undefined),

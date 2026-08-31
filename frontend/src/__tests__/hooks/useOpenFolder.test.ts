@@ -1,15 +1,19 @@
 import { renderHook, act } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
-import { filesystem } from '../../../wailsjs/go/models';
+import { filesystem } from '../../wails/bindings';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  OpenFolderDialog: (...args: unknown[]) => mockOpenFolderDialog(...args),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    OpenFolderDialog: (...args: unknown[]) => mockOpenFolderDialog(...args),
+  };
+});
 
 const mockWindowSetTitle = jest.fn();
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: (...args: unknown[]) => mockWindowSetTitle(...args),
 }));
 

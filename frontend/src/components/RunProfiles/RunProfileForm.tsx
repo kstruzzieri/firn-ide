@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../../wailsjs/go/main/App';
-import type { runprofile } from '../../../wailsjs/go/models';
+import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../wails/bindings';
+import type { runprofile } from '../../wails/bindings';
 import {
   useIDEStore,
   useWorkspace,

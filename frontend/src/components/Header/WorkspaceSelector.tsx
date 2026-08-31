@@ -7,7 +7,7 @@ import {
   useActiveWorkspaceId,
   useIDEStore,
 } from '../../stores/ideStore';
-import { EventsOn } from '../../../wailsjs/runtime/runtime';
+import { EventsOn } from '../../wails/runtime';
 import { accentVar } from '../../utils/accent';
 
 const MENU_ID = 'workspace-selector-menu';

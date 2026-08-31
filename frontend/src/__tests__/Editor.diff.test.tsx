@@ -2,9 +2,9 @@ import { render, screen, fireEvent, act, createEvent, waitFor } from '@testing-l
 import userEvent from '@testing-library/user-event';
 import { useIDEStore } from '../stores/ideStore';
 import { useGitStore, type DiffSession, type MergeSession } from '../stores/gitStore';
-import type { workspace } from '../../wailsjs/go/models';
+import type { workspace } from '../wails/bindings';
 
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
   GitStatus: jest.fn(),
@@ -21,7 +21,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
   ReadFile: jest.fn(),
 }));
 
-jest.mock('../../wailsjs/runtime/runtime', () => ({
+jest.mock('../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 

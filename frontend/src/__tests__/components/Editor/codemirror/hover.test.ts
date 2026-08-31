@@ -1,12 +1,16 @@
 import { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
-jest.mock('../../../../../wailsjs/go/main/App', () => ({
-  LSPHover: jest.fn(),
-  LSPDefinition: jest.fn(),
-}));
+jest.mock('../../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../../wails/bindings');
+  return {
+    ...actual,
+    LSPHover: jest.fn(),
+    LSPDefinition: jest.fn(),
+  };
+});
 
-jest.mock('../../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../../wails/runtime', () => ({
   ClipboardSetText: jest.fn(),
   BrowserOpenURL: jest.fn(),
 }));
@@ -15,8 +19,8 @@ jest.mock('../../../../utils/lspDocumentSync', () => ({
   flushLSPDocumentChange: jest.fn(() => Promise.resolve(false)),
 }));
 
-import { LSPHover } from '../../../../../wailsjs/go/main/App';
-import { lsp } from '../../../../../wailsjs/go/models';
+import { LSPHover } from '../../../../wails/bindings';
+import { lsp } from '../../../../wails/bindings';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
 import { loadLanguageSupport } from '../../../../components/Editor/codemirror/languages';
 import {

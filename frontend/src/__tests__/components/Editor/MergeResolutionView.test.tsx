@@ -94,7 +94,7 @@ jest.mock('../../../stores/ideStore', () => ({
 
 // wailsjs/go/main/App.js is generated ESM this Jest config does not transform, so a
 // bare jest.mock(path) auto-load throws `Unexpected token 'export'` — use a factory.
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   GitConflictStages: jest.fn(),
   GitFileAtRev: jest.fn(),
 }));
@@ -103,7 +103,7 @@ import {
   MergeResolutionView,
   describeMergeAnnouncement,
 } from '../../../components/Editor/MergeResolutionView';
-import { GitConflictStages, GitFileAtRev } from '../../../../wailsjs/go/main/App';
+import { GitConflictStages, GitFileAtRev } from '../../../wails/bindings';
 
 const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
 const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;

@@ -6,10 +6,10 @@ import { isMac } from '../../utils/platform';
 const mockEventsOn = jest.fn().mockReturnValue(jest.fn());
 const mockNavigateToEditorLocation = jest.fn();
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   ToggleMaximize: jest.fn(),
 }));
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: (...args: unknown[]) => mockEventsOn(...args),
   WindowSetTitle: jest.fn(),
 }));

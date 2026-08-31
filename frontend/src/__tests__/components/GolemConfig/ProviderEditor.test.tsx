@@ -11,10 +11,10 @@ import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfi
 import { KeyVault, type Change } from '../../../types/golemConfig';
 import type { ProviderProjection } from '../../../types/golem';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
 }));
-import { ReloadGolemSettings } from '../../../../wailsjs/go/main/App';
+import { ReloadGolemSettings } from '../../../wails/bindings';
 
 const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 /** A second, later document: any other 64-hex CAS token. */

@@ -5,7 +5,7 @@ import { useIDEStore } from '../../stores/ideStore';
 const mockStart = jest.fn().mockResolvedValue(undefined);
 const mockRestart = jest.fn().mockResolvedValue(undefined);
 const mockStop = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (...a: unknown[]) => mockStart(...a),
   StopRunProfile: (...a: unknown[]) => mockStop(...a),
   RestartRunProfile: (...a: unknown[]) => mockRestart(...a),

@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
 
 const callbacks = new Map<string, (...args: unknown[]) => void>();
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn((event: string, callback: (...args: unknown[]) => void) => {
     callbacks.set(event, callback);
     return jest.fn();
@@ -41,13 +41,17 @@ const mockGetRunProfilesSnapshot = jest.fn(() =>
   })
 );
 const mockGetRunHistorySnapshot = jest.fn(() => Promise.resolve({ version: 1, summaries: [] }));
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  AppendRunHistoryRecord: (record: unknown) => mockAppendRunHistoryRecord(record),
-  ClearAllRunHistory: () => mockClearAllRunHistory(),
-  LoadRunProfiles: (path: string) => mockLoadRunProfiles(path),
-  GetRunProfilesSnapshot: () => mockGetRunProfilesSnapshot(),
-  GetRunHistorySnapshot: () => mockGetRunHistorySnapshot(),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    AppendRunHistoryRecord: (record: unknown) => mockAppendRunHistoryRecord(record),
+    ClearAllRunHistory: () => mockClearAllRunHistory(),
+    LoadRunProfiles: (path: string) => mockLoadRunProfiles(path),
+    GetRunProfilesSnapshot: () => mockGetRunProfilesSnapshot(),
+    GetRunHistorySnapshot: () => mockGetRunHistorySnapshot(),
+  };
+});
 
 import * as runOutputModule from '../../hooks/useRunOutput';
 import { useRunOutputListener } from '../../hooks/useRunOutput';

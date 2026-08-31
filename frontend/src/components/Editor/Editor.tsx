@@ -39,7 +39,7 @@ import { useGitBaseline } from '../../hooks/useGitBaseline';
 import { getLanguageName } from './codemirror';
 import { createWorkspacePathResolver } from '../../utils/workspaceRegions';
 import { accentVar } from '../../utils/accent';
-import type { workspace as workspaceModels } from '../../../wailsjs/go/models';
+import type { workspace as workspaceModels } from '../../wails/bindings';
 import firnLogo from '../../assets/branding/banner-transparent.svg';
 
 export function Editor() {

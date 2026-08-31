@@ -23,7 +23,7 @@ import {
 import { foldKeymap } from '@codemirror/language';
 import { lintKeymap } from '@codemirror/lint';
 import { Decoration, EditorView, keymap, lineNumbers, WidgetType } from '@codemirror/view';
-import type { git } from '../../../../wailsjs/go/models';
+import type { git } from '../../../wails/bindings';
 import type { InlineDiffSegment } from '../../../utils/lineDiff';
 import type { MergeDecision, TextMergeSession } from '../../../stores/gitStore';
 import { DEFAULT_SYNTAX_THEME_ID, getSyntaxPalette, type SyntaxThemeId } from './palettes';

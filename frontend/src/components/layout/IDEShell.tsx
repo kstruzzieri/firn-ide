@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { ToggleMaximize } from '../../../wailsjs/go/main/App';
+import { ToggleMaximize } from '../../wails/bindings';
 import {
   useIDEStore,
   useIsLeftPanelCollapsed,

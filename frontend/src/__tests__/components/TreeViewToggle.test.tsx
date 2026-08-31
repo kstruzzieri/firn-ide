@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TreeViewToggle } from '../../components/FileExplorer/TreeViewToggle';
 import { useIDEStore } from '../../stores/ideStore';
-import type { workspace } from '../../../wailsjs/go/models';
+import type { workspace } from '../../wails/bindings';
 
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },

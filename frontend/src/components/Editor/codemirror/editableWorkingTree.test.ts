@@ -10,7 +10,7 @@ jest.mock('@codemirror/state', () => ({
   Annotation: { define: () => mockExternalDocUpdate },
   Transaction: { addToHistory: { of: jest.fn(() => 'NO_HISTORY') } },
 }));
-jest.mock('../../../../wailsjs/go/main/App', () => ({ WriteFile: jest.fn() }));
+jest.mock('../../../wails/bindings', () => ({ WriteFile: jest.fn() }));
 
 import {
   isWorkingTreeEditable,
@@ -20,7 +20,7 @@ import {
 import { flushWorkingTreeEdit, writeFileSerialized } from '../../../utils/fileWrites';
 import type { DiffSession } from '../../../stores/gitStore';
 import { useIDEStore, type EditorFile } from '../../../stores/ideStore';
-import { WriteFile } from '../../../../wailsjs/go/main/App';
+import { WriteFile } from '../../../wails/bindings';
 
 const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
 

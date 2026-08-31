@@ -3,7 +3,7 @@ import {
   pickWorkspaceForCommand,
   commandWorkspaceMismatch,
 } from '../../utils/commandWorkspace';
-import type { workspace } from '../../../wailsjs/go/models';
+import type { workspace } from '../../wails/bindings';
 
 const ws = (id: string, type: string, name = id): workspace.WorkspaceDef =>
   ({
