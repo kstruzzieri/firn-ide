@@ -11,7 +11,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -31,15 +30,15 @@ func buildAppMenu(app *App) *menu.Menu {
 
 	navigateMenu := appMenu.AddSubmenu("Navigate")
 	navigateMenu.AddText("Go Back", keys.CmdOrCtrl("["), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "navigate:back")
+		app.emit("navigate:back")
 	})
 	navigateMenu.AddText("Go Forward", keys.CmdOrCtrl("]"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "navigate:forward")
+		app.emit("navigate:forward")
 	})
 
 	workspaceMenu := appMenu.AddSubmenu("Workspace")
 	workspaceMenu.AddText("Switch Workspace", keys.Combo(".", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:switch-workspace")
+		app.emit("menu:switch-workspace")
 	})
 
 	return appMenu

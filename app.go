@@ -138,11 +138,9 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.executor = runprofile.NewExecutor(
-		func(event string, data ...any) {
-			runtime.EventsEmit(a.ctx, event, data...)
-		},
+		a.emit,
 		func(id runprofile.RunIdentity, stream, data string, timestamp int64) {
-			runtime.EventsEmit(a.ctx, "run:output", runprofile.OutputChunk{
+			a.emit("run:output", runprofile.OutputChunk{
 				RunIdentity: id,
 				Stream:      stream,
 				Data:        data,
@@ -150,9 +148,7 @@ func (a *App) startup(ctx context.Context) {
 			})
 		},
 	)
-	a.lspManager = lsp.NewManager(func(event string, data ...any) {
-		runtime.EventsEmit(a.ctx, event, data...)
-	})
+	a.lspManager = lsp.NewManager(a.emit)
 	a.wireLSPProvisioners()
 
 	// Golem chat. Without a ~/.firn root there is no consent path at all: an
@@ -746,6 +742,18 @@ func (a *App) ToggleMaximize() {
 	runtime.WindowToggleMaximise(a.ctx)
 }
 
+// TerminalOutputEvent is the single payload for "terminal:output". The v2
+// two-argument emit (id, data) was retired in #273 Task 0 so every event
+// carries at most one payload (the v3 event bridge relies on this).
+type TerminalOutputEvent struct {
+	TermID string `json:"termId"`
+	Data   string `json:"data"`
+}
+
+func (a *App) emitTerminalOutput(id, data string) {
+	a.emit("terminal:output", TerminalOutputEvent{TermID: id, Data: data})
+}
+
 // CreateTerminal creates a new terminal whose shell starts in dir — the loaded
 // workspace root — instead of the app process's own working directory. An
 // empty or missing dir inherits the process default.
@@ -761,7 +769,7 @@ func (a *App) CreateTerminal(dir string) (string, error) {
 	// means there is no output to stream — never a nil-deref in the goroutine.
 	if session, ok := a.termManager.Get(id); ok {
 		go session.ReadLoop(func(data string) {
-			runtime.EventsEmit(a.ctx, "terminal:output", id, data)
+			a.emitTerminalOutput(id, data)
 		})
 	}
 

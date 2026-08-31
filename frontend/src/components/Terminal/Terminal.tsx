@@ -67,18 +67,18 @@ let globalOutputCleanup: (() => void) | null = null;
 
 function ensureGlobalOutputListener() {
   if (globalOutputCleanup) return;
-  globalOutputCleanup = EventsOn('terminal:output', (termId: string, data: string) => {
-    const listener = outputListeners.get(termId);
+  globalOutputCleanup = EventsOn('terminal:output', (evt: { termId: string; data: string }) => {
+    const listener = outputListeners.get(evt.termId);
     if (listener) {
-      listener(data);
+      listener(evt.data);
     } else {
       // Buffer output until a listener attaches
-      let buf = outputBuffers.get(termId);
+      let buf = outputBuffers.get(evt.termId);
       if (!buf) {
         buf = [];
-        outputBuffers.set(termId, buf);
+        outputBuffers.set(evt.termId, buf);
       }
-      buf.push(data);
+      buf.push(evt.data);
     }
   });
 }

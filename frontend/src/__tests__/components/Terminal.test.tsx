@@ -14,6 +14,8 @@ import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
 import { git } from '../../wails/bindings';
+import { EventsOn } from '../../wails/runtime';
+import { Terminal as XTerm } from '@xterm/xterm';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
@@ -176,6 +178,37 @@ describe('Terminal component', () => {
     // The PTY must spawn in the workspace, not the app process's cwd (which
     // under wails dev is the firn checkout itself).
     expect(mockCreateTerminal).toHaveBeenCalledWith('/repo/flux-ml');
+  });
+
+  it('routes a terminal:output event only to the xterm session matching its termId', async () => {
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 2')).toBeInTheDocument();
+
+    // The single-payload contract (#273 Task 4): the backend now emits one
+    // { termId, data } object per "terminal:output" event instead of two
+    // positional (id, data) arguments.
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    expect(registration).toBeDefined();
+    const handler = registration![1] as (evt: { termId: string; data: string }) => void;
+
+    const writeSpy = jest.spyOn(XTerm.prototype, 'write');
+    writeSpy.mockClear();
+
+    act(() => {
+      handler({ termId: 'term-1', data: 'hello from term-1' });
+    });
+
+    // With two live sessions mounted, a mis-routed event would write into
+    // both xterm instances instead of just the matching one.
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect(writeSpy).toHaveBeenCalledWith('hello from term-1');
+
+    writeSpy.mockRestore();
   });
 
   it('leaves the terminal panel empty after closing the last session and resets the next default title', async () => {
