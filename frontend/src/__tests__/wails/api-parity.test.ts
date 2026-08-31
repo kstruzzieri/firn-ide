@@ -7,3 +7,12 @@ it('adapter exports every v2-bound method name', () => {
   );
   expect(missing).toEqual([]);
 });
+
+it('no binding function missing from the inventory', () => {
+  const extra = Object.keys(bindings).filter(
+    (k) =>
+      typeof (bindings as Record<string, unknown>)[k] === 'function' &&
+      !(names as string[]).includes(k)
+  );
+  expect(extra).toEqual([]);
+});

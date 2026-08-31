@@ -99,6 +99,8 @@ var eventEmitScanSkipDirs = map[string]bool{
 //     App.emit may call it at all, by design), so its anti-vacuity instead
 //     confirms the one exempt call inside App.emit was actually found — a
 //     rename there zeroes it out and fails loudly too.
+const eventEmitScanRoot = "."
+
 func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 	fset := token.NewFileSet()
 	var violations []string
@@ -110,11 +112,13 @@ func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
-		// Only app.go's own (a *App) emit method may call EventsEmit at all,
-		// or forward a variadic call, or carry more than one payload — it is
-		// the seam's single choke point. Every other function, in every
-		// file, is checked.
-		isAppEmitSeam := filepath.Base(path) == "app.go"
+		// Only the repo-root app.go's own (a *App) emit method may call
+		// EventsEmit at all, or forward a variadic call, or carry more than
+		// one payload — it is the seam's single choke point. A same-named
+		// app.go nested under internal/** (or anywhere else) does not
+		// inherit this exemption. Every other function, in every file, is
+		// checked.
+		isAppEmitSeam := path == filepath.Join(eventEmitScanRoot, "app.go")
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
@@ -168,7 +172,7 @@ func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 		}
 	}
 
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(eventEmitScanRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

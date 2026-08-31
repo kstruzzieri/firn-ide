@@ -287,7 +287,8 @@ firn-ide/
 │   │   ├── stores/             # Zustand state (ide, git, lsp, search)
 │   │   ├── hooks/              # Custom React hooks
 │   │   ├── utils/              # Shared utilities
-│   │   └── types/              # TypeScript type definitions
+│   │   ├── types/              # TypeScript type definitions
+│   │   └── wails/              # Adapter — single import surface for generated bindings
 │   └── wailsjs/                # Generated Go bindings
 └── docs/
     ├── roadmap.md              # Consolidated roadmap with all issues

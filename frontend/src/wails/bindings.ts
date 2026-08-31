@@ -3,14 +3,7 @@
 // wailsjs paths (enforced by no-direct-wailsjs.test.ts). The v3
 // migration swaps the re-export targets here without touching consumers.
 export * from '../../wailsjs/go/main/App';
-export {
-  ai,
-  filesystem,
-  git,
-  lsp,
-  main,
-  runhistory,
-  runprofile,
-  search,
-  workspace,
-} from '../../wailsjs/go/models';
+// Re-exports every model namespace (ai, filesystem, git, lsp, main,
+// runhistory, runprofile, search, workspace) so this stays in sync with
+// models.ts without an explicit name list to maintain.
+export * from '../../wailsjs/go/models';

@@ -429,10 +429,12 @@ func (a *App) SaveFile(path string, content string) error {
 export function SaveFile(path: string, content: string): Promise<void>;
 ```
 
-4. Import and use in React:
+4. Import and use in React, through the adapter — `frontend/src/wails/` is the
+   only permitted importer of `wailsjs` paths, enforced by
+   `no-direct-wailsjs.test.ts`:
 
 ```typescript
-import { SaveFile } from '../../wailsjs/go/main/App';
+import { SaveFile } from '../wails/bindings';
 
 async function handleSave() {
     await SaveFile('/path/to/file', editorContent);
@@ -473,7 +475,8 @@ firn-ide/
 │   │   ├── stores/        # Zustand stores
 │   │   ├── styles/        # Global CSS (tokens, reset)
 │   │   ├── utils/         # Utility functions
-│   │   └── __tests__/     # Jest tests
+│   │   ├── __tests__/     # Jest tests
+│   │   └── wails/         # Adapter — single import surface for generated bindings
 │   ├── wailsjs/           # Auto-generated Wails bindings
 │   └── package.json
 ├── build/                  # Build output
