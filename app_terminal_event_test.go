@@ -74,9 +74,11 @@ var eventEmitScanSkipDirs = map[string]bool{
 // shaped like an event emit — runtime.EventsEmit, App.emit, and the internal
 // producer wrappers (runprofile.Executor.emitFn, lsp.Manager.emitter,
 // ai.Service.emit) — must carry at most one payload argument and must never
-// forward a slice via "...". The sole exception is the forwarding call
-// inside App.emit itself (app.go's (a *App) emit method), which is the one
-// place the seam turns a variadic call into the single Wails EventsEmit call.
+// forward a slice via "...". EventsEmit carries a stronger rule: it may only
+// ever be called from inside App.emit itself (app.go's (a *App) emit
+// method) — any other call, of any arity, is the seam being bypassed. That
+// one call inside App.emit is the sole exempt call site in the whole guard;
+// everything else it matches is checked.
 //
 // Method-value wiring such as runprofile.NewExecutor(a.emit, ...) is exempt
 // by construction: a bare "a.emit" passed as an argument is an *ast.SelectorExpr,
@@ -85,23 +87,33 @@ var eventEmitScanSkipDirs = map[string]bool{
 // This is an explicit guard over Firn's current event topology, not a proof
 // over arbitrary dynamically-constructed call data. To keep it from going
 // vacuous when a symbol here is renamed (Phase B's v3 event bridge is
-// expected to touch these), the test also asserts every tracked category
-// actually matched at least one call site — a rename that silently stops
-// matching anything must fail loudly here, not pass by finding nothing to
-// check.
+// expected to touch these), the test also asserts anti-vacuity per category:
+//   - emit/emitFn/emitter must each have matched at least one call site
+//     OUTSIDE App.emit's exempt body — the real external producers
+//     (runprofile.Executor.emitFn, lsp.Manager.emitter, ai.Service.emit, the
+//     App/main.go event calls). Counting App.emit's own internal calls here
+//     would keep these green even if the external producer's identifier
+//     changed, since App.emit's body would still match by coincidence — the
+//     exact failure mode this check exists to catch.
+//   - EventsEmit has no external producer to count non-exemptly (only
+//     App.emit may call it at all, by design), so its anti-vacuity instead
+//     confirms the one exempt call inside App.emit was actually found — a
+//     rename there zeroes it out and fails loudly too.
 func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 	fset := token.NewFileSet()
 	var violations []string
-	counts := map[string]int{}
+	nonExemptCounts := map[string]int{}
+	exemptEventsEmitCount := 0
 
 	scanFile := func(path string) {
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
-		// Only app.go's own (a *App) emit method may forward a variadic
-		// call or carry more than one payload — it is the seam's single
-		// choke point. Every other function, in every file, is checked.
+		// Only app.go's own (a *App) emit method may call EventsEmit at all,
+		// or forward a variadic call, or carry more than one payload — it is
+		// the seam's single choke point. Every other function, in every
+		// file, is checked.
 		isAppEmitSeam := filepath.Base(path) == "app.go"
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -122,20 +134,32 @@ func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 				if !tracked {
 					return true
 				}
-				counts[target.category]++
+				pos := fset.Position(call.Pos())
 				if exempt {
+					if target.category == "EventsEmit" {
+						exemptEventsEmitCount++
+					}
+					return true
+				}
+				nonExemptCounts[target.category]++
+				if target.category == "EventsEmit" {
+					// Bypassing the seam is itself the violation — arity
+					// doesn't matter, only App.emit may call this directly.
+					violations = append(violations, fmt.Sprintf(
+						"%s:%d: EventsEmit(...) called outside App.emit — only the seam's own forwarding call may call it directly",
+						pos.Filename, pos.Line,
+					))
 					return true
 				}
 				hasEllipsis := call.Ellipsis != token.NoPos
 				payloadArgs := len(call.Args) - target.leadingArgs
 				if hasEllipsis || payloadArgs > 1 {
-					pos := fset.Position(call.Pos())
 					forwarding := ""
 					if hasEllipsis {
 						forwarding = " (ellipsis-forwarded)"
 					}
 					violations = append(violations, fmt.Sprintf(
-						"%s:%d: %s(...) carries %d payload argument(s)%s, want at most 1 and no forwarding outside App.emit",
+						"%s:%d: %s(...) carries %d payload argument(s)%s, want at most 1 and no forwarding",
 						pos.Filename, pos.Line, sel.Sel.Name, payloadArgs, forwarding,
 					))
 				}
@@ -164,12 +188,12 @@ func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 		t.Fatalf("walk repository for production .go files: %v", err)
 	}
 
-	// Anti-vacuity: every tracked category must have matched something real,
-	// so a future rename of these identifiers fails this test instead of
-	// silently making the guard check nothing.
-	for _, category := range []string{"EventsEmit", "emit", "emitFn", "emitter"} {
-		if counts[category] == 0 {
-			t.Errorf("guard matched zero %s(...) call sites — it has gone vacuous (symbol renamed?)", category)
+	if exemptEventsEmitCount == 0 {
+		t.Error("guard found no EventsEmit(...) call inside App.emit — it has gone vacuous (symbol renamed or App.emit restructured?)")
+	}
+	for _, category := range []string{"emit", "emitFn", "emitter"} {
+		if nonExemptCounts[category] == 0 {
+			t.Errorf("guard matched zero non-exempt %s(...) call sites — it has gone vacuous (symbol renamed?)", category)
 		}
 	}
 
