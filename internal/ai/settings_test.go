@@ -520,6 +520,13 @@ func TestBuildSettingsProjectionFailures(t *testing.T) {
 			t.Fatal("collections must be empty slices, not nil")
 		}
 	})
+	t.Run("missing under an env override", func(t *testing.T) {
+		p := buildSettingsProjection(loadedAgentConfig{Origin: originEnv},
+			fmt.Errorf("%w: nothing found", ErrAgentConfigMissing))
+		if p.State != "missing" || p.SourceOrigin != "env" {
+			t.Fatalf("%+v", p)
+		}
+	})
 	t.Run("json syntax", func(t *testing.T) {
 		p := buildSettingsProjection(loadedAgentConfig{Origin: originEnv},
 			fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax))
@@ -782,19 +789,6 @@ func contractIdentifier(value string) bool {
 		})
 }
 
-func validSettingsRevision(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for i := range value {
-		if (value[i] < '0' || value[i] > '9') &&
-			(value[i] < 'a' || value[i] > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 func capabilityPosition(value string) int {
 	for i, candidate := range provider.CanonicalCapabilityNames {
 		if value == candidate {
@@ -831,6 +825,31 @@ func strictStringList(values []string) bool {
 	return true
 }
 
+// validateDiagnostics is the one diagnostic-array rule set, shared by the
+// projection, the profile draft, and the apply-result oracle: allowlisted
+// code, allowlisted subject kind, bounded subject, canonical order, no
+// duplicates, within the array bound.
+func validateDiagnostics(ds []Diagnostic) error {
+	if len(ds) > maxProjectionDiagnostics {
+		return fmt.Errorf("diagnostics over bound")
+	}
+	codes := make(map[string]bool, len(settingsDiagnosticCodes))
+	for _, code := range settingsDiagnosticCodes {
+		codes[code] = true
+	}
+	kinds := map[string]bool{"": true, "use_case": true, "role": true, "model": true, "provider": true}
+	for i, diagnostic := range ds {
+		if !codes[diagnostic.Code] || !kinds[diagnostic.SubjectKind] ||
+			(diagnostic.SubjectName != "" && !contractIdentifier(diagnostic.SubjectName)) {
+			return fmt.Errorf("diagnostic[%d] = %+v", i, diagnostic)
+		}
+		if i > 0 && !diagnosticBefore(ds[i-1], diagnostic) {
+			return fmt.Errorf("diagnostics are not unique canonical order")
+		}
+	}
+	return nil
+}
+
 func diagnosticBefore(left, right Diagnostic) bool {
 	if left.Blocking != right.Blocking {
 		return left.Blocking
@@ -854,7 +873,7 @@ func validateSettingsProjection(p SettingsProjection) error {
 		return fmt.Errorf("state/source %q/%q", p.State, p.SourceOrigin)
 	}
 	loaded := p.State == "ready" || p.State == "limited"
-	if (loaded && !validSettingsRevision(p.Revision)) || (!loaded && p.Revision != "") {
+	if (loaded && !validRevision(p.Revision)) || (!loaded && p.Revision != "") {
 		return fmt.Errorf("revision/state %q/%q", p.Revision, p.State)
 	}
 	if !loaded && (p.ReadOnly || p.Editable || len(p.Routes) != 0 ||
@@ -904,6 +923,13 @@ func validateSettingsProjection(p SettingsProjection) error {
 			!strictStringList(model.RoutedUseCases) {
 			return fmt.Errorf("model[%d] non-canonical array", i)
 		}
+		// caps ⊆ knownCaps (§5.6), stated explicitly rather than left implied
+		// by the full-vocabulary rule below: if knownCaps ever narrows to a
+		// per-model set, the subset relation is what still has to hold.
+		if !capabilitySubset(model.EffectiveCapabilities, model.CapabilityFacts.KnownCaps) ||
+			!capabilitySubset(model.ExposedCapabilities, model.CapabilityFacts.KnownCaps) {
+			return fmt.Errorf("model[%d] capability array is not a knownCaps subset", i)
+		}
 		for _, useCase := range model.RoutedUseCases {
 			if !contractIdentifier(useCase) {
 				return fmt.Errorf("model[%d] routed use case %q", i, useCase)
@@ -939,19 +965,8 @@ func validateSettingsProjection(p SettingsProjection) error {
 		}
 	}
 
-	codes := make(map[string]bool, len(settingsDiagnosticCodes))
-	for _, code := range settingsDiagnosticCodes {
-		codes[code] = true
-	}
-	kinds := map[string]bool{"": true, "use_case": true, "role": true, "model": true, "provider": true}
-	for i, diagnostic := range p.Diagnostics {
-		if !codes[diagnostic.Code] || !kinds[diagnostic.SubjectKind] ||
-			(diagnostic.SubjectName != "" && !contractIdentifier(diagnostic.SubjectName)) {
-			return fmt.Errorf("diagnostic[%d] = %+v", i, diagnostic)
-		}
-		if i > 0 && !diagnosticBefore(p.Diagnostics[i-1], diagnostic) {
-			return fmt.Errorf("diagnostics are not unique canonical order")
-		}
+	if err := validateDiagnostics(p.Diagnostics); err != nil {
+		return err
 	}
 	limitedHasCause := p.ReadOnly || !p.Editable
 	for _, diagnostic := range p.Diagnostics {
@@ -1100,12 +1115,42 @@ func structuralCheck(projection json.RawMessage) error {
 		}
 	}
 
-	routes, err := contractArrayField(root, "routes", "projection")
+	return projectionEntitiesStructuralCheck(root, "projection")
+}
+
+// draftStructuralCheck is the profile-draft shape: a projection minus
+// sourceOrigin and revision (§5.6 ProfileDraftProjection). Their PRESENCE is
+// the contract break, so it is checked here rather than in the typed oracle.
+func draftStructuralCheck(projection json.RawMessage) error {
+	root, err := contractObject(projection, "draft")
+	if err != nil {
+		return err
+	}
+	if _, err := contractStringField(root, "state", "draft"); err != nil {
+		return err
+	}
+	for _, key := range []string{"sourceOrigin", "revision"} {
+		if _, ok := root[key]; ok {
+			return fmt.Errorf("draft carries %q", key)
+		}
+	}
+	for _, key := range []string{"readOnly", "editable"} {
+		if err := contractBoolField(root, key, "draft"); err != nil {
+			return err
+		}
+	}
+	return projectionEntitiesStructuralCheck(root, "draft")
+}
+
+// projectionEntitiesStructuralCheck walks the four entity collections shared
+// by the projection and the profile draft.
+func projectionEntitiesStructuralCheck(root map[string]json.RawMessage, where string) error {
+	routes, err := contractArrayField(root, "routes", where)
 	if err != nil {
 		return err
 	}
 	for i, raw := range routes {
-		where := fmt.Sprintf("projection.routes[%d]", i)
+		where := fmt.Sprintf("%s.routes[%d]", where, i)
 		fields, err := contractObject(raw, where)
 		if err != nil {
 			return err
@@ -1117,12 +1162,12 @@ func structuralCheck(projection json.RawMessage) error {
 		}
 	}
 
-	models, err := contractArrayField(root, "models", "projection")
+	models, err := contractArrayField(root, "models", where)
 	if err != nil {
 		return err
 	}
 	for i, raw := range models {
-		where := fmt.Sprintf("projection.models[%d]", i)
+		where := fmt.Sprintf("%s.models[%d]", where, i)
 		fields, err := contractObject(raw, where)
 		if err != nil {
 			return err
@@ -1154,17 +1199,22 @@ func structuralCheck(projection json.RawMessage) error {
 				return err
 			}
 		}
-		if err := contractBoolField(fields, "removable", where); err != nil {
-			return err
+		// hasThinkTags/hasSlots are EXISTENCE facts (amendment 13): the
+		// authored ThinkTags/Slots values themselves never cross the boundary,
+		// only whether a retarget would drop them.
+		for _, key := range []string{"removable", "hasThinkTags", "hasSlots"} {
+			if err := contractBoolField(fields, key, where); err != nil {
+				return err
+			}
 		}
 	}
 
-	providers, err := contractArrayField(root, "providers", "projection")
+	providers, err := contractArrayField(root, "providers", where)
 	if err != nil {
 		return err
 	}
 	for i, raw := range providers {
-		where := fmt.Sprintf("projection.providers[%d]", i)
+		where := fmt.Sprintf("%s.providers[%d]", where, i)
 		fields, err := contractObject(raw, where)
 		if err != nil {
 			return err
@@ -1176,12 +1226,19 @@ func structuralCheck(projection json.RawMessage) error {
 		}
 	}
 
-	diagnostics, err := contractArrayField(root, "diagnostics", "projection")
+	return diagnosticsStructuralCheck(root, where)
+}
+
+// diagnosticsStructuralCheck walks a raw diagnostics array wherever one
+// appears — projection, profile draft, or an apply result. `blocking` is a
+// required boolean, so its absence must not decode to a silent false.
+func diagnosticsStructuralCheck(root map[string]json.RawMessage, where string) error {
+	diagnostics, err := contractArrayField(root, "diagnostics", where)
 	if err != nil {
 		return err
 	}
 	for i, raw := range diagnostics {
-		where := fmt.Sprintf("projection.diagnostics[%d]", i)
+		where := fmt.Sprintf("%s.diagnostics[%d]", where, i)
 		fields, err := contractObject(raw, where)
 		if err != nil {
 			return err
@@ -1287,10 +1344,55 @@ func loadSettingsDiagnosticMapping(t *testing.T) []settingsDiagnosticMappingCase
 	return cases
 }
 
+// upstreamDiagnosticCodes is the PINNED go-llm config vocabulary, written out
+// so a bump that adds, renames, or drops a code cannot slip through: a rename
+// or removal breaks the build here, and an addition breaks
+// TestMapConfigDiagnosticContract's row count against the shared mapping
+// fixture. The role-lifecycle slice (#462) took this from 27 to 31.
+var upstreamDiagnosticCodes = []config.ErrorCode{
+	config.CodeConfigNotFound, config.CodeConfigDiscoveryInvalid, config.CodeIO,
+	config.CodeParseError, config.CodeRenderError, config.CodeDuplicateKeys,
+	config.CodeProviderRequired, config.CodeProviderNameInvalid,
+	config.CodeProviderEndpointInvalid, config.CodeProviderFormatInvalid,
+	config.CodeSlotPolicyInvalid, config.CodeModelInvalid, config.CodeThinkInvalid,
+	config.CodeProviderNotFound, config.CodeDefaultsInvalid,
+	config.CodeKeyReferenceMalformed, config.CodeKeyReferenceUnavailable,
+	config.CodeInvalidArgument, config.CodeRoleNotFound, config.CodeProviderExists,
+	config.CodeProviderInUse, config.CodeEligibilityIneligible,
+	config.CodeEligibilityUnknown, config.CodeSelectorConflict,
+	config.CodeTargetExists, config.CodeRevisionConflict,
+	config.CodeDurabilityUncertain, config.CodeRoleExists, config.CodeRoleInUse,
+	config.CodeUseCaseNotFound, config.CodeDropConfirmationRequired,
+}
+
+// TestUpstreamDiagnosticVocabularyPinned is the drift check: every pinned
+// upstream code has exactly one mapping row, and the corpus row count matches
+// the constant set. A future upstream addition therefore fails here (missing
+// row) instead of silently failing closed in production.
+func TestUpstreamDiagnosticVocabularyPinned(t *testing.T) {
+	if len(upstreamDiagnosticCodes) != 31 {
+		t.Fatalf("pinned upstream vocabulary = %d codes, want 31", len(upstreamDiagnosticCodes))
+	}
+	rows := map[string]bool{}
+	for _, tc := range loadSettingsDiagnosticMapping(t) {
+		rows[tc.Input] = true
+	}
+	for _, code := range upstreamDiagnosticCodes {
+		if !rows[string(code)] {
+			t.Fatalf("upstream code %q has no mapping row (add it to "+
+				"testdata/settings_diagnostic_mapping.json and to both closed allowlists)", code)
+		}
+	}
+	if len(rows) != len(upstreamDiagnosticCodes)+1 {
+		t.Fatalf("mapping rows = %d, want %d upstream codes plus the unknown-future sentinel",
+			len(rows), len(upstreamDiagnosticCodes))
+	}
+}
+
 func TestMapConfigDiagnosticContract(t *testing.T) {
 	cases := loadSettingsDiagnosticMapping(t)
-	if len(cases) != 28 {
-		t.Fatalf("mapping rows = %d, want 27 upstream codes plus unknown", len(cases))
+	if len(cases) != 32 {
+		t.Fatalf("mapping rows = %d, want 31 upstream codes plus unknown", len(cases))
 	}
 	if got := cases[len(cases)-1].Input; got != "certified_future_code" {
 		t.Fatalf("last mapping input = %q, want unknown-future sentinel", got)
@@ -1347,7 +1449,11 @@ func TestMapConfigDiagnosticSubjectKinds(t *testing.T) {
 	}
 }
 
-func TestSettingsDiagnosticCodesSliceAOrder(t *testing.T) {
+// TestSettingsDiagnosticCodesContractOrder pins the Firn-side vocabulary
+// exactly as spec §5.6 aliases it — Slice A's 21 codes plus the ten Slice B
+// action/write codes. The frontend's DIAGNOSTIC_CODES mirrors this list
+// byte-for-byte.
+func TestSettingsDiagnosticCodesContractOrder(t *testing.T) {
 	want := []string{
 		"config_missing", "json_invalid", "config_invalid",
 		"agent_role_missing", "agent_capabilities_insufficient",
@@ -1358,6 +1464,10 @@ func TestSettingsDiagnosticCodesSliceAOrder(t *testing.T) {
 		"provider_not_found", "defaults_invalid", "key_reference_malformed",
 		"key_reference_unavailable", "selector_conflict",
 		"identifier_not_editable",
+		"invalid_argument", "role_not_found", "provider_exists",
+		"provider_in_use", "eligibility_ineligible", "eligibility_unknown",
+		"key_value_invalid", "profile_source_unavailable",
+		"consent_store_failed", "config_save_failed",
 	}
 	if fmt.Sprint(settingsDiagnosticCodes) != fmt.Sprint(want) {
 		t.Fatalf("diagnostic codes = %v, want %v", settingsDiagnosticCodes, want)
@@ -1454,6 +1564,10 @@ func TestProjectionForcesTypedLoadDiagnosticBlocking(t *testing.T) {
 // that always emits state "invalid" would produce a self-contradicting
 // invalid/config_missing pair. A typed config_not_found diagnostic must
 // project as the Missing document, not Invalid.
+// The origin is the discovery branch that selected the file, not a claim that
+// the file loaded: a target that vanished between discovery and load is still
+// "the env override" or "the user config", and the masthead has to say which.
+// Only a discovery that matched nothing has origin "none".
 func TestProjectionLoadErrorConfigNotFoundProjectsAsMissing(t *testing.T) {
 	loaded := loadedAgentConfig{
 		Origin:              originUserConfig,
@@ -1462,8 +1576,11 @@ func TestProjectionLoadErrorConfigNotFoundProjectsAsMissing(t *testing.T) {
 	}
 	p := buildSettingsProjection(loaded,
 		fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid))
-	if p.State != "missing" || p.SourceOrigin != "none" {
+	if p.State != "missing" || p.SourceOrigin != "user_config" {
 		t.Fatalf("projection = %+v", p)
+	}
+	if err := validateSettingsProjection(p); err != nil {
+		t.Fatalf("missing projection rejected by the oracle: %v", err)
 	}
 	if len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != codeConfigMissing || !p.Diagnostics[0].Blocking {
 		t.Fatalf("diagnostics = %+v", p.Diagnostics)
@@ -1489,5 +1606,90 @@ func TestProjectionUnknownDiagnosticFailsClosed(t *testing.T) {
 	if d.Code != codeConfigInvalid || d.SubjectKind != "" ||
 		d.SubjectName != "" || !d.Blocking {
 		t.Fatalf("diagnostic = %+v", d)
+	}
+}
+
+// TestProjectionHiddenModelFacts covers amendment 13: the projection reports
+// WHETHER a model carries authored ThinkTags/Slots, never their values, so the
+// route editor can disclose a pending drop before the backend has to refuse
+// the write. Both facts are existence-only.
+func TestProjectionHiddenModelFacts(t *testing.T) {
+	cfg := projectionConfig()
+	plain := cfg.Models["agent-m"]
+	hidden := plain
+	hidden.Slots = 4
+	hidden.ThinkTags = &config.ThinkTagsConfig{Open: "<think>", Close: "</think>"}
+	cfg.Models["hidden-m"] = hidden
+	cfg.Defaults["chat"] = "hidden-m"
+
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if m := projectedModel(t, p, "agent-m"); m.HasThinkTags || m.HasSlots {
+		t.Fatalf("plain model reports hidden facts: %+v", m)
+	}
+	m := projectedModel(t, p, "hidden-m")
+	if !m.HasThinkTags || !m.HasSlots {
+		t.Fatalf("hidden facts missing: %+v", m)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"<think>", "</think>", "think_tags", "slots", "\"4\""} {
+		if strings.Contains(string(raw), marker) {
+			t.Fatalf("projection leaks hidden field %q: %s", marker, raw)
+		}
+	}
+	if err := validateSettingsProjection(p); err != nil {
+		t.Fatalf("projection with hidden facts rejected: %v", err)
+	}
+}
+
+// TestSettingsProjectionIsDeepCopied: Settings/ReloadSettings hand the
+// projection to the Wails layer, which is free to do what it likes with the
+// value it got. Sharing the cached snapshot's slice memory would let one
+// caller's edit rewrite the next caller's answer, so every handoff copies.
+func TestSettingsProjectionIsDeepCopied(t *testing.T) {
+	h := newServiceHarness(t, "http://localhost:8080")
+	first, err := h.svc.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Providers) == 0 || len(first.Models) == 0 || len(first.Routes) == 0 {
+		t.Fatalf("fixture projection is too small to prove copying: %+v", first)
+	}
+	first.Providers[0].Name = "tampered"
+	first.Models[0].Role = "tampered"
+	first.Models[0].EffectiveCapabilities[0] = "tampered"
+	first.Models[0].CapabilityFacts.KnownCaps[0] = "tampered"
+	first.Routes[0].UseCase = "tampered"
+	first.Diagnostics = append(first.Diagnostics, Diagnostic{Code: codeConfigInvalid})
+
+	second, err := h.svc.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []string{
+		second.Providers[0].Name, second.Models[0].Role,
+		second.Models[0].EffectiveCapabilities[0],
+		second.Models[0].CapabilityFacts.KnownCaps[0], second.Routes[0].UseCase,
+	} {
+		if got == "tampered" {
+			t.Fatalf("cached snapshot shares memory with a returned projection: %+v", second)
+		}
+	}
+	if err := validateSettingsProjection(second); err != nil {
+		t.Fatalf("second projection is no longer contract-valid: %v", err)
+	}
+	res, err := h.svc.ReloadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Projection.Models[0].Role = "tampered"
+	third, err := h.svc.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Models[0].Role == "tampered" {
+		t.Fatalf("reload result shares memory with the cached snapshot: %+v", third)
 	}
 }

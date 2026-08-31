@@ -11,51 +11,45 @@
  * model → provider can be traced by colour between sections.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
 import golemIcon from '../../assets/branding/golem-icon.svg';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,
-  type SettingsDiagnosticCode,
+  type ModelProjection,
+  type ProviderProjection,
   type SettingsProjection,
 } from '../../types/golem';
+import { focusConfigTab } from '../../utils/editorSurface';
+import { orderModelsForDisplay } from '../../utils/golemModelOrder';
+import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfiguration.module.css';
 
-/** Total map over the closed Slice A code set; the validator guarantees
- * membership, so no fallback branch exists to rot. */
-const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
-  config_missing: 'No models.json was found at any discovery location.',
-  json_invalid: 'The configuration file is not valid JSON.',
-  config_invalid: 'The configuration was rejected while loading.',
-  agent_role_missing: 'No usable agent role is configured.',
-  agent_capabilities_insufficient: 'The agent model must support chat, stream, and tool_call.',
-  provider_endpoint_unsupported: 'This provider endpoint is not a usable URL.',
-  projection_limited: 'Configuration is too large to display in full.',
-  duplicate_keys: 'Duplicate JSON keys make this configuration read-only.',
-  provider_required: 'At least one provider is required.',
-  provider_name_invalid: 'A provider name is invalid.',
-  provider_endpoint_invalid: 'A provider endpoint is invalid.',
-  provider_format_invalid: 'A provider API format is invalid.',
-  slot_policy_invalid: 'A provider slot policy is invalid.',
-  model_invalid: 'A model entry is invalid.',
-  think_invalid: 'A thinking configuration is invalid.',
-  provider_not_found: 'A model references a provider that does not exist.',
-  defaults_invalid: 'A default route is invalid.',
-  key_reference_malformed: 'An API-key environment reference is malformed.',
-  key_reference_unavailable: 'An API-key environment variable is unavailable.',
-  selector_conflict: 'Models sharing a provider/model selector disagree.',
-  identifier_not_editable:
-    'An identifier is empty or contains unsafe control characters; edit the file externally.',
+/**
+ * Plain English for each discovery branch (internal/ai/config.go
+ * discoverAgentConfigSource): what file was used and where it came from,
+ * worded so a user knows which knob to turn. The projection carries no
+ * resolved path, so the vocabulary names the mechanism, not the file.
+ */
+const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {
+  none: 'No configuration file found',
+  env: 'models.json named by GO_LLM_CONFIG',
+  working_directory: 'models.json in the working directory',
+  user_config: 'models.json in the user configuration directory',
+  legacy: 'models.json in the legacy configuration directory',
 };
 
-const ORIGIN_LABEL: Record<SettingsProjection['sourceOrigin'], string> = {
-  none: 'No configuration found',
-  env: 'Environment override',
-  working_directory: 'Working directory models.json',
-  user_config: 'User configuration directory',
-  legacy: 'Legacy configuration directory',
+/** Hover detail where the short label benefits from the longer mechanism. */
+const ORIGIN_DETAIL: Partial<Record<SettingsProjection['sourceOrigin'], string>> = {
+  env: 'The GO_LLM_CONFIG environment variable overrides default discovery and names the configuration file directly.',
+  user_config: 'go-llm/models.json inside the system user-configuration directory.',
+  legacy: '~/.config/go-llm/models.json — the older go-llm discovery location.',
 };
+
+/** A source origin this build does not know still renders honestly, as itself. */
+const originLabel = (origin: SettingsProjection['sourceOrigin']): string =>
+  (ORIGIN_LABEL as Partial<Record<string, string>>)[origin] ?? origin;
 
 const STATE_LABEL: Record<SettingsProjection['state'], string> = {
   ready: 'Ready',
@@ -122,6 +116,11 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
             Configuration
           </h2>
           <div className={styles.headerActions}>
+            {/* The dock's one new affordance (spec §3.1): the editing surface is
+                the app-global workspace tab; this readout stays read-only. */}
+            <button type="button" className={styles.headerButton} onClick={focusConfigTab}>
+              Open configuration
+            </button>
             <button
               type="button"
               className={styles.headerButton}
@@ -137,13 +136,21 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
         </div>
         {phase.kind === 'ready' && (
           <div className={styles.stateRow}>
-            <span className={styles.statePill} data-state={phase.projection.state}>
-              <span className={styles.stateDot} aria-hidden="true" />
-              {STATE_LABEL[phase.projection.state]}
-            </span>
-            <span className={styles.sourceChip}>
+            {/* Quiet when healthy: a READY pill repeats what the visible data
+                already says, so only a non-ready state earns the instrument.
+                The live region below still announces every transition. */}
+            {phase.projection.state !== 'ready' && (
+              <span className={styles.statePill} data-state={phase.projection.state}>
+                <span className={styles.stateDot} aria-hidden="true" />
+                {STATE_LABEL[phase.projection.state]}
+              </span>
+            )}
+            <span
+              className={styles.sourceChip}
+              title={ORIGIN_DETAIL[phase.projection.sourceOrigin]}
+            >
               <span className={styles.sourceKey}>Source</span>
-              {ORIGIN_LABEL[phase.projection.sourceOrigin]}
+              {originLabel(phase.projection.sourceOrigin)}
             </span>
           </div>
         )}
@@ -151,7 +158,7 @@ export function GolemConfiguration({ onClose }: { onClose: () => void }) {
 
       <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
         {phase.kind === 'ready'
-          ? `Configuration ${STATE_LABEL[phase.projection.state]}. Source ${ORIGIN_LABEL[phase.projection.sourceOrigin]}.`
+          ? `Configuration ${STATE_LABEL[phase.projection.state]}. Source ${originLabel(phase.projection.sourceOrigin)}.`
           : ''}
       </div>
 
@@ -195,6 +202,22 @@ function ConfigurationBody({
     projection.models.length === 0 &&
     projection.providers.length === 0;
 
+  // A route names a role; the model is what the reader actually wants. A role
+  // with no model stays absent rather than rendering a placeholder — that is a
+  // broken route, and the Models section is where it is diagnosed.
+  const modelForRole = new Map(projection.models.map((m) => [m.role, m.modelName]));
+
+  // A use case is PRIMARY for the role its route names, and a FALLBACK user of
+  // every other role its chain reaches. The projection carries the union in
+  // `routedUseCases`; the routes carry the primaries, so the difference is the
+  // fallback membership. Presentation only — no contract data is recomputed.
+  const primaryFor = (role: string): string[] =>
+    projection.routes.filter((r) => r.role === role).map((r) => r.useCase);
+  const fallbackFor = (m: ModelProjection): string[] => {
+    const primary = new Set(primaryFor(m.role));
+    return m.routedUseCases.filter((useCase) => !primary.has(useCase));
+  };
+
   return (
     <div className={styles.body}>
       {busyNotice && (
@@ -208,23 +231,33 @@ function ConfigurationBody({
         <section aria-label="Configuration diagnostics">
           <h3 className={styles.sectionHeading}>Diagnostics</h3>
           <ul className={styles.diagnosticList}>
-            {projection.diagnostics.map((d, i) => (
-              <li
-                key={`${d.code}-${d.subjectName}-${i}`}
-                className={styles.diagnosticRow}
-                data-blocking={d.blocking || undefined}
-              >
-                <span className={styles.diagnosticSeverity}>
-                  {d.blocking ? 'Blocking' : 'Notice'}
-                </span>
-                <span className={styles.diagnosticText}>
-                  {DIAGNOSTIC_TEXT[d.code]}
-                  {d.subjectName !== '' && (
-                    <span className={styles.subject}> — {d.subjectName}</span>
-                  )}
-                </span>
-              </li>
-            ))}
+            {projection.diagnostics.map((d, i) => {
+              const { text, subject } = formatSettingsDiagnostic(
+                d.code,
+                d.subjectKind,
+                d.subjectName
+              );
+              return (
+                <li
+                  key={`${d.code}-${d.subjectKind}-${d.subjectName}-${i}`}
+                  className={styles.diagnosticRow}
+                  data-blocking={d.blocking || undefined}
+                >
+                  <span className={styles.diagnosticSeverity}>
+                    {d.blocking ? 'Blocking' : 'Notice'}
+                  </span>
+                  <span className={styles.diagnosticText}>
+                    {text}
+                    {subject !== '' && (
+                      <>
+                        {' — '}
+                        <span className={styles.subject}>{subject}</span>
+                      </>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}
@@ -236,81 +269,194 @@ function ConfigurationBody({
         </div>
       )}
 
+      {projection.providers.length > 0 && (
+        <section aria-label="Providers">
+          <Section id="providers" label="Providers" count={projection.providers.length}>
+            <ul className={styles.cardList}>
+              {projection.providers.map((p) => (
+                <li key={p.name} className={styles.card}>
+                  <div className={styles.cardHeader}>
+                    <span className={styles.providerName}>{p.name}</span>
+                    <span className={styles.badge} data-classification={p.classification}>
+                      {CLASSIFICATION_LABEL[p.classification]}
+                    </span>
+                  </div>
+                  {p.endpoint !== '' && <div className={styles.endpoint}>{p.endpoint}</div>}
+                  <div className={styles.cardMeta}>
+                    <span className={styles.metaChip}>{p.apiFormat}</span>
+                    <span className={styles.credential} data-credential={p.credentialState}>
+                      <span className={styles.credentialDot} aria-hidden="true" />
+                      {CREDENTIAL_LABEL[p.credentialState]}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        </section>
+      )}
+
       {projection.routes.length > 0 && (
         <section aria-label="Role routing">
-          <h3 className={styles.sectionHeading}>Roles</h3>
-          <ul className={styles.routeList}>
-            {projection.routes.map((r) => (
-              <li key={r.useCase} className={styles.routeRow}>
-                <span className={styles.routeUseCase}>{r.useCase}</span>
-                <span className={styles.srOnly}>routes to role</span>
-                <span className={styles.routeArrow} aria-hidden="true">
-                  →
-                </span>
-                <span className={styles.roleChip}>{r.role}</span>
-              </li>
-            ))}
-          </ul>
+          <Section id="roles" label="Roles" count={projection.routes.length}>
+            <ul className={styles.routeList}>
+              {projection.routes.map((r) => (
+                <li key={r.useCase} className={styles.routeRow}>
+                  <span className={styles.routeUseCase}>{r.useCase}</span>
+                  <span className={styles.srOnly}>routes to role</span>
+                  <span className={styles.routeArrow} aria-hidden="true">
+                    →
+                  </span>
+                  <span className={styles.roleChip}>{r.role}</span>
+                  {/* The role resolved: the same model name the cards head with,
+                     so the ROLES/MODELS join reads without cross-referencing. */}
+                  {modelForRole.get(r.role) !== undefined && (
+                    <span className={styles.modelName}>{modelForRole.get(r.role)}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Section>
         </section>
       )}
 
       {projection.models.length > 0 && (
         <section aria-label="Models">
-          <h3 className={styles.sectionHeading}>Models</h3>
-          <ul className={styles.cardList}>
-            {projection.models.map((m) => (
-              <li key={m.role} className={styles.card}>
-                <div className={styles.cardHeader}>
-                  <span className={styles.roleChip}>{m.role}</span>
-                  <span className={styles.modelName}>{m.modelName}</span>
-                </div>
-                <div className={styles.cardMeta}>
-                  <span className={styles.providerName}>{m.provider}</span>
-                  <span className={styles.metaChip}>{m.type}</span>
-                  {m.thinkMode !== '' && (
-                    <span className={styles.metaChip}>think: {m.thinkMode}</span>
-                  )}
-                </div>
-                {m.effectiveCapabilities.length > 0 && (
-                  <div className={styles.capabilityRow}>
-                    {m.effectiveCapabilities.map((c) => (
-                      <span key={c} className={styles.capabilityChip}>
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {projection.providers.length > 0 && (
-        <section aria-label="Providers">
-          <h3 className={styles.sectionHeading}>Providers</h3>
-          <ul className={styles.cardList}>
-            {projection.providers.map((p) => (
-              <li key={p.name} className={styles.card}>
-                <div className={styles.cardHeader}>
-                  <span className={styles.providerName}>{p.name}</span>
-                  <span className={styles.badge} data-classification={p.classification}>
-                    {CLASSIFICATION_LABEL[p.classification]}
+          <Section id="models" label="Models" count={projection.models.length}>
+            {modelsByProvider(projection.models, projection.providers).map(([provider, group]) => (
+              <details
+                key={provider}
+                className={styles.subgroup}
+                data-testid={`models-${provider}`}
+                open
+              >
+                <summary className={styles.subgroupHeading}>
+                  <span className={styles.sectionChevron} aria-hidden="true">
+                    ▸
                   </span>
-                </div>
-                {p.endpoint !== '' && <div className={styles.endpoint}>{p.endpoint}</div>}
-                <div className={styles.cardMeta}>
-                  <span className={styles.metaChip}>{p.apiFormat}</span>
-                  <span className={styles.credential} data-credential={p.credentialState}>
-                    <span className={styles.credentialDot} aria-hidden="true" />
-                    {CREDENTIAL_LABEL[p.credentialState]}
-                  </span>
-                </div>
-              </li>
+                  <span className={styles.providerName}>{provider}</span>
+                  <span className={styles.sectionCount}>{group.length}</span>
+                </summary>
+                <ul className={styles.cardList}>
+                  {group.map((m) => (
+                    <li
+                      key={m.role}
+                      className={styles.card}
+                      // The active fleet reads first: a role something routes to
+                      // primarily is emphasised, a fallback-only or unrouted one
+                      // steps back.
+                      data-standing={primaryFor(m.role).length > 0 ? 'primary' : 'quiet'}
+                    >
+                      <div className={styles.cardHeader}>
+                        <span className={styles.roleChip}>{m.role}</span>
+                        <span className={styles.modelName}>{m.modelName}</span>
+                      </div>
+                      {/* No provider chip here: the group header above says
+                          it once, for every card beneath it. */}
+                      <div className={styles.cardMeta}>
+                        {/* Model FACTS are outlined tags, told apart at a glance
+                            from the capability pills and the routing chips. */}
+                        <span className={styles.factTag}>{m.type}</span>
+                        {m.thinkMode !== '' && (
+                          <span className={styles.factTag}>think: {m.thinkMode}</span>
+                        )}
+                      </div>
+                      {m.effectiveCapabilities.length > 0 && (
+                        <div className={styles.capabilityRow}>
+                          {m.effectiveCapabilities.map((c) => (
+                            <span key={c} className={styles.capabilityChip}>
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/*
+                       * `routedUseCases` is the fallback-AWARE union: it counts a use
+                       * case whose chain merely passes through this role. Shown as one
+                       * row it contradicts the Roles section, which names only the
+                       * primary. Split by what the routes actually say, so a card can
+                       * be primary for one use case and a fallback for another and say
+                       * so. An unrouted model shows neither row — "defined but not
+                       * routed" stays the workspace's distinction to draw.
+                       */}
+                      {primaryFor(m.role).length > 0 && (
+                        <div className={styles.capabilityRow} data-testid={`routed-${m.role}`}>
+                          <span className={styles.chipLabel}>routes:</span>
+                          {primaryFor(m.role).map((useCase) => (
+                            <span key={useCase} className={styles.useCaseChip}>
+                              {useCase}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {fallbackFor(m).length > 0 && (
+                        <div className={styles.capabilityRow} data-testid={`fallback-${m.role}`}>
+                          <span className={styles.chipLabel}>fallback for:</span>
+                          {fallbackFor(m).map((useCase) => (
+                            <span key={useCase} className={styles.useCaseChip}>
+                              {useCase}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ))}
-          </ul>
+          </Section>
         </section>
       )}
     </div>
   );
+}
+
+/**
+ * One collapsible readout section. `<details>` is the repo's section-collapse
+ * idiom (RunProfiles renders its detected group the same way), and it is the
+ * right one: the browser owns the expanded state, the keyboard behaviour, and
+ * hiding the collapsed content from the accessibility tree, so none of that can
+ * drift out of sync with a hand-rolled button.
+ */
+function Section({
+  id,
+  label,
+  count,
+  children,
+}: {
+  id: string;
+  label: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className={styles.section} data-testid={`section-${id}`} open>
+      <summary className={styles.sectionHeading}>
+        <span className={styles.sectionChevron} aria-hidden="true">
+          ▸
+        </span>
+        {label}
+        <span className={styles.sectionCount}>{count}</span>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+/**
+ * The ordered model list, split into its provider groups. Order comes from the
+ * one shared display rule, so the groups read in the providers section's own
+ * sequence and the rows inside them are role-alpha.
+ */
+function modelsByProvider(
+  models: readonly ModelProjection[],
+  providers: readonly ProviderProjection[]
+): [string, ModelProjection[]][] {
+  const groups = new Map<string, ModelProjection[]>();
+  for (const model of orderModelsForDisplay(models, providers)) {
+    const group = groups.get(model.provider);
+    if (group === undefined) groups.set(model.provider, [model]);
+    else group.push(model);
+  }
+  return [...groups];
 }

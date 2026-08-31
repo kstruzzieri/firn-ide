@@ -160,20 +160,22 @@ func TestAppPhase2C_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testin
 	if err != nil {
 		t.Fatalf("parse app.go: %v", err)
 	}
-	var beforeClose *ast.FuncDecl
+	// The stop lives in the drain the §5.5 machine starts, not in beforeClose
+	// itself: the first close only asks the frontend.
+	var drain *ast.FuncDecl
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if ok && function.Name.Name == "beforeClose" {
-			beforeClose = function
+		if ok && function.Name.Name == "startCloseDrain" {
+			drain = function
 			break
 		}
 	}
-	if beforeClose == nil {
-		t.Fatal("app.go has no beforeClose method")
+	if drain == nil {
+		t.Fatal("app.go has no startCloseDrain method")
 	}
 
 	found := false
-	ast.Inspect(beforeClose.Body, func(node ast.Node) bool {
+	ast.Inspect(drain.Body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) != 2 {
 			return true
@@ -189,7 +191,7 @@ func TestAppPhase2C_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testin
 		return true
 	})
 	if !found {
-		t.Fatal(`beforeClose must call StopAllWithReason(timeout, "shutdown")`)
+		t.Fatal(`startCloseDrain must call StopAllWithReason(timeout, "shutdown")`)
 	}
 }
 

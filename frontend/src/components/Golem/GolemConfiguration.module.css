@@ -24,7 +24,10 @@
   gap: 8px;
   height: 100%;
   min-height: 0;
-  padding: 8px;
+  /* No TOP padding: `top: 0` on the sticky masthead resolves to the scrollport
+     padding edge, so 8px here left a transparent band above it that scrolled
+     cards showed through. The masthead supplies its own top inset instead. */
+  padding: 0 8px 8px;
   overflow-y: auto;
   background-color: var(--surface-panel);
   color: var(--text-primary);
@@ -43,8 +46,11 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: -8px -8px 0;
-  padding: 6px 10px;
+  /* Full-bleed across the scroll container, flush at its top edge. The
+     trailing margin adds to .root gap: the readout needs real air between the
+     header instrument and the first section. */
+  margin: 0 -8px 10px;
+  padding: 10px 10px 6px;
   border-bottom: 1px solid var(--surface-border-subtle);
   background-color: var(--surface-elevated);
 }
@@ -74,23 +80,32 @@
   gap: 6px;
 }
 
-/* The panel's secondary-button recipe; the panel surface reads inset against
-   the elevated masthead strip. */
+/* The workspace button grammar (GolemConfig .button), at dock scale: a real
+   border, a fill one step ABOVE the surface it sits on — the masthead is
+   --surface-elevated, so the raised step is --surface-hover — and the accent
+   border on hover. The earlier --surface-panel fill sat BELOW the masthead and
+   read as an inset chip rather than a button. */
 .headerButton {
   flex: none;
-  padding: 3px 9px;
+  padding: 4px 12px;
   border: 1px solid var(--surface-border);
-  border-radius: 5px;
-  background-color: var(--surface-panel);
+  border-radius: 6px;
+  background-color: var(--surface-hover);
   color: var(--text-primary);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
-  transition: background-color var(--transition);
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
 }
 
 .headerButton:hover:not(:disabled) {
-  background-color: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.headerButton:active:not(:disabled) {
+  background-color: var(--surface-panel);
 }
 
 .headerButton:disabled {
@@ -134,12 +149,8 @@
   background-color: currentColor;
 }
 
-.statePill[data-state='ready'] {
-  border-color: color-mix(in srgb, var(--golem-teal) 35%, transparent);
-  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
-  color: var(--golem-teal);
-}
-
+/* No ready variant: the pill is quiet-when-healthy and only renders for a
+   non-ready state, so a ready recipe would be dead CSS. */
 .statePill[data-state='limited'] {
   border-color: color-mix(in srgb, var(--status-warning) 35%, transparent);
   background-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
@@ -178,7 +189,9 @@
 /* Section headings extend into a hairline rule — the readout's frame lines. */
 .sectionHeading {
   display: flex;
-  align-items: center;
+  /* Baseline, not centre: the count is mono and the label is the UI face, and
+     two different font metrics centred against each other read as a shift. */
+  align-items: baseline;
   gap: 6px;
   margin: 0 0 4px;
   color: var(--text-secondary);
@@ -191,8 +204,96 @@
 .sectionHeading::after {
   content: '';
   flex: 1;
+  align-self: center;
   height: 1px;
   background-color: var(--surface-border-subtle);
+}
+
+/* ── collapsible sections ───────────────────────────────────────────────────
+ *
+ * Native <details>, the idiom RunProfiles already uses. The browser owns the
+ * open state, the keyboard behaviour, and hiding collapsed content from the
+ * accessibility tree, so none of it can drift out of sync with the visuals.
+ * The readout's heading grammar is unchanged — the summary simply wears it.
+ */
+.section {
+  margin: 0;
+}
+
+/* The default disclosure triangle gives way to the chevron below. */
+summary.sectionHeading,
+summary.subgroupHeading {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.sectionHeading::-webkit-details-marker,
+summary.subgroupHeading::-webkit-details-marker {
+  display: none;
+}
+
+summary.sectionHeading:focus-visible,
+summary.subgroupHeading:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sectionChevron {
+  flex: none;
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+details[open] > .sectionHeading .sectionChevron,
+details[open] > .subgroupHeading .sectionChevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sectionChevron {
+    transition: none;
+  }
+}
+
+.sectionCount {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* A provider group inside Models: the same grammar, one step quieter. */
+.subgroup {
+  margin: 0 0 8px;
+}
+
+.subgroupHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ── nesting ────────────────────────────────────────────────────────────────
+ *
+ * Content sits indented from the header that owns it, so the hierarchy reads
+ * structurally rather than only through type weight. Proportional as asked,
+ * capped so a wide dock does not push the cards into a gutter. Dialled down to
+ * a quarter of the first pass: the two-level step stays legible as a step, and
+ * nothing reads as a gutter.
+ */
+.section > *:not(summary) {
+  padding-left: min(5%, 8px);
+}
+
+.subgroup > *:not(summary) {
+  padding-left: min(3%, 5px);
 }
 
 .loading {
@@ -372,7 +473,7 @@
   flex: none;
   color: var(--golem-accent);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 15px;
 }
 
 /* Role identity chip — the workspace-chip recipe in teal, reused verbatim so
@@ -381,12 +482,15 @@
   min-width: 0;
   max-width: 100%;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  /* The leading identity on a card, so it outranks every other badge: full
+     teal edge, a fill you can see, and weight behind the text. */
+  border: 1px solid var(--golem-teal);
   border-radius: 5px;
-  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  background-color: color-mix(in srgb, var(--golem-teal) 24%, transparent);
   color: var(--golem-teal);
   font-family: var(--font-mono);
   font-size: 10px;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
@@ -460,6 +564,44 @@
   gap: 6px;
 }
 
+/*
+ * Three kinds of badge sit on a model card and must not read alike:
+ *   fact  — what the model IS (type, think mode): an outlined square tag.
+ *   caps  — what it CAN do: the neutral pills below.
+ *   route — what it SERVES: teal pills behind a routes:/fallback for: label.
+ * Shape carries the distinction, so it survives a colour-blind reading.
+ */
+.factTag {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Standing: a role something routes to primarily is the working fleet and reads
+ * first; a fallback-only or unrouted one steps back without disappearing.
+ */
+.card[data-standing='primary'] {
+  border-color: var(--golem-accent);
+  background-color: var(--surface-hover);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--golem-accent) 25%, transparent);
+}
+
+.card[data-standing='quiet'] {
+  border-color: var(--surface-border-subtle);
+}
+
+.card[data-standing='quiet'] .modelName {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 .metaChip {
   padding: 1px 6px;
   border: 1px solid var(--surface-border-subtle);
@@ -474,6 +616,31 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/*
+ * Two chip rows sit on a model card and they mean different things: what the
+ * model CAN do, and what it is actually wired to. The capability row stays
+ * neutral; the routed row takes the roles section teal and a visible micro-
+ * label, so the kinds are told apart at a glance and not only by reading them.
+ */
+.chipLabel {
+  flex: none;
+  align-self: center;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9px;
+}
+
+.useCaseChip {
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  color: var(--golem-teal);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .capabilityChip {

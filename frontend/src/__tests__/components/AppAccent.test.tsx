@@ -22,6 +22,7 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
   CloseTerminal: jest.fn(),
   ResizeTerminal: jest.fn(),
   ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
+  CancelBeforeClose: jest.fn(() => Promise.resolve()),
   SaveWorkspaceState: jest.fn(() => Promise.resolve()),
   LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),

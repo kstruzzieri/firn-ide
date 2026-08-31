@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -62,6 +63,22 @@ const (
 	codeKeyReferenceUnavailable     = "key_reference_unavailable"
 	codeSelectorConflict            = "selector_conflict"
 	codeIdentifierNotEditable       = "identifier_not_editable"
+	// Slice B write/action codes. They never arise from a load: the apply
+	// pipeline maps upstream action failures onto them, and request validation
+	// maps its one caller-actionable break — a key value that is empty or not a
+	// literal — onto codeKeyValueInvalid. They share one vocabulary with the
+	// projection because they share one SettingsDiagnostic type across the
+	// boundary (spec §5.6).
+	codeInvalidArgument          = "invalid_argument"
+	codeRoleNotFound             = "role_not_found"
+	codeProviderExists           = "provider_exists"
+	codeProviderInUse            = "provider_in_use"
+	codeEligibilityIneligible    = "eligibility_ineligible"
+	codeEligibilityUnknown       = "eligibility_unknown"
+	codeKeyValueInvalid          = "key_value_invalid"
+	codeProfileSourceUnavailable = "profile_source_unavailable"
+	codeConsentStoreFailed       = "consent_store_failed"
+	codeConfigSaveFailed         = "config_save_failed"
 )
 
 // settingsDiagnosticCodes enumerates every code the builder can emit, in the
@@ -88,7 +105,34 @@ var settingsDiagnosticCodes = []string{
 	codeKeyReferenceUnavailable,
 	codeSelectorConflict,
 	codeIdentifierNotEditable,
+	codeInvalidArgument,
+	codeRoleNotFound,
+	codeProviderExists,
+	codeProviderInUse,
+	codeEligibilityIneligible,
+	codeEligibilityUnknown,
+	codeKeyValueInvalid,
+	codeProfileSourceUnavailable,
+	codeConsentStoreFailed,
+	codeConfigSaveFailed,
 }
+
+// firnUseCaseFloors is THE Firn capability floor table: the minimum a model
+// must support for a use case Firn itself drives. It is the one Go source of
+// truth (testdata/settings_use_case_floors.json is the same table, shared with
+// the TypeScript mirror), and the agent row is the run path's own constant so
+// a write can never accept a model the runtime would then refuse. A use case
+// absent from this table has no Firn requirement — upstream's eligibility gate
+// evaluates it as unknown, and the request must confirm it explicitly
+// (§3.3 confirmUnknownUseCases).
+var firnUseCaseFloors = map[string]provider.Capability{
+	useCaseAgent: requiredAgentCaps,
+	"chat":       provider.CapChat | provider.CapStream,
+	"embedding":  provider.CapEmbed,
+}
+
+// useCaseAgent is the one use case Firn's own run path resolves.
+const useCaseAgent = "agent"
 
 // SettingsProjection is the Wails-facing read-only view of the effective Golem
 // configuration. It never carries filesystem paths, raw JSON, API keys,
@@ -137,6 +181,10 @@ type RouteProjection struct {
 // mutation would actually apply (selectorCapabilityOverrides). RoutedUseCases
 // lists every use case reaching this role (directly or through a fallback
 // chain); Removable is true when nothing references it.
+//
+// HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
+// these authored, model-specific members, so the editor has to disclose the
+// loss before staging. The values themselves never cross the boundary.
 type ModelProjection struct {
 	Role                  string          `json:"role"`
 	ModelName             string          `json:"modelName"`
@@ -150,7 +198,30 @@ type ModelProjection struct {
 	ExposedCapabilities   []string        `json:"exposedCapabilities"`
 	ThinkMode             string          `json:"thinkMode"`
 	RoutedUseCases        []string        `json:"routedUseCases"`
+	HasThinkTags          bool            `json:"hasThinkTags"`
+	HasSlots              bool            `json:"hasSlots"`
 	Removable             bool            `json:"removable"`
+}
+
+// clone deep-copies every slice a projection owns. Settings() and
+// ReloadSettings() hand their value to the Wails layer, which may keep or edit
+// it; without this, one caller's edit would rewrite the cached snapshot that
+// the next caller reads.
+func (p SettingsProjection) clone() SettingsProjection {
+	out := p
+	out.Routes = slices.Clone(p.Routes)
+	out.Providers = slices.Clone(p.Providers)
+	out.Diagnostics = slices.Clone(p.Diagnostics)
+	out.Models = slices.Clone(p.Models)
+	for i := range out.Models {
+		m := &out.Models[i]
+		m.EffectiveCapabilities = slices.Clone(m.EffectiveCapabilities)
+		m.ExposedCapabilities = slices.Clone(m.ExposedCapabilities)
+		m.RoutedUseCases = slices.Clone(m.RoutedUseCases)
+		m.CapabilityFacts.Caps = slices.Clone(m.CapabilityFacts.Caps)
+		m.CapabilityFacts.KnownCaps = slices.Clone(m.CapabilityFacts.KnownCaps)
+	}
+	return out
 }
 
 // ProviderProjection is one provider. Endpoint is the NormalizeEndpoint
@@ -327,15 +398,19 @@ func buildSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsPr
 // buildSettingsProjection sanitizes what it returns.
 func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) SettingsProjection {
 	if loadErr != nil {
+		// The origin is the discovery branch that SELECTED a source, not a
+		// claim that the source loaded: a target named by $GO_LLM_CONFIG that
+		// is not there is still the env target, and the masthead has to name
+		// it. A discovery that matched nothing already reports originNone.
 		if errors.Is(loadErr, ErrAgentConfigMissing) {
-			p := emptyProjection("missing", originNone)
+			p := emptyProjection("missing", loaded.Origin)
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
 		}
 		if loaded.HasConfigDiagnostic && loaded.ConfigDiagnostic.Code == config.CodeConfigNotFound {
 			// mapConfigDiagnostic maps this code to codeConfigMissing; emitting
 			// it under state "invalid" would be a self-contradicting pair.
-			p := emptyProjection("missing", originNone)
+			p := emptyProjection("missing", loaded.Origin)
 			p.Diagnostics = append(p.Diagnostics, Diagnostic{Code: codeConfigMissing, Blocking: true})
 			return p
 		}
@@ -435,6 +510,8 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 			},
 			ExposedCapabilities: exposed, ThinkMode: m.ThinkMode,
 			RoutedUseCases: append([]string{}, routed[role]...),
+			HasThinkTags:   m.ThinkTags != nil,
+			HasSlots:       m.Slots != 0,
 			Removable:      !referenced[role],
 		})
 	}
@@ -737,7 +814,7 @@ func exceedsProjectionBounds(cfg *config.Config) bool {
 // selectedAgentProvider names the provider on the agent route, "" when the
 // route is incomplete.
 func selectedAgentProvider(cfg *config.Config) string {
-	role, ok := cfg.RoleForUseCase("agent")
+	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {
 		return ""
 	}
@@ -784,7 +861,7 @@ func boundSubject(d Diagnostic) Diagnostic {
 // agentRouteDiagnostics re-states ResolveAgentTarget's role/capability checks
 // as diagnostics. Endpoint problems are reported per provider by the caller.
 func agentRouteDiagnostics(cfg *config.Config) []Diagnostic {
-	role, ok := cfg.RoleForUseCase("agent")
+	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {
 		return []Diagnostic{{Code: codeAgentRoleMissing, Blocking: true}}
 	}

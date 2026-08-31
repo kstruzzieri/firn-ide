@@ -33,6 +33,8 @@
         "exposedCapabilities": {},
         "thinkMode": "",
         "routedUseCases": ["agent", "chat"],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": false
       }
     ],

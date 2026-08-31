@@ -26,6 +26,8 @@
         "exposedCapabilities": ["chat", "stream", "tool_call"],
         "thinkMode": "auto",
         "routedUseCases": ["agent"],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": false
       },
       {
@@ -41,6 +43,8 @@
         "exposedCapabilities": ["chat", "stream"],
         "thinkMode": "toggle",
         "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": true
       },
       {
@@ -57,6 +61,8 @@
         "exposedCapabilities": ["embed"],
         "thinkMode": "",
         "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": true
       },
       {
@@ -72,6 +78,8 @@
         "exposedCapabilities": ["chat", "generate", "stream", "tool_call"],
         "thinkMode": "always",
         "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": true
       },
       {
@@ -87,6 +95,8 @@
         "exposedCapabilities": ["chat"],
         "thinkMode": "none",
         "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": true
       }
     ],

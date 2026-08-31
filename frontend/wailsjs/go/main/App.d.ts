@@ -14,7 +14,13 @@ export function AdoptRunProfile(arg1:string):Promise<void>;
 
 export function AppendRunHistoryRecord(arg1:runhistory.RecordInput):Promise<runhistory.Summary>;
 
+export function ApplyGolemSettings(arg1:ai.SettingsApplyRequest):Promise<ai.SettingsApplyResult>;
+
+export function CancelBeforeClose():Promise<void>;
+
 export function CancelGolemRun(arg1:ai.RunIdentity):Promise<boolean>;
+
+export function CancelGolemSettingsApply(arg1:string):Promise<ai.CancelSettingsApplyResult>;
 
 export function CancelSearch(arg1:string):Promise<void>;
 
@@ -25,6 +31,10 @@ export function ClearRunHistoryRecord(arg1:string):Promise<void>;
 export function CloseTerminal(arg1:string):Promise<void>;
 
 export function ConfirmBeforeCloseReady():Promise<void>;
+
+export function ConfirmGolemSettingsApply(arg1:ai.ConfirmSettingsApplyRequest):Promise<ai.SettingsApplyResult>;
+
+export function CreateGolemSettings(arg1:ai.SettingsApplyRequest):Promise<ai.SettingsApplyResult>;
 
 export function CreateTerminal(arg1:string):Promise<string>;
 
@@ -127,6 +137,8 @@ export function LSPRetryProvision(arg1:string,arg2:string):Promise<void>;
 export function LSPSetInterpreter(arg1:string,arg2:string):Promise<void>;
 
 export function ListRecentWorkspaces():Promise<Array<workspace.Summary>>;
+
+export function LoadGolemProfile(arg1:string):Promise<ai.GolemProfileLoadResult>;
 
 export function LoadRunProfiles(arg1:string):Promise<void>;
 

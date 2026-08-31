@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"firn/internal/filesystem"
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
+	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/golem"
 
 	"github.com/google/uuid"
@@ -153,6 +155,12 @@ type Service struct {
 	degraded      error                          // consent degradation cause
 
 	bindingGate sync.RWMutex
+	// challengeMu guards pendingApplies exclusively. It is a LEAF: Call 1
+	// installs while holding bindingGate, so the only nesting is
+	// bindingGate -> challengeMu, and CancelSettingsApply takes it ALONE
+	// (Amendment 9) so a cancel can never queue behind a running turn.
+	challengeMu    sync.Mutex
+	pendingApplies map[string]*settingsChallengeRecord
 	// snapshotMu guards snapshot and configEpoch exclusively. Lock order:
 	// bindingGate -> conv.mu -> snapshotMu; snapshotMu is also taken alone and
 	// never held while acquiring any other Service lock.
@@ -188,20 +196,21 @@ func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath strin
 	}
 	baseCtx, baseCancel := context.WithCancel(ctx)
 	s := &Service{
-		fs:            fs,
-		emit:          emit,
-		bindings:      NewBindings(fs),
-		sessions:      NewMemorySessionStore(), // the one store every runner shares
-		baseCtx:       baseCtx,
-		baseCancel:    baseCancel,
-		active:        make(map[string]*activeRun),
-		conversations: make(map[string]*conversationRecord),
-		closeDone:     make(chan struct{}),
-		runClaims:     make(map[string]RunIdentity),
-		loadConfig:    loadDefaultAgentConfig,
-		newRunner:     NewGolemRunner,
-		now:           time.Now,
-		newID:         uuid.NewString,
+		fs:             fs,
+		emit:           emit,
+		bindings:       NewBindings(fs),
+		sessions:       NewMemorySessionStore(), // the one store every runner shares
+		baseCtx:        baseCtx,
+		baseCancel:     baseCancel,
+		active:         make(map[string]*activeRun),
+		conversations:  make(map[string]*conversationRecord),
+		closeDone:      make(chan struct{}),
+		runClaims:      make(map[string]RunIdentity),
+		pendingApplies: make(map[string]*settingsChallengeRecord),
+		loadConfig:     loadDefaultAgentConfig,
+		newRunner:      NewGolemRunner,
+		now:            time.Now,
+		newID:          uuid.NewString,
 	}
 	consent, err := OpenConsentStore(fs, consentPath)
 	s.consent = consent
@@ -1058,7 +1067,7 @@ func (s *Service) Settings() (SettingsProjection, error) {
 	if s.isClosing() {
 		return SettingsProjection{}, s.publicErr("settings", fmt.Errorf("%w: settings rejected", errServiceClosing))
 	}
-	return s.snapshotOrBuild().projection, nil
+	return s.snapshotOrBuild().projection.clone(), nil
 }
 
 // ReloadSettings rebuilds the effective snapshot under the idle barrier:
@@ -1084,20 +1093,8 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 		s.bindingGate.Unlock()
 		return SettingsReloadResult{}, s.publicErr("settings-reload", fmt.Errorf("%w: reload rejected", errServiceClosing))
 	}
-	busy := false
-	for _, conv := range s.conversationsSnapshot() {
-		conv.mu.Lock()
-		s.dropExpiredChallengeLocked(conv)
-		if conv.state != stateIdle {
-			busy = true
-		}
-		conv.mu.Unlock()
-		if busy {
-			break
-		}
-	}
-	if busy {
-		cur := s.snapshotOrBuild().projection
+	if s.conversationsBusy() {
+		cur := s.snapshotOrBuild().projection.clone()
 		s.bindingGate.Unlock()
 		return SettingsReloadResult{Busy: true, Projection: cur}, nil
 	}
@@ -1107,10 +1104,39 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 	sn := s.snapshot
 	s.snapshotMu.Unlock()
 
-	// Every runner is idle (the barrier held). Close them while STILL HOLDING
-	// the writer so no admission can construct a replacement before its
-	// predecessor fully quiesced — the ownership rule BindRepository's
-	// retirement follows.
+	s.retireCachedRunners("settings-reload")
+	s.bindingGate.Unlock()
+
+	s.emit(EventGolemStatusChanged)
+	return SettingsReloadResult{Busy: false, Projection: sn.projection.clone()}, nil
+}
+
+// conversationsBusy reports whether the idle barrier must refuse: after
+// expiring stale challenges, every conversation has to be exactly idle —
+// running AND canceling both count as busy, and so does an unexpired pending
+// consent challenge. Caller holds the bindingGate WRITER, which is what makes
+// the answer stable for the operation that acts on it.
+func (s *Service) conversationsBusy() bool {
+	for _, conv := range s.conversationsSnapshot() {
+		conv.mu.Lock()
+		s.dropExpiredChallengeLocked(conv)
+		busy := conv.state != stateIdle
+		conv.mu.Unlock()
+		if busy {
+			return true
+		}
+	}
+	return false
+}
+
+// retireCachedRunners closes every cached runner and drops it from its
+// conversation. Caller holds the bindingGate WRITER and has established that
+// every conversation is idle, so the close happens while no admission can
+// construct a replacement before its predecessor fully quiesced — the
+// ownership rule BindRepository's retirement follows. A close failure is
+// host-only: it never resurrects the cache entry and never turns an already
+// published configuration into a false failure.
+func (s *Service) retireCachedRunners(op string) {
 	for _, conv := range s.conversationsSnapshot() {
 		conv.mu.Lock()
 		rec := conv.runner
@@ -1119,14 +1145,299 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 		conv.mu.Unlock()
 		if rec != nil {
 			if err := rec.close(); err != nil {
-				log.Printf("ai: golem settings-reload runner close: %v", err)
+				log.Printf("ai: golem %s runner close: %v", op, err)
 			}
 		}
 	}
-	s.bindingGate.Unlock()
+}
 
-	s.emit(EventGolemStatusChanged)
-	return SettingsReloadResult{Busy: false, Projection: sn.projection}, nil
+// ---------------------------------------------------------------------------
+// Settings writes (spec §5.2). Two calls, one pipeline: Apply/Create prepare
+// and either publish or ask for consent, and Confirm re-runs the SAME
+// preparation from fresh reads before recording the grant and publishing.
+// Nothing is retained between them but the challenge record below.
+// ---------------------------------------------------------------------------
+
+// settingsChallengeRecord is the short-lived consent record behind one issued
+// token. It holds NO document, request, draft, path, or key value: only the
+// expiry, the operation kind, the canonical target and request digests, and
+// the resolved pre/post destination identity the user was actually shown.
+// Everything else Call 2 needs it recomputes.
+type settingsChallengeRecord struct {
+	expiresAt     int64
+	mode          applyMode
+	targetDigest  string
+	requestDigest string
+	pre           ProviderDestination
+	post          ProviderDestination
+}
+
+// matches reports whether a fresh preparation still describes the write the
+// user approved. Both digests are compared in constant time: they are the
+// values an attacker could otherwise probe for. The destinations are already
+// bound into the request digest; comparing them again states the §5.2 check
+// rather than inferring it.
+func (r *settingsChallengeRecord) matches(targetDigest, requestDigest string, pre, post ProviderDestination) bool {
+	return constantTimeEqual(r.targetDigest, targetDigest) &&
+		constantTimeEqual(r.requestDigest, requestDigest) && r.pre == pre && r.post == post
+}
+
+// ApplySettings is Call 1 against an existing target.
+func (s *Service) ApplySettings(req SettingsApplyRequest) (SettingsApplyResult, error) {
+	return s.writeSettings("", req, applyModeExisting)
+}
+
+// CreateSettings is Call 1 for a missing target.
+func (s *Service) CreateSettings(req SettingsApplyRequest) (SettingsApplyResult, error) {
+	return s.writeSettings("", req, applyModeCreate)
+}
+
+// ConfirmSettingsApply is Call 2. The frontend resends the complete request
+// because Call 1 retained none of it; the operation kind comes from the
+// challenge record, so one binding serves both entry points.
+func (s *Service) ConfirmSettingsApply(req ConfirmSettingsApplyRequest) (SettingsApplyResult, error) {
+	if !validChallengeTokenShape(req.ChallengeToken) {
+		// A token this shape can never have been issued, so there is nothing to
+		// look up and nothing to consume.
+		return *conflictChallenge(consentUnchanged), nil
+	}
+	// The mode is a placeholder: the consumed record's operation replaces it.
+	return s.writeSettings(req.ChallengeToken, req.Request, applyModeExisting)
+}
+
+// CancelSettingsApply invalidates one issued challenge. Amendment 9: it takes
+// the settings-challenge mutex and NOTHING else — not the idle barrier, not
+// the snapshot mutex — so it returns immediately even while a turn holds the
+// barrier. It is an atomic map removal and therefore idempotent: an absent,
+// expired, or already consumed token is already cancelled.
+func (s *Service) CancelSettingsApply(token string) CancelSettingsApplyResult {
+	s.takeSettingsChallenge(token)
+	return CancelSettingsApplyResult{Status: "cancelled"}
+}
+
+// takeSettingsChallenge atomically removes and returns the record for token,
+// or nil when there is no live one. The scan is linear and compares every key
+// in constant time: a map lookup keyed by the secret would leak it through
+// hashing and probe timing, and the map only ever holds the handful of
+// challenges one user can have outstanding inside the TTL.
+func (s *Service) takeSettingsChallenge(token string) *settingsChallengeRecord {
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+	var key string
+	var record *settingsChallengeRecord
+	for candidate, rec := range s.pendingApplies {
+		if constantTimeEqual(candidate, token) {
+			key, record = candidate, rec
+		}
+	}
+	if record == nil {
+		return nil
+	}
+	delete(s.pendingApplies, key)
+	if s.now().UnixMilli() > record.expiresAt {
+		return nil // expired: invalid, and correctly removed on the way out
+	}
+	return record
+}
+
+// installSettingsChallenge publishes one pending record and returns its token.
+// Expired records are pruned here, which is what keeps the map bounded by the
+// TTL rather than by the number of calls.
+func (s *Service) installSettingsChallenge(record *settingsChallengeRecord) string {
+	token := newChallengeToken()
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+	now := s.now().UnixMilli()
+	for key, rec := range s.pendingApplies {
+		if now > rec.expiresAt {
+			delete(s.pendingApplies, key)
+		}
+	}
+	s.pendingApplies[token] = record
+	return token
+}
+
+// writeSettings is the whole write path. token is empty for Call 1 and the
+// challenge token for Call 2; mode is the caller's for Call 1 and the
+// record's for Call 2.
+//
+// The idle barrier is held from the busy check through save, snapshot
+// publication, and runner retirement, so no turn can be admitted against a
+// configuration that is mid-publication. Only a closing service fails the
+// call: every other outcome is a closed §5.6 domain result.
+func (s *Service) writeSettings(token string, req SettingsApplyRequest, mode applyMode) (SettingsApplyResult, error) {
+	const op = "settings-write"
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return SettingsApplyResult{}, s.publicErr(op, fmt.Errorf("%w: settings write rejected", errServiceClosing))
+	}
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+	defer s.wg.Done()
+
+	// Registered FIRST so LIFO runs it LAST: every emit happens after the
+	// barrier below is released.
+	var after []string
+	defer func() {
+		for _, name := range after {
+			s.emit(name)
+		}
+	}()
+
+	s.bindingGate.Lock()
+	defer s.bindingGate.Unlock()
+	if s.isClosing() {
+		return SettingsApplyResult{}, s.publicErr(op, fmt.Errorf("%w: settings write rejected", errServiceClosing))
+	}
+	if s.conversationsBusy() {
+		// Busy is the one nonterminal result: nothing is consumed, nothing is
+		// written, and the same token retries.
+		return SettingsApplyResult{Status: "busy"}, nil
+	}
+
+	var record *settingsChallengeRecord
+	if token != "" {
+		if record = s.takeSettingsChallenge(token); record == nil {
+			return *conflictChallenge(consentUnchanged), nil
+		}
+		// From here every result is terminal for this token.
+		mode = record.mode
+		if err := validateConfirmSettingsApplyRequest(
+			ConfirmSettingsApplyRequest{ChallengeToken: token, Request: req}, mode); err != nil {
+			return *blockingDiagnostics(Diagnostic{Code: codeInvalidArgument}), nil
+		}
+	}
+
+	prepared, result := prepareSettingsApply(s.baseCtx, req, mode)
+	if result != nil {
+		return *result, nil
+	}
+	// Both destinations come from the freshly prepared documents, never from a
+	// draft or a cached snapshot.
+	pre, post := agentDestination(prepared.prior), agentDestination(prepared.doc.Config())
+	targetDigest := prepared.target.identityDigest()
+	requestDigest := canonicalApplyDigest(req, mode, targetDigest, pre, post)
+
+	outcome := consentUnchanged
+	if record == nil {
+		if consentChangesEgress(pre, post) && !s.consent.Has(post.Digest) {
+			// Nothing is written and the Document is discarded with this frame.
+			expiresAt := s.now().Add(consentChallengeTTL).UnixMilli()
+			challengeToken := s.installSettingsChallenge(&settingsChallengeRecord{
+				expiresAt: expiresAt, mode: mode, targetDigest: targetDigest,
+				requestDigest: requestDigest, pre: pre, post: post,
+			})
+			return SettingsApplyResult{Status: "consent_required", Challenge: &ApplyChallenge{
+				Token: challengeToken, ExpiresAt: expiresAt,
+				Destination: ApplyDestination{
+					Provider: post.Provider, Model: post.Model,
+					Endpoint: post.Endpoint, Classification: post.Classification,
+				},
+			}}, nil
+		}
+	} else {
+		if !record.matches(targetDigest, requestDigest, pre, post) {
+			return *conflictChallenge(consentUnchanged), nil
+		}
+		// Consent persistence and config publication are two honest commits:
+		// the grant must succeed before a remote config can become live.
+		if err := s.grantSettingsDestination(post, &after); err != nil {
+			return *withConsentOutcome(
+				blockingDiagnostics(Diagnostic{Code: codeConsentStoreFailed}), consentUncertain), nil
+		}
+		outcome = consentRecorded
+	}
+	return s.publishSettingsWrite(prepared, mode, outcome, &after), nil
+}
+
+// grantSettingsDestination records the durable grant. Any failure prevents the
+// save and the publication; the store's own writer may still have renamed
+// bytes, which is why the caller reports `uncertain` rather than `unchanged`.
+func (s *Service) grantSettingsDestination(dest ProviderDestination, after *[]string) error {
+	if err := s.consent.Grant(dest); err != nil {
+		log.Printf("ai: golem settings consent grant failed: %v", err)
+		if s.setConsentDegraded(err) {
+			*after = append(*after, EventGolemStatusChanged)
+		}
+		return err
+	}
+	if s.clearConsentDegraded() {
+		*after = append(*after, EventGolemStatusChanged)
+	}
+	return nil
+}
+
+// publishSettingsWrite is Step S: save, publish the new snapshot, and retire
+// the old cached runners — all under the idle barrier the caller still holds.
+// Replacement runners are created lazily on the next run.
+func (s *Service) publishSettingsWrite(prepared *preparedSettingsApply, mode applyMode, outcome string, after *[]string) SettingsApplyResult {
+	var err error
+	if mode == applyModeCreate {
+		if refusal := s.prepareCreateTarget(prepared.target.path); refusal != nil {
+			return *withConsentOutcome(refusal, outcome)
+		}
+		err = prepared.doc.SaveNew(prepared.target.path)
+	} else {
+		err = prepared.doc.SaveReplace(prepared.target.path, prepared.target.revision)
+	}
+	warning, refusal := saveOutcome(err)
+	if refusal != nil {
+		logSettingsSaveFailure("save", err)
+		return *withConsentOutcome(refusal, outcome)
+	}
+	// The bytes are live (durability uncertainty included). Publish before the
+	// barrier is released so the next admission sees the new configuration.
+	s.snapshotMu.Lock()
+	s.snapshot = s.buildSnapshotLocked()
+	sn := s.snapshot
+	s.snapshotMu.Unlock()
+	s.retireCachedRunners("settings-write")
+	*after = append(*after, EventGolemStatusChanged)
+	projection := sn.projection.clone()
+	return SettingsApplyResult{Status: "applied", Projection: &projection, Warning: warning}
+}
+
+// prepareCreateTarget establishes the Create destination: a real, non-symlink,
+// owner-only parent directory and a target that does not exist in ANY form —
+// including one discovery could not see, such as a dangling symlink. SaveNew
+// owns the create-only 0600 publication itself.
+func (s *Service) prepareCreateTarget(path string) *SettingsApplyResult {
+	dir := filepath.Dir(path)
+	if err := filesystem.EnsureDirPerm(s.fs, dir, 0o700); err != nil {
+		logSettingsSaveFailure("create parent", err)
+		return blockingDiagnostics(Diagnostic{Code: codeConfigSaveFailed})
+	}
+	info, err := filesystem.Lstat(s.fs, dir)
+	if err != nil {
+		logSettingsSaveFailure("create parent probe", err)
+		return blockingDiagnostics(Diagnostic{Code: codeConfigSaveFailed})
+	}
+	if err := verifyPrivateMode(info, true); err != nil {
+		logSettingsSaveFailure("create parent mode", err)
+		return blockingDiagnostics(Diagnostic{Code: codeConfigSaveFailed})
+	}
+	switch _, err := filesystem.Lstat(s.fs, path); {
+	case err == nil:
+		return conflictTarget(nil) // something is there that discovery could not see
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	default:
+		logSettingsSaveFailure("create target probe", err)
+		return blockingDiagnostics(Diagnostic{Code: codeConfigSaveFailed})
+	}
+}
+
+// logSettingsSaveFailure host-logs a save-side failure WITHOUT its cause: a
+// save error carries the target path, and §5.4 keeps paths out of the log the
+// same way it keeps them off the Wails boundary. The upstream diagnostic code
+// is bounded and is the only detail worth keeping.
+func logSettingsSaveFailure(stage string, err error) {
+	if d, ok := config.DiagnosticOf(err); ok {
+		log.Printf("ai: golem settings %s failed: code=%s", stage, d.Code)
+		return
+	}
+	log.Printf("ai: golem settings %s failed", stage)
 }
 
 // Close shuts the service down. The first call marks `closing` under

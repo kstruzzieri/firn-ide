@@ -33,6 +33,8 @@
         "exposedCapabilities": ["chat", "stream", "tool_call"],
         "thinkMode": "",
         "routedUseCases": ["agent", "chat"],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": false
       },
       {
@@ -51,6 +53,8 @@
         "exposedCapabilities": ["chat", "stream", "tool_call"],
         "thinkMode": "",
         "routedUseCases": ["agent", "chat"],
+        "hasThinkTags": false,
+        "hasSlots": false,
         "removable": false
       }
     ],

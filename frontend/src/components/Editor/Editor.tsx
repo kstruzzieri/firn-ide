@@ -24,9 +24,13 @@ import {
   useWorkspaces,
 } from '../../stores/ideStore';
 import { FileIcon } from '../FileExplorer/FileIcon';
-import { FolderOutlineIcon, GitBranchIcon } from '../icons';
+import { FolderOutlineIcon, GitBranchIcon, SettingsIcon } from '../icons';
+import { GolemConfigWorkspace } from '../GolemConfig/GolemConfigWorkspace';
+import { confirmConfigClose, hasUnsavedConfigWork } from '../GolemConfig/configCloseGuard';
+import { useGolemStore } from '../../stores/golemStore';
 import { formatShortcut, isMac } from '../../utils/platform';
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
+import { focusConfigTab, focusEditorSurface } from '../../utils/editorSurface';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { GitDiffView } from './GitDiffView';
 import { MergeResolutionView } from './MergeResolutionView';
@@ -57,6 +61,12 @@ export function Editor() {
   // only keeps the live region mounted outside the conditional merge view, so a
   // next surface that mounts late cannot swallow the announcement.
   const queueAnnouncement = useGitStore((state) => state.mergeQueueAnnouncement);
+  // The one app-global configuration tab (#263 spec §3.1). It is an explicit
+  // fourth editor surface beside file/diff/merge — not an EditorFile, not a
+  // virtual-document registry — so the store carries nothing but its open and
+  // focus flags.
+  const configTabOpen = useGolemStore((state) => state.configTabOpen);
+  const configTabFocused = useGolemStore((state) => state.configTabFocused);
   const gitBaseline = useGitBaseline(activeFile?.path);
   const setActiveFile = useIDEStore((state) => state.setActiveFile);
   const closeFile = useIDEStore((state) => state.closeFile);
@@ -139,16 +149,37 @@ export function Editor() {
     if (prevActiveFileIdRef.current === activeFileId) return;
     prevActiveFileIdRef.current = activeFileId;
     if (activeFileId) {
-      useGitStore.getState().setEditorFocus('file');
+      focusEditorSurface('file');
     }
     return undefined;
   }, [activeFileId]);
 
+  // A diff or merge opened from elsewhere (the Git panel, a conflict queue)
+  // takes editor focus in the git store directly, so watch that rising edge and
+  // retire the configuration tab's focus with it. Tab clicks re-assert focus on
+  // an already-focused surface, which is no edge at all, so they clear the flag
+  // themselves through focusEditorSurface.
+  const otherFocusRef = useRef({ diff: diffFocused, merge: mergeFocused });
+  useEffect(() => {
+    const previous = otherFocusRef.current;
+    // Per surface, not on the disjunction: focus moving straight from the diff
+    // to the merge leaves the disjunction flat and would look like no change.
+    if ((diffFocused && !previous.diff) || (mergeFocused && !previous.merge)) {
+      useGolemStore.getState().setConfigTabFocused(false);
+    }
+    otherFocusRef.current = { diff: diffFocused, merge: mergeFocused };
+  }, [diffFocused, mergeFocused]);
+
+  // Precedence: the configuration tab wins while it is the focused surface, and
+  // also when nothing else is left to show — the same rule the diff tab follows
+  // so the panel never renders blank.
+  const showConfig =
+    configTabOpen && (configTabFocused || (!activeFile && !diffSession && !mergeSession));
   // Show the diff when it's focused, or when there's simply no file to show
   // instead (e.g. the file opened from a diff was closed, leaving only the
   // diff tab) — otherwise the panel would render blank.
-  const showDiff = !!diffSession && (diffFocused || (!activeFile && !mergeSession));
-  const showMerge = !!mergeSession && !showDiff && (mergeFocused || !activeFile);
+  const showDiff = !showConfig && !!diffSession && (diffFocused || (!activeFile && !mergeSession));
+  const showMerge = !showConfig && !!mergeSession && !showDiff && (mergeFocused || !activeFile);
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
   const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
@@ -186,7 +217,15 @@ export function Editor() {
     }, 0);
 
     return () => window.clearTimeout(timeout);
-  }, [activeFileId, diffFocused, diffSession, mergeAdvancePending, mergeSession, openFiles]);
+  }, [
+    activeFileId,
+    configTabOpen,
+    diffFocused,
+    diffSession,
+    mergeAdvancePending,
+    mergeSession,
+    openFiles,
+  ]);
 
   // Re-fetch the diff each time it becomes visible so it reflects edits made in
   // the editor while it was in the background (the working-tree side re-reads
@@ -199,8 +238,20 @@ export function Editor() {
     prevShowDiffRef.current = showDiff;
   }, [showDiff]);
 
-  // Welcome screen when no files are open (and no diff preview tab)
-  if (openFiles.length === 0 && !diffSession && !mergeSession) {
+  // The one choke point for closing the configuration surface, so the §4.6a
+  // prompt cannot be routed around. A dirty surface is revealed first: the
+  // dialog it raises lives inside that pane, and a hidden pane cannot show one.
+  const closeConfigTab = () => {
+    if (hasUnsavedConfigWork()) focusConfigTab();
+    void confirmConfigClose('close').then((proceed) => {
+      if (!proceed) return;
+      restoreFocusAfterCloseRef.current = true;
+      useGolemStore.getState().closeConfigTab();
+    });
+  };
+
+  // Welcome screen when no editor surface at all is open
+  if (openFiles.length === 0 && !diffSession && !mergeSession && !configTabOpen) {
     // Filter out the currently open workspace from recent list
     const recentProjects = recentWorkspaces.filter((w) => w.path !== workspace?.path);
 
@@ -261,16 +312,16 @@ export function Editor() {
       >
         {queueAnnouncement}
       </div>
-      <div className={styles.tabBar} role="tablist" aria-label="Open files">
+      <div className={styles.tabBar} role="tablist" aria-label="Open editors">
         {openFiles.map((file) => {
           // A focused diff tab owns the active state, so the file tab it was
           // opened from doesn't also read as active.
-          const isActive = file.id === activeFile?.id && !showDiff && !showMerge;
+          const isActive = file.id === activeFile?.id && !showDiff && !showMerge && !showConfig;
           const languageName = getLanguageName(file.name);
           const owner = resolveWorkspace(file.path);
 
           const activateFileTab = () => {
-            useGitStore.getState().setEditorFocus('file');
+            focusEditorSurface('file');
             setActiveFile(file.id);
           };
 
@@ -317,7 +368,7 @@ export function Editor() {
             className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
             style={tabAccentStyle(diffOwner)}
             title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
-            onClick={() => useGitStore.getState().setEditorFocus('diff')}
+            onClick={() => focusEditorSurface('diff')}
           >
             <div
               id="tab-git-diff"
@@ -326,11 +377,7 @@ export function Editor() {
               tabIndex={showDiff ? 0 : -1}
               aria-selected={showDiff}
               aria-controls="editor-tabpanel"
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, () => {
-                  useGitStore.getState().setEditorFocus('diff');
-                })
-              }
+              onKeyDown={(event) => handleTabKeyDown(event, () => focusEditorSurface('diff'))}
             >
               <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
               <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
@@ -354,7 +401,7 @@ export function Editor() {
             className={`${styles.tab} ${mergeOwner ? styles.workspaceTab : ''} ${showMerge ? styles.active : ''}`}
             style={tabAccentStyle(mergeOwner)}
             title={mergeSession.path}
-            onClick={() => useGitStore.getState().setEditorFocus('merge')}
+            onClick={() => focusEditorSurface('merge')}
           >
             <div
               id="tab-merge-resolution"
@@ -363,11 +410,7 @@ export function Editor() {
               tabIndex={showMerge ? 0 : -1}
               aria-selected={showMerge}
               aria-controls="editor-tabpanel"
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, () => {
-                  useGitStore.getState().setEditorFocus('merge');
-                })
-              }
+              onKeyDown={(event) => handleTabKeyDown(event, () => focusEditorSurface('merge'))}
             >
               <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
               <span className={styles.tabName}>{diffTabName(mergeSession.path)} (merge)</span>
@@ -391,6 +434,37 @@ export function Editor() {
             </button>
           </div>
         )}
+        {configTabOpen && (
+          <div
+            className={`${styles.tab} ${showConfig ? styles.active : ''}`}
+            title={'Golem Configuration\nApplies to every workspace'}
+            onClick={focusConfigTab}
+          >
+            <div
+              id="tab-golem-config"
+              className={styles.tabTarget}
+              role="tab"
+              tabIndex={showConfig ? 0 : -1}
+              aria-selected={showConfig}
+              aria-controls="editor-tabpanel"
+              onKeyDown={(event) => handleTabKeyDown(event, focusConfigTab)}
+            >
+              <SettingsIcon className={styles.tabIcon} aria-hidden="true" />
+              <span className={styles.tabName}>Golem Configuration</span>
+            </div>
+            <button
+              className={styles.tabClose}
+              onClick={(event) => {
+                event.stopPropagation();
+                closeConfigTab();
+              }}
+              aria-label="Close Golem Configuration"
+              type="button"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Editor content */}
@@ -400,13 +474,15 @@ export function Editor() {
         role="tabpanel"
         tabIndex={0}
         aria-labelledby={
-          showMerge
-            ? 'tab-merge-resolution'
-            : showDiff
-              ? 'tab-git-diff'
-              : activeFile
-                ? editorTabId(activeFile.id)
-                : undefined
+          showConfig
+            ? 'tab-golem-config'
+            : showMerge
+              ? 'tab-merge-resolution'
+              : showDiff
+                ? 'tab-git-diff'
+                : activeFile
+                  ? editorTabId(activeFile.id)
+                  : undefined
         }
       >
         {/* Both surfaces stay mounted and are toggled with CSS so switching
@@ -427,10 +503,18 @@ export function Editor() {
             />
           </div>
         )}
+        {/* Same hidden-pane pattern: the configuration surface stays mounted
+            behind a file or diff so its loaded projection — and, from the next
+            tasks on, its draft — survives a switch away and back. */}
+        {configTabOpen && (
+          <div className={styles.pane} style={{ display: showConfig ? undefined : 'none' }}>
+            <GolemConfigWorkspace onClose={closeConfigTab} />
+          </div>
+        )}
         {activeFile && (
           <div
             className={styles.editorContent}
-            style={{ display: showDiff || showMerge ? 'none' : undefined }}
+            style={{ display: showDiff || showMerge || showConfig ? 'none' : undefined }}
           >
             <CodeMirrorEditor
               fileId={activeFile.id}

@@ -252,7 +252,7 @@ The roadmap includes a built-in AI assistant panel with:
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
-- [ ] Golem follow-ups — settings UI for models, roles, and keys (#263), durable multi-conversation history (#264), token and context usage (#265)
+- [ ] Golem follow-ups — settings UI for models, roles, and keys (#263, phase 1 merged and the write phases in review), durable multi-conversation history (#264), token and context usage (#265)
 
 ## Project Structure
 
@@ -345,7 +345,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 Active tracks:
 
-1. **Golem:** the read-only workspace chat panel shipped as #226 phase 1, on the embedded `go-llm` runtime that also replaced the commit-message CLI shell-out (#165). Next: the settings UI (#263), then durable multi-conversation history (#264); token and context usage (#265) waits on go-llm emitting usage. Phase 2 chat work (context attachments, mutating tools) comes after.
+1. **Golem:** the read-only workspace chat panel shipped as #226 phase 1, on the embedded `go-llm` runtime that also replaced the commit-message CLI shell-out (#165). The settings UI (#263) is under way: phase 1 merged as PR #269, Slice A read-only diagnostics is open as PR #270, and Slice B — the write path, whose go-llm prerequisite landed upstream in #462 — is implemented and in review. Then durable multi-conversation history (#264); token and context usage (#265) waits on go-llm emitting usage. Phase 2 chat work (context attachments, mutating tools) comes after.
 2. **Git merge:** finish #164 phase 4 — multi-file queue advance and watcher/external-change hardening — then work the follow-up backlog: auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), and the diagnostics follow-ups surfaced by phase 3 (#240, #241, #242). Destructive VCS operations (#166) come after.
 3. **Run engine:** run execution identity Phase 2 (#146) is complete and the issue is closed — 2A retained tabs (#224), 2B same-profile parallelism (#232), 2C persisted history (#233), and 2D owned execution plans (#237), with the two bugs that work surfaced fixed in #238 and #245. No run-engine track is currently open.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.

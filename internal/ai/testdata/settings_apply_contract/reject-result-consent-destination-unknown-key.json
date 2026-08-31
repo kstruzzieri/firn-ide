@@ -1,0 +1,18 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "consent_required",
+    "challenge": {
+      "token": "opaque-challenge-token",
+      "expiresAt": 1767225600000,
+      "destination": {
+        "provider": "hosted",
+        "model": "wire-model",
+        "endpoint": "https://api.example.com/v1",
+        "classification": "remote",
+        "apiKey": "sk-leak"
+      }
+    }
+  }
+}

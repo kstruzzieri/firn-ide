@@ -51,6 +51,87 @@ export namespace ai {
       return a;
     }
   }
+  export class ApplyDestination {
+    provider: string;
+    model: string;
+    endpoint: string;
+    classification: string;
+
+    static createFrom(source: any = {}) {
+      return new ApplyDestination(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.provider = source['provider'];
+      this.model = source['model'];
+      this.endpoint = source['endpoint'];
+      this.classification = source['classification'];
+    }
+  }
+  export class ApplyChallenge {
+    token: string;
+    expiresAt: number;
+    destination: ApplyDestination;
+
+    static createFrom(source: any = {}) {
+      return new ApplyChallenge(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.token = source['token'];
+      this.expiresAt = source['expiresAt'];
+      this.destination = this.convertValues(source['destination'], ApplyDestination);
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+
+  export class ApplySource {
+    kind: string;
+    profileId?: string;
+    sourceRevision?: string;
+
+    static createFrom(source: any = {}) {
+      return new ApplySource(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.kind = source['kind'];
+      this.profileId = source['profileId'];
+      this.sourceRevision = source['sourceRevision'];
+    }
+  }
+  export class CancelSettingsApplyResult {
+    status: string;
+
+    static createFrom(source: any = {}) {
+      return new CancelSettingsApplyResult(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.status = source['status'];
+    }
+  }
   export class CapabilityFacts {
     caps: string[];
     knownCaps: string[];
@@ -63,6 +144,164 @@ export namespace ai {
       if ('string' === typeof source) source = JSON.parse(source);
       this.caps = source['caps'];
       this.knownCaps = source['knownCaps'];
+    }
+  }
+  export class ModelFacts {
+    provider: string;
+    model: string;
+    type: string;
+    parameters?: string;
+    contextWindow?: number;
+    dimensions?: number;
+
+    static createFrom(source: any = {}) {
+      return new ModelFacts(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.provider = source['provider'];
+      this.model = source['model'];
+      this.type = source['type'];
+      this.parameters = source['parameters'];
+      this.contextWindow = source['contextWindow'];
+      this.dimensions = source['dimensions'];
+    }
+  }
+  export class Change {
+    kind: string;
+    useCase?: string;
+    role?: string;
+    name?: string;
+    endpoint?: string;
+    apiFormat?: string;
+    modelFacts?: ModelFacts;
+    capabilityFacts?: CapabilityFacts;
+    exposedCaps?: string[];
+    thinkMode?: string;
+    confirmUnknown?: boolean;
+    confirmUnknownUseCases?: string[];
+    confirmDrops?: string[];
+
+    static createFrom(source: any = {}) {
+      return new Change(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.kind = source['kind'];
+      this.useCase = source['useCase'];
+      this.role = source['role'];
+      this.name = source['name'];
+      this.endpoint = source['endpoint'];
+      this.apiFormat = source['apiFormat'];
+      this.modelFacts = this.convertValues(source['modelFacts'], ModelFacts);
+      this.capabilityFacts = this.convertValues(source['capabilityFacts'], CapabilityFacts);
+      this.exposedCaps = source['exposedCaps'];
+      this.thinkMode = source['thinkMode'];
+      this.confirmUnknown = source['confirmUnknown'];
+      this.confirmUnknownUseCases = source['confirmUnknownUseCases'];
+      this.confirmDrops = source['confirmDrops'];
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+  export class ChangeDropSet {
+    changeId: string;
+    fields: string[];
+
+    static createFrom(source: any = {}) {
+      return new ChangeDropSet(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.changeId = source['changeId'];
+      this.fields = source['fields'];
+    }
+  }
+  export class SettingsApplyRequest {
+    targetRevision?: string;
+    source: ApplySource;
+    changes: Change[];
+    keys: Record<string, string>;
+
+    static createFrom(source: any = {}) {
+      return new SettingsApplyRequest(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.targetRevision = source['targetRevision'];
+      this.source = this.convertValues(source['source'], ApplySource);
+      this.changes = this.convertValues(source['changes'], Change);
+      this.keys = source['keys'];
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+  export class ConfirmSettingsApplyRequest {
+    challengeToken: string;
+    request: SettingsApplyRequest;
+
+    static createFrom(source: any = {}) {
+      return new ConfirmSettingsApplyRequest(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.challengeToken = source['challengeToken'];
+      this.request = this.convertValues(source['request'], SettingsApplyRequest);
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
     }
   }
   export class ProviderDestination {
@@ -173,6 +412,40 @@ export namespace ai {
       this.blocking = source['blocking'];
     }
   }
+  export class ProfileDiagnostic {
+    code: string;
+    profileId?: string;
+
+    static createFrom(source: any = {}) {
+      return new ProfileDiagnostic(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.code = source['code'];
+      this.profileId = source['profileId'];
+    }
+  }
+  export class ProviderProjection {
+    name: string;
+    endpoint: string;
+    classification: string;
+    apiFormat: string;
+    credentialState: string;
+
+    static createFrom(source: any = {}) {
+      return new ProviderProjection(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.name = source['name'];
+      this.endpoint = source['endpoint'];
+      this.classification = source['classification'];
+      this.apiFormat = source['apiFormat'];
+      this.credentialState = source['credentialState'];
+    }
+  }
   export class ModelProjection {
     role: string;
     modelName: string;
@@ -186,6 +459,8 @@ export namespace ai {
     exposedCapabilities: string[];
     thinkMode: string;
     routedUseCases: string[];
+    hasThinkTags: boolean;
+    hasSlots: boolean;
     removable: boolean;
 
     static createFrom(source: any = {}) {
@@ -206,6 +481,8 @@ export namespace ai {
       this.exposedCapabilities = source['exposedCapabilities'];
       this.thinkMode = source['thinkMode'];
       this.routedUseCases = source['routedUseCases'];
+      this.hasThinkTags = source['hasThinkTags'];
+      this.hasSlots = source['hasSlots'];
       this.removable = source['removable'];
     }
 
@@ -227,27 +504,6 @@ export namespace ai {
       return a;
     }
   }
-
-  export class ProviderProjection {
-    name: string;
-    endpoint: string;
-    classification: string;
-    apiFormat: string;
-    credentialState: string;
-
-    static createFrom(source: any = {}) {
-      return new ProviderProjection(source);
-    }
-
-    constructor(source: any = {}) {
-      if ('string' === typeof source) source = JSON.parse(source);
-      this.name = source['name'];
-      this.endpoint = source['endpoint'];
-      this.classification = source['classification'];
-      this.apiFormat = source['apiFormat'];
-      this.credentialState = source['credentialState'];
-    }
-  }
   export class RouteProjection {
     useCase: string;
     role: string;
@@ -260,6 +516,86 @@ export namespace ai {
       if ('string' === typeof source) source = JSON.parse(source);
       this.useCase = source['useCase'];
       this.role = source['role'];
+    }
+  }
+  export class ProfileDraftProjection {
+    state: string;
+    readOnly: boolean;
+    editable: boolean;
+    routes: RouteProjection[];
+    models: ModelProjection[];
+    providers: ProviderProjection[];
+    diagnostics: Diagnostic[];
+
+    static createFrom(source: any = {}) {
+      return new ProfileDraftProjection(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.state = source['state'];
+      this.readOnly = source['readOnly'];
+      this.editable = source['editable'];
+      this.routes = this.convertValues(source['routes'], RouteProjection);
+      this.models = this.convertValues(source['models'], ModelProjection);
+      this.providers = this.convertValues(source['providers'], ProviderProjection);
+      this.diagnostics = this.convertValues(source['diagnostics'], Diagnostic);
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+  export class GolemProfileLoadResult {
+    status: string;
+    profileId?: string;
+    sourceRevision?: string;
+    projection?: ProfileDraftProjection;
+    diagnostics?: ProfileDiagnostic[];
+
+    static createFrom(source: any = {}) {
+      return new GolemProfileLoadResult(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.status = source['status'];
+      this.profileId = source['profileId'];
+      this.sourceRevision = source['sourceRevision'];
+      this.projection = this.convertValues(source['projection'], ProfileDraftProjection);
+      this.diagnostics = this.convertValues(source['diagnostics'], ProfileDiagnostic);
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
     }
   }
 
@@ -309,6 +645,51 @@ export namespace ai {
       return a;
     }
   }
+  export class SettingsApplyResult {
+    status: string;
+    projection?: SettingsProjection;
+    warning?: string;
+    challenge?: ApplyChallenge;
+    drops?: ChangeDropSet[];
+    conflict?: string;
+    consentOutcome?: string;
+    diagnostics?: Diagnostic[];
+
+    static createFrom(source: any = {}) {
+      return new SettingsApplyResult(source);
+    }
+
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.status = source['status'];
+      this.projection = this.convertValues(source['projection'], SettingsProjection);
+      this.warning = source['warning'];
+      this.challenge = this.convertValues(source['challenge'], ApplyChallenge);
+      this.drops = this.convertValues(source['drops'], ChangeDropSet);
+      this.conflict = source['conflict'];
+      this.consentOutcome = source['consentOutcome'];
+      this.diagnostics = this.convertValues(source['diagnostics'], Diagnostic);
+    }
+
+    convertValues(a: any, classs: any, asMap: boolean = false): any {
+      if (!a) {
+        return a;
+      }
+      if (a.slice && a.map) {
+        return (a as any[]).map((elem) => this.convertValues(elem, classs));
+      } else if ('object' === typeof a) {
+        if (asMap) {
+          for (const key of Object.keys(a)) {
+            a[key] = new classs(a[key]);
+          }
+          return a;
+        }
+        return new classs(a);
+      }
+      return a;
+    }
+  }
+
   export class SettingsReloadResult {
     busy: boolean;
     projection: SettingsProjection;

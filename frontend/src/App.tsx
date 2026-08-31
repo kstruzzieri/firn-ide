@@ -36,14 +36,28 @@ import { isDirVisible } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
 import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
 import { flushAllFileEdits } from './utils/fileWrites';
+import { focusConfigTab } from './utils/editorSurface';
+import {
+  confirmConfigClose,
+  hasUnsavedConfigWork,
+} from './components/GolemConfig/configCloseGuard';
 
 function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
   // collapse into one mis-scoped refetch.
   const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // The app-close handshake (§5.5) asks the configuration surface first: it may
+  // hold a dirty draft, an open editor, or a pending settings challenge that the
+  // backend must not tear down underneath. A dirty surface is revealed before it
+  // is asked, because the dialog it raises lives inside that pane.
+  const golemConfigCloseGuard = useCallback(async () => {
+    if (hasUnsavedConfigWork()) focusConfigTab();
+    return confirmConfigClose('quit');
+  }, []);
+
   useAutosave();
-  useWorkspacePersistence(flushAllFileEdits, drainRunHistoryForClose);
+  useWorkspacePersistence(flushAllFileEdits, drainRunHistoryForClose, golemConfigCloseGuard);
   // Own run-event capture at the always-mounted App so collapsing the bottom
   // panel (which unmounts Terminal) cannot drop run output or history (#235).
   useRunOutputListener();

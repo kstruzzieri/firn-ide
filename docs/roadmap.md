@@ -75,7 +75,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 
 | Lane | Ticket | Primary ownership | Dependency and conflict rule |
 |------|--------|-------------------|------------------------------|
-| A | Golem follow-ups — #263 settings UI, #264 durable multi-conversation, #265 token/context usage | `internal/ai`, `frontend/src/components/Golem`, `golemStore` | #165 and #226 are both shipped: the embedded `go-llm` runtime replaced the commit-message shell-out, and PR #262 landed the chat panel on it. #265 is blocked on go-llm emitting usage; go-llm #393 (sanitized tool args on `tool.started`/`tool.finished`) would fill in the tool-chip detail view. #263 Phase 1 (read-only projection, diagnostics, panel view) has no upstream dependency and is implemented on `feature/issue-263-golem-settings-phase1`; the #263 write phases (role/provider edits, key entry) depend on go-llm #410 (source-preserving models.json document API). |
+| A | Golem follow-ups — #263 settings UI, #264 durable multi-conversation, #265 token/context usage | `internal/ai`, `frontend/src/components/Golem`, `golemStore` | #165 and #226 are both shipped: the embedded `go-llm` runtime replaced the commit-message shell-out, and PR #262 landed the chat panel on it. #265 is blocked on go-llm emitting usage; go-llm #393 (sanitized tool args on `tool.started`/`tool.finished`) would fill in the tool-chip detail view. #263 Phase 1 (read-only projection, diagnostics, panel view) merged as PR #269, and Slice A (read-only configuration workspace and diagnostics) is open as PR #270. The #263 write phases (role/provider edits, key entry) needed a source-preserving models.json document API; that prerequisite landed upstream as go-llm #462, and Slice B is implemented on `codex/issue-263-slice-b-writes` pending review. |
 | B | #164 merge follow-up backlog — #220, #219, #221, #223, #240, #241 | `frontend/src/components/Editor/Merge*`, merge-specific `GitPanel` seams, `gitStore` merge tests | #164 itself is closed: phase 4 shipped via PR #244, and #222 and #242 are closed. What remains is the follow-up backlog above. Do not start #166 or #46 against the same editor/Git seams. |
 | C | #45 — context menus | `FileExplorer` row/context surfaces, editor tab-bar menus, command registry entries | Unblocked: #202 released the File Explorer seams. Reuse #44's registry instead of adding a parallel action path. Keep out of the merge editor while Lane B is active. |
 
@@ -84,7 +84,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 1. Work the #164 merge follow-up backlog in Lane B — #220 auto-merged region hints, #219 key-hold preview, #221 multi-file conflict rail, #223 bulk take-Current/Incoming, #240 pre-stage diagnostics check, #241 base-relative word marks. #164 phase 4 shipped via PR #244; #222 newline metadata and #242 collapsed conflicted-file diagnostics are closed.
 2. Start #166 only after the merge surface stabilizes. Split it into safe/read-only branch metadata and later destructive merge/rebase/rename/delete operations.
 3. Start #46 after the #164 editor surface stabilizes; keep sibling navigation compatible with lazy directory loading.
-4. Work the Golem follow-ups in Lane A now that #226 has shipped: #263 settings UI Phase 1 first (read-only; write phases gated on go-llm #410), then #264 durable multi-conversation; hold #265 until go-llm emits usage.
+4. Work the Golem follow-ups in Lane A now that #226 has shipped. #263 settings UI Phase 1 is merged (PR #269); Slice A read-only diagnostics is open as PR #270; Slice B, the write phases, is implemented and pending review, its go-llm prerequisite having landed upstream in #462. Take #264 durable multi-conversation next; hold #265 until go-llm emits usage.
 5. Close the #44 tracker as housekeeping; the implementation shipped in PR #206.
 6. Keep #148/#196 benchmark-gated and #41 unscheduled as a standalone rewrite.
 
@@ -122,7 +122,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | P2 | #241 Base-relative word marks | When git recorded a base, mark each side against it to show what that side changed rather than how the sides differ. |
 | P2 | #242 Conflicted-file diagnostics | Collapse per-marker errors into one actionable warning keyed on git's `UU` status; must clear the moment the file is written clean. |
 | P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
-| P2 | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. |
+| P2 | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics open as PR #270; Slice B write phases implemented and pending review. |
 | P2 | #264 Golem durable multi-conversation | Persist and switch between conversations; the New chat reset shipped with #226 is the in-memory slice of this. |
 | P3 | #265 Golem token and context usage | Blocked: needs go-llm to emit usage on its run events first. |
 | Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |

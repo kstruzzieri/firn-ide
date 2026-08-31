@@ -80,15 +80,26 @@ type loadedAgentConfig struct {
 // The selected file is canonicalized and handed to config.LoadDocument
 // exactly once. No discovery step performs network I/O.
 func loadDefaultAgentConfig() (loadedAgentConfig, error) {
+	_, loaded, err := loadAgentConfigDocument()
+	return loaded, err
+}
+
+// loadAgentConfigDocument is loadDefaultAgentConfig plus the Document itself.
+// A write needs the mutable document AND the canonical identity of the file it
+// came from, and both must come from ONE discovery + canonicalize + load: the
+// document is read from the RESOLVED path, so a symlink repointed after
+// discovery cannot slip a different file between the identity check and the
+// read, and a later save targets exactly the file this call read.
+func loadAgentConfigDocument() (*config.Document, loadedAgentConfig, error) {
 	source, origin, err := discoverAgentConfigSource()
 	if err != nil {
-		return loadedAgentConfig{Origin: origin}, err
+		return nil, loadedAgentConfig{Origin: origin}, err
 	}
 	loaded := loadedAgentConfig{LexicalPath: source, Origin: origin}
 	resolved, err := canonicalizeConfigSource(source)
 	if err != nil {
 		log.Print("ai: agent config source rejected")
-		return loaded, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+		return nil, loaded, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
 	loaded.SourcePath = resolved
 	doc, err := config.LoadDocument(resolved)
@@ -102,9 +113,9 @@ func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 		}
 		var syntaxErr *json.SyntaxError
 		if errors.As(err, &syntaxErr) {
-			return loaded, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax)
+			return nil, loaded, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errConfigJSONSyntax)
 		}
-		return loaded, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
+		return nil, loaded, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
 	}
 	loaded.Config = doc.Config()
 	loaded.Revision = doc.Revision()
@@ -112,7 +123,7 @@ func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 		loaded.ReadOnly = true
 		loaded.ReadOnlyDiagnostic = d
 	}
-	return loaded, nil
+	return doc, loaded, nil
 }
 
 // discoverAgentConfigSource mirrors the pinned go-llm discovery order and
@@ -195,7 +206,7 @@ const requiredAgentCaps = provider.CapChat | provider.CapStream | provider.CapTo
 // are ignored completely — there is no fallback walking, so consent decisions
 // bind to exactly one destination. No network or DNS call is made.
 func ResolveAgentTarget(cfg *config.Config) (providerTarget, error) {
-	role, ok := cfg.RoleForUseCase("agent")
+	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {
 		return providerTarget{}, fmt.Errorf("%w: no agent use-case configured", ErrAgentConfigInvalid)
 	}

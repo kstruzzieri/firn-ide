@@ -177,6 +177,17 @@ export interface GolemStoreState {
   panelMode: 'golem' | 'runs'; // initialize to 'runs'
   golemView: 'chat' | 'configuration'; // panel-level view; initialize to 'chat'
   setGolemView(view: GolemStoreState['golemView']): void;
+  /**
+   * The one app-global configuration tab (#263 spec §3.1). Only its open/focus
+   * flags live here: the draft and any pending API-key value stay inside the
+   * mounted workspace root, so no key value can ever reach a store. Both
+   * initialize to false, and focus is meaningless while the tab is closed.
+   */
+  configTabOpen: boolean;
+  configTabFocused: boolean;
+  openConfigTab(): void;
+  closeConfigTab(): void;
+  setConfigTabFocused(focused: boolean): void;
   composerFocusRevision: number;
   hydrateStatus(status: GolemStatus): void;
   invalidateBinding(): void;
@@ -223,7 +234,7 @@ export class GolemContractError extends Error {
   }
 }
 
-const contractError = (): never => {
+export const contractError = (): never => {
   throw new GolemContractError();
 };
 
@@ -243,7 +254,7 @@ export function boundedGolemMessage(value: unknown): string {
   return text.length > MAX_ERROR_CHARS ? `${text.slice(0, MAX_ERROR_CHARS - 1)}…` : text;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isString = (value: unknown): value is string => typeof value === 'string';
@@ -468,7 +479,18 @@ export type SettingsDiagnosticCode =
   | 'key_reference_malformed'
   | 'key_reference_unavailable'
   | 'selector_conflict'
-  | 'identifier_not_editable';
+  | 'identifier_not_editable'
+  // Write/action codes: produced by the apply pipeline, never by a load.
+  | 'invalid_argument'
+  | 'role_not_found'
+  | 'provider_exists'
+  | 'provider_in_use'
+  | 'eligibility_ineligible'
+  | 'eligibility_unknown'
+  | 'key_value_invalid'
+  | 'profile_source_unavailable'
+  | 'consent_store_failed'
+  | 'config_save_failed';
 export type CapabilityName =
   | 'chat'
   | 'generate'
@@ -505,6 +527,9 @@ export interface ModelProjection {
   exposedCapabilities: CapabilityName[];
   thinkMode: ThinkMode;
   routedUseCases: string[];
+  /** Existence facts only — a retarget drops these, the values never cross. */
+  hasThinkTags: boolean;
+  hasSlots: boolean;
   removable: boolean;
 }
 
@@ -540,18 +565,22 @@ export interface SettingsReloadResult {
   projection: SettingsProjection;
 }
 
-const MAX_PROJECTION_ENTRIES = 256;
+// The primitives below are exported for golemConfig.ts, the sibling validator
+// that owns the WRITE transport. They stay internal to the frontend contract
+// layer: one definition of each bound, rune class, and ordering rule, shared
+// by both validators so the read and write sides cannot drift apart.
+export const MAX_PROJECTION_ENTRIES = 256;
 // All string limits are UTF-8 BYTE counts, matching internal/ai/settings.go
 // (Go len()). Measured here with TextEncoder — never String.length, whose
 // UTF-16 code units disagree with Go on non-ASCII input.
 const MAX_IDENTIFIER_BYTES = 256;
-const MAX_ENDPOINT_BYTES = 1024;
+export const MAX_ENDPOINT_BYTES = 1024;
 // Worst case the backend can emit: one endpoint diagnostic per provider plus
 // one agent diagnostic (see internal/ai/settings.go maxProjectionDiagnostics).
-const MAX_DIAGNOSTICS = MAX_PROJECTION_ENTRIES + 1;
+export const MAX_DIAGNOSTICS = MAX_PROJECTION_ENTRIES + 1;
 
 const utf8Encoder = new TextEncoder();
-const utf8Length = (value: string): number => utf8Encoder.encode(value).length;
+export const utf8Length = (value: string): number => utf8Encoder.encode(value).length;
 
 const SETTINGS_STATES: readonly SettingsState[] = ['missing', 'invalid', 'limited', 'ready'];
 const SOURCE_ORIGINS: readonly SettingsSourceOrigin[] = [
@@ -596,8 +625,18 @@ const DIAGNOSTIC_CODES: readonly SettingsDiagnosticCode[] = [
   'key_reference_unavailable',
   'selector_conflict',
   'identifier_not_editable',
+  'invalid_argument',
+  'role_not_found',
+  'provider_exists',
+  'provider_in_use',
+  'eligibility_ineligible',
+  'eligibility_unknown',
+  'key_value_invalid',
+  'profile_source_unavailable',
+  'consent_store_failed',
+  'config_save_failed',
 ];
-const CAPABILITY_NAMES: readonly CapabilityName[] = [
+export const CAPABILITY_NAMES: readonly CapabilityName[] = [
   'chat',
   'generate',
   'stream',
@@ -607,18 +646,18 @@ const CAPABILITY_NAMES: readonly CapabilityName[] = [
   'insert',
 ];
 
-const isBoundedString = (value: unknown, maxBytes: number): value is string =>
+export const isBoundedString = (value: unknown, maxBytes: number): value is string =>
   isString(value) && utf8Length(value) <= maxBytes;
 
 // hasOnlyKeys rejects any key outside the allowlist: strict-both-ways mirror
 // of the Go corpus harness's DisallowUnknownFields (see the section comment).
-const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
+export const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
   Object.keys(value).every((key) => allowed.includes(key));
 
-const MODEL_TYPES: readonly ModelType[] = ['dense', 'moe', 'embedding'];
-const THINK_MODES: readonly ThinkMode[] = ['', 'none', 'always', 'toggle', 'auto'];
-const API_FORMATS: readonly APIFormat[] = ['ollama', 'openai-compat'];
-const REVISION = /^[0-9a-f]{64}$/;
+export const MODEL_TYPES: readonly ModelType[] = ['dense', 'moe', 'embedding'];
+export const THINK_MODES: readonly ThinkMode[] = ['', 'none', 'always', 'toggle', 'auto'];
+export const API_FORMATS: readonly APIFormat[] = ['ollama', 'openai-compat'];
+export const REVISION = /^[0-9a-f]{64}$/;
 const MAX_MODEL_NUMBER = 2147483647;
 // Identifier spoofing guard: every Unicode Cc (control) and Cf (format) rune
 // -- including bidi overrides/isolates and zero-widths that can reorder or
@@ -637,21 +676,21 @@ const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
 // supplied as their punycode form) and percent-escapes any non-ASCII byte in
 // the path. This is defense-in-depth on the reader's side of a boundary the
 // producer already closes.
-const NON_ASCII_RUNE = /[^\x20-\x7E]/;
+export const NON_ASCII_RUNE = /[^\x20-\x7E]/;
 
-const isCleanIdentifier = (value: unknown, maxBytes: number): value is string =>
+export const isCleanIdentifier = (value: unknown, maxBytes: number): value is string =>
   isBoundedString(value, maxBytes) && !FORBIDDEN_IDENTIFIER_RUNES.test(value);
 
-const isIdentifier = (value: unknown): value is string =>
+export const isIdentifier = (value: unknown): value is string =>
   isCleanIdentifier(value, MAX_IDENTIFIER_BYTES) && value !== '';
 
-const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
+export const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
   isString(value) && (allowed as readonly string[]).includes(value);
 
 // compareString orders by emitted UTF-8 byte value, matching Go's `<` on
 // strings -- never String.length/localeCompare, whose UTF-16 code-unit order
 // disagrees with Go on non-BMP characters (see accept-utf8-order-nonbmp.json).
-const compareString = (a: string, b: string): number => {
+export const compareString = (a: string, b: string): number => {
   const left = utf8Encoder.encode(a);
   const right = utf8Encoder.encode(b);
   const shared = Math.min(left.length, right.length);
@@ -661,14 +700,17 @@ const compareString = (a: string, b: string): number => {
   return left.length - right.length;
 };
 
-function isStrictlyOrdered<T>(values: readonly T[], compare: (a: T, b: T) => number): boolean {
+export function isStrictlyOrdered<T>(
+  values: readonly T[],
+  compare: (a: T, b: T) => number
+): boolean {
   for (let i = 1; i < values.length; i += 1) {
     if (compare(values[i - 1], values[i]) >= 0) return false;
   }
   return true;
 }
 
-function isCanonicalCapabilities(values: readonly CapabilityName[]): boolean {
+export function isCanonicalCapabilities(values: readonly CapabilityName[]): boolean {
   let previous = -1;
   for (const value of values) {
     const index = CAPABILITY_NAMES.indexOf(value);
@@ -678,10 +720,10 @@ function isCanonicalCapabilities(values: readonly CapabilityName[]): boolean {
   return true;
 }
 
-const isOptionalModelNumber = (value: unknown): value is number =>
+export const isOptionalModelNumber = (value: unknown): value is number =>
   Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_MODEL_NUMBER;
 
-function readCappedArray<T>(
+export function readCappedArray<T>(
   value: unknown,
   max: number,
   read: (entry: unknown) => T | null
@@ -739,19 +781,24 @@ function readModel(value: unknown): ModelProjection | null {
       'exposedCapabilities',
       'thinkMode',
       'routedUseCases',
+      'hasThinkTags',
+      'hasSlots',
       'removable',
     ])
   )
     return null;
 
   const { role, modelName, provider, type, thinkMode, removable } = value;
+  const { hasThinkTags, hasSlots } = value;
   if (
     !isIdentifier(role) ||
     !isIdentifier(modelName) ||
     !isIdentifier(provider) ||
     !isOneOf(type, MODEL_TYPES) ||
     !isOneOf(thinkMode, THINK_MODES) ||
-    typeof removable !== 'boolean'
+    typeof removable !== 'boolean' ||
+    typeof hasThinkTags !== 'boolean' ||
+    typeof hasSlots !== 'boolean'
   )
     return null;
 
@@ -785,6 +832,10 @@ function readModel(value: unknown): ModelProjection | null {
     !isCanonicalCapabilities(exposedCapabilities) ||
     capabilityFacts.caps.length !== effectiveCapabilities.length ||
     capabilityFacts.caps.some((cap, index) => cap !== effectiveCapabilities[index]) ||
+    // caps ⊆ knownCaps (§5.6), stated rather than left implied by the
+    // full-vocabulary rule in readCapabilityFacts.
+    !effectiveCapabilities.every((cap) => capabilityFacts.knownCaps.includes(cap)) ||
+    !exposedCapabilities.every((cap) => capabilityFacts.knownCaps.includes(cap)) ||
     !isStrictlyOrdered(routedUseCases, compareString)
   )
     return null;
@@ -802,6 +853,8 @@ function readModel(value: unknown): ModelProjection | null {
     exposedCapabilities,
     thinkMode,
     routedUseCases,
+    hasThinkTags,
+    hasSlots,
     removable,
   };
 }
@@ -827,7 +880,7 @@ function readProvider(value: unknown): ProviderProjection | null {
   return { name, endpoint, classification, apiFormat, credentialState };
 }
 
-function readSettingsDiagnostic(value: unknown): SettingsDiagnostic | null {
+export function readSettingsDiagnostic(value: unknown): SettingsDiagnostic | null {
   if (!isRecord(value)) return null;
   if (!hasOnlyKeys(value, ['code', 'subjectKind', 'subjectName', 'blocking'])) return null;
   const { code, subjectKind, subjectName, blocking } = value;

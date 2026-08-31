@@ -10,8 +10,20 @@ export function AppendRunHistoryRecord(arg1) {
   return window['go']['main']['App']['AppendRunHistoryRecord'](arg1);
 }
 
+export function ApplyGolemSettings(arg1) {
+  return window['go']['main']['App']['ApplyGolemSettings'](arg1);
+}
+
+export function CancelBeforeClose() {
+  return window['go']['main']['App']['CancelBeforeClose']();
+}
+
 export function CancelGolemRun(arg1) {
   return window['go']['main']['App']['CancelGolemRun'](arg1);
+}
+
+export function CancelGolemSettingsApply(arg1) {
+  return window['go']['main']['App']['CancelGolemSettingsApply'](arg1);
 }
 
 export function CancelSearch(arg1) {
@@ -32,6 +44,14 @@ export function CloseTerminal(arg1) {
 
 export function ConfirmBeforeCloseReady() {
   return window['go']['main']['App']['ConfirmBeforeCloseReady']();
+}
+
+export function ConfirmGolemSettingsApply(arg1) {
+  return window['go']['main']['App']['ConfirmGolemSettingsApply'](arg1);
+}
+
+export function CreateGolemSettings(arg1) {
+  return window['go']['main']['App']['CreateGolemSettings'](arg1);
 }
 
 export function CreateTerminal(arg1) {
@@ -236,6 +256,10 @@ export function LSPSetInterpreter(arg1, arg2) {
 
 export function ListRecentWorkspaces() {
   return window['go']['main']['App']['ListRecentWorkspaces']();
+}
+
+export function LoadGolemProfile(arg1) {
+  return window['go']['main']['App']['LoadGolemProfile'](arg1);
 }
 
 export function LoadRunProfiles(arg1) {

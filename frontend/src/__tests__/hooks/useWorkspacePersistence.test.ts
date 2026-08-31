@@ -8,6 +8,7 @@ import {
 } from '../../utils/workspaceTreeCache';
 
 const mockConfirmBeforeCloseReady = jest.fn(() => Promise.resolve());
+const mockCancelBeforeClose = jest.fn(() => Promise.resolve());
 let lastSavedWorkspaceState: unknown = null;
 const mockSaveWorkspaceState = jest.fn((state: unknown) => {
   lastSavedWorkspaceState = state;
@@ -20,6 +21,7 @@ let beforeCloseHandler: (() => void) | null = null;
 
 jest.mock('../../../wailsjs/go/main/App', () => ({
   ConfirmBeforeCloseReady: mockConfirmBeforeCloseReady,
+  CancelBeforeClose: mockCancelBeforeClose,
   SaveWorkspaceState: mockSaveWorkspaceState,
   LoadWorkspaceState: mockLoadWorkspaceState,
   ReadFile: mockReadFile,
@@ -179,7 +181,9 @@ describe('useWorkspacePersistence', () => {
     await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
   });
 
-  it('does not acknowledge app close when pending editor work fails to flush', async () => {
+  // A flush that fails must not approve data loss — and must not leave the app
+  // wedged behind an unanswered handshake either: it cancels the close.
+  it('cancels the close when pending editor work fails to flush', async () => {
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const flushPendingEdits = jest.fn(() => Promise.reject(new Error('disk full')));
     try {
@@ -191,6 +195,71 @@ describe('useWorkspacePersistence', () => {
       });
 
       await waitFor(() => expect(flushPendingEdits).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockCancelBeforeClose).toHaveBeenCalledTimes(1));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  // The close guard is the §5.5 preparation step: settle any settings write,
+  // resolve unsaved work, clear secrets. It runs BEFORE the flush, and its
+  // answer decides whether the app tears down at all.
+  it('flushes and confirms once the close guard approves', async () => {
+    const closeGuard = jest.fn(() => Promise.resolve(true));
+    const flushPendingEdits = jest.fn(() => Promise.resolve());
+    renderHook(() => useWorkspacePersistence(flushPendingEdits, undefined, closeGuard));
+    await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+    act(() => {
+      beforeCloseHandler?.();
+    });
+
+    await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    expect(closeGuard).toHaveBeenCalledTimes(1);
+    expect(flushPendingEdits).toHaveBeenCalledTimes(1);
+    expect(mockCancelBeforeClose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['declines', () => Promise.resolve(false)],
+    ['fails', () => Promise.reject(new Error('draft prompt exploded'))],
+  ])('cancels the close and leaves the app usable when the guard %s', async (_name, guard) => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const closeGuard = jest.fn(guard as () => Promise<boolean>);
+    const flushPendingEdits = jest.fn(() => Promise.resolve());
+    try {
+      renderHook(() => useWorkspacePersistence(flushPendingEdits, undefined, closeGuard));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+
+      await waitFor(() => expect(mockCancelBeforeClose).toHaveBeenCalledTimes(1));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+      // A close the user declined must not flush half-finished work either.
+      expect(flushPendingEdits).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  // A cancel that cannot reach the backend is reported, never thrown; the
+  // backend backstop is the remaining safety net.
+  it('survives a failing CancelBeforeClose', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockCancelBeforeClose.mockRejectedValueOnce(new Error('transport gone'));
+    const closeGuard = jest.fn(() => Promise.resolve(false));
+    try {
+      renderHook(() => useWorkspacePersistence(undefined, undefined, closeGuard));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => {
+        beforeCloseHandler?.();
+      });
+
+      await waitFor(() => expect(mockCancelBeforeClose).toHaveBeenCalledTimes(1));
       expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
