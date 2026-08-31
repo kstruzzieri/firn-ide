@@ -68,6 +68,7 @@ let globalOutputCleanup: (() => void) | null = null;
 function ensureGlobalOutputListener() {
   if (globalOutputCleanup) return;
   globalOutputCleanup = EventsOn('terminal:output', (evt: { termId: string; data: string }) => {
+    if (!evt?.termId) return;
     const listener = outputListeners.get(evt.termId);
     if (listener) {
       listener(evt.data);

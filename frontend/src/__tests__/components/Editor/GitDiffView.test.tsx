@@ -98,9 +98,8 @@ const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureOpen(...args),
 }));
-// gitStore (imported for its store) transitively loads the ESM wailsjs App
-// bindings; mock them so the module graph stays jest-parseable.
 jest.mock('../../../wails/bindings', () => ({
+  ...jest.requireActual('../../../wails/bindings'),
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),

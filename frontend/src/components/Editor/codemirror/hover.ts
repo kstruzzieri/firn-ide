@@ -146,7 +146,7 @@ function createHoverTooltipDOM(
   copyType.href = '#';
   copyType.addEventListener('click', (e) => {
     e.preventDefault();
-    ClipboardSetText(signature || rawContent);
+    void ClipboardSetText(signature || rawContent).catch(() => {});
   });
   actionsDiv.appendChild(copyType);
 

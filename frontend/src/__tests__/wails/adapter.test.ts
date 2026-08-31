@@ -2,7 +2,7 @@ import { EventsOn, WindowSetTitle, BrowserOpenURL, ClipboardSetText } from '../.
 import * as bindings from '../../wails/bindings';
 
 describe('wails adapter surface', () => {
-  it('central mock provides the four production runtime functions', () => {
+  it('adapter re-exports the four production runtime functions', () => {
     expect(typeof EventsOn).toBe('function');
     expect(typeof WindowSetTitle).toBe('function');
     expect(typeof BrowserOpenURL).toBe('function');

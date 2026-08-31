@@ -92,9 +92,8 @@ jest.mock('../../../stores/ideStore', () => ({
   useEditorSyntaxTheme: () => syntaxThemeId,
 }));
 
-// wailsjs/go/main/App.js is generated ESM this Jest config does not transform, so a
-// bare jest.mock(path) auto-load throws `Unexpected token 'export'` — use a factory.
 jest.mock('../../../wails/bindings', () => ({
+  ...jest.requireActual('../../../wails/bindings'),
   GitConflictStages: jest.fn(),
   GitFileAtRev: jest.fn(),
 }));

@@ -11,7 +11,7 @@ jest.mock('../../../../wails/bindings', () => {
 });
 
 jest.mock('../../../../wails/runtime', () => ({
-  ClipboardSetText: jest.fn(),
+  ClipboardSetText: jest.fn(() => Promise.resolve()),
   BrowserOpenURL: jest.fn(),
 }));
 

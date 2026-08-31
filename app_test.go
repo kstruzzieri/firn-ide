@@ -117,6 +117,19 @@ func newLoadedAppForProfiles(t *testing.T) *App {
 	return app
 }
 
+// countEvent filters a captured emit slice down to a single event name, so a
+// count-based assertion isn't broken by an unrelated subsystem's emit landing
+// in the same sink.
+func countEvent(events []string, name string) int {
+	n := 0
+	for _, e := range events {
+		if e == name {
+			n++
+		}
+	}
+	return n
+}
+
 func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	app := newLoadedAppForProfiles(t)
 	all := app.GetAllRunProfiles()
@@ -138,8 +151,8 @@ func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	if res.Valid {
 		t.Fatal("expected invalid result for empty name")
 	}
-	if len(events) != 0 {
-		t.Fatalf("expected no emit on invalid save, got %v", events)
+	if n := countEvent(events, "runprofiles:changed"); n != 0 {
+		t.Fatalf("expected no runprofiles:changed emit on invalid save, got %v", events)
 	}
 
 	// Valid: emits exactly one runprofiles:changed.
@@ -150,7 +163,7 @@ func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	if err != nil || !res.Valid {
 		t.Fatalf("valid save failed: err=%v res=%+v", err, res)
 	}
-	if len(events) != 1 || events[0] != "runprofiles:changed" {
+	if n := countEvent(events, "runprofiles:changed"); n != 1 {
 		t.Fatalf("expected one runprofiles:changed, got %v", events)
 	}
 }
