@@ -7,6 +7,7 @@ module.exports = {
     '\\.svg$': '<rootDir>/src/__mocks__/svgMock.js',
     '^@/(.*)$': '<rootDir>/src/$1',
     '(?:\\.\\./)+wailsjs/runtime(?:/runtime)?$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '^(?:\\.\\.?/)+wails/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
   },
   transform: {
     // Also matches .js so ts-jest can down-level the ESM-only react-markdown
