@@ -138,14 +138,12 @@ export function RoutingCard({
   /** A fresh object per request, so a repeated chip click focuses again. */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
 
-  // More than one row may be expanded at once: collapsing one to open another
-  // would silently discard unstaged fields (§4.6a forbids that).
-  const toggle = (useCase: string) =>
-    setOpen((current) => {
-      const next = new Set(current);
-      if (!next.delete(useCase)) next.add(useCase);
-      return next;
-    });
+  // More than one row may be expanded at once: collapsing an editor outside
+  // its explicit actions would silently discard unstaged fields (§4.6a).
+  const openEditor = (useCase: string, elementId: string) => {
+    setOpen((current) => (current.has(useCase) ? current : new Set(current).add(useCase)));
+    setPendingFocus({ elementId });
+  };
 
   const close = (useCase: string) =>
     setOpen((current) => {
@@ -325,7 +323,7 @@ export function RoutingCard({
                         className={styles.button}
                         aria-expanded={expanded}
                         aria-controls={editorId}
-                        onClick={() => toggle(useCase)}
+                        onClick={() => openEditor(useCase, editorId)}
                       >
                         {role === null ? 'Assign' : 'Edit'}
                         <span className={styles.srOnly}>{` route ${useCase}`}</span>

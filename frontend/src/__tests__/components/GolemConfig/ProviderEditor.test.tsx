@@ -259,9 +259,9 @@ describe('ProviderEditor', () => {
     await userEvent.type(screen.getByLabelText('New API key'), 'sk-live-value');
     await stage();
 
-    await openEditor(); // collapse
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByLabelText('New API key')).not.toBeInTheDocument();
-    await openEditor(); // reopen
+    await openEditor();
     expect(screen.getByLabelText('New API key')).toHaveValue('');
     expect(keys.get('llama-swap')).toBe('sk-live-value');
   });

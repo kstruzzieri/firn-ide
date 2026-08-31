@@ -49,7 +49,6 @@ import {
   parseSettingsApplyResult,
   projectDraft,
   recordApplyProvenance,
-  replaceSource,
   retainsKeys,
   setTargetRevision,
   settleDraft,
@@ -234,6 +233,7 @@ const consentCopy = (outcome: 'unchanged' | 'recorded' | 'uncertain'): string =>
 export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [inFlight, setInFlight] = useState(false);
+  const [sourceLoading, setSourceLoading] = useState(false);
   const generation = useRef(0);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -254,6 +254,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [outcome, setOutcome] = useState<WriteOutcome>(NO_OUTCOME);
   /** True while an Apply/Confirm/Cancel owns the surface (§3.3). */
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [focusRequest, setFocusRequest] = useState<EditorFocusRequest | null>(null);
 
@@ -263,8 +264,28 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const writeRef = useRef<Promise<void>>(Promise.resolve());
   const answerRef = useRef<((ok: boolean) => void) | null>(null);
 
+  const invalidateLoads = useCallback(() => {
+    generation.current += 1;
+    setInFlight(false);
+    setSourceLoading(false);
+  }, []);
+
+  const beginOperation = (): boolean => {
+    if (sendingRef.current) return false;
+    sendingRef.current = true;
+    setSending(true);
+    return true;
+  };
+
+  const endOperation = (): void => {
+    sendingRef.current = false;
+    setSending(false);
+  };
+
   const load = useCallback(async (explicit: boolean): Promise<boolean> => {
     const gen = ++generation.current;
+    setSourceLoading(false);
+    setFocusRequest(null);
     setInFlight(true);
     try {
       const result = parseSettingsReloadResult(await ReloadGolemSettings());
@@ -336,6 +357,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   };
 
   const settle = (event: DraftEvent, next: Partial<WriteOutcome> = {}): void => {
+    invalidateLoads();
     recordApplyProvenance(draftRef.current.source, event);
     setDraft((current) => settleDraft(current, event, vault));
     if (!retainsKeys(event)) {
@@ -353,8 +375,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // The consent challenge outlives nothing: its own expiry is a terminal event.
   useEffect(() => {
     const challenge = outcome.challenge;
-    if (challenge === null) return;
-    const expire = () => settleRef.current({ kind: 'expired' }, { notice: CHALLENGE_EXPIRED });
+    if (challenge === null || sending) return;
+    const expire = () => {
+      if (sendingRef.current) return;
+      settleRef.current({ kind: 'expired' }, { notice: CHALLENGE_EXPIRED });
+    };
     const delay = challenge.expiresAt - Date.now();
     if (delay <= 0) {
       expire();
@@ -362,7 +387,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     }
     const timer = setTimeout(expire, delay);
     return () => clearTimeout(timer);
-  }, [outcome.challenge]);
+  }, [outcome.challenge, sending]);
 
   // -------------------------------------------------------------------------
   // Editors
@@ -422,13 +447,20 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const cancelChallenge = async (): Promise<boolean> => {
     const token = outcomeRef.current.challenge?.token;
     if (token === undefined) return true;
-    try {
-      parseCancelSettingsApplyResult(await CancelGolemSettingsApply(token));
-      return true;
-    } catch {
-      setOutcome((current) => ({ ...current, notice: CANCEL_FAILED }));
-      return false;
-    }
+    if (!beginOperation()) return false;
+    const run = (async () => {
+      try {
+        parseCancelSettingsApplyResult(await CancelGolemSettingsApply(token));
+        return true;
+      } catch {
+        setOutcome((current) => ({ ...current, notice: CANCEL_FAILED }));
+        return false;
+      } finally {
+        endOperation();
+      }
+    })();
+    writeRef.current = run.then(() => undefined);
+    return run;
   };
 
   /** Confirm, then cancel any challenge. Callers only reach it while dirty. */
@@ -501,9 +533,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** Resolves true only when the preview actually landed. */
   const adoptProfile = async (profileId: string, keepDraft: boolean): Promise<boolean> => {
+    if (!keepDraft) {
+      settle({ kind: 'discard' });
+      setPreview(null);
+    }
+    const gen = ++generation.current;
+    setInFlight(false);
+    setFocusRequest(null);
+    setSourceLoading(true);
     setSourceError('');
     try {
       const result = parseGolemProfileLoadResult(await LoadGolemProfile(profileId));
+      if (gen !== generation.current) return false;
       if (result.status === 'diagnostics') {
         setSourceError(formatProfileDiagnostic(result.diagnostics[0]));
         return false;
@@ -516,18 +557,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       setPreview(result.projection);
       // A conflict reload keeps the draft under review; a fresh choice clears
       // it through the one terminal path (§4.6a).
-      setDraft((current) =>
-        keepDraft ? { ...current, source } : replaceSource(current, source, vault)
-      );
+      setDraft((current) => ({ ...current, source }));
       // Either way the document the editors derive from has just been replaced,
       // so they re-derive: a row reopened against the old preview would read
       // back a stale model as if the user had chosen it.
       resetCards();
-      if (!keepDraft) setOutcome(NO_OUTCOME);
       return true;
     } catch (err) {
+      if (gen !== generation.current) return false;
       setSourceError(boundedGolemMessage(err));
       return false;
+    } finally {
+      if (gen === generation.current) setSourceLoading(false);
     }
   };
 
@@ -552,11 +593,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       ))
     )
       return;
+    settle({ kind: 'discard' });
     setSourceError('');
     setPreview(BLANK_PREVIEW);
-    setDraft((current) => replaceSource(current, { kind: 'blank' }, vault));
-    resetCards();
-    setOutcome(NO_OUTCOME);
+    setDraft((current) => ({ ...current, source: { kind: 'blank' } }));
   };
 
   // -------------------------------------------------------------------------
@@ -601,6 +641,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         );
         return;
       case 'busy':
+        if (
+          outcomeRef.current.challenge !== null &&
+          outcomeRef.current.challenge.expiresAt <= Date.now()
+        ) {
+          settle({ kind: 'expired' }, { notice: CHALLENGE_EXPIRED });
+          return;
+        }
         // §5.2: Busy is the only NONTERMINAL confirmation result — it leaves the
         // token and the key refs retryable. Carrying the challenge forward is
         // what makes that true on this side: drop it and the panel vanishes,
@@ -626,7 +673,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * same situation for the same reason: the outcome is unknown either way.
    */
   const send = (call: () => Promise<unknown>, token: string | null): void => {
-    setSending(true);
+    if (!beginOperation()) return;
     const run = (async () => {
       try {
         receive(parseSettingsApplyResult(await call()));
@@ -639,7 +686,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         settleRef.current({ kind: 'rejected' }, { unknown: true });
         setPreview(null);
       } finally {
-        setSending(false);
+        endOperation();
       }
     })();
     writeRef.current = run;
@@ -692,12 +739,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   };
 
   const cancelDestination = async () => {
-    setSending(true);
-    try {
-      if (await cancelChallenge()) settle({ kind: 'cancelled' }, { notice: CHALLENGE_CANCELLED });
-    } finally {
-      setSending(false);
-    }
+    if (await cancelChallenge()) settle({ kind: 'cancelled' }, { notice: CHALLENGE_CANCELLED });
   };
 
   /**
@@ -765,8 +807,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * §4.6a: while challenged, the only enabled draft actions are Confirm,
    * Cancel, and the cancel-then-transition paths (Discard, Refresh, source
    * switch, tab close, quit). Everything the request is made of — editors,
-   * chips, Apply, the bootstrap CTAs — is frozen, because the visible request
-   * is what the challenge token is bound to.
+   * chips, and Apply — is frozen, because the visible request is what the
+   * challenge token is bound to. Bootstrap source switches stay available as
+   * cancel-then-transition paths and use the narrower lock below.
    *
    * A Busy result holds the surface for the same reason: §5.2 keeps that exact
    * request retryable, and Retry resends the RETAINED bytes. An edit made
@@ -775,7 +818,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * condition in one place; clearing the retained request on every draft
    * mutation would be the same invariant restated at every mutation site.
    */
-  const locked = sending || recovery || outcome.busy || outcome.challenge !== null;
+  const locked =
+    inFlight || sourceLoading || sending || recovery || outcome.busy || outcome.challenge !== null;
+  const sourceLocked = inFlight || sourceLoading || sending || recovery || outcome.busy;
   const changeCount = draftChangeCount(draft);
   // Editing needs a document that is both loaded and writable. A profile or
   // blank source supplies its own: the draft is layered on THAT preview.
@@ -854,7 +899,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 className={styles.button}
-                disabled={locked}
+                disabled={sourceLocked}
                 onClick={() => void startFromProfile()}
               >
                 Start from curated/local
@@ -862,7 +907,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 className={styles.button}
-                disabled={locked}
+                disabled={sourceLocked}
                 onClick={() => void startBlank()}
               >
                 Start blank
@@ -873,7 +918,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className={styles.button}
-              disabled={inFlight}
+              disabled={inFlight || sourceLoading || sending}
               onClick={() => void recover()}
             >
               Recover state
@@ -882,7 +927,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className={styles.button}
-              disabled={inFlight || sending}
+              disabled={inFlight || sourceLoading || sending}
               onClick={() => void refresh()}
             >
               Refresh
@@ -1001,12 +1046,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             )}
 
             <ProvidersCard
-              // Remount on every draft reset AND on every document the open
-              // editors could be diffing against: an editor derives its fields
-              // once, at mount, but stages against the live projection, so a
-              // Refresh that moved the revision would otherwise let a stale
-              // endpoint be re-staged as if the user had authored it.
-              key={`providers-${draftEpoch}:${projection.revision ?? ''}`}
+              // Remount when the surface locks and on every document the open
+              // editors could be diffing against. An editor derives its fields
+              // once but stages against the live projection, so keeping it
+              // mounted across a reload could re-stage stale values.
+              key={`providers-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
               providers={body.providers}
               usedProviders={usedProviders}
               changes={draft.changes}
@@ -1021,10 +1065,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             />
             <RoutingCard
               // Same remount rule as the providers card: an open route editor
-              // derives its fields at mount but stages against the live
-              // projection, so a Refresh that moved the revision must not let a
-              // stale model read back as the user's choice.
-              key={`routing-${draftEpoch}:${projection.revision ?? ''}`}
+              // must not survive a lock or read stale values back as a choice.
+              key={`routing-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
               routes={body.routes}
               models={body.models}
               providers={routableProviders}
@@ -1072,7 +1114,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     className={`${styles.button} ${styles.primary}`}
-                    disabled={sending}
+                    disabled={inFlight || sourceLoading || sending}
                     onClick={confirmDestination}
                   >
                     Confirm destination
@@ -1080,7 +1122,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     className={`${styles.button} ${styles.quiet}`}
-                    disabled={sending}
+                    disabled={inFlight || sourceLoading || sending}
                     onClick={() => void cancelDestination()}
                   >
                     Cancel approval
@@ -1106,7 +1148,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     className={`${styles.button} ${styles.primary}`}
-                    disabled={sending}
+                    disabled={inFlight || sourceLoading || sending}
                     onClick={restageDrops}
                   >
                     Confirm and restage
@@ -1124,7 +1166,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     className={styles.button}
-                    disabled={sending || inFlight}
+                    disabled={sending || inFlight || sourceLoading}
                     onClick={() => void reviewConflict()}
                   >
                     {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
@@ -1132,7 +1174,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     className={`${styles.button} ${styles.quiet}`}
-                    disabled={sending || inFlight}
+                    disabled={sending || inFlight || sourceLoading}
                     onClick={() => void discardConflict()}
                   >
                     Discard draft
@@ -1149,7 +1191,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
             {outcome.busy && (
               <div className={styles.panelActions}>
-                <button type="button" className={styles.button} disabled={sending} onClick={retry}>
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={inFlight || sourceLoading || sending}
+                  onClick={retry}
+                >
                   Retry
                 </button>
               </div>
@@ -1162,7 +1209,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 count={changeCount}
                 blocked={blocked}
                 locked={locked}
-                discardLocked={sending || recovery}
+                discardLocked={inFlight || sourceLoading || sending || recovery}
                 onApply={apply}
                 onDiscard={() => void discard()}
                 onOpenChange={(changeId) =>

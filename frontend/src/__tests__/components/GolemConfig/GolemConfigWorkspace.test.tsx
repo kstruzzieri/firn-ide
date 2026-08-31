@@ -400,6 +400,36 @@ describe('GolemConfigWorkspace', () => {
     expect(refresh).toBeEnabled();
   });
 
+  it('closes an open editor while Refresh owns the surface', async () => {
+    let settle!: (value: unknown) => void;
+    (ReloadGolemSettings as jest.Mock)
+      .mockResolvedValueOnce({ busy: false, projection: readyProjection })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolveReload) => {
+            settle = resolveReload;
+          })
+      );
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('provider-row-llama-swap');
+    await userEvent.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+    expect(screen.getByLabelText('Endpoint')).toBeEnabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Edit provider llama-swap' })
+    ).not.toBeInTheDocument();
+
+    settle({
+      busy: false,
+      projection: { ...readyProjection, revision: 'f'.repeat(64) },
+    });
+    await screen.findByText(`rev ${'f'.repeat(12)}`);
+    expect(screen.getByRole('button', { name: 'Edit provider llama-swap' })).toBeEnabled();
+  });
+
   it('drops a response that lands after unmount', async () => {
     let settle!: (value: unknown) => void;
     (ReloadGolemSettings as jest.Mock).mockImplementation(

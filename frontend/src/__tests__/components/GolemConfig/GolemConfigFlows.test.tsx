@@ -11,7 +11,7 @@
  * applied credential state.
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 import {
@@ -216,6 +216,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   jest.restoreAllMocks();
 });
 
@@ -600,6 +601,41 @@ describe('nonterminal apply results', () => {
     expect(ApplyGolemSettings).toHaveBeenCalledTimes(1);
   });
 
+  it('expires a challenge cleanly when Confirm returns Busy after its deadline', async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    let settleConfirm!: (value: unknown) => void;
+    applyReturns({
+      status: 'consent_required',
+      challenge: challenge({ expiresAt: Date.now() + 1000 }),
+    });
+    (ConfirmGolemSettingsApply as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolveConfirm) => {
+          settleConfirm = resolveConfirm;
+        })
+    );
+    await mountWorkspace();
+    await user.click(screen.getByRole('button', { name: 'Edit provider hosted' }));
+    await user.type(screen.getByLabelText('New API key'), KEY);
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+
+    await act(async () => {
+      jest.advanceTimersByTime(1001);
+    });
+    await act(async () => {
+      settleConfirm({ status: 'busy' });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/approval request expired/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+  });
+
   // The retained request is what Retry resends, so it must stay immutable: an
   // edit made beside the Retry button would be invisible to the resend and then
   // erased by the settle of a write that never carried it.
@@ -712,6 +748,32 @@ describe('nonterminal apply results', () => {
     const row = screen.getByTestId('provider-row-hosted');
     expect(within(row).getByText('Modified')).toBeInTheDocument();
     expect(within(row).queryByText('Key staged')).not.toBeInTheDocument();
+  });
+
+  it('locks every challenge action while Discard is cancelling its token', async () => {
+    let settleCancel!: (value: unknown) => void;
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    (CancelGolemSettingsApply as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolveCancel) => {
+          settleCancel = resolveCancel;
+        })
+    );
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeDisabled();
+
+    settleCancel({ status: 'cancelled' });
+    await waitFor(() => expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument());
   });
 
   // §4.6a: while challenged, the only enabled draft actions are Confirm,
@@ -885,6 +947,36 @@ describe('unsaved-work transitions', () => {
     expect(await screen.findByRole('alertdialog')).toBeVisible();
   });
 
+  it('locks a retained draft while its conflict reload is pending', async () => {
+    let settleReload!: (value: unknown) => void;
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await stageEndpoint();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+    await userEvent.click(screen.getByRole('button', { name: 'hosted → updated' }));
+    expect(screen.getByLabelText('Endpoint')).toBeEnabled();
+    (ReloadGolemSettings as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolveReload) => {
+          settleReload = resolveReload;
+        })
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+
+    await waitFor(() => expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'hosted → updated' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    settleReload({
+      busy: false,
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+    expect(screen.getByRole('button', { name: 'hosted → updated' })).toBeEnabled();
+  });
+
   it('acknowledges a clean shutdown without mounting a dialog', async () => {
     await mountWorkspace();
     expect(hasUnsavedConfigWork()).toBe(false);
@@ -986,6 +1078,146 @@ describe('bootstrap CTAs', () => {
     expect(await screen.findByTestId('provider-row-hosted')).toBeInTheDocument();
     expect(within(screen.getByTestId('route-row-chat')).getByText('Modified')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'source → curated/local' })).toBeInTheDocument();
+  });
+
+  it('locks source choices and Refresh while a profile load is pending', async () => {
+    let settleProfile!: (value: unknown) => void;
+    (LoadGolemProfile as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolveProfile) => {
+          settleProfile = resolveProfile;
+        })
+    );
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+
+    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+
+    settleProfile(loadedProfile);
+    expect(await screen.findByRole('button', { name: 'source → curated/local' })).toBeVisible();
+  });
+
+  it('does not let an older profile response overwrite a later blank source', async () => {
+    let settleProfile!: (value: unknown) => void;
+    (LoadGolemProfile as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolveProfile) => {
+          settleProfile = resolveProfile;
+        })
+    );
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const profile = await screen.findByRole('button', { name: 'Start from curated/local' });
+    const blank = screen.getByRole('button', { name: 'Start blank' });
+
+    act(() => {
+      fireEvent.click(profile);
+      fireEvent.click(blank);
+    });
+    expect(
+      await screen.findByRole('button', { name: 'source → blank configuration' })
+    ).toBeVisible();
+
+    await act(async () => {
+      settleProfile(loadedProfile);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: 'source → blank configuration' })).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'source → curated/local' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps source switches reachable during consent and locks them during cancellation', async () => {
+    let settleCancel!: (value: unknown) => void;
+    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
+      status: 'consent_required',
+      challenge: challenge(),
+    });
+    (CancelGolemSettingsApply as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolveCancel) => {
+          settleCancel = resolveCancel;
+        })
+    );
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByRole('button', { name: 'source → curated/local' });
+    await clickApply();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+
+    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Discard & switch',
+      })
+    );
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
+
+    settleCancel({ status: 'cancelled' });
+    expect(
+      await screen.findByRole('button', { name: 'source → blank configuration' })
+    ).toBeVisible();
+  });
+
+  it('clears cancelled consent before a replacement profile load can fail', async () => {
+    let rejectProfile!: (reason: unknown) => void;
+    (LoadGolemProfile as jest.Mock)
+      .mockResolvedValueOnce(loadedProfile)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectProfile = reject;
+          })
+      )
+      .mockResolvedValueOnce(loadedProfile);
+    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
+      status: 'consent_required',
+      challenge: challenge(),
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByRole('button', { name: 'source → curated/local' });
+    await stageKey();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Discard & switch',
+      })
+    );
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledTimes(2));
+
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel approval' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+
+    await act(async () => {
+      rejectProfile('Profile source is unavailable.');
+      await Promise.resolve();
+    });
+    expect(await screen.findByText('Profile source is unavailable.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel approval' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: 'source → curated/local' });
+    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({ status: 'busy' });
+    await clickApply();
+    await screen.findByRole('button', { name: 'Retry' });
+    expect((CreateGolemSettings as jest.Mock).mock.calls.at(-1)?.[0].keys).toEqual({});
   });
 
   // The curated bootstrap end to end. The loaded, scrubbed profile document IS

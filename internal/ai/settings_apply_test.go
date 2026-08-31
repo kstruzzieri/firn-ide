@@ -1696,6 +1696,55 @@ func TestPrepareProfileSourceWithNoChangesPublishesTheScrubbedProfile(t *testing
 	}
 }
 
+func TestPrepareSettingsApplyRejectsZeroChangeProfileWithoutRunnableAgent(t *testing.T) {
+	tests := []struct {
+		name     string
+		profile  string
+		wantCode string
+	}{
+		{
+			name: "missing agent route",
+			profile: `{
+  "providers": {"local": {"base_url": "http://localhost:11434"}},
+  "models": {"chat-m": {"name": "chat-model", "provider": "local", "type": "dense"}},
+  "defaults": {"chat": "chat-m"}
+}`,
+			wantCode: codeAgentRoleMissing,
+		},
+		{
+			name: "agent below capability floor",
+			profile: `{
+  "providers": {"local": {"base_url": "http://localhost:11434"}},
+  "models": {"agent-m": {"name": "agent-model", "provider": "local", "type": "dense",
+    "capabilities": ["chat", "stream"]}},
+  "defaults": {"agent": "agent-m"}
+}`,
+			wantCode: codeAgentCapsInsufficient,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stageApplyTarget(t, applyTargetConfigJSON)
+			targetRevision := stagedTargetRevision(t)
+			stageUserProfile(t, "staged", tt.profile)
+
+			prepared, result := prepareSettingsApply(context.Background(), profileSourceRequest(
+				targetRevision, profileBodyRevision(tt.profile), nil, nil), applyModeExisting)
+
+			if prepared != nil {
+				t.Errorf("prepareSettingsApply(%q) prepared a document, want refusal", tt.name)
+			}
+			if result == nil {
+				t.Fatalf("prepareSettingsApply(%q) result = nil, want diagnostics", tt.name)
+			}
+			if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+				result.Diagnostics[0].Code != tt.wantCode {
+				t.Errorf("prepareSettingsApply(%q) = %+v, want one %s diagnostic", tt.name, *result, tt.wantCode)
+			}
+		})
+	}
+}
+
 // TestPrepareRefusesABadKeyValueByItsOwnCode: the UI pre-checks key values, so
 // a request still carrying a bad one bypassed it — and gets the code that says
 // what is wrong rather than the opaque catch-all.
@@ -2261,6 +2310,63 @@ func markConversationBusy(svc *Service, id string, state convState) {
 	conv.mu.Lock()
 	conv.state = state
 	conv.mu.Unlock()
+}
+
+func TestApplySettingsRejectsAgentProviderEndpointMadeUnusable(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	before := h.targetBytes(t)
+
+	res, err := h.svc.ApplySettings(h.request(t, Change{
+		Kind: changeKindProviderUpdate, Name: "ollama", Endpoint: stringPtr("ftp://example.com"),
+	}))
+	if err != nil {
+		t.Fatalf("ApplySettings(provider endpoint): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeProviderEndpointUnsupported {
+		t.Errorf("ApplySettings(provider endpoint) = %+v, want one %s diagnostic",
+			res, codeProviderEndpointUnsupported)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Errorf("ApplySettings(provider endpoint) target bytes changed, want unchanged")
+	}
+}
+
+func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *testing.T) {
+	const target = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "embed-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "embed"]},
+    "summary-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "embed"]}
+  },
+  "defaults": {"agent": "agent-m", "embedding": "embed-m", "summarize": "summary-m"}
+}`
+	h := newApplyHarness(t, target)
+	before := h.targetBytes(t)
+	change := confirmUnknown(
+		routeChange("summarize", "ollama", "shared-model", "chat", "stream", "embed"),
+		"summarize",
+	)
+	change.ExposedCaps = []string{}
+
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(selector override): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "embedding" {
+		t.Errorf("ApplySettings(selector override) = %+v, want embedding %s diagnostic",
+			res, codeEligibilityIneligible)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Errorf("ApplySettings(selector override) target bytes changed, want unchanged")
+	}
 }
 
 // TestApplySettingsConsentMatrix: only a CHANGED, ungranted, remote agent

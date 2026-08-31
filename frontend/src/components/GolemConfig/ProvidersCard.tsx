@@ -94,14 +94,12 @@ export function ProvidersCard({
   /** A fresh object per request, so a repeated chip click focuses again. */
   const [pendingFocus, setPendingFocus] = useState<{ editorId: string } | null>(null);
 
-  // More than one row may be expanded at once: collapsing one to open another
-  // would silently discard unstaged fields (§4.6a forbids that).
-  const toggle = (rowKey: string) =>
-    setOpen((current) => {
-      const next = new Set(current);
-      if (!next.delete(rowKey)) next.add(rowKey);
-      return next;
-    });
+  // More than one row may be expanded at once: collapsing an editor outside
+  // its explicit actions would silently discard unstaged fields (§4.6a).
+  const openEditor = (rowKey: string, editorId: string) => {
+    setOpen((current) => (current.has(rowKey) ? current : new Set(current).add(rowKey)));
+    setPendingFocus({ editorId });
+  };
 
   const close = (rowKey: string) =>
     setOpen((current) => {
@@ -191,7 +189,7 @@ export function ProvidersCard({
               className={styles.button}
               aria-expanded={open.has(ADD_ROW_KEY)}
               aria-controls={ADD_EDITOR_ID}
-              onClick={() => toggle(ADD_ROW_KEY)}
+              onClick={() => openEditor(ADD_ROW_KEY, ADD_EDITOR_ID)}
             >
               Add provider
             </button>
@@ -257,7 +255,7 @@ export function ProvidersCard({
                             className={styles.button}
                             aria-expanded={expanded}
                             aria-controls={editorId}
-                            onClick={() => toggle(provider.name)}
+                            onClick={() => openEditor(provider.name, editorId)}
                           >
                             Edit
                             <span className={styles.srOnly}>{` provider ${provider.name}`}</span>

@@ -1650,11 +1650,13 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 }
 
 // checkPreparedDocument is the last non-writing gate. NewDocument and
-// BindUseCase guarantee go-llm validity only, so every use case this request
-// routed is re-checked against Firn's floor on the FINISHED document; and a
+// BindUseCase guarantee go-llm validity only, so the FINISHED document must
+// still resolve Firn's agent and satisfy every configured Firn floor; and a
 // result Firn could not project is a result Firn must not write blind.
 func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest) *SettingsApplyResult {
 	cfg := doc.Config()
+	// Keep the request-local verdict for an explicitly routed use case. The
+	// completed-document checks below cover changes whose effects are indirect.
 	for _, change := range req.Changes {
 		if change.Kind != changeKindRoute {
 			continue
@@ -1666,6 +1668,23 @@ func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest) *Sett
 		if !routeMeetsFloor(cfg, change.UseCase, floor) {
 			return blockingDiagnostics(Diagnostic{
 				Code: codeEligibilityIneligible, SubjectKind: "use_case", SubjectName: change.UseCase,
+			})
+		}
+	}
+	if _, err := ResolveAgentTarget(cfg); err != nil {
+		if diagnostics := agentRouteDiagnostics(cfg); len(diagnostics) > 0 {
+			return blockingDiagnostics(diagnostics...)
+		}
+		if diagnostic, ok := selectedAgentBlockingDiagnostic(cfg); ok {
+			return blockingDiagnostics(diagnostic)
+		}
+		return blockingDiagnostics(Diagnostic{Code: codeConfigInvalid})
+	}
+	for _, useCase := range slices.Sorted(maps.Keys(cfg.Defaults)) {
+		floor, ok := firnUseCaseFloors[useCase]
+		if ok && !routeMeetsFloor(cfg, useCase, floor) {
+			return blockingDiagnostics(Diagnostic{
+				Code: codeEligibilityIneligible, SubjectKind: "use_case", SubjectName: useCase,
 			})
 		}
 	}
