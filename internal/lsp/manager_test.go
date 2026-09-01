@@ -39,9 +39,13 @@ type collectedEvent struct {
 }
 
 func (ec *eventCollector) emit(event string, data any) {
+	var args []any
+	if data != nil {
+		args = []any{data}
+	}
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
-	ec.events = append(ec.events, collectedEvent{name: event, data: []any{data}})
+	ec.events = append(ec.events, collectedEvent{name: event, data: args})
 }
 
 func (ec *eventCollector) eventsByName(name string) []collectedEvent {

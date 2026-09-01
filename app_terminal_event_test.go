@@ -14,6 +14,11 @@ import (
 	"testing"
 )
 
+// TestAppEmitIsNotVariadic and TestAppEmitFnIsNotVariadic make the "emit is a
+// single-payload call, compiler-enforced" claim self-verifying: if (*App).emit
+// or the App.emitFn field ever regains a variadic ...any parameter, these
+// fail directly via reflection, without relying on the AST guard below to
+// notice the drift.
 func TestAppEmitIsNotVariadic(t *testing.T) {
 	t.Parallel()
 
@@ -63,6 +68,20 @@ func TestEmitTerminalOutputSinglePayload(t *testing.T) {
 	}
 }
 
+// The functions below enforce a single choke point for Wails event emission:
+// only (*App).emit in root app.go may call runtime.EventsEmit from the Wails
+// v2 runtime package. The seam is located by import path and resolved
+// alias (wailsEventsEmitSelector), not by matching the literal identifier
+// "runtime", so an evasive import such as
+// `import wr "github.com/wailsapp/wails/v2/pkg/runtime"` is still caught.
+//
+// The scan is anti-vacuous: TestOnlyAppEmitReferencesWailsEventsEmit fails
+// if it finds zero allowed references (its `allowed == 0` check), so
+// renaming or moving the seam, or losing the v2 import entirely, fails
+// loudly instead of silently disabling the guard. When Phase B swaps in the
+// v3 transport, wailsRuntimeImportPath, isAppEmitSeam, and validAppEmitCall
+// must be updated together and deliberately - not left to whatever the new
+// code happens to look like.
 const wailsRuntimeImportPath = "github.com/wailsapp/wails/v2/pkg/runtime"
 
 var eventEmitScanSkipDirs = map[string]bool{
@@ -97,24 +116,41 @@ func wailsEventsEmitSelector(expr ast.Expr, aliases map[string]bool) (*ast.Selec
 	return sel, ok && aliases[pkg.Name] && pkg.Obj == nil
 }
 
-func validAppEmitCall(call *ast.CallExpr) bool {
-	if call.Ellipsis.IsValid() || (len(call.Args) != 2 && len(call.Args) != 3) {
-		return false
+// validAppEmitCall reports whether call is the fixed-shape
+// runtime.EventsEmit(a.ctx, event) or runtime.EventsEmit(a.ctx, event, data)
+// invocation the seam is allowed to make, and if not, a reason naming the
+// specific defect. Every argument must be the exact identifier emit's own
+// signature received - a.ctx, event, and (when present) data - so the third
+// argument in particular cannot be a literal nil: that would let the seam
+// smuggle a hardcoded no-payload emission in place of actually forwarding
+// the caller's data.
+func validAppEmitCall(call *ast.CallExpr) (bool, string) {
+	if call.Ellipsis.IsValid() {
+		return false, "must not spread its arguments with ellipsis"
+	}
+	if len(call.Args) != 2 && len(call.Args) != 3 {
+		return false, "must be a fixed 2- or 3-argument call"
 	}
 	ctx, ok := call.Args[0].(*ast.SelectorExpr)
 	if !ok {
-		return false
+		return false, "first argument must be a.ctx"
 	}
 	receiver, receiverOK := ctx.X.(*ast.Ident)
+	if !receiverOK || receiver.Name != "a" || ctx.Sel.Name != "ctx" {
+		return false, "first argument must be a.ctx"
+	}
 	event, eventOK := call.Args[1].(*ast.Ident)
-	if !receiverOK || receiver.Name != "a" || ctx.Sel.Name != "ctx" || !eventOK || event.Name != "event" {
-		return false
+	if !eventOK || event.Name != "event" {
+		return false, "second argument must be the forwarded event identifier"
 	}
 	if len(call.Args) == 2 {
-		return true
+		return true, ""
 	}
 	data, ok := call.Args[2].(*ast.Ident)
-	return ok && data.Name == "data"
+	if !ok || data.Name != "data" {
+		return false, "third argument must be the forwarded data identifier, not a literal"
+	}
+	return true, ""
 }
 
 func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (int, []string) {
@@ -159,13 +195,13 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 			if !ok {
 				return true
 			}
-			valid := validAppEmitCall(call)
+			valid, reason := validAppEmitCall(call)
 			seamCalls[sel] = valid
 			if valid {
 				shapes[len(call.Args)]++
 			} else {
 				pos := fset.Position(call.Pos())
-				violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit in (*App).emit must be a fixed 2- or 3-argument call", pos.Filename, pos.Line))
+				violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit in (*App).emit %s", pos.Filename, pos.Line, reason))
 			}
 			return true
 		})
@@ -202,7 +238,7 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 	return allowed, violations
 }
 
-func TestWailsEventsEmitGuardRejectsAlias(t *testing.T) {
+func TestWailsEventsEmitGuardDetectsAliasedImport(t *testing.T) {
 	t.Parallel()
 
 	const source = `package main

@@ -24,9 +24,13 @@ type emitEvent struct {
 }
 
 func (s *emitSpy) emit(event string, data any) {
+	var args []any
+	if data != nil {
+		args = []any{data}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.events = append(s.events, emitEvent{event: event, data: []any{data}})
+	s.events = append(s.events, emitEvent{event: event, data: args})
 }
 
 func (s *emitSpy) statuses() []RunStatus {
