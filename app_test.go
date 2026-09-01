@@ -139,7 +139,7 @@ func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	wsID := all[0].WorkspaceID
 
 	var events []string
-	app.emitFn = func(event string, _ ...any) { events = append(events, event) }
+	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
 	// Invalid: empty name → no emit.
 	res, err := app.SaveRunProfile(runprofile.RunProfile{
@@ -174,7 +174,7 @@ func TestDeleteRunProfileEmitsOnSuccess(t *testing.T) {
 
 	// Set emitFn before seed save so the valid save doesn't reach runtime.EventsEmit.
 	var events []string
-	app.emitFn = func(event string, _ ...any) { events = append(events, event) }
+	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
 	if _, err := app.SaveRunProfile(runprofile.RunProfile{
 		ID: "user-dev", Name: "Dev", Type: runprofile.ProfileTypeSingle,
@@ -238,7 +238,7 @@ type closeProbe struct {
 	quit   chan struct{}
 }
 
-func (p *closeProbe) emit(event string, _ ...any) {
+func (p *closeProbe) emit(event string, _ any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, event)

@@ -23,10 +23,10 @@ type emitEvent struct {
 	data  []any
 }
 
-func (s *emitSpy) emit(event string, data ...any) {
+func (s *emitSpy) emit(event string, data any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.events = append(s.events, emitEvent{event: event, data: data})
+	s.events = append(s.events, emitEvent{event: event, data: []any{data}})
 }
 
 func (s *emitSpy) statuses() []RunStatus {
@@ -826,8 +826,8 @@ func TestExecutor_OutputCallback(t *testing.T) {
 
 func TestExecutor_SingleRunHasInstanceIDAndActiveLookup(t *testing.T) {
 	var statuses []RunStatus
-	e := NewExecutor(func(_ string, data ...any) {
-		if s, ok := data[0].(RunStatus); ok {
+	e := NewExecutor(func(_ string, data any) {
+		if s, ok := data.(RunStatus); ok {
 			statuses = append(statuses, s)
 		}
 	}, nil)

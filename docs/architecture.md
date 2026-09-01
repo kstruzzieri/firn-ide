@@ -362,7 +362,7 @@ Wails automatically exposes Go methods to the frontend JavaScript.
 
 1. Methods on structs listed in `main.go`'s `Bind` option are exposed
 2. Wails generates TypeScript bindings during build
-3. Frontend accesses via `window.go.main.StructName.MethodName()`
+3. Generated bindings invoke `window.go.main.StructName.MethodName()`; application code imports them through `frontend/src/wails/bindings`
 
 ### Current Bindings
 
@@ -375,14 +375,14 @@ Bind: []interface{}{
 
 ### Exposed Methods
 
-| Go Method | Frontend Call | Returns |
-|-----------|---------------|---------|
-| `App.GetWorkspaceInfo(repoPath)` | `window.go.main.App.GetWorkspaceInfo(repoPath)` | `Promise<WorkspaceInfo>` |
-| `App.GetGolemStatus(req)` | `window.go.main.App.GetGolemStatus(req)` | `Promise<ai.Status>` |
-| `App.RunGolemTurn(req)` | `window.go.main.App.RunGolemTurn(req)` | `Promise<ai.TurnAdmission>` |
-| `App.CancelGolemRun(identity)` | `window.go.main.App.CancelGolemRun(identity)` | `Promise<boolean>` |
-| `App.GetGolemSettings()` | `window.go.main.App.GetGolemSettings()` | `Promise<ai.SettingsProjection>` |
-| `App.ReloadGolemSettings()` | `window.go.main.App.ReloadGolemSettings()` | `Promise<ai.SettingsReloadResult>` |
+| Go Method | Application Call | Returns |
+|-----------|------------------|---------|
+| `App.GetWorkspaceInfo(repoPath)` | `GetWorkspaceInfo(repoPath)` | `Promise<WorkspaceInfo>` |
+| `App.GetGolemStatus(req)` | `GetGolemStatus(req)` | `Promise<ai.Status>` |
+| `App.RunGolemTurn(req)` | `RunGolemTurn(req)` | `Promise<ai.TurnAdmission>` |
+| `App.CancelGolemRun(identity)` | `CancelGolemRun(identity)` | `Promise<boolean>` |
+| `App.GetGolemSettings()` | `GetGolemSettings()` | `Promise<ai.SettingsProjection>` |
+| `App.ReloadGolemSettings()` | `ReloadGolemSettings()` | `Promise<ai.SettingsReloadResult>` |
 
 The Golem surface is deliberately narrow. `GetWorkspaceInfo` is the only call
 that takes a path: it binds the repository, returns the canonical root the
@@ -429,9 +429,9 @@ func (a *App) SaveFile(path string, content string) error {
 export function SaveFile(path: string, content: string): Promise<void>;
 ```
 
-4. Import and use in React, through the adapter — `frontend/src/wails/` is the
-   only permitted importer of `wailsjs` paths, enforced by
-   `no-direct-wailsjs.test.ts`:
+4. Import and use in React through the adapters. Only
+   `frontend/src/wails/bindings.ts` and `frontend/src/wails/runtime.ts` may
+   import generated `wailsjs` paths, enforced by `no-direct-wailsjs.test.ts`:
 
 ```typescript
 import { SaveFile } from '../wails/bindings';

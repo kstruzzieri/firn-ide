@@ -1,58 +1,244 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, resolve } from 'path';
+import ts from 'typescript';
 
 const SRC = resolve(__dirname, '../..');
+const FRONTEND = resolve(SRC, '..');
 const ADAPTER_DIR = resolve(SRC, 'wails');
-// This guard's own source contains the literal substrings both patterns
-// below look for (the regexes are built out of the same words they scan
-// for), so it would flag itself if scanned. Exempt it by exact path rather
-// than contorting the regexes to dodge their own source text.
-const SELF = resolve(__filename);
-
-// Matches wailsjs inside import specifiers, dynamic imports, requires,
-// bare side-effect imports, and every jest mocking entry point that can name
-// a module path by string. The adapter directory (and this file) are the
-// only exemptions.
-const DIRECT_REF =
-  /(?:from\s+|import\(|require\(|jest\.mock\(\s*|jest\.requireActual\(\s*|jest\.doMock\(\s*|jest\.setMock\(\s*|jest\.unmock\(\s*|import\s+)['"`][^'"`]*wailsjs[^'"`]*['"`]/;
-
-// The raw v2 `window.runtime` / `window.go` globals need no import at all,
-// so DIRECT_REF can't see them.
-const RAW_GLOBAL = /window\s*\.\s*(runtime|go)\b/;
+const ALLOWED_GENERATED_IMPORTERS = new Set([
+  resolve(ADAPTER_DIR, 'bindings.ts'),
+  resolve(ADAPTER_DIR, 'runtime.ts'),
+]);
+const JEST_MODULE_LOADERS = new Set([
+  'createMockFromModule',
+  'deepUnmock',
+  'doMock',
+  'dontMock',
+  'mock',
+  'requireActual',
+  'requireMock',
+  'setMock',
+  'unmock',
+  'unstable_mockModule',
+  'unstable_unmockModule',
+]);
+const RAW_WAILS_GLOBALS = new Set(['go', 'runtime']);
+const SKIP_DIRS = new Set(['coverage', 'dist', 'node_modules', 'wailsjs']);
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      if (full === ADAPTER_DIR) continue;
+      if (SKIP_DIRS.has(entry)) continue;
       walk(full, acc);
-    } else if (/\.(ts|tsx|js|jsx|mjs|cjs|mts)$/.test(entry) && full !== SELF) {
+    } else if (/\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/.test(entry)) {
       acc.push(full);
     }
   }
   return acc;
 }
 
-const files = walk(SRC);
+const files = walk(FRONTEND);
 
-// firstOffenseLine returns the 1-based line number of whichever pattern
-// matches earliest in the file, or null if neither matches.
-function firstOffenseLine(content: string): number | null {
-  const directIdx = content.search(DIRECT_REF);
-  const globalIdx = content.search(RAW_GLOBAL);
-  const idx =
-    directIdx === -1 ? globalIdx : globalIdx === -1 ? directIdx : Math.min(directIdx, globalIdx);
-  return idx === -1 ? null : content.slice(0, idx).split('\n').length;
+function unwrap(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
 }
+
+function memberName(node: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | null {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (!node.argumentExpression) return null;
+  const name = unwrap(node.argumentExpression);
+  return ts.isStringLiteralLike(name) ? name.text : null;
+}
+
+function isWailsJSPath(expression: ts.Expression | undefined): boolean {
+  if (!expression) return false;
+  const path = unwrap(expression);
+  return ts.isStringLiteralLike(path) && /(^|[\\/])wailsjs([\\/]|$)/.test(path.text);
+}
+
+function isModuleLoaderCall(node: ts.CallExpression): boolean {
+  if (node.expression.kind === ts.SyntaxKind.ImportKeyword) return true;
+  const target = unwrap(node.expression);
+  if (ts.isIdentifier(target) && target.text === 'require') return true;
+  if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) return false;
+  const owner = unwrap(target.expression);
+  const method = memberName(target);
+  return (
+    ts.isIdentifier(owner) &&
+    ((owner.text === 'module' && method === 'require') ||
+      (owner.text === 'jest' && JEST_MODULE_LOADERS.has(method ?? '')))
+  );
+}
+
+// firstOffenseLine returns the 1-based line number of the first direct generated
+// import or raw Wails global access, or null when the file uses only the adapters.
+function firstOffenseLine(content: string, filePath = 'probe.ts'): number | null {
+  const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, false);
+  const mayImportGenerated = ALLOWED_GENERATED_IMPORTERS.has(resolve(filePath));
+  let firstPosition = Number.POSITIVE_INFINITY;
+
+  const record = (node: ts.Node) => {
+    firstPosition = Math.min(firstPosition, node.getStart(source));
+  };
+  const visit = (node: ts.Node) => {
+    if (!mayImportGenerated) {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        isWailsJSPath(node.moduleSpecifier)
+      ) {
+        record(node);
+      } else if (
+        ts.isImportEqualsDeclaration(node) &&
+        ts.isExternalModuleReference(node.moduleReference) &&
+        isWailsJSPath(node.moduleReference.expression)
+      ) {
+        record(node);
+      } else if (
+        ts.isImportTypeNode(node) &&
+        ts.isLiteralTypeNode(node.argument) &&
+        isWailsJSPath(node.argument.literal)
+      ) {
+        record(node);
+      } else if (
+        ts.isCallExpression(node) &&
+        isModuleLoaderCall(node) &&
+        isWailsJSPath(node.arguments[0])
+      ) {
+        record(node);
+      }
+    }
+
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      RAW_WAILS_GLOBALS.has(memberName(node) ?? '')
+    ) {
+      const owner = unwrap(node.expression);
+      if (ts.isIdentifier(owner) && owner.text === 'window') record(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(source);
+  if (!Number.isFinite(firstPosition)) return null;
+  return source.getLineAndCharacterOfPosition(firstPosition).line + 1;
+}
+
+const PROBE_FILE = resolve(SRC, 'probe.ts');
+
+const directReferenceCases: Array<[string, string, number, string]> = [
+  ['static import', "import { ReadFile } from '../../wailsjs/go/main/App';", 1, PROBE_FILE],
+  ['static export', "export * from '../../wailsjs/go/models';", 1, PROBE_FILE],
+  ['import type query', 'type Module = typeof import("../../wailsjs/go/main/App");', 1, PROBE_FILE],
+  [
+    'import type reference',
+    'type App = import("../../wailsjs/go/models").main.App;',
+    1,
+    PROBE_FILE,
+  ],
+  ['dynamic import', "void import('../../wailsjs/runtime/runtime');", 1, PROBE_FILE],
+  [
+    'cast dynamic import path',
+    "void import('../../wailsjs/runtime/runtime' as string);",
+    1,
+    PROBE_FILE,
+  ],
+  ['require', "require('../../wailsjs/runtime');", 1, PROBE_FILE],
+  ['cast require path', "require('../../wailsjs/runtime' as string);", 1, PROBE_FILE],
+  ['cast require', "(require as any)('../../wailsjs/runtime');", 1, PROBE_FILE],
+  ['module require', "module.require('../../wailsjs/runtime');", 1, PROBE_FILE],
+  ['computed module require', "module['require']('../../wailsjs/runtime');", 1, PROBE_FILE],
+  ['cast module require', "(module as any)['require']('../../wailsjs/runtime');", 1, PROBE_FILE],
+  ['Jest mock', "jest.mock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['parenthesized Jest mock path', "jest.mock(('../../wailsjs/go/main/App'));", 1, PROBE_FILE],
+  ['Jest element mock', "jest['mock']('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['cast Jest mock', "(jest as any).mock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest requireActual', "jest.requireActual('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest requireMock', "jest.requireMock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest doMock', "jest.doMock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest dontMock', "jest.dontMock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest setMock', "jest.setMock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest unmock', "jest.unmock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  ['Jest deepUnmock', "jest.deepUnmock('../../wailsjs/go/main/App');", 1, PROBE_FILE],
+  [
+    'Jest createMockFromModule',
+    "jest.createMockFromModule('../../wailsjs/go/main/App');",
+    1,
+    PROBE_FILE,
+  ],
+  [
+    'Jest unstable_mockModule',
+    "jest.unstable_mockModule('../../wailsjs/go/main/App');",
+    1,
+    PROBE_FILE,
+  ],
+  [
+    'Jest unstable_unmockModule',
+    "jest.unstable_unmockModule('../../wailsjs/go/main/App');",
+    1,
+    PROBE_FILE,
+  ],
+  ['dot-form global', 'window.runtime.EventsEmit()', 1, PROBE_FILE],
+  ['cast element access', "const go = (window as any)['go'];", 1, PROBE_FILE],
+  ['parenthesized element access', "const runtime = (window)['runtime'];", 1, PROBE_FILE],
+  ['optional property access', 'const go = window?.go;', 1, PROBE_FILE],
+  ['cast element name', "const runtime = window['runtime' as any];", 1, PROBE_FILE],
+  ['optional element access', "const go = window?.['go'];", 1, PROBE_FILE],
+  [
+    'unapproved adapter-directory file',
+    "export * from '../../wailsjs/go/models';",
+    1,
+    resolve(ADAPTER_DIR, 'extra.ts'),
+  ],
+];
+
+it.each(directReferenceCases)('detects %s', (_name, content, line, filePath) => {
+  expect(firstOffenseLine(content, filePath)).toBe(line);
+});
+
+const allowedReferenceCases: Array<[string, string, string]> = [
+  ['adapter import', "import { ReadFile } from '../wails/bindings';", PROBE_FILE],
+  ['comment', "// import { ReadFile } from '../../wailsjs/go/main/App';", PROBE_FILE],
+  ['string', "const note = 'window.go and wailsjs are migration terms';", PROBE_FILE],
+  ['unrelated properties', 'config.go; config.runtime; window.runtimeConfig;', PROBE_FILE],
+  [
+    'bindings adapter',
+    "export * from '../../wailsjs/go/main/App';",
+    resolve(ADAPTER_DIR, 'bindings.ts'),
+  ],
+  [
+    'runtime adapter',
+    "export { EventsOn } from '../../wailsjs/runtime/runtime';",
+    resolve(ADAPTER_DIR, 'runtime.ts'),
+  ],
+];
+
+it.each(allowedReferenceCases)('allows %s', (_name, content, filePath) => {
+  expect(firstOffenseLine(content, filePath)).toBeNull();
+});
 
 it('scans a non-trivial number of files (anti-vacuity floor)', () => {
   expect(files.length).toBeGreaterThan(200);
 });
 
-it('no file outside src/wails references wailsjs directly or reaches the raw v2 globals', () => {
+it('scans handwritten frontend files outside src but skips generated output', () => {
+  expect(files).toContain(resolve(SRC, '../vite.config.ts'));
+  expect(files).not.toContain(resolve(SRC, '../wailsjs/runtime/runtime.js'));
+});
+
+it('only the two adapters import wailsjs and no handwritten file reaches the raw v2 globals', () => {
   const offenders: string[] = [];
   for (const f of files) {
-    const line = firstOffenseLine(readFileSync(f, 'utf-8'));
+    const line = firstOffenseLine(readFileSync(f, 'utf-8'), f);
     if (line !== null) offenders.push(`${f}:${line}`);
   }
   expect(offenders).toEqual([]);

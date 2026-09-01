@@ -59,7 +59,7 @@ type OutputChunk struct {
 type OutputFunc func(id RunIdentity, stream, data string, timestamp int64)
 
 // StatusFunc emits run status events (wraps runtime.EventsEmit in production).
-type StatusFunc func(event string, data ...any)
+type StatusFunc func(event string, data any)
 
 // Executor manages the lifecycle of running profiles.
 type Executor struct {

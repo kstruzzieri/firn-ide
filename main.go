@@ -30,15 +30,15 @@ func buildAppMenu(app *App) *menu.Menu {
 
 	navigateMenu := appMenu.AddSubmenu("Navigate")
 	navigateMenu.AddText("Go Back", keys.CmdOrCtrl("["), func(_ *menu.CallbackData) {
-		app.emit("navigate:back")
+		app.emit("navigate:back", nil)
 	})
 	navigateMenu.AddText("Go Forward", keys.CmdOrCtrl("]"), func(_ *menu.CallbackData) {
-		app.emit("navigate:forward")
+		app.emit("navigate:forward", nil)
 	})
 
 	workspaceMenu := appMenu.AddSubmenu("Workspace")
 	workspaceMenu.AddText("Switch Workspace", keys.Combo(".", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-		app.emit("menu:switch-workspace")
+		app.emit("menu:switch-workspace", nil)
 	})
 
 	return appMenu

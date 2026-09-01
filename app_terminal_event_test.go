@@ -8,15 +8,38 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
 
+func TestAppEmitIsNotVariadic(t *testing.T) {
+	t.Parallel()
+
+	got := reflect.TypeOf((*App).emit).IsVariadic()
+	if got {
+		t.Errorf("reflect.TypeOf((*App).emit).IsVariadic() = %t, want false", got)
+	}
+}
+
+func TestAppEmitFnIsNotVariadic(t *testing.T) {
+	t.Parallel()
+
+	field, ok := reflect.TypeOf(App{}).FieldByName("emitFn")
+	if !ok {
+		t.Fatal("reflect.TypeOf(App{}).FieldByName(\"emitFn\") not found")
+	}
+	if field.Type.IsVariadic() {
+		t.Error("App.emitFn is variadic, want fixed func(string, any)")
+	}
+}
+
 func TestEmitTerminalOutputSinglePayload(t *testing.T) {
 	a := NewApp()
 	var gotEvent string
-	var gotData []any
-	a.emitFn = func(event string, data ...any) {
+	var gotData any
+	a.emitFn = func(event string, data any) {
 		gotEvent = event
 		gotData = data
 	}
@@ -26,47 +49,22 @@ func TestEmitTerminalOutputSinglePayload(t *testing.T) {
 	if gotEvent != "terminal:output" {
 		t.Fatalf("event = %q, want terminal:output", gotEvent)
 	}
-	if len(gotData) != 1 {
-		t.Fatalf("payload count = %d, want 1 (single-payload contract)", len(gotData))
-	}
-	ev, ok := gotData[0].(TerminalOutputEvent)
+	ev, ok := gotData.(TerminalOutputEvent)
 	if !ok {
-		t.Fatalf("payload type = %T, want TerminalOutputEvent", gotData[0])
+		t.Fatalf("payload type = %T, want TerminalOutputEvent", gotData)
 	}
 	if ev.TermID != "term-1" || ev.Data != "hello" {
 		t.Fatalf("payload = %+v", ev)
 	}
 
-	b, err := json.Marshal(gotData[0])
+	b, err := json.Marshal(gotData)
 	if err != nil || string(b) != `{"termId":"term-1","data":"hello"}` {
 		t.Fatalf("wire shape = %s (err %v), want exact keys termId/data - Terminal.tsx depends on them", b, err)
 	}
 }
 
-// emitTarget names one tracked emit-shaped call: the selector method/function
-// name to match, the category its hits are counted under, and how many
-// leading (non-payload) arguments precede the payload — 2 for
-// runtime.EventsEmit(ctx, event, data...), 1 for every event(data...)-shaped
-// wrapper (App.emit, the internal producer emitters).
-type emitTarget struct {
-	category    string
-	leadingArgs int
-}
+const wailsRuntimeImportPath = "github.com/wailsapp/wails/v2/pkg/runtime"
 
-// eventEmitTargets is the fixed set of call shapes the guard tracks across
-// every production (non-test) Go file in the repo. It is intentionally a
-// closed list naming Firn's current event-emission identifiers — see
-// TestProductionEventEmitSitesUseAtMostOnePayload's doc comment for why a
-// symbol rename must touch this list, not silently pass it.
-var eventEmitTargets = map[string]emitTarget{
-	"EventsEmit": {category: "EventsEmit", leadingArgs: 2}, // runtime.EventsEmit(ctx, event, data...)
-	"emit":       {category: "emit", leadingArgs: 1},       // App.emit / ai.Service.emit / menu app.emit(...)
-	"emitFn":     {category: "emitFn", leadingArgs: 1},     // runprofile.Executor.emitFn(...)
-	"emitter":    {category: "emitter", leadingArgs: 1},    // lsp.Manager.emitter(...)
-}
-
-// eventEmitScanSkipDirs excludes trees that hold no production Go source (or,
-// for .git, nothing parseable at all) so the walk stays fast.
 var eventEmitScanSkipDirs = map[string]bool{
 	".git":         true,
 	"node_modules": true,
@@ -76,109 +74,187 @@ var eventEmitScanSkipDirs = map[string]bool{
 	"testdata":     true,
 }
 
-// TestProductionEventEmitSitesUseAtMostOnePayload is a static guard over
-// Firn's event-emission topology (#273 Task 4): every production Go call
-// shaped like an event emit — runtime.EventsEmit, App.emit, and the internal
-// producer wrappers (runprofile.Executor.emitFn, lsp.Manager.emitter,
-// ai.Service.emit) — must carry at most one payload argument and must never
-// forward a slice via "...". EventsEmit carries a stronger rule: it may only
-// ever be called from inside App.emit itself (app.go's (a *App) emit
-// method) — any other call, of any arity, is the seam being bypassed. That
-// one call inside App.emit is the sole exempt call site in the whole guard;
-// everything else it matches is checked.
-//
-// Method-value wiring such as runprofile.NewExecutor(a.emit, ...) is exempt
-// by construction: a bare "a.emit" passed as an argument is an *ast.SelectorExpr,
-// never wrapped in the *ast.CallExpr this guard inspects.
-//
-// This is an explicit guard over Firn's current event topology, not a proof
-// over arbitrary dynamically-constructed call data. To keep it from going
-// vacuous when a symbol here is renamed (Phase B's v3 event bridge is
-// expected to touch these), the test also asserts anti-vacuity per category:
-//   - emit/emitFn/emitter must each have matched at least one call site
-//     OUTSIDE App.emit's exempt body — the real external producers
-//     (runprofile.Executor.emitFn, lsp.Manager.emitter, ai.Service.emit, the
-//     App/main.go event calls). Counting App.emit's own internal calls here
-//     would keep these green even if the external producer's identifier
-//     changed, since App.emit's body would still match by coincidence — the
-//     exact failure mode this check exists to catch.
-//   - EventsEmit has no external producer to count non-exemptly (only
-//     App.emit may call it at all, by design), so its anti-vacuity instead
-//     confirms the one exempt call inside App.emit was actually found — a
-//     rename there zeroes it out and fails loudly too.
 const eventEmitScanRoot = "."
 
-func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
-	fset := token.NewFileSet()
-	var violations []string
-	nonExemptCounts := map[string]int{}
-	exemptEventsEmitCount := 0
+func isAppEmitSeam(path string, fn *ast.FuncDecl) bool {
+	if filepath.Clean(path) != "app.go" || fn.Name.Name != "emit" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return false
+	}
+	ptr, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	receiver, ok := ptr.X.(*ast.Ident)
+	return ok && receiver.Name == "App"
+}
 
-	scanFile := func(path string) {
-		file, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			t.Logf("skip %s: parse error: %v", path, err)
-			return
+func wailsEventsEmitSelector(expr ast.Expr, aliases map[string]bool) (*ast.SelectorExpr, bool) {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "EventsEmit" {
+		return nil, false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return sel, ok && aliases[pkg.Name] && pkg.Obj == nil
+}
+
+func validAppEmitCall(call *ast.CallExpr) bool {
+	if call.Ellipsis.IsValid() || (len(call.Args) != 2 && len(call.Args) != 3) {
+		return false
+	}
+	ctx, ok := call.Args[0].(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	receiver, receiverOK := ctx.X.(*ast.Ident)
+	event, eventOK := call.Args[1].(*ast.Ident)
+	if !receiverOK || receiver.Name != "a" || ctx.Sel.Name != "ctx" || !eventOK || event.Name != "event" {
+		return false
+	}
+	if len(call.Args) == 2 {
+		return true
+	}
+	data, ok := call.Args[2].(*ast.Ident)
+	return ok && data.Name == "data"
+}
+
+func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (int, []string) {
+	aliases := map[string]bool{}
+	var violations []string
+	for _, spec := range file.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || importPath != wailsRuntimeImportPath {
+			continue
 		}
-		// Only the repo-root app.go's own (a *App) emit method may call
-		// EventsEmit at all, or forward a variadic call, or carry more than
-		// one payload — it is the seam's single choke point. A same-named
-		// app.go nested under internal/** (or anywhere else) does not
-		// inherit this exemption. Every other function, in every file, is
-		// checked.
-		isAppEmitSeam := path == filepath.Join(eventEmitScanRoot, "app.go")
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			exempt := isAppEmitSeam && fn.Name.Name == "emit"
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				call, ok := node.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				target, tracked := eventEmitTargets[sel.Sel.Name]
-				if !tracked {
-					return true
-				}
-				pos := fset.Position(call.Pos())
-				if exempt {
-					if target.category == "EventsEmit" {
-						exemptEventsEmitCount++
-					}
-					return true
-				}
-				nonExemptCounts[target.category]++
-				if target.category == "EventsEmit" {
-					// Bypassing the seam is itself the violation — arity
-					// doesn't matter, only App.emit may call this directly.
-					violations = append(violations, fmt.Sprintf(
-						"%s:%d: EventsEmit(...) called outside App.emit — only the seam's own forwarding call may call it directly",
-						pos.Filename, pos.Line,
-					))
-					return true
-				}
-				hasEllipsis := call.Ellipsis != token.NoPos
-				payloadArgs := len(call.Args) - target.leadingArgs
-				if hasEllipsis || payloadArgs > 1 {
-					forwarding := ""
-					if hasEllipsis {
-						forwarding = " (ellipsis-forwarded)"
-					}
-					violations = append(violations, fmt.Sprintf(
-						"%s:%d: %s(...) carries %d payload argument(s)%s, want at most 1 and no forwarding",
-						pos.Filename, pos.Line, sel.Sel.Name, payloadArgs, forwarding,
-					))
-				}
-				return true
-			})
+		name := "runtime"
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		if name == "." {
+			pos := fset.Position(spec.Pos())
+			violations = append(violations, fmt.Sprintf("%s:%d: dot-import of Wails runtime bypasses App.emit", pos.Filename, pos.Line))
+			continue
+		}
+		if name != "_" {
+			aliases[name] = true
 		}
 	}
+
+	var seam *ast.BlockStmt
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil && isAppEmitSeam(path, fn) {
+			seam = fn.Body
+			break
+		}
+	}
+
+	seamCalls := make(map[*ast.SelectorExpr]bool)
+	shapes := make(map[int]int)
+	if seam != nil {
+		ast.Inspect(seam, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := wailsEventsEmitSelector(call.Fun, aliases)
+			if !ok {
+				return true
+			}
+			valid := validAppEmitCall(call)
+			seamCalls[sel] = valid
+			if valid {
+				shapes[len(call.Args)]++
+			} else {
+				pos := fset.Position(call.Pos())
+				violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit in (*App).emit must be a fixed 2- or 3-argument call", pos.Filename, pos.Line))
+			}
+			return true
+		})
+		if shapes[2] != 1 || shapes[3] != 1 {
+			violations = append(violations, fmt.Sprintf("%s: (*App).emit must contain exactly one payload-free and one single-payload runtime.EventsEmit call", path))
+		}
+	}
+
+	allowed := 0
+	ast.Inspect(file, func(node ast.Node) bool {
+		sel, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		_, isWailsEventsEmit := wailsEventsEmitSelector(sel, aliases)
+		if !isWailsEventsEmit {
+			return true
+		}
+		if seam != nil && seam.Pos() <= sel.Pos() && sel.End() <= seam.End() {
+			if valid, directCall := seamCalls[sel]; directCall {
+				if valid {
+					allowed++
+				}
+				return true
+			}
+			pos := fset.Position(sel.Pos())
+			violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit in (*App).emit must be called directly", pos.Filename, pos.Line))
+			return true
+		}
+		pos := fset.Position(sel.Pos())
+		violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit referenced outside (*App).emit", pos.Filename, pos.Line))
+		return true
+	})
+	return allowed, violations
+}
+
+func TestWailsEventsEmitGuardRejectsAlias(t *testing.T) {
+	t.Parallel()
+
+	const source = `package main
+import wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+func bypass() { send := wailsruntime.EventsEmit; _ = send }
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "bypass.go", source, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile(alias fixture) error = %v, want nil", err)
+	}
+	_, violations := scanWailsEventsEmitFile(fset, "bypass.go", file)
+	if len(violations) != 1 {
+		t.Errorf("len(scanWailsEventsEmitFile(alias fixture).violations) = %d, want 1", len(violations))
+	}
+}
+
+func TestWailsEventsEmitGuardRejectsInvalidSeamReferences(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"method value":   `func (a *App) emit(event string, data any) { send := runtime.EventsEmit; _ = send }`,
+		"extra argument": `func (a *App) emit(event string, data any) { runtime.EventsEmit(a.ctx, event, data, data) }`,
+		"ellipsis":       `func (a *App) emit(event string, data any) { args := []any{data}; runtime.EventsEmit(a.ctx, event, args...) }`,
+		"nil payload": `func (a *App) emit(event string, data any) {
+			if data == nil { runtime.EventsEmit(a.ctx, event); return }
+			runtime.EventsEmit(a.ctx, event, nil)
+		}`,
+	}
+
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			source := "package main\nimport \"" + wailsRuntimeImportPath + "\"\n" + body
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "app.go", source, 0)
+			if err != nil {
+				t.Fatalf("parser.ParseFile(invalid seam fixture) error = %v, want nil", err)
+			}
+			_, violations := scanWailsEventsEmitFile(fset, "app.go", file)
+			if len(violations) == 0 {
+				t.Error("scanWailsEventsEmitFile(invalid seam fixture) returned no violations")
+			}
+		})
+	}
+}
+
+func TestOnlyAppEmitReferencesWailsEventsEmit(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	allowed := 0
+	var violations []string
 
 	err := filepath.WalkDir(eventEmitScanRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -193,23 +269,24 @@ func TestProductionEventEmitSitesUseAtMostOnePayload(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		scanFile(path)
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			violations = append(violations, fmt.Sprintf("%s: parse error: %v", path, err))
+			return nil
+		}
+		fileAllowed, fileViolations := scanWailsEventsEmitFile(fset, path, file)
+		allowed += fileAllowed
+		violations = append(violations, fileViolations...)
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk repository for production .go files: %v", err)
 	}
 
-	if exemptEventsEmitCount == 0 {
-		t.Error("guard found no EventsEmit(...) call inside App.emit — it has gone vacuous (symbol renamed or App.emit restructured?)")
+	if allowed == 0 {
+		violations = append(violations, "guard found no runtime.EventsEmit reference inside (*App).emit")
 	}
-	for _, category := range []string{"emit", "emitFn", "emitter"} {
-		if nonExemptCounts[category] == 0 {
-			t.Errorf("guard matched zero non-exempt %s(...) call sites — it has gone vacuous (symbol renamed?)", category)
-		}
-	}
-
 	if len(violations) > 0 {
-		t.Fatalf("production event-emit arity violations:\n%s", strings.Join(violations, "\n"))
+		t.Fatalf("direct Wails event-emission violations:\n%s", strings.Join(violations, "\n"))
 	}
 }

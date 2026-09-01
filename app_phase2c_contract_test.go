@@ -66,11 +66,11 @@ type phase2CStatusLog struct {
 	statuses []runprofile.RunStatus
 }
 
-func (log *phase2CStatusLog) emit(event string, data ...any) {
-	if event != "run:status" || len(data) == 0 {
+func (log *phase2CStatusLog) emit(event string, data any) {
+	if event != "run:status" {
 		return
 	}
-	status, ok := data[0].(runprofile.RunStatus)
+	status, ok := data.(runprofile.RunStatus)
 	if !ok {
 		return
 	}
@@ -106,7 +106,7 @@ func TestAppPhase2C_WorkspaceSwitchUsesAdministrativeStopReason(t *testing.T) {
 	log := &phase2CStatusLog{}
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(log.emit, nil)
-	app.emitFn = func(string, ...any) {}
+	app.emitFn = func(string, any) {}
 	firstRoot := t.TempDir()
 	secondRoot := t.TempDir()
 	if err := app.LoadRunProfiles(firstRoot); err != nil {
@@ -249,8 +249,8 @@ func TestAppPhase2C_StalledAppendDoesNotBlockSwitchAndStaysInCapturedWorkspace(t
 		release:    make(chan struct{}),
 	}
 	app := NewApp()
-	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
-	app.emitFn = func(string, ...any) {}
+	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
+	app.emitFn = func(string, any) {}
 	workspaceA := t.TempDir()
 	workspaceB := t.TempDir()
 	if err := app.LoadRunProfiles(workspaceA); err != nil {
@@ -299,8 +299,8 @@ func TestAppPhase2C_StalledAppendDoesNotBlockSwitchAndStaysInCapturedWorkspace(t
 
 func TestAppPhase2C_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing.T) {
 	app := NewApp()
-	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
-	app.emitFn = func(string, ...any) {}
+	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
+	app.emitFn = func(string, any) {}
 	workspaceA := t.TempDir()
 	workspaceB := t.TempDir()
 	if err := app.LoadRunProfiles(workspaceA); err != nil {
@@ -344,8 +344,8 @@ func TestAppPhase2C_BeginRunShutdownDoesNotWaitForProfileLoadLock(t *testing.T) 
 
 func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing.T) {
 	app := NewApp()
-	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
-	app.emitFn = func(string, ...any) {}
+	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
+	app.emitFn = func(string, any) {}
 	workspacePath := t.TempDir()
 	if err := app.LoadRunProfiles(workspacePath); err != nil {
 		t.Fatalf("LoadRunProfiles: %v", err)
@@ -376,8 +376,8 @@ func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing
 
 func TestAppPhase2C_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorkspace(t *testing.T) {
 	app := NewApp()
-	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
-	app.emitFn = func(string, ...any) {}
+	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
+	app.emitFn = func(string, any) {}
 	workspaceA := t.TempDir()
 	workspaceB := t.TempDir()
 	if err := app.LoadRunProfiles(workspaceA); err != nil {
@@ -408,8 +408,8 @@ func TestAppPhase2C_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorks
 
 func TestAppPhase2C_ShutdownDrainStillRejectsOtherWorkspaceEpochs(t *testing.T) {
 	app := NewApp()
-	app.executor = runprofile.NewExecutor(func(string, ...any) {}, nil)
-	app.emitFn = func(string, ...any) {}
+	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
+	app.emitFn = func(string, any) {}
 	workspaceA := t.TempDir()
 	workspaceB := t.TempDir()
 	if err := app.LoadRunProfiles(workspaceA); err != nil {

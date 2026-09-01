@@ -40,7 +40,7 @@ type App struct {
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
 	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
-	emitFn func(event string, data ...any)
+	emitFn func(event string, data any)
 	// quitFn lets tests observe the drain's final quit, which cannot run
 	// outside a live Wails application. nil in production → runtime.Quit.
 	quitFn          func()
@@ -235,7 +235,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 			a.enterCloseDrain("frontend never answered")
 		})
 		a.closeMu.Unlock()
-		a.emit("app:beforeclose")
+		a.emit("app:beforeclose", nil)
 		return true
 	}
 }
@@ -687,7 +687,7 @@ func (a *App) handleWatchEvent(event watcher.FileEvent) {
 	// policy path crosses the boundary, and it is emitted only for a manifest
 	// the current binding actually watches.
 	if a.aiService != nil && a.aiService.ReloadPolicy(event.Path) {
-		a.emit(ai.EventGolemStatusChanged)
+		a.emit(ai.EventGolemStatusChanged, nil)
 	}
 
 	// Reactive run profile re-detection on config file changes
@@ -910,13 +910,18 @@ func (a *App) UnadoptRunProfile(id string) error {
 	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.UnadoptProfile(id) })
 }
 
-// emit sends a Wails event, or routes to emitFn when set (tests).
-func (a *App) emit(event string, data ...any) {
+// emit sends a Wails event with zero or one payload, or routes to emitFn when set (tests).
+// In production, a nil payload means no Wails payload argument.
+func (a *App) emit(event string, data any) {
 	if a.emitFn != nil {
-		a.emitFn(event, data...)
+		a.emitFn(event, data)
 		return
 	}
-	runtime.EventsEmit(a.ctx, event, data...)
+	if data == nil {
+		runtime.EventsEmit(a.ctx, event)
+		return
+	}
+	runtime.EventsEmit(a.ctx, event, data)
 }
 
 func (a *App) runProfilesSnapshot(manager *runprofile.ProjectRunProfileManager) runprofile.RunProfilesSnapshot {

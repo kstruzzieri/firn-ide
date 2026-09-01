@@ -38,10 +38,10 @@ type collectedEvent struct {
 	data []any
 }
 
-func (ec *eventCollector) emit(event string, data ...any) {
+func (ec *eventCollector) emit(event string, data any) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
-	ec.events = append(ec.events, collectedEvent{name: event, data: data})
+	ec.events = append(ec.events, collectedEvent{name: event, data: []any{data}})
 }
 
 func (ec *eventCollector) eventsByName(name string) []collectedEvent {
@@ -1034,11 +1034,11 @@ func TestManager_DiagnosticsRouting(t *testing.T) {
 	var diagMu sync.Mutex
 	var diagnostics []PublishDiagnosticsParams
 
-	mgr.emitter = func(event string, data ...any) {
-		if event == "lsp:diagnostics" && len(data) > 0 {
+	mgr.emitter = func(event string, data any) {
+		if event == "lsp:diagnostics" {
 			diagMu.Lock()
 			defer diagMu.Unlock()
-			payload, ok := data[0].(map[string]any)
+			payload, ok := data.(map[string]any)
 			if !ok {
 				return
 			}
@@ -1764,9 +1764,9 @@ func TestManager_ShutdownAllTearsDownAllRoots(t *testing.T) {
 
 func TestEmitStatus_PythonReadyEnriched(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			if s, ok := data[0].(ServerStatus); ok {
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			if s, ok := data.(ServerStatus); ok {
 				got = s
 			}
 		}
@@ -1802,9 +1802,9 @@ func TestEmitStatus_PythonReadyEnriched(t *testing.T) {
 
 func TestEmitStatus_PythonMisconfiguredVenv(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			got, _ = data[0].(ServerStatus)
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			got, _ = data.(ServerStatus)
 		}
 	})
 	m.configProvider = &envConfigProvider{
@@ -1830,9 +1830,9 @@ func TestEmitStatus_PythonMisconfiguredVenv(t *testing.T) {
 
 func TestEmitStatus_PythonMissingInterpreter(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			got, _ = data[0].(ServerStatus)
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			got, _ = data.(ServerStatus)
 		}
 	})
 	m.configProvider = &envConfigProvider{
@@ -1857,9 +1857,9 @@ func TestEmitStatus_PythonMissingInterpreter(t *testing.T) {
 
 func TestEmitStatus_PythonConfigDegraded(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			got, _ = data[0].(ServerStatus)
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			got, _ = data.(ServerStatus)
 		}
 	})
 	m.configProvider = &envConfigProvider{
@@ -1882,9 +1882,9 @@ func TestEmitStatus_PythonConfigDegraded(t *testing.T) {
 
 func TestEmitStatus_PythonMissingServer(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			got, _ = data[0].(ServerStatus)
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			got, _ = data.(ServerStatus)
 		}
 	})
 
@@ -1902,9 +1902,9 @@ func TestEmitStatus_PythonMissingServer(t *testing.T) {
 
 func TestEmitStatus_NonPythonUnaffected(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			got, _ = data[0].(ServerStatus)
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			got, _ = data.(ServerStatus)
 		}
 	})
 
@@ -1958,9 +1958,9 @@ func TestGetStatus_PythonReadyEnriched(t *testing.T) {
 
 func TestEmitStatus_PythonOverrideEmitsOverrideConfigSource(t *testing.T) {
 	var got ServerStatus
-	m := NewManager(func(event string, data ...any) {
-		if event == "lsp:status" && len(data) > 0 {
-			got, _ = data[0].(ServerStatus)
+	m := NewManager(func(event string, data any) {
+		if event == "lsp:status" {
+			got, _ = data.(ServerStatus)
 		}
 	})
 	m.configProvider = &envConfigProvider{

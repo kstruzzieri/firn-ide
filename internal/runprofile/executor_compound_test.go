@@ -130,7 +130,7 @@ func waitForCompoundSnapshot(t *testing.T, spy *emitSpy, want RunState, timeout 
 	return nil
 }
 
-func noopStatus(string, ...any) {}
+func noopStatus(string, any) {}
 
 func compoundProfile(id string, steps ...string) RunProfile {
 	return RunProfile{
@@ -484,12 +484,12 @@ func TestExecutorPhase2E_CompoundPreReservationInvalidationStops(t *testing.T) {
 	var gateOnce sync.Once
 	var releaseOnce sync.Once
 
-	exec := NewExecutor(func(event string, data ...any) {
-		spy.emit(event, data...)
-		if event != "run:compound" || len(data) == 0 {
+	exec := NewExecutor(func(event string, data any) {
+		spy.emit(event, data)
+		if event != "run:compound" {
 			return
 		}
-		snap, ok := data[0].(compoundStatus)
+		snap, ok := data.(compoundStatus)
 		if !ok || len(snap.Steps) == 0 || snap.Steps[0].State != CompoundStepRunning {
 			return
 		}
