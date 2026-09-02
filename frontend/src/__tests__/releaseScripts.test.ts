@@ -124,6 +124,22 @@ describe('release version consistency', () => {
 
     expect(config.info?.version).toBe(packageVersion);
   });
+
+  it('keeps a four-part Windows assembly version derived from the config version', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+    const manifest = readFileSync(resolve(rootDir, 'build/windows/wails.exe.manifest'), 'utf8');
+    // `wails3 update build-assets` re-emits a 3-part version here; Win32
+    // assemblyIdentity is major.minor.build.revision and the manifest is
+    // embedded into firn.exe by windows:generate:syso.
+    const version = manifest.match(
+      new RegExp(
+        `<assemblyIdentity[^>]*name="${config.info.productIdentifier}"[^>]*version="([^"]+)"`
+      )
+    )?.[1];
+
+    expect(version).toBe(`${config.info.version}.0`);
+    expect(version).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+  });
 });
 
 describe('release checksums', () => {
