@@ -6,7 +6,15 @@ module.exports = {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
     '\\.svg$': '<rootDir>/src/__mocks__/svgMock.js',
     '^@/(.*)$': '<rootDir>/src/$1',
-    '(?:\\.\\./)+wailsjs/runtime(?:/runtime)?$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    // The `$` anchor is load-bearing: it must not capture wails/runtime-helpers,
+    // whose test exercises the real registration code.
+    '(?:\\.\\./)+wails/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '^@wailsio/runtime$': '<rootDir>/src/__mocks__/wailsioRuntime.js',
+    // The generated bindings are ESM and spell relative imports with an explicit
+    // `.js` extension ('./internal/ai/models.js'); jest's CJS resolver would look
+    // for a literal .js file. Dropping the extension lets moduleFileExtensions
+    // find the .ts source (and still finds real .js files in node_modules ESM).
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {
     // Also matches .js so ts-jest can down-level the ESM-only react-markdown
@@ -74,7 +82,6 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/main.tsx',
     '!src/vite-env.d.ts',
-    '!src/wailsjs/**',
   ],
   coverageThreshold: {
     global: {

@@ -1,9 +1,11 @@
-// Single stable import surface for the generated Wails bindings.
-// This file and runtime.ts are the ONLY places allowed to reference
-// wailsjs paths (enforced by no-direct-wailsjs.test.ts). The v3
-// migration swaps the re-export targets here without touching consumers.
-export * from '../../wailsjs/go/main/App';
-// Re-exports every model namespace (ai, filesystem, git, lsp, main,
-// runhistory, runprofile, search, workspace) so this stays in sync with
-// models.ts without an explicit name list to maintain.
-export * from '../../wailsjs/go/models';
+// Single stable import surface for the generated v3 bindings.
+export * from '../../bindings/firn/app';
+export * as ai from '../../bindings/firn/internal/ai/models';
+export * as filesystem from '../../bindings/firn/internal/filesystem/models';
+export * as git from '../../bindings/firn/internal/git/models';
+export * as lsp from '../../bindings/firn/internal/lsp/models';
+export * as main from '../../bindings/firn/models';
+export * as runhistory from '../../bindings/firn/internal/runhistory/models';
+export * as runprofile from '../../bindings/firn/internal/runprofile/models';
+export * as search from '../../bindings/firn/internal/search/models';
+export * as workspace from '../../bindings/firn/internal/workspace/models';

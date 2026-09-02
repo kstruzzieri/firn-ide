@@ -24,7 +24,7 @@ const JEST_MODULE_LOADERS = new Set([
 ]);
 const RAW_WAILS_GLOBALS = new Set(['go', 'runtime']);
 const RAW_GLOBAL_OWNERS = new Set(['window', 'globalThis', 'self', 'top', 'parent']);
-const SKIP_DIRS = new Set(['coverage', 'dist', 'node_modules', 'wailsjs']);
+const SKIP_DIRS = new Set(['coverage', 'dist', 'node_modules', 'bindings']);
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -61,13 +61,23 @@ function memberName(node: ts.PropertyAccessExpression | ts.ElementAccessExpressi
   return ts.isStringLiteralLike(name) ? name.text : null;
 }
 
-function isWailsJSPath(expression: ts.Expression | undefined): boolean {
+// isGeneratedPath recognises every specifier that only the two adapters may
+// import: the v2 `wailsjs` tree (deleted, but a re-introduction must still be
+// caught), the v3 `@wailsio/runtime` package, and the generated `bindings/firn`
+// output. `@wailsio/runtime/plugins/*` is build tooling, not app runtime, so
+// vite.config.ts may import it freely.
+function isGeneratedPath(expression: ts.Expression | undefined): boolean {
   if (!expression) return false;
   const path = unwrap(expression);
+  if (!ts.isStringLiteralLike(path)) return false;
+  const text = path.text;
   // A wailsjs path segment counts whether it starts the specifier or follows any
   // non-word character (path separator, alias sigil like @ or ~, etc.), so aliased
   // imports such as '@wailsjs/go/main/App' or '~wailsjs/...' are still caught.
-  return ts.isStringLiteralLike(path) && /(^|[^A-Za-z0-9_])wailsjs([\\/]|$)/.test(path.text);
+  if (/(^|[^A-Za-z0-9_])wailsjs([\\/]|$)/.test(text)) return true;
+  if (/(^|[^A-Za-z0-9_])bindings\/firn([\\/]|$)/.test(text)) return true;
+  if (text === '@wailsio/runtime') return true;
+  return text.startsWith('@wailsio/runtime/') && !text.startsWith('@wailsio/runtime/plugins/');
 }
 
 function isModuleLoaderCall(node: ts.CallExpression): boolean {
@@ -85,7 +95,8 @@ function isModuleLoaderCall(node: ts.CallExpression): boolean {
 }
 
 // firstOffenseLine returns the 1-based line number of the first direct generated
-// import or raw Wails global access, or null when the file uses only the adapters.
+// import — wailsjs, @wailsio/runtime, or bindings/ — or raw Wails global access,
+// or null when the file uses only the adapters.
 // A string-concatenated or template-interpolated dynamic import specifier (e.g.
 // `import('../../' + 'wailsjs/go/main/App')`) is outside a static scanner's reach
 // by design — this walks a syntax tree, not a value evaluator.
@@ -101,25 +112,25 @@ function firstOffenseLine(content: string, filePath = 'probe.ts'): number | null
     if (!mayImportGenerated) {
       if (
         (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-        isWailsJSPath(node.moduleSpecifier)
+        isGeneratedPath(node.moduleSpecifier)
       ) {
         record(node);
       } else if (
         ts.isImportEqualsDeclaration(node) &&
         ts.isExternalModuleReference(node.moduleReference) &&
-        isWailsJSPath(node.moduleReference.expression)
+        isGeneratedPath(node.moduleReference.expression)
       ) {
         record(node);
       } else if (
         ts.isImportTypeNode(node) &&
         ts.isLiteralTypeNode(node.argument) &&
-        isWailsJSPath(node.argument.literal)
+        isGeneratedPath(node.argument.literal)
       ) {
         record(node);
       } else if (
         ts.isCallExpression(node) &&
         isModuleLoaderCall(node) &&
-        isWailsJSPath(node.arguments[0])
+        isGeneratedPath(node.arguments[0])
       ) {
         record(node);
       }
@@ -230,6 +241,15 @@ const directReferenceCases: Array<[string, string, number, string]> = [
   ['let destructured from window', 'let { go } = window;', 1, PROBE_FILE],
   ['var destructured from window', 'var { runtime } = window;', 1, PROBE_FILE],
   ['aliased path import', "import x from '@wailsjs/go/main/App';", 1, PROBE_FILE],
+  ['v3 runtime import', "import { Events } from '@wailsio/runtime';", 1, PROBE_FILE],
+  ['v3 runtime subpath import', "import '@wailsio/runtime/foo';", 1, PROBE_FILE],
+  ['v3 runtime Jest mock', "jest.mock('@wailsio/runtime');", 1, PROBE_FILE],
+  [
+    'generated bindings import',
+    "import { ReadFile } from '../../bindings/firn/app';",
+    1,
+    PROBE_FILE,
+  ],
 ];
 
 it.each(directReferenceCases)('detects %s', (_name, content, line, filePath) => {
@@ -252,6 +272,21 @@ const allowedReferenceCases: Array<[string, string, string]> = [
     "export { EventsOn } from '../../wailsjs/runtime/runtime';",
     resolve(ADAPTER_DIR, 'runtime.ts'),
   ],
+  [
+    'runtime adapter v3 import',
+    "import { Events } from '@wailsio/runtime';",
+    resolve(ADAPTER_DIR, 'runtime.ts'),
+  ],
+  [
+    'bindings adapter v3 export',
+    "export * from '../../bindings/firn/app';",
+    resolve(ADAPTER_DIR, 'bindings.ts'),
+  ],
+  [
+    'vite plugin import',
+    "import wails from '@wailsio/runtime/plugins/vite';",
+    resolve(FRONTEND, 'vite.config.ts'),
+  ],
 ];
 
 it.each(allowedReferenceCases)('allows %s', (_name, content, filePath) => {
@@ -264,10 +299,10 @@ it('scans a non-trivial number of files (anti-vacuity floor)', () => {
 
 it('scans handwritten frontend files outside src but skips generated output', () => {
   expect(files).toContain(resolve(SRC, '../vite.config.ts'));
-  expect(files).not.toContain(resolve(SRC, '../wailsjs/runtime/runtime.js'));
+  expect(files).not.toContain(resolve(SRC, '../bindings/firn/app.ts'));
 });
 
-it('only the two adapters import wailsjs and no handwritten file reaches the raw v2 globals', () => {
+it('only the two adapters import generated code and no handwritten file reaches the raw v2 globals', () => {
   const offenders: string[] = [];
   for (const f of files) {
     const line = firstOffenseLine(readFileSync(f, 'utf-8'), f);

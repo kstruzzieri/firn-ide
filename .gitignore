@@ -22,8 +22,6 @@ Thumbs.db
 *.so
 *.dylib
 
-# Wails dev (wailsjs bindings are committed to avoid CI chicken-and-egg issues)
-
 # Test coverage
 coverage.out
 
