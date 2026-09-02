@@ -33,7 +33,7 @@ func phase2BOpenFIFOForBlockedReader(t *testing.T, path string) *os.File {
 func TestAppPhase2B_ShutdownClosesAdmissionBeforeStopAll(t *testing.T) {
 	var eventMu sync.Mutex
 	statusEvents := 0
-	executor := runprofile.NewExecutor(func(event string, _ ...any) {
+	executor := runprofile.NewExecutor(func(event string, _ any) {
 		if event == "run:status" {
 			eventMu.Lock()
 			statusEvents++
@@ -111,7 +111,7 @@ func TestAppPhase2B_ShutdownAdmissionCannotBeReopenedByWorkspaceLoad(t *testing.
 func TestAppPhase2B_RecencyUsesLaunchAttemptOrderNotSpawnCompletion(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(nil, nil)
-	app.emitFn = func(string, ...any) {}
+	app.emitFn = func(string, any) {}
 	t.Cleanup(func() { app.executor.StopAll(2 * time.Second) }) //nolint:errcheck
 	root := t.TempDir()
 	if err := app.LoadRunProfiles(root); err != nil {

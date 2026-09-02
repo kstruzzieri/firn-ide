@@ -2,19 +2,23 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorer } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
-import { ReadDirectoryShallow } from '../../../../wailsjs/go/main/App';
-import { filesystem } from '../../../../wailsjs/go/models';
+import { ReadDirectoryShallow } from '../../../wails/bindings';
+import { filesystem } from '../../../wails/bindings';
 import { installVirtualLayout } from '../../helpers/virtualTree';
 import { __resetEnsurePathLoaded } from '../../../hooks/useEnsurePathLoaded';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
-  ReadDirectory: jest.fn(),
-  ReadDirectoryShallow: jest.fn(),
-  ReadFile: jest.fn(),
-  OpenFolderDialog: jest.fn(),
-}));
+jest.mock('../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../wails/bindings');
+  return {
+    ...actual,
+    ReadDirectory: jest.fn(),
+    ReadDirectoryShallow: jest.fn(),
+    ReadFile: jest.fn(),
+    OpenFolderDialog: jest.fn(),
+  };
+});
 
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 

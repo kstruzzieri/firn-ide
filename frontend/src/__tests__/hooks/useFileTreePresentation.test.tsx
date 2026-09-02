@@ -1,7 +1,7 @@
 import { renderHook } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
-import type { workspace } from '../../../wailsjs/go/models';
+import type { workspace } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
 
 const root = '/Users/me/repo';

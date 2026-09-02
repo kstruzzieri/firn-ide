@@ -37,13 +37,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { createShellIntegration } from './shellIntegration';
 import { XTERM_OPTIONS } from './xtermConfig';
-import {
-  CreateTerminal,
-  WriteTerminal,
-  CloseTerminal,
-  ResizeTerminal,
-} from '../../../wailsjs/go/main/App';
-import { EventsOn } from '../../../wailsjs/runtime';
+import { CreateTerminal, WriteTerminal, CloseTerminal, ResizeTerminal } from '../../wails/bindings';
+import { EventsOn } from '../../wails/runtime';
 
 const TERMINAL_TABS: Array<{
   id: TerminalTab;
@@ -72,18 +67,19 @@ let globalOutputCleanup: (() => void) | null = null;
 
 function ensureGlobalOutputListener() {
   if (globalOutputCleanup) return;
-  globalOutputCleanup = EventsOn('terminal:output', (termId: string, data: string) => {
-    const listener = outputListeners.get(termId);
+  globalOutputCleanup = EventsOn('terminal:output', (evt: { termId: string; data: string }) => {
+    if (!evt?.termId) return;
+    const listener = outputListeners.get(evt.termId);
     if (listener) {
-      listener(data);
+      listener(evt.data ?? '');
     } else {
       // Buffer output until a listener attaches
-      let buf = outputBuffers.get(termId);
+      let buf = outputBuffers.get(evt.termId);
       if (!buf) {
         buf = [];
-        outputBuffers.set(termId, buf);
+        outputBuffers.set(evt.termId, buf);
       }
-      buf.push(data);
+      buf.push(evt.data ?? '');
     }
   });
 }

@@ -2,7 +2,7 @@ import { acceptCompletion } from '@codemirror/autocomplete';
 import { indentWithTab } from '@codemirror/commands';
 import { EditorState } from '@codemirror/state';
 
-jest.mock('../../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../../wails/bindings', () => ({
   LSPComplete: jest.fn(),
   LSPResolveCompletionItem: jest.fn(),
 }));
@@ -11,7 +11,7 @@ jest.mock('../../../../utils/lspDocumentSync', () => ({
   flushLSPDocumentChange: jest.fn(() => Promise.resolve(false)),
 }));
 
-import { LSPComplete, LSPResolveCompletionItem } from '../../../../../wailsjs/go/main/App';
+import { LSPComplete, LSPResolveCompletionItem } from '../../../../wails/bindings';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
 import {
   COMPLETION_RESOLVE_CACHE_LIMIT,

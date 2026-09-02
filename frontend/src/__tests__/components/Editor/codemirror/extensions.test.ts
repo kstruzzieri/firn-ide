@@ -1,4 +1,4 @@
-jest.mock('../../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../../wails/bindings', () => ({
   LSPComplete: jest.fn(),
   LSPResolveCompletionItem: jest.fn(),
   LSPDefinition: jest.fn(),

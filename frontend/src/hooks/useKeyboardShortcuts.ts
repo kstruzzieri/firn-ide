@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { isMac } from '../utils/platform';
 import { useIDEStore } from '../stores/ideStore';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { EventsOn } from '../wails/runtime';
 import {
   navigateBack,
   navigateForward,

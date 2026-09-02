@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { runhistory } from '../../../wailsjs/go/models';
+import { runhistory } from '../../wails/bindings';
 import { useIDEStore } from '../../stores/ideStore';
 
 const mockDrainRunHistoryQueue = jest.fn<Promise<void>, []>(() => Promise.resolve());
@@ -28,14 +28,18 @@ const mockGetRunHistorySnapshot = jest.fn<Promise<unknown>, []>(() =>
   Promise.resolve({ version: 1, summaries: [] })
 );
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  LoadRunProfiles: (path: string) => mockLoadRunProfiles(path),
-  GetRunProfilesSnapshot: () => mockGetRunProfilesSnapshot(),
-  GetRunHistorySnapshot: () => mockGetRunHistorySnapshot(),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    LoadRunProfiles: (path: string) => mockLoadRunProfiles(path),
+    GetRunProfilesSnapshot: () => mockGetRunProfilesSnapshot(),
+    GetRunHistorySnapshot: () => mockGetRunHistorySnapshot(),
+  };
+});
 
 let runprofilesChanged: ((snapshot: unknown) => void) | null = null;
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn((event: string, callback: (snapshot: unknown) => void) => {
     if (event === 'runprofiles:changed') {
       runprofilesChanged = callback;

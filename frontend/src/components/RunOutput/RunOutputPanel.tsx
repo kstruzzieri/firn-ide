@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import type { runhistory } from '../../../wailsjs/go/models';
-import { GetRunHistoryRecord } from '../../../wailsjs/go/main/App';
+import type { runhistory } from '../../wails/bindings';
+import { GetRunHistoryRecord } from '../../wails/bindings';
 import {
   compareRunHistorySummaries,
   mergeRunHistoryArchiveMaps,

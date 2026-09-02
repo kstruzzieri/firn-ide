@@ -1,9 +1,9 @@
 import { ensurePathLoaded, __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
 import { useIDEStore } from '../../stores/ideStore';
-import { ReadDirectoryShallow } from '../../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({ ReadDirectoryShallow: jest.fn() }));
+jest.mock('../../wails/bindings', () => ({ ReadDirectoryShallow: jest.fn() }));
 const mockRead = ReadDirectoryShallow as jest.Mock;
 
 const dir = (path: string, children?: FileEntry[]): FileEntry =>

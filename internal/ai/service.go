@@ -139,7 +139,7 @@ type loadedSnapshot struct {
 // others); snapshotMu never wraps another lock.
 type Service struct {
 	fs       filesystem.FileSystem
-	emit     func(string, ...any)
+	emit     func(string, any)
 	bindings *Bindings
 	consent  *ConsentStore
 	sessions *MemorySessionStore
@@ -190,9 +190,9 @@ type Service struct {
 // Only Close sets `closing` and cancels the derived baseCtx, so a caller ctx
 // cancelled without Close leaves every subsequent run context born cancelled
 // while Status still reports Available.
-func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, ...any)) *Service {
+func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, any)) *Service {
 	if emit == nil {
-		emit = func(string, ...any) {}
+		emit = func(string, any) {}
 	}
 	baseCtx, baseCancel := context.WithCancel(ctx)
 	s := &Service{
@@ -688,12 +688,12 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 			// permanently wedging a challenge whose run UUID is tombstoned.
 			conv.state = statePendingConsent
 			if s.setConsentDegraded(err) {
-				*after = append(*after, func() { s.emit(EventGolemStatusChanged) })
+				*after = append(*after, func() { s.emit(EventGolemStatusChanged, nil) })
 			}
 			return TurnAdmission{}, err
 		}
 		if s.clearConsentDegraded() {
-			*after = append(*after, func() { s.emit(EventGolemStatusChanged) })
+			*after = append(*after, func() { s.emit(EventGolemStatusChanged, nil) })
 		}
 		conv.challenge = nil // consume exactly once
 	case stateIdle:
@@ -1107,7 +1107,7 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 	s.retireCachedRunners("settings-reload")
 	s.bindingGate.Unlock()
 
-	s.emit(EventGolemStatusChanged)
+	s.emit(EventGolemStatusChanged, nil)
 	return SettingsReloadResult{Busy: false, Projection: sn.projection.clone()}, nil
 }
 
@@ -1281,7 +1281,7 @@ func (s *Service) writeSettings(token string, req SettingsApplyRequest, mode app
 	var after []string
 	defer func() {
 		for _, name := range after {
-			s.emit(name)
+			s.emit(name, nil)
 		}
 	}()
 

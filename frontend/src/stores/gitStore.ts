@@ -21,8 +21,8 @@ import {
   GitStageConflictResult,
   GitApplyConflictSide,
   ReadFile,
-} from '../../wailsjs/go/main/App';
-import type { git } from '../../wailsjs/go/models';
+} from '../wails/bindings';
+import type { git } from '../wails/bindings';
 import {
   buildStatusByPath,
   classifyChange,

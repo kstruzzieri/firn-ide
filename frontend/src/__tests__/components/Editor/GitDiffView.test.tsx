@@ -98,9 +98,8 @@ const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureOpen(...args),
 }));
-// gitStore (imported for its store) transitively loads the ESM wailsjs App
-// bindings; mock them so the module graph stays jest-parseable.
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
+  ...jest.requireActual('../../../wails/bindings'),
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -122,7 +121,7 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { GitDiffView } from '../../../components/Editor/GitDiffView';
 import { useGitStore, type DiffSession } from '../../../stores/gitStore';
 import { useIDEStore } from '../../../stores/ideStore';
-import { WriteFile } from '../../../../wailsjs/go/main/App';
+import { WriteFile } from '../../../wails/bindings';
 import { flushWorkingTreeEdit } from '../../../utils/fileWrites';
 
 const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;

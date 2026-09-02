@@ -1,4 +1,4 @@
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -30,7 +30,7 @@ import {
   GitFileHunks,
   GitApplyHunk,
   ReadFile,
-} from '../../wailsjs/go/main/App';
+} from '../wails/bindings';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from './gitStore';
 import { useIDEStore } from './ideStore';
 

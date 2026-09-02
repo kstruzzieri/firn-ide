@@ -11,7 +11,7 @@ import {
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { getVisualState } from '../../utils/visualState';
 import { startProfile, stopProfile, restartProfile } from '../../utils/profileActions';
-import { SetActiveVariant } from '../../../wailsjs/go/main/App';
+import { SetActiveVariant } from '../../wails/bindings';
 import { groupProfiles, SECTION_LABEL, type ProfileSection } from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfileSelector.module.css';

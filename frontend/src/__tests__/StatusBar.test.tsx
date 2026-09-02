@@ -6,14 +6,14 @@
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { act } from 'react';
-import { GitPull, GitPush } from '../../wailsjs/go/main/App';
+import { GitPull, GitPush } from '../wails/bindings';
 import { StatusBar } from '../components/StatusBar';
 import { __resetGolemStore } from '../stores/golemStore';
 import { useLSPStore } from '../stores/lspStore';
 import { useGitStore } from '../stores/gitStore';
-import type { git } from '../../wailsjs/go/models';
+import type { git } from '../wails/bindings';
 
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),

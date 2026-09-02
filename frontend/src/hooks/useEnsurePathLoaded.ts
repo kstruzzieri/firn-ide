@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { ReadDirectoryShallow } from '../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import type { WorkspaceInfo } from '../stores/ideStore';
 import { pathsReferToSameFile, getFileNameFromPath } from '../utils/lspUri';

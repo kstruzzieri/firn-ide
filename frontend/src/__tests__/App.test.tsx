@@ -57,53 +57,57 @@ const mockAppendRunHistoryRecord = jest.fn((record: Record<string, unknown>) =>
 );
 
 // Mock Wails bindings
-jest.mock('../../wailsjs/go/main/App', () => ({
-  ReadDirectory: (...args: unknown[]) => mockReadDirectory(...args),
-  ReadDirectoryShallow: (...args: unknown[]) => mockReadDirectoryShallow(...args),
-  ReadFile: (...args: unknown[]) => mockReadFile(...args),
-  WriteFile: jest.fn(),
-  OpenFolderDialog: jest.fn(),
-  GetWatchedPath: jest.fn(),
-  SetWatchedPath: jest.fn(),
-  CreateTerminal: jest.fn(() => Promise.resolve('term-1')),
-  WriteTerminal: jest.fn(),
-  CloseTerminal: jest.fn(),
-  ResizeTerminal: jest.fn(),
-  ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
-  CancelBeforeClose: jest.fn(() => Promise.resolve()),
-  SaveWorkspaceState: jest.fn(() => Promise.resolve()),
-  LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
-  ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
-  LoadRunProfiles: jest.fn(() => Promise.resolve()),
-  GetRunProfilesSnapshot: jest.fn(() => Promise.resolve({ profiles: [], profileState: {} })),
-  SetActiveVariant: jest.fn(() => Promise.resolve()),
-  LSPDidOpen: (...args: unknown[]) => mockDidOpen(...args),
-  LSPDidChange: (...args: unknown[]) => mockDidChange(...args),
-  LSPDidSave: (...args: unknown[]) => mockDidSave(...args),
-  LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
-  SearchWorkspace: (...args: unknown[]) => mockSearchWorkspace(...args),
-  CancelSearch: (...args: unknown[]) => mockCancelSearch(...args),
-  DetectWorkspaces: jest.fn(() => Promise.resolve([])),
-  AppendRunHistoryRecord: (record: Record<string, unknown>) => mockAppendRunHistoryRecord(record),
-  ClearAllRunHistory: jest.fn(() => Promise.resolve()),
-  // App now mounts useGolemBridge; an unbound repository is the quiet default.
-  GetWorkspaceInfo: jest.fn((path: string) =>
-    Promise.resolve({ name: '', path, repoKey: '', repoEpoch: 0 })
-  ),
-  GetGolemStatus: jest.fn(() =>
-    Promise.resolve({
-      available: false,
-      workspaceLabel: '',
-      identity: { repoEpoch: 0, workspaceId: '', conversationId: '' },
-      needsConsent: false,
-      activeRuns: [],
-    })
-  ),
-  RunGolemTurn: jest.fn(() => Promise.resolve(null)),
-  CancelGolemRun: jest.fn(() => Promise.resolve(false)),
-}));
+jest.mock('../wails/bindings', () => {
+  const actual = jest.requireActual('../wails/bindings');
+  return {
+    ...actual,
+    ReadDirectory: (...args: unknown[]) => mockReadDirectory(...args),
+    ReadDirectoryShallow: (...args: unknown[]) => mockReadDirectoryShallow(...args),
+    ReadFile: (...args: unknown[]) => mockReadFile(...args),
+    WriteFile: jest.fn(),
+    OpenFolderDialog: jest.fn(),
+    GetWatchedPath: jest.fn(),
+    SetWatchedPath: jest.fn(),
+    CreateTerminal: jest.fn(() => Promise.resolve('term-1')),
+    WriteTerminal: jest.fn(),
+    CloseTerminal: jest.fn(),
+    ResizeTerminal: jest.fn(),
+    ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
+    CancelBeforeClose: jest.fn(() => Promise.resolve()),
+    SaveWorkspaceState: jest.fn(() => Promise.resolve()),
+    LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
+    ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
+    LoadRunProfiles: jest.fn(() => Promise.resolve()),
+    GetRunProfilesSnapshot: jest.fn(() => Promise.resolve({ profiles: [], profileState: {} })),
+    SetActiveVariant: jest.fn(() => Promise.resolve()),
+    LSPDidOpen: (...args: unknown[]) => mockDidOpen(...args),
+    LSPDidChange: (...args: unknown[]) => mockDidChange(...args),
+    LSPDidSave: (...args: unknown[]) => mockDidSave(...args),
+    LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
+    SearchWorkspace: (...args: unknown[]) => mockSearchWorkspace(...args),
+    CancelSearch: (...args: unknown[]) => mockCancelSearch(...args),
+    DetectWorkspaces: jest.fn(() => Promise.resolve([])),
+    AppendRunHistoryRecord: (record: Record<string, unknown>) => mockAppendRunHistoryRecord(record),
+    ClearAllRunHistory: jest.fn(() => Promise.resolve()),
+    // App now mounts useGolemBridge; an unbound repository is the quiet default.
+    GetWorkspaceInfo: jest.fn((path: string) =>
+      Promise.resolve({ name: '', path, repoKey: '', repoEpoch: 0 })
+    ),
+    GetGolemStatus: jest.fn(() =>
+      Promise.resolve({
+        available: false,
+        workspaceLabel: '',
+        identity: { repoEpoch: 0, workspaceId: '', conversationId: '' },
+        needsConsent: false,
+        activeRuns: [],
+      })
+    ),
+    RunGolemTurn: jest.fn(() => Promise.resolve(null)),
+    CancelGolemRun: jest.fn(() => Promise.resolve(false)),
+  };
+});
 
-jest.mock('../../wailsjs/runtime/runtime', () => ({
+jest.mock('../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: (event: string, callback: (...args: unknown[]) => void) =>
     mockEventsOn(event, callback),

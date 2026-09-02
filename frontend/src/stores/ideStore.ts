@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import type { filesystem, runhistory, workspace } from '../../wailsjs/go/models';
+import type { filesystem, runhistory, workspace } from '../wails/bindings';
 import type { RunProfile, RunProfileUIState } from '../types/runProfile';
 import type { FormState } from '../utils/runProfileForm';
 import { LineAssembler } from '../utils/lineAssembler';

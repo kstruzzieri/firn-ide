@@ -4,7 +4,7 @@ import { act } from 'react';
 import { FileExplorer } from '../../../components/FileExplorer/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
 import { installVirtualLayout } from '../../helpers/virtualTree';
-import type { filesystem, workspace } from '../../../../wailsjs/go/models';
+import type { filesystem, workspace } from '../../../wails/bindings';
 
 // FileExplorer mounts useDirectoryTree, which auto-fetches through Wails when a
 // workspace exists. This test seeds the store directly, so prevent the fetch.
@@ -13,13 +13,13 @@ jest.mock('../../../components/FileExplorer/useDirectoryTree', () => ({
   useDirectoryTree: () => ({ refetch: mockRefetch }),
 }));
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   ReadDirectory: jest.fn(),
   ReadFile: jest.fn(),
   OpenFolderDialog: jest.fn(),
 }));
 
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 

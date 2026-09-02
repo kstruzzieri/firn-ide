@@ -91,7 +91,7 @@ func TestLoadRunProfilesFailureKeepsAdmissionClosedUntilSuccessfulRetry(t *testi
 func TestRestartRunProfilePropagatesCompoundDrainErrorWithoutRecordingRecency(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(nil, nil)
-	app.emitFn = func(string, ...any) {}
+	app.emitFn = func(string, any) {}
 	t.Cleanup(func() { app.executor.StopAll(2 * time.Second) }) //nolint:errcheck
 	root := t.TempDir()
 	if err := app.LoadRunProfiles(root); err != nil {

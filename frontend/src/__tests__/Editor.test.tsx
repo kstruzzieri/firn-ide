@@ -5,7 +5,7 @@ import { __resetGolemStore, useGolemStore } from '../stores/golemStore';
 import { showGolemConfiguration } from '../utils/commands';
 import { focusConfigTab } from '../utils/editorSurface';
 
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
   CancelGolemRun: jest.fn(),
@@ -13,7 +13,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
 }));
 
 const mockWindowSetTitle = jest.fn();
-jest.mock('../../wailsjs/runtime/runtime', () => ({
+jest.mock('../wails/runtime', () => ({
   WindowSetTitle: mockWindowSetTitle,
 }));
 

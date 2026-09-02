@@ -52,7 +52,7 @@ func newGolemApp(t *testing.T) *App {
 	t.Helper()
 	t.Setenv("GO_LLM_CONFIG", "")
 	app := NewApp()
-	app.emitFn = func(string, ...any) {}
+	app.emitFn = func(string, any) {}
 	app.startup(context.Background())
 	if app.aiService == nil {
 		t.Fatal("startup did not create the Golem service")
@@ -682,7 +682,7 @@ func TestGolemStartupWithoutFirnDirDegradesRemoteConsent(t *testing.T) {
 	if app.firnDir != "" {
 		t.Fatalf("firnDir = %q, want empty when the home directory is unavailable", app.firnDir)
 	}
-	app.emitFn = func(string, ...any) {}
+	app.emitFn = func(string, any) {}
 	app.startup(context.Background())
 	t.Cleanup(app.closeAIService)
 
@@ -745,7 +745,7 @@ func TestGolemStartupUsesConsentPathUnderFirnDir(t *testing.T) {
 			if want := filepath.Join(tc.home, ".firn"); app.firnDir != want {
 				t.Fatalf("firnDir = %q, want %q", app.firnDir, want)
 			}
-			app.emitFn = func(string, ...any) {}
+			app.emitFn = func(string, any) {}
 			app.startup(context.Background())
 			t.Cleanup(app.closeAIService)
 
@@ -787,7 +787,7 @@ func TestGolemWatchEventReloadsPolicyOnlyForWatchedManifests(t *testing.T) {
 	if events[1].event != ai.EventGolemStatusChanged {
 		t.Errorf("second event = %q, want %q", events[1].event, ai.EventGolemStatusChanged)
 	}
-	if len(events[1].data) != 0 {
+	if events[1].data != nil {
 		t.Errorf("%s carried a payload %+v, want none", ai.EventGolemStatusChanged, events[1].data)
 	}
 
@@ -951,10 +951,10 @@ type golemEventSink struct {
 
 type golemEmitted struct {
 	event string
-	data  []any
+	data  any
 }
 
-func (s *golemEventSink) emit(event string, data ...any) {
+func (s *golemEventSink) emit(event string, data any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, golemEmitted{event: event, data: data})
@@ -1135,7 +1135,7 @@ func newGolemAppWithTarget(t *testing.T, body string) (*App, string) {
 	t.Helper()
 	path := stageGolemTarget(t, body)
 	app := NewApp()
-	app.emitFn = func(string, ...any) {}
+	app.emitFn = func(string, any) {}
 	app.startup(context.Background())
 	if app.aiService == nil {
 		t.Fatal("startup did not create the Golem service")

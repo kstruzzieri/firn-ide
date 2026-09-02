@@ -1,19 +1,19 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { useDirectoryTree } from '../../../components/FileExplorer/useDirectoryTree';
 import { useIDEStore, type FileEntry } from '../../../stores/ideStore';
-import { ReadDirectoryShallow } from '../../../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../../../wails/bindings';
 import { getCachedWorkspaceTree } from '../../../utils/workspaceTreeCache';
 import { ensurePathLoaded, __resetEnsurePathLoaded } from '../../../hooks/useEnsurePathLoaded';
 import { act } from 'react';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   ReadDirectory: jest.fn(),
   ReadDirectoryShallow: jest.fn(),
   ReadFile: jest.fn(),
   OpenFolderDialog: jest.fn(),
 }));
 
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 

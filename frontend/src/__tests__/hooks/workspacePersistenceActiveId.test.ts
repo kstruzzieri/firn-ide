@@ -1,14 +1,14 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 import { useIDEStore } from '../../stores/ideStore';
-import { LoadWorkspaceState, SaveWorkspaceState } from '../../../wailsjs/go/main/App';
+import { LoadWorkspaceState, SaveWorkspaceState } from '../../wails/bindings';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   SaveWorkspaceState: jest.fn(() => Promise.resolve()),
   LoadWorkspaceState: jest.fn(),
   DetectWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: jest.fn(() => jest.fn()),
 }));

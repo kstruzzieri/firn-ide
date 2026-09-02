@@ -14,7 +14,7 @@ import { RightPanel } from '../../components/layout/RightPanel';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: jest.fn(() => Promise.resolve()),
   StopRunProfile: jest.fn(() => Promise.resolve()),
   RestartRunProfile: jest.fn(() => Promise.resolve()),

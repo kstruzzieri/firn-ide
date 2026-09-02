@@ -434,12 +434,12 @@ func TestExecutorPhase2B_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
 	releaseTerminal := make(chan struct{})
 	var selected string
 	var blockOnce sync.Once
-	exec := NewExecutor(func(event string, data ...any) {
-		spy.emit(event, data...)
-		if event != "run:status" || len(data) == 0 {
+	exec := NewExecutor(func(event string, data any) {
+		spy.emit(event, data)
+		if event != "run:status" {
 			return
 		}
-		status, ok := data[0].(RunStatus)
+		status, ok := data.(RunStatus)
 		if ok && status.RunInstanceID == selected && status.State == RunStateStopped {
 			blockOnce.Do(func() {
 				close(terminalEntered)
@@ -497,12 +497,12 @@ func TestExecutorPhase2B_DrainInvalidatesAndWaitsForExactRestartReservation(t *t
 	releaseTerminal := make(chan struct{})
 	var selected string
 	var blockOnce sync.Once
-	exec := NewExecutor(func(event string, data ...any) {
-		spy.emit(event, data...)
-		if event != "run:status" || len(data) == 0 {
+	exec := NewExecutor(func(event string, data any) {
+		spy.emit(event, data)
+		if event != "run:status" {
 			return
 		}
-		status, ok := data[0].(RunStatus)
+		status, ok := data.(RunStatus)
 		if ok && status.RunInstanceID == selected && status.State == RunStateStopped {
 			blockOnce.Do(func() {
 				close(terminalEntered)

@@ -1,6 +1,6 @@
 import { normalizePathForComparison } from './lspUri';
 import type { WorkspaceAccent, FileEntry } from '../stores/ideStore';
-import type { workspace } from '../../wailsjs/go/models';
+import type { workspace } from '../wails/bindings';
 
 /**
  * Repo-relative, forward-slash path for `absPath` under `repoRoot`.

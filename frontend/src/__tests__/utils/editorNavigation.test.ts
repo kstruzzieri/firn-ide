@@ -2,10 +2,10 @@ import { ensureEditorFileOpen, navigateToEditorLocation } from '../../utils/edit
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore } from '../../stores/gitStore';
 import { toNativeLocalPath } from '../../utils/lspUri';
-import { ReadFile, WriteFile } from '../../../wailsjs/go/main/App';
+import { ReadFile, WriteFile } from '../../wails/bindings';
 import { queueWorkingTreeEdit } from '../../utils/fileWrites';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   ReadFile: jest.fn(),
   WriteFile: jest.fn(),
 }));

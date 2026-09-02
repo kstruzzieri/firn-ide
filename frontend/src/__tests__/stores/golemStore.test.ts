@@ -10,7 +10,7 @@
  *    consent state monotonic across deferred promises and epoch changes.
  */
 
-import { ai } from '../../../wailsjs/go/models';
+import { ai } from '../../wails/bindings';
 import {
   boundedGolemMessage,
   GolemContractError,
@@ -32,12 +32,16 @@ const mockGetGolemStatus = jest.fn();
 const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  GetWorkspaceInfo: (...args: unknown[]) => mockGetWorkspaceInfo(...args),
-  GetGolemStatus: (...args: unknown[]) => mockGetGolemStatus(...args),
-  RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
-  CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    GetWorkspaceInfo: (...args: unknown[]) => mockGetWorkspaceInfo(...args),
+    GetGolemStatus: (...args: unknown[]) => mockGetGolemStatus(...args),
+    RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
+    CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
+  };
+});
 
 // ── crypto.randomUUID control ─────────────────────────────────────────────────
 

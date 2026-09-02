@@ -6,15 +6,19 @@ import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
 import { parseGolemStatus } from '../../types/golem';
-import { git } from '../../../wailsjs/go/models';
+import { git } from '../../wails/bindings';
 
 const mockGitConflictState = jest.fn();
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  GitConflictState: (...args: unknown[]) => mockGitConflictState(...args),
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    GitConflictState: (...args: unknown[]) => mockGitConflictState(...args),
+  };
+});
 
-jest.mock('../../../wailsjs/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn(() => jest.fn()),
 }));
 

@@ -27,8 +27,8 @@ import {
   CreateGolemSettings,
   LoadGolemProfile,
   ReloadGolemSettings,
-} from '../../../wailsjs/go/main/App';
-import type { ai } from '../../../wailsjs/go/models';
+} from '../../wails/bindings';
+import type { ai } from '../../wails/bindings';
 import {
   boundedGolemMessage,
   parseSettingsReloadResult,

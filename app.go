@@ -40,7 +40,7 @@ type App struct {
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
 	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
-	emitFn func(event string, data ...any)
+	emitFn func(event string, data any)
 	// quitFn lets tests observe the drain's final quit, which cannot run
 	// outside a live Wails application. nil in production → runtime.Quit.
 	quitFn          func()
@@ -138,11 +138,9 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.executor = runprofile.NewExecutor(
-		func(event string, data ...any) {
-			runtime.EventsEmit(a.ctx, event, data...)
-		},
+		a.emit,
 		func(id runprofile.RunIdentity, stream, data string, timestamp int64) {
-			runtime.EventsEmit(a.ctx, "run:output", runprofile.OutputChunk{
+			a.emit("run:output", runprofile.OutputChunk{
 				RunIdentity: id,
 				Stream:      stream,
 				Data:        data,
@@ -150,9 +148,7 @@ func (a *App) startup(ctx context.Context) {
 			})
 		},
 	)
-	a.lspManager = lsp.NewManager(func(event string, data ...any) {
-		runtime.EventsEmit(a.ctx, event, data...)
-	})
+	a.lspManager = lsp.NewManager(a.emit)
 	a.wireLSPProvisioners()
 
 	// Golem chat. Without a ~/.firn root there is no consent path at all: an
@@ -239,7 +235,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 			a.enterCloseDrain("frontend never answered")
 		})
 		a.closeMu.Unlock()
-		a.emit("app:beforeclose")
+		a.emit("app:beforeclose", nil)
 		return true
 	}
 }
@@ -691,7 +687,7 @@ func (a *App) handleWatchEvent(event watcher.FileEvent) {
 	// policy path crosses the boundary, and it is emitted only for a manifest
 	// the current binding actually watches.
 	if a.aiService != nil && a.aiService.ReloadPolicy(event.Path) {
-		a.emit(ai.EventGolemStatusChanged)
+		a.emit(ai.EventGolemStatusChanged, nil)
 	}
 
 	// Reactive run profile re-detection on config file changes
@@ -746,6 +742,18 @@ func (a *App) ToggleMaximize() {
 	runtime.WindowToggleMaximise(a.ctx)
 }
 
+// TerminalOutputEvent is the single payload for "terminal:output". The v2
+// two-argument emit (id, data) was retired in #273 Task 0 so every event
+// carries at most one payload (the v3 event bridge relies on this).
+type TerminalOutputEvent struct {
+	TermID string `json:"termId"`
+	Data   string `json:"data"`
+}
+
+func (a *App) emitTerminalOutput(id, data string) {
+	a.emit("terminal:output", TerminalOutputEvent{TermID: id, Data: data})
+}
+
 // CreateTerminal creates a new terminal whose shell starts in dir — the loaded
 // workspace root — instead of the app process's own working directory. An
 // empty or missing dir inherits the process default.
@@ -761,7 +769,7 @@ func (a *App) CreateTerminal(dir string) (string, error) {
 	// means there is no output to stream — never a nil-deref in the goroutine.
 	if session, ok := a.termManager.Get(id); ok {
 		go session.ReadLoop(func(data string) {
-			runtime.EventsEmit(a.ctx, "terminal:output", id, data)
+			a.emitTerminalOutput(id, data)
 		})
 	}
 
@@ -902,13 +910,23 @@ func (a *App) UnadoptRunProfile(id string) error {
 	return a.mutateAndEmitProfiles(func(m *runprofile.ProjectRunProfileManager) error { return m.UnadoptProfile(id) })
 }
 
-// emit sends a Wails event, or routes to emitFn when set (tests).
-func (a *App) emit(event string, data ...any) {
+// emit sends a Wails event with zero or one payload, or routes to emitFn when set (tests).
+// In production, a nil payload means no Wails payload argument.
+// Callers must pass an untyped nil for zero-payload events. A typed nil pointer boxed into
+// this any parameter (e.g. a nil *Foo) is non-nil once boxed, so it would fail the data == nil
+// check below and serialize as a JSON null on the wire instead of omitting the payload
+// argument. All current call sites pass struct values, never pointers, into data (verified
+// 2026-09-01).
+func (a *App) emit(event string, data any) {
 	if a.emitFn != nil {
-		a.emitFn(event, data...)
+		a.emitFn(event, data)
 		return
 	}
-	runtime.EventsEmit(a.ctx, event, data...)
+	if data == nil {
+		runtime.EventsEmit(a.ctx, event)
+		return
+	}
+	runtime.EventsEmit(a.ctx, event, data)
 }
 
 func (a *App) runProfilesSnapshot(manager *runprofile.ProjectRunProfileManager) runprofile.RunProfilesSnapshot {

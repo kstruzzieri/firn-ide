@@ -6,6 +6,8 @@ module.exports = {
   EventsOffAll: jest.fn(),
   EventsEmit: jest.fn(),
   WindowSetTitle: jest.fn(),
+  BrowserOpenURL: jest.fn(),
+  ClipboardSetText: jest.fn(() => Promise.resolve()),
   LogPrint: jest.fn(),
   LogTrace: jest.fn(),
   LogDebug: jest.fn(),

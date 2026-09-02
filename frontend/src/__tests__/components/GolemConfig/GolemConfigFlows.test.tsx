@@ -23,7 +23,7 @@ import { ACTIVE_PROFILE_KEY } from '../../../types/golemConfig';
 import { GolemContractError, CAPABILITY_NAMES } from '../../../types/golem';
 import type { ModelProjection, ProviderProjection } from '../../../types/golem';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
   ApplyGolemSettings: jest.fn(),
   CreateGolemSettings: jest.fn(),
@@ -38,7 +38,7 @@ import {
   CreateGolemSettings,
   LoadGolemProfile,
   ReloadGolemSettings,
-} from '../../../../wailsjs/go/main/App';
+} from '../../../wails/bindings';
 
 const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const movedRevision = 'f'.repeat(64);

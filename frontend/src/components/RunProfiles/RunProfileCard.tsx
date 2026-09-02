@@ -10,7 +10,7 @@ import {
   SetActiveVariant,
   AdoptRunProfile,
   UnadoptRunProfile,
-} from '../../../wailsjs/go/main/App';
+} from '../../wails/bindings';
 import { useIDEStore } from '../../stores/ideStore';
 import { useProfileActions } from '../../hooks/useProfileActions';
 import type { RunProfile } from '../../types/runProfile';

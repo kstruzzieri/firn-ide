@@ -53,7 +53,11 @@ type emittedEvent struct {
 	args []any
 }
 
-func (r *emitRecorder) emit(name string, args ...any) {
+func (r *emitRecorder) emit(name string, data any) {
+	var args []any
+	if data != nil {
+		args = []any{data}
+	}
 	r.mu.Lock()
 	r.events = append(r.events, emittedEvent{name: name, args: args})
 	hook := r.hook

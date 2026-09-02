@@ -1,4 +1,4 @@
-import { filesystem } from '../../wailsjs/go/models';
+import { filesystem } from '../wails/bindings';
 
 const entry = (unreadable?: boolean) =>
   filesystem.FileEntry.createFrom({

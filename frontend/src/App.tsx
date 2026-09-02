@@ -29,7 +29,7 @@ import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
 import { useConflictProjectionSync } from './hooks/useProblemsProjection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
 import { useGitStore } from './stores/gitStore';
-import { ReadFile } from '../wailsjs/go/main/App';
+import { ReadFile } from './wails/bindings';
 import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
 import { isDirVisible } from './utils/treeVisibility';

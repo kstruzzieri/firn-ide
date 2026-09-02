@@ -1,5 +1,5 @@
 import { useIDEStore } from '../stores/ideStore';
-import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
+import { WindowSetTitle } from '../wails/runtime';
 import { getCachedWorkspaceTree } from './workspaceTreeCache';
 
 const MAX_RECENT = 10;

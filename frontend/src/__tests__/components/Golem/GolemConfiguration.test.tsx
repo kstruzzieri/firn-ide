@@ -5,12 +5,12 @@ import userEvent from '@testing-library/user-event';
 import { GolemConfiguration } from '../../../components/Golem/GolemConfiguration';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
   CancelGolemRun: jest.fn(),
   RunGolemTurn: jest.fn(),
 }));
-import { ReloadGolemSettings } from '../../../../wailsjs/go/main/App';
+import { ReloadGolemSettings } from '../../../wails/bindings';
 
 const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 

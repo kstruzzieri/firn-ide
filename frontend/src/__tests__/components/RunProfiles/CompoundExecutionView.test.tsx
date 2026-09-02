@@ -29,7 +29,7 @@ jest.mock('../../../components/RunOutput/SourceTimelineView', () => ({
 }));
 
 const stopMock = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   StopRunProfile: (id: string) => stopMock(id),
 }));
 

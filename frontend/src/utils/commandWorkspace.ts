@@ -1,4 +1,4 @@
-import type { workspace } from '../../wailsjs/go/models';
+import type { workspace } from '../wails/bindings';
 
 /**
  * Heuristics that map a run command to the workspace its toolchain implies, so

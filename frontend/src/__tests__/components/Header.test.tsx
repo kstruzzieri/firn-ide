@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { Header } from '../../components/Header/Header';
 import { useIDEStore } from '../../stores/ideStore';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: jest.fn().mockResolvedValue(undefined),
   StopRunProfile: jest.fn().mockResolvedValue(undefined),
   RestartRunProfile: jest.fn().mockResolvedValue(undefined),
@@ -10,7 +10,7 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
   OpenFolderDialog: jest.fn().mockResolvedValue(''),
 }));
 
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   EventsOn: jest.fn(() => jest.fn()),
   EventsOff: jest.fn(),
   WindowSetTitle: jest.fn(),

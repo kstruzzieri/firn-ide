@@ -1,11 +1,7 @@
 import { useEffect } from 'react';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
-import {
-  GetRunHistorySnapshot,
-  GetRunProfilesSnapshot,
-  LoadRunProfiles,
-} from '../../wailsjs/go/main/App';
-import type { runhistory, runprofile } from '../../wailsjs/go/models';
+import { EventsOn } from '../wails/runtime';
+import { GetRunHistorySnapshot, GetRunProfilesSnapshot, LoadRunProfiles } from '../wails/bindings';
+import type { runhistory, runprofile } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import { drainRunHistoryQueue, waitForRunHistoryClears } from './useRunOutput';
 import type {

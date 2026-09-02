@@ -24,11 +24,15 @@ const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
 const mockReloadGolemSettings = jest.fn();
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
-  RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
-  CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
-  ReloadGolemSettings: (...args: unknown[]) => mockReloadGolemSettings(...args),
-}));
+jest.mock('../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../wails/bindings');
+  return {
+    ...actual,
+    RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
+    CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
+    ReloadGolemSettings: (...args: unknown[]) => mockReloadGolemSettings(...args),
+  };
+});
 
 // The command-palette focus-interplay test below mounts the real
 // CommandPalette, which relies on <dialog> methods jsdom does not implement.

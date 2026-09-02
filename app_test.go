@@ -117,6 +117,19 @@ func newLoadedAppForProfiles(t *testing.T) *App {
 	return app
 }
 
+// countEvent filters a captured emit slice down to a single event name, so a
+// count-based assertion isn't broken by an unrelated subsystem's emit landing
+// in the same sink.
+func countEvent(events []string, name string) int {
+	n := 0
+	for _, e := range events {
+		if e == name {
+			n++
+		}
+	}
+	return n
+}
+
 func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	app := newLoadedAppForProfiles(t)
 	all := app.GetAllRunProfiles()
@@ -126,7 +139,7 @@ func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	wsID := all[0].WorkspaceID
 
 	var events []string
-	app.emitFn = func(event string, _ ...any) { events = append(events, event) }
+	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
 	// Invalid: empty name → no emit.
 	res, err := app.SaveRunProfile(runprofile.RunProfile{
@@ -138,8 +151,8 @@ func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	if res.Valid {
 		t.Fatal("expected invalid result for empty name")
 	}
-	if len(events) != 0 {
-		t.Fatalf("expected no emit on invalid save, got %v", events)
+	if n := countEvent(events, "runprofiles:changed"); n != 0 {
+		t.Fatalf("expected no runprofiles:changed emit on invalid save, got %v", events)
 	}
 
 	// Valid: emits exactly one runprofiles:changed.
@@ -150,7 +163,7 @@ func TestSaveRunProfileEmitsOnlyWhenValid(t *testing.T) {
 	if err != nil || !res.Valid {
 		t.Fatalf("valid save failed: err=%v res=%+v", err, res)
 	}
-	if len(events) != 1 || events[0] != "runprofiles:changed" {
+	if n := countEvent(events, "runprofiles:changed"); n != 1 {
 		t.Fatalf("expected one runprofiles:changed, got %v", events)
 	}
 }
@@ -161,7 +174,7 @@ func TestDeleteRunProfileEmitsOnSuccess(t *testing.T) {
 
 	// Set emitFn before seed save so the valid save doesn't reach runtime.EventsEmit.
 	var events []string
-	app.emitFn = func(event string, _ ...any) { events = append(events, event) }
+	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
 	if _, err := app.SaveRunProfile(runprofile.RunProfile{
 		ID: "user-dev", Name: "Dev", Type: runprofile.ProfileTypeSingle,
@@ -225,7 +238,7 @@ type closeProbe struct {
 	quit   chan struct{}
 }
 
-func (p *closeProbe) emit(event string, _ ...any) {
+func (p *closeProbe) emit(event string, _ any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, event)

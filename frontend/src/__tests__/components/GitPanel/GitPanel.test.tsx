@@ -1,4 +1,4 @@
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -38,8 +38,8 @@ import {
   GitFileAtRev,
   GitFileHunks,
   ReadFile,
-} from '../../../../wailsjs/go/main/App';
-import type { git, workspace } from '../../../../wailsjs/go/models';
+} from '../../../wails/bindings';
+import type { git, workspace } from '../../../wails/bindings';
 
 const mockGitStatus = GitStatus as jest.MockedFunction<typeof GitStatus>;
 const mockGenerate = GitGenerateCommitMessage as jest.MockedFunction<

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { GetGolemStatus, GetWorkspaceInfo } from '../../wailsjs/go/main/App';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { GetGolemStatus, GetWorkspaceInfo } from '../wails/bindings';
+import { EventsOn } from '../wails/runtime';
 import { ingestGolemEvents, useGolemStore } from '../stores/golemStore';
 import { useIDEStore } from '../stores/ideStore';
 import { boundedGolemMessage, parseGolemStatus, toStatusRequest } from '../types/golem';

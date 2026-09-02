@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ReloadGolemSettings } from '../../../wailsjs/go/main/App';
+import { ReloadGolemSettings } from '../../wails/bindings';
 import golemIcon from '../../assets/branding/golem-icon.svg';
 import {
   boundedGolemMessage,

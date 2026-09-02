@@ -6,9 +6,9 @@ import {
   SaveWorkspaceState,
   LoadWorkspaceState,
   ReadFile,
-} from '../../wailsjs/go/main/App';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
-import type { workspace, filesystem } from '../../wailsjs/go/models';
+} from '../wails/bindings';
+import { EventsOn } from '../wails/runtime';
+import type { workspace, filesystem } from '../wails/bindings';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { relativePathFromRoot } from '../utils/workspaceRegions';
