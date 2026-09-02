@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -69,20 +68,20 @@ func TestEmitTerminalOutputSinglePayload(t *testing.T) {
 }
 
 // The functions below enforce a single choke point for Wails event emission:
-// only (*App).emit in root app.go may call runtime.EventsEmit from the Wails
-// v2 runtime package. The seam is located by import path and resolved
-// alias (wailsEventsEmitSelector), not by matching the literal identifier
-// "runtime", so an evasive import such as
-// `import wr "github.com/wailsapp/wails/v2/pkg/runtime"` is still caught.
+// only (*App).emit in root app.go may reach the v3 event bus. v3 emits through
+// a value (app.Event.Emit), not a package function, so the guard keys on the
+// selector chain ending in .Event.Emit rather than on an import alias: the
+// seam's own a.v3app.Event.Emit, an application.Get().Event.Emit anywhere else,
+// and a stored method value are all recognized the same way, whatever the file
+// called its import. That also retires the v2 dot-import rule - a dot-import of
+// the application package cannot produce an emission that does not end in
+// .Event.Emit, so it needs no rule of its own.
 //
 // The scan is anti-vacuous: TestOnlyAppEmitReferencesWailsEventsEmit fails
-// if it finds zero allowed references (its `allowed == 0` check), so
-// renaming or moving the seam, or losing the v2 import entirely, fails
-// loudly instead of silently disabling the guard. When Phase B swaps in the
-// v3 transport, wailsRuntimeImportPath, isAppEmitSeam, and validAppEmitCall
-// must be updated together and deliberately - not left to whatever the new
-// code happens to look like.
-const wailsRuntimeImportPath = "github.com/wailsapp/wails/v2/pkg/runtime"
+// if it finds zero allowed references (its `allowed == 0` check), so renaming
+// or moving the seam, or breaking its fixed shape, fails loudly instead of
+// silently disabling the guard.
+const wailsApplicationImportPath = "github.com/wailsapp/wails/v3/pkg/application"
 
 var eventEmitScanSkipDirs = map[string]bool{
 	".git":         true,
@@ -107,73 +106,60 @@ func isAppEmitSeam(path string, fn *ast.FuncDecl) bool {
 	return ok && receiver.Name == "App"
 }
 
-func wailsEventsEmitSelector(expr ast.Expr, aliases map[string]bool) (*ast.SelectorExpr, bool) {
+// eventBusEmitSelector reports whether expr is an `<anything>.Event.Emit`
+// selector - the only shape a v3 event emission can take, whatever holds the
+// application value it is reached through.
+func eventBusEmitSelector(expr ast.Expr) (*ast.SelectorExpr, bool) {
 	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "EventsEmit" {
+	if !ok || sel.Sel.Name != "Emit" {
 		return nil, false
 	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return sel, ok && aliases[pkg.Name] && pkg.Obj == nil
+	bus, ok := sel.X.(*ast.SelectorExpr)
+	return sel, ok && bus.Sel.Name == "Event"
 }
 
 // validAppEmitCall reports whether call is the fixed-shape
-// runtime.EventsEmit(a.ctx, event) or runtime.EventsEmit(a.ctx, event, data)
-// invocation the seam is allowed to make, and if not, a reason naming the
-// specific defect. Every argument must be the exact identifier emit's own
-// signature received - a.ctx, event, and (when present) data - so the third
-// argument in particular cannot be a literal nil: that would let the seam
-// smuggle a hardcoded no-payload emission in place of actually forwarding
-// the caller's data.
-func validAppEmitCall(call *ast.CallExpr) (bool, string) {
+// a.v3app.Event.Emit(event) or a.v3app.Event.Emit(event, data) invocation the
+// seam is allowed to make, and if not, a reason naming the specific defect.
+// The bus must be the app's own v3 handle rather than one fetched from
+// somewhere else, and every argument must be the exact identifier emit's own
+// signature received - so the payload in particular cannot be a literal nil:
+// that would let the seam smuggle a hardcoded no-payload emission in place of
+// actually forwarding the caller's data.
+func validAppEmitCall(sel *ast.SelectorExpr, call *ast.CallExpr) (bool, string) {
 	if call.Ellipsis.IsValid() {
 		return false, "must not spread its arguments with ellipsis"
 	}
-	if len(call.Args) != 2 && len(call.Args) != 3 {
-		return false, "must be a fixed 2- or 3-argument call"
+	// sel matched eventBusEmitSelector, so sel.X is the `<host>.Event` selector;
+	// the host below must in turn be the a.v3app field.
+	bus := sel.X.(*ast.SelectorExpr)
+	host, hostOK := bus.X.(*ast.SelectorExpr)
+	if !hostOK {
+		return false, "must emit through a.v3app.Event"
 	}
-	ctx, ok := call.Args[0].(*ast.SelectorExpr)
-	if !ok {
-		return false, "first argument must be a.ctx"
+	receiver, receiverOK := host.X.(*ast.Ident)
+	if !receiverOK || receiver.Name != "a" || host.Sel.Name != "v3app" {
+		return false, "must emit through a.v3app.Event"
 	}
-	receiver, receiverOK := ctx.X.(*ast.Ident)
-	if !receiverOK || receiver.Name != "a" || ctx.Sel.Name != "ctx" {
-		return false, "first argument must be a.ctx"
+	if len(call.Args) != 1 && len(call.Args) != 2 {
+		return false, "must be a fixed 1- or 2-argument call"
 	}
-	event, eventOK := call.Args[1].(*ast.Ident)
+	event, eventOK := call.Args[0].(*ast.Ident)
 	if !eventOK || event.Name != "event" {
-		return false, "second argument must be the forwarded event identifier"
+		return false, "first argument must be the forwarded event identifier"
 	}
-	if len(call.Args) == 2 {
+	if len(call.Args) == 1 {
 		return true, ""
 	}
-	data, ok := call.Args[2].(*ast.Ident)
+	data, ok := call.Args[1].(*ast.Ident)
 	if !ok || data.Name != "data" {
-		return false, "third argument must be the forwarded data identifier, not a literal"
+		return false, "second argument must be the forwarded data identifier, not a literal"
 	}
 	return true, ""
 }
 
 func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (int, []string) {
-	aliases := map[string]bool{}
 	var violations []string
-	for _, spec := range file.Imports {
-		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || importPath != wailsRuntimeImportPath {
-			continue
-		}
-		name := "runtime"
-		if spec.Name != nil {
-			name = spec.Name.Name
-		}
-		if name == "." {
-			pos := fset.Position(spec.Pos())
-			violations = append(violations, fmt.Sprintf("%s:%d: dot-import of Wails runtime bypasses App.emit", pos.Filename, pos.Line))
-			continue
-		}
-		if name != "_" {
-			aliases[name] = true
-		}
-	}
 
 	var seam *ast.BlockStmt
 	for _, decl := range file.Decls {
@@ -191,22 +177,22 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 			if !ok {
 				return true
 			}
-			sel, ok := wailsEventsEmitSelector(call.Fun, aliases)
+			sel, ok := eventBusEmitSelector(call.Fun)
 			if !ok {
 				return true
 			}
-			valid, reason := validAppEmitCall(call)
+			valid, reason := validAppEmitCall(sel, call)
 			seamCalls[sel] = valid
 			if valid {
 				shapes[len(call.Args)]++
 			} else {
 				pos := fset.Position(call.Pos())
-				violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit in (*App).emit %s", pos.Filename, pos.Line, reason))
+				violations = append(violations, fmt.Sprintf("%s:%d: Event.Emit in (*App).emit %s", pos.Filename, pos.Line, reason))
 			}
 			return true
 		})
-		if shapes[2] != 1 || shapes[3] != 1 {
-			violations = append(violations, fmt.Sprintf("%s: (*App).emit must contain exactly one payload-free and one single-payload runtime.EventsEmit call", path))
+		if shapes[1] != 1 || shapes[2] != 1 {
+			violations = append(violations, fmt.Sprintf("%s: (*App).emit must contain exactly one payload-free and one single-payload a.v3app.Event.Emit call", path))
 		}
 	}
 
@@ -216,8 +202,8 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 		if !ok {
 			return true
 		}
-		_, isWailsEventsEmit := wailsEventsEmitSelector(sel, aliases)
-		if !isWailsEventsEmit {
+		_, isEventBusEmit := eventBusEmitSelector(sel)
+		if !isEventBusEmit {
 			return true
 		}
 		if seam != nil && seam.Pos() <= sel.Pos() && sel.End() <= seam.End() {
@@ -228,31 +214,41 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 				return true
 			}
 			pos := fset.Position(sel.Pos())
-			violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit in (*App).emit must be called directly", pos.Filename, pos.Line))
+			violations = append(violations, fmt.Sprintf("%s:%d: Event.Emit in (*App).emit must be called directly", pos.Filename, pos.Line))
 			return true
 		}
 		pos := fset.Position(sel.Pos())
-		violations = append(violations, fmt.Sprintf("%s:%d: runtime.EventsEmit referenced outside (*App).emit", pos.Filename, pos.Line))
+		violations = append(violations, fmt.Sprintf("%s:%d: Event.Emit referenced outside (*App).emit", pos.Filename, pos.Line))
 		return true
 	})
 	return allowed, violations
 }
 
-func TestWailsEventsEmitGuardDetectsAliasedImport(t *testing.T) {
+// The v3 bus is reached through a value, so no import name identifies it: a
+// file that aliases the application package and one that emits through the
+// App's own field must both be caught outside the seam, and a stored method
+// value counts as an emission just like a direct call.
+func TestWailsEventsEmitGuardDetectsEmitOutsideTheSeam(t *testing.T) {
 	t.Parallel()
 
-	const source = `package main
-import wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-func bypass() { send := wailsruntime.EventsEmit; _ = send }
-`
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "bypass.go", source, 0)
-	if err != nil {
-		t.Fatalf("parser.ParseFile(alias fixture) error = %v, want nil", err)
+	bypasses := map[string]string{
+		"aliased package call": `func bypass() { wailsapp.Get().Event.Emit("terminal:output") }`,
+		"stored method value":  `func bypass(a *App) { send := a.v3app.Event.Emit; _ = send }`,
 	}
-	_, violations := scanWailsEventsEmitFile(fset, "bypass.go", file)
-	if len(violations) != 1 {
-		t.Errorf("len(scanWailsEventsEmitFile(alias fixture).violations) = %d, want 1", len(violations))
+
+	for name, body := range bypasses {
+		t.Run(name, func(t *testing.T) {
+			source := "package main\nimport wailsapp \"" + wailsApplicationImportPath + "\"\n" + body
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "bypass.go", source, 0)
+			if err != nil {
+				t.Fatalf("parser.ParseFile(bypass fixture) error = %v, want nil", err)
+			}
+			_, violations := scanWailsEventsEmitFile(fset, "bypass.go", file)
+			if len(violations) != 1 {
+				t.Errorf("len(scanWailsEventsEmitFile(bypass fixture).violations) = %d, want 1", len(violations))
+			}
+		})
 	}
 }
 
@@ -260,18 +256,22 @@ func TestWailsEventsEmitGuardRejectsInvalidSeamReferences(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"method value":   `func (a *App) emit(event string, data any) { send := runtime.EventsEmit; _ = send }`,
-		"extra argument": `func (a *App) emit(event string, data any) { runtime.EventsEmit(a.ctx, event, data, data) }`,
-		"ellipsis":       `func (a *App) emit(event string, data any) { args := []any{data}; runtime.EventsEmit(a.ctx, event, args...) }`,
+		"method value":   `func (a *App) emit(event string, data any) { send := a.v3app.Event.Emit; _ = send }`,
+		"extra argument": `func (a *App) emit(event string, data any) { a.v3app.Event.Emit(event, data, data) }`,
+		"ellipsis":       `func (a *App) emit(event string, data any) { args := []any{data}; a.v3app.Event.Emit(event, args...) }`,
 		"nil payload": `func (a *App) emit(event string, data any) {
-			if data == nil { runtime.EventsEmit(a.ctx, event); return }
-			runtime.EventsEmit(a.ctx, event, nil)
+			if data == nil { a.v3app.Event.Emit(event); return }
+			a.v3app.Event.Emit(event, nil)
+		}`,
+		"foreign bus": `func (a *App) emit(event string, data any) {
+			if data == nil { application.Get().Event.Emit(event); return }
+			application.Get().Event.Emit(event, data)
 		}`,
 	}
 
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
-			source := "package main\nimport \"" + wailsRuntimeImportPath + "\"\n" + body
+			source := "package main\nimport \"" + wailsApplicationImportPath + "\"\n" + body
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, "app.go", source, 0)
 			if err != nil {
@@ -320,7 +320,7 @@ func TestOnlyAppEmitReferencesWailsEventsEmit(t *testing.T) {
 	}
 
 	if allowed == 0 {
-		violations = append(violations, "guard found no runtime.EventsEmit reference inside (*App).emit")
+		violations = append(violations, "guard found no a.v3app.Event.Emit reference inside (*App).emit")
 	}
 	if len(violations) > 0 {
 		t.Fatalf("direct Wails event-emission violations:\n%s", strings.Join(violations, "\n"))

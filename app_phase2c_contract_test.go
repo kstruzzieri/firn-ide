@@ -160,8 +160,8 @@ func TestAppPhase2C_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testin
 	if err != nil {
 		t.Fatalf("parse app.go: %v", err)
 	}
-	// The stop lives in the drain the §5.5 machine starts, not in beforeClose
-	// itself: the first close only asks the frontend.
+	// The stop lives in the drain the §5.5 machine starts, not in the shouldQuit
+	// edge itself: the first quit request only asks the frontend.
 	var drain *ast.FuncDecl
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)

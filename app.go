@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App represents the main application structure for Firn IDE.
@@ -39,11 +39,15 @@ type App struct {
 	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
-	// emitFn lets tests observe emitted events. nil in production → runtime.EventsEmit.
+	// emitFn lets tests observe emitted events. nil in production → the v3 event bus.
 	emitFn func(event string, data any)
 	// quitFn lets tests observe the drain's final quit, which cannot run
-	// outside a live Wails application. nil in production → runtime.Quit.
-	quitFn          func()
+	// outside a live Wails application. nil in production → v3app.Quit.
+	quitFn func()
+	// v3app and mainWindow are the v3 host handles, set in main() before Run.
+	// Both are nil in tests, so every use of them is nil-guarded.
+	v3app           *application.App
+	mainWindow      *application.WebviewWindow
 	executor        *runprofile.Executor
 	osFS            filesystem.FileSystem
 	workspaceStore  *workspace.Store
@@ -81,12 +85,20 @@ type App struct {
 // enters awaiting_frontend and changes nothing else; only the frontend's
 // answer (or one of the amendment-11 escape hatches) enters draining, which is
 // the single state where teardown, the two-second deadline, and Quit happen.
+//
+// closePermitted is the v3 terminal state. v2 answered "prevent this close?"
+// and let the drain's own Quit past by allowing the close while draining; v3
+// asks the inverse question on ShouldQuit and routes the drain's Quit back
+// through the same callback, so the drain has to record that it finished
+// before it asks the platform to quit — otherwise its own request is refused
+// and the app never exits.
 type closeState int
 
 const (
 	closeIdle closeState = iota
 	closeAwaitingFrontend
 	closeDraining
+	closePermitted
 )
 
 // closeHandshakeBackstop bounds awaiting_frontend for a renderer that never
@@ -133,8 +145,16 @@ func NewApp() *App {
 	}
 }
 
-// startup is called by Wails when the application starts.
-// It stores the context for later use with runtime methods.
+// ServiceStartup is the v3 service lifecycle hook Wails calls before the window
+// serves the frontend — the same ordering v2's OnStartup had. It exists only to
+// adapt that signature onto startup.
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	a.startup(ctx)
+	return nil
+}
+
+// startup is called by Wails when the application starts, through
+// ServiceStartup. It stores the context the services it wires below hang off.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.executor = runprofile.NewExecutor(
@@ -210,25 +230,31 @@ func (a *App) wireLSPProvisioners() {
 	})
 }
 
-// beforeClose is called by Wails before the application window closes. It is
-// the OS edge of the §5.5 machine:
+// shouldQuit is the v3 Options.ShouldQuit callback: it answers every quit
+// request — Cmd+Q, the application menu, and the main window's close button via
+// handleMainWindowClosing — and it is the OS edge of the §5.5 machine:
 //
 //   - idle: enter awaiting_frontend, emit one app:beforeclose, arm the
-//     backstop, and prevent the close. No teardown, no deadline — the frontend
+//     backstop, and refuse the quit. No teardown, no deadline — the frontend
 //     may still finish a settings write, resolve an unsaved draft, or cancel.
-//   - awaiting_frontend: a second close request is the user asking again
+//   - awaiting_frontend: a second request is the user asking again
 //     (amendment 11), so it forces the drain. It emits no second event.
-//   - draining: allow the close so the drain's own Quit can finish.
-func (a *App) beforeClose(ctx context.Context) (prevent bool) {
+//   - draining: refuse; the teardown is still running and only the drain's own
+//     permitted quit may end the app.
+//   - permitted: allow, so the quit the finished drain requested goes through.
+func (a *App) shouldQuit() bool {
 	a.closeMu.Lock()
 	switch a.closePhase {
+	case closePermitted:
+		a.closeMu.Unlock()
+		return true
 	case closeDraining:
 		a.closeMu.Unlock()
 		return false
 	case closeAwaitingFrontend:
 		a.closeMu.Unlock()
 		a.enterCloseDrain("second close request")
-		return true
+		return false
 	default:
 		a.closePhase = closeAwaitingFrontend
 		a.closeBackstopTimer = time.AfterFunc(a.backstopDelay(), func() {
@@ -236,8 +262,31 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 		})
 		a.closeMu.Unlock()
 		a.emit("app:beforeclose", nil)
-		return true
+		return false
 	}
+}
+
+// quitPermitted reports whether the drain has finished and its quit may pass.
+func (a *App) quitPermitted() bool {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+	return a.closePhase == closePermitted
+}
+
+// handleMainWindowClosing routes the main window's close button into the same
+// machine rather than letting the window close on its own: closing the only
+// window would tear the UI down while the drain is still running. It cancels
+// the close and asks the machine, which emits the handshake event on the first
+// press and forces the drain on the second. Once permitted, the window is
+// closing because the app is quitting, so there is nothing to cancel.
+// #271 secondary windows own their own close behaviour; only this hook is
+// wired to the main window.
+func (a *App) handleMainWindowClosing(cancel func()) {
+	if a.quitPermitted() {
+		return
+	}
+	cancel()
+	_ = a.shouldQuit()
 }
 
 // backstopDelay is the production backstop unless a test shortened it.
@@ -356,22 +405,34 @@ func (a *App) startCloseDrain() {
 			case <-aiDoneCh:
 				aiDoneCh = nil
 			case <-deadline:
-				a.quit()
+				a.permitAndQuit()
 				return
 			}
 		}
 
-		a.quit()
+		a.permitAndQuit()
 	}()
 }
 
-// quit ends the application, or routes to quitFn when set (tests).
+// permitAndQuit ends the drain: it records that the teardown is done and only
+// then asks the platform to quit. The order matters — the platform answers by
+// calling shouldQuit, which refuses anything that is not already permitted.
+func (a *App) permitAndQuit() {
+	a.closeMu.Lock()
+	a.closePhase = closePermitted
+	a.closeMu.Unlock()
+	a.quit()
+}
+
+// quit asks the v3 application to quit, or routes to quitFn when set (tests).
 func (a *App) quit() {
 	if a.quitFn != nil {
 		a.quitFn()
 		return
 	}
-	runtime.Quit(a.ctx)
+	if a.v3app != nil {
+		a.v3app.Quit()
+	}
 }
 
 // closeAIService shuts the Golem service down inside the close drain's budget.
@@ -456,10 +517,10 @@ func (a *App) golemError(err error) error {
 		public = ai.SanitizeError(err)
 	}
 	// The standard logger, as internal/ai already uses for host-only Golem
-	// diagnostics. runtime.LogErrorf would need a.ctx to be the Wails lifecycle
-	// context carrying the logger — it calls log.Fatalf otherwise — so it cannot
-	// record the calls that land before startup, which are exactly the ones
-	// worth recording. In a Wails app both reach the same destination.
+	// diagnostics and as every host-side log line does since the v3 migration:
+	// the v3 application logger lives on the app handle, which is nil until
+	// main() builds it, so it cannot record the calls that land before startup —
+	// exactly the ones worth recording.
 	log.Printf(golemLogPrefix+"%s: %v", public.Code, err)
 	return public
 }
@@ -731,15 +792,22 @@ func (a *App) GetWatchedPath() string {
 // Returns the selected folder path, or empty string if cancelled.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) OpenFolderDialog() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Folder",
-	})
+	if a.v3app == nil {
+		return "", nil
+	}
+	return a.v3app.Dialog.OpenFile().
+		SetTitle("Open Folder").
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
 }
 
 // ToggleMaximize toggles the window between maximized and restored states.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ToggleMaximize() {
-	runtime.WindowToggleMaximise(a.ctx)
+	if a.mainWindow != nil {
+		a.mainWindow.ToggleMaximise()
+	}
 }
 
 // TerminalOutputEvent is the single payload for "terminal:output". The v2
@@ -761,7 +829,7 @@ func (a *App) emitTerminalOutput(id, data string) {
 func (a *App) CreateTerminal(dir string) (string, error) {
 	id, err := a.termManager.Create(dir)
 	if err != nil {
-		runtime.LogErrorf(a.ctx, "CreateTerminal failed: %v", err)
+		log.Printf("CreateTerminal failed: %v", err)
 		return "", err
 	}
 
@@ -865,7 +933,7 @@ func (a *App) loadRunProfilesLocked(workspacePath string) error {
 	// could not be written back) instead of swallowing them. A degraded load
 	// still yields a usable profile list.
 	for _, w := range manager.Warnings() {
-		runtime.LogWarningf(a.ctx, "run profiles: %s", w)
+		log.Printf("run profiles: %s", w)
 	}
 	return nil
 }
@@ -922,11 +990,14 @@ func (a *App) emit(event string, data any) {
 		a.emitFn(event, data)
 		return
 	}
-	if data == nil {
-		runtime.EventsEmit(a.ctx, event)
+	if a.v3app == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, event, data)
+	if data == nil {
+		a.v3app.Event.Emit(event)
+		return
+	}
+	a.v3app.Event.Emit(event, data)
 }
 
 func (a *App) runProfilesSnapshot(manager *runprofile.ProjectRunProfileManager) runprofile.RunProfilesSnapshot {
@@ -1201,7 +1272,7 @@ func (a *App) recordRunProfile(profileID string, launchedAt int64) {
 	}
 	a.profileMu.RUnlock()
 	if err != nil {
-		runtime.LogWarningf(a.ctx, "could not record run recency for %s: %v", profileID, err)
+		log.Printf("could not record run recency for %s: %v", profileID, err)
 		return
 	}
 	a.emit("runprofiles:changed", snap)
