@@ -140,6 +140,38 @@ describe('release version consistency', () => {
     expect(version).toBe(`${config.info.version}.0`);
     expect(version).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
   });
+
+  // build/config.yml info.version is baked verbatim into these platform asset
+  // files by `wails3 task common:update:build-assets`; nothing re-derives
+  // them at build time, so a version bump that skips regeneration ships a
+  // mismatched packaged version with no other gate to catch it.
+  function plistValue(plist: string, key: string): string | undefined {
+    return plist.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`))?.[1];
+  }
+
+  it('keeps the macOS Info.plist bundle version in lockstep with the config version', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+    const plist = readFileSync(resolve(rootDir, 'build/darwin/Info.plist'), 'utf8');
+
+    expect(plistValue(plist, 'CFBundleShortVersionString')).toBe(config.info.version);
+    expect(plistValue(plist, 'CFBundleVersion')).toBe(config.info.version);
+  });
+
+  it('keeps the macOS dev Info.plist bundle version in lockstep with the config version', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+    const plist = readFileSync(resolve(rootDir, 'build/darwin/Info.dev.plist'), 'utf8');
+
+    expect(plistValue(plist, 'CFBundleShortVersionString')).toBe(config.info.version);
+    expect(plistValue(plist, 'CFBundleVersion')).toBe(config.info.version);
+  });
+
+  it('keeps the Windows info.json version in lockstep with the config version', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+    const info = JSON.parse(readFileSync(resolve(rootDir, 'build/windows/info.json'), 'utf8'));
+
+    expect(info.fixed.file_version).toBe(config.info.version);
+    expect(info.info['0000'].ProductVersion).toBe(config.info.version);
+  });
 });
 
 describe('release checksums', () => {

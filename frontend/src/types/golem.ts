@@ -206,13 +206,20 @@ export interface GolemStoreState {
 }
 
 // ── Wails inputs ──────────────────────────────────────────────────────────────
-// The generated constructors build the request payloads and produce the right
-// classes for the boundary. It is the TypeScript types below, not the
-// constructors, that keep an undeclared field from being written here — v3
-// constructors Object.assign their entire source object rather than copying
-// field by field. The Go side (internal/ai) is the actual backstop: it
-// validates unknown fields strictly and rejects, rather than silently drops,
-// anything that gets through.
+// v3 constructors Object.assign their entire source object rather than
+// copying field by field, so passing a caller-supplied object straight
+// through (spread, or a variable handed to the constructor whole) ships
+// anything extra it carries -- a QueuedTurn's `queueId`/`state` riding along
+// on a TurnDraft, for example. Every builder below is enumerated field by
+// field from the declared shape of its input type, so nothing beyond those
+// fields ever reaches the wire. TypeScript types are not a runtime guard for
+// this: excess-property checks only fire on object literals passed inline,
+// never on a caller's variable, which is exactly how a QueuedTurn reaches
+// toTurnRequest. The Go side is not a backstop either -- ai.TurnRequest,
+// ai.StatusRequest, and ai.RunIdentity decode with plain json.Unmarshal, with
+// none of settings_apply.go/consent.go's strictUnmarshal rejecting unknown
+// fields. This file is the only enforcement point on the request side of the
+// boundary.
 
 export const toStatusRequest = (identity: ConversationIdentity) =>
   new ai.StatusRequest({
@@ -221,11 +228,25 @@ export const toStatusRequest = (identity: ConversationIdentity) =>
   });
 
 export const toTurnRequest = (identity: RunIdentity, draft: TurnDraft, consentChallengeId = '') =>
-  // v3 constructors Object.assign their source, so nested structs have to be
-  // built explicitly to stay generated instances.
-  new ai.TurnRequest({ identity: new ai.RunIdentity(identity), ...draft, consentChallengeId });
+  new ai.TurnRequest({
+    identity: new ai.RunIdentity({
+      repoEpoch: identity.repoEpoch,
+      workspaceId: identity.workspaceId,
+      conversationId: identity.conversationId,
+      runId: identity.runId,
+    }),
+    message: draft.message,
+    contextRefs: draft.contextRefs,
+    consentChallengeId,
+  });
 
-export const toCancelRequest = (identity: RunIdentity) => new ai.RunIdentity(identity);
+export const toCancelRequest = (identity: RunIdentity) =>
+  new ai.RunIdentity({
+    repoEpoch: identity.repoEpoch,
+    workspaceId: identity.workspaceId,
+    conversationId: identity.conversationId,
+    runId: identity.runId,
+  });
 
 // ── Boundary validators ───────────────────────────────────────────────────────
 

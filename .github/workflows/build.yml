@@ -57,3 +57,9 @@ jobs:
 
       - name: Verify build output
         run: test -f bin/firn
+
+      # The build regenerates bindings with -clean=true; a diff here means a
+      # Go-facing API or exported model shape changed without regenerating
+      # the committed frontend/bindings output.
+      - name: Verify committed bindings are current
+        run: git diff --exit-code -- frontend/bindings

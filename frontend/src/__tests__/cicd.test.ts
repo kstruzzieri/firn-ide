@@ -230,13 +230,20 @@ describe('CI Workflow', () => {
   it('should not reference the Wails v2 SDK in any workflow', () => {
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
 
+    let scannedFiles = 0;
     for (const file of workflowFiles) {
       const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
       expect({ file, hasV2Reference: /wailsapp\/wails\/v2|wails@v2/.test(content) }).toEqual({
         file,
         hasV2Reference: false,
       });
+      scannedFiles += 1;
     }
+
+    // A loop that only asserts inside its body passes vacuously if the
+    // workflows directory is ever empty or unreadable -- assert it actually
+    // scanned something.
+    expect(scannedFiles).toBeGreaterThan(0);
   });
 
   // The v3 Linux ABI is CGO build-tag gated: without -tags gtk3, package main
@@ -258,6 +265,7 @@ describe('CI Workflow', () => {
       'wails3 task linux:build',
     ];
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
+    let matchedSteps = 0;
 
     for (const file of workflowFiles) {
       const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
@@ -278,6 +286,7 @@ describe('CI Workflow', () => {
             .join('\n');
           const compilesGo = goCompileMarkers.some((marker) => stepText.includes(marker));
           if (!compilesGo) continue;
+          matchedSteps += 1;
 
           const isLinuxTaskBuild = stepText.includes('wails3 task linux:build');
           const isGolangci = stepText.includes('golangci-lint');
@@ -293,6 +302,12 @@ describe('CI Workflow', () => {
         }
       }
     }
+
+    // A loop that only asserts inside its body passes vacuously if nothing
+    // ever matches. Today five Go-compiling Linux steps match: test.yml
+    // backend-tests (two `go test` steps), lint.yml golangci-lint, and the
+    // `wails3 task linux:build` steps in build.yml and release.yml.
+    expect(matchedSteps).toBeGreaterThanOrEqual(3);
   });
 });
 

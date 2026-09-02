@@ -23,7 +23,11 @@ tasks:
       # Scoped to this task, not the file's top-level `vars:`: go-task merges an
       # included Taskfile's file-level vars into the global scope, which would
       # also stamp `-tags gtk3` onto the macOS and Windows builds.
-      EXTRA_TAGS: '{{.EXTRA_TAGS | default "gtk3"}}'
+      # `default` REPLACES rather than augments, so a caller-supplied
+      # EXTRA_TAGS (the upstream CLI passes one for `wails3 build -tags ...`
+      # and when WAILS_MCP is set) would silently drop gtk3 instead of adding
+      # to it. gtk3 is always present; any caller tags are appended after it.
+      EXTRA_TAGS: 'gtk3{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}}'
 
   build:native:
     summary: Builds the application natively on Linux
