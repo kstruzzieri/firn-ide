@@ -11,6 +11,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { parse } from 'yaml';
 
 const rootDir = resolve(__dirname, '../../..');
 const releaseScriptsDir = resolve(rootDir, '.github/scripts');
@@ -33,13 +34,13 @@ describe('release changelog extraction', () => {
   const script = resolve(releaseScriptsDir, 'extract-changelog.sh');
   const changelog = resolve(rootDir, 'CHANGELOG.md');
   const packageJson = resolve(rootDir, 'frontend/package.json');
-  const wailsJson = resolve(rootDir, 'wails.json');
+  const configYml = resolve(rootDir, 'build/config.yml');
 
   it('extracts the requested stable section without bleeding into the prior release', () => {
     withTempDir((dir) => {
       const output = join(dir, 'notes.md');
 
-      execFileSync('sh', [script, 'v0.11.0-rc.1', changelog, output, packageJson, wailsJson]);
+      execFileSync('sh', [script, 'v0.11.0-rc.1', changelog, output, packageJson, configYml]);
 
       const notes = readFileSync(output, 'utf8');
       expect(notes.trim()).not.toBe('');
@@ -60,7 +61,7 @@ describe('release changelog extraction', () => {
       );
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0', pendingChangelog, join(dir, 'notes.md'), packageJson, wailsJson],
+        [script, 'v0.11.0', pendingChangelog, join(dir, 'notes.md'), packageJson, configYml],
         { encoding: 'utf8' }
       );
 
@@ -73,7 +74,7 @@ describe('release changelog extraction', () => {
     withTempDir((dir) => {
       const output = join(dir, 'notes.md');
 
-      execFileSync('sh', [script, 'v0.11.0', changelog, output, packageJson, wailsJson]);
+      execFileSync('sh', [script, 'v0.11.0', changelog, output, packageJson, configYml]);
 
       const notes = readFileSync(output, 'utf8');
       expect(notes.trim()).not.toBe('');
@@ -87,7 +88,7 @@ describe('release changelog extraction', () => {
       writeFileSync(stalePackage, '{"version":"0.10.0"}\n');
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), stalePackage, wailsJson],
+        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), stalePackage, configYml],
         { encoding: 'utf8' }
       );
 
@@ -98,16 +99,18 @@ describe('release changelog extraction', () => {
 
   it('rejects a Wails product version that does not match the tag', () => {
     withTempDir((dir) => {
-      const staleWails = join(dir, 'wails.json');
-      writeFileSync(staleWails, '{\n  "info": {\n    "productVersion": "1.0.0"\n  }\n}\n');
+      const staleConfig = join(dir, 'config.yml');
+      writeFileSync(staleConfig, "version: '3'\ninfo:\n  version: '1.0.0'\n");
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), packageJson, staleWails],
+        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), packageJson, staleConfig],
         { encoding: 'utf8' }
       );
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain('wails productVersion 1.0.0 does not match tag v0.11.0-rc.1');
+      expect(result.stderr).toContain(
+        'config.yml info.version 1.0.0 does not match tag v0.11.0-rc.1'
+      );
     });
   });
 });
@@ -117,10 +120,9 @@ describe('release version consistency', () => {
     const packageVersion = JSON.parse(
       readFileSync(resolve(rootDir, 'frontend/package.json'), 'utf8')
     ).version;
-    const wailsProductVersion = JSON.parse(readFileSync(resolve(rootDir, 'wails.json'), 'utf8'))
-      .info?.productVersion;
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
 
-    expect(wailsProductVersion).toBe(packageVersion);
+    expect(config.info?.version).toBe(packageVersion);
   });
 });
 
