@@ -250,7 +250,9 @@ describe('CI Workflow', () => {
   // compiles against the GTK4 path Firn does not ship (see build/linux and
   // .golangci.yml), so any job that compiles Go on a ubuntu runner must
   // either pass the tag directly, inherit it from .golangci.yml, or delegate
-  // to the linux:build Task (which supplies it by default).
+  // to the linux:build Task (which supplies it by default). The wails3 CLI
+  // itself is also gtk3-gated on Linux (it links WebKit directly), so a
+  // `go install ... cmd/wails3` step counts too.
   it('should require the gtk3 build tag wherever a Linux job compiles Go', () => {
     const golangciConfig = readFileSync(resolve(rootDir, '.golangci.yml'), 'utf-8');
     const golangciBuildTags =
@@ -284,7 +286,10 @@ describe('CI Workflow', () => {
           const stepText = [step.run, step.uses]
             .filter((value): value is string => Boolean(value))
             .join('\n');
-          const compilesGo = goCompileMarkers.some((marker) => stepText.includes(marker));
+          const isWailsCliInstall =
+            stepText.includes('go install') && stepText.includes('cmd/wails3');
+          const compilesGo =
+            goCompileMarkers.some((marker) => stepText.includes(marker)) || isWailsCliInstall;
           if (!compilesGo) continue;
           matchedSteps += 1;
 
@@ -304,10 +309,12 @@ describe('CI Workflow', () => {
     }
 
     // A loop that only asserts inside its body passes vacuously if nothing
-    // ever matches. Today five Go-compiling Linux steps match: test.yml
-    // backend-tests (two `go test` steps), lint.yml golangci-lint, and the
-    // `wails3 task linux:build` steps in build.yml and release.yml.
-    expect(matchedSteps).toBeGreaterThanOrEqual(3);
+    // ever matches. Today seven Go-compiling Linux steps match: test.yml
+    // backend-tests (two `go test` steps), lint.yml golangci-lint, the
+    // `wails3 task linux:build` steps in build.yml and release.yml, and the
+    // `go install ... cmd/wails3` CLI-install steps in build.yml and
+    // release.yml's build-linux job.
+    expect(matchedSteps).toBeGreaterThanOrEqual(5);
   });
 });
 

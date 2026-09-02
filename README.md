@@ -302,7 +302,7 @@ firn-ide/
 
 - Go 1.25+
 - Node.js 18+
-- Wails CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16`
+- Wails CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16` (on Linux, install `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` first, then add `-tags gtk3` to that install command, matching CI)
 - Linux only: `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` (the Linux build compiles with the `gtk3` tag against WebKit2GTK 4.1)
 
 ### Commands
