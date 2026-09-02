@@ -912,6 +912,11 @@ func (a *App) UnadoptRunProfile(id string) error {
 
 // emit sends a Wails event with zero or one payload, or routes to emitFn when set (tests).
 // In production, a nil payload means no Wails payload argument.
+// Callers must pass an untyped nil for zero-payload events. A typed nil pointer boxed into
+// this any parameter (e.g. a nil *Foo) is non-nil once boxed, so it would fail the data == nil
+// check below and serialize as a JSON null on the wire instead of omitting the payload
+// argument. All current call sites pass struct values, never pointers, into data (verified
+// 2026-09-01).
 func (a *App) emit(event string, data any) {
 	if a.emitFn != nil {
 		a.emitFn(event, data)

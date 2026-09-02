@@ -23,6 +23,7 @@ const JEST_MODULE_LOADERS = new Set([
   'unstable_unmockModule',
 ]);
 const RAW_WAILS_GLOBALS = new Set(['go', 'runtime']);
+const RAW_GLOBAL_OWNERS = new Set(['window', 'globalThis', 'self', 'top', 'parent']);
 const SKIP_DIRS = new Set(['coverage', 'dist', 'node_modules', 'wailsjs']);
 
 function walk(dir: string, acc: string[] = []): string[] {
@@ -63,7 +64,10 @@ function memberName(node: ts.PropertyAccessExpression | ts.ElementAccessExpressi
 function isWailsJSPath(expression: ts.Expression | undefined): boolean {
   if (!expression) return false;
   const path = unwrap(expression);
-  return ts.isStringLiteralLike(path) && /(^|[\\/])wailsjs([\\/]|$)/.test(path.text);
+  // A wailsjs path segment counts whether it starts the specifier or follows any
+  // non-word character (path separator, alias sigil like @ or ~, etc.), so aliased
+  // imports such as '@wailsjs/go/main/App' or '~wailsjs/...' are still caught.
+  return ts.isStringLiteralLike(path) && /(^|[^A-Za-z0-9_])wailsjs([\\/]|$)/.test(path.text);
 }
 
 function isModuleLoaderCall(node: ts.CallExpression): boolean {
@@ -82,6 +86,9 @@ function isModuleLoaderCall(node: ts.CallExpression): boolean {
 
 // firstOffenseLine returns the 1-based line number of the first direct generated
 // import or raw Wails global access, or null when the file uses only the adapters.
+// A string-concatenated or template-interpolated dynamic import specifier (e.g.
+// `import('../../' + 'wailsjs/go/main/App')`) is outside a static scanner's reach
+// by design — this walks a syntax tree, not a value evaluator.
 function firstOffenseLine(content: string, filePath = 'probe.ts'): number | null {
   const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, false);
   const mayImportGenerated = ALLOWED_GENERATED_IMPORTERS.has(resolve(filePath));
@@ -123,7 +130,23 @@ function firstOffenseLine(content: string, filePath = 'probe.ts'): number | null
       RAW_WAILS_GLOBALS.has(memberName(node) ?? '')
     ) {
       const owner = unwrap(node.expression);
-      if (ts.isIdentifier(owner) && owner.text === 'window') record(node);
+      if (ts.isIdentifier(owner) && RAW_GLOBAL_OWNERS.has(owner.text)) record(node);
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer
+    ) {
+      const owner = unwrap(node.initializer);
+      if (ts.isIdentifier(owner) && RAW_GLOBAL_OWNERS.has(owner.text)) {
+        for (const element of node.name.elements) {
+          const boundName = element.propertyName ?? element.name;
+          const propName = ts.isIdentifier(boundName) ? boundName.text : null;
+          if (propName && RAW_WAILS_GLOBALS.has(propName)) {
+            record(element);
+            break;
+          }
+        }
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -199,6 +222,14 @@ const directReferenceCases: Array<[string, string, number, string]> = [
     1,
     resolve(ADAPTER_DIR, 'extra.ts'),
   ],
+  ['globalThis property access', 'globalThis.go.CreateTerminal();', 1, PROBE_FILE],
+  ['self property access', 'self.runtime.EventsEmit();', 1, PROBE_FILE],
+  ['destructured from window', 'const { go } = window;', 1, PROBE_FILE],
+  ['destructured from globalThis', 'const { runtime } = globalThis;', 1, PROBE_FILE],
+  ['destructured multiple from globalThis', 'const { runtime, go } = globalThis;', 1, PROBE_FILE],
+  ['let destructured from window', 'let { go } = window;', 1, PROBE_FILE],
+  ['var destructured from window', 'var { runtime } = window;', 1, PROBE_FILE],
+  ['aliased path import', "import x from '@wailsjs/go/main/App';", 1, PROBE_FILE],
 ];
 
 it.each(directReferenceCases)('detects %s', (_name, content, line, filePath) => {
@@ -210,6 +241,7 @@ const allowedReferenceCases: Array<[string, string, string]> = [
   ['comment', "// import { ReadFile } from '../../wailsjs/go/main/App';", PROBE_FILE],
   ['string', "const note = 'window.go and wailsjs are migration terms';", PROBE_FILE],
   ['unrelated properties', 'config.go; config.runtime; window.runtimeConfig;', PROBE_FILE],
+  ['unrelated local identifier named go', 'const go = 1; go + 1;', PROBE_FILE],
   [
     'bindings adapter',
     "export * from '../../wailsjs/go/main/App';",

@@ -71,7 +71,7 @@ function ensureGlobalOutputListener() {
     if (!evt?.termId) return;
     const listener = outputListeners.get(evt.termId);
     if (listener) {
-      listener(evt.data);
+      listener(evt.data ?? '');
     } else {
       // Buffer output until a listener attaches
       let buf = outputBuffers.get(evt.termId);
@@ -79,7 +79,7 @@ function ensureGlobalOutputListener() {
         buf = [];
         outputBuffers.set(evt.termId, buf);
       }
-      buf.push(evt.data);
+      buf.push(evt.data ?? '');
     }
   });
 }
