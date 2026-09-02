@@ -170,6 +170,68 @@ describe('release checksums', () => {
   });
 });
 
+describe('archive root verification', () => {
+  const script = resolve(releaseScriptsDir, 'verify-archive-roots.sh');
+
+  // Builds all four frozen release archives (two macOS zips rooted at
+  // Firn.app, a Linux tarball rooted at firn, a Windows zip rooted at
+  // firn.exe) under artifacts/<name>/<file>, matching what
+  // actions/download-artifact lays out from the upload names in release.yml.
+  function buildValidArtifacts(dir: string): string {
+    const artifacts = join(dir, 'artifacts');
+
+    for (const arch of ['arm64', 'amd64']) {
+      const targetDir = join(artifacts, `Firn-macos-${arch}`);
+      const appDir = join(targetDir, 'Firn.app', 'Contents');
+      mkdirSync(appDir, { recursive: true });
+      writeFileSync(join(appDir, 'Info.plist'), 'fixture');
+      execFileSync('zip', ['-r', `Firn-macos-${arch}.zip`, 'Firn.app'], { cwd: targetDir });
+      rmSync(join(targetDir, 'Firn.app'), { recursive: true, force: true });
+    }
+
+    const linuxDir = join(artifacts, 'Firn-linux-amd64');
+    mkdirSync(linuxDir, { recursive: true });
+    writeFileSync(join(linuxDir, 'firn'), 'fixture');
+    execFileSync('tar', ['-czf', 'Firn-linux-amd64.tar.gz', 'firn'], { cwd: linuxDir });
+    rmSync(join(linuxDir, 'firn'));
+
+    const windowsDir = join(artifacts, 'Firn-windows-amd64');
+    mkdirSync(windowsDir, { recursive: true });
+    writeFileSync(join(windowsDir, 'firn.exe'), 'fixture');
+    execFileSync('zip', ['Firn-windows-amd64.zip', 'firn.exe'], { cwd: windowsDir });
+    rmSync(join(windowsDir, 'firn.exe'));
+
+    return artifacts;
+  }
+
+  it('accepts the frozen archive-root contract for all four release targets', () => {
+    withTempDir((dir) => {
+      const artifacts = buildValidArtifacts(dir);
+
+      const result = spawnSync('sh', [script, artifacts], { encoding: 'utf8' });
+
+      expect(result.status).toBe(0);
+    });
+  });
+
+  it('rejects an archive that carries an unexpected second top-level entry', () => {
+    withTempDir((dir) => {
+      const artifacts = buildValidArtifacts(dir);
+      const linuxDir = join(artifacts, 'Firn-linux-amd64');
+      writeFileSync(join(linuxDir, 'firn'), 'fixture');
+      writeFileSync(join(linuxDir, 'stray-file'), 'unexpected');
+      execFileSync('tar', ['-czf', 'Firn-linux-amd64.tar.gz', 'firn', 'stray-file'], {
+        cwd: linuxDir,
+      });
+
+      const result = spawnSync('sh', [script, artifacts], { encoding: 'utf8' });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('unexpected archive roots');
+    });
+  });
+});
+
 describe('installer integrity verification', () => {
   const ASSET_NAME = 'Firn-linux-amd64.tar.gz';
 

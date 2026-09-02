@@ -196,21 +196,32 @@ describe('CI Workflow', () => {
     }
   });
 
-  it('should pin workflow Wails installs to the module version', () => {
+  it('should pin workflow wails3 installs to the module version', () => {
     const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
-    const wailsVersion = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v2\s+(v\S+)/m)?.[1];
-
+    const wailsVersion = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v3\s+(v\S+)/m)?.[1];
     expect(wailsVersion).toBeDefined();
+
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
-    const installVersions = workflowFiles.flatMap((workflow) => {
-      const content = readFileSync(resolve(workflowsDir, workflow), 'utf-8');
-      return [...content.matchAll(/github\.com\/wailsapp\/wails\/v2\/cmd\/wails@(\S+)/g)].map(
-        (match) => match[1]
+    const installVersions = workflowFiles.flatMap((file) => {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      return [...content.matchAll(/github\.com\/wailsapp\/wails\/v3\/cmd\/wails3@(\S+)/g)].map(
+        (m) => m[1]
       );
     });
-
     expect(installVersions.length).toBeGreaterThan(0);
     expect(new Set(installVersions)).toEqual(new Set([wailsVersion]));
+  });
+
+  it('should pin @wailsio/runtime to the wails module version exactly', () => {
+    const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
+    const wailsVersion = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v3\s+(v\S+)/m)?.[1];
+    const npmVersion = wailsVersion?.replace(/^v/, '');
+
+    const pkg = JSON.parse(readFileSync(resolve(rootDir, 'frontend/package.json'), 'utf-8'));
+    expect(pkg.dependencies['@wailsio/runtime']).toBe(npmVersion);
+
+    const lock = JSON.parse(readFileSync(resolve(rootDir, 'frontend/package-lock.json'), 'utf-8'));
+    expect(lock.packages['node_modules/@wailsio/runtime'].version).toBe(npmVersion);
   });
 });
 
@@ -240,6 +251,31 @@ describe('Release Workflow', () => {
     expect(releaseYml).toContain('.github/scripts/extract-changelog.sh');
     expect(releaseYml).toContain('.github/scripts/generate-checksums.sh');
     expect(releaseYml).toContain('SHA256SUMS');
+  });
+
+  it('should feed build/config.yml to the changelog script', () => {
+    const releaseYml = readFileSync(resolve(workflowsDir, 'release.yml'), 'utf-8');
+    expect(releaseYml).toContain('build/config.yml');
+    expect(releaseYml).not.toContain('wails.json');
+  });
+
+  it('should keep dispatch read-only and publish only from tag pushes', () => {
+    const releaseYml = readFileSync(resolve(workflowsDir, 'release.yml'), 'utf-8');
+    const workflow = parse(releaseYml) as {
+      on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
+      permissions?: Record<string, string>;
+      jobs?: Record<string, { if?: string; permissions?: Record<string, string> }>;
+    };
+
+    expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty('release_tag');
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(workflow.jobs?.release?.if).toBe("github.event_name == 'push'");
+    expect(workflow.jobs?.release?.permissions).toEqual({ contents: 'write' });
+  });
+
+  it('should verify archive root entries', () => {
+    const releaseYml = readFileSync(resolve(workflowsDir, 'release.yml'), 'utf-8');
+    expect(releaseYml).toContain('.github/scripts/verify-archive-roots.sh');
   });
 });
 
