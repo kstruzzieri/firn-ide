@@ -68,14 +68,28 @@ func TestEmitTerminalOutputSinglePayload(t *testing.T) {
 }
 
 // The functions below enforce a single choke point for Wails event emission:
-// only (*App).emit in root app.go may reach the v3 event bus. v3 emits through
-// a value (app.Event.Emit), not a package function, so the guard keys on the
-// selector chain ending in .Event.Emit rather than on an import alias: the
-// seam's own a.v3app.Event.Emit, an application.Get().Event.Emit anywhere else,
-// and a stored method value are all recognized the same way, whatever the file
-// called its import. That also retires the v2 dot-import rule - a dot-import of
-// the application package cannot produce an emission that does not end in
-// .Event.Emit, so it needs no rule of its own.
+// only (*App).emit in root app.go may push an event to the frontend. v2 had one
+// emit surface (the runtime.EventsEmit package function); v3 has several
+// methods, all reachable from the handles App now holds - EventManager.Emit and
+// EventManager.EmitEvent on a.v3app.Event, and the variadic
+// WebviewWindow.EmitEvent on a.mainWindow, which would put two payloads on the
+// wire and break the single-payload contract Terminal.tsx depends on. So the
+// guard keys on the METHOD NAME and ignores the receiver: any selector named
+// Emit or EmitEvent, called or taken as a method value, on anything, is an
+// emission. That catches a.v3app.Event.EmitEvent(ev), a.mainWindow.EmitEvent(…),
+// application.Get().Event.Emit(…), and a hoisted manager
+// (bus := a.v3app.Event; bus.Emit(…)) alike, whatever a file called its import -
+// which is also why the v2 alias and dot-import rules are gone: no import name
+// takes part in the decision any more.
+//
+// Being name-based makes the rule deliberately broad. Census at d85e854: the
+// repo declares no Emit or EmitEvent method or interface method of its own and
+// has no such call site outside the seam, so there are no false positives
+// today. A future in-repo type that grows an Emit/EmitEvent method trips this
+// guard loudly - and that is the intended outcome: rename it, or widen the
+// guard deliberately, never bypass it silently. Its limits are the limits of
+// any static scan: an emission reached by reflection or by a method name built
+// at run time is out of scope, as it was under v2.
 //
 // The scan is anti-vacuous: TestOnlyAppEmitReferencesWailsEventsEmit fails
 // if it finds zero allowed references (its `allowed == 0` check), so renaming
@@ -106,40 +120,45 @@ func isAppEmitSeam(path string, fn *ast.FuncDecl) bool {
 	return ok && receiver.Name == "App"
 }
 
-// eventBusEmitSelector reports whether expr is an `<anything>.Event.Emit`
-// selector - the only shape a v3 event emission can take, whatever holds the
-// application value it is reached through.
-func eventBusEmitSelector(expr ast.Expr) (*ast.SelectorExpr, bool) {
+// eventEmitSelector reports whether expr selects one of v3's emit methods by
+// name, on any receiver: EventManager.Emit, EventManager.EmitEvent, or
+// WebviewWindow.EmitEvent. Receiver-agnostic on purpose - see the rule above.
+func eventEmitSelector(expr ast.Expr) (*ast.SelectorExpr, bool) {
 	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Emit" {
+	if !ok {
 		return nil, false
 	}
-	bus, ok := sel.X.(*ast.SelectorExpr)
-	return sel, ok && bus.Sel.Name == "Event"
+	return sel, sel.Sel.Name == "Emit" || sel.Sel.Name == "EmitEvent"
 }
 
 // validAppEmitCall reports whether call is the fixed-shape
 // a.v3app.Event.Emit(event) or a.v3app.Event.Emit(event, data) invocation the
 // seam is allowed to make, and if not, a reason naming the specific defect.
-// The bus must be the app's own v3 handle rather than one fetched from
-// somewhere else, and every argument must be the exact identifier emit's own
-// signature received - so the payload in particular cannot be a literal nil:
-// that would let the seam smuggle a hardcoded no-payload emission in place of
-// actually forwarding the caller's data.
+// It must be Emit on the app's own event manager - not EmitEvent, not the
+// window emitter, not a hoisted local standing in for the manager - and every
+// argument must be the exact identifier emit's own signature received, so the
+// payload in particular cannot be a literal nil: that would let the seam
+// smuggle a hardcoded no-payload emission in place of actually forwarding the
+// caller's data.
 func validAppEmitCall(sel *ast.SelectorExpr, call *ast.CallExpr) (bool, string) {
 	if call.Ellipsis.IsValid() {
 		return false, "must not spread its arguments with ellipsis"
 	}
-	// sel matched eventBusEmitSelector, so sel.X is the `<host>.Event` selector;
-	// the host below must in turn be the a.v3app field.
-	bus := sel.X.(*ast.SelectorExpr)
+	const receiverRule = "must emit through a.v3app.Event.Emit"
+	if sel.Sel.Name != "Emit" {
+		return false, receiverRule
+	}
+	bus, busOK := sel.X.(*ast.SelectorExpr)
+	if !busOK || bus.Sel.Name != "Event" {
+		return false, receiverRule
+	}
 	host, hostOK := bus.X.(*ast.SelectorExpr)
 	if !hostOK {
-		return false, "must emit through a.v3app.Event"
+		return false, receiverRule
 	}
 	receiver, receiverOK := host.X.(*ast.Ident)
 	if !receiverOK || receiver.Name != "a" || host.Sel.Name != "v3app" {
-		return false, "must emit through a.v3app.Event"
+		return false, receiverRule
 	}
 	if len(call.Args) != 1 && len(call.Args) != 2 {
 		return false, "must be a fixed 1- or 2-argument call"
@@ -177,7 +196,7 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 			if !ok {
 				return true
 			}
-			sel, ok := eventBusEmitSelector(call.Fun)
+			sel, ok := eventEmitSelector(call.Fun)
 			if !ok {
 				return true
 			}
@@ -187,7 +206,7 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 				shapes[len(call.Args)]++
 			} else {
 				pos := fset.Position(call.Pos())
-				violations = append(violations, fmt.Sprintf("%s:%d: Event.Emit in (*App).emit %s", pos.Filename, pos.Line, reason))
+				violations = append(violations, fmt.Sprintf("%s:%d: %s in (*App).emit %s", pos.Filename, pos.Line, sel.Sel.Name, reason))
 			}
 			return true
 		})
@@ -202,8 +221,8 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 		if !ok {
 			return true
 		}
-		_, isEventBusEmit := eventBusEmitSelector(sel)
-		if !isEventBusEmit {
+		_, isEventEmit := eventEmitSelector(sel)
+		if !isEventEmit {
 			return true
 		}
 		if seam != nil && seam.Pos() <= sel.Pos() && sel.End() <= seam.End() {
@@ -214,26 +233,29 @@ func scanWailsEventsEmitFile(fset *token.FileSet, path string, file *ast.File) (
 				return true
 			}
 			pos := fset.Position(sel.Pos())
-			violations = append(violations, fmt.Sprintf("%s:%d: Event.Emit in (*App).emit must be called directly", pos.Filename, pos.Line))
+			violations = append(violations, fmt.Sprintf("%s:%d: %s in (*App).emit must be called directly", pos.Filename, pos.Line, sel.Sel.Name))
 			return true
 		}
 		pos := fset.Position(sel.Pos())
-		violations = append(violations, fmt.Sprintf("%s:%d: Event.Emit referenced outside (*App).emit", pos.Filename, pos.Line))
+		violations = append(violations, fmt.Sprintf("%s:%d: %s referenced outside (*App).emit", pos.Filename, pos.Line, sel.Sel.Name))
 		return true
 	})
 	return allowed, violations
 }
 
-// The v3 bus is reached through a value, so no import name identifies it: a
-// file that aliases the application package and one that emits through the
-// App's own field must both be caught outside the seam, and a stored method
-// value counts as an emission just like a direct call.
+// Every v3 emit surface, on every receiver, must be caught outside the seam:
+// the aliased package handle, the App's own field, the variadic window
+// emitter, the CustomEvent overload, a manager hoisted into a local, and a
+// method value that is never even called.
 func TestWailsEventsEmitGuardDetectsEmitOutsideTheSeam(t *testing.T) {
 	t.Parallel()
 
 	bypasses := map[string]string{
 		"aliased package call": `func bypass() { wailsapp.Get().Event.Emit("terminal:output") }`,
 		"stored method value":  `func bypass(a *App) { send := a.v3app.Event.Emit; _ = send }`,
+		"window emit event":    `func bypass(a *App, data any) { a.mainWindow.EmitEvent("terminal:output", data, data) }`,
+		"custom event":         `func bypass(a *App, ev *wailsapp.CustomEvent) { a.v3app.Event.EmitEvent(ev) }`,
+		"hoisted manager":      `func bypass(a *App, event string) { bus := a.v3app.Event; bus.Emit(event) }`,
 	}
 
 	for name, body := range bypasses {
@@ -266,6 +288,15 @@ func TestWailsEventsEmitGuardRejectsInvalidSeamReferences(t *testing.T) {
 		"foreign bus": `func (a *App) emit(event string, data any) {
 			if data == nil { application.Get().Event.Emit(event); return }
 			application.Get().Event.Emit(event, data)
+		}`,
+		"hoisted manager": `func (a *App) emit(event string, data any) {
+			bus := a.v3app.Event
+			if data == nil { bus.Emit(event); return }
+			bus.Emit(event, data)
+		}`,
+		"window emit event": `func (a *App) emit(event string, data any) {
+			if data == nil { a.mainWindow.EmitEvent(event); return }
+			a.mainWindow.EmitEvent(event, data)
 		}`,
 	}
 
