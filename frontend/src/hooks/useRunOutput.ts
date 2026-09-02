@@ -185,7 +185,7 @@ function ordinaryHistoryRecord(
   const profile = state.runProfiles.find(({ id }) => id === status.profileId);
   const workingDir = output.workingDir ?? state.workspace?.path;
   const values = {
-    kind: 'ordinary' as const,
+    kind: runhistory.RecordKind.RecordKindOrdinary,
     profileId: boundedUTF8String(status.profileId, 4 << 10),
     profileName: boundedUTF8String(profile?.name ?? status.profileId, 4 << 10),
     state: status.state,
@@ -215,7 +215,7 @@ function compoundStepHistoryRecord(
     return undefined;
   }
   const record = new runhistory.RecordInput({
-    kind: 'compound-step',
+    kind: runhistory.RecordKind.RecordKindCompoundStep,
     profileId: boundedUTF8String(step.profileId, 4 << 10),
     profileName: boundedUTF8String(step.name || step.profileId, 4 << 10),
     state: step.state,
@@ -332,7 +332,7 @@ export function useRunOutputListener(): void {
           ) {
             const profile = after.runProfiles.find(({ id }) => id === status.profileId);
             const record = new runhistory.RecordInput({
-              kind: 'compound-aggregate',
+              kind: runhistory.RecordKind.RecordKindCompoundAggregate,
               profileId: boundedUTF8String(status.profileId, 4 << 10),
               profileName: boundedUTF8String(profile?.name ?? status.profileId, 4 << 10),
               state: status.state,

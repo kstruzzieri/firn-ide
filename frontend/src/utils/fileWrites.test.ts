@@ -3,6 +3,7 @@ jest.mock('../wails/bindings', () => ({
 }));
 
 import { WriteFile } from '../wails/bindings';
+import { CancellablePromise } from '../wails/runtime';
 import {
   flushAllFileEdits,
   isWritableFormat,
@@ -92,10 +93,11 @@ describe('saveOpenFileToDisk', () => {
     useIDEStore.setState({ openFiles: [file()] });
     // First write races with a keystroke: mutate the buffer while the write is
     // in flight, so the flush must write again with the newer content.
-    mockWriteFile.mockImplementationOnce(async () => {
+    mockWriteFile.mockImplementationOnce(() => {
       useIDEStore.setState({
         openFiles: [file({ content: 'newer content', isModified: true })],
       });
+      return CancellablePromise.resolve();
     });
 
     await saveOpenFileToDisk('/repo/src/conflicted.ts');
@@ -114,7 +116,7 @@ describe('saveOpenFileToDisk', () => {
   it('rewrites a stable buffer after a later queued write', async () => {
     let finishInitialWrite!: () => void;
     let markInitialWriteStarted!: () => void;
-    const initialWrite = new Promise<void>((resolve) => (finishInitialWrite = resolve));
+    const initialWrite = new CancellablePromise<void>((resolve) => (finishInitialWrite = resolve));
     const initialWriteStarted = new Promise<void>((resolve) => (markInitialWriteStarted = resolve));
     mockWriteFile.mockImplementationOnce(() => {
       markInitialWriteStarted();
@@ -145,7 +147,7 @@ describe('saveOpenFileToDisk', () => {
 
   it('waits for queued writes before accepting a clean buffer', async () => {
     let finishWrite!: () => void;
-    const queuedWrite = new Promise<void>((resolve) => (finishWrite = resolve));
+    const queuedWrite = new CancellablePromise<void>((resolve) => (finishWrite = resolve));
     mockWriteFile.mockReturnValueOnce(queuedWrite);
     useIDEStore.setState({ openFiles: [file({ isModified: false })] });
     const pending = writeFileSerialized(
@@ -172,8 +174,8 @@ describe('saveOpenFileToDisk', () => {
     let finishCloseWrite!: () => void;
     let markInitialWriteStarted!: () => void;
     let markCloseWriteStarted!: () => void;
-    const initialWrite = new Promise<void>((resolve) => (finishInitialWrite = resolve));
-    const closeWrite = new Promise<void>((resolve) => (finishCloseWrite = resolve));
+    const initialWrite = new CancellablePromise<void>((resolve) => (finishInitialWrite = resolve));
+    const closeWrite = new CancellablePromise<void>((resolve) => (finishCloseWrite = resolve));
     const initialWriteStarted = new Promise<void>((resolve) => (markInitialWriteStarted = resolve));
     const closeWriteStarted = new Promise<void>((resolve) => (markCloseWriteStarted = resolve));
     mockWriteFile
@@ -221,7 +223,7 @@ describe('saveOpenFileToDisk', () => {
   it('rejects when a later close-save fails', async () => {
     let finishInitialWrite!: () => void;
     let markInitialWriteStarted!: () => void;
-    const initialWrite = new Promise<void>((resolve) => (finishInitialWrite = resolve));
+    const initialWrite = new CancellablePromise<void>((resolve) => (finishInitialWrite = resolve));
     const initialWriteStarted = new Promise<void>((resolve) => (markInitialWriteStarted = resolve));
     mockWriteFile
       .mockImplementationOnce(() => {
@@ -257,7 +259,7 @@ describe('saveOpenFileToDisk', () => {
 
   it('waits for an already queued close-save when the file is absent', async () => {
     let finishWrite!: () => void;
-    const queuedWrite = new Promise<void>((resolve) => (finishWrite = resolve));
+    const queuedWrite = new CancellablePromise<void>((resolve) => (finishWrite = resolve));
     mockWriteFile.mockReturnValueOnce(queuedWrite);
     const closeSave = writeFileSerialized(
       '/repo/src/conflicted.ts',
@@ -290,7 +292,7 @@ describe('saveOpenFileToDisk', () => {
 describe('flushAllFileEdits', () => {
   it('waits for writes that were already queued', async () => {
     let finishWrite!: () => void;
-    const queuedWrite = new Promise<void>((resolve) => (finishWrite = resolve));
+    const queuedWrite = new CancellablePromise<void>((resolve) => (finishWrite = resolve));
     mockWriteFile.mockReturnValueOnce(queuedWrite);
     const save = writeFileSerialized(
       '/repo/src/conflicted.ts',
@@ -312,7 +314,7 @@ describe('flushAllFileEdits', () => {
 
   it('reports a failure from a write that was already queued', async () => {
     let failWrite!: (error: Error) => void;
-    const queuedWrite = new Promise<void>((_resolve, reject) => (failWrite = reject));
+    const queuedWrite = new CancellablePromise<void>((_resolve, reject) => (failWrite = reject));
     mockWriteFile.mockReturnValueOnce(queuedWrite);
     const save = writeFileSerialized(
       '/repo/src/conflicted.ts',

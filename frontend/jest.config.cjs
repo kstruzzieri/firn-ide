@@ -9,7 +9,7 @@ module.exports = {
     // The `$` anchor is load-bearing: it must not capture wails/runtime-helpers,
     // whose test exercises the real registration code.
     '(?:\\.\\./)+wails/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
-    '^@wailsio/runtime$': '<rootDir>/src/__mocks__/wailsioRuntime.js',
+    '^@wailsio/runtime$': '<rootDir>/src/__mocks__/wailsV3Runtime.js',
     // The generated bindings are ESM and spell relative imports with an explicit
     // `.js` extension ('./internal/ai/models.js'); jest's CJS resolver would look
     // for a literal .js file. Dropping the extension lets moduleFileExtensions

@@ -13,7 +13,7 @@ import { useConflictProjectionSync } from '../../hooks/useProblemsProjection';
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
-import { git } from '../../wails/bindings';
+import { git, runhistory } from '../../wails/bindings';
 import { EventsOn } from '../../wails/runtime';
 import { Terminal as XTerm } from '@xterm/xterm';
 
@@ -131,7 +131,7 @@ describe('Terminal component', () => {
     mockGetRunHistoryRecord.mockResolvedValue({
       version: 1,
       historyId: '018f0000-0000-7000-8000-000000000001',
-      kind: 'ordinary',
+      kind: runhistory.RecordKind.RecordKindOrdinary,
       profileId: 'p1',
       profileName: 'Build',
       state: 'success',
@@ -325,7 +325,7 @@ describe('Terminal component', () => {
     const historyId = '018f0000-0000-7000-8000-000000000001';
     const archived = {
       historyId,
-      kind: 'ordinary',
+      kind: runhistory.RecordKind.RecordKindOrdinary,
       profileId: 'p1',
       profileName: 'Build',
       state: 'success',
@@ -359,7 +359,7 @@ describe('Terminal component', () => {
     const historyId = '018f0000-0000-7000-8000-000000000010';
     const archived = {
       historyId,
-      kind: 'ordinary',
+      kind: runhistory.RecordKind.RecordKindOrdinary,
       profileId: 'p1',
       profileName: 'Build',
       state: 'success',
@@ -398,7 +398,7 @@ describe('Terminal component', () => {
     const newerId = '018f0000-0000-7000-8000-000000000012';
     const older = {
       historyId: olderId,
-      kind: 'ordinary',
+      kind: runhistory.RecordKind.RecordKindOrdinary,
       profileId: 'p1',
       profileName: 'Build',
       state: 'success',
@@ -433,7 +433,7 @@ describe('Terminal component', () => {
     const historyId = '018f0000-0000-7000-8000-000000000002';
     const archived = {
       historyId,
-      kind: 'ordinary',
+      kind: runhistory.RecordKind.RecordKindOrdinary,
       profileId: 'p2',
       profileName: 'Test',
       state: 'success',

@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
-import { filesystem } from '../../wails/bindings';
+import { filesystem, runhistory } from '../../wails/bindings';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
@@ -228,7 +228,7 @@ describe('openWorkspaceByPath', () => {
       runHistorySummaries: {
         oldHistory: {
           historyId: 'oldHistory',
-          kind: 'ordinary',
+          kind: runhistory.RecordKind.RecordKindOrdinary,
           profileId: 'build',
           profileName: 'Build',
           state: 'success',
@@ -241,7 +241,7 @@ describe('openWorkspaceByPath', () => {
       runHistoryRecords: {
         oldHistory: {
           historyId: 'oldHistory',
-          kind: 'ordinary',
+          kind: runhistory.RecordKind.RecordKindOrdinary,
           profileId: 'build',
           profileName: 'Build',
           state: 'success',

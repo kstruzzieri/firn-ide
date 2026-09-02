@@ -27,15 +27,20 @@ jest.mock('../../../components/FileExplorer/useDirectoryTree', () => ({
   useDirectoryTree: () => ({ refetch: mockRefetch }),
 }));
 
+// Children here are already FileEntry instances, so the constructor is the
+// right entry point. createFrom would re-run Create.Array over every child, and
+// useDefineForClassFields gives each instance an own `children` key even when
+// unset — so the conversion would turn the unloaded sentinel (undefined) into
+// an empty array and make the directory look loaded.
 const dir = (path: string, children?: filesystem.FileEntry[]) =>
-  filesystem.FileEntry.createFrom({
+  new filesystem.FileEntry({
     name: path.split('/').pop()!,
     path,
     isDir: true,
     size: 0,
     modTime: new Date().toISOString(),
     children,
-  }) as filesystem.FileEntry;
+  });
 
 describe('FileExplorer lazy-load on expand', () => {
   let restoreVirtualLayout: () => void;

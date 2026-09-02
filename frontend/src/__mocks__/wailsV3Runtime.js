@@ -2,12 +2,16 @@
 // $Call/$Create at module load, so this must stay live for every suite —
 // including the many that replace the adapter mock (wailsRuntime.js) with their
 // own factory. Keeping the two mocks in separate files keeps their jest module
-// ids distinct, so one cannot clobber the other.
+// ids distinct, so one cannot clobber the other, so neither file may require
+// the other.
 const pass = (value) => value;
 
 class CancellablePromise extends Promise {
   cancel() {
     return CancellablePromise.resolve();
+  }
+  cancelOn() {
+    return this;
   }
 }
 

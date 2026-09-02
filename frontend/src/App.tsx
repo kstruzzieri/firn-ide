@@ -142,6 +142,9 @@ function App() {
 
         ReadFile(event.path)
           .then((result) => {
+            if (result === null) {
+              throw new Error(`ReadFile returned no content for ${event.path}`);
+            }
             const state = useIDEStore.getState();
             const file = state.openFiles.find((f) => f.path === event.path);
             if (file && !file.isModified) {

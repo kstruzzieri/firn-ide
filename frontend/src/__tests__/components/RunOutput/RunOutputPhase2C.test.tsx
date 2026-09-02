@@ -93,7 +93,7 @@ function summary(
 ): runhistory.Summary {
   return {
     historyId,
-    kind: 'ordinary',
+    kind: runhistory.RecordKind.RecordKindOrdinary,
     profileId,
     profileName: profileId === 'build' ? 'Archived Build' : 'Archived Test',
     state: 'success',
@@ -476,7 +476,7 @@ it('builds All from one current run per profile plus readable archive fallback o
   const olderTest = summary(otherId, 'test', 200);
   const redactedTest = summary(redactedId, 'test', 400, { outputAvailable: false });
   const compound = summary(compoundId, 'deploy', 500, {
-    kind: 'compound',
+    kind: runhistory.RecordKind.RecordKindCompoundAggregate,
     profileName: 'Deploy',
   });
   mockGetRunHistoryRecord.mockResolvedValueOnce(record(olderTest, 'archived test', '/repo/test'));

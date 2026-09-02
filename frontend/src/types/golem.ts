@@ -216,7 +216,9 @@ export const toStatusRequest = (identity: ConversationIdentity) =>
   });
 
 export const toTurnRequest = (identity: RunIdentity, draft: TurnDraft, consentChallengeId = '') =>
-  new ai.TurnRequest({ identity, ...draft, consentChallengeId });
+  // v3 constructors Object.assign their source, so nested structs have to be
+  // built explicitly to stay generated instances.
+  new ai.TurnRequest({ identity: new ai.RunIdentity(identity), ...draft, consentChallengeId });
 
 export const toCancelRequest = (identity: RunIdentity) => new ai.RunIdentity(identity);
 

@@ -220,6 +220,7 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
         try {
           const fileContent = await ReadFile(fileState.path);
           if (signal.aborted) return;
+          if (fileContent === null) continue;
           if (fileContent.isBinary) continue;
 
           const editorFile = createEditorFile(fileState.path, fileContent);

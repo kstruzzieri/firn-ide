@@ -60,7 +60,13 @@ function normalizeRunProfiles(rawProfiles: unknown): RunProfile[] {
       source: asProfileSource(profile.source),
       command: profile.command,
       workingDir: profile.workingDir,
-      env: profile.env,
+      // The generated model types env values as possibly undefined; drop those
+      // rather than widen the UI type.
+      env:
+        profile.env &&
+        Object.fromEntries(
+          Object.entries(profile.env).filter((e): e is [string, string] => e[1] !== undefined)
+        ),
       envFile: profile.envFile,
       envVariants: profile.envVariants,
       activeVariant: profile.activeVariant,

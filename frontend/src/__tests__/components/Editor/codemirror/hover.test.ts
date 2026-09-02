@@ -11,6 +11,8 @@ jest.mock('../../../../wails/bindings', () => {
 });
 
 jest.mock('../../../../wails/runtime', () => ({
+  // Spread the real adapter so CancellablePromise stays available to the test.
+  ...jest.requireActual('../../../../wails/runtime'),
   ClipboardSetText: jest.fn(() => Promise.resolve()),
   BrowserOpenURL: jest.fn(),
 }));
@@ -21,6 +23,7 @@ jest.mock('../../../../utils/lspDocumentSync', () => ({
 
 import { LSPHover } from '../../../../wails/bindings';
 import { lsp } from '../../../../wails/bindings';
+import { CancellablePromise } from '../../../../wails/runtime';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
 import { loadLanguageSupport } from '../../../../components/Editor/codemirror/languages';
 import {
@@ -58,7 +61,7 @@ describe('createLSPHoverSource', () => {
     let resolveHover: (value: Awaited<ReturnType<typeof LSPHover>>) => void = () => {};
 
     mockHover.mockReturnValue(
-      new Promise((resolve) => {
+      new CancellablePromise((resolve) => {
         resolveHover = resolve;
       })
     );

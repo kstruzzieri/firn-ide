@@ -705,6 +705,9 @@ export const useGitStore = create<GitStore>()(
               // worktree snapshot remains read-only.
             } else {
               const result = await ReadFile(abs);
+              if (result === null) {
+                throw new Error(`ReadFile returned no content for ${abs}`);
+              }
               worktree = result.content ?? '';
               binary = binary || result.isBinary === true;
               worktreeEncoding = result.encoding;
@@ -1162,7 +1165,9 @@ interface MergeRevalidationBinding {
   epoch: number;
 }
 
-function sameStageBlob(a?: git.StageBlob, b?: git.StageBlob): boolean {
+// Generated stages are `StageBlob | null`; the presence check below already
+// treats absent and null the same, so accept both rather than guard each caller.
+function sameStageBlob(a?: git.StageBlob | null, b?: git.StageBlob | null): boolean {
   if (!a || !b) return !a && !b;
   return a.hash === b.hash && a.mode === b.mode && a.size === b.size;
 }
