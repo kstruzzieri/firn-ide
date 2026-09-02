@@ -223,6 +223,77 @@ describe('CI Workflow', () => {
     const lock = JSON.parse(readFileSync(resolve(rootDir, 'frontend/package-lock.json'), 'utf-8'));
     expect(lock.packages['node_modules/@wailsio/runtime'].version).toBe(npmVersion);
   });
+
+  // #273 (v2 -> v3 migration): package main now imports wailsapp/wails/v3, so
+  // a stray v2 reference anywhere in the workflows would mean a job is
+  // building or asserting against the wrong SDK line.
+  it('should not reference the Wails v2 SDK in any workflow', () => {
+    const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
+
+    for (const file of workflowFiles) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      expect({ file, hasV2Reference: /wailsapp\/wails\/v2|wails@v2/.test(content) }).toEqual({
+        file,
+        hasV2Reference: false,
+      });
+    }
+  });
+
+  // The v3 Linux ABI is CGO build-tag gated: without -tags gtk3, package main
+  // compiles against the GTK4 path Firn does not ship (see build/linux and
+  // .golangci.yml), so any job that compiles Go on a ubuntu runner must
+  // either pass the tag directly, inherit it from .golangci.yml, or delegate
+  // to the linux:build Task (which supplies it by default).
+  it('should require the gtk3 build tag wherever a Linux job compiles Go', () => {
+    const golangciConfig = readFileSync(resolve(rootDir, '.golangci.yml'), 'utf-8');
+    const golangciBuildTags =
+      (parse(golangciConfig) as { run?: { 'build-tags'?: string[] } }).run?.['build-tags'] ?? [];
+    const golangciHasGtk3Tag = golangciBuildTags.includes('gtk3');
+
+    const goCompileMarkers = [
+      'go test',
+      'go build',
+      'go vet',
+      'golangci-lint',
+      'wails3 task linux:build',
+    ];
+    const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
+
+    for (const file of workflowFiles) {
+      const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
+      const workflow = parse(content) as {
+        jobs?: Record<
+          string,
+          { 'runs-on'?: unknown; steps?: Array<{ run?: string; uses?: string }> }
+        >;
+      };
+
+      for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+        const runsOn = job['runs-on'];
+        if (typeof runsOn !== 'string' || !runsOn.startsWith('ubuntu')) continue;
+
+        for (const step of job.steps ?? []) {
+          const stepText = [step.run, step.uses]
+            .filter((value): value is string => Boolean(value))
+            .join('\n');
+          const compilesGo = goCompileMarkers.some((marker) => stepText.includes(marker));
+          if (!compilesGo) continue;
+
+          const isLinuxTaskBuild = stepText.includes('wails3 task linux:build');
+          const isGolangci = stepText.includes('golangci-lint');
+          const hasTagArg = /-tags[= ]\S*gtk3\b/.test(stepText);
+          const tagged = isLinuxTaskBuild || (isGolangci ? golangciHasGtk3Tag : hasTagArg);
+
+          expect({ file, job: jobName, step: step.run ?? step.uses, tagged }).toEqual({
+            file,
+            job: jobName,
+            step: step.run ?? step.uses,
+            tagged: true,
+          });
+        }
+      }
+    }
+  });
 });
 
 describe('Release Workflow', () => {

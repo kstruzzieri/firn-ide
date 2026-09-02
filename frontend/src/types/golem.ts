@@ -206,8 +206,13 @@ export interface GolemStoreState {
 }
 
 // ── Wails inputs ──────────────────────────────────────────────────────────────
-// Only the generated constructors build request payloads, so a field the Go
-// structs do not declare cannot be smuggled across the boundary.
+// The generated constructors build the request payloads and produce the right
+// classes for the boundary. It is the TypeScript types below, not the
+// constructors, that keep an undeclared field from being written here — v3
+// constructors Object.assign their entire source object rather than copying
+// field by field. The Go side (internal/ai) is the actual backstop: it
+// validates unknown fields strictly and rejects, rather than silently drops,
+// anything that gets through.
 
 export const toStatusRequest = (identity: ConversationIdentity) =>
   new ai.StatusRequest({

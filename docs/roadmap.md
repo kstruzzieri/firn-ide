@@ -189,17 +189,17 @@ Historical #112 follow-up checklist (now complete), in execution order:
 Build the current `develop` revision normally, then launch the packaged binary with a disposable home and a minimal tool shim. Building first avoids making the Go/npm build caches part of the smoke environment. The shim keeps the Go toolchain available for managed `gopls` installation while excluding user-installed `gopls`, `typescript-language-server`, `rust-analyzer`, and Python language servers from `PATH`.
 
 ```bash
-wails build
+wails3 task darwin:package ARCH=arm64
 SMOKE_HOME="$(mktemp -d)"
 SMOKE_BIN="$SMOKE_HOME/bin"
 mkdir -p "$SMOKE_BIN"
 ln -s "$(command -v go)" "$SMOKE_BIN/go"
 env HOME="$SMOKE_HOME" \
   PATH="$SMOKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  build/bin/Firn.app/Contents/MacOS/firn
+  bin/Firn.app/Contents/MacOS/firn
 ```
 
-The final path is the macOS build. Use `build/bin/firn` for Linux; on Windows, launch `build/bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
+The final path is the macOS build. Use `wails3 task linux:build` and `bin/firn` for Linux; on Windows, use `wails3 task windows:build` and launch `bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
 
 #### 2. Use a four-workspace smoke repository
 
