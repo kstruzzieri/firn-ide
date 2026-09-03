@@ -172,6 +172,101 @@ describe('release version consistency', () => {
     expect(info.fixed.file_version).toBe(config.info.version);
     expect(info.info['0000'].ProductVersion).toBe(config.info.version);
   });
+
+  // Identity, not just version, is duplicated into the generated assets and
+  // never re-derived at build time. The mapping below is the one the pinned
+  // beta.16 templates implement ($GOMODCACHE/github.com/wailsapp/wails/
+  // v3@v3.0.0-beta.16/internal/commands/updatable_build_assets/):
+  //   darwin/Info.plist.tmpl, darwin/Info.dev.plist.tmpl
+  //     CFBundleName             <- info.productName
+  //     CFBundleIdentifier       <- info.productIdentifier
+  //     CFBundleGetInfoString    <- info.comments
+  //     NSHumanReadableCopyright <- info.copyright
+  //     CFBundleExecutable       <- the -binaryname flag, not config
+  //     LSMinimumSystemVersion   <- a literal in the template, not config
+  //   windows/info.json.tmpl
+  //     ProductName     <- info.productName
+  //     CompanyName     <- info.companyName
+  //     LegalCopyright  <- info.copyright
+  //     Comments        <- info.comments
+  //     FileDescription <- info.description, which build/Taskfile.yml
+  //                        overrides with -productdescription <productName>
+  //   windows/wails.exe.manifest.tmpl
+  //     assemblyIdentity name <- info.productIdentifier
+  // Only what the templates actually map is asserted here.
+  it.each(['Info.plist', 'Info.dev.plist'])(
+    'keeps the macOS %s identity in lockstep with the config info block',
+    (file) => {
+      const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+      const plist = readFileSync(resolve(rootDir, 'build/darwin', file), 'utf8');
+
+      expect({
+        bundleName: plistValue(plist, 'CFBundleName'),
+        bundleIdentifier: plistValue(plist, 'CFBundleIdentifier'),
+        getInfoString: plistValue(plist, 'CFBundleGetInfoString'),
+        copyright: plistValue(plist, 'NSHumanReadableCopyright'),
+      }).toEqual({
+        bundleName: config.info.productName,
+        bundleIdentifier: config.info.productIdentifier,
+        getInfoString: config.info.comments,
+        copyright: config.info.copyright,
+      });
+    }
+  );
+
+  it('keeps the Windows info.json identity in lockstep with the config info block', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+    const info = JSON.parse(readFileSync(resolve(rootDir, 'build/windows/info.json'), 'utf8'));
+
+    expect({
+      productName: info.info['0000'].ProductName,
+      companyName: info.info['0000'].CompanyName,
+      copyright: info.info['0000'].LegalCopyright,
+      comments: info.info['0000'].Comments,
+      // Windows renders FileDescription as the executable's display name
+      // (Task Manager, the .exe properties sheet), where v2 shipped the
+      // product name rather than the description sentence. Regeneration keeps
+      // producing it because build/Taskfile.yml passes -productdescription.
+      fileDescription: info.info['0000'].FileDescription,
+    }).toEqual({
+      productName: config.info.productName,
+      companyName: config.info.companyName,
+      copyright: config.info.copyright,
+      comments: config.info.comments,
+      fileDescription: config.info.productName,
+    });
+  });
+
+  it('keeps the Windows manifest assembly name in lockstep with the config product identifier', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf8'));
+    const manifest = readFileSync(resolve(rootDir, 'build/windows/wails.exe.manifest'), 'utf8');
+    // The first assemblyIdentity is the application's own; the second is the
+    // Microsoft.Windows.Common-Controls dependency.
+    const name = manifest.match(/<assemblyIdentity[^>]*\bname="([^"]+)"/)?.[1];
+
+    expect(name).toBe(config.info.productIdentifier);
+  });
+
+  it('keeps the macOS deployment target in lockstep with the plist minimum system version', () => {
+    const darwinTasks = parse(
+      readFileSync(resolve(rootDir, 'build/darwin/Taskfile.yml'), 'utf8')
+    ) as { tasks: Record<string, { env?: Record<string, string> }> };
+    const target = darwinTasks.tasks['build:native'].env?.MACOSX_DEPLOYMENT_TARGET;
+    // The Taskfile carries the compiler's two-part form (12.0); the plists
+    // carry Apple's three-part form (12.0.0). Pad both to major.minor.patch
+    // so the comparison is on the version, not its spelling.
+    const normalise = (value: string) => `${value}.0.0`.split('.').slice(0, 3).join('.');
+
+    expect(target).toBeDefined();
+    for (const file of ['Info.plist', 'Info.dev.plist']) {
+      const plist = readFileSync(resolve(rootDir, 'build/darwin', file), 'utf8');
+
+      expect({
+        file,
+        minimumSystemVersion: normalise(plistValue(plist, 'LSMinimumSystemVersion') ?? ''),
+      }).toEqual({ file, minimumSystemVersion: normalise(String(target)) });
+    }
+  });
 });
 
 describe('release checksums', () => {
@@ -209,6 +304,10 @@ describe('archive root verification', () => {
   // Firn.app, a Linux tarball rooted at firn, a Windows zip rooted at
   // firn.exe) under artifacts/<name>/<file>, matching what
   // actions/download-artifact lays out from the upload names in release.yml.
+  // These shell out to `zip` and `tar` on purpose: the script under test
+  // reads real archives, so a hand-rolled fixture would test the fixture.
+  // Both tools are preinstalled on the ubuntu-22.04 image that runs the
+  // frontend suite (test.yml) and on macOS, so the dependency costs nothing.
   function buildValidArtifacts(dir: string): string {
     const artifacts = join(dir, 'artifacts');
 

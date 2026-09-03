@@ -172,7 +172,8 @@ func TestDeleteRunProfileEmitsOnSuccess(t *testing.T) {
 	app := newLoadedAppForProfiles(t)
 	wsID := app.GetAllRunProfiles()[0].WorkspaceID
 
-	// Set emitFn before seed save so the valid save doesn't reach runtime.EventsEmit.
+	// Set emitFn before the seed save so the valid save is captured here
+	// instead of reaching the real (*App).emit seam.
 	var events []string
 	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
@@ -504,5 +505,24 @@ func TestCloseHandshakeBackstopDefaultsToSixtySeconds(t *testing.T) {
 	app := &App{}
 	if got := app.backstopDelay(); got != closeHandshakeBackstop {
 		t.Errorf("backstopDelay() = %v, want the %v production value", got, closeHandshakeBackstop)
+	}
+}
+
+// A cancelled folder dialog also answers with an empty path, so a missing
+// application host must be an error: returning ("", nil) would let the
+// frontend read "the dialog never opened" as "the user changed their mind".
+func TestOpenFolderDialogWithoutHostReturnsError(t *testing.T) {
+	app := NewApp()
+
+	path, err := app.OpenFolderDialog()
+
+	if err == nil {
+		t.Fatal("OpenFolderDialog() error = nil, want one when v3app is unset")
+	}
+	if !strings.Contains(err.Error(), "application host not initialised") {
+		t.Errorf("OpenFolderDialog() error = %q, want it to name the uninitialised host", err)
+	}
+	if path != "" {
+		t.Errorf("OpenFolderDialog() path = %q, want empty", path)
 	}
 }

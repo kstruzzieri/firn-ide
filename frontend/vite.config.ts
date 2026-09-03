@@ -2,13 +2,20 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import wails from '@wailsio/runtime/plugins/vite';
 
+// The dev-server port lives in the root Taskfile.yml (VITE_PORT), which passes
+// it to both wails3 and `npm run dev -- --port ... --strictPort`. Repeating a
+// default here would make this the second place to edit and let the two drift,
+// so an unset WAILS_VITE_PORT falls back to Vite's own default and drops the
+// strictPort demand along with it.
+const devPort = Number(process.env.WAILS_VITE_PORT) || undefined;
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), wails('./bindings')],
   server: {
     host: '127.0.0.1',
-    port: Number(process.env.WAILS_VITE_PORT) || 9245,
-    strictPort: true,
+    port: devPort,
+    strictPort: devPort !== undefined,
     hmr: {
       overlay: false,
     },

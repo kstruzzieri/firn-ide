@@ -14,22 +14,13 @@ class CancellablePromise extends Promise {
   }
 }
 
+// Exactly the adapter's exports, no more: a mock that offers v2 names the
+// adapter never re-exported (EventsEmit, the Log* family, the EventsOff
+// variants) lets a test pass against an API production does not have.
 module.exports = {
   CancellablePromise,
   EventsOn: jest.fn(() => jest.fn()),
-  EventsOnce: jest.fn(() => jest.fn()),
-  EventsOnMultiple: jest.fn(() => jest.fn()),
-  EventsOff: jest.fn(),
-  EventsOffAll: jest.fn(),
-  EventsEmit: jest.fn(),
   WindowSetTitle: jest.fn(),
   BrowserOpenURL: jest.fn(),
   ClipboardSetText: jest.fn(() => Promise.resolve()),
-  LogPrint: jest.fn(),
-  LogTrace: jest.fn(),
-  LogDebug: jest.fn(),
-  LogInfo: jest.fn(),
-  LogWarning: jest.fn(),
-  LogError: jest.fn(),
-  LogFatal: jest.fn(),
 };

@@ -63,9 +63,9 @@ function memberName(node: ts.PropertyAccessExpression | ts.ElementAccessExpressi
 
 // isGeneratedPath recognises every specifier that only the two adapters may
 // import: the v2 `wailsjs` tree (deleted, but a re-introduction must still be
-// caught), the v3 `@wailsio/runtime` package, and the generated `bindings/firn`
-// output. `@wailsio/runtime/plugins/*` is build tooling, not app runtime, so
-// vite.config.ts may import it freely.
+// caught), the v3 `@wailsio/runtime` package, and the generated output under
+// frontend/bindings. `@wailsio/runtime/plugins/*` is build tooling, not app
+// runtime, so vite.config.ts may import it freely.
 function isGeneratedPath(expression: ts.Expression | undefined): boolean {
   if (!expression) return false;
   const path = unwrap(expression);
@@ -75,7 +75,11 @@ function isGeneratedPath(expression: ts.Expression | undefined): boolean {
   // non-word character (path separator, alias sigil like @ or ~, etc.), so aliased
   // imports such as '@wailsjs/go/main/App' or '~wailsjs/...' are still caught.
   if (/(^|[^A-Za-z0-9_])wailsjs([\\/]|$)/.test(text)) return true;
-  if (/(^|[^A-Za-z0-9_])bindings\/firn([\\/]|$)/.test(text)) return true;
+  // `wails3 generate bindings` emits three roots under frontend/bindings:
+  // firn/ (this module), encoding/json/ and github.com/wailsapp/wails/v3/.
+  // They are enumerated rather than matched as a bare `bindings` segment,
+  // which would also flag the adapter path '../wails/bindings'.
+  if (/(^|[^A-Za-z0-9_])bindings\/(firn|encoding|github\.com)([\\/]|$)/.test(text)) return true;
   if (text === '@wailsio/runtime') return true;
   return text.startsWith('@wailsio/runtime/') && !text.startsWith('@wailsio/runtime/plugins/');
 }
@@ -247,6 +251,18 @@ const directReferenceCases: Array<[string, string, number, string]> = [
   [
     'generated bindings import',
     "import { ReadFile } from '../../bindings/firn/app';",
+    1,
+    PROBE_FILE,
+  ],
+  [
+    'generated encoding/json bindings import',
+    "import { Marshal } from '../../bindings/encoding/json/models';",
+    1,
+    PROBE_FILE,
+  ],
+  [
+    'generated wails internal bindings import',
+    "import { create } from '../../bindings/github.com/wailsapp/wails/v3/internal/eventcreate';",
     1,
     PROBE_FILE,
   ],

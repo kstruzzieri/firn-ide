@@ -430,9 +430,14 @@ func (a *App) quit() {
 		a.quitFn()
 		return
 	}
-	if a.v3app != nil {
-		a.v3app.Quit()
+	// Same nil-host window as emit: a quit that lands before startup has no
+	// platform to ask, so record it rather than letting the drain look like
+	// it succeeded.
+	if a.v3app == nil {
+		log.Printf("firn: quit requested before the application host was initialised; nothing to quit")
+		return
 	}
+	a.v3app.Quit()
 }
 
 // closeAIService shuts the Golem service down inside the close drain's budget.
@@ -792,10 +797,13 @@ func (a *App) GetWatchedPath() string {
 // Returns the selected folder path, or empty string if cancelled.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) OpenFolderDialog() (string, error) {
+	// A cancelled dialog also returns an empty path, so a missing host must
+	// surface as an error rather than as a silent, indistinguishable cancel.
 	if a.v3app == nil {
-		return "", nil
+		return "", errors.New("folder dialog unavailable: application host not initialised")
 	}
 	return a.v3app.Dialog.OpenFile().
+		// macOS ignores open-panel titles; the call still applies elsewhere.
 		SetTitle("Open Folder").
 		CanChooseDirectories(true).
 		CanChooseFiles(false).
@@ -990,7 +998,11 @@ func (a *App) emit(event string, data any) {
 		a.emitFn(event, data)
 		return
 	}
+	// The host is nil before application.New runs (and in tests that build an
+	// App directly). Dropping the event is the only option, but say so: a
+	// swallowed handshake event is otherwise invisible.
 	if a.v3app == nil {
+		log.Printf("firn: dropping event %q emitted before the application host was initialised", event)
 		return
 	}
 	if data == nil {

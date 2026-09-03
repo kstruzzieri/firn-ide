@@ -1,0 +1,246 @@
+package main
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strings"
+	"testing"
+)
+
+// main() is the one place the App is joined to the v3 runtime, and none of
+// that wiring is reachable from a unit test: application.New starts a real
+// platform app. So the wiring is checked structurally instead. Every clause
+// below is load-bearing, and silently losing one breaks a whole feature with
+// no failing test:
+//
+//   - Services / application.NewService(app): without it the generated
+//     bindings resolve to nothing and the entire frontend API is dead.
+//   - ShouldQuit: app.shouldQuit: the §5.5 close handshake's OS edge. Absent,
+//     Cmd+Q quits immediately and skips the drain.
+//   - app.v3app and app.mainWindow: the handles (*App).emit, (*App).quit,
+//     ToggleMaximize and OpenFolderDialog need; unset, they all no-op.
+//   - the events.Common.WindowClosing hook calling app.handleMainWindowClosing:
+//     without it the close button bypasses the handshake entirely.
+//
+// The matching is deliberately shallow - identifiers and selector paths, not
+// types - so it states the shape of the wiring without duplicating main.go.
+
+const mainWiringFile = "main.go"
+
+// selectorPath renders an identifier or a chain of selectors as a dotted
+// string ("app.v3app", "events.Common.WindowClosing"), or "" for anything
+// else.
+func selectorPath(expr ast.Expr) string {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return node.Name
+	case *ast.SelectorExpr:
+		prefix := selectorPath(node.X)
+		if prefix == "" {
+			return ""
+		}
+		return prefix + "." + node.Sel.Name
+	default:
+		return ""
+	}
+}
+
+// containsCallTo reports whether node contains a call whose callee is exactly
+// the given dotted selector path. When args is non-nil the call's arguments
+// must also render to exactly those selector paths.
+func containsCallTo(node ast.Node, path string, args ...string) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if selectorPath(call.Fun) != path {
+			return true
+		}
+		if args != nil {
+			if len(call.Args) != len(args) {
+				return true
+			}
+			for i, want := range args {
+				if selectorPath(call.Args[i]) != want {
+					return true
+				}
+			}
+		}
+		found = true
+		return false
+	})
+	return found
+}
+
+// fieldValue returns the value of the named field in any composite literal
+// under node, or nil when the field is absent.
+func fieldValue(node ast.Node, field string) ast.Expr {
+	var value ast.Expr
+	ast.Inspect(node, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if key, isIdent := kv.Key.(*ast.Ident); isIdent && key.Name == field {
+			value = kv.Value
+			return false
+		}
+		return true
+	})
+	return value
+}
+
+// assignsTo reports whether node contains an assignment whose left-hand side
+// is the given dotted selector path.
+func assignsTo(node ast.Node, path string) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, lhs := range assign.Lhs {
+			if selectorPath(lhs) == path {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// registersWindowClosingHook reports whether node contains a RegisterHook call
+// for events.Common.WindowClosing whose handler calls
+// app.handleMainWindowClosing.
+func registersWindowClosingHook(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if !strings.HasSuffix(selectorPath(call.Fun), ".RegisterHook") || len(call.Args) != 2 {
+			return true
+		}
+		if selectorPath(call.Args[0]) != "events.Common.WindowClosing" {
+			return true
+		}
+		if containsCallTo(call.Args[1], "app.handleMainWindowClosing") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// scanMainWiring returns one description per missing wiring clause, or an
+// empty slice when main() wires everything.
+func scanMainWiring(fn *ast.FuncDecl) []string {
+	var missing []string
+
+	services := fieldValue(fn.Body, "Services")
+	if services == nil || !containsCallTo(services, "application.NewService", "app") {
+		missing = append(missing, "Options.Services must register application.NewService(app)")
+	}
+
+	if shouldQuit := fieldValue(fn.Body, "ShouldQuit"); selectorPath(shouldQuit) != "app.shouldQuit" {
+		missing = append(missing, "Options.ShouldQuit must be app.shouldQuit")
+	}
+	if !assignsTo(fn.Body, "app.v3app") {
+		missing = append(missing, "main must assign app.v3app")
+	}
+	if !assignsTo(fn.Body, "app.mainWindow") {
+		missing = append(missing, "main must assign app.mainWindow")
+	}
+	if !registersWindowClosingHook(fn.Body) {
+		missing = append(missing, "main must register events.Common.WindowClosing calling app.handleMainWindowClosing")
+	}
+
+	return missing
+}
+
+// parseMainFunc returns the `func main()` declaration in src, which is read
+// from mainWiringFile when src is nil.
+func parseMainFunc(t *testing.T, name string, src any) *ast.FuncDecl {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile(%s) error = %v, want nil", name, err)
+	}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "main" && fn.Body != nil {
+			return fn
+		}
+	}
+	t.Fatalf("%s declares no func main() with a body", name)
+	return nil
+}
+
+func TestMainWiresTheAppIntoTheV3Runtime(t *testing.T) {
+	t.Parallel()
+
+	missing := scanMainWiring(parseMainFunc(t, mainWiringFile, nil))
+
+	if len(missing) > 0 {
+		t.Fatalf("main() wiring gaps:\n%s", strings.Join(missing, "\n"))
+	}
+}
+
+// The guard is only worth having if it fails when the wiring goes: each
+// fixture below drops exactly one clause from an otherwise complete main().
+func TestMainWiringGuardDetectsMissingWiring(t *testing.T) {
+	t.Parallel()
+
+	const complete = `package main
+func main() {
+	app := NewApp()
+	wapp := application.New(application.Options{
+		Services:   []application.Service{application.NewService(app)},
+		ShouldQuit: app.shouldQuit,
+	})
+	app.v3app = wapp
+	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{})
+	app.mainWindow = win
+	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		app.handleMainWindowClosing(e.Cancel)
+	})
+	_ = wapp.Run()
+}
+`
+
+	if missing := scanMainWiring(parseMainFunc(t, "complete.go", complete)); len(missing) > 0 {
+		t.Fatalf("scanMainWiring(complete fixture) = %v, want no gaps", missing)
+	}
+
+	mutations := map[string]string{
+		"hook removed": `win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		app.handleMainWindowClosing(e.Cancel)
+	})`,
+		"hook handler gutted":    "app.handleMainWindowClosing(e.Cancel)",
+		"services removed":       "Services:   []application.Service{application.NewService(app)},",
+		"should-quit removed":    "ShouldQuit: app.shouldQuit,",
+		"v3app unassigned":       "app.v3app = wapp",
+		"main window unassigned": "app.mainWindow = win",
+	}
+
+	for name, removed := range mutations {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(complete, removed, "", 1)
+			if mutated == complete {
+				t.Fatalf("fixture mutation %q did not change the source", name)
+			}
+
+			missing := scanMainWiring(parseMainFunc(t, "mutated.go", mutated))
+
+			if len(missing) == 0 {
+				t.Errorf("scanMainWiring(%q fixture) found no gap, want one", name)
+			}
+		})
+	}
+}

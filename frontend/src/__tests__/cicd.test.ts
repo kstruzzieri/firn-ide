@@ -253,7 +253,13 @@ describe('CI Workflow', () => {
   // to the linux:build Task (which supplies it by default). The wails3 CLI
   // itself is also gtk3-gated on Linux (it links WebKit directly), so a
   // `go install ... cmd/wails3` step counts too.
-  it('should require the gtk3 build tag wherever a Linux job compiles Go', () => {
+  //
+  // The runner pin is the other half of the same contract: the ubuntu-22.04
+  // image IS the WebKit2GTK 4.1 compatibility floor those tags target, so no
+  // job anywhere may ride the moving `ubuntu-latest` label, and every job
+  // that installs the GTK dev packages or produces the Linux binary must name
+  // 22.04 explicitly.
+  it('should pin the Linux runners and pass the gtk3 build tag wherever a Linux job compiles Go', () => {
     const golangciConfig = readFileSync(resolve(rootDir, '.golangci.yml'), 'utf-8');
     const golangciBuildTags =
       (parse(golangciConfig) as { run?: { 'build-tags'?: string[] } }).run?.['build-tags'] ?? [];
@@ -268,6 +274,7 @@ describe('CI Workflow', () => {
     ];
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
     let matchedSteps = 0;
+    let gtkFloorJobs = 0;
 
     for (const file of workflowFiles) {
       const content = readFileSync(resolve(workflowsDir, file), 'utf-8');
@@ -280,9 +287,33 @@ describe('CI Workflow', () => {
 
       for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
         const runsOn = job['runs-on'];
+        const steps = job.steps ?? [];
+        const stepTexts = steps.map((step) =>
+          [step.run, step.uses].filter((value): value is string => Boolean(value)).join('\n')
+        );
+
+        expect({ file, job: jobName, ridesUbuntuLatest: runsOn === 'ubuntu-latest' }).toEqual({
+          file,
+          job: jobName,
+          ridesUbuntuLatest: false,
+        });
+
         if (typeof runsOn !== 'string' || !runsOn.startsWith('ubuntu')) continue;
 
-        for (const step of job.steps ?? []) {
+        const needsGtkFloor = stepTexts.some(
+          (text) =>
+            text.includes('libwebkit2gtk-4.1-dev') || text.includes('wails3 task linux:build')
+        );
+        if (needsGtkFloor) {
+          gtkFloorJobs += 1;
+          expect({ file, job: jobName, runsOn }).toEqual({
+            file,
+            job: jobName,
+            runsOn: 'ubuntu-22.04',
+          });
+        }
+
+        for (const step of steps) {
           const stepText = [step.run, step.uses]
             .filter((value): value is string => Boolean(value))
             .join('\n');
@@ -309,12 +340,16 @@ describe('CI Workflow', () => {
     }
 
     // A loop that only asserts inside its body passes vacuously if nothing
-    // ever matches. Today seven Go-compiling Linux steps match: test.yml
-    // backend-tests (two `go test` steps), lint.yml golangci-lint, the
-    // `wails3 task linux:build` steps in build.yml and release.yml, and the
-    // `go install ... cmd/wails3` CLI-install steps in build.yml and
+    // ever matches, so both counts are exact censuses rather than floors.
+    //
+    // Seven Go-compiling Linux steps: test.yml backend-tests (two `go test`
+    // steps), lint.yml golangci-lint, the `go install ... cmd/wails3` and
+    // `wails3 task linux:build` steps in build.yml, and the same two in
     // release.yml's build-linux job.
-    expect(matchedSteps).toBeGreaterThanOrEqual(5);
+    expect(matchedSteps).toBe(7);
+    // Four jobs sit on the WebKit2GTK floor: build.yml build, test.yml
+    // backend-tests, lint.yml golangci-lint, release.yml build-linux.
+    expect(gtkFloorJobs).toBe(4);
   });
 });
 
