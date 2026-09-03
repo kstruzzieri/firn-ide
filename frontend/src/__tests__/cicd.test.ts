@@ -292,7 +292,21 @@ describe('CI Workflow', () => {
           [step.run, step.uses].filter((value): value is string => Boolean(value)).join('\n')
         );
 
-        expect({ file, job: jobName, ridesUbuntuLatest: runsOn === 'ubuntu-latest' }).toEqual({
+        // `runs-on` must be a plain string literal: an expression
+        // (`${{ matrix.os }}`), an array, or an object form could carry
+        // 'ubuntu-latest' while dodging a strict `=== 'ubuntu-latest'` check.
+        const runsOnIsLiteralString = typeof runsOn === 'string' && !runsOn.includes('${{');
+        expect({ file, job: jobName, runsOnIsLiteralString }).toEqual({
+          file,
+          job: jobName,
+          runsOnIsLiteralString: true,
+        });
+
+        expect({
+          file,
+          job: jobName,
+          ridesUbuntuLatest: JSON.stringify(runsOn).includes('ubuntu-latest'),
+        }).toEqual({
           file,
           job: jobName,
           ridesUbuntuLatest: false,
@@ -350,6 +364,31 @@ describe('CI Workflow', () => {
     // Four jobs sit on the WebKit2GTK floor: build.yml build, test.yml
     // backend-tests, lint.yml golangci-lint, release.yml build-linux.
     expect(gtkFloorJobs).toBe(4);
+  });
+
+  // generate:bindings runs with -clean=true, so a Go-facing API or exported
+  // model shape that changed without regenerating frontend/bindings would
+  // otherwise ship silently -- nothing else in CI would catch it.
+  it('should verify committed bindings are current after build.yml builds Linux', () => {
+    const content = readFileSync(resolve(workflowsDir, 'build.yml'), 'utf-8');
+    const workflow = parse(content) as {
+      jobs?: Record<string, { steps?: Array<{ run?: string }> }>;
+    };
+    const steps = workflow.jobs?.build?.steps ?? [];
+    const buildStepIndex = steps.findIndex((step) => step.run?.includes('wails3 task linux:build'));
+
+    expect(buildStepIndex).toBeGreaterThanOrEqual(0);
+
+    const driftCheck = steps.slice(buildStepIndex + 1).find((step) => {
+      const run = step.run;
+      return (
+        typeof run === 'string' &&
+        run.includes('git status --porcelain -- frontend/bindings') &&
+        run.includes('test -z')
+      );
+    });
+
+    expect(driftCheck).toBeDefined();
   });
 });
 

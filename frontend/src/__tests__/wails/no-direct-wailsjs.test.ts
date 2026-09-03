@@ -5,6 +5,22 @@ import ts from 'typescript';
 const SRC = resolve(__dirname, '../..');
 const FRONTEND = resolve(SRC, '..');
 const ADAPTER_DIR = resolve(SRC, 'wails');
+const BINDINGS_DIR = resolve(FRONTEND, 'bindings');
+
+// `wails3 generate bindings` emits one directory per module root under
+// frontend/bindings (currently firn/, encoding/json/ and
+// github.com/wailsapp/wails/v3/) -- derived here instead of hard-coded so a
+// future root wails3 adds is caught automatically rather than silently
+// slipping past the generated-path check below.
+const BINDING_ROOTS = readdirSync(BINDINGS_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name);
+const BINDING_ROOTS_PATTERN = BINDING_ROOTS.map((name) =>
+  name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+).join('|');
+const GENERATED_BINDINGS_RE = new RegExp(
+  `(^|[^A-Za-z0-9_])bindings\\/(${BINDING_ROOTS_PATTERN})([\\\\/]|$)`
+);
 const ALLOWED_GENERATED_IMPORTERS = new Set([
   resolve(ADAPTER_DIR, 'bindings.ts'),
   resolve(ADAPTER_DIR, 'runtime.ts'),
@@ -75,11 +91,10 @@ function isGeneratedPath(expression: ts.Expression | undefined): boolean {
   // non-word character (path separator, alias sigil like @ or ~, etc.), so aliased
   // imports such as '@wailsjs/go/main/App' or '~wailsjs/...' are still caught.
   if (/(^|[^A-Za-z0-9_])wailsjs([\\/]|$)/.test(text)) return true;
-  // `wails3 generate bindings` emits three roots under frontend/bindings:
-  // firn/ (this module), encoding/json/ and github.com/wailsapp/wails/v3/.
-  // They are enumerated rather than matched as a bare `bindings` segment,
-  // which would also flag the adapter path '../wails/bindings'.
-  if (/(^|[^A-Za-z0-9_])bindings\/(firn|encoding|github\.com)([\\/]|$)/.test(text)) return true;
+  // The generated roots (BINDING_ROOTS, read from frontend/bindings above)
+  // are matched by name rather than as a bare `bindings` segment, which
+  // would also flag the adapter path '../wails/bindings'.
+  if (GENERATED_BINDINGS_RE.test(text)) return true;
   if (text === '@wailsio/runtime') return true;
   return text.startsWith('@wailsio/runtime/') && !text.startsWith('@wailsio/runtime/plugins/');
 }
@@ -311,6 +326,11 @@ it.each(allowedReferenceCases)('allows %s', (_name, content, filePath) => {
 
 it('scans a non-trivial number of files (anti-vacuity floor)', () => {
   expect(files.length).toBeGreaterThan(200);
+});
+
+it('derives a non-empty set of generated binding roots including firn (anti-vacuity floor)', () => {
+  expect(BINDING_ROOTS.length).toBeGreaterThan(0);
+  expect(BINDING_ROOTS).toContain('firn');
 });
 
 it('scans handwritten frontend files outside src but skips generated output', () => {

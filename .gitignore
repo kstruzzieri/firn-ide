@@ -9,7 +9,6 @@ frontend/dist
 # packaging targets #273 does not maintain (AppImage, deb/rpm, NSIS, iOS), plus
 # the .desktop file generated during every Linux build.
 /build/ios/
-/build/linux/appimage/
 /build/linux/desktop
 /build/linux/firn.desktop
 /build/linux/nfpm/

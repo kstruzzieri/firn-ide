@@ -195,8 +195,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # Includes the release-bundle artifact `verify` uploaded, so the notes
       # and checksums published below are the exact bytes `verify` gated --

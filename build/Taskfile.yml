@@ -119,4 +119,10 @@ tasks:
       # productName stays the single source; info.description keeps its real
       # sentence for every other consumer. releaseScripts.test.ts asserts the
       # resulting info.json FileDescription == config.yml info.productName.
-      - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir . -productdescription "$(sed -n 's/^[[:space:]]*productName:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' config.yml)"
+      # The extraction accepts a quoted or unquoted scalar (config.yml's exact
+      # YAML style is not a contract) and fails loudly on an empty result
+      # instead of silently handing wails3 an empty -productdescription.
+      - |
+        product_name="$(sed -n 's/^[[:space:]]*productName:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' config.yml)"
+        test -n "$product_name" || { echo "productName not found in config.yml" >&2; exit 1; }
+        wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir . -productdescription "$product_name"

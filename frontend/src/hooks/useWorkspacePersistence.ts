@@ -245,10 +245,12 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
               column: fileState.cursorColumn || 1,
             };
           }
-        } catch {
+        } catch (err) {
           // The file is gone, unreadable, or came back empty-handed — drop it
           // from the restore and keep going, so one missing file cannot cost
-          // the user every other tab in the session.
+          // the user every other tab in the session. Still logged, so a
+          // silently dropped tab has a trail to follow.
+          console.warn(`Failed to restore file ${fileState.path}:`, err);
           continue;
         }
       }
