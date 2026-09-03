@@ -59,8 +59,13 @@ jobs:
       - name: Verify build output
         run: test -f bin/firn
 
-      # The build regenerates bindings with -clean=true; a diff here means a
-      # Go-facing API or exported model shape changed without regenerating
-      # the committed frontend/bindings output.
+      # The build regenerates bindings with -clean=true; anything reported here
+      # means a Go-facing API or exported model shape changed without
+      # regenerating the committed frontend/bindings output. `git status
+      # --porcelain`, not `git diff`: -clean=true deletes and rewrites the whole
+      # tree, so a binding file that was added or removed shows up as untracked
+      # or deleted, which `git diff` against the index would miss.
       - name: Verify committed bindings are current
-        run: git diff --exit-code -- frontend/bindings
+        run: |
+          git status --porcelain -- frontend/bindings
+          test -z "$(git status --porcelain -- frontend/bindings)"

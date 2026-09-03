@@ -7,7 +7,7 @@ import { Create as $Create } from "@wailsio/runtime";
 
 /**
  * FileResult groups all matching lines for a single file.
- *
+ * 
  * Path is the absolute path. RelativePath is the path relative to the search
  * root, using forward slashes regardless of host OS so the frontend can
  * render and compare it consistently.
@@ -47,14 +47,14 @@ export class FileResult {
 
 /**
  * LineMatch is a single matching line within a file.
- *
+ * 
  * Line is 1-based to match user-visible line numbering and the existing
  * navigateToEditorLocation contract.
- *
+ * 
  * Column is the 1-based byte column of the first match on the line as
  * reported by ripgrep. Frontend converts to a character column before
  * passing to the editor.
- *
+ * 
  * Submatches are ordered by Start ascending and never overlap each other
  * (ripgrep guarantees this).
  */
@@ -175,12 +175,12 @@ export class SearchOptions {
 
 /**
  * SearchRequest is the input shape for SearchWorkspace.
- *
+ * 
  * RequestID is supplied by the caller (the frontend) so concurrent searches
  * can be tracked and canceled deterministically. It must be non-empty.
- *
+ * 
  * Root must be a non-empty absolute path that exists and is a directory.
- *
+ * 
  * Query is the user-entered search string. With Options.Regex == false it is
  * treated as a literal via ripgrep's --fixed-strings flag, so regex
  * metacharacters are safe.
@@ -224,18 +224,18 @@ export class SearchRequest {
 
 /**
  * SearchResponse is the terminal result of a search request.
- *
+ * 
  * Status is always set. When Status is StatusFailed, StatusMissingTool, or
  * StatusInvalidRegex, Message contains an actionable description. For other
  * statuses Message is empty.
- *
+ * 
  * Truncated is true when the runner stopped collecting results because the
  * configured cap was reached. The Files slice is a prefix of all matches in
  * that case.
- *
+ * 
  * MatchCap is the cap that was in effect for this request, surfaced so the
  * UI can explain "showing first N of many" without hard-coding a value.
- *
+ * 
  * DurationMs is the wall-clock duration of the run in milliseconds, useful
  * for surfacing search latency.
  */
@@ -295,7 +295,7 @@ export class SearchResponse {
 
 /**
  * SearchStatus is a typed enumeration of terminal states for a search request.
- *
+ * 
  * The frontend uses this value to render distinct UI states. We intentionally
  * avoid surfacing a generic "error" status: each failure mode that the user
  * can act on has a dedicated value.

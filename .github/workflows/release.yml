@@ -198,23 +198,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Includes the release-bundle artifact `verify` uploaded, so the notes
+      # and checksums published below are the exact bytes `verify` gated --
+      # regenerating them here would publish artefacts no job ever checked.
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Generate changelog
-        run: sh .github/scripts/extract-changelog.sh "$GITHUB_REF_NAME" CHANGELOG.md changelog.md frontend/package.json build/config.yml
+      - name: Verify archive roots
+        run: sh .github/scripts/verify-archive-roots.sh artifacts
 
-      - name: Generate checksums
-        run: sh .github/scripts/generate-checksums.sh artifacts SHA256SUMS
+      - name: Verify checksum manifest covers all targets
+        run: test "$(wc -l < artifacts/release-bundle/SHA256SUMS)" -eq 4
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: changelog.md
+          body_path: artifacts/release-bundle/changelog.md
           files: |
-            SHA256SUMS
+            artifacts/release-bundle/SHA256SUMS
             artifacts/**/*.zip
             artifacts/**/*.tar.gz
           draft: false

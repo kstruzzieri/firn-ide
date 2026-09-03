@@ -240,13 +240,13 @@ export class ConflictStages {
  * text-mergeable, the operation heads that give Current/Incoming their meaning,
  * and an opaque SourceVersion covering all of it plus the raw working-tree
  * bytes.
- *
+ * 
  * SourceVersion exists because a filesystem watcher is a hint, not an
  * authority: an event can be missed, coalesced, or arrive late, and a merge
  * session that trusted it would happily overwrite a change it never saw. Every
  * mutation therefore carries the version the user actually reviewed, and the
  * backend re-derives the version inside the same call as the mutation.
- *
+ * 
  * Snapshot is nil when the stage topology calls for the whole-file side UI (a
  * binary conflict, or a delete/modify where one side has no blob) and when the
  * path is no longer conflicted at all. Heads is nil only when there are no

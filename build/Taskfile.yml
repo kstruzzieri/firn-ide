@@ -2,21 +2,20 @@ version: '3'
 
 tasks:
   go:mod:tidy:
-    summary: Runs `go mod tidy`
+    summary: Verifies go.mod/go.sum are tidy without rewriting them
     internal: true
-    # Universal/multi-arch builds invoke this concurrently from parallel deps;
-    # two `go mod tidy` processes racing on go.mod can corrupt it (#4637).
+    # `-diff` (Go 1.23+) reports what `go mod tidy` WOULD change and exits
+    # non-zero instead of writing: a build must never mutate the module graph
+    # it is building from. Dependency drift fails the build loudly; the fix is
+    # to run `go mod tidy` yourself and commit the result.
+    # run: once so several build tasks depending on it pay for one check.
     run: once
     cmds:
-      - go mod tidy
+      - go mod tidy -diff
 
   install:frontend:deps:
     summary: Install frontend dependencies
     run: once
-    cmds:
-      - task: install:frontend:deps:{{.PACKAGE_MANAGER}}
-
-  install:frontend:deps:npm:
     dir: frontend
     sources:
       - package.json
@@ -32,54 +31,14 @@ tasks:
       # command, so a local build cannot drift from a release build.
       - npm ci
 
-  install:frontend:deps:bun:
-    dir: frontend
-    sources:
-      - package.json
-      - bun.lock
-      - bun.lockb
-    generates:
-      - node_modules
-    preconditions:
-      - sh: bun --version
-        msg: "bun not found"
-    cmds:
-      - bun install
-
-  install:frontend:deps:pnpm:
-    dir: frontend
-    sources:
-      - package.json
-      - pnpm-lock.yaml
-    generates:
-      - node_modules
-    preconditions:
-      - sh: pnpm --version
-        msg: "pnpm not found"
-    cmds:
-      - pnpm install
-
-  install:frontend:deps:yarn:
-    dir: frontend
-    sources:
-      - package.json
-      - yarn.lock
-    status:
-      - test -d node_modules || test -f .pnp.cjs
-    preconditions:
-      - sh: yarn --version
-        msg: "yarn not found"
-    cmds:
-      - yarn install
-
   build:frontend:
-    label: build:frontend (DEV={{.DEV}} RUNNER={{.PACKAGE_MANAGER}})
+    label: build:frontend (DEV={{.DEV}})
     summary: Build the frontend project
-    # darwin:build:universal runs its per-arch builds as parallel deps, each of
-    # which depends on this task. Without run:once the two executions race:
-    # one regenerates frontend/bindings (-clean deletes it first) while the
-    # other's bundler is reading it, failing intermittently with
-    # 'Could not resolve "./bindings/<pkg>"' (#4637).
+    # run: once so the several build tasks that depend on this one share a
+    # single execution: generate:bindings below deletes frontend/bindings
+    # (-clean=true) before rewriting it, and a second concurrent run would
+    # have its bundler read the directory mid-delete, failing intermittently
+    # with 'Could not resolve "./bindings/<pkg>"' (#4637).
     run: once
     dir: frontend
     sources:
@@ -99,48 +58,9 @@ tasks:
       # Firn's frontend exposes a single `build` script (tsc + vite build +
       # language-bundle check). The upstream template's DEV-only `build:dev`
       # script does not exist here; `PRODUCTION` below still marks the mode.
-      - task: frontend:run
-        vars:
-          SCRIPT: build
+      - npm run build -q
     env:
       PRODUCTION: '{{if eq .DEV "true"}}false{{else}}true{{end}}'
-
-  frontend:run:
-    summary: Run a frontend script with selected runner
-    cmds:
-      - task: frontend:run:{{.PACKAGE_MANAGER}}
-        vars:
-          SCRIPT: "{{.SCRIPT}}"
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:run:npm:
-    dir: frontend
-    cmds:
-      - npm run {{.SCRIPT}} -q
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:run:yarn:
-    dir: frontend
-    cmds:
-      - yarn {{.SCRIPT}}
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:run:pnpm:
-    dir: frontend
-    cmds:
-      - pnpm run {{.SCRIPT}}
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:run:bun:
-    dir: frontend
-    cmds:
-      - bun run {{.SCRIPT}}
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
 
   generate:bindings:
     summary: Generates bindings for the frontend
@@ -181,31 +101,22 @@ tasks:
     summary: Runs the frontend in development mode
     deps:
       - task: install:frontend:deps
-    cmds:
-      - task: frontend:dev:{{.PACKAGE_MANAGER}}
-
-  frontend:dev:npm:
     dir: frontend
     cmds:
+      # VITE_PORT is the single source of truth for the dev-server port (root
+      # Taskfile.yml); vite.config.ts deliberately hard-codes no default.
       - npm run dev -- --port {{.VITE_PORT}} --strictPort
-
-  frontend:dev:yarn:
-    dir: frontend
-    cmds:
-      - yarn dev --port {{.VITE_PORT}} --strictPort
-
-  frontend:dev:pnpm:
-    dir: frontend
-    cmds:
-      - pnpm dev --port {{.VITE_PORT}} --strictPort
-
-  frontend:dev:bun:
-    dir: frontend
-    cmds:
-      - bun run dev --port {{.VITE_PORT}} --strictPort
 
   update:build-assets:
     summary: Updates the build assets
     dir: build
     cmds:
-      - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir .
+      # -productdescription overrides config.yml info.description, which the
+      # upstream windows/info.json template otherwise maps to FileDescription.
+      # Windows renders FileDescription as the executable's display name (Task
+      # Manager, the .exe properties sheet), where v2 shipped the product name
+      # rather than a sentence. The value is read back out of config.yml so
+      # productName stays the single source; info.description keeps its real
+      # sentence for every other consumer. releaseScripts.test.ts asserts the
+      # resulting info.json FileDescription == config.yml info.productName.
+      - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir . -productdescription "$(sed -n 's/^[[:space:]]*productName:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' config.yml)"

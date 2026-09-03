@@ -153,7 +153,7 @@ export class DoctorReport {
  * DocumentSymbol represents a programming construct in a document, such as a
  * class, method, or variable. Symbols can nest via Children when the server
  * supports hierarchical document symbols.
- *
+ * 
  * This is the normalized shape Firn works with. Servers that only return the
  * legacy flat SymbolInformation[] are converted into a flat slice of these
  * (no Children) before reaching the manager — see normalizeDocumentSymbols.

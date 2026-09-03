@@ -578,7 +578,7 @@ export class ModelFacts {
  * mutation would actually apply (selectorCapabilityOverrides). RoutedUseCases
  * lists every use case reaching this role (directly or through a fallback
  * chain); Removable is true when nothing references it.
- *
+ * 
  * HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
  * these authored, model-specific members, so the editor has to disclose the
  * loss before staging. The values themselves never cross the boundary.
