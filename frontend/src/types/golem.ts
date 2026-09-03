@@ -677,10 +677,26 @@ export const CAPABILITY_NAMES: readonly CapabilityName[] = [
 export const isBoundedString = (value: unknown, maxBytes: number): value is string =>
   isString(value) && utf8Length(value) <= maxBytes;
 
-// hasOnlyKeys rejects any key outside the allowlist: strict-both-ways mirror
-// of the Go corpus harness's DisallowUnknownFields (see the section comment).
+// Presence at this boundary means "own key holding a DEFINED value", and both
+// helpers below apply that rule.
+//
+// Wails v3 hands every binding result back as a generated class instance, and
+// tsconfig sets useDefineForClassFields, so each declared optional member
+// ("revision"?: string) becomes an own property valued `undefined` on every
+// instance -- whether or not the wire carried it. JSON cannot represent
+// `undefined`, so an own key valued `undefined` can only come from the class
+// shape and never from the producer; ignoring those keys restores the exact
+// wire semantics the v2 plain objects had.
+//
+// Strictness is untouched: a key carrying any real value -- null included --
+// still counts as present, so hasOnlyKeys still rejects genuine unknown keys,
+// a strict-both-ways mirror of the Go corpus harness's DisallowUnknownFields
+// (see the section comment).
+export const hasPresentKey = (value: Record<string, unknown>, key: string): boolean =>
+  Object.hasOwn(value, key) && value[key] !== undefined;
+
 export const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
-  Object.keys(value).every((key) => allowed.includes(key));
+  Object.keys(value).every((key) => value[key] === undefined || allowed.includes(key));
 
 export const MODEL_TYPES: readonly ModelType[] = ['dense', 'moe', 'embedding'];
 export const THINK_MODES: readonly ThinkMode[] = ['', 'none', 'always', 'toggle', 'auto'];
@@ -830,9 +846,9 @@ function readModel(value: unknown): ModelProjection | null {
   )
     return null;
 
-  const hasParameters = Object.hasOwn(value, 'parameters');
-  const hasContextWindow = Object.hasOwn(value, 'contextWindow');
-  const hasDimensions = Object.hasOwn(value, 'dimensions');
+  const hasParameters = hasPresentKey(value, 'parameters');
+  const hasContextWindow = hasPresentKey(value, 'contextWindow');
+  const hasDimensions = hasPresentKey(value, 'dimensions');
   if (hasParameters && !isIdentifier(value.parameters)) return null;
   if (hasContextWindow && !isOptionalModelNumber(value.contextWindow)) return null;
   if (hasDimensions && !isOptionalModelNumber(value.dimensions)) return null;
@@ -944,7 +960,7 @@ export function parseSettingsProjection(value: unknown): SettingsProjection {
     return contractError();
 
   const loaded = value.state === 'ready' || value.state === 'limited';
-  const hasRevision = Object.hasOwn(value, 'revision');
+  const hasRevision = hasPresentKey(value, 'revision');
   if (
     loaded !== hasRevision ||
     (loaded && (typeof value.revision !== 'string' || !REVISION.test(value.revision)))
