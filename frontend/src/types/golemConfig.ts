@@ -298,7 +298,12 @@ const isChangeID = (value: unknown): value is string => {
   );
 };
 
-/** Present-but-absent is not a thing: an explicit null is a rejection. */
+/**
+ * An explicit `null` is a rejection. An own key valued `undefined` reads as
+ * absent (see `hasPresentKey`): v3's generated class instances declare every
+ * optional field as an own `undefined` property under
+ * `useDefineForClassFields`, and JSON cannot carry `undefined`.
+ */
 const readOptional = <T>(
   value: Record<string, unknown>,
   key: string,
