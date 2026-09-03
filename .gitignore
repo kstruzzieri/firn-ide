@@ -6,7 +6,7 @@ frontend/dist
 /.task/
 
 # Wails v3 build assets that `wails3 task common:update:build-assets` emits for
-# packaging targets #273 does not maintain (AppImage, deb/rpm, NSIS, iOS), plus
+# packaging targets #273 does not maintain (deb/rpm, NSIS, iOS), plus
 # the .desktop file generated during every Linux build.
 /build/ios/
 /build/linux/desktop

@@ -124,5 +124,6 @@ tasks:
       # instead of silently handing wails3 an empty -productdescription.
       - |
         product_name="$(sed -n 's/^[[:space:]]*productName:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' config.yml)"
+        product_name="$(printf '%s' "$product_name" | sed 's/[[:space:]]*$//;s/^[[:space:]]*//')"
         test -n "$product_name" || { echo "productName not found in config.yml" >&2; exit 1; }
         wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir . -productdescription "$product_name"
