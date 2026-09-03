@@ -29,6 +29,30 @@ describe('wails adapter surface', () => {
     await written;
   });
 
+  it('logs and swallows a rejected WindowSetTitle promise instead of throwing', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = new Error('set title failed');
+    v3.Window.SetTitle.mockReturnValueOnce(Promise.reject(err));
+
+    expect(() => WindowSetTitle('Firn — a.ts')).not.toThrow();
+    await Promise.resolve(); // flush the microtask queue so the .catch runs
+
+    expect(warn).toHaveBeenCalledWith('WindowSetTitle failed:', err);
+    warn.mockRestore();
+  });
+
+  it('logs and swallows a rejected BrowserOpenURL promise instead of throwing', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = new Error('open url failed');
+    v3.Browser.OpenURL.mockReturnValueOnce(Promise.reject(err));
+
+    expect(() => BrowserOpenURL('https://example.test/docs')).not.toThrow();
+    await Promise.resolve(); // flush the microtask queue so the .catch runs
+
+    expect(warn).toHaveBeenCalledWith('BrowserOpenURL failed:', err);
+    warn.mockRestore();
+  });
+
   it('registers an unwrapping listener and returns the v3 cleanup unchanged', () => {
     const cleanup = jest.fn();
     v3.Events.On.mockReturnValueOnce(cleanup);

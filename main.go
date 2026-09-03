@@ -69,6 +69,9 @@ func main() {
 		MinWidth:         1024,
 		MinHeight:        600,
 		BackgroundColour: application.NewRGB(2, 6, 23),
+		// Windows and Linux attach the global menu to a window only when this
+		// is true; macOS ignores it and always uses the NSApp menu.
+		UseApplicationMenu: true,
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBar{
 				AppearsTransparent: true,

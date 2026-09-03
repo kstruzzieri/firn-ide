@@ -22,6 +22,10 @@ import (
 //     ToggleMaximize and OpenFolderDialog need; unset, they all no-op.
 //   - the events.Common.WindowClosing hook calling app.handleMainWindowClosing:
 //     without it the close button bypasses the handshake entirely.
+//   - WebviewWindowOptions.UseApplicationMenu: true: on Windows and Linux the
+//     global menu (Navigate/Workspace) attaches to a window only when this is
+//     set; absent, those builds silently lose the menu and its accelerators.
+//     macOS ignores the flag and always uses the NSApp menu.
 //
 // The matching is deliberately shallow - identifiers and selector paths, not
 // types - so it states the shape of the wiring without duplicating main.go.
@@ -157,6 +161,9 @@ func scanMainWiring(fn *ast.FuncDecl) []string {
 	if !assignsTo(fn.Body, "app.mainWindow") {
 		missing = append(missing, "main must assign app.mainWindow")
 	}
+	if useAppMenu := fieldValue(fn.Body, "UseApplicationMenu"); selectorPath(useAppMenu) != "true" {
+		missing = append(missing, "WebviewWindowOptions must set UseApplicationMenu: true")
+	}
 	if !registersWindowClosingHook(fn.Body) {
 		missing = append(missing, "main must register events.Common.WindowClosing calling app.handleMainWindowClosing")
 	}
@@ -205,7 +212,9 @@ func main() {
 		ShouldQuit: app.shouldQuit,
 	})
 	app.v3app = wapp
-	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{})
+	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
+		UseApplicationMenu: true,
+	})
 	app.mainWindow = win
 	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		app.handleMainWindowClosing(e.Cancel)
@@ -222,11 +231,12 @@ func main() {
 		"hook removed": `win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		app.handleMainWindowClosing(e.Cancel)
 	})`,
-		"hook handler gutted":    "app.handleMainWindowClosing(e.Cancel)",
-		"services removed":       "Services:   []application.Service{application.NewService(app)},",
-		"should-quit removed":    "ShouldQuit: app.shouldQuit,",
-		"v3app unassigned":       "app.v3app = wapp",
-		"main window unassigned": "app.mainWindow = win",
+		"hook handler gutted":          "app.handleMainWindowClosing(e.Cancel)",
+		"services removed":             "Services:   []application.Service{application.NewService(app)},",
+		"should-quit removed":          "ShouldQuit: app.shouldQuit,",
+		"v3app unassigned":             "app.v3app = wapp",
+		"main window unassigned":       "app.mainWindow = win",
+		"use application menu removed": "UseApplicationMenu: true,",
 	}
 
 	for name, removed := range mutations {
