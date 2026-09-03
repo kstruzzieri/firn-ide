@@ -4,3 +4,11 @@
 # generator's output, and CI never configures `filter.trimws.clean`, so
 # build.yml's post-build `git status --porcelain -- frontend/bindings` gate
 # would fail on whitespace the local working tree cannot see.
+
+# The Taskfile's go:mod:tidy task runs `go mod tidy -diff`, a read-only
+# byte-for-byte comparison. Windows runners check out text files with CRLF
+# (core.autocrlf=true on GitHub's Windows images), so without a forced LF
+# eol these files show as fully changed on Windows even though tidy would
+# not actually rewrite anything.
+go.mod text eol=lf
+go.sum text eol=lf
