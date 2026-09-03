@@ -14,6 +14,9 @@ module.exports = {
     // `.js` extension ('./internal/ai/models.js'); jest's CJS resolver would look
     // for a literal .js file. Dropping the extension lets moduleFileExtensions
     // find the .ts source (and still finds real .js files in node_modules ESM).
+    // Deliberately repo-wide rather than scoped to bindings/: jest maps by
+    // import specifier, not by the importing file, so there is no scope to
+    // narrow it to -- and the fallback resolves real .js files unchanged.
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {

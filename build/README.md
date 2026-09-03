@@ -15,7 +15,6 @@ build. Wails v3 orchestrates builds with [Task](https://taskfile.dev); the root
 | `linux/` | Linux Taskfile. |
 | `windows/` | Windows Taskfile plus the generated `info.json`, `wails.exe.manifest`, and `icon.ico`. |
 | `icons/` | Standalone PNG icons used outside the build (README, docs, packaging notes). |
-| `windows/installer/` | Dormant NSIS sources retained from the v2 build; not wired into any task. |
 
 Build output goes to the repository-root `bin/` directory (`bin/firn`,
 `bin/Firn.app`), which is git-ignored.
@@ -33,7 +32,9 @@ wails3 task dev               # Vite dev server + hot-reloading desktop window
 ```
 
 `wails3 task build` and `wails3 task run` dispatch to the host platform, and
-`wails3 task dev` runs `wails3 dev -config ./build/config.yml -port 9245`. Add
+`wails3 task dev` runs `wails3 dev -config ./build/config.yml` on the Vite
+port. That port is the root `Taskfile.yml`'s `VITE_PORT` var — the single
+place it is defined, overridable per invocation with `WAILS_VITE_PORT`. Add
 `ARCH=arm64` / `ARCH=amd64` to select the target architecture, and `DEV=true`
 for a non-production build.
 
@@ -51,10 +52,15 @@ wails3 task common:update:build-assets
 ```
 
 That command is coarse: it also writes assets for packaging targets this project
-does not maintain (`ios/`, `linux/appimage/`, `linux/nfpm/`, `linux/desktop`,
-`windows/nsis/`). Those paths are git-ignored on purpose - do not track them. It also
-re-emits a 3-part `assemblyIdentity` version in `windows/wails.exe.manifest`; restore the
+does not maintain (`ios/`, `linux/nfpm/`, `linux/desktop`, `windows/nsis/`).
+Those paths are git-ignored on purpose - do not track them. It also re-emits a
+3-part `assemblyIdentity` version in `windows/wails.exe.manifest`; restore the
 4-part `<info.version>.0` form afterwards (the release-script test suite enforces it).
+
+The task passes `-productdescription <info.productName>` on purpose: the
+upstream template maps `windows/info.json`'s `FileDescription` to
+`info.description`, but Windows renders that field as the executable's display
+name. `info.description` keeps its real sentence for every other consumer.
 
 Icons are regenerated from `appicon.png` alone:
 
