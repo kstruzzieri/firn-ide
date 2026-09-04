@@ -318,7 +318,7 @@ wails3 task build
 cd frontend && npm test
 
 # Run Go tests
-go test ./...
+go test -tags gtk3 ./...
 ```
 
 See [build/README.md](build/README.md) for the per-platform tasks (`darwin:build`, `darwin:package`, `linux:build`, `windows:build`) and build-asset regeneration.
