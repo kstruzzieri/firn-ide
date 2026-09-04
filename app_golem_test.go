@@ -840,9 +840,9 @@ func TestGolemCloseAIServiceClosesAdmissionAndToleratesNoService(t *testing.T) {
 
 // startCloseDrain owns the shutdown fan-out. Search cancellation and the LSP
 // shutdown have no idle-state observable, so the shape of the drain — and the
-// fact that beforeClose alone starts none of it — is asserted structurally,
-// alongside the behavioural §5.5 rows in app_test.go.
-func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
+// fact that shouldQuit, the v3 quit edge, alone starts none of it — is asserted
+// structurally, alongside the behavioural §5.5 rows in app_test.go.
+func TestCloseDrainRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
 	fset, files := golemPackageFiles(t)
 	drain := golemFuncDecl(t, files, "startCloseDrain")
 
@@ -884,10 +884,10 @@ func TestBeforeCloseRunsAIShutdownAsAThirdConcurrentWorker(t *testing.T) {
 
 	// §5.5: the first close only asks the frontend. Nothing it does may reach
 	// the teardown, which is exactly what a cancelled handshake relies on.
-	beforeClose := golemFuncDecl(t, files, "beforeClose")
+	shouldQuit := golemFuncDecl(t, files, "shouldQuit")
 	for _, teardown := range []string{"closeAIService", "CancelAll", "beginRunShutdown", "StopAllWithReason", "ShutdownAll"} {
-		if golemCallsFunction(beforeClose.Body, teardown) {
-			t.Errorf("beforeClose calls %s directly; awaiting_frontend must start no teardown", teardown)
+		if golemCallsFunction(shouldQuit.Body, teardown) {
+			t.Errorf("shouldQuit calls %s directly; awaiting_frontend must start no teardown", teardown)
 		}
 	}
 

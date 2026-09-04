@@ -42,7 +42,7 @@ firn-ide/
 │   │   ├── utils/              # Shared utilities
 │   │   ├── types/              # TypeScript type definitions
 │   │   └── wails/              # Adapter — single import surface for generated bindings
-│   └── wailsjs/                # Generated Go bindings
+│   └── bindings/               # Generated Go bindings
 ├── docs/
 │   ├── roadmap.md              # Consolidated roadmap with all issues
 │   ├── design-specification.md # Full UI/UX specification

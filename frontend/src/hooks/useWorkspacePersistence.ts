@@ -220,6 +220,13 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
         try {
           const fileContent = await ReadFile(fileState.path);
           if (signal.aborted) return;
+          // Matches the other ReadFile call sites (gitStore, editorNavigation):
+          // a null answer is a backend contract violation, not a fact about
+          // the file, so it goes through the catch below rather than being
+          // indistinguishable from a deliberate skip.
+          if (fileContent === null) {
+            throw new Error(`ReadFile returned no content for ${fileState.path}`);
+          }
           if (fileContent.isBinary) continue;
 
           const editorFile = createEditorFile(fileState.path, fileContent);
@@ -238,8 +245,12 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
               column: fileState.cursorColumn || 1,
             };
           }
-        } catch {
-          // File no longer exists — skip silently
+        } catch (err) {
+          // The file is gone, unreadable, or came back empty-handed — drop it
+          // from the restore and keep going, so one missing file cannot cost
+          // the user every other tab in the session. Still logged, so a
+          // silently dropped tab has a trail to follow.
+          console.warn(`Failed to restore file ${fileState.path}:`, err);
           continue;
         }
       }

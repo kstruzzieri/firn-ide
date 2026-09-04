@@ -26,6 +26,7 @@ import {
   compareString,
   contractError,
   hasOnlyKeys,
+  hasPresentKey,
   isBoundedString,
   isCanonicalCapabilities,
   isCleanIdentifier,
@@ -297,13 +298,24 @@ const isChangeID = (value: unknown): value is string => {
   );
 };
 
-/** Present-but-absent is not a thing: an explicit null is a rejection. */
+/**
+ * An explicit `null` is a rejection. An own key valued `undefined` reads as
+ * absent (see `hasPresentKey`): v3's generated class instances declare every
+ * optional field as an own `undefined` property under
+ * `useDefineForClassFields`, and JSON cannot carry `undefined`.
+ *
+ * The apply/cancel/profile-load results this file parses no longer arrive as
+ * generated instances -- they are among the nine calls src/wails/bindings.ts
+ * reads raw -- so on the wire path the rule is a no-op, for that same reason
+ * that JSON carries no `undefined`. It is kept so the helper stays correct for
+ * any generated instance that ever reaches it.
+ */
 const readOptional = <T>(
   value: Record<string, unknown>,
   key: string,
   read: (entry: unknown) => T | null
 ): { present: false } | { present: true; value: T } | null => {
-  if (!Object.hasOwn(value, key)) return { present: false };
+  if (!hasPresentKey(value, key)) return { present: false };
   const parsed = read(value[key]);
   return parsed === null ? null : { present: true, value: parsed };
 };
@@ -525,7 +537,7 @@ export function parseSettingsApplyRequest(value: unknown, mode: ApplyMode): Sett
   if (!isRecord(value)) return contractError();
   if (!hasOnlyKeys(value, ['targetRevision', 'source', 'changes', 'keys'])) return contractError();
 
-  const hasTargetRevision = Object.hasOwn(value, 'targetRevision');
+  const hasTargetRevision = hasPresentKey(value, 'targetRevision');
   if (mode === 'apply' && !(hasTargetRevision && isRevision(value.targetRevision)))
     return contractError();
   if (mode === 'create' && hasTargetRevision) return contractError();
@@ -651,9 +663,9 @@ export function parseSettingsApplyResult(value: unknown): SettingsApplyResult {
 
   switch (value.status) {
     case 'applied': {
-      if (!Object.hasOwn(value, 'projection')) return contractError();
+      if (!hasPresentKey(value, 'projection')) return contractError();
       const projection = parseSettingsProjection(value.projection);
-      if (!Object.hasOwn(value, 'warning')) return { status: 'applied', projection };
+      if (!hasPresentKey(value, 'warning')) return { status: 'applied', projection };
       if (value.warning !== 'durability_uncertain') return contractError();
       return { status: 'applied', projection, warning: 'durability_uncertain' };
     }
@@ -672,7 +684,7 @@ export function parseSettingsApplyResult(value: unknown): SettingsApplyResult {
       if (!isOneOf(value.consentOutcome, CONSENT_OUTCOMES)) return contractError();
       const conflict = value.conflict;
       const consentOutcome = value.consentOutcome;
-      if (!Object.hasOwn(value, 'projection'))
+      if (!hasPresentKey(value, 'projection'))
         return { status: 'conflict', conflict, consentOutcome };
       return {
         status: 'conflict',
@@ -771,7 +783,7 @@ export function parseGolemProfileLoadResult(value: unknown): GolemProfileLoadRes
         return contractError();
       if (!isProfileID(value.profileId) || !isRevision(value.sourceRevision))
         return contractError();
-      if (!Object.hasOwn(value, 'projection')) return contractError();
+      if (!hasPresentKey(value, 'projection')) return contractError();
       return {
         status: 'loaded',
         profileId: value.profileId,

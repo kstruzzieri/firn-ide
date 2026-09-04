@@ -52,7 +52,7 @@ This section supersedes the archived delivery narrative below for current priori
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
 - Release documentation and install examples now target `v0.11.0`.
-- PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs remain pinned to the module's v2.11.0; cross-platform PR verification remains a future release-engineering improvement.
+- PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs now pin `wails3` to the module's `v3.0.0-beta.16`; cross-platform PR verification remains a future release-engineering improvement.
 - #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
 - The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — and the Phase 3 confidence layer added #240-#242, rather than any observed regression. Treat those as scoped enhancements, not defects.
 
@@ -189,17 +189,17 @@ Historical #112 follow-up checklist (now complete), in execution order:
 Build the current `develop` revision normally, then launch the packaged binary with a disposable home and a minimal tool shim. Building first avoids making the Go/npm build caches part of the smoke environment. The shim keeps the Go toolchain available for managed `gopls` installation while excluding user-installed `gopls`, `typescript-language-server`, `rust-analyzer`, and Python language servers from `PATH`.
 
 ```bash
-wails build
+wails3 task darwin:package ARCH=arm64
 SMOKE_HOME="$(mktemp -d)"
 SMOKE_BIN="$SMOKE_HOME/bin"
 mkdir -p "$SMOKE_BIN"
 ln -s "$(command -v go)" "$SMOKE_BIN/go"
 env HOME="$SMOKE_HOME" \
   PATH="$SMOKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  build/bin/Firn.app/Contents/MacOS/firn
+  bin/Firn.app/Contents/MacOS/firn
 ```
 
-The final path is the macOS build. Use `build/bin/firn` for Linux; on Windows, launch `build/bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
+The final path is the macOS build. Use `wails3 task linux:build` and `bin/firn` for Linux; on Windows, use `wails3 task windows:build` and launch `bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
 
 #### 2. Use a four-workspace smoke repository
 

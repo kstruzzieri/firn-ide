@@ -58,6 +58,9 @@ export async function ensureEditorFileOpen(
   // Read and open
   try {
     const content = await ReadFile(localPath);
+    if (content === null) {
+      throw new Error(`ReadFile returned no content for ${localPath}`);
+    }
     if (!shouldApplyNavigation(options)) return null;
 
     if (content.isBinary) {

@@ -58,7 +58,8 @@ type OutputChunk struct {
 // The caller is responsible for buffering or backpressure.
 type OutputFunc func(id RunIdentity, stream, data string, timestamp int64)
 
-// StatusFunc emits run status events (wraps runtime.EventsEmit in production).
+// StatusFunc emits run status events. In production the app wires this to its
+// own (*App).emit seam, the single choke point for Wails event emission.
 type StatusFunc func(event string, data any)
 
 // Executor manages the lifecycle of running profiles.

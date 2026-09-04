@@ -360,16 +360,16 @@ Wails automatically exposes Go methods to the frontend JavaScript.
 
 ### How Bindings Work
 
-1. Methods on structs listed in `main.go`'s `Bind` option are exposed
-2. Wails generates TypeScript bindings during build
-3. Generated bindings invoke `window.go.main.StructName.MethodName()`; application code imports them through `frontend/src/wails/bindings`
+1. Structs registered as an `application.Service` in `main.go`'s `Services` option have their public methods exposed
+2. `wails3 generate bindings` emits TypeScript bindings (also run automatically by `wails3 task <os>:build`)
+3. Generated bindings call the Wails v3 runtime (`$Call.ByID(...)`); application code imports them through `frontend/src/wails/bindings`
 
 ### Current Bindings
 
 ```go
 // main.go
-Bind: []interface{}{
-    app,  // Exposes all public methods on *App
+Services: []application.Service{
+    application.NewService(app), // Exposes all public methods on *App
 },
 ```
 
@@ -420,9 +420,9 @@ func (a *App) SaveFile(path string, content string) error {
 }
 ```
 
-2. Rebuild the application (`wails build` or `wails dev`)
+2. Rebuild the application (`wails3 task build` or `wails3 task dev`)
 
-3. Wails generates bindings in `frontend/wailsjs/go/main/`:
+3. Wails generates bindings in `frontend/bindings/firn/`:
 
 ```typescript
 // Auto-generated
@@ -431,7 +431,7 @@ export function SaveFile(path: string, content: string): Promise<void>;
 
 4. Import and use in React through the adapters. Only
    `frontend/src/wails/bindings.ts` and `frontend/src/wails/runtime.ts` may
-   import generated `wailsjs` paths, enforced by `no-direct-wailsjs.test.ts`:
+   import generated `bindings/` paths, enforced by `no-direct-wailsjs.test.ts`:
 
 ```typescript
 import { SaveFile } from '../wails/bindings';
@@ -446,7 +446,21 @@ async function handleSave() {
 - **Method names**: PascalCase (Go convention)
 - **Return values**: Automatically converted to JavaScript equivalents
 - **Errors**: Returned as rejected promises
-- **Structs**: Converted to plain JavaScript objects
+- **Structs**: Returned as generated class instances (`createFrom`), not plain objects.
+  `frontend/tsconfig.json` sets `useDefineForClassFields`, so every declared optional field is
+  an own property valued `undefined` on every instance, whether or not the wire carried it — a
+  presence check at a boundary must therefore mean "own key holding a defined value"
+  (`hasPresentKey` in `frontend/src/types/golem.ts`), not a bare `Object.hasOwn`.
+- **Golem contract calls**: the nine object-returning Golem bindings are the one exception —
+  the adapter reads them raw through the runtime's `Call.ByID` so the wire-contract validators
+  in `frontend/src/types/golem.ts` and `golemConfig.ts` see the untouched payload instead of a
+  class instance that has already defaulted missing fields and emptied null collections. The
+  header comment on `GOLEM_RAW_CALL_IDS` in `frontend/src/wails/bindings.ts` is the primary
+  record; `frontend/src/__tests__/wails/golemRawCalls.test.ts` pins the ids to the generated
+  bindings and fails when a new object-returning binding is not routed raw — it keys on the
+  generated return type (`$CancellablePromise<ai$0.…`), plus any Golem-named binding, so a
+  future object-returning call in this area escapes the guard neither by being renamed nor by
+  never having carried "Golem" in its name.
 
 ### Type Mapping
 
@@ -456,7 +470,7 @@ async function handleSave() {
 | `int`, `int64` | `number` |
 | `bool` | `boolean` |
 | `[]byte` | `string` (base64) |
-| `struct` | `interface` |
+| `struct` | generated `class` |
 | `error` | `Promise rejection` |
 
 ## Project Structure
@@ -477,9 +491,9 @@ firn-ide/
 │   │   ├── utils/         # Utility functions
 │   │   ├── __tests__/     # Jest tests
 │   │   └── wails/         # Adapter — single import surface for generated bindings
-│   ├── wailsjs/           # Auto-generated Wails bindings
+│   ├── bindings/          # Auto-generated Wails bindings
 │   └── package.json
-├── build/                  # Build output
+├── build/                  # Build config, Taskfiles, platform assets (packaged output goes to root bin/)
 ├── docs/
 │   ├── architecture.md    # This file
 │   └── tdd/               # TDD documentation per issue

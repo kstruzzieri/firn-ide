@@ -206,8 +206,20 @@ export interface GolemStoreState {
 }
 
 // ── Wails inputs ──────────────────────────────────────────────────────────────
-// Only the generated constructors build request payloads, so a field the Go
-// structs do not declare cannot be smuggled across the boundary.
+// v3 constructors Object.assign their entire source object rather than
+// copying field by field, so passing a caller-supplied object straight
+// through (spread, or a variable handed to the constructor whole) ships
+// anything extra it carries -- a QueuedTurn's `queueId`/`state` riding along
+// on a TurnDraft, for example. Every builder below is enumerated field by
+// field from the declared shape of its input type, so nothing beyond those
+// fields ever reaches the wire. TypeScript types are not a runtime guard for
+// this: excess-property checks only fire on object literals passed inline,
+// never on a caller's variable, which is exactly how a QueuedTurn reaches
+// toTurnRequest. The Go side is not a backstop either -- ai.TurnRequest,
+// ai.StatusRequest, and ai.RunIdentity decode with plain json.Unmarshal, with
+// none of settings_apply.go/consent.go's strictUnmarshal rejecting unknown
+// fields. This file is the only enforcement point on the request side of the
+// boundary.
 
 export const toStatusRequest = (identity: ConversationIdentity) =>
   new ai.StatusRequest({
@@ -216,9 +228,25 @@ export const toStatusRequest = (identity: ConversationIdentity) =>
   });
 
 export const toTurnRequest = (identity: RunIdentity, draft: TurnDraft, consentChallengeId = '') =>
-  new ai.TurnRequest({ identity, ...draft, consentChallengeId });
+  new ai.TurnRequest({
+    identity: new ai.RunIdentity({
+      repoEpoch: identity.repoEpoch,
+      workspaceId: identity.workspaceId,
+      conversationId: identity.conversationId,
+      runId: identity.runId,
+    }),
+    message: draft.message,
+    contextRefs: draft.contextRefs,
+    consentChallengeId,
+  });
 
-export const toCancelRequest = (identity: RunIdentity) => new ai.RunIdentity(identity);
+export const toCancelRequest = (identity: RunIdentity) =>
+  new ai.RunIdentity({
+    repoEpoch: identity.repoEpoch,
+    workspaceId: identity.workspaceId,
+    conversationId: identity.conversationId,
+    runId: identity.runId,
+  });
 
 // ── Boundary validators ───────────────────────────────────────────────────────
 
@@ -649,10 +677,34 @@ export const CAPABILITY_NAMES: readonly CapabilityName[] = [
 export const isBoundedString = (value: unknown, maxBytes: number): value is string =>
   isString(value) && utf8Length(value) <= maxBytes;
 
-// hasOnlyKeys rejects any key outside the allowlist: strict-both-ways mirror
-// of the Go corpus harness's DisallowUnknownFields (see the section comment).
+// Presence in the settings/apply contract documents means "own key holding a
+// DEFINED value", and both helpers below apply that rule -- deliberately not
+// the policy isAbsent states higher in this file for the run/status documents
+// (`undefined` and `null` alike missing): there a null optional is nothing,
+// here a null is a real value the strict-both-ways mirror must still see.
+//
+// Wails v3 hands every binding result back as a generated class instance --
+// every result EXCEPT the nine Golem calls src/wails/bindings.ts reads raw
+// through the runtime's Call.ByID, which is how the documents these validators
+// govern reach them today. tsconfig sets useDefineForClassFields, so on a
+// generated instance each declared optional member ("revision"?: string)
+// becomes an own property valued `undefined` -- whether or not the wire carried
+// it. JSON cannot represent `undefined`, so an own key valued `undefined` can
+// only come from the class shape and never from the producer; ignoring those
+// keys restores the exact wire semantics the v2 plain objects had. The rule is
+// retained rather than dropped with the raw routing: it keeps the helpers
+// correct for any generated instance that ever reaches them, and it is a no-op
+// on the raw wire path precisely because JSON cannot carry `undefined`.
+//
+// Strictness is untouched: a key carrying any real value -- null included --
+// still counts as present, so hasOnlyKeys still rejects genuine unknown keys,
+// a strict-both-ways mirror of the Go corpus harness's DisallowUnknownFields
+// (see the section comment).
+export const hasPresentKey = (value: Record<string, unknown>, key: string): boolean =>
+  Object.hasOwn(value, key) && value[key] !== undefined;
+
 export const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
-  Object.keys(value).every((key) => allowed.includes(key));
+  Object.keys(value).every((key) => value[key] === undefined || allowed.includes(key));
 
 export const MODEL_TYPES: readonly ModelType[] = ['dense', 'moe', 'embedding'];
 export const THINK_MODES: readonly ThinkMode[] = ['', 'none', 'always', 'toggle', 'auto'];
@@ -802,9 +854,9 @@ function readModel(value: unknown): ModelProjection | null {
   )
     return null;
 
-  const hasParameters = Object.hasOwn(value, 'parameters');
-  const hasContextWindow = Object.hasOwn(value, 'contextWindow');
-  const hasDimensions = Object.hasOwn(value, 'dimensions');
+  const hasParameters = hasPresentKey(value, 'parameters');
+  const hasContextWindow = hasPresentKey(value, 'contextWindow');
+  const hasDimensions = hasPresentKey(value, 'dimensions');
   if (hasParameters && !isIdentifier(value.parameters)) return null;
   if (hasContextWindow && !isOptionalModelNumber(value.contextWindow)) return null;
   if (hasDimensions && !isOptionalModelNumber(value.dimensions)) return null;
@@ -916,7 +968,7 @@ export function parseSettingsProjection(value: unknown): SettingsProjection {
     return contractError();
 
   const loaded = value.state === 'ready' || value.state === 'limited';
-  const hasRevision = Object.hasOwn(value, 'revision');
+  const hasRevision = hasPresentKey(value, 'revision');
   if (
     loaded !== hasRevision ||
     (loaded && (typeof value.revision !== 'string' || !REVISION.test(value.revision)))

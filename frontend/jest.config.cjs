@@ -6,7 +6,18 @@ module.exports = {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
     '\\.svg$': '<rootDir>/src/__mocks__/svgMock.js',
     '^@/(.*)$': '<rootDir>/src/$1',
-    '(?:\\.\\./)+wailsjs/runtime(?:/runtime)?$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    // The `$` anchor is load-bearing: it must not capture wails/runtime-helpers,
+    // whose test exercises the real registration code.
+    '(?:\\.\\./)+wails/runtime$': '<rootDir>/src/__mocks__/wailsRuntime.js',
+    '^@wailsio/runtime$': '<rootDir>/src/__mocks__/wailsV3Runtime.js',
+    // The generated bindings are ESM and spell relative imports with an explicit
+    // `.js` extension ('./internal/ai/models.js'); jest's CJS resolver would look
+    // for a literal .js file. Dropping the extension lets moduleFileExtensions
+    // find the .ts source (and still finds real .js files in node_modules ESM).
+    // Deliberately repo-wide rather than scoped to bindings/: jest maps by
+    // import specifier, not by the importing file, so there is no scope to
+    // narrow it to -- and the fallback resolves real .js files unchanged.
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {
     // Also matches .js so ts-jest can down-level the ESM-only react-markdown
@@ -30,7 +41,9 @@ module.exports = {
   // react-markdown 9 / remark-gfm 4 and their whole unified/micromark/mdast/hast
   // dependency tree ship ESM only; jest ignores node_modules by default, so let
   // just that tree through to the transform above. Prefix families below are all
-  // exclusively markdown-ecosystem packages.
+  // exclusively markdown-ecosystem packages, save @wailsio/runtime: the package
+  // itself is mapped to the mock above, but runtimeMockFidelity.test.ts loads
+  // the shipped dist/create.js by file path to hold the mock's copy against it.
   // ponytail: hand-scoped allow-list. If a version bump adds a new transitive
   // ESM dep outside these families, a Golem test fails with "Unexpected token
   // 'export'" naming the package — add it here.
@@ -47,6 +60,7 @@ module.exports = {
         'character-(entities[a-z0-9-]*|reference-invalid)',
         'is-(alphabetical|alphanumerical|decimal|hexadecimal|plain-obj)',
         '@ungap/structured-clone',
+        '@wailsio/runtime',
         'bail',
         'ccount',
         'comma-separated-tokens',
@@ -74,7 +88,6 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/main.tsx',
     '!src/vite-env.d.ts',
-    '!src/wailsjs/**',
   ],
   coverageThreshold: {
     global: {

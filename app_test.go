@@ -172,7 +172,8 @@ func TestDeleteRunProfileEmitsOnSuccess(t *testing.T) {
 	app := newLoadedAppForProfiles(t)
 	wsID := app.GetAllRunProfiles()[0].WorkspaceID
 
-	// Set emitFn before seed save so the valid save doesn't reach runtime.EventsEmit.
+	// Set emitFn before the seed save so the valid save is captured here
+	// instead of reaching the real (*App).emit seam.
 	var events []string
 	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
@@ -226,7 +227,9 @@ func TestApp_DetectWorkspaces(t *testing.T) {
 	}
 }
 
-// --- Spec §5.5 app-close state machine (idle → awaiting_frontend → draining) --
+// --- Spec §5.5 app-close state machine ---------------------------------------
+// idle → awaiting_frontend → draining → permitted, driven from the v3
+// ShouldQuit edge (app.shouldQuit). The v3-only edges live in app_close_test.go.
 
 // closeProbe observes everything the close machine does that a test can see:
 // the events it emits and the final Quit it hands to Wails. Both are recorded
@@ -244,9 +247,9 @@ func (p *closeProbe) emit(event string, _ any) {
 	p.events = append(p.events, event)
 }
 
-// recordQuit stands in for runtime.Quit, which cannot run outside a live Wails
-// application. The channel is buffered so a second (contract-violating) quit is
-// still counted rather than blocking the drain goroutine.
+// recordQuit stands in for the platform quit, which cannot run outside a live
+// Wails application. The channel is buffered so a second (contract-violating)
+// quit is still counted rather than blocking the drain goroutine.
 func (p *closeProbe) recordQuit() {
 	p.mu.Lock()
 	p.quits++
@@ -274,7 +277,7 @@ func (p *closeProbe) waitForQuit(t *testing.T) {
 	select {
 	case <-p.quit:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the drain never reached runtime.Quit")
+		t.Fatal("the drain never reached the platform quit")
 	}
 }
 
@@ -320,8 +323,8 @@ func TestCloseHandshakeFirstCloseOnlyAsksTheFrontend(t *testing.T) {
 	app, probe := newCloseApp(t, time.Hour)
 	before := snapshotCloseState(t, app)
 
-	if prevent := app.beforeClose(context.Background()); !prevent {
-		t.Fatal("the first close must be prevented while the frontend prepares")
+	if app.shouldQuit() {
+		t.Fatal("the first quit request must be refused while the frontend prepares")
 	}
 
 	events, quits := probe.snapshot()
@@ -343,13 +346,13 @@ func TestCloseHandshakeConfirmDrainsExactlyOnce(t *testing.T) {
 	app, probe := newCloseApp(t, time.Hour)
 	before := snapshotCloseState(t, app)
 
-	app.beforeClose(context.Background())
+	app.shouldQuit()
 	app.ConfirmBeforeCloseReady()
 	probe.waitForQuit(t)
 
 	app.ConfirmBeforeCloseReady() // idempotent
-	if prevent := app.beforeClose(context.Background()); prevent {
-		t.Error("a close during draining must be allowed so the final Quit can close the window")
+	if !app.shouldQuit() {
+		t.Error("a quit request after the drain permitted it must be allowed so the final Quit can close the window")
 	}
 	// Give a stray second drain time to land before counting.
 	time.Sleep(50 * time.Millisecond)
@@ -396,7 +399,7 @@ func TestCloseHandshakeCancelReturnsToIdleAndTouchesNothing(t *testing.T) {
 	app, probe := newCloseApp(t, 40*time.Millisecond)
 	before := snapshotCloseState(t, app)
 
-	app.beforeClose(context.Background())
+	app.shouldQuit()
 	app.CancelBeforeClose()
 	app.CancelBeforeClose() // idempotent
 
@@ -405,8 +408,8 @@ func TestCloseHandshakeCancelReturnsToIdleAndTouchesNothing(t *testing.T) {
 	// timer is still counting down: unless the cancel disarmed it, it fires
 	// mid-handshake and force-quits a close the user is still answering.
 	app.closeBackstopOverride = time.Hour
-	if prevent := app.beforeClose(context.Background()); !prevent {
-		t.Fatal("the close after a cancel must be prevented like any first close")
+	if app.shouldQuit() {
+		t.Fatal("the quit request after a cancel must be refused like any first request")
 	}
 	time.Sleep(200 * time.Millisecond) // well past the abandoned backstop
 
@@ -429,9 +432,9 @@ func TestCloseHandshakeSecondCloseForcesTheDrain(t *testing.T) {
 	app, probe := newCloseApp(t, time.Hour)
 	logged := captureGolemLog(t)
 
-	app.beforeClose(context.Background())
-	if prevent := app.beforeClose(context.Background()); !prevent {
-		t.Fatal("the forced drain must still prevent the close; its own Quit ends the app")
+	app.shouldQuit()
+	if app.shouldQuit() {
+		t.Fatal("the forced drain must still refuse the request; its own Quit ends the app")
 	}
 	probe.waitForQuit(t)
 
@@ -449,8 +452,8 @@ func TestCloseHandshakeSecondCloseForcesTheDrain(t *testing.T) {
 	if !after.runShutdown || after.aiAlive {
 		t.Errorf("state = %+v, want a completed teardown", after)
 	}
-	if prevent := app.beforeClose(context.Background()); prevent {
-		t.Error("a close during draining must be allowed")
+	if !app.shouldQuit() {
+		t.Error("a quit request after the drain permitted it must be allowed")
 	}
 }
 
@@ -460,7 +463,7 @@ func TestCloseHandshakeBackstopDrainsADeadRenderer(t *testing.T) {
 	app, probe := newCloseApp(t, 20*time.Millisecond)
 	logged := captureGolemLog(t)
 
-	app.beforeClose(context.Background())
+	app.shouldQuit()
 	probe.waitForQuit(t)
 
 	if !strings.Contains(logged(), closeLogPrefix) {
@@ -483,7 +486,7 @@ func TestCloseHandshakeBackstopDrainsADeadRenderer(t *testing.T) {
 func TestCloseHandshakeConfirmClearsTheBackstop(t *testing.T) {
 	app, probe := newCloseApp(t, 20*time.Millisecond)
 
-	app.beforeClose(context.Background())
+	app.shouldQuit()
 	app.ConfirmBeforeCloseReady()
 	probe.waitForQuit(t)
 
@@ -502,5 +505,24 @@ func TestCloseHandshakeBackstopDefaultsToSixtySeconds(t *testing.T) {
 	app := &App{}
 	if got := app.backstopDelay(); got != closeHandshakeBackstop {
 		t.Errorf("backstopDelay() = %v, want the %v production value", got, closeHandshakeBackstop)
+	}
+}
+
+// A cancelled folder dialog also answers with an empty path, so a missing
+// application host must be an error: returning ("", nil) would let the
+// frontend read "the dialog never opened" as "the user changed their mind".
+func TestOpenFolderDialogWithoutHostReturnsError(t *testing.T) {
+	app := NewApp()
+
+	path, err := app.OpenFolderDialog()
+
+	if err == nil {
+		t.Fatal("OpenFolderDialog() error = nil, want one when v3app is unset")
+	}
+	if !strings.Contains(err.Error(), "application host not initialised") {
+		t.Errorf("OpenFolderDialog() error = %q, want it to name the uninitialised host", err)
+	}
+	if path != "" {
+		t.Errorf("OpenFolderDialog() path = %q, want empty", path)
 	}
 }

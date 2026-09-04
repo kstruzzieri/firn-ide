@@ -39,6 +39,7 @@ import {
   GitApplyConflictSide,
 } from '../wails/bindings';
 import type { git } from '../wails/bindings';
+import { CancellablePromise } from '../wails/runtime';
 import { useGitStore } from './gitStore';
 import { useIDEStore, type EditorFile } from './ideStore';
 import { writeFileSerialized } from '../utils/fileWrites';
@@ -149,7 +150,7 @@ const conflictState = (over: Partial<git.ConflictState> = {}): git.ConflictState
  * `mockState` directly.
  */
 function backendDerivesStateFromMocks() {
-  mockState.mockImplementation(async (root: string, path: string) => {
+  const derive = async (root: string, path: string) => {
     const stages = await mockStages(root, path);
     const conflicted = Boolean(stages.base || stages.ours || stages.theirs);
     const wantsSides = Boolean(stages.binary || !stages.ours || !stages.theirs);
@@ -157,7 +158,10 @@ function backendDerivesStateFromMocks() {
     if (conflicted) state.heads = await mockHeads(root);
     if (conflicted && !wantsSides) state.snapshot = await mockSnapshot(root, path);
     return state as unknown as git.ConflictState;
-  });
+  };
+  mockState.mockImplementation((root: string, path: string) =>
+    CancellablePromise.resolve(derive(root, path))
+  );
 }
 
 /** The result a successful guarded write reports. */
@@ -167,7 +171,7 @@ const writeApplied = () =>
 /** A promise whose resolution the test controls. */
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  const promise = new CancellablePromise<T>((res) => {
     resolve = res;
   });
   return { promise, resolve };
@@ -184,26 +188,23 @@ beforeEach(() => {
   backendDerivesStateFromMocks();
   // Default guarded backend: every mutation is accepted and reports a fresh
   // version, which is what a real successful write/stage/apply does.
-  mockGuardedWrite.mockImplementation(
-    async () =>
-      ({
-        applied: true,
-        sourceVersion: 'v1:after-write',
-      }) as git.ConflictGuardResult
+  mockGuardedWrite.mockImplementation(() =>
+    CancellablePromise.resolve({
+      applied: true,
+      sourceVersion: 'v1:after-write',
+    } as git.ConflictGuardResult)
   );
-  mockGuardedStage.mockImplementation(
-    async () =>
-      ({
-        applied: true,
-        sourceVersion: 'v1:after-stage',
-      }) as git.ConflictGuardResult
+  mockGuardedStage.mockImplementation(() =>
+    CancellablePromise.resolve({
+      applied: true,
+      sourceVersion: 'v1:after-stage',
+    } as git.ConflictGuardResult)
   );
-  mockGuardedApply.mockImplementation(
-    async () =>
-      ({
-        applied: true,
-        sourceVersion: 'v1:after-apply',
-      }) as git.ConflictGuardResult
+  mockGuardedApply.mockImplementation(() =>
+    CancellablePromise.resolve({
+      applied: true,
+      sourceVersion: 'v1:after-apply',
+    } as git.ConflictGuardResult)
   );
 });
 
@@ -412,7 +413,9 @@ describe('openMergeResolution', () => {
     // Key the mock by path — the two opens run concurrently, so call order
     // between them is scheduling-dependent.
     mockStages.mockImplementation((_root, p) =>
-      p === 'a.txt' ? first.promise : Promise.resolve(allStages({ path: 'b.txt', binary: true }))
+      p === 'a.txt'
+        ? first.promise
+        : CancellablePromise.resolve(allStages({ path: 'b.txt', binary: true }))
     );
     mockHeads.mockResolvedValue(heads());
 
@@ -732,8 +735,8 @@ describe('mergeFinalizeAndStage', () => {
   it('advances to the next queued conflicted file after a successful finalize', async () => {
     mockStages.mockImplementation((_root, p) =>
       p === 'file.txt'
-        ? Promise.resolve(allStages())
-        : Promise.resolve(allStages({ path: 'other.txt', binary: true }))
+        ? CancellablePromise.resolve(allStages())
+        : CancellablePromise.resolve(allStages({ path: 'other.txt', binary: true }))
     );
     mockHeads.mockResolvedValue(heads());
     mockSnapshot.mockResolvedValue(snapshot());
@@ -752,8 +755,8 @@ describe('mergeFinalizeAndStage', () => {
   it('hands off to the next queued file after staging this one', async () => {
     mockStages.mockImplementation((_root, path) =>
       path === 'file.txt'
-        ? Promise.resolve(allStages())
-        : Promise.resolve(allStages({ path: 'other.txt', binary: true }))
+        ? CancellablePromise.resolve(allStages())
+        : CancellablePromise.resolve(allStages({ path: 'other.txt', binary: true }))
     );
     mockHeads.mockResolvedValue(heads());
     mockSnapshot.mockResolvedValue(snapshot());
@@ -1124,8 +1127,9 @@ describe('review round 2 hardening', () => {
     mockGuardedWrite.mockReturnValueOnce(writeGate.promise);
     // The autosave still writes through WriteFile: only the resolution goes
     // through the guarded op, and it must finish staging first.
-    mockWriteFile.mockImplementationOnce(async () => {
+    mockWriteFile.mockImplementationOnce(() => {
       staleWriteStarted = true;
+      return CancellablePromise.resolve();
     });
     mockGuardedStage.mockReturnValue(stageGate.promise);
 
@@ -1200,7 +1204,7 @@ describe('review round 2 hardening', () => {
     await openTextSession();
     resolveTextSessionForFinalize();
     let rejectStage!: (error: Error) => void;
-    const stage = new Promise<git.ConflictGuardResult>(
+    const stage = new CancellablePromise<git.ConflictGuardResult>(
       (_resolve, reject) => (rejectStage = reject)
     );
     void stage.catch(() => undefined);
@@ -1296,8 +1300,8 @@ describe('merge queue advance', () => {
     useIDEStore.setState({ openFiles: [openFile({ isModified: false })] });
     mockStages.mockImplementation((_root, p) =>
       p === 'file.txt'
-        ? Promise.resolve(allStages({ binary: true }))
-        : Promise.resolve(
+        ? CancellablePromise.resolve(allStages({ binary: true }))
+        : CancellablePromise.resolve(
             allStages({ path: 'next.txt', base: undefined, ours: undefined, theirs: undefined })
           )
     );
@@ -1325,8 +1329,8 @@ describe('installed-session refusal leaves the session finalizable', () => {
   it('a not-conflicted Resolve request on another file does not dead-end the open session', async () => {
     mockStages.mockImplementation((_root, p) =>
       p === 'file.txt'
-        ? Promise.resolve(allStages())
-        : Promise.resolve(
+        ? CancellablePromise.resolve(allStages())
+        : CancellablePromise.resolve(
             allStages({ path: 'b.txt', base: undefined, ours: undefined, theirs: undefined })
           )
     );
@@ -1345,7 +1349,9 @@ describe('installed-session refusal leaves the session finalizable', () => {
 
   it('a rejected Resolve request on another file does not dead-end the open session', async () => {
     mockStages.mockImplementation((_root, p) =>
-      p === 'file.txt' ? Promise.resolve(allStages()) : Promise.reject(new Error('too large'))
+      p === 'file.txt'
+        ? CancellablePromise.resolve(allStages())
+        : CancellablePromise.reject(new Error('too large'))
     );
     mockHeads.mockResolvedValue(heads());
     mockSnapshot.mockResolvedValue(snapshot());
@@ -1934,13 +1940,14 @@ describe('merge revalidation', () => {
 
   it('skips revalidation while a finalize is in flight', async () => {
     await openTextSession();
-    mockGuardedStage.mockImplementation(async () => {
+    const stageAfterNotify = async () => {
       // Mid-finalize: the backend guard is the authority here, and the
       // worktree is half-written.
       await notify();
       expect(mockState).toHaveBeenCalledTimes(1); // only the open read
       return { applied: true, sourceVersion: 'v1:after-stage' } as git.ConflictGuardResult;
-    });
+    };
+    mockGuardedStage.mockImplementation(() => CancellablePromise.resolve(stageAfterNotify()));
     useGitStore.getState().recordDecision(0, 'C');
     await useGitStore.getState().mergeFinalizeAndStage('resolved\n');
 

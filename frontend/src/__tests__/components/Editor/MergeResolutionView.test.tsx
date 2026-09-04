@@ -103,6 +103,7 @@ import {
   describeMergeAnnouncement,
 } from '../../../components/Editor/MergeResolutionView';
 import { GitConflictStages, GitFileAtRev } from '../../../wails/bindings';
+import { CancellablePromise } from '../../../wails/runtime';
 
 const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
 const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
@@ -606,7 +607,7 @@ describe('MergeResolutionView rail reopen', () => {
 
 describe('MergeResolutionView base strip', () => {
   it('keeps a polite live region mounted and announces loading', () => {
-    mockedStages.mockReturnValue(new Promise<never>(() => undefined));
+    mockedStages.mockReturnValue(new CancellablePromise<never>(() => undefined));
 
     render(<MergeResolutionView session={textSession} visible />);
     const toggle = screen.getByRole('button', { name: 'Show base (common ancestor)' });

@@ -3,6 +3,7 @@ import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore } from '../../stores/gitStore';
 import { toNativeLocalPath } from '../../utils/lspUri';
 import { ReadFile, WriteFile } from '../../wails/bindings';
+import { CancellablePromise } from '../../wails/runtime';
 import { queueWorkingTreeEdit } from '../../utils/fileWrites';
 
 jest.mock('../../wails/bindings', () => ({
@@ -223,7 +224,7 @@ describe('navigateToEditorLocation', () => {
     let resolveRead!: (value: ReturnType<typeof createReadFileResult>) => void;
     mockReadFile.mockImplementation(
       () =>
-        new Promise((resolve) => {
+        new CancellablePromise((resolve) => {
           resolveRead = resolve;
         })
     );

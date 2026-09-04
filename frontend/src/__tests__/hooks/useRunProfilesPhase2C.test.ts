@@ -169,7 +169,10 @@ it.each(['resolve', 'reject'] as const)(
 it('hydrates lazy archive summaries into capped completion history without touching live RID maps', async () => {
   const summaries = Array.from({ length: 52 }, (_, index) => ({
     historyId: `00000000-0000-7000-8000-${String(index).padStart(12, '0')}`,
-    kind: index === 10 ? 'compound-step' : 'ordinary',
+    kind:
+      index === 10
+        ? runhistory.RecordKind.RecordKindCompoundStep
+        : runhistory.RecordKind.RecordKindOrdinary,
     profileId: 'build',
     profileName: 'Build',
     state: index % 2 === 0 ? 'success' : 'failed',

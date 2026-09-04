@@ -22,7 +22,7 @@ import {
   toStatusRequest,
   toTurnRequest,
 } from '../../types/golem';
-import type { ConversationView, GolemStatus, TurnAdmission } from '../../types/golem';
+import type { ConversationView, GolemStatus, QueuedTurn, TurnAdmission } from '../../types/golem';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 
 // ── Wails mocks ───────────────────────────────────────────────────────────────
@@ -451,6 +451,33 @@ describe('boundary validators', () => {
     ]);
 
     expect(toCancelRequest(runIdentity(RUN_A))).toBeInstanceOf(ai.RunIdentity);
+  });
+
+  // #273 adversarial fix wave (M3): a QueuedTurn is structurally a TurnDraft
+  // plus queueId/state/userEntryId. Replaying one through toTurnRequest must
+  // not let those extra fields ride the wire -- v3 constructors Object.assign
+  // their whole source, so a spread of the caller's object would ship them.
+  it('drops QueuedTurn-only fields when a queued turn is replayed as a draft', () => {
+    const queuedTurn: QueuedTurn = {
+      message: 'hi',
+      contextRefs: [],
+      queueId: 'q1',
+      state: 'queued',
+      userEntryId: 'entry-1',
+    };
+
+    const turnRequest = toTurnRequest(runIdentity(RUN_A), queuedTurn);
+    const payload = JSON.parse(JSON.stringify(turnRequest)) as Record<string, unknown>;
+
+    expect('queueId' in payload).toBe(false);
+    expect('state' in payload).toBe(false);
+    expect('userEntryId' in payload).toBe(false);
+    expect(Object.keys(turnRequest).sort()).toEqual([
+      'consentChallengeId',
+      'contextRefs',
+      'identity',
+      'message',
+    ]);
   });
 });
 

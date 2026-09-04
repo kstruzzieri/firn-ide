@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Platform
+
+- Raised the macOS support floor from 11 (Big Sur) to 12 (Monterey), matching
+  the Wails v3 beta.16 deployment target (#273).
+- The app now runs on the Wails v3 host (v3.0.0-beta.16), with the same
+  features and window behavior as before (#273).
+- Linux continues to target WebKit2GTK 4.1 (GTK3), with the build pinned to
+  that ABI (#273).
+
 ## [0.11.0] - 2026-07-12
 
 Stabilization release for the managed language-server, Structure view, Git,
