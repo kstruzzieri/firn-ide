@@ -19,13 +19,13 @@ export function EventsOn<T>(name: string, cb: (data: T) => void): () => void {
 }
 
 export function WindowSetTitle(title: string): void {
-  Window.SetTitle(title)?.catch((err: unknown) => {
+  Window.SetTitle(title).catch((err: unknown) => {
     console.warn('WindowSetTitle failed:', err);
   });
 }
 
 export function BrowserOpenURL(url: string): void {
-  Browser.OpenURL(url)?.catch((err: unknown) => {
+  Browser.OpenURL(url).catch((err: unknown) => {
     console.warn('BrowserOpenURL failed:', err);
   });
 }

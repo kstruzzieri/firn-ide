@@ -22,10 +22,15 @@ import (
 //     ToggleMaximize and OpenFolderDialog need; unset, they all no-op.
 //   - the events.Common.WindowClosing hook calling app.handleMainWindowClosing:
 //     without it the close button bypasses the handshake entirely.
-//   - WebviewWindowOptions.UseApplicationMenu: true: on Windows and Linux the
-//     global menu (Navigate/Workspace) attaches to a window only when this is
-//     set; absent, those builds silently lose the menu and its accelerators.
-//     macOS ignores the flag and always uses the NSApp menu.
+//   - wapp.Menu.Set(buildAppMenu(app, wapp)): the only registration of the
+//     global menu. Absent, Navigate/Workspace vanish on every platform, and
+//     macOS also loses the AppMenu/EditMenu roles that wire Cmd+C/V/X/A into
+//     the webview's responder chain.
+//   - WebviewWindowOptions.UseApplicationMenu: true: Windows attaches the
+//     global menu (Navigate/Workspace) to a window only when this is true;
+//     absent, that build silently loses the menu and its accelerators. Linux
+//     already falls back to the global menu on its own, and macOS ignores the
+//     flag and always uses the NSApp menu.
 //
 // The matching is deliberately shallow - identifiers and selector paths, not
 // types - so it states the shape of the wiring without duplicating main.go.
@@ -142,6 +147,28 @@ func registersWindowClosingHook(node ast.Node) bool {
 	return found
 }
 
+// callsMenuSet reports whether node registers the menu buildAppMenu returns as
+// the global application menu. UseApplicationMenu on its own attaches nothing:
+// the framework also needs an application menu to have been set.
+func callsMenuSet(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if !strings.HasSuffix(selectorPath(call.Fun), ".Menu.Set") || len(call.Args) != 1 {
+			return true
+		}
+		if containsCallTo(call.Args[0], "buildAppMenu") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 // scanMainWiring returns one description per missing wiring clause, or an
 // empty slice when main() wires everything.
 func scanMainWiring(fn *ast.FuncDecl) []string {
@@ -160,6 +187,9 @@ func scanMainWiring(fn *ast.FuncDecl) []string {
 	}
 	if !assignsTo(fn.Body, "app.mainWindow") {
 		missing = append(missing, "main must assign app.mainWindow")
+	}
+	if !callsMenuSet(fn.Body) {
+		missing = append(missing, "main must call wapp.Menu.Set(buildAppMenu(app, wapp))")
 	}
 	if useAppMenu := fieldValue(fn.Body, "UseApplicationMenu"); selectorPath(useAppMenu) != "true" {
 		missing = append(missing, "WebviewWindowOptions must set UseApplicationMenu: true")
@@ -212,6 +242,7 @@ func main() {
 		ShouldQuit: app.shouldQuit,
 	})
 	app.v3app = wapp
+	wapp.Menu.Set(buildAppMenu(app, wapp))
 	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		UseApplicationMenu: true,
 	})
@@ -236,6 +267,7 @@ func main() {
 		"should-quit removed":          "ShouldQuit: app.shouldQuit,",
 		"v3app unassigned":             "app.v3app = wapp",
 		"main window unassigned":       "app.mainWindow = win",
+		"menu set removed":             "wapp.Menu.Set(buildAppMenu(app, wapp))",
 		"use application menu removed": "UseApplicationMenu: true,",
 	}
 

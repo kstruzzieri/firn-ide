@@ -4,7 +4,6 @@
 // own factory. Keeping the two mocks in separate files keeps their jest module
 // ids distinct, so one cannot clobber the other, so neither file may require
 // the other.
-const pass = (value) => value;
 
 class CancellablePromise extends Promise {
   cancel() {
@@ -20,33 +19,98 @@ const Events = {
   Off: jest.fn(),
   Emit: jest.fn(),
 };
-const Window = { SetTitle: jest.fn() };
-const Browser = { OpenURL: jest.fn() };
+const Window = { SetTitle: jest.fn(() => Promise.resolve()) };
+const Browser = { OpenURL: jest.fn(() => Promise.resolve()) };
 const Clipboard = { SetText: jest.fn(() => Promise.resolve()) };
 const Call = {
   ByID: jest.fn(() => CancellablePromise.resolve()),
   ByName: jest.fn(() => CancellablePromise.resolve()),
 };
-// NOTE: the real dist/create.js null-checks strictly (`source === null`) and
-// mutates arrays/maps in place. These stand-ins are deliberately looser; see the
-// Task 7 report for the one place where that difference is observable.
-const Create = {
-  Any: pass,
-  ByteSlice: (value) => value ?? '',
-  Array: (create) => (value) => (value == null ? [] : value.map(create)),
-  Map: (_createKey, createValue) => (value) => {
-    if (value == null) return {};
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, createValue(item)]));
-  },
-  Nullable: (create) => (value) => (value == null ? null : create(value)),
-  Struct: (fields) => (value) => {
-    if (value == null) return value;
-    for (const [name, create] of Object.entries(fields)) {
-      if (name in value) value[name] = create(value[name]);
+// The creation functions below are a verbatim copy of the shipped
+// node_modules/@wailsio/runtime/dist/create.js (@wailsio/runtime 3.0.0-beta.16,
+// pinned in frontend/package.json). The generated bindings run them for real,
+// so a test that parses a generated instance is only as faithful as this copy:
+// any divergence from the shipped file is a bug, not a licence.
+// src/__tests__/wails/runtimeMockFidelity.test.ts holds the two side by side.
+
+function Any(source) {
+  return source;
+}
+
+function ByteSlice(source) {
+  return source == null ? '' : source;
+}
+
+function Array(element) {
+  if (element === Any) {
+    return (source) => (source === null ? [] : source);
+  }
+  return (source) => {
+    if (source === null) {
+      return [];
     }
-    return value;
-  },
-  DateFromTime: (value) => new Date(value),
+    for (let i = 0; i < source.length; i++) {
+      source[i] = element(source[i]);
+    }
+    return source;
+  };
+}
+
+function Map(key, value) {
+  if (value === Any) {
+    return (source) => (source === null ? {} : source);
+  }
+  return (source) => {
+    if (source === null) {
+      return {};
+    }
+    for (const key in source) {
+      source[key] = value(source[key]);
+    }
+    return source;
+  };
+}
+
+function Nullable(element) {
+  if (element === Any) {
+    return Any;
+  }
+  return (source) => (source === null ? null : element(source));
+}
+
+function Struct(createField) {
+  let allAny = true;
+  for (const name in createField) {
+    if (createField[name] !== Any) {
+      allAny = false;
+      break;
+    }
+  }
+  if (allAny) {
+    return Any;
+  }
+  return (source) => {
+    for (const name in createField) {
+      if (name in source) {
+        source[name] = createField[name](source[name]);
+      }
+    }
+    return source;
+  };
+}
+
+function DateFromTime(source) {
+  return new Date(source);
+}
+
+const Create = {
+  Any,
+  ByteSlice,
+  Array,
+  Map,
+  Nullable,
+  Struct,
+  DateFromTime,
   Events: {},
 };
 

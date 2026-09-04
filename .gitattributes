@@ -7,8 +7,11 @@
 
 # The Taskfile's go:mod:tidy task runs `go mod tidy -diff`, a read-only
 # byte-for-byte comparison. Windows runners check out text files with CRLF
-# (core.autocrlf=true on GitHub's Windows images), so without a forced LF
-# eol these files show as fully changed on Windows even though tidy would
-# not actually rewrite anything.
+# (core.autocrlf=true on GitHub's Windows images), and a CRLF go.sum is
+# regenerated wholesale, so without a forced LF eol it trips that byte
+# comparison as a whole-file diff even though tidy would not actually rewrite
+# anything; go.mod is normalised silently and is pinned here for symmetry.
+# Measured on go1.26.1, from the release dry run's Windows job (run
+# 33703781657) -- this job does not run on develop.
 go.mod text eol=lf
 go.sum text eol=lf

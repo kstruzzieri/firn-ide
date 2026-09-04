@@ -29,27 +29,20 @@ describe('wails adapter surface', () => {
     await written;
   });
 
-  it('logs and swallows a rejected WindowSetTitle promise instead of throwing', async () => {
+  // Both void-returning adapters swallow a rejection the same way; the mocks
+  // are never reassigned, so they can be captured here.
+  it.each([
+    ['WindowSetTitle', v3.Window.SetTitle, () => WindowSetTitle('Firn — a.ts')],
+    ['BrowserOpenURL', v3.Browser.OpenURL, () => BrowserOpenURL('https://example.test/docs')],
+  ])('logs and swallows a rejected %s promise instead of throwing', async (name, v3Fn, call) => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const err = new Error('set title failed');
-    v3.Window.SetTitle.mockReturnValueOnce(Promise.reject(err));
+    const err = new Error(`${name} failed`);
+    v3Fn.mockReturnValueOnce(Promise.reject(err));
 
-    expect(() => WindowSetTitle('Firn — a.ts')).not.toThrow();
+    expect(call).not.toThrow();
     await Promise.resolve(); // flush the microtask queue so the .catch runs
 
-    expect(warn).toHaveBeenCalledWith('WindowSetTitle failed:', err);
-    warn.mockRestore();
-  });
-
-  it('logs and swallows a rejected BrowserOpenURL promise instead of throwing', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const err = new Error('open url failed');
-    v3.Browser.OpenURL.mockReturnValueOnce(Promise.reject(err));
-
-    expect(() => BrowserOpenURL('https://example.test/docs')).not.toThrow();
-    await Promise.resolve(); // flush the microtask queue so the .catch runs
-
-    expect(warn).toHaveBeenCalledWith('BrowserOpenURL failed:', err);
+    expect(warn).toHaveBeenCalledWith(`${name} failed:`, err);
     warn.mockRestore();
   });
 

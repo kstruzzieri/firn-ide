@@ -41,7 +41,9 @@ module.exports = {
   // react-markdown 9 / remark-gfm 4 and their whole unified/micromark/mdast/hast
   // dependency tree ship ESM only; jest ignores node_modules by default, so let
   // just that tree through to the transform above. Prefix families below are all
-  // exclusively markdown-ecosystem packages.
+  // exclusively markdown-ecosystem packages, save @wailsio/runtime: the package
+  // itself is mapped to the mock above, but runtimeMockFidelity.test.ts loads
+  // the shipped dist/create.js by file path to hold the mock's copy against it.
   // ponytail: hand-scoped allow-list. If a version bump adds a new transitive
   // ESM dep outside these families, a Golem test fails with "Unexpected token
   // 'export'" naming the package — add it here.
@@ -58,6 +60,7 @@ module.exports = {
         'character-(entities[a-z0-9-]*|reference-invalid)',
         'is-(alphabetical|alphanumerical|decimal|hexadecimal|plain-obj)',
         '@ungap/structured-clone',
+        '@wailsio/runtime',
         'bail',
         'ccount',
         'comma-separated-tokens',

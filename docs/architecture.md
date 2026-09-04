@@ -446,7 +446,11 @@ async function handleSave() {
 - **Method names**: PascalCase (Go convention)
 - **Return values**: Automatically converted to JavaScript equivalents
 - **Errors**: Returned as rejected promises
-- **Structs**: Converted to plain JavaScript objects
+- **Structs**: Returned as generated class instances (`createFrom`), not plain objects.
+  `frontend/tsconfig.json` sets `useDefineForClassFields`, so every declared optional field is
+  an own property valued `undefined` on every instance, whether or not the wire carried it — a
+  presence check at a boundary must therefore mean "own key holding a defined value"
+  (`hasPresentKey` in `frontend/src/types/golem.ts`), not a bare `Object.hasOwn`.
 
 ### Type Mapping
 
@@ -456,7 +460,7 @@ async function handleSave() {
 | `int`, `int64` | `number` |
 | `bool` | `boolean` |
 | `[]byte` | `string` (base64) |
-| `struct` | `interface` |
+| `struct` | generated `class` |
 | `error` | `Promise rejection` |
 
 ## Project Structure

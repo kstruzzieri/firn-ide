@@ -677,8 +677,11 @@ export const CAPABILITY_NAMES: readonly CapabilityName[] = [
 export const isBoundedString = (value: unknown, maxBytes: number): value is string =>
   isString(value) && utf8Length(value) <= maxBytes;
 
-// Presence at this boundary means "own key holding a DEFINED value", and both
-// helpers below apply that rule.
+// Presence in the settings/apply contract documents means "own key holding a
+// DEFINED value", and both helpers below apply that rule -- deliberately not
+// the policy isAbsent states higher in this file for the run/status documents
+// (`undefined` and `null` alike missing): there a null optional is nothing,
+// here a null is a real value the strict-both-ways mirror must still see.
 //
 // Wails v3 hands every binding result back as a generated class instance, and
 // tsconfig sets useDefineForClassFields, so each declared optional member

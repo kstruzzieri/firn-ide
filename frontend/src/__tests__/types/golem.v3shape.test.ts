@@ -104,8 +104,7 @@ describe('v3 generated class instances at the Golem boundary', () => {
       const fromWire = parseSettingsProjection(wireCopy(fixture.projection));
       const instance = ai.SettingsProjection.createFrom(wireCopy(fixture.projection));
 
-      expect(() => parseSettingsProjection(instance)).not.toThrow();
-      expect(parseSettingsProjection(instance)).toEqual(fromWire);
+      expect(parseSettingsProjection(instance)).toStrictEqual(fromWire);
     });
   });
 
@@ -121,8 +120,7 @@ describe('v3 generated class instances at the Golem boundary', () => {
       const fromWire = parseDocument(fixture, wireCopy(fixture.value));
       const instance = instantiate(fixture);
 
-      expect(() => parseDocument(fixture, instance)).not.toThrow();
-      expect(parseDocument(fixture, instance)).toEqual(fromWire);
+      expect(parseDocument(fixture, instance)).toStrictEqual(fromWire);
     });
   });
 });
