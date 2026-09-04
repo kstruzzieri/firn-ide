@@ -44,10 +44,18 @@ const generatedByName = new Map(generated.map((fn) => [fn.name, fn]));
 
 // A generated call converts its result when it pipes it through a
 // `$$createTypeN` helper -- exactly the lossy step the raw routing exists to
-// skip. Every Golem-named binding is enumerated here so a newly generated one
-// cannot appear unnoticed.
+// skip.
 const isObjectReturning = (fn: GeneratedFunction): boolean => /\$\$createType\d+\(/.test(fn.body);
-const golemFunctions = generated.filter((fn) => fn.name.includes('Golem'));
+
+// The invariant the raw routing rests on is about the RETURN TYPE, not the
+// method name: every generated binding that resolves with an `ai$0.*` class is
+// a wire-contract document the validators must see untouched. Candidates are
+// therefore every binding whose signature says `$CancellablePromise<ai$0.`,
+// plus every Golem-NAMED one so a call that stops returning an ai type (or is
+// renamed out of the ai package) still cannot drop out of the set unnoticed.
+const golemFunctions = generated.filter(
+  (fn) => fn.name.includes('Golem') || /\$CancellablePromise<ai\$0\./.test(fn.body)
+);
 
 describe('generated Golem call ids', () => {
   it('finds the generated bindings', () => {
@@ -111,7 +119,11 @@ describe('adapter routing', () => {
     v3.Call.ByID.mock.calls[0].slice(1).forEach((forwarded: unknown, i: number) => {
       expect(forwarded).toBe(args[i]);
     });
-    // The runtime's cancellable promise, not a plain Promise wrapper.
+    // The runtime's cancellable promise, not a plain Promise wrapper. The
+    // identity check is what rules out a `.then()` chain: CancellablePromise
+    // extends Promise, so a derived promise would still satisfy both the
+    // instanceof and the `cancel` probe below.
+    expect(promise).toBe(v3.Call.ByID.mock.results[0].value);
     expect(promise).toBeInstanceOf(v3.CancellablePromise);
     expect(typeof (promise as unknown as { cancel: unknown }).cancel).toBe('function');
     // The very object the call resolved with: no copy, no createFrom repair.
@@ -204,6 +216,13 @@ const expectVerdict = async (file: string, run: () => Promise<void>): Promise<vo
 };
 
 describe('contract corpora on the live adapter seam', () => {
+  // A fixture whose `mode` is missing or invalid throws in fixtureMode BEFORE
+  // the call, so without this its queued payload would be consumed by the next
+  // fixture and that one would pass for the wrong reason.
+  beforeEach(() => {
+    v3.Call.ByID.mockReset();
+  });
+
   const projectionFiles = jsonFiles(projectionCorpus);
   const applyFiles = jsonFiles(applyCorpus);
 

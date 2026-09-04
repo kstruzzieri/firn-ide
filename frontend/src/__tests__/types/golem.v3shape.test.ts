@@ -16,17 +16,20 @@ import {
 // validators see the untouched wire payload, and
 // src/__tests__/wails/golemRawCalls.test.ts is the guard for that routing.
 //
-// This file still matters, because generated class instances still reach the
-// validators wherever the frontend BUILDS one (the ai.StatusRequest /
-// ai.TurnRequest / ai.SettingsApplyRequest builders in src/types/golem.ts).
-// tsconfig sets useDefineForClassFields, so every declared optional field
-// ("revision"?: string) is an OWN property valued `undefined` on every
-// instance -- absent on the wire, present to Object.hasOwn. The tests below
-// pin the validators to wire semantics for those inputs: parsing a generated
-// instance must match parsing the same JSON as a plain object, byte for byte.
+// So no live production path feeds a generated instance to these validators
+// any more: the only `new ai.*` sites in src are the outbound StatusRequest /
+// TurnRequest / RunIdentity builders in src/types/golem.ts, and nothing parses
+// one back. This file is therefore a standing REGRESSION PIN, not a test of a
+// path production walks today. It holds two properties:
 //
-// The last test records WHY the inbound calls are routed raw, and fails loudly
-// if the generator ever stops injecting defaults.
+//   - parsing a generated class instance must equal parsing the same payload
+//     as plain JSON. tsconfig sets useDefineForClassFields, so every declared
+//     optional field ("revision"?: string) is an OWN property valued
+//     `undefined` on an instance -- absent on the wire, present to
+//     Object.hasOwn. This is what would have to hold if the raw routing were
+//     ever reverted, or if a builder result were ever re-parsed.
+//   - the last test records WHY the inbound calls are routed raw, and fails
+//     loudly if the generator ever stops injecting defaults.
 
 const projectionCorpus = path.resolve(
   __dirname,

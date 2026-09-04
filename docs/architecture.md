@@ -457,7 +457,10 @@ async function handleSave() {
   class instance that has already defaulted missing fields and emptied null collections. The
   header comment on `GOLEM_RAW_CALL_IDS` in `frontend/src/wails/bindings.ts` is the primary
   record; `frontend/src/__tests__/wails/golemRawCalls.test.ts` pins the ids to the generated
-  bindings and fails when a new object-returning Golem call is not routed raw.
+  bindings and fails when a new object-returning binding is not routed raw — it keys on the
+  generated return type (`$CancellablePromise<ai$0.…`), plus any Golem-named binding, so a
+  future object-returning call in this area escapes the guard neither by being renamed nor by
+  never having carried "Golem" in its name.
 
 ### Type Mapping
 

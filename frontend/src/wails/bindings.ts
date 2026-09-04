@@ -37,7 +37,11 @@ export * as workspace from '../../bindings/firn/internal/workspace/models';
  * src/__tests__/wails/golemRawCalls.test.ts pins every entry against the
  * `$Call.ByID(...)` literal inside the matching generated function, and fails
  * when a regeneration renumbers one, a rename moves one, or a NEW
- * object-returning Golem call appears that is not routed raw. ByID rather than
+ * object-returning binding appears that is not routed raw. That guard keys on
+ * the generated RETURN TYPE, not on the name: its candidates are every binding
+ * whose signature says `$CancellablePromise<ai$0.` plus every Golem-named one,
+ * so a future `GetAgentStatus(): $CancellablePromise<ai$0.Status>` is caught
+ * even though nothing about it says "Golem". ByID rather than
  * ByName because this repo ships obfuscated builds (build/Taskfile.yml), where
  * reflection-visible method names are gone but the numeric ids are stable.
  *

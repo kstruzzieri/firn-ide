@@ -683,13 +683,18 @@ export const isBoundedString = (value: unknown, maxBytes: number): value is stri
 // (`undefined` and `null` alike missing): there a null optional is nothing,
 // here a null is a real value the strict-both-ways mirror must still see.
 //
-// Wails v3 hands every binding result back as a generated class instance, and
-// tsconfig sets useDefineForClassFields, so each declared optional member
-// ("revision"?: string) becomes an own property valued `undefined` on every
-// instance -- whether or not the wire carried it. JSON cannot represent
-// `undefined`, so an own key valued `undefined` can only come from the class
-// shape and never from the producer; ignoring those keys restores the exact
-// wire semantics the v2 plain objects had.
+// Wails v3 hands every binding result back as a generated class instance --
+// every result EXCEPT the nine Golem calls src/wails/bindings.ts reads raw
+// through the runtime's Call.ByID, which is how the documents these validators
+// govern reach them today. tsconfig sets useDefineForClassFields, so on a
+// generated instance each declared optional member ("revision"?: string)
+// becomes an own property valued `undefined` -- whether or not the wire carried
+// it. JSON cannot represent `undefined`, so an own key valued `undefined` can
+// only come from the class shape and never from the producer; ignoring those
+// keys restores the exact wire semantics the v2 plain objects had. The rule is
+// retained rather than dropped with the raw routing: it keeps the helpers
+// correct for any generated instance that ever reaches them, and it is a no-op
+// on the raw wire path precisely because JSON cannot carry `undefined`.
 //
 // Strictness is untouched: a key carrying any real value -- null included --
 // still counts as present, so hasOnlyKeys still rejects genuine unknown keys,

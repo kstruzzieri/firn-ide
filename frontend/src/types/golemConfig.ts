@@ -303,6 +303,12 @@ const isChangeID = (value: unknown): value is string => {
  * absent (see `hasPresentKey`): v3's generated class instances declare every
  * optional field as an own `undefined` property under
  * `useDefineForClassFields`, and JSON cannot carry `undefined`.
+ *
+ * The apply/cancel/profile-load results this file parses no longer arrive as
+ * generated instances -- they are among the nine calls src/wails/bindings.ts
+ * reads raw -- so on the wire path the rule is a no-op, for that same reason
+ * that JSON carries no `undefined`. It is kept so the helper stays correct for
+ * any generated instance that ever reaches it.
  */
 const readOptional = <T>(
   value: Record<string, unknown>,
