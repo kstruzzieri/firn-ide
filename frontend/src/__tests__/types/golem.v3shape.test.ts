@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ai } from '../../wails/bindings';
-import { parseSettingsProjection } from '../../types/golem';
+import { GolemContractError, parseSettingsProjection } from '../../types/golem';
 import {
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
@@ -11,12 +11,22 @@ import {
   type ApplyMode,
 } from '../../types/golemConfig';
 
-// Wails v3 hands every binding result back as a generated CLASS instance, not
-// the plain object v2 delivered. tsconfig sets useDefineForClassFields, so every
-// declared optional field ("revision"?: string) is an OWN property valued
-// `undefined` on every instance -- absent on the wire, present to Object.hasOwn.
-// These tests pin the boundary validators to wire semantics: parsing a generated
+// The Golem INBOUND path no longer goes through `createFrom`: the nine
+// object-returning Golem calls are read raw in src/wails/bindings.ts so the
+// validators see the untouched wire payload, and
+// src/__tests__/wails/golemRawCalls.test.ts is the guard for that routing.
+//
+// This file still matters, because generated class instances still reach the
+// validators wherever the frontend BUILDS one (the ai.StatusRequest /
+// ai.TurnRequest / ai.SettingsApplyRequest builders in src/types/golem.ts).
+// tsconfig sets useDefineForClassFields, so every declared optional field
+// ("revision"?: string) is an OWN property valued `undefined` on every
+// instance -- absent on the wire, present to Object.hasOwn. The tests below
+// pin the validators to wire semantics for those inputs: parsing a generated
 // instance must match parsing the same JSON as a plain object, byte for byte.
+//
+// The last test records WHY the inbound calls are routed raw, and fails loudly
+// if the generator ever stops injecting defaults.
 
 const projectionCorpus = path.resolve(
   __dirname,
@@ -122,5 +132,22 @@ describe('v3 generated class instances at the Golem boundary', () => {
 
       expect(parseDocument(fixture, instance)).toStrictEqual(fromWire);
     });
+  });
+
+  // The defect the raw routing exists to close: the generated constructor
+  // DEFAULTS a missing required field, so a payload the contract rejects comes
+  // out of createFrom indistinguishable from a valid one -- here, a settings
+  // document with no `readOnly` key materialises as an EDITABLE surface, and
+  // `readOnly` is a fail-closed UI control.
+  it('repairs a reject fixture when the payload goes through createFrom', () => {
+    const fixture = readFixture<ProjectionFixture>(
+      projectionCorpus,
+      'reject-readonly-missing.json'
+    );
+    expect(Object.hasOwn(fixture.projection, 'readOnly')).toBe(false);
+    expect(() => parseSettingsProjection(wireCopy(fixture.projection))).toThrow(GolemContractError);
+
+    const repaired = ai.SettingsProjection.createFrom(wireCopy(fixture.projection));
+    expect(parseSettingsProjection(repaired).readOnly).toBe(false);
   });
 });

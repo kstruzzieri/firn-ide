@@ -451,6 +451,13 @@ async function handleSave() {
   an own property valued `undefined` on every instance, whether or not the wire carried it — a
   presence check at a boundary must therefore mean "own key holding a defined value"
   (`hasPresentKey` in `frontend/src/types/golem.ts`), not a bare `Object.hasOwn`.
+- **Golem contract calls**: the nine object-returning Golem bindings are the one exception —
+  the adapter reads them raw through the runtime's `Call.ByID` so the wire-contract validators
+  in `frontend/src/types/golem.ts` and `golemConfig.ts` see the untouched payload instead of a
+  class instance that has already defaulted missing fields and emptied null collections. The
+  header comment on `GOLEM_RAW_CALL_IDS` in `frontend/src/wails/bindings.ts` is the primary
+  record; `frontend/src/__tests__/wails/golemRawCalls.test.ts` pins the ids to the generated
+  bindings and fails when a new object-returning Golem call is not routed raw.
 
 ### Type Mapping
 
