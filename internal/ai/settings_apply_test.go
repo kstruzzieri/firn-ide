@@ -633,6 +633,15 @@ func strictDecodeFixture(raw json.RawMessage, target any) error {
 	return dec.Decode(target)
 }
 
+// knownApplyDocuments are the document kinds checkApplyFixture can judge. A
+// fixture outside the set fails here by name, so a misspelled `document` on a
+// reject fixture cannot pass vacuously through the walker's default branch.
+var knownApplyDocuments = map[string]bool{
+	"apply_request": true, "confirm_request": true, "apply_result": true, "cancel_result": true,
+	"profile_load_result": true, "profile_list_result": true, "profile_save_request": true,
+	"profile_save_result": true,
+}
+
 func TestSettingsApplyContractCorpus(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("testdata", "settings_apply_contract", "*.json"))
 	if err != nil || len(files) == 0 {
@@ -646,6 +655,9 @@ func TestSettingsApplyContractCorpus(t *testing.T) {
 		var fixture applyFixture
 		if err := json.Unmarshal(raw, &fixture); err != nil {
 			t.Fatalf("%s: %v", file, err)
+		}
+		if !knownApplyDocuments[fixture.Document] {
+			t.Fatalf("%s: unknown document %q", file, fixture.Document)
 		}
 		checkErr := checkApplyFixture(fixture)
 		switch fixture.Verdict {

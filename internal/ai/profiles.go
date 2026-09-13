@@ -1,11 +1,14 @@
 package ai
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/kstruzzieri/go-llm/profiles"
 )
@@ -101,6 +104,12 @@ type GolemProfileSaveResult struct {
 
 var userProfileIDPattern = regexp.MustCompile(`^user/[a-z0-9][a-z0-9-]{0,63}$`)
 
+// profileStoreTimeout bounds one store call. Both profile operations hold a
+// lifecycle wg unit and shutdown cancels baseCtx only AFTER wg.Wait(), so an
+// unbounded call blocked on a hung config directory would wedge Close; the
+// deadline error maps to "io" like any other unmapped store failure.
+const profileStoreTimeout = 30 * time.Second
+
 func validUserProfileID(value string) bool { return userProfileIDPattern.MatchString(value) }
 
 // validateSaveGolemProfileAsRequest enforces the request shape and returns the
@@ -134,24 +143,29 @@ func profileStoreDiagnostics(err error) []ProfileDiagnostic {
 	if !ok {
 		code = "io"
 	}
+	log.Printf("ai: profile store: code=%s", code)
 	return []ProfileDiagnostic{{Code: code}}
 }
 
 // projectProfileInfos maps store rows into bounded §5.6 rows. The id shape is
-// pinned to upstream ParseID by TestProfileIDPatternMatchesUpstreamParseID, so
-// no per-row filtering is needed; `curated` is DERIVED from the namespace so
-// the flag can never disagree with the id; descriptions are sanitized
+// pinned to upstream ParseID by TestProfileIDPatternMatchesUpstreamParseID; a
+// row that still fails the §5.6 grammar is dropped alone rather than turning
+// the whole list into a client contract error; `curated` is DERIVED from the
+// namespace so the flag can never disagree with the id; descriptions are sanitized
 // (Cc/Cf -> U+FFFD) and trimmed to the §5.6 byte bound at a rune boundary; a
 // revision crosses only in §5.6 shape. User rows arrive ID-only from
 // Store.List and stay that way — nothing is invented here.
 func projectProfileInfos(rows []profiles.Info) []ProfileInfo {
 	out := make([]ProfileInfo, 0, len(rows))
 	for _, row := range rows {
+		if !validProfileID(string(row.ID)) {
+			continue
+		}
 		info := ProfileInfo{
 			ID:      string(row.ID),
 			Curated: strings.HasPrefix(string(row.ID), "curated/"),
 		}
-		if desc := trimToBytes(sanitizeIdentifier(row.Description), maxProjectionEndpointLen); desc != "" {
+		if desc := trimToBytes(sanitizeIdentifier(row.Description), maxProfileDescriptionLen); desc != "" {
 			info.Description = desc
 		}
 		if validRevision(row.Revision) {
@@ -186,19 +200,38 @@ func (s *Service) ListGolemProfiles() (GolemProfileListResult, error) {
 		return GolemProfileListResult{Status: "diagnostics",
 			Diagnostics: []ProfileDiagnostic{{Code: "io"}}}, nil
 	}
-	rows, err := store.List(s.baseCtx)
+	ctx, cancel := context.WithTimeout(s.baseCtx, profileStoreTimeout)
+	defer cancel()
+	rows, err := store.List(ctx)
 	if err != nil {
 		return GolemProfileListResult{Status: "diagnostics",
 			Diagnostics: profileStoreDiagnostics(err)}, nil
 	}
+	// Rows arrive in stable ID order, so the cap is applied before any row is
+	// projected: a directory of thousands costs 256 projections, not thousands.
+	limited := len(rows) > maxProjectionEntries
+	if limited {
+		rows = rows[:maxProjectionEntries]
+	}
 	infos := projectProfileInfos(rows)
-	if len(infos) > maxProjectionEntries {
-		return GolemProfileListResult{Status: "limited", Profiles: infos[:maxProjectionEntries]}, nil
+	if len(infos) == 0 {
+		// Unreachable while the embedded curated catalog is non-empty (pinned
+		// by TestListGolemProfilesNeverEmpty); should it ever happen, the
+		// diagnostics shape is the one the contract can carry — `omitempty`
+		// would otherwise emit {"status":"loaded"}, which the client refuses.
+		log.Printf("ai: profile store: empty list")
+		return GolemProfileListResult{Status: "diagnostics",
+			Diagnostics: []ProfileDiagnostic{{Code: "io"}}}, nil
+	}
+	if limited {
+		return GolemProfileListResult{Status: "limited", Profiles: infos}, nil
 	}
 	return GolemProfileListResult{Status: "loaded", Profiles: infos}, nil
 }
 
 func profileSaveDiagnostics(code string) GolemProfileSaveResult {
+	// Code only (§5.4): the operator record names the cause, never the bytes.
+	log.Printf("ai: profile save: code=%s", code)
 	return GolemProfileSaveResult{Status: "diagnostics",
 		Diagnostics: []ProfileDiagnostic{{Code: code}}}
 }
@@ -210,6 +243,16 @@ func profileSaveDiagnostics(code string) GolemProfileSaveResult {
 // stale CAS, or a mid-overwrite vanish — is the profile_target conflict; the
 // active_revision conflict is decided earlier, against the applied document.
 func profileSaveResult(id string, outcome profiles.SaveOutcome, err error) GolemProfileSaveResult {
+	if err == nil && !outcome.Persisted {
+		// Upstream documents Persisted ⇒ err == nil, not the converse: a nil
+		// error without a persisted write is a silent non-write, never "saved".
+		diagnostics := []ProfileDiagnostic{{Code: "io"}}
+		if validProfileID(id) {
+			diagnostics[0].ProfileID = id
+		}
+		log.Printf("ai: profile save: code=io (not persisted)")
+		return GolemProfileSaveResult{Status: "diagnostics", Diagnostics: diagnostics}
+	}
 	if err == nil {
 		result := GolemProfileSaveResult{
 			Status:  "saved",
@@ -266,6 +309,9 @@ func saveDestinationPath(id string) (string, error) {
 // Failures on the ACTIVE side refuse (the file was just parsed; a source that
 // cannot be stat'ed cannot be proven distinct from the destination); failures
 // on the destination side fall through to "no alias" (no store to write into).
+// That asymmetry is a residual: the create leg is fail-open on the half a
+// concurrent writer can perturb between EvalSymlinks and Stat; upstream's
+// SaveAs Lstat+IsRegular guard independently refuses a symlinked destination.
 func activeAliasSameFile(destination, activeSource string) bool {
 	activeInfo, err := os.Stat(activeSource)
 	if err != nil {
@@ -341,6 +387,16 @@ func (s *Service) SaveGolemProfileAs(req SaveGolemProfileAsRequest) (GolemProfil
 		// — Save requires a valid applied source at state 'ready'.
 		return profileSaveDiagnostics("active_config_invalid"), nil
 	}
+	// The §4.8 scrub is api_key-scoped. A credential riding an endpoint's
+	// userinfo is not an api_key and would be duplicated verbatim — and the
+	// ready gate alone lets it through: a NON-agent provider's unsupported
+	// endpoint is a non-blocking diagnostic. Firn refuses to render such an
+	// endpoint (NormalizeEndpoint), so it refuses to duplicate it too.
+	for _, provider := range loaded.Config.Providers {
+		if _, _, endpointErr := NormalizeEndpoint(provider.BaseURL); endpointErr != nil {
+			return profileSaveDiagnostics("active_config_invalid"), nil
+		}
+	}
 	if loaded.Revision != req.AppliedRevision {
 		return GolemProfileSaveResult{Status: "conflict", Conflict: "active_revision"}, nil
 	}
@@ -370,20 +426,25 @@ func (s *Service) SaveGolemProfileAs(req SaveGolemProfileAsRequest) (GolemProfil
 	if err != nil {
 		return profileSaveDiagnostics("io"), nil
 	}
+	ctx, cancel := context.WithTimeout(s.baseCtx, profileStoreTimeout)
+	defer cancel()
 	if req.ExpectedRevision == nil {
-		// §5.6: while the list is limited a CREATE is refused with
-		// profile_limit; replacing an existing profile by exact id/revision
-		// stays available. The count condition is exactly the limited
-		// condition, so the two gates cannot drift.
-		rows, listErr := store.List(s.baseCtx)
+		// §5.6: a CREATE is refused with profile_limit while the list is
+		// limited OR WOULD BECOME limited by this row — the list gate counts
+		// the rows that exist, this one the rows that would; they differ by
+		// exactly the row about to be written, so the bound is >=. Otherwise
+		// the create at the bound succeeds and truncates itself out of the
+		// only enumeration path. Replacing an existing profile by exact
+		// id/revision stays available.
+		rows, listErr := store.List(ctx)
 		if listErr != nil {
 			return GolemProfileSaveResult{Status: "diagnostics",
 				Diagnostics: profileStoreDiagnostics(listErr)}, nil
 		}
-		if len(rows) > maxProjectionEntries {
+		if len(rows) >= maxProjectionEntries {
 			return profileSaveDiagnostics("profile_limit"), nil
 		}
 	}
-	outcome, err := store.SaveAs(s.baseCtx, profiles.ID(req.ID), doc, derefString(req.ExpectedRevision))
+	outcome, err := store.SaveAs(ctx, profiles.ID(req.ID), doc, derefString(req.ExpectedRevision))
 	return profileSaveResult(req.ID, outcome, err), nil
 }

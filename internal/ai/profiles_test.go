@@ -657,6 +657,73 @@ func TestSaveGolemProfileAsProfileLimitOnCreateOnly(t *testing.T) {
 // The durability warning is the nil-error path (§4.8): SaveOutcome.Persisted
 // pairs with a nil error and the bounded warning code. The store cannot be
 // driven into that state from here, so the mapping is pinned as a pure table.
+// The create at exactly the bound is the one that would truncate itself out of
+// the only enumeration path: 255 user rows + curated = 256, the list is still
+// `loaded`, and the 257th row would never be listed. Refused; overwrite stays open.
+func TestSaveGolemProfileAsRefusesTheCreateThatWouldLimitTheList(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	for i := 0; i < maxProjectionEntries-1; i++ {
+		stageUserProfile(t, "p-"+threeDigits(i), keyedProfileJSON)
+	}
+	svc := newProfilesTestService(t)
+	list, err := svc.ListGolemProfiles()
+	if err != nil || list.Status != "loaded" || len(list.Profiles) != maxProjectionEntries {
+		t.Fatalf("list at the bound = %+v (%v), want loaded with %d rows", list.Status, err, maxProjectionEntries)
+	}
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/zzz-last", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || result.Diagnostics[0].Code != "profile_limit" {
+		t.Fatalf("create at the bound = %+v, want profile_limit", result)
+	}
+	if _, statErr := os.Stat(filepath.Join(userProfileStoreRoot(t), "profiles", "zzz-last.json")); statErr == nil {
+		t.Fatal("the refused create wrote a profile")
+	}
+	result, err = svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/p-000", ExpectedRevision: stringPtr(profileBodyRevision(keyedProfileJSON)),
+		AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "saved" {
+		t.Fatalf("overwrite at the bound = %+v, want saved", result)
+	}
+}
+
+// A credential riding a provider endpoint's userinfo is not an api_key: the
+// scrub would not touch it, and a NON-agent provider's unsupported endpoint is
+// only a non-blocking diagnostic, so the ready gate alone lets the save through.
+func TestSaveGolemProfileAsRefusesAnEndpointCarryingUserinfo(t *testing.T) {
+	const userinfoTargetJSON = `{
+  "providers": {
+    "local": {"base_url": "http://localhost:11434"},
+    "vendor": {"base_url": "https://svc:sk-live-userinfo@api.example.org/v1", "api_format": "openai-compat"}
+  },
+  "models": {"agent-m": {"name": "target-model", "provider": "local", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+	stageApplyTarget(t, userinfoTargetJSON)
+	revision := stagedTargetRevision(t)
+	svc := newProfilesTestService(t)
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || result.Diagnostics[0].Code != "active_config_invalid" {
+		t.Fatalf("userinfo endpoint save = %+v, want active_config_invalid", result)
+	}
+	if _, statErr := os.Stat(filepath.Join(userProfileStoreRoot(t), "profiles", "mine.json")); statErr == nil {
+		t.Fatal("a profile was written with a userinfo credential in it")
+	}
+}
+
 func TestProfileSaveResultMapping(t *testing.T) {
 	rev := strings.Repeat("c", 64)
 	rows := []struct {
@@ -665,6 +732,9 @@ func TestProfileSaveResultMapping(t *testing.T) {
 		err     error
 		want    GolemProfileSaveResult
 	}{
+		// A nil error without a persisted write is a silent non-write: never "saved".
+		{"nil error but not persisted", profiles.SaveOutcome{}, nil,
+			GolemProfileSaveResult{Status: "diagnostics"}},
 		{"saved", profiles.SaveOutcome{Persisted: true, Revision: rev}, nil,
 			GolemProfileSaveResult{Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: rev}}},
 		{"saved with durability warning", profiles.SaveOutcome{Persisted: true, Warning: profiles.CodeDurability, Revision: rev}, nil,

@@ -1510,19 +1510,19 @@ func verifyRouteConfirmations(base *config.Config, routed map[string][]string, p
 }
 
 // gateRolesFor mirrors upstream's eligibility gate: the role being changed,
-// plus — when the change asserts an explicit capability override, or is itself
-// selector-wide — every role already sharing the target selector, because that
-// override becomes their persisted truth too.
+// plus every role already sharing the target selector. Every validated route
+// change carries a non-empty exposure (validateRouteChange), i.e. an explicit
+// capability override that becomes the selector's persisted truth, so the
+// selector's roles always gate — an override plan by identity, a join by the
+// override it asserts.
 func gateRolesFor(base *config.Config, plan routePlan) map[string]bool {
 	roles := map[string]bool{}
 	if plan.role != "" {
 		roles[plan.role] = true
 	}
-	if plan.action == routeOverride || len(plan.change.ExposedCaps) > 0 {
-		for role, m := range base.Models {
-			if (modelSelector{provider: m.Provider, model: m.Name}) == plan.selector {
-				roles[role] = true
-			}
+	for role, m := range base.Models {
+		if (modelSelector{provider: m.Provider, model: m.Name}) == plan.selector {
+			roles[role] = true
 		}
 	}
 	return roles

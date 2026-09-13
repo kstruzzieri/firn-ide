@@ -655,6 +655,8 @@ export const MAX_PROJECTION_ENTRIES = 256;
 // UTF-16 code units disagree with Go on non-ASCII input.
 const MAX_IDENTIFIER_BYTES = 256;
 export const MAX_ENDPOINT_BYTES = 1024;
+/** §5.6 profile description bound — its own constant, never the endpoint's. */
+export const MAX_PROFILE_DESCRIPTION_BYTES = 1024;
 // Worst case the backend can emit: one endpoint diagnostic per provider plus
 // one agent diagnostic (see internal/ai/settings.go maxProjectionDiagnostics).
 export const MAX_DIAGNOSTICS = MAX_PROJECTION_ENTRIES + 1;
@@ -771,7 +773,7 @@ const MAX_MODEL_NUMBER = 2147483647;
 // or a corpus fixture with an exotic Cf rune could split verdicts between the
 // two oracles. The Go builder scrubs the same categories to U+FFFD, which is
 // safe: producer stricter than contract.
-const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
+export const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
 
 // A canonical endpoint is always plain ASCII: NormalizeEndpoint rejects a
 // non-ASCII host outright (Cyrillic/fullwidth/ideographic-dot homoglyphs

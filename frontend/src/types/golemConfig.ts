@@ -16,7 +16,9 @@
 import {
   CAPABILITY_NAMES,
   MAX_DIAGNOSTICS,
+  FORBIDDEN_IDENTIFIER_RUNES,
   MAX_ENDPOINT_BYTES,
+  MAX_PROFILE_DESCRIPTION_BYTES,
   MAX_PROJECTION_ENTRIES,
   MODEL_TYPES,
   NON_ASCII_RUNE,
@@ -939,7 +941,13 @@ function readProfileInfo(value: unknown): ProfileInfo | null {
   // §4.8: the curated flag must agree with the namespace.
   if (value.curated !== value.id.startsWith('curated/')) return null;
   const description = readOptional(value, 'description', (entry) =>
-    isBoundedString(entry, MAX_ENDPOINT_BYTES) && entry !== '' ? entry : null
+    // The producer sanitizes Cc/Cf to U+FFFD; this boundary is independent (§5.6),
+    // so a control or format rune in a description is a break here too.
+    isBoundedString(entry, MAX_PROFILE_DESCRIPTION_BYTES) &&
+    entry !== '' &&
+    !FORBIDDEN_IDENTIFIER_RUNES.test(entry)
+      ? entry
+      : null
   );
   if (description === null) return null;
   const revision = readOptional(value, 'revision', (entry) => (isRevision(entry) ? entry : null));
@@ -1506,6 +1514,9 @@ function selectorGroups(
     const current = role === undefined ? undefined : modelOf.get(role);
     // The current role feeds the confirmation set only.
     for (const useCase of current?.routedUseCases ?? []) group.affected.add(useCase);
+    // Every change the editor stages or the parsers accept carries a non-empty
+    // exposure [W5-1], so the roles already on the selector feed both sets for
+    // every real change; the guard stays for hand-built changes (probes, tests).
     if (
       (current !== undefined && sameModelFacts(current, change.modelFacts)) ||
       change.exposedCaps.length > 0
