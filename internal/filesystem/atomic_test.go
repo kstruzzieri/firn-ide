@@ -8,8 +8,64 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestWriteFileAtomicFailuresHaveStableMessagesAndPreserveCauses(t *testing.T) {
+	for _, stage := range []string{"write", "write-sync", "rename"} {
+		t.Run(stage, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.json")
+			var tempPath string
+			var original error
+			var cause error = syscall.ENOSPC
+			mock := &Mock{
+				WriteFileFunc: func(p string, _ []byte, _ fs.FileMode) error {
+					tempPath = p
+					if stage == "rename" {
+						return nil
+					}
+					original = &fs.PathError{Op: "open", Path: p, Err: cause}
+					return original
+				},
+				RenameFunc: func(oldPath, newPath string) error {
+					original = &os.LinkError{Op: "rename", Old: oldPath, New: newPath, Err: cause}
+					return original
+				},
+			}
+			var fsys FileSystem = mock
+			if stage == "write-sync" {
+				fsys = &syncRecorder{FileSystem: mock}
+			}
+
+			var firstMessage string
+			for attempt := range 3 {
+				if attempt == 2 {
+					cause = fs.ErrPermission
+				}
+				err := WriteFileAtomic(fsys, path, []byte("{}"), 0o600)
+				if !errors.Is(err, cause) || !errors.Is(err, original) {
+					t.Fatalf("error = %v, want original error %v and cause %v preserved", err, original, cause)
+				}
+				if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), tempPath) {
+					t.Errorf("error must name destination %q without temporary path %q: %v", path, tempPath, err)
+				}
+				switch attempt {
+				case 0:
+					firstMessage = err.Error()
+				case 1:
+					if err.Error() != firstMessage {
+						t.Errorf("same failure changed message:\nfirst: %s\nretry: %s", firstMessage, err)
+					}
+				case 2:
+					if err.Error() == firstMessage {
+						t.Error("different failure must produce a different message")
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestWriteFileAtomicCleansTempAfterRenameFailure(t *testing.T) {
 	renameErr := errors.New("rename failed")

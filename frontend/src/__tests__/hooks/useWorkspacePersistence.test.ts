@@ -77,12 +77,13 @@ describe('useWorkspacePersistence', () => {
     // After a failed load the backend refuses every save for that workspace.
     // The refusal names the consequence, the file, the reason and the remedy,
     // so the hook shows it in the backend's words: once per workspace, sticky
-    // until dismissed, retired when saving recovers or the workspace restores.
+    // until dismissed. A successful save retires the toast; a successful
+    // restore keeps it and only re-arms the report for the next refusal.
     const refusal =
       'workspace saving disabled for this session to preserve the existing state file (fix or remove it, then restart Firn): parsing workspace state file /home/u/.firn/workspaces/abc.json: json: cannot unmarshal string into Go struct field Layout.state.layout.golemCollapsed of type bool';
     const shown = `Workspace session not saved (/workspace/w): ${refusal}`;
     const diskFull =
-      'writing workspace state file: open /home/u/.firn/workspaces/abc.json.tmp: no space left on device';
+      'writing workspace state file: writing atomic temp file: open /home/u/.firn/workspaces/abc.json: no space left on device';
     // Workspace path -> the reason its saves are refused right now.
     const refusing = new Map<string, string>();
     let originalSave: ((state: unknown) => Promise<void>) | undefined;
