@@ -92,6 +92,7 @@ import styles from './GolemConfig.module.css';
 import {
   APPLIED_SOURCE_VALUE,
   BLANK_SOURCE_VALUE,
+  LIST_LIMITED_COPY,
   TRANSPORT_UNAVAILABLE_COPY,
   buildProfileSelectModel,
   sourceSelectValue,
@@ -1464,7 +1465,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   ? profileList.message
                   : profileList.kind === 'unloaded'
                     ? 'Loading profiles…'
-                    : ''
+                    : profileList.kind === 'limited'
+                      ? LIST_LIMITED_COPY
+                      : ''
               }
               onOpen={() => void refreshProfileList()}
               // [F3][K1] Every start routes through `bootstrapFrom`, so any start that

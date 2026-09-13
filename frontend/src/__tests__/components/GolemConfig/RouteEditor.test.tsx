@@ -952,6 +952,142 @@ describe('RouteEditor', () => {
     expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('agent'), false);
   });
 
+  it.each([
+    ['hosted', 'fresh-model', true],
+    ['other-provider', 'fresh-model', false],
+    ['hosted', 'different-model', false],
+  ] as const)(
+    'seeds a manual join from its exact staged selector (%s/%s)',
+    async (provider, name, sharesSelector) => {
+      const peer: RouteChange = {
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+        thinkMode: 'always',
+        confirmUnknown: false,
+      };
+      const draft = draftWith(peer);
+      const base = { routes: [{ useCase: 'chat', role: 'chat-role' }], models: [model()] };
+      const { onStage } = renderRouting({
+        ...base,
+        draft,
+        providers: [providerRow(), providerRow({ name: 'other-provider' })],
+      });
+      await openRoute('agent', 'Assign');
+      await userEvent.selectOptions(screen.getByLabelText('Provider'), provider);
+      await declareModel(name);
+      await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+      if (sharesSelector) {
+        expect(screen.getByLabelText('Think mode')).toHaveValue('always');
+        const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
+        const exposure = screen.getByRole('group', {
+          name: 'Capabilities exposed to agent — from fresh-model',
+        });
+        expect(within(declared).getByLabelText('generate')).toBeChecked();
+        expect(within(exposure).getByLabelText('generate')).not.toBeChecked();
+      } else {
+        expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+      }
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      const joined = onStage.mock.calls[0][0][0] as RouteChange;
+      expect(joined.exposedCaps).toEqual(
+        sharesSelector ? peer.exposedCaps : ['chat', 'stream', 'tool_call']
+      );
+      expect(joined.thinkMode).toBe(sharesSelector ? 'always' : '');
+      if (sharesSelector) expect(joined.capabilityFacts).toEqual(peer.capabilityFacts);
+      const request = buildApplyRequest(
+        base,
+        stageChange(draft, joined, vault()),
+        vault(),
+        'apply'
+      );
+      expect(
+        request.changes.find((change) => change.kind === 'route' && change.useCase === 'chat')
+      ).toEqual(peer);
+    }
+  );
+
+  it.each(['fresh-model', 'fresh-model-custom'])(
+    'adopts only the completed manual name when Done blurs it (%s)',
+    async (name) => {
+      const peer: RouteChange = {
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call', 'thinking'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+        thinkMode: 'always',
+        confirmUnknown: false,
+      };
+      const { onStage } = renderRouting({ models: [model()], draft: draftWith(peer) });
+      await openRoute('agent', 'Assign');
+      await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+      await declareModel('scratch');
+      await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+      const input = screen.getByLabelText('Model name');
+      await userEvent.clear(input);
+      await userEvent.type(input, name);
+      // A staged name can be only the prefix of the one still being typed.
+      expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      const joined = onStage.mock.calls[0][0][0] as RouteChange;
+      const caps = name === 'fresh-model' ? peer.exposedCaps : ['chat', 'stream', 'tool_call'];
+      expect(joined.modelFacts.model).toBe(name);
+      expect(joined.capabilityFacts.caps).toEqual(caps);
+      expect(joined.exposedCaps).toEqual(caps);
+      expect(joined.thinkMode).toBe(name === 'fresh-model' ? 'always' : '');
+    }
+  );
+
+  it('keeps explicit manual exposure and Think edits after adopting staged values', async () => {
+    const peer: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+      capabilityFacts: {
+        caps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCaps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ models: [model()], draft: draftWith(peer) });
+    await openRoute('agent', 'Assign');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+    await declareModel('fresh-model');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    const exposure = screen.getByRole('group', {
+      name: 'Capabilities exposed to agent — from fresh-model',
+    });
+    await userEvent.click(within(exposure).getByLabelText('generate'));
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'toggle');
+    // Returning to an unchanged name must not reapply its original seed.
+    await userEvent.click(screen.getByLabelText('Model name'));
+    await userEvent.tab();
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    expect(within(exposure).getByLabelText('generate')).not.toBeChecked();
+    // Half-typed names and non-selector facts must not re-seed over explicit edits.
+    await userEvent.type(screen.getByLabelText('Model name'), '-custom');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'moe');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    await stage();
+    const joined = onStage.mock.calls[0][0][0] as RouteChange;
+    expect(joined.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+    expect(joined.thinkMode).toBe('toggle');
+    expect(joined.capabilityFacts.caps).toEqual(peer.capabilityFacts.caps);
+  });
+
   it('re-seeds from its own coalesced staging when a pick returns to that model', async () => {
     // chat staged an override on its model that narrows the exposure and sets
     // Think. Reopened, the user picks another model, then the original again:

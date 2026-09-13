@@ -716,7 +716,7 @@ describe('Save as profile', () => {
   // block always sorts inside the first maxProjectionEntries rows, so both
   // Start actions stay enabled — a limited list must never strand a
   // Missing-state user with zero bootstrap path.
-  it('refuses create while the list is limited but leaves the Start actions enabled', async () => {
+  it('discloses a limited list and refuses create while leaving the Start actions enabled', async () => {
     // The parameterized helper mounts against the limited list directly — a
     // pre-set mock would be overwritten by the helper's own default.
     await mountReady(listResult({ status: 'limited' }));
@@ -734,8 +734,11 @@ describe('Save as profile', () => {
     expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
       'aria-disabled'
     );
-    // The list-limited copy no longer gates Start at all.
-    expect(screen.queryByText('Too many profiles to display.')).not.toBeInTheDocument();
+    // The list is truncated, so disclose it without gating the Start actions.
+    expect(screen.getByText('Too many profiles to display.')).toBeVisible();
+    expect(screen.getByRole('listbox', { name: 'Source' })).toHaveAccessibleDescription(
+      'Too many profiles to display.'
+    );
     // Selection of LISTED rows stays allowed (§4.8).
     expect(sourceTrigger()).not.toBeDisabled();
   });

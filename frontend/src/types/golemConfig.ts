@@ -1804,7 +1804,7 @@ export function probeRouteChange(
 
 /** The latest raw staging is the authority projectDraft coalesces this selector onto. */
 export const selectorAuthority = (
-  model: ModelProjection | null,
+  model: Pick<ModelProjection, 'provider' | 'modelName'> | null,
   changes: readonly Change[]
 ): RouteChange | undefined =>
   model === null

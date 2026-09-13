@@ -457,7 +457,7 @@ func stageAliasedActiveTarget(t *testing.T, viaSymlink, caseVaried bool) (revisi
 func assertActiveAliasRefused(t *testing.T, revision string) {
 	t.Helper()
 	svc := newProfilesTestService(t)
-	activePath := filepath.Join(userProfileStoreRoot(t), "profiles", "mine.json")
+	activePath := os.Getenv("GO_LLM_CONFIG")
 	before, err := os.ReadFile(activePath)
 	if err != nil {
 		t.Fatal(err)
@@ -491,8 +491,28 @@ func assertActiveAliasRefused(t *testing.T, revision string) {
 // active configuration source is refused with store_unsafe (controller ruling,
 // header block) — never scrubbed-and-replaced under the read gate.
 func TestSaveGolemProfileAsRefusesActiveAlias(t *testing.T) {
-	revision := stageAliasedActiveTarget(t, false, false)
-	assertActiveAliasRefused(t, revision)
+	sandboxAgentConfigEnv(t)
+	store, err := profiles.DefaultStoreWithOptions(profileStoreOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := store.Load(t.Context(), "curated/local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range doc.Config().Providers {
+		if err := doc.SetProviderAPIKey(name, profileLiteralSecret); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outcome, err := store.SaveAs(t.Context(), "user/mine", doc, "")
+	if err != nil || !outcome.Persisted {
+		t.Fatalf("create upstream profile = %+v (%v)", outcome, err)
+	}
+	// The upstream write supplies the destination: a layout change must fail
+	// the alias guard test even if Firn's mirrored path remains unchanged.
+	t.Setenv("GO_LLM_CONFIG", doc.Origin().Path)
+	assertActiveAliasRefused(t, outcome.Revision)
 }
 
 func TestSaveGolemProfileAsRefusesActiveAliasSymlink(t *testing.T) {

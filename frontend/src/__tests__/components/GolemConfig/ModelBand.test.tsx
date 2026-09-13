@@ -330,11 +330,14 @@ describe('ModelBand declare path', () => {
 
     await userEvent.click(declare);
     // Floor caps come pre-declared; the type stays unchosen (§4.4).
-    expect(onManual).toHaveBeenCalledWith({
-      model: 'llama-4',
-      type: '',
-      caps: ['chat', 'stream'],
-    });
+    expect(onManual).toHaveBeenCalledWith(
+      {
+        model: 'llama-4',
+        type: '',
+        caps: ['chat', 'stream'],
+      },
+      true
+    );
   });
 
   it('offers no declare card once the typed name matches exactly', async () => {
@@ -408,11 +411,14 @@ describe('ModelBand declare path', () => {
     // A fresh declaration still starts from the band floor alone.
     await userEvent.type(screen.getByLabelText('Filter models'), 'llama-4');
     await userEvent.click(screen.getByRole('option', { name: /Declare "llama-4"/ }));
-    expect(onManual).toHaveBeenLastCalledWith({
-      model: 'llama-4',
-      type: '',
-      caps: ['chat', 'stream'],
-    });
+    expect(onManual).toHaveBeenLastCalledWith(
+      {
+        model: 'llama-4',
+        type: '',
+        caps: ['chat', 'stream'],
+      },
+      true
+    );
   });
 });
 

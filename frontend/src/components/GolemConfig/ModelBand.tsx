@@ -174,7 +174,8 @@ export interface ModelBandProps {
   exposure?: ReactNode;
   onProviderChange: (provider: string) => void;
   onSelect: (model: ModelProjection) => void;
-  onManual: (manual: ManualModel | null) => void;
+  /** `commitName` marks Declare or leaving the name field, never a keystroke. */
+  onManual: (manual: ManualModel | null, commitName?: boolean) => void;
 }
 
 export function ModelBand({
@@ -258,7 +259,7 @@ export function ModelBand({
       choose(row.model);
       return;
     }
-    if (declaring) onManual({ model: query.trim(), type: '', caps: canonicalCaps(floor) });
+    if (declaring) onManual({ model: query.trim(), type: '', caps: canonicalCaps(floor) }, true);
   };
 
   /** One edit of the hand-declared facts; null-safe because the fieldset only
@@ -370,6 +371,7 @@ export function ModelBand({
             id={`${id}-manual-model`}
             value={manual.model}
             onChange={(event) => patch({ model: event.target.value })}
+            onBlur={() => onManual(manual, true)}
           />
         </div>
         <div className={styles.field}>

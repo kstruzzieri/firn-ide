@@ -29,7 +29,7 @@
  * omission or an extra.
  */
 
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CAPABILITY_NAMES,
   compareString,
@@ -277,6 +277,7 @@ export function RouteEditor({
   const [provider, setProvider] = useState(seed.provider);
   const [defined, setDefined] = useState<ModelProjection | null>(seed.defined);
   const [manual, setManual] = useState<ManualModel | null>(seed.manual);
+  const completedManualName = useRef(seed.manual?.model ?? null);
   const [exposed, setExposed] = useState<CapabilityName[]>(seed.exposed);
   const [think, setThink] = useState<ThinkMode>(seed.think);
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
@@ -323,10 +324,10 @@ export function RouteEditor({
   const offeredCaps =
     authority?.exposedCaps ?? defined?.exposedCapabilities ?? capabilityFacts?.caps ?? [];
 
-  // Choosing a different model re-seeds the checklist from ITS exposure. Keyed
-  // on the declaration, not the half-typed name, so a keystroke never discards
-  // an exposure the user has already adjusted. (Render-phase state adjustment:
-  // the React "derive state from props" pattern.)
+  // Choosing a different model re-seeds the checklist from ITS exposure. Manual
+  // joins adopt exact staged selectors in onManual; intermediate name edits do
+  // not change this declaration key or reset exposure. (Render-phase state
+  // adjustment: the React "derive state from props" pattern.)
   const factsKey =
     manual !== null
       ? declarationKey(manual.caps)
@@ -335,9 +336,8 @@ export function RouteEditor({
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
     setExposed(canonicalCaps(offeredCaps));
-    // A hand-declared name is never matched against a staged selector: this
-    // key is the declaration's caps, not the half-typed name (ceiling; a
-    // declaration that spells a peer's staged model still opens on '').
+    // A manual join adopts staged values in onManual; ordinary declaration
+    // edits still seed from their own capabilities.
     setThink(manual === null ? (authority?.thinkMode ?? defined?.thinkMode ?? '') : '');
     setAckDrops(false);
     setAckUnknown(false);
@@ -750,15 +750,40 @@ export function RouteEditor({
           setProvider(next);
           setDefined(null);
           setManual(null);
+          completedManualName.current = null;
           clearRefusal();
         }}
         onSelect={(model) => {
           setDefined(model);
           setManual(null);
+          completedManualName.current = null;
           clearRefusal();
         }}
-        onManual={(next) => {
-          setManual(next);
+        onManual={(next, commitName) => {
+          const stagedSelector =
+            next !== null && commitName && next.model !== completedManualName.current
+              ? selectorAuthority({ provider, modelName: next.model }, draft.changes)
+              : undefined;
+          if (next === null || commitName) completedManualName.current = next?.model ?? null;
+          if (next !== null && stagedSelector !== undefined) {
+            // Match only a completed name: a staged selector may be a prefix
+            // of the one being typed. Both sets are existing assertions; never
+            // add this route's floor on its behalf.
+            const caps = canonicalCaps([
+              ...stagedSelector.capabilityFacts.caps,
+              ...stagedSelector.exposedCaps,
+            ]);
+            setManual({ ...next, caps });
+            setExposed(canonicalCaps(stagedSelector.exposedCaps));
+            setThink(stagedSelector.thinkMode);
+            setAckDrops(false);
+            setAckUnknown(false);
+            // Adopt atomically: initialization must not widen exposure or
+            // clear Think, and later field edits must not reapply this seed.
+            setSeenKey(declarationKey(caps));
+          } else {
+            setManual(next);
+          }
           if (next !== null) setDefined(null);
           clearRefusal();
         }}
