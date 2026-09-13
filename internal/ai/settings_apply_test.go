@@ -2758,11 +2758,16 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 }`
 	h := newApplyHarness(t, target)
 	before := h.targetBytes(t)
+	// An override asserting the shared selector without embed, below
+	// embedding's floor. Upstream's SetRoleOverrides gate refuses it during the
+	// mutation, naming the first matching ROLE; the use-case-subject refusal
+	// (checkPreparedDocument) is reached only when that gate passes — which an
+	// empty exposure did, by clearing to the type defaults, before
+	// validateRouteChange refused the empty list (see the apply corpus).
 	change := confirmUnknown(
-		routeChange("summarize", "ollama", "shared-model", "chat", "stream", "embed"),
+		routeChange("summarize", "ollama", "shared-model", "chat", "stream"),
 		"summarize",
 	)
-	change.ExposedCaps = []string{}
 
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
@@ -2770,13 +2775,43 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 	}
 	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
 		res.Diagnostics[0].Code != codeEligibilityIneligible ||
-		res.Diagnostics[0].SubjectKind != "use_case" ||
-		res.Diagnostics[0].SubjectName != "embedding" {
-		t.Errorf("ApplySettings(selector override) = %+v, want embedding %s diagnostic",
+		res.Diagnostics[0].SubjectKind != "role" ||
+		res.Diagnostics[0].SubjectName != "embed-m" ||
+		!res.Diagnostics[0].Blocking {
+		t.Errorf("ApplySettings(selector override) = %+v, want blocking embed-m %s diagnostic",
 			res, codeEligibilityIneligible)
 	}
 	if got := h.targetBytes(t); !bytes.Equal(got, before) {
 		t.Errorf("ApplySettings(selector override) target bytes changed, want unchanged")
+	}
+}
+
+// TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase pins the completed-
+// document loop: a Firn floor the request never names but the finished
+// document no longer meets is reported on THAT use case. The apply path
+// reaches this loop only when upstream's own gate passed (see the selector
+// override test above, where it does not).
+func TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase(t *testing.T) {
+	doc, err := config.ParseDocument([]byte(`{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "embed-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream"]}
+  },
+  "defaults": {"agent": "agent-m", "embedding": "embed-m"}
+}`), config.Origin{Source: config.OriginProfile}, config.DocumentOptions{})
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	res := checkPreparedDocument(doc, SettingsApplyRequest{})
+	if res == nil || res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "embedding" {
+		t.Fatalf("checkPreparedDocument = %+v, want embedding %s diagnostic",
+			res, codeEligibilityIneligible)
 	}
 }
 

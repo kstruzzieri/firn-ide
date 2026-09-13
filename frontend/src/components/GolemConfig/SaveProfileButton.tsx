@@ -1,9 +1,12 @@
 /**
- * §4.8 Actions ▾ menu: Save applied as profile… (the ONLY naming flow),
- * Start from curated ▸, Start blank. Ordinary buttons in natural Tab order,
- * Escape closes and restores the trigger, an outside pointer closes without
- * stealing focus (§4.7). Export and Delete are deferred (go-llm#537/#536) and
- * deliberately absent — not disabled placeholders.
+ * §4.8 `Save as profile…` button (#312): the ONE write action left once the
+ * Actions menu's two bootstrap items (Start from curated ▸, Start blank)
+ * moved to the Source picker's START FROM group. A plain masthead button
+ * that opens straight onto the naming step — no idle menu step stands
+ * between the click and the `Profile name` field. Escape closes and restores
+ * the trigger, an outside pointer closes without stealing focus (§4.7).
+ * Export and Delete are deferred (go-llm#537/#536) and deliberately absent —
+ * not disabled placeholders.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { GolemProfileSaveResult } from '../../types/golemConfig';
@@ -17,31 +20,24 @@ export type AcquireRevisionOutcome =
   | { kind: 'unloadable' }
   | { kind: 'transport' };
 
-export interface ConfigurationMenuProps {
-  /** Curated rows from the live list projection, as {id, label(slug)}. */
-  curated: Array<{ id: string; label: string }>;
-  /** '' while the curated submenu can offer rows; else the bounded reason. */
-  curatedNotice: string;
+export interface SaveProfileButtonProps {
   /** '' when a Save may target the applied config; else the state refusal. */
   saveRefusal: string;
   /** '' when a CREATE is allowed; else the profile-limit refusal. §5.6 keeps
    *  replacement by exact id/revision available while the list is limited, so
    *  Overwrite gates on saveRefusal alone and ignores this on purpose. */
   createRefusal: string;
-  /** '' when the Start actions are available; else the bounded refusal. */
-  startRefusal: string;
   /** The whole-surface lock (§4.8 write/consent/drop/busy/recovery states) —
    *  enforced on EVERY descendant and handler, not only the trigger. */
   disabled: boolean;
+  /** The title shown while the trigger is disabled; '' when it is enabled. */
+  reason: string;
   saving: boolean;
   /** The applied revision a Save would duplicate (undefined off-ready; the
    *  refusals gate every path that reads it). The overwrite tuple freezes the
    *  value current at ACQUISITION completion, read through a ref — see
    *  SaveStep and beginOverwrite. */
   appliedRevision: string | undefined;
-  onOpen: () => void;
-  onStartFromProfile: (id: string) => void;
-  onStartBlank: () => void;
   saveProfileAs: (
     id: string,
     revisions: { appliedRevision: string; expectedRevision?: string }
@@ -57,6 +53,9 @@ const SAVE_ACTIVE_CONFLICT = 'Configuration changed; Refresh and try again.';
 const SAVE_TARGET_CONFLICT = 'The profile changed; reload and try again.';
 const SAVE_COLLIDER_UNREADABLE =
   'That name is taken and the existing profile cannot be read. Choose another name, or repair the file outside Firn.';
+/** [F5] The one cause the workspace's `reason` cannot name: this component's OWN
+ *  in-flight flow (`pending`). The copy matches the workspace's `saving` case. */
+const SAVE_IN_PROGRESS = 'A save is already in progress.';
 const SAVE_OUTCOME_UNKNOWN =
   'The save result is unknown — the profile may already exist. Refresh the profile list before saving again.';
 
@@ -64,6 +63,8 @@ const SAVE_OUTCOME_UNKNOWN =
 // effect and the elements that carry the ids cannot drift apart.
 const OVERWRITE_CONFIRM_ID = 'golem-profile-overwrite-confirm';
 const NOTICE_DONE_ID = 'golem-profile-notice-done';
+/** [K2] The trigger is a focus target like any other step control, so it is named here too. */
+const SAVE_TRIGGER_ID = 'golem-profile-save';
 
 type SaveStep =
   | { step: 'idle' }
@@ -85,23 +86,17 @@ type SaveStep =
     }
   | { step: 'notice'; text: string };
 
-export function ConfigurationMenu({
-  curated,
-  curatedNotice,
+export function SaveProfileButton({
   saveRefusal,
   createRefusal,
-  startRefusal,
   disabled,
+  reason,
   saving,
   appliedRevision,
-  onOpen,
-  onStartFromProfile,
-  onStartBlank,
   saveProfileAs,
   acquireProfileRevision,
-}: ConfigurationMenuProps) {
+}: SaveProfileButtonProps) {
   const [open, setOpen] = useState(false);
-  const [curatedOpen, setCuratedOpen] = useState(false);
   const [save, setSave] = useState<SaveStep>({ step: 'idle' });
   /** In-flight bit for the WHOLE save flow — the RPC AND the collider
    *  acquisition — so no window exists where a stale continuation can land
@@ -125,14 +120,13 @@ export function ConfigurationMenu({
    */
   const appliedRevisionRef = useRef(appliedRevision);
   appliedRevisionRef.current = appliedRevision;
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLSpanElement>(null);
   /**
    * The announcement channel for the visible notice text, mirroring
    * RoutingCard's `announcement` state (line ~144 there). The live region it
    * feeds is rendered UNCONDITIONALLY below, outside `open &&` — a region
    * inserted together with its text is generally not announced by assistive
-   * technology, so it must pre-exist for the menu's whole lifetime and only
+   * technology, so it must pre-exist for the button's whole lifetime and only
    * then receive text. This is an announcement CHANNEL only: the visible
    * notice copy stays exactly where it was.
    */
@@ -140,6 +134,10 @@ export function ConfigurationMenu({
   /** A fresh object per request, so a repeated transition to the same step
    *  focuses again (mirrors RoutingCard's `pendingFocus`). */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
+  /** [N1] The element id of the request WAITING for its disabled target to come back. */
+  const held = useRef<string | null>(null);
+  const ownedElsewhere = (): boolean =>
+    document.activeElement !== null && document.activeElement !== document.body;
 
   const invalidateFlow = () => {
     flowGeneration.current += 1;
@@ -149,9 +147,12 @@ export function ConfigurationMenu({
   const close = (restoreFocus: boolean) => {
     invalidateFlow();
     setOpen(false);
-    setCuratedOpen(false);
     setSave({ step: 'idle' });
-    if (restoreFocus) triggerRef.current?.focus();
+    // [K2] Never a synchronous focus(): the trigger is DISABLED while a save is in
+    // flight, so the call was a no-op and focus fell to <body>. The request goes
+    // through the pendingFocus effect, which holds it until the trigger is
+    // focusable again.
+    if (restoreFocus) setPendingFocus({ elementId: SAVE_TRIGGER_ID });
   };
 
   useEffect(() => {
@@ -184,34 +185,56 @@ export function ConfigurationMenu({
     setAnnouncement(save.step === 'notice' ? save.text : '');
   }, [save]);
 
-  // A step transition currently drops focus to <body> — nothing moves it —
-  // so a keyboard user must Tab from the document start to reach the fresh
-  // control. Mirrors RoutingCard's pendingFocus + focus effect exactly:
-  // `setPendingFocus` is called SYNCHRONOUSLY alongside `setSave` at each
-  // entry point below (gotoNotice; the naming trigger; beginOverwrite) —
-  // never derived from a separate effect watching save.step. A derived
-  // effect adds a second render/commit hop between "the step changed" and
-  // "focus moved", and that extra hop raced a real keyboard interaction in
-  // testing: a `Refresh` keypress landed while the stolen focus was still
-  // in flight and silently hijacked it. Setting both states in the same
-  // synchronous block lets React batch them into ONE commit, so the
-  // consuming effect below runs focus() inside the SAME flush that puts the
-  // fresh step on screen.
-  useEffect(() => {
-    if (pendingFocus === null) return;
-    document.getElementById(pendingFocus.elementId)?.focus();
-    setPendingFocus(null);
-  }, [pendingFocus]);
-
   // §4.8 availability, enforced on EVERY descendant and handler — not only the
   // trigger — so a restriction arriving while the popover is open (a list
   // refresh resolving limited, a projection transition) takes effect at once.
+  // [K2] Declared above the focus effect, which depends on `createBlocked`.
   const flowBusy = disabled || saving || pending;
   const createBlocked = flowBusy || saveRefusal !== '' || createRefusal !== '';
   // §5.6: replacement by exact id/revision stays available while the list is
   // limited, so Overwrite gates on the state refusal alone — never the limit.
   const overwriteBlocked = flowBusy || saveRefusal !== '';
-  const startBlocked = flowBusy || startRefusal !== '';
+
+  // A step transition currently drops focus to <body> — nothing moves it —
+  // so a keyboard user must Tab from the document start to reach the fresh
+  // control. Mirrors RoutingCard's pendingFocus + focus effect exactly:
+  // `setPendingFocus` is called SYNCHRONOUSLY alongside `setSave` at each
+  // entry point below (gotoNotice; the trigger; beginOverwrite) — never
+  // derived from a separate effect watching save.step. A derived effect adds
+  // a second render/commit hop between "the step changed" and "focus moved",
+  // and that extra hop raced a real keyboard interaction in testing: a
+  // `Refresh` keypress landed while the stolen focus was still in flight and
+  // silently hijacked it. Setting both states in the same synchronous block
+  // lets React batch them into ONE commit, so the consuming effect below runs
+  // focus() inside the SAME flush that puts the fresh step on screen.
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    const target = document.getElementById(pendingFocus.elementId);
+    // [K2] A disabled control cannot take focus, and the save flow closes the
+    // popover WHILE its own RPC is still in flight — so hold the request across
+    // the commits that keep it disabled and spend it on the one that re-enables
+    // it. `createBlocked` is that bit; the effect re-runs when it clears.
+    if (target instanceof HTMLButtonElement && target.disabled) {
+      // [N1] …but only while nothing else owns focus. Escape closes the popover
+      // mid-save, and the user can reach an editor and start typing before the
+      // RPC settles; a request held unconditionally would then yank focus back
+      // here. Something else holding focus means the request is stale — drop it.
+      if (ownedElsewhere()) {
+        setPendingFocus(null);
+        held.current = null;
+      } else held.current = pendingFocus.elementId;
+      return;
+    }
+    // [N1] A HELD request is spent on the commit that re-enables the target — which
+    // is also the first commit that can observe a focus move made while it waited.
+    // An immediate request (a step transition) is not subject to this: it fires in
+    // the same flush as the change that produced it, and the control it leaves
+    // behind — the trigger that opened the popover — is legitimately still focused.
+    const stale = held.current === pendingFocus.elementId && ownedElsewhere();
+    held.current = null;
+    if (!stale) target?.focus();
+    setPendingFocus(null);
+  }, [pendingFocus, createBlocked]);
 
   /**
    * Enters the notice step AND focuses Done, in one synchronous call — every
@@ -350,24 +373,27 @@ export function ConfigurationMenu({
     <span className={styles.menuRoot} ref={rootRef}>
       <button
         type="button"
-        ref={triggerRef}
+        id={SAVE_TRIGGER_ID}
         className={styles.button}
         aria-haspopup="true"
         aria-expanded={open}
-        disabled={disabled}
+        disabled={disabled || createBlocked}
+        title={disabled || createBlocked ? reason || SAVE_IN_PROGRESS : undefined}
         onClick={() => {
           if (open) {
             close(false);
             return;
           }
+          if (createBlocked) return;
           setOpen(true);
-          onOpen();
+          setSave({ step: 'naming', slug: '', fieldError: '' });
+          setPendingFocus({ elementId: 'golem-profile-name' });
         }}
       >
-        Actions <span aria-hidden="true">▾</span>
+        Save as profile…
       </button>
       {/* #263 follow-up: rendered unconditionally (outside `open &&`) so this
-          region exists for the menu's WHOLE lifetime, not only from the
+          region exists for the button's WHOLE lifetime, not only from the
           moment the notice step mounts — a region inserted together with its
           text is generally not announced by assistive technology. */}
       <span
@@ -380,70 +406,7 @@ export function ConfigurationMenu({
         {announcement}
       </span>
       {open && (
-        <div className={styles.menuPanel} role="group" aria-label="Configuration actions">
-          {save.step === 'idle' && (
-            <>
-              <button
-                type="button"
-                className={styles.menuItem}
-                disabled={createBlocked}
-                onClick={() => {
-                  if (createBlocked) return;
-                  setSave({ step: 'naming', slug: '', fieldError: '' });
-                  setPendingFocus({ elementId: 'golem-profile-name' });
-                }}
-              >
-                Save applied as profile…
-              </button>
-              {(saveRefusal !== '' || createRefusal !== '') && (
-                <p className={styles.menuHint}>
-                  {saveRefusal !== '' ? saveRefusal : createRefusal}
-                </p>
-              )}
-              <button
-                type="button"
-                className={styles.menuItem}
-                aria-expanded={curatedOpen}
-                disabled={startBlocked}
-                onClick={() => setCuratedOpen((current) => !current)}
-              >
-                Start from curated <span aria-hidden="true">▸</span>
-              </button>
-              {curatedOpen && curatedNotice !== '' && (
-                <p className={styles.menuHint}>{curatedNotice}</p>
-              )}
-              {curatedOpen &&
-                curatedNotice === '' &&
-                curated.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={styles.menuSubItem}
-                    disabled={startBlocked}
-                    onClick={() => {
-                      if (startBlocked) return;
-                      close(false);
-                      onStartFromProfile(entry.id);
-                    }}
-                  >
-                    {entry.label}
-                  </button>
-                ))}
-              <button
-                type="button"
-                className={styles.menuItem}
-                disabled={startBlocked}
-                onClick={() => {
-                  if (startBlocked) return;
-                  close(false);
-                  onStartBlank();
-                }}
-              >
-                Start blank
-              </button>
-              {startRefusal !== '' && <p className={styles.menuHint}>{startRefusal}</p>}
-            </>
-          )}
+        <div className={styles.menuPanel} role="group" aria-label="Save as profile">
           {save.step === 'naming' && (
             <form
               className={styles.menuForm}
@@ -452,6 +415,10 @@ export function ConfigurationMenu({
                 void submitName(save.slug);
               }}
             >
+              <p className={styles.menuHint}>
+                Saves the applied configuration on disk as a named profile. Staged edits are not
+                included until you Apply.
+              </p>
               <label className={styles.fieldLabel} htmlFor="golem-profile-name">
                 Profile name
               </label>
@@ -489,12 +456,7 @@ export function ConfigurationMenu({
                 <button
                   type="button"
                   className={`${styles.button} ${styles.quiet}`}
-                  onClick={() => {
-                    // Dismissal invalidates the flow: a pending acquisition or
-                    // save response lands in a dead generation.
-                    invalidateFlow();
-                    setSave({ step: 'idle' });
-                  }}
+                  onClick={() => close(true)}
                 >
                   Back
                 </button>
@@ -527,7 +489,8 @@ export function ConfigurationMenu({
                   className={`${styles.button} ${styles.quiet}`}
                   onClick={() => {
                     invalidateFlow();
-                    setSave({ step: 'idle' });
+                    setSave({ step: 'naming', slug: save.slug, fieldError: '' });
+                    setPendingFocus({ elementId: 'golem-profile-name' });
                   }}
                 >
                   Back
@@ -538,7 +501,7 @@ export function ConfigurationMenu({
           {save.step === 'notice' && (
             <div className={styles.menuForm}>
               {/* Visible copy only: the persistent region above (rendered for
-                  the menu's whole lifetime) is the one that announces — a
+                  the button's whole lifetime) is the one that announces — a
                   region created together with its text, as this `<p>` was
                   before, is generally not picked up by assistive technology. */}
               <p className={styles.panelText}>{save.text}</p>

@@ -30,6 +30,25 @@ import {
   SaveGolemProfileAs,
 } from '../../../wails/bindings';
 
+/** #312: the picker replaced the native select. [C3] Query the trigger by ROLE — while the
+ *  list is open the listbox answers to the label "Source" too. */
+const sourceTrigger = () => screen.getByRole('button', { name: 'Source' });
+/** Choose an option by name, optionally inside a group; closes the list afterwards even when
+ *  the option was disabled (a disabled click leaves the list open). */
+const pickSource = async (
+  user: ReturnType<typeof userEvent.setup>,
+  name: string | RegExp,
+  group?: string
+) => {
+  await user.click(sourceTrigger());
+  const list = await screen.findByRole('listbox', { name: 'Source' });
+  const scope =
+    group === undefined ? within(list) : within(within(list).getByRole('group', { name: group }));
+  await user.click(scope.getByRole('option', { name }));
+  if (screen.queryByRole('listbox', { name: 'Source' }) !== null) await user.keyboard('{Escape}');
+};
+const sourceValue = () => sourceTrigger().getAttribute('data-value');
+
 const REV = (c: string) => c.repeat(64);
 
 // Copied verbatim from GolemConfigWorkspace.test.tsx (fixtures are copied, not
@@ -135,7 +154,7 @@ const mountReady = async (list: unknown = listResult()) => {
   });
   (ListGolemProfiles as jest.Mock).mockResolvedValue(list);
   render(<GolemConfigWorkspace onClose={jest.fn()} />);
-  await screen.findByLabelText('Source');
+  await screen.findByRole('button', { name: 'Source' });
   await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
 };
 
@@ -161,22 +180,22 @@ describe('masthead profile select', () => {
 
   it('lists Applied, Curated, and Yours, and names the current source', async () => {
     await mountReady();
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    expect(select.value).toBe('applied');
-    expect(within(select).getByRole('group', { name: 'Curated' })).toBeInTheDocument();
-    expect(within(select).getByRole('group', { name: 'Yours' })).toBeInTheDocument();
-    expect(within(select).getByRole('option', { name: 'local' })).toBeInTheDocument();
-    expect(within(select).getByRole('option', { name: 'mine' })).toBeInTheDocument();
+    const user = userEvent.setup();
+    expect(sourceValue()).toBe('applied');
+    await user.click(sourceTrigger());
+    const list = screen.getByRole('listbox', { name: 'Source' });
+    expect(within(list).getByRole('group', { name: 'Curated' })).toBeInTheDocument();
+    expect(within(list).getByRole('group', { name: 'Yours' })).toBeInTheDocument();
+    expect(within(list).getByRole('option', { name: 'local' })).toBeInTheDocument();
+    expect(within(list).getByRole('option', { name: 'mine' })).toBeInTheDocument();
   });
 
   it('selecting a profile stages the preview and never writes', async () => {
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
     await mountReady();
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('user/mine')
-    );
+    await pickSource(user, /mine/, 'Yours');
+    await waitFor(() => expect(sourceValue()).toBe('user/mine'));
     expect(LoadGolemProfile).toHaveBeenCalledWith('user/mine');
     expect(ApplyGolemSettings).not.toHaveBeenCalled();
     expect(SaveGolemProfileAs).not.toHaveBeenCalled();
@@ -189,9 +208,9 @@ describe('masthead profile select', () => {
     });
     await mountReady();
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
+    await pickSource(user, /mine/, 'Yours');
     await screen.findByText('That profile no longer exists.');
-    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('applied');
+    expect(sourceValue()).toBe('applied');
   });
 
   it('a failed selection from a profile source restores that source AND its preview', async () => {
@@ -203,23 +222,22 @@ describe('masthead profile select', () => {
       });
     await mountReady();
     const user = userEvent.setup();
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    await user.selectOptions(select, 'curated/local');
-    await waitFor(() => expect(select.value).toBe('curated/local'));
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
     // The curated preview is on screen: its marker provider row renders.
     // (`findByText(/preview-extra/)` is ambiguous here — ProvidersCard also
     // renders the same name into an "Edit provider preview-extra" srOnly
     // label — so the row's own test id proves it unambiguously instead.)
     await screen.findByTestId('provider-row-preview-extra');
 
-    await user.selectOptions(select, 'user/mine');
+    await pickSource(user, /mine/, 'Yours');
     // A profile source is inherently unsaved work, so the §4.6a guard
     // intercepts the switch — confirm it, or the failing load never runs.
     await user.click(await screen.findByRole('button', { name: 'Discard & switch' }));
     await screen.findByText('That profile no longer exists.');
     // §4.8: the select returns to the PRIOR source — never a silent snap to
     // Applied — and the prior source's clean preview is back on screen.
-    expect(select.value).toBe('curated/local');
+    expect(sourceValue()).toBe('curated/local');
     expect(screen.getByTestId('provider-row-preview-extra')).toBeInTheDocument();
   });
 
@@ -227,10 +245,12 @@ describe('masthead profile select', () => {
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
     await mountReady();
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'curated/local');
+    await pickSource(user, 'local', 'Curated');
     await screen.findByText('Vetted local lineup');
-    const select = screen.getByLabelText('Source');
-    expect(select).toHaveAttribute('aria-describedby', 'golem-profile-select-desc');
+    expect(sourceTrigger()).toHaveAttribute(
+      'aria-describedby',
+      expect.stringContaining('golem-profile-select-desc')
+    );
   });
 
   // Review finding 1 (Task 6): `buildProfileSelectModel` renders `{kind:
@@ -251,10 +271,120 @@ describe('masthead profile select', () => {
     });
     (ListGolemProfiles as jest.Mock).mockRejectedValue(new Error('transport down'));
     render(<GolemConfigWorkspace onClose={jest.fn()} />);
-    const select = (await screen.findByLabelText('Source')) as HTMLSelectElement;
+    await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
-    expect(select.value).toBe('applied');
-    expect(within(select).queryByRole('group', { name: 'Curated' })).not.toBeInTheDocument();
+    expect(sourceValue()).toBe('applied');
+    const user = userEvent.setup();
+    await user.click(sourceTrigger());
+    expect(
+      within(screen.getByRole('listbox', { name: 'Source' })).queryByRole('group', {
+        name: 'Curated',
+      })
+    ).not.toBeInTheDocument();
+  });
+
+  it('returns focus to the Source trigger once a pick lands', async () => {
+    // [F3] The picker's own close focuses the trigger, but the trigger is DISABLED while
+    // the load is in flight — focus falls to <body> there. The start outcome is what
+    // brings it back, in the commit that re-enables the control.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+    await waitFor(() => expect(sourceTrigger()).toHaveFocus());
+  });
+
+  it('leaves focus on the trigger, and does not steal it later, when the guard refuses', async () => {
+    // [K1] `Keep editing` refuses the start. The picker's OWN close already restored
+    // the trigger before the guard opened, and the dialog hands it back there — so the
+    // trigger legitimately holds focus. What must not happen is a later,
+    // outcome-driven steal from wherever the user went next.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    await mountReady();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await pickSource(user, /mine/, 'Yours');
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(sourceValue()).toBe('applied');
+    expect(LoadGolemProfile).not.toHaveBeenCalled();
+    expect(sourceTrigger()).toHaveFocus();
+
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    refresh.focus();
+    await act(async () => {}); // flush any pending focus effect
+    expect(refresh).toHaveFocus();
+  });
+
+  it('returns focus to the Source trigger when the pick FAILS', async () => {
+    // [K1] The failure path is where focus was actually stranded: the picker closed,
+    // the trigger was disabled for the load, and the refusal notice arrived with focus
+    // on <body>. The notice is no use to a reader who cannot get back to the control.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue({
+      status: 'diagnostics',
+      diagnostics: [{ code: 'not_found', profileId: 'user/mine' }],
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, /mine/, 'Yours');
+    await screen.findByText('That profile no longer exists.');
+    expect(sourceValue()).toBe('applied');
+    await waitFor(() => expect(sourceTrigger()).toHaveFocus());
+  });
+
+  it('re-adopts the profile a START FROM entry names even when it is already the source', async () => {
+    // [K3] `selectSource` short-circuits on `value === current`, so START FROM Curated
+    // local was a silent no-op once `curated/local` WAS the source — exactly when a
+    // user reaches for it, to throw a bad draft away and start over from that profile.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.getByTestId('golem-config-draft')).toBeInTheDocument();
+    (LoadGolemProfile as jest.Mock).mockClear();
+
+    await pickSource(user, /^Curated local/, 'Start from');
+    // §4.6a still guards it: the staged work is discarded, not silently dropped.
+    await user.click(await screen.findByRole('button', { name: 'Discard & switch' }));
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('golem-config-draft')).queryByRole('button', {
+          name: /route/,
+        })
+      ).toBeNull()
+    );
+  });
+
+  // [W3] §3.3 counts the replacement source as a change, so the guard fires on a
+  // draft holding nothing else. The shipped copy then claimed staged changes and
+  // an API key were being dropped — neither existed.
+  it('names only the source when the source is the only thing the draft replaces', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+
+    await pickSource(user, /mine/, 'Yours');
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(
+      'This draft only replaces the source; switching drops that replacement. Nothing has been written, and the file on disk does not change.'
+    );
+    expect(dialog).not.toHaveTextContent(/API key/);
+
+    // One staged change and the shipped discard copy is back, key sentence and all.
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await pickSource(user, /mine/, 'Yours');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'The staged changes and any API key you entered are dropped.'
+    );
   });
 
   it('guards a source switch while work is unsaved', async () => {
@@ -265,11 +395,11 @@ describe('masthead profile select', () => {
     // GolemConfigFlows.test.tsx: open the chat route editor and press Done).
     await user.click(screen.getByRole('button', { name: /edit route/i }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
+    await pickSource(user, /mine/, 'Yours');
     // §4.6a: the prompt intercepts; Keep editing cancels the switch.
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
     expect(LoadGolemProfile).not.toHaveBeenCalled();
-    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('applied');
+    expect(sourceValue()).toBe('applied');
   });
 
   // Review finding 2 (Task 6): `refreshProfileList` fires on mount AND from
@@ -290,7 +420,12 @@ describe('masthead profile select', () => {
             resolveFirst = resolve;
           })
       )
-      .mockResolvedValueOnce(listResult({ profiles: [{ id: 'user/second', curated: false }] }));
+      .mockResolvedValueOnce(listResult({ profiles: [{ id: 'user/second', curated: false }] }))
+      // #312: opening the picker itself fires another `refreshProfileList` call
+      // (its `onOpen`), a third call this test's original two-call mock chain
+      // never anticipated — give every call from here on the same 'second'
+      // list so the picker-open probe below settles predictably.
+      .mockResolvedValue(listResult({ profiles: [{ id: 'user/second', curated: false }] }));
 
     render(<GolemConfigWorkspace onClose={jest.fn()} />);
     // Wait for the ready state so Refresh is enabled, then confirm the first
@@ -298,15 +433,16 @@ describe('masthead profile select', () => {
     await screen.findByTestId('provider-row-llama-swap');
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalledTimes(1));
 
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
     const user = userEvent.setup();
     // Refresh triggers a second, overlapping `refreshProfileList` call while
     // the first is still pending.
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalledTimes(2));
+    await user.click(sourceTrigger());
+    const list = screen.getByRole('listbox', { name: 'Source' });
     // The second (newer) call resolves on its own and repaints the options.
     await waitFor(() =>
-      expect(within(select).queryByRole('option', { name: 'second' })).toBeInTheDocument()
+      expect(within(list).queryByRole('option', { name: 'second' })).toBeInTheDocument()
     );
 
     // Now the FIRST (older, superseded) call resolves with a DIFFERENT list.
@@ -316,8 +452,8 @@ describe('masthead profile select', () => {
       await Promise.resolve();
     });
 
-    expect(within(select).queryByRole('option', { name: 'second' })).toBeInTheDocument();
-    expect(within(select).queryByRole('option', { name: 'first' })).not.toBeInTheDocument();
+    expect(within(list).queryByRole('option', { name: 'second' })).toBeInTheDocument();
+    expect(within(list).queryByRole('option', { name: 'first' })).not.toBeInTheDocument();
   });
 
   // Review finding 3 (Task 6): `selectSource`'s `current` and
@@ -329,22 +465,82 @@ describe('masthead profile select', () => {
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
     await mountReady();
     const user = userEvent.setup();
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    await user.selectOptions(select, 'user/mine');
-    await waitFor(() => expect(select.value).toBe('user/mine'));
+    await pickSource(user, /mine/, 'Yours');
+    await waitFor(() => expect(sourceValue()).toBe('user/mine'));
     expect(LoadGolemProfile).toHaveBeenCalledTimes(1);
 
-    await user.selectOptions(select, 'user/mine');
+    await pickSource(user, /mine/, 'Yours');
     expect(LoadGolemProfile).toHaveBeenCalledTimes(1);
   });
 });
 
+/** #312: the trigger opens the naming step directly — no intermediate item. */
 const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(screen.getByRole('button', { name: 'Actions' }));
+  await user.click(screen.getByRole('button', { name: 'Save as profile…' }));
 };
 
-describe('Configuration menu', () => {
+describe('Save as profile', () => {
   beforeEach(() => jest.clearAllMocks());
+
+  it('is a plain masthead button with no Start actions behind it', async () => {
+    await mountReady();
+    const user = userEvent.setup();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Save as profile…' }));
+    expect(screen.getByRole('group', { name: 'Save as profile' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start blank' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start from curated' })).toBeNull();
+    // The naming field is the first step: nothing else stands between the button and the name.
+    expect(screen.getByLabelText('Profile name')).toHaveFocus();
+    // The popover names its scope: the APPLIED configuration, never the staged draft.
+    expect(
+      screen.getByText(
+        'Saves the applied configuration on disk as a named profile. Staged edits are not included until you Apply.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('names the reason while disabled', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: emptyProjection('missing', 'none'),
+    });
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    const save = await screen.findByRole('button', { name: 'Save as profile…' });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Nothing to save until a configuration is applied.');
+  });
+
+  it('keeps the Save popover open when the Source picker handles Escape', async () => {
+    // [X7] SaveProfileButton closes on a DOCUMENT-level Escape. The picker handles its
+    // own Escape first and must stop it there, or dismissing the list also throws away
+    // a half-typed profile name.
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    sourceTrigger().focus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('listbox', { name: 'Source' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox', { name: 'Source' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Save as profile' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Profile name')).toHaveValue('mine');
+  });
+
+  it('names its own in-flight save as the reason the trigger is disabled', async () => {
+    // [F5] `pending` is the component's OWN flow bit; the workspace's `reason` cannot
+    // see it, so without a local fallback the disabled trigger carried an empty title.
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const trigger = screen.getByRole('button', { name: 'Save as profile…' });
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAttribute('title', 'A save is already in progress.');
+  });
 
   it('saves the applied configuration create-only and reports success', async () => {
     (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
@@ -354,7 +550,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -378,7 +573,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/could not confirm the write reached disk/i);
@@ -388,7 +582,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'Bad Name!');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByRole('alert')).toHaveTextContent('That profile name is invalid.');
@@ -403,14 +596,13 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     // Acquisition loaded the collider WITHOUT staging it…
     await screen.findByText(/already exists/i);
     expect(LoadGolemProfile).toHaveBeenCalledWith('user/mine');
-    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('applied');
+    expect(sourceValue()).toBe('applied');
     // …and Overwrite binds {id, acquired revision, appliedRevision}.
     await user.click(screen.getByRole('button', { name: 'Overwrite' }));
     await screen.findByText('Profile saved.');
@@ -433,7 +625,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/choose another name, or repair the file outside firn/i);
@@ -445,7 +636,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/save result is unknown/i);
@@ -462,15 +652,14 @@ describe('Configuration menu', () => {
     // Stage one change; the Apply bar appears.
     await user.click(screen.getByRole('button', { name: /edit route/i }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
-    await screen.findByText(/1 change waiting for Apply/i);
+    await screen.findByText(/1 staged change/i);
 
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
     // §4.8: the staged configuration draft is untouched.
-    expect(screen.getByText(/1 change waiting for Apply/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 staged change/i)).toBeInTheDocument();
   });
 
   it('save leaves staged keys in the vault for the next Apply', async () => {
@@ -493,7 +682,6 @@ describe('Configuration menu', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -507,32 +695,6 @@ describe('Configuration menu', () => {
     expect(request.keys).toEqual({ 'llama-swap': 'sk-test-key' });
   });
 
-  it('starts from a curated profile through the submenu', async () => {
-    // (The §4.6a dirty guard on this path is exercised by Task 6's select
-    // guard test — the submenu routes through the same selectSource.)
-    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
-    await mountReady();
-    const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
-    await user.click(screen.getByRole('button', { name: 'local' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('curated/local')
-    );
-    expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local');
-  });
-
-  it('starts blank and lists the Blank draft option', async () => {
-    await mountReady();
-    const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start blank' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('__blank__')
-    );
-    expect(screen.getByRole('option', { name: 'Blank draft' })).toBeInTheDocument();
-  });
-
   // Ruling 13: a limited list blocks CREATE only (§5.6 scopes the profile
   // count limit to creation). Start blank is purely local and the curated
   // block always sorts inside the first maxProjectionEntries rows, so both
@@ -543,21 +705,28 @@ describe('Configuration menu', () => {
     // pre-set mock would be overwritten by the helper's own default.
     await mountReady(listResult({ status: 'limited' }));
     const user = userEvent.setup();
-    await openMenu(user);
-    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(screen.getByText('Too many profiles exist to create another.')).toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save as profile…' });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Too many profiles exist to create another.');
+    await user.click(sourceTrigger());
+    const startFrom = within(screen.getByRole('listbox', { name: 'Source' })).getByRole('group', {
+      name: 'Start from',
+    });
+    expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
     // The list-limited copy no longer gates Start at all.
     expect(screen.queryByText('Too many profiles to display.')).not.toBeInTheDocument();
     // Selection of LISTED rows stays allowed (§4.8).
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    expect(select).not.toBeDisabled();
+    expect(sourceTrigger()).not.toBeDisabled();
   });
 
   // Ruling 9(a). Task 6's `unavailable` list-state test could not fail:
   // `buildProfileSelectModel` renders `unloaded` and `unavailable` alike. The
-  // menu's curated notice is where the state finally becomes observable.
+  // picker's list notice is where the state finally becomes observable.
   it('names the transport failure in the curated submenu when the list is unavailable', async () => {
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: false,
@@ -565,15 +734,14 @@ describe('Configuration menu', () => {
     });
     (ListGolemProfiles as jest.Mock).mockRejectedValue(new Error('transport down'));
     render(<GolemConfigWorkspace onClose={jest.fn()} />);
-    await screen.findByLabelText('Source');
+    await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
     const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
+    await user.click(sourceTrigger());
     expect(
       screen.getByText('Configuration service unavailable. Refresh before trying again.')
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'local' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'local' })).not.toBeInTheDocument();
   });
 
   // Ruling 9(b). `refreshProfileList`'s `status === 'diagnostics'` branch had
@@ -583,9 +751,26 @@ describe('Configuration menu', () => {
   it('surfaces the profile diagnostic when the list itself answers diagnostics', async () => {
     await mountReady({ status: 'diagnostics', diagnostics: [{ code: 'io' }] });
     const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
+    await user.click(sourceTrigger());
     expect(screen.getByText('The profile could not be read or saved.')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Configuration service unavailable. Refresh before trying again.')
+    ).not.toBeInTheDocument();
+  });
+
+  // [A5] A pending initial list request must never be reported as a failure —
+  // `unloaded` and `unavailable` render identically everywhere except this
+  // notice line.
+  it('a pending initial list shows Loading profiles… and no failure', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: readyProjection,
+    });
+    (ListGolemProfiles as jest.Mock).mockReturnValue(new Promise(() => {}));
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Source' }));
+    expect(screen.getByText('Loading profiles…')).toBeInTheDocument();
     expect(
       screen.queryByText('Configuration service unavailable. Refresh before trying again.')
     ).not.toBeInTheDocument();
@@ -599,33 +784,39 @@ describe('Configuration menu', () => {
     (ListGolemProfiles as jest.Mock).mockResolvedValue(listResult());
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
     render(<GolemConfigWorkspace onClose={jest.fn()} />);
-    const select = (await screen.findByLabelText('Source')) as HTMLSelectElement;
+    await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
 
-    // §4.8: ONLY the applied-configuration-absent state — no optgroups, no
-    // profile rows, even though the loaded list carries them.
-    expect(
-      within(select).getByRole('option', { name: 'No applied configuration' })
-    ).toBeInTheDocument();
-    expect(select.querySelector('optgroup')).toBeNull();
-    expect(within(select).queryByRole('option', { name: 'local' })).not.toBeInTheDocument();
-
     const user = userEvent.setup();
-    await openMenu(user);
-    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-    expect(screen.getByText('Save needs a Ready applied configuration.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
+    // §4.8: ONLY the applied-configuration-absent state — no Curated/Yours
+    // groups, no profile rows, even though the loaded list carries them.
+    expect(sourceTrigger()).toHaveTextContent('No applied configuration');
+    await user.click(sourceTrigger());
+    let list = screen.getByRole('listbox', { name: 'Source' });
+    expect(
+      within(list).getByRole('option', { name: 'No applied configuration' })
+    ).toBeInTheDocument();
+    expect(within(list).queryByRole('group', { name: 'Curated' })).toBeNull();
+    expect(within(list).queryByRole('group', { name: 'Yours' })).toBeNull();
+    expect(within(list).queryByRole('option', { name: 'local' })).not.toBeInTheDocument();
+    const startFrom = within(list).getByRole('group', { name: 'Start from' });
 
-    // A Start action stages a draft; the select then truthfully names that
-    // draft source — as the selected (disabled) option, optgroups still absent.
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
-    await user.click(screen.getByRole('button', { name: 'local' }));
-    await waitFor(() => expect(select.value).toBe('curated/local'));
-    expect(select.querySelector('optgroup')).toBeNull();
-    const staged = within(select).getByRole('option', { name: 'local' }) as HTMLOptionElement;
-    expect(staged.selected).toBe(true);
-    expect(staged).toBeDisabled();
+    // A Start action stages a draft; the picker then truthfully names that
+    // draft source — as the selected (disabled) entry, groups still absent.
+    await user.click(within(startFrom).getByRole('option', { name: /Curated local/ }));
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+    // #312: the trigger names the staged source with its group prefix — the
+    // CSS supplies the ' · ' separator (a ::after generated string, invisible
+    // to jsdom's textContent), so the group and the slug are asserted apart.
+    expect(sourceTrigger()).toHaveTextContent('Curated');
+    expect(sourceTrigger()).toHaveTextContent('local');
+    await user.click(sourceTrigger());
+    list = screen.getByRole('listbox', { name: 'Source' });
+    expect(within(list).queryByRole('group', { name: 'Curated' })).toBeNull();
+    expect(within(list).queryByRole('group', { name: 'Yours' })).toBeNull();
+    const staged = within(list).getByRole('option', { name: 'local' });
+    expect(staged).toHaveAttribute('aria-selected', 'true');
+    expect(staged).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('a failed selection from a blank draft returns to the blank draft', async () => {
@@ -635,19 +826,23 @@ describe('Configuration menu', () => {
     });
     await mountReady();
     const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start blank' }));
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    await waitFor(() => expect(select.value).toBe('__blank__'));
+    await user.click(sourceTrigger());
+    await user.click(await screen.findByRole('option', { name: /Blank draft/ }));
+    await waitFor(() => expect(sourceValue()).toBe('__blank__'));
 
-    await user.selectOptions(select, 'user/mine');
+    await pickSource(user, /mine/, 'Yours');
     // A blank draft is inherently unsaved work, so the §4.6a guard intercepts
     // the switch — confirm it, or the failing load never runs.
     await user.click(await screen.findByRole('button', { name: 'Discard & switch' }));
     await screen.findByText('The profile could not be read or saved.');
     // §4.8: back to the PRIOR source — the blank draft, not Applied.
-    expect(select.value).toBe('__blank__');
-    expect(screen.getByRole('option', { name: 'Blank draft' })).toBeInTheDocument();
+    expect(sourceValue()).toBe('__blank__');
+    await user.click(sourceTrigger());
+    expect(
+      within(screen.getByRole('listbox', { name: 'Source' })).getByRole('option', {
+        name: 'Blank draft',
+      })
+    ).toBeInTheDocument();
   });
 
   it('a refresh AFTER acquisition never rewrites the frozen tuple', async () => {
@@ -658,7 +853,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/already exists/i);
@@ -706,7 +900,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('user/mine'));
@@ -752,12 +945,14 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     // The collision resolved; the collider acquisition is now pending. Abandon it.
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('user/mine'));
+    // Naming's Back closes the whole popover ([C14]) — there is no idle step
+    // to fall back into any more.
     await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
 
     // The OLD acquisition finally resolves — into a dead generation: no
     // overwrite step may appear.
@@ -765,14 +960,11 @@ describe('Configuration menu', () => {
       resolveLoad(profileLoadResult('user/mine'));
       await Promise.resolve();
     });
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Start blank' })).toBeInTheDocument()
-    );
     expect(screen.queryByRole('button', { name: 'Overwrite' })).not.toBeInTheDocument();
     expect(screen.queryByText(/already exists/i)).not.toBeInTheDocument();
 
     // A fresh naming flow proceeds untouched by the dead continuation.
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'other');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -796,11 +988,15 @@ describe('Configuration menu', () => {
         })
       ); // the onOpen refresh, still in flight while naming opens
     render(<GolemConfigWorkspace onClose={jest.fn()} />);
-    await screen.findByLabelText('Source');
+    await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
     const user = userEvent.setup();
+    // #312: Save no longer refreshes the list itself (that `onOpen` moved to
+    // the Source picker) — open and close the picker to fire the second,
+    // still-pending fetch this test drives, then open Save's naming step.
+    await user.click(sourceTrigger());
+    await user.keyboard('{Escape}');
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
 
     resolveList(listResult({ status: 'limited' }));
@@ -823,7 +1019,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/already exists/i);
@@ -831,8 +1026,10 @@ describe('Configuration menu', () => {
     (ListGolemProfiles as jest.Mock).mockResolvedValue(listResult({ status: 'limited' }));
     screen.getByRole('button', { name: 'Refresh' }).focus();
     await user.keyboard('{Enter}');
+    // #312: Save no longer refreshes the list itself (only the mount fetch
+    // and this Refresh do), so the count floor drops from 3 to 2.
     await waitFor(() =>
-      expect((ListGolemProfiles as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3)
+      expect((ListGolemProfiles as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2)
     );
     await waitFor(() => expect(screen.getByRole('button', { name: 'Overwrite' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Overwrite' }));
@@ -861,7 +1058,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -883,7 +1079,7 @@ describe('Configuration menu', () => {
     // shipped clean-draft write: it approves destinations for the ACTIVE
     // configuration, writes no document, and never touches the draft. Its
     // Prepare call is deferred by the mock (resolveGrants below).
-    await user.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+    await user.click(screen.getByRole('button', { name: 'Check destinations…' }));
     await waitFor(() => expect(PrepareGolemDestinationGrants).toHaveBeenCalled());
 
     await act(async () => {
@@ -931,13 +1127,12 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     // The LATER write registers while the EARLIER (Save) write is still
     // pending — same as the drain test above.
-    await user.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+    await user.click(screen.getByRole('button', { name: 'Check destinations…' }));
     await waitFor(() => expect(PrepareGolemDestinationGrants).toHaveBeenCalled());
 
     // Unlike the drain test above: the LATER write settles FIRST, and the
@@ -973,8 +1168,67 @@ describe('Configuration menu', () => {
     const user = userEvent.setup();
     await openMenu(user);
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('button', { name: 'Start blank' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Actions' })).toHaveFocus();
+    expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toHaveFocus();
+  });
+
+  it('restores focus to the trigger when Escape closes a save that is still in flight', async () => {
+    // [K2] `close(true)` called `focus()` on the trigger synchronously — while the
+    // in-flight save still had it DISABLED, which makes the call a no-op and drops
+    // focus to <body>. The request now waits for the commit that re-enables it.
+    let settle: ((result: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const trigger = screen.getByRole('button', { name: 'Save as profile…' });
+    expect(trigger).toBeDisabled();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByLabelText('Profile name')).not.toBeInTheDocument();
+    expect(trigger).not.toHaveFocus(); // still disabled: nothing could take it yet
+
+    await act(async () => {
+      settle?.({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toHaveFocus()
+    );
+  });
+
+  it('drops the held focus request when the user has moved on during the save', async () => {
+    // [N1] The [K2] hold had no owner check and never expired: Escape mid-save, click
+    // Edit, start typing, and the settling RPC yanked focus out of the editor and onto
+    // the Save trigger. The request survives only while NOTHING else holds focus.
+    let settle: ((result: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+    const endpoint = screen.getByLabelText('Endpoint');
+    await user.type(endpoint, '-draft');
+    expect(endpoint).toHaveFocus();
+
+    await act(async () => {
+      settle?.({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeEnabled()
+    );
+    expect(endpoint).toHaveFocus();
+    expect(endpoint).toHaveValue('http://127.0.0.1:9292/v1-draft');
   });
 
   // Fix for the review finding: a `role="status"` mounted together with its
@@ -994,7 +1248,6 @@ describe('Configuration menu', () => {
     const region = screen.getByTestId('golem-profile-menu-announcement');
     expect(region).toHaveTextContent('');
 
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -1008,7 +1261,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     expect(screen.getByLabelText('Profile name')).toHaveFocus();
   });
 
@@ -1021,7 +1273,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/already exists/i);
@@ -1036,7 +1287,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -1051,7 +1301,7 @@ describe('availability matrix (§4.8)', () => {
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({ busy: false, projection });
     (ListGolemProfiles as jest.Mock).mockResolvedValue(list);
     render(<GolemConfigWorkspace onClose={jest.fn()} />);
-    await screen.findByLabelText('Source');
+    await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
   };
 
@@ -1071,25 +1321,40 @@ describe('availability matrix (§4.8)', () => {
     async (state, origin) => {
       await mountState(matrixProjection(state, origin));
       const user = userEvent.setup();
-      await user.click(screen.getByRole('button', { name: 'Actions' }));
-      expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+      await user.click(sourceTrigger());
+      const list = screen.getByRole('listbox', { name: 'Source' });
+      const startFrom = within(list).getByRole('group', { name: 'Start from' });
+      expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      // [N5] ONE refusal notice names both halves; two near-identical <p>s under one
+      // list said the same thing twice and both landed in `aria-describedby`.
       expect(
-        screen.getByText('Unavailable while the configuration is Invalid or Limited.')
-      ).toBeInTheDocument();
-      const select = screen.getByLabelText('Source') as HTMLSelectElement;
-      const option = within(select).getByRole('option', { name: 'local' });
-      expect(option).toBeDisabled();
+        screen.getAllByText(
+          'Profiles and Start from are unavailable while the configuration is Invalid or Limited.'
+        )
+      ).toHaveLength(1);
+      const option = within(list).getByRole('option', { name: 'local' });
+      expect(option).toHaveAttribute('aria-disabled', 'true');
     }
   );
 
   it('while ready: everything is offered', async () => {
     await mountState(readyProjection);
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeEnabled();
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
+    await user.click(sourceTrigger());
+    const startFrom = within(screen.getByRole('listbox', { name: 'Source' })).getByRole('group', {
+      name: 'Start from',
+    });
+    expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
   });
 
   it('while a selection load is in flight the select disables with the affordance', async () => {
@@ -1101,11 +1366,13 @@ describe('availability matrix (§4.8)', () => {
     );
     await mountState(readyProjection);
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
-    expect(screen.getByLabelText('Source')).toBeDisabled();
-    expect(screen.getByText('Loading profile…')).toBeInTheDocument();
+    await pickSource(user, /mine/, 'Yours');
+    expect(sourceTrigger()).toBeDisabled();
+    // [C12][A6] the sr-only status announcement and the visible spinner line
+    // are two separate elements now, both carrying the same text.
+    expect(screen.getAllByText('Loading profile…')).toHaveLength(2);
     resolveLoad(profileLoadResult('user/mine'));
-    await waitFor(() => expect(screen.getByLabelText('Source')).toBeEnabled());
+    await waitFor(() => expect(sourceTrigger()).toBeEnabled());
   });
 
   it('while a Save is in flight the other profile actions disable', async () => {
@@ -1117,11 +1384,10 @@ describe('availability matrix (§4.8)', () => {
     );
     await mountState(readyProjection);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(screen.getByLabelText('Source')).toBeDisabled();
+    expect(sourceTrigger()).toBeDisabled();
     resolveSave({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
     await screen.findByText('Profile saved.');
   });
@@ -1138,14 +1404,10 @@ describe('select shows the source (§4.8 invariants)', () => {
     });
     await mountReady();
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('user/mine')
-    );
+    await pickSource(user, /mine/, 'Yours');
+    await waitFor(() => expect(sourceValue()).toBe('user/mine'));
     await user.click(screen.getByRole('button', { name: 'Apply' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('applied')
-    );
+    await waitFor(() => expect(sourceValue()).toBe('applied'));
   });
 
   it('Discard returns the select to Applied', async () => {
@@ -1153,14 +1415,10 @@ describe('select shows the source (§4.8 invariants)', () => {
     (CancelGolemSettingsApply as jest.Mock).mockResolvedValue({ status: 'cancelled' });
     await mountReady();
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('user/mine')
-    );
+    await pickSource(user, /mine/, 'Yours');
+    await waitFor(() => expect(sourceValue()).toBe('user/mine'));
     await user.click(screen.getByRole('button', { name: 'Discard' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('applied')
-    );
+    await waitFor(() => expect(sourceValue()).toBe('applied'));
   });
 
   it('a list-only refresh that lost the selected profile retains it as the selected, disabled option', async () => {
@@ -1171,9 +1429,8 @@ describe('select shows the source (§4.8 invariants)', () => {
     });
     await mountReady();
     const user = userEvent.setup();
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    await user.selectOptions(select, 'user/mine');
-    await waitFor(() => expect(select.value).toBe('user/mine'));
+    await pickSource(user, /mine/, 'Yours');
+    await waitFor(() => expect(sourceValue()).toBe('user/mine'));
 
     // The list refresh a successful Save triggers — a LIST-ONLY refresh, no
     // §4.6a transition — no longer carries user/mine.
@@ -1189,21 +1446,23 @@ describe('select shows the source (§4.8 invariants)', () => {
         ],
       })
     );
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'other');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
 
-    // §4.8: retained as the SELECTED option, marked unavailable and not
+    // §4.8: retained as the SELECTED entry, marked unavailable and not
     // re-choosable — never a snap to a lie. This is the rendered proof the
-    // pure-model rule stands in the real select.
-    expect(select.value).toBe('user/mine');
-    const retained = within(select).getByRole('option', {
-      name: 'mine (unavailable)',
-    }) as HTMLOptionElement;
-    expect(retained.selected).toBe(true);
-    expect(retained).toBeDisabled();
+    // pure-model rule stands in the real picker.
+    expect(sourceValue()).toBe('user/mine');
+    expect(sourceTrigger()).toHaveTextContent('unavailable');
+    await user.click(sourceTrigger());
+    const retained = within(screen.getByRole('listbox', { name: 'Source' })).getByRole('option', {
+      name: /^mine/,
+    });
+    expect(retained).toHaveAttribute('aria-selected', 'true');
+    expect(retained).toHaveAttribute('aria-disabled', 'true');
+    expect(retained).toHaveTextContent('unavailable');
   });
 
   it('a list refresh alone never changes the selected source', async () => {
@@ -1214,18 +1473,15 @@ describe('select shows the source (§4.8 invariants)', () => {
     });
     await mountReady();
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('Source'), 'user/mine');
-    await waitFor(() =>
-      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('user/mine')
-    );
+    await pickSource(user, /mine/, 'Yours');
+    await waitFor(() => expect(sourceValue()).toBe('user/mine'));
     // A successful save triggers refreshProfileList (a list refresh with no
     // §4.6a transition) — the selection must not move. Save requires ready
     // state, which the profile-source draft still satisfies via projection.
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'other');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
-    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('user/mine');
+    expect(sourceValue()).toBe('user/mine');
   });
 });
