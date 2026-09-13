@@ -284,8 +284,13 @@ func validateGolemProfileListResult(r GolemProfileListResult) error {
 			if p.Curated != strings.HasPrefix(p.ID, "curated/") {
 				return fmt.Errorf("profiles[%d] curated flag disagrees with namespace", i)
 			}
-			if len(p.Description) > maxProjectionEndpointLen {
+			if len(p.Description) > maxProfileDescriptionLen {
 				return fmt.Errorf("profiles[%d] description over bound", i)
+			}
+			// The TS parser refuses Cc/Cf runes in a description; the producer
+			// sanitizes them, so a fixture carrying one must reject on both sides.
+			if sanitizeIdentifier(p.Description) != p.Description {
+				return fmt.Errorf("profiles[%d] description carries a control or format rune", i)
 			}
 			if p.Revision != "" && !validRevision(p.Revision) {
 				return fmt.Errorf("profiles[%d].revision %q", i, p.Revision)

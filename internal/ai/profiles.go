@@ -104,10 +104,12 @@ type GolemProfileSaveResult struct {
 
 var userProfileIDPattern = regexp.MustCompile(`^user/[a-z0-9][a-z0-9-]{0,63}$`)
 
-// profileStoreTimeout bounds one store call. Both profile operations hold a
-// lifecycle wg unit and shutdown cancels baseCtx only AFTER wg.Wait(), so an
-// unbounded call blocked on a hung config directory would wedge Close; the
-// deadline error maps to "io" like any other unmapped store failure.
+// profileStoreTimeout bounds one store call COOPERATIVELY: upstream checks
+// the context between steps, never inside a syscall, so a ReadDir or fsync
+// hung on a dead mount still holds the lifecycle wg unit past the deadline
+// (shutdown cancels baseCtx only after wg.Wait()). The deadline bounds every
+// other stall and maps to "io" like any unmapped store failure; a hard bound
+// on the filesystem work itself is a follow-up (#341).
 const profileStoreTimeout = 30 * time.Second
 
 func validUserProfileID(value string) bool { return userProfileIDPattern.MatchString(value) }
@@ -120,15 +122,18 @@ func validUserProfileID(value string) bool { return userProfileIDPattern.MatchSt
 // silently read as create-only — gets the deliberately opaque invalid_id.
 func validateSaveGolemProfileAsRequest(req SaveGolemProfileAsRequest) *GolemProfileSaveResult {
 	if validProfileID(req.ID) && strings.HasPrefix(req.ID, "curated/") {
+		log.Printf("ai: profile save: code=curated_read_only")
 		return &GolemProfileSaveResult{Status: "diagnostics",
 			Diagnostics: []ProfileDiagnostic{{Code: "curated_read_only", ProfileID: req.ID}}}
 	}
 	if !validUserProfileID(req.ID) {
+		log.Printf("ai: profile save: code=invalid_id")
 		return &GolemProfileSaveResult{Status: "diagnostics",
 			Diagnostics: []ProfileDiagnostic{{Code: "invalid_id"}}}
 	}
 	if !validRevision(req.AppliedRevision) ||
 		(req.ExpectedRevision != nil && !validRevision(*req.ExpectedRevision)) {
+		log.Printf("ai: profile save: code=invalid_id")
 		return &GolemProfileSaveResult{Status: "diagnostics",
 			Diagnostics: []ProfileDiagnostic{{Code: "invalid_id"}}}
 	}
@@ -197,6 +202,7 @@ func (s *Service) ListGolemProfiles() (GolemProfileListResult, error) {
 	store, err := profiles.DefaultStoreWithOptions(profileStoreOptions())
 	if err != nil {
 		// The user config directory could not be resolved; there is no store.
+		log.Printf("ai: profile store: code=io (no store)")
 		return GolemProfileListResult{Status: "diagnostics",
 			Diagnostics: []ProfileDiagnostic{{Code: "io"}}}, nil
 	}
@@ -414,6 +420,7 @@ func (s *Service) SaveGolemProfileAs(req SaveGolemProfileAsRequest) (GolemProfil
 		return profileSaveDiagnostics("io"), nil
 	}
 	if activeAliasSameFile(destination, loaded.SourcePath) {
+		log.Printf("ai: profile save: code=store_unsafe (active alias)")
 		return GolemProfileSaveResult{Status: "diagnostics",
 			Diagnostics: []ProfileDiagnostic{{Code: "store_unsafe", ProfileID: req.ID}}}, nil
 	}

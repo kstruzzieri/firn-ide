@@ -747,6 +747,13 @@ func TestProfileSaveResultMapping(t *testing.T) {
 			(got.Profile != nil && *got.Profile != *row.want.Profile) {
 			t.Fatalf("%s = %+v, want %+v", row.name, got, row.want)
 		}
+		if err := validateGolemProfileSaveResult(got); err != nil {
+			t.Fatalf("%s violates the §5.6 oracle: %v (%+v)", row.name, err, got)
+		}
+		if row.want.Status == "diagnostics" &&
+			(len(got.Diagnostics) != 1 || got.Diagnostics[0].Code != "io" || got.Diagnostics[0].ProfileID != "user/mine") {
+			t.Fatalf("%s diagnostics = %+v, want one io diagnostic naming the profile", row.name, got.Diagnostics)
+		}
 	}
 }
 
