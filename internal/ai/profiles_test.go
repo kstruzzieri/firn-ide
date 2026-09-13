@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -691,6 +692,49 @@ func TestSaveGolemProfileAsRefusesTheCreateThatWouldLimitTheList(t *testing.T) {
 	}
 	if result.Status != "saved" {
 		t.Fatalf("overwrite at the bound = %+v, want saved", result)
+	}
+}
+
+func TestSaveGolemProfileAsConcurrentCreatesRespectProfileLimit(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	for i := 0; i < maxProjectionEntries-2; i++ {
+		stageUserProfile(t, "p-"+threeDigits(i), keyedProfileJSON)
+	}
+	svc := newProfilesTestService(t)
+	// One slot remains, shared by every destination. Starting several saves
+	// together exercises the list-to-publication window without timing sleeps.
+	results := make([]GolemProfileSaveResult, 16)
+	errs := make([]error, len(results))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Go(func() {
+			<-start
+			results[i], errs[i] = svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+				ID: "user/zzz-" + threeDigits(i), AppliedRevision: revision,
+			})
+		})
+	}
+	close(start)
+	wg.Wait()
+	saved := 0
+	for i, result := range results {
+		if errs[i] != nil {
+			t.Fatal(errs[i])
+		}
+		if result.Status == "saved" {
+			saved++
+		} else if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+			result.Diagnostics[0].Code != "profile_limit" {
+			t.Fatalf("concurrent create = %+v, want saved or profile_limit", result)
+		}
+	}
+	if saved != 1 {
+		t.Fatalf("%d creates saved with one profile slot remaining, want 1", saved)
+	}
+	list, err := svc.ListGolemProfiles()
+	if err != nil || list.Status != "loaded" || len(list.Profiles) != maxProjectionEntries {
+		t.Fatalf("list after concurrent creates = %+v (%v), want loaded at the bound", list, err)
 	}
 }
 

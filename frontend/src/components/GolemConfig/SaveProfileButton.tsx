@@ -158,7 +158,7 @@ export function SaveProfileButton({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close(true);
+      if (event.key === 'Escape' && !event.defaultPrevented) close(true);
     };
     const onPointer = (event: PointerEvent) => {
       if (rootRef.current !== null && !rootRef.current.contains(event.target as Node)) {

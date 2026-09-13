@@ -124,6 +124,51 @@ async function declareModel(name: string) {
 
 const routeCells = (useCase: string) => screen.getByTestId(`route-row-${useCase}`);
 
+it.each([true, false])(
+  'judges picker eligibility from staged exposure (eligible: %s)',
+  async (eligible) => {
+    const narrow = ['chat', 'stream'] as const;
+    const wide = ['chat', 'stream', 'tool_call'] as const;
+    const target = model({
+      ...other,
+      exposedCapabilities: [...(eligible ? narrow : wide)],
+    });
+    const peer: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: target.modelName, type: 'dense' },
+      capabilityFacts: target.capabilityFacts,
+      exposedCaps: [...(eligible ? wide : narrow)],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ models: [model(), target], draft: draftWith(peer) });
+    await openRoute('agent', 'Assign');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+    if (!eligible) {
+      await userEvent.click(screen.getByRole('button', { name: /not eligible/ }));
+    }
+    const card = within(screen.getByRole('listbox', { name: 'Models for agent' }))
+      .queryAllByRole('option')
+      .find((option) => within(option).queryByText(target.modelName) !== null);
+    expect(card).toBeDefined();
+    if (card === undefined) throw new Error('eligible model was hidden');
+    if (eligible) {
+      expect(card).not.toHaveAttribute('aria-disabled');
+      await userEvent.click(card);
+      expect(screen.getByRole('checkbox', { name: /^tool_call/ })).toBeChecked();
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(wide);
+    } else {
+      expect(card).toHaveAttribute('aria-disabled', 'true');
+      expect(card).toHaveTextContent('agent needs tool_call');
+      await userEvent.click(card);
+      expect(screen.queryByRole('checkbox', { name: /^tool_call/ })).not.toBeInTheDocument();
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // The rows themselves.
 // ---------------------------------------------------------------------------

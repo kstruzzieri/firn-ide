@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kstruzzieri/go-llm/profiles"
@@ -103,6 +104,10 @@ type GolemProfileSaveResult struct {
 }
 
 var userProfileIDPattern = regexp.MustCompile(`^user/[a-z0-9][a-z0-9-]{0,63}$`)
+
+// ponytail: one process-wide lock keeps the default store's create count and
+// publication atomic; cross-process writers require a shared store lock.
+var profileCreateMu sync.Mutex
 
 // profileStoreTimeout bounds one store call COOPERATIVELY: upstream checks
 // the context between steps, never inside a syscall, so a ReadDir or fsync
@@ -436,6 +441,8 @@ func (s *Service) SaveGolemProfileAs(req SaveGolemProfileAsRequest) (GolemProfil
 	ctx, cancel := context.WithTimeout(s.baseCtx, profileStoreTimeout)
 	defer cancel()
 	if req.ExpectedRevision == nil {
+		profileCreateMu.Lock()
+		defer profileCreateMu.Unlock()
 		// §5.6: a CREATE is refused with profile_limit while the list is
 		// limited OR WOULD BECOME limited by this row — the list gate counts
 		// the rows that exist, this one the rows that would; they differ by

@@ -1777,21 +1777,46 @@ export function governedUseCasesOf(
 
 /**
  * The change the editor would stage for a defined model before any exposure
- * edit: the model's own exposure, nothing added. This is the question
+ * edit: the selector's staged exposure when present, else the model's own.
+ * This is the question
  * `governedUseCasesOf` asks per card — the picker's verdicts and the Assign
  * list's reasons — and a floor that exposure misses is the verdict, never
  * something the probe asserts on the user's behalf.
  */
-export const probeRouteChange = (useCase: string, model: ModelProjection): RouteChange => ({
-  kind: 'route',
-  useCase,
-  modelFacts: modelFactsOf(model),
-  capabilityFacts: model.capabilityFacts,
-  // Canonical order, as every capability array crosses the transport.
-  exposedCaps: CAPABILITY_NAMES.filter((cap) => model.exposedCapabilities.includes(cap)),
-  thinkMode: model.thinkMode,
-  confirmUnknown: false,
-});
+export function probeRouteChange(
+  useCase: string,
+  model: ModelProjection,
+  changes: readonly Change[] = []
+): RouteChange {
+  const authority = selectorAuthority(model, changes);
+  const exposed = authority?.exposedCaps ?? model.exposedCapabilities;
+  return {
+    kind: 'route',
+    useCase,
+    modelFacts: modelFactsOf(model),
+    capabilityFacts: model.capabilityFacts,
+    // Canonical order, as every capability array crosses the transport.
+    exposedCaps: CAPABILITY_NAMES.filter((cap) => exposed.includes(cap)),
+    thinkMode: authority?.thinkMode ?? model.thinkMode,
+    confirmUnknown: false,
+  };
+}
+
+/** The latest raw staging is the authority projectDraft coalesces this selector onto. */
+export const selectorAuthority = (
+  model: ModelProjection | null,
+  changes: readonly Change[]
+): RouteChange | undefined =>
+  model === null
+    ? undefined
+    : [...changes]
+        .reverse()
+        .find(
+          (change): change is RouteChange =>
+            change.kind === 'route' &&
+            change.modelFacts.provider === model.provider &&
+            change.modelFacts.model === model.modelName
+        );
 
 /** One floor capability a model lacks, and the use cases whose floor asks for it. */
 export interface FloorShortfall {

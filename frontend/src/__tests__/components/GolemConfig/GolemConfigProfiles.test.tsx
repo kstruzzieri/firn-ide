@@ -528,6 +528,22 @@ describe('Save as profile', () => {
     expect(screen.getByLabelText('Profile name')).toHaveValue('mine');
   });
 
+  it('preserves the profile name and model focus when the model picker handles Escape', async () => {
+    await mountReady();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    const card = within(screen.getByRole('listbox', { name: /Models/ })).getByRole('option');
+    card.focus();
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByRole('group', { name: 'Save as profile' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Profile name')).toHaveValue('mine');
+    expect(card).toHaveFocus();
+  });
+
   it('names its own in-flight save as the reason the trigger is disabled', async () => {
     // [F5] `pending` is the component's OWN flow bit; the workspace's `reason` cannot
     // see it, so without a local fallback the disabled trigger carried an empty title.

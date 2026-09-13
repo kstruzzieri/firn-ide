@@ -52,6 +52,7 @@ import {
   probeRouteChange,
   retargetOf,
   sameModelFacts,
+  selectorAuthority,
   shortfallLine,
   stagedRoutes,
   unionFloor,
@@ -260,31 +261,13 @@ export function RouteEditor({
   const others = draft.changes.filter(
     (change) => !(change.kind === 'route' && change.useCase === useCase)
   );
-  /**
-   * [W5-5] What the selector's group holds in this draft — the values
-   * `projectDraft` will coalesce this route onto (its latest member is the
-   * authority, and Done makes this route the latest). This route's own
-   * staging comes first when it sits on the selector: RoutingCard hands it
-   * over already coalesced, so it IS the group's current values, where a
-   * peer's raw staging may predate them. Otherwise the latest peer.
-   */
-  const authorityOn = (model: ModelProjection | null): RouteChange | undefined => {
-    if (model === null) return undefined;
-    const onSelector = (change: Change): change is RouteChange =>
-      change.kind === 'route' &&
-      change.modelFacts.provider === model.provider &&
-      change.modelFacts.model === model.modelName;
-    return staged !== undefined && onSelector(staged)
-      ? staged
-      : [...others].reverse().find(onSelector);
-  };
   const seed = useMemo(
     () =>
       seedFrom(
         preselect === undefined ? staged : undefined,
         preselect ?? current,
         models,
-        authorityOn(preselect ?? current)
+        selectorAuthority(preselect ?? current, draft.changes)
       ),
     // Derived once, at mount: the row remounts when the document moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -336,7 +319,7 @@ export function RouteEditor({
    * selector comes first [W5-5]: coalescing makes its exposure this one's.
    * Nothing is added to it (see `seedFrom`).
    */
-  const authority = authorityOn(defined);
+  const authority = selectorAuthority(defined, draft.changes);
   const offeredCaps =
     authority?.exposedCaps ?? defined?.exposedCapabilities ?? capabilityFacts?.caps ?? [];
 
@@ -521,10 +504,8 @@ export function RouteEditor({
     return (model: ModelProjection): readonly FloorShortfall[] => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const verdict = floorShortfalls(
-        model.exposedCapabilities,
-        governedUseCasesOf(base, draft, probeRouteChange(useCase, model))
-      );
+      const probe = probeRouteChange(useCase, model, draft.changes);
+      const verdict = floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe));
       cache.set(model.role, verdict);
       return verdict;
     };
@@ -545,7 +526,7 @@ export function RouteEditor({
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
   const [committed] = useState(() =>
-    snapshotOf(seedFrom(staged, current, models, authorityOn(current)))
+    snapshotOf(seedFrom(staged, current, models, selectorAuthority(current, draft.changes)))
   );
   const unstaged = snapshot !== committed;
 

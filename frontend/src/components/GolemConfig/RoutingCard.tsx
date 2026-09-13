@@ -324,10 +324,8 @@ export function RoutingCard({
   const assignOptions = (model: ModelProjection): AssignOption[] =>
     routeUseCases(routes).map((useCase) => {
       if (open.has(useCase)) return { useCase, reason: 'editor open' };
-      const short = floorShortfalls(
-        model.exposedCapabilities,
-        governedUseCasesOf(base, draft, probeRouteChange(useCase, model))
-      );
+      const probe = probeRouteChange(useCase, model, draft.changes);
+      const short = floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe));
       return { useCase, reason: shortfallLine(short) };
     });
 

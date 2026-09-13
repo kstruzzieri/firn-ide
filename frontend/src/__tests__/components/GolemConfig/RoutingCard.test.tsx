@@ -537,6 +537,53 @@ describe('Defined models — Assign (wave 4d)', () => {
     return option;
   };
 
+  it.each([true, false])(
+    'judges Assign eligibility from staged exposure (eligible: %s)',
+    async (eligible) => {
+      const narrow = ['chat', 'stream'] as const;
+      const wide = ['chat', 'stream', 'tool_call'] as const;
+      const p = props();
+      const target = { ...spare, exposedCapabilities: [...(eligible ? narrow : wide)] };
+      const change: RouteChange = {
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: spare.modelName, type: 'dense' },
+        capabilityFacts: spare.capabilityFacts,
+        exposedCaps: [...(eligible ? wide : narrow)],
+        thinkMode: '',
+        confirmUnknown: false,
+      };
+      const draft = stageChange(p.draft, change, new KeyVault(new Map()));
+      const models = [model, target];
+      const projected = projectDraft({ routes: p.routes, models }, draft);
+      render(
+        <RoutingCard
+          {...p}
+          models={models}
+          draft={draft}
+          changes={projected.changes}
+          rows={projected.routeRows}
+          selectorUseCases={projected.selectorUseCases}
+        />
+      );
+      await userEvent.click(assign());
+      const option = optionNamed('agent');
+      if (eligible) {
+        expect(option).not.toHaveAttribute('aria-disabled');
+        await userEvent.click(option);
+        expect(screen.getByRole('checkbox', { name: /^tool_call/ })).toBeChecked();
+        await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+        expect(p.onStage).toHaveBeenCalledTimes(1);
+        expect(p.onStage.mock.calls[0][0][0].exposedCaps).toEqual(wide);
+      } else {
+        expect(option).toHaveAttribute('aria-disabled', 'true');
+        expect(option).toHaveTextContent('agent needs tool_call');
+        await userEvent.click(option);
+        expect(screen.queryByRole('group', { name: 'Route agent' })).not.toBeInTheDocument();
+      }
+    }
+  );
+
   it('labels the role cell in the record form, so a role and a use case never read alike', () => {
     render(<RoutingCard {...props()} />);
     const row = screen.getByTestId('defined-model-row-spare');
