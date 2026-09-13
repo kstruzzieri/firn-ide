@@ -71,6 +71,9 @@ func (s *Store) Save(state State) error {
 		if errors.Is(blocked, ErrUnknownVersion) {
 			return fmt.Errorf("workspace saving disabled for this session to preserve a state file written by a newer Firn (open the workspace with that Firn, or remove the file and restart Firn to start fresh): %w", blocked)
 		}
+		if errors.Is(blocked, fs.ErrPermission) {
+			return fmt.Errorf("workspace saving disabled for this session to preserve the existing state file (restore read access to the file and its parent directory, then restart Firn): %w", blocked)
+		}
 		return fmt.Errorf("workspace saving disabled for this session to preserve the existing state file (fix or remove it, then restart Firn): %w", blocked)
 	}
 

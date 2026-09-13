@@ -1368,7 +1368,9 @@ export const useIDEStore = create<IDEStore>()(
         set(
           (state) => {
             const held = state.heldToasts.filter((t) => t.message !== message);
-            if (state.toast?.message !== message) return { heldToasts: held };
+            if (state.toast?.message !== message) {
+              return held.length === state.heldToasts.length ? state : { heldToasts: held };
+            }
             return held.length === 0
               ? { toast: null, heldToasts: held }
               : { toast: held[held.length - 1], heldToasts: held.slice(0, -1) };

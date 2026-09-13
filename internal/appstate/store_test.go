@@ -225,7 +225,7 @@ func TestLoadReadErrorBlocksSubsequentSaveAndBytesUnchanged(t *testing.T) {
 func TestSaveWithoutLoadProbesExistingFileAndBlocksOnFutureVersion(t *testing.T) {
 	fsys, files := newMockFS(t)
 	path := filepath.Join(firnDir, "app.json")
-	files[path] = []byte(`{"version":2,"state":{}}`)
+	files[path] = []byte(`{"version":2,"state":{"golemWindow":{"width":"new schema"}}}`)
 	before := string(files[path])
 	s := NewStore(fsys, firnDir)
 	// No Load() call: Save must still refuse to clobber a future-version file.
@@ -234,6 +234,24 @@ func TestSaveWithoutLoadProbesExistingFileAndBlocksOnFutureVersion(t *testing.T)
 	}
 	if string(files[path]) != before {
 		t.Fatal("future-version file changed by a Save that never called Load")
+	}
+}
+
+func TestSaveWithoutLoadPreservesInvalidBody(t *testing.T) {
+	fsys, files := newMockFS(t)
+	path := filepath.Join(firnDir, "app.json")
+	raw := `{"version":1,"state":{"golemWindow":{"width":"broken"}}}`
+	files[path] = []byte(raw)
+	s := NewStore(fsys, firnDir)
+	for range 2 {
+		err := s.Save(Default())
+		var decodeErr *json.UnmarshalTypeError
+		if !errors.As(err, &decodeErr) {
+			t.Errorf("Save without Load = %v, want the body's decode error", err)
+		}
+		if string(files[path]) != raw {
+			t.Fatal("invalid body was overwritten by a never-loaded store")
+		}
 	}
 }
 

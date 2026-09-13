@@ -121,6 +121,31 @@ func TestStoreLoadReadErrorBlocksSave(t *testing.T) {
 	}
 }
 
+func TestStorePermissionFailureAdvisesRestoringAccess(t *testing.T) {
+	mockFS := &filesystem.Mock{
+		ReadFileFunc: func(path string) ([]byte, error) {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrPermission}
+		},
+		WriteFileFunc: func(path string, data []byte, perm fs.FileMode) error {
+			t.Fatalf("Save must not write after permission failure (wrote %s)", path)
+			return nil
+		},
+	}
+	store := NewStore(mockFS, testWorkspaceBaseDir)
+	err := store.Save(testState("/project", "project"))
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("Save = %v, want the original permission error", err)
+	}
+	message := err.Error()
+	if strings.Contains(message, "remove") || !strings.Contains(message, "read access") || !strings.Contains(message, "restart Firn") {
+		t.Errorf("permission remedy must restore access, not remove the file: %s", message)
+	}
+	path := filepath.Join(testWorkspaceBaseDir, pathToID("/project")+".json")
+	if !strings.Contains(message, path) {
+		t.Errorf("permission remedy must identify %s: %s", path, message)
+	}
+}
+
 // A Store that saves a workspace it never loaded has not seen what is on
 // disk: it probes the file first and reaches the same latch, while a missing
 // file still lets the first Save through.

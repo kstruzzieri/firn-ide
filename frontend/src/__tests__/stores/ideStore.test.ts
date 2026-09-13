@@ -369,8 +369,9 @@ describe('ideStore - toast', () => {
     expect(useIDEStore.getState().heldToasts).toEqual([]);
 
     // Unknown message: no-op.
+    const beforeRetirement = useIDEStore.getState();
     retireToast('Never shown');
-    expect(useIDEStore.getState().toast?.message).toBe('Shown');
+    expect(useIDEStore.getState()).toBe(beforeRetirement);
 
     retireToast('Shown');
     expect(useIDEStore.getState().toast).toBeNull();
