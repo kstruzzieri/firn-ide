@@ -5,6 +5,7 @@
 package appstate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,9 +64,9 @@ type Store struct {
 	path string
 
 	mu sync.Mutex
-	// loaded is set once Load has run. Save probes the existing file itself
+	// loaded records the initial read attempt. Save uses the same decoder
 	// when this is still false, so a Store that writes without ever loading
-	// cannot clobber a file it never read (spec §3.2).
+	// cannot clobber a file it could not read (spec §3.2).
 	loaded bool
 	// writeBlocked is latched after an unreadable/unparseable/future-version
 	// existing file, so this session never overwrites content it could not
@@ -89,6 +90,12 @@ func NewStore(fsys filesystem.FileSystem, firnDir string) *Store {
 func (s *Store) Load() (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+// loadLocked reads the complete file under s.mu and latches any read or
+// decode failure for the session, including a never-loaded Store's first Save.
+func (s *Store) loadLocked() (State, error) {
 	s.loaded = true
 	if s.path == "" {
 		return Default(), nil
@@ -101,13 +108,27 @@ func (s *Store) Load() (State, error) {
 		s.writeBlocked = fmt.Errorf("reading app state: %w", err)
 		return Default(), s.writeBlocked
 	}
-	var sf StateFile
-	if err := json.Unmarshal(data, &sf); err != nil {
+	// Zero bytes hold no preference to preserve: read as absent rather than
+	// latching writes off for the session (same rule as the workspace store).
+	if len(bytes.TrimSpace(data)) == 0 {
+		return Default(), nil
+	}
+	// Read the version envelope first: a newer Firn's schema is reported as
+	// newer, not as corrupt.
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
 		return Default(), s.writeBlocked
 	}
-	if err := checkVersion(sf.Version); err != nil {
+	if err := checkVersion(envelope.Version); err != nil {
 		s.writeBlocked = err
+		return Default(), s.writeBlocked
+	}
+	var sf StateFile
+	if err := json.Unmarshal(data, &sf); err != nil {
+		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
 		return Default(), s.writeBlocked
 	}
 	if sf.State.GolemWindow.Mode != ModeUndocked {
@@ -121,16 +142,13 @@ func (s *Store) Load() (State, error) {
 //
 // A Store that writes without ever calling Load has not yet seen whatever is
 // on disk. Rather than trust a zero-value writeBlocked, Save probes the
-// existing file itself the first time, so it can never overwrite a
-// future-version app.json a newer Firn wrote (spec §3.2).
+// complete existing file itself the first time, preserving unreadable,
+// unparseable, or future-version app.json files (spec §3.2).
 func (s *Store) Save(state State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.loaded {
-		if s.path != "" {
-			s.probeExistingVersion()
-		}
-		s.loaded = true
+		_, _ = s.loadLocked() // latches writeBlocked on failure
 	}
 	if s.writeBlocked != nil {
 		return fmt.Errorf("app state writes disabled to preserve existing file: %w", s.writeBlocked)
@@ -152,29 +170,6 @@ func (s *Store) Save(state State) error {
 		return fmt.Errorf("writing app state: %w", err)
 	}
 	return nil
-}
-
-// probeExistingVersion reads only the version envelope of an existing file
-// ahead of a never-loaded Store's first write, latching writeBlocked with the
-// same wrapped errors Load would produce for an unreadable, unparseable, or
-// future-version file. A missing file latches nothing: Save may proceed.
-func (s *Store) probeExistingVersion() {
-	data, err := s.fs.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return
-		}
-		s.writeBlocked = fmt.Errorf("reading app state: %w", err)
-		return
-	}
-	var envelope struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
-		return
-	}
-	s.writeBlocked = checkVersion(envelope.Version)
 }
 
 // checkVersion classifies a file's version envelope. Versions start at 1, so
