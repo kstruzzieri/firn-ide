@@ -377,6 +377,8 @@ export function RoutingCard({
 
   const stagedFor = (useCase: string): Change | undefined =>
     changes.find((change) => changeStableID(change) === `route:${useCase}`);
+  /** The staged route changes by use case, once per render (every row reads it). */
+  const stagedByUseCase = stagedRoutes(changes);
 
   /**
    * [W4-1][#315] The staged route change whose selector `applied` shares, and
@@ -523,8 +525,10 @@ export function RoutingCard({
             const notices = rowDiagnostics(useCase);
             /**
              * The routes this row's APPLIED model also serves after Apply, from the
-             * same `routedUseCases` RouteEditor's `sharedRole` reads (the editor's
-             * notice keeps the unfiltered applied list — its own copy says so).
+             * same `routedUseCases` RouteEditor's `sharedRole` reads — that notice
+             * still lists the unfiltered applied set (a follow-up candidate); the
+             * two are never on screen together, since this marker hides while the
+             * row is expanded.
              * While a RETARGET is staged the row paints another model and this
              * coupling belongs to the one being replaced, so the marker is
              * suppressed; an override paints the applied model, whose coupling
@@ -539,7 +543,7 @@ export function RoutingCard({
                 staged.modelFacts.provider !== applied.provider ||
                 staged.modelFacts.model !== applied.modelName);
             const leaving =
-              applied === null ? undefined : leavingRoutes(base, stagedRoutes(changes), applied);
+              applied === null ? undefined : leavingRoutes(base, stagedByUseCase, applied);
             const shared = paintsAnotherModel
               ? []
               : (applied?.routedUseCases ?? []).filter(
@@ -858,8 +862,13 @@ export function RoutingCard({
                     className={styles.row}
                     data-expanded={listOpen || undefined}
                     // [X11] A staged `role-remove` stripes its row like every other
-                    // staged change, and a landed `role:` jump flashes it.
-                    data-changed={markers?.modified === true || undefined}
+                    // staged change, and a landed `role:` jump flashes it. [W6] So does
+                    // a selector override that rewrites this role: the same stripe and
+                    // tint a same-model route row carries.
+                    data-changed={
+                      markers?.modified === true || markers?.affected === true || undefined
+                    }
+                    data-mark={markers?.affected === true ? 'same-model' : undefined}
                     data-flash={flashNonce(`role:${model.role}`)}
                   >
                     {/* [W4-3] A role and a use case may share a name (`agent`): the record
@@ -873,17 +882,18 @@ export function RoutingCard({
                       {markers?.needsReview === true && (
                         <StatusText tone="warn">Needs review</StatusText>
                       )}
-                      {markers?.needsReview !== true && markers?.modified === true && (
-                        <StatusText tone="warn">Modified</StatusText>
-                      )}
-                      {/* [W6] Its selector is overridden by a staged route change: the
-                          override rewrites this role's OWN values too, though nothing
-                          routes it — Modified, as a same-model route row reads; Affected
-                          is reserved for rows whose values stay. */}
+                      {/* [W6] A selector override rewrites this role's OWN values too,
+                          though nothing routes it — Modified, as a same-model route row
+                          reads (Affected is reserved for rows whose values stay), with
+                          the sub-line kept even when a removal is staged alongside. */}
                       {markers?.needsReview !== true &&
-                        markers?.modified !== true &&
-                        markers?.affected === true && (
-                          <StatusText tone="warn" detail={REACH_DETAIL['same-model']}>
+                        (markers?.modified === true || markers?.affected === true) && (
+                          <StatusText
+                            tone="warn"
+                            detail={
+                              markers?.affected === true ? REACH_DETAIL['same-model'] : undefined
+                            }
+                          >
                             Modified
                           </StatusText>
                         )}

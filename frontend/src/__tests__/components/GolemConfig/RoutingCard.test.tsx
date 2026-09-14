@@ -644,7 +644,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps the coupling fact on an edited row whose sentence does not name it', () => {
+  it('keeps the coupling fact where the reach sentence does not name it: edited and same-model rows', () => {
     // chat-role serves chat, completion and summarize. chat re-asserts the selector's own
     // exposure: nothing else changes, the sentence has no siblings to name — but the
     // model still serves the others, and the editor asked for consent about them.
@@ -759,10 +759,29 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     expect(statusOf(spare, 'Modified')).toHaveAttribute('data-tone', 'warn');
     expect(statusOf(spare, 'Modified')).toHaveTextContent('model changes');
     expect(within(spare).queryByText('Affected')).not.toBeInTheDocument();
-    expect(spare).not.toHaveAttribute('data-changed');
+    // …with the same stripe and tint a same-model route row carries.
+    expect(spare).toHaveAttribute('data-changed', 'true');
+    expect(spare).toHaveAttribute('data-mark', 'same-model');
   });
 
-  it('keeps naming a sibling that still reaches the model through its fallback chain', () => {
+  it('keeps the model-changes sub-line on a role row that is also staged for removal', () => {
+    const routes = [{ useCase: 'chat', role: 'chat-role' }];
+    const models = [
+      thinking({ routedUseCases: ['chat'] }),
+      thinking({ role: 'spare-role', routedUseCases: [], removable: true, thinkMode: '' }),
+    ];
+    renderProjected(
+      routes,
+      models,
+      change({ exposedCaps: ['chat', 'stream', 'thinking', 'tool_call'], thinkMode: 'auto' }),
+      { kind: 'role-remove', role: 'spare-role' }
+    );
+    const spare = screen.getByTestId('defined-model-row-spare-role');
+    expect(statusOf(spare, 'Modified')).toHaveTextContent('model changes');
+    expect(screen.getByRole('button', { name: /Unstage removal/ })).toBeInTheDocument();
+  });
+
+  it('keeps naming a fallback-reached sibling staged elsewhere, and drops an unassigned one', () => {
     // completion is routed to coder-role and falls back to chat-role. Staging it onto
     // gpt-6 retargets coder-role, which KEEPS its fallbacks: chat's model still serves
     // completion after Apply, so chat's marker keeps naming it.
@@ -793,11 +812,16 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows the legend only while some row is reached or the source is replaced', () => {
+  it('shows the legend for a reached row, and not for a lone unassign', () => {
     // A staged unassign marks a row without any reach: nothing the legend explains is
     // on screen.
     renderProjected(twoRoles, twoRoleModels, { kind: 'route-unassign', useCase: 'chat' });
     expect(screen.queryByText(/staged, not applied/)).not.toBeInTheDocument();
+    cleanup();
+    renderProjected(twoRoles, twoRoleModels, change());
+    const legend = screen.getByText(/staged, not applied/);
+    expect(legend).toHaveTextContent('Modified');
+    expect(legend).toHaveTextContent('Affected');
   });
 
   it('shows the legend under a replaced source, where every row reads Modified', () => {

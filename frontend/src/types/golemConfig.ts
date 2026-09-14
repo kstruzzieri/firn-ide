@@ -1750,6 +1750,9 @@ function reachGroupsOf(
             : { provider: applied.provider, model: applied.modelName },
       };
     });
+    // The four optional facts below are the set `sameModelFacts` compares (with the
+    // same ''/0 reading of an omitted one): keep the two in step, or a new fact
+    // would read as an override here and print `re-asserts` for a real change.
     const factsChanged = new Set<string>();
     for (const change of group.changes) {
       const applied = modelOf.get(roleOf.get(change.useCase) ?? '');

@@ -2244,9 +2244,11 @@ select.input {
   background-color: color-mix(in srgb, var(--status-warning) 5%, transparent);
 }
 
-/* Hover still answers on a tinted row. */
-.row.row[data-mark]:hover {
-  background-color: var(--surface-hover);
+/* Hover still answers on a tinted row, keeping a trace of the tint so the mark
+   survives the pointer (a fallback row has no tint and keeps the plain hover). */
+.row.row[data-mark='edited']:hover,
+.row.row[data-mark='same-model']:hover {
+  background-color: color-mix(in srgb, var(--surface-hover) 85%, var(--status-warning));
 }
 
 .row[data-mark='same-model']::before {

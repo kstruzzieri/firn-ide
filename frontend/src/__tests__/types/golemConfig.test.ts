@@ -1550,29 +1550,17 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
       }),
     ],
   };
-  /** chat joins gpt-5 from gpt-5-mini, asserting `exposed`. */
+  /**
+   * chat joins gpt-5 from gpt-5-mini, asserting `exposed`. The exposure must keep
+   * `embed`: the embedding route reaches the selector through embed-role and Firn's
+   * floor for it is `embed`, so a join dropping it is ineligible and never staged.
+   */
   const joinChat = (exposed: CapabilityName[]) =>
     override({
       useCase: 'chat',
       capabilityFacts: { caps: DENSE, knownCaps: [...CAPABILITY_NAMES] },
       exposedCaps: exposed,
     });
-
-  it('judges each role on the selector by its own baseline', () => {
-    // The join asserts exactly what a dense role derives: spare-dense does not change
-    // (no affected role), embed-role (embed → chat, generate, stream) does, and so
-    // does the route that falls back to it.
-    const projected = projectDraft(twoTypes, stage([joinChat(DENSE)]));
-    const group = groupOf(projected, 'gpt-5');
-    expect(group.edited).toEqual([
-      { useCase: 'chat', was: { provider: 'hosted', model: 'gpt-5-mini' } },
-    ]);
-    expect(group.addedCaps).toEqual(['chat', 'generate', 'stream']);
-    expect(group.removedCaps).toEqual(['embed']);
-    expect(group.affectedRoles).toEqual([]);
-    expect(group.sameModel).toEqual([]);
-    expect(group.fallback).toEqual(['embedding']);
-  });
 
   it("scopes a fallback row's delta to the roles that actually list it", () => {
     // Both roles change, differently: spare-dense gains embed and loses generate,
@@ -1612,14 +1600,15 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
     // Contrast: when the contributing role's Think does move, the row's delta says so.
     const moving = projectDraft(base, stage([override({ thinkMode: 'auto' })]));
     expect(groupOf(moving, 'gpt-5').fallbackDeltas.get('completion')?.think).toBe('auto');
-    // Several contributing roles: the row's delta is THEIR union. agent-role ('') and
-    // analysis-role (auto) both list completion; Think moves for agent-role.
+    // Several contributing roles: the row's delta is THEIR union. agent-role (already
+    // auto, listed first) and analysis-role ('') both list completion; only the LATER
+    // contributor moves Think, so an implementation reading the first alone fails.
     const both = projectDraft(
       {
         ...base,
-        models: analysisAuto.map((model) =>
+        models: base.models.map((model) =>
           model.role === 'agent-role'
-            ? { ...model, routedUseCases: ['agent', 'completion'] }
+            ? { ...model, thinkMode: 'auto' as const, routedUseCases: ['agent', 'completion'] }
             : model
         ),
       },
@@ -1663,6 +1652,25 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
     );
     expect(groupOf(already, 'gpt-5').affectedRoles).toEqual([]);
     expect(already.roleRows.has('spare-role')).toBe(false);
+  });
+
+  it('names the model facts a same-name change declares, and nothing for an override or a join', () => {
+    // Same provider+model as chat-role, different parameters: not an override (the
+    // facts differ), not a join (the role is already there).
+    const facts = projectDraft(
+      base,
+      stage([
+        routeChange({
+          modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', parameters: '7b' },
+        }),
+      ])
+    );
+    expect(groupOf(facts, 'gpt-5-mini').factsChanged).toEqual(['parameters 7b']);
+    // An override shares every fact; a join's applied role is elsewhere.
+    expect(groupOf(projectDraft(base, stage([override()])), 'gpt-5').factsChanged).toEqual([]);
+    expect(
+      groupOf(projectDraft(base, stage([override({ useCase: 'chat' })])), 'gpt-5').factsChanged
+    ).toEqual([]);
   });
 
   it('reads a selector as empty when its only role is leaving', () => {

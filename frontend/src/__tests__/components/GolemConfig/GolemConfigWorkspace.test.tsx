@@ -118,7 +118,14 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toMatch(/\.row\.row\[data-mark='edited'\]/);
     expect(text).toMatch(/\.row\.row\[data-mark='same-model'\]/);
     expect(text).not.toMatch(/\.table > \.row\[data-mark/);
-    expect(text).toMatch(/\.row\.row\[data-mark\]:hover/);
+    // Equal specificity is settled by source order: the tint follows zebra and hover.
+    expect(text.indexOf(".row.row[data-mark='edited']")).toBeGreaterThan(
+      text.indexOf('.table > .row:hover')
+    );
+    // Hover keeps a trace of the tint rather than erasing the mark.
+    expect(text).toMatch(
+      /\.row\.row\[data-mark='edited'\]:hover,\s*\.row\.row\[data-mark='same-model'\]:hover \{[^}]*color-mix/
+    );
     expect(text).toMatch(/\.capPill del \{/);
     expect(text).not.toMatch(/\.capPill s \{/);
   });

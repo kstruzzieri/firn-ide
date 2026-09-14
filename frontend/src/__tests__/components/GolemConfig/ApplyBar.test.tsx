@@ -197,7 +197,8 @@ describe('Apply bar reach groups (wave 6)', () => {
   it('separates the two signs of a mixed capabilities delta', () => {
     renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call', 'generate'] }));
     const header = within(group('gpt-5')).getAllByRole('button')[0];
-    expect(header).toHaveTextContent('capabilities + generate · − thinking');
+    // The signs delimit themselves; `·` means "next part" only.
+    expect(header).toHaveTextContent('capabilities + generate − thinking');
   });
 
   it('names the facts a same-name change declares when nothing else is visible', () => {
@@ -233,7 +234,7 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(badgeNames('gpt-5-mini', 'local')).toEqual(['chatwashosted · gpt-5-miniedited']);
   });
 
-  it('says what a no-op override re-asserts instead of a placeholder', () => {
+  it('says what a no-op override re-asserts, with its Think when set, instead of a placeholder', () => {
     // Done on an untouched editor stages an override identical to the applied
     // configuration: nothing on the model changes, and the header must still say
     // something derived from the change.

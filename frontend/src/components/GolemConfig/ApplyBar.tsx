@@ -107,8 +107,8 @@ function reachDeltaLine(group: ReachGroup): string {
     group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
   ].filter((sign) => sign !== '');
   const parts = [
-    // `·` between the signs, so the reader can tell where the added list ends.
-    signs.length > 0 ? `capabilities ${signs.join(' · ')}` : '',
+    // The signs delimit themselves (`+ a, b − c`); `·` means "next part" only.
+    signs.length > 0 ? `capabilities ${signs.join(' ')}` : '',
     group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
     group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
     // A same-name change that is not an override differs in its facts: name them.
