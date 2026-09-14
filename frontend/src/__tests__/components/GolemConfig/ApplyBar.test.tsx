@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApplyBar } from '../../../components/GolemConfig/ApplyBar';
 import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../../../types/golem';
@@ -81,11 +81,15 @@ const toGpt6 = (useCase: string): RouteChange =>
   });
 
 function renderBar(...changes: Change[]) {
+  return renderBarOn(base, ...changes);
+}
+
+function renderBarOn(projection: DraftBaseProjection, ...changes: Change[]) {
   const draft = changes.reduce(
     (current, change) => stageChange(current, change, new KeyVault(new Map())),
     cleanDraft('0'.repeat(64))
   );
-  const projected = projectDraft(base, draft);
+  const projected = projectDraft(projection, draft);
   const onOpenChange = jest.fn();
   render(
     <ApplyBar
@@ -125,7 +129,6 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(header).toHaveTextContent('gpt-5');
     expect(header).toHaveTextContent('hosted');
     expect(header).toHaveTextContent('capabilities + generate');
-    expect(header).not.toHaveTextContent('re-asserts');
     // No Think delta: analysis-role already Thinks auto; agent-role's '' → auto is a delta…
     // …so the header names it. (Per-role baselines; the override writes Think selector-wide.)
     expect(header).toHaveTextContent('Think auto');
@@ -189,10 +192,33 @@ describe('Apply bar reach groups (wave 6)', () => {
     const header = within(group('gpt-5')).getAllByRole('button')[0];
     // One capabilities clause carries both signs, so a removal keeps its noun.
     expect(header).toHaveTextContent('capabilities − thinking · Think cleared');
-    expect(header).not.toHaveTextContent('+');
   });
 
-  it('names the provider a retarget leaves when only the provider changes', () => {
+  it('separates the two signs of a mixed capabilities delta', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call', 'generate'] }));
+    const header = within(group('gpt-5')).getAllByRole('button')[0];
+    expect(header).toHaveTextContent('capabilities + generate · − thinking');
+  });
+
+  it('names the facts a same-name change declares when nothing else is visible', () => {
+    // Same provider+model, different parameters: not an override (the facts differ),
+    // not a join (the role is already there), no exposure or Think delta. The one
+    // thing the user changed is what the header says.
+    renderBar(
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', parameters: '7b' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+      })
+    );
+    const header = within(group('gpt-5-mini')).getAllByRole('button')[0];
+    expect(header).toHaveTextContent('declares parameters 7b');
+    expect(header).not.toHaveTextContent('re-asserts');
+  });
+
+  it('names the provider a fork leaves when only the provider changes', () => {
     // Two providers serving one model name is ordinary; a WAS that repeats the group
     // header's model would read as "nothing changed".
     renderBar(
@@ -222,8 +248,27 @@ describe('Apply bar reach groups (wave 6)', () => {
     );
     const header = within(group('gpt-5-mini')).getAllByRole('button')[0];
     expect(header).toHaveTextContent('re-asserts capabilities chat, stream');
+    expect(header).not.toHaveTextContent('Think');
     expect(header).not.toHaveTextContent('staged');
     expect(within(bar).getByText('1 model · 1 route affected')).toBeInTheDocument();
+    // With a Think already set, the re-assertion names it too.
+    cleanup();
+    renderBarOn(
+      {
+        ...base,
+        models: base.models.map((m) => (m.role === 'chat-role' ? { ...m, thinkMode: 'auto' } : m)),
+      },
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: 'auto',
+      })
+    );
+    expect(within(group('gpt-5-mini')).getAllByRole('button')[0]).toHaveTextContent(
+      're-asserts capabilities chat, stream · Think auto'
+    );
   });
 
   it('prints no reach line and no group when only non-route changes are staged', () => {

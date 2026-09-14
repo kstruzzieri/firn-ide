@@ -2111,8 +2111,9 @@ describe('selector-wide siblings (firn-ide#315)', () => {
       models: [
         // cloud-pro serves analysis and reasoning directly; agent, chat and
         // completion reach it through their roles' fallback chains (roleUsage is
-        // fallback-inclusive). No explicit override: exposure = the derived caps
-        // (the projection cannot expose less than an explicit override declares).
+        // fallback-inclusive). An explicit chat/stream declaration, which the
+        // projection folds across the selector: with one role there, exposure
+        // equals it (the earlier fixture exposed less than the sole role declared).
         model({
           role: 'cloud-pro',
           modelName: 'deepseek-v4-pro',

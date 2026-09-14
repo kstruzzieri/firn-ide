@@ -107,9 +107,12 @@ function reachDeltaLine(group: ReachGroup): string {
     group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
   ].filter((sign) => sign !== '');
   const parts = [
-    signs.length > 0 ? `capabilities ${signs.join(', ')}` : '',
+    // `·` between the signs, so the reader can tell where the added list ends.
+    signs.length > 0 ? `capabilities ${signs.join(' · ')}` : '',
     group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
     group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
+    // A same-name change that is not an override differs in its facts: name them.
+    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(' · ')}` : '',
   ].filter((part) => part !== '');
   if (parts.length > 0) return parts.join(' · ');
   const [caps, think] = stagedConfiguration(group);

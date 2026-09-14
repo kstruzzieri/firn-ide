@@ -34,13 +34,14 @@ import {
   changeStableID,
   floorShortfalls,
   governedUseCasesOf,
+  leavingRoutes,
   meetsUseCaseFloor,
   overridesSelector,
   probeRouteChange,
   shortfallLine,
+  stagedRoutes,
   type Change,
   type Draft,
-  type ReachDelta,
   type RouteChange,
   type RouteReach,
   type RouteReachEntry,
@@ -180,7 +181,7 @@ function reachSentence(
     }
     case 'fallback': {
       // The delta of the roles in THIS row's chain, never the group's union.
-      const delta: ReachDelta | undefined = group.fallbackDeltas.get(useCase);
+      const delta = group.fallbackDeltas.get(useCase);
       const lead = `${group.model} is in this route's fallback chain — `;
       if (delta === undefined) return `${lead}its configuration changes.`;
       const caps = [
@@ -521,52 +522,48 @@ export function RoutingCard({
             const editorId = `golem-route-editor-${index}`;
             const notices = rowDiagnostics(useCase);
             /**
-             * The routes this row's APPLIED model also serves — the same
-             * derivation RouteEditor's `sharedRole` makes from the same
-             * `current` object, so the row marker can never disagree with
-             * the notice inside the open editor. While a route change is
-             * staged the row's headline paints the STAGED model, and this
-             * coupling belongs to the model being replaced — describing the
-             * displayed model with the old model's marker would be a lie, so
-             * the marker is suppressed until the row shows the applied truth.
+             * The routes this row's APPLIED model also serves after Apply, from the
+             * same `routedUseCases` RouteEditor's `sharedRole` reads (the editor's
+             * notice keeps the unfiltered applied list — its own copy says so).
+             * While a RETARGET is staged the row paints another model and this
+             * coupling belongs to the one being replaced, so the marker is
+             * suppressed; an override paints the applied model, whose coupling
+             * holds. [W6] A sibling this draft routes DIRECTLY off the model leaves
+             * (`leavingRoutes`: a retarget rewrites its role, a fork copies it away);
+             * one that reaches the model only through its chain stays — a retarget
+             * keeps its role's fallbacks — and an unassign leaves every chain.
              */
-            // While a RETARGET is staged the row paints another model and the coupling
-            // belongs to the one being replaced; an override paints the applied model,
-            // whose coupling still holds.
             const paintsAnotherModel =
               staged?.kind === 'route' &&
               (applied === null ||
                 staged.modelFacts.provider !== applied.provider ||
                 staged.modelFacts.model !== applied.modelName);
+            const leaving =
+              applied === null ? undefined : leavingRoutes(base, stagedRoutes(changes), applied);
             const shared = paintsAnotherModel
               ? []
-              : (applied?.routedUseCases ?? []).filter((other) => {
-                  if (other === useCase) return false;
-                  // [W6] A sibling this draft moves off the model, or unassigns, is
-                  // a routing Apply undoes: naming it would describe the past.
-                  const away = stagedFor(other);
-                  return (
-                    away === undefined ||
-                    (away.kind === 'route' &&
-                      applied !== null &&
-                      away.modelFacts.provider === applied.provider &&
-                      away.modelFacts.model === applied.modelName)
-                  );
-                });
+              : (applied?.routedUseCases ?? []).filter(
+                  (other) =>
+                    other !== useCase &&
+                    leaving?.has(other) !== true &&
+                    stagedFor(other)?.kind !== 'route-unassign'
+                );
             /**
              * [W6] The coupling fact stays wherever the reach sentence does not
              * already name it: an edited row's sentence names the same-model and
-             * fallback routes its change reaches, nothing else; a fallback row's
-             * sentence is about ANOTHER model, so its own model's siblings stay.
+             * fallback routes its change reaches; a same-model row's names the
+             * edited routes; a fallback row's sentence is about ANOTHER model, so
+             * its own model's siblings all stay.
              */
-            const unsaid =
-              reach?.reach === 'edited'
-                ? shared.filter(
-                    (other) =>
-                      !reach.group.sameModel.includes(other) &&
-                      !reach.group.fallback.includes(other)
-                  )
-                : shared;
+            const named =
+              reach === undefined
+                ? []
+                : reach.reach === 'edited'
+                  ? [...reach.group.sameModel, ...reach.group.fallback]
+                  : reach.reach === 'same-model'
+                    ? reach.group.edited.map((edit) => edit.useCase)
+                    : [];
+            const unsaid = shared.filter((other) => !named.includes(other));
             // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
             // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
             // row marker — the shipped definition of "this row has a staged change" — so
@@ -880,12 +877,14 @@ export function RoutingCard({
                         <StatusText tone="warn">Modified</StatusText>
                       )}
                       {/* [W6] Its selector is overridden by a staged route change: the
-                          override rewrites this role too, though nothing routes it. */}
+                          override rewrites this role's OWN values too, though nothing
+                          routes it — Modified, as a same-model route row reads; Affected
+                          is reserved for rows whose values stay. */}
                       {markers?.needsReview !== true &&
                         markers?.modified !== true &&
                         markers?.affected === true && (
-                          <StatusText tone="info" detail="model changes">
-                            Affected
+                          <StatusText tone="warn" detail={REACH_DETAIL['same-model']}>
+                            Modified
                           </StatusText>
                         )}
                       {/* An inline disclosure (W4-3), so no aria-haspopup: expanded +

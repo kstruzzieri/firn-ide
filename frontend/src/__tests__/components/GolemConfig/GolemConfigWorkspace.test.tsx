@@ -110,6 +110,19 @@ describe('GolemConfig stylesheet', () => {
     expect(css()).not.toContain('data-blocking');
   });
 
+  // [W6] jsdom computes no cascade, so the reach tint's specificity and the
+  // removed-pill rule are pinned as text: the tint must win over the (0,3,0)
+  // zebra/hover rules under EVERY row parent, and a removed pill is a <del>.
+  it('paints the reach tint at (0,3,0) without naming a parent, and mutes <del> pills', () => {
+    const text = css();
+    expect(text).toMatch(/\.row\.row\[data-mark='edited'\]/);
+    expect(text).toMatch(/\.row\.row\[data-mark='same-model'\]/);
+    expect(text).not.toMatch(/\.table > \.row\[data-mark/);
+    expect(text).toMatch(/\.row\.row\[data-mark\]:hover/);
+    expect(text).toMatch(/\.capPill del \{/);
+    expect(text).not.toMatch(/\.capPill s \{/);
+  });
+
   it('upgrades records to subgrid tables only where subgrid exists, squeezing only the long columns', () => {
     const text = css();
     // [A7] The BASE is the record form: the header row is hidden VISUALLY (never removed

@@ -1512,21 +1512,28 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
   // Two roles on one selector can only DIFFER in exposure while neither carries an
   // explicit override — the projection derives each role's exposure from its TYPE
   // (dense: chat, generate, stream; embedding: embed). An explicit override folds
-  // across the selector. These fixtures are those derived baselines.
+  // across the selector, and go-llm refuses non-embedding capabilities on an
+  // embedding role, so the ONLY eligible mutation onto such a selector is a JOIN
+  // from elsewhere: the joining dense role takes the explicit capabilities and the
+  // projection folds that exposure across the selector.
   const DENSE: CapabilityName[] = ['chat', 'generate', 'stream'];
   const twoTypes: DraftBaseProjection = {
     routes: [
       { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'chat', role: 'chat-role' },
       { useCase: 'embedding', role: 'vector-role' },
     ],
     models: [
       modelRow({
         role: 'agent-role',
-        modelName: 'gpt-5',
-        ...caps(DENSE),
+        modelName: 'gpt-agent',
+        ...caps(GPT5),
         routedUseCases: ['agent'],
       }),
-      // An embedding role on the SAME selector; the embedding route falls back to it.
+      modelRow({ routedUseCases: ['chat'] }),
+      // gpt-5 holds an unrouted derived dense role and a derived embedding role that
+      // the embedding route falls back to.
+      modelRow({ role: 'spare-dense', modelName: 'gpt-5', ...caps(DENSE), routedUseCases: [] }),
       modelRow({
         role: 'embed-role',
         modelName: 'gpt-5',
@@ -1543,34 +1550,39 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
       }),
     ],
   };
-  const dense = (over: Partial<RouteChange> = {}) =>
-    override({ capabilityFacts: { caps: DENSE, knownCaps: [...CAPABILITY_NAMES] }, ...over });
+  /** chat joins gpt-5 from gpt-5-mini, asserting `exposed`. */
+  const joinChat = (exposed: CapabilityName[]) =>
+    override({
+      useCase: 'chat',
+      capabilityFacts: { caps: DENSE, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: exposed,
+    });
 
   it('judges each role on the selector by its own baseline', () => {
-    // agent re-asserts exactly what its dense role derives: agent-role does not change,
-    // embed-role (embed → chat, generate, stream) does, and so does the route that
-    // falls back to it.
-    const projected = projectDraft(twoTypes, stage([dense({ exposedCaps: DENSE })]));
+    // The join asserts exactly what a dense role derives: spare-dense does not change
+    // (no affected role), embed-role (embed → chat, generate, stream) does, and so
+    // does the route that falls back to it.
+    const projected = projectDraft(twoTypes, stage([joinChat(DENSE)]));
     const group = groupOf(projected, 'gpt-5');
+    expect(group.edited).toEqual([
+      { useCase: 'chat', was: { provider: 'hosted', model: 'gpt-5-mini' } },
+    ]);
     expect(group.addedCaps).toEqual(['chat', 'generate', 'stream']);
     expect(group.removedCaps).toEqual(['embed']);
+    expect(group.affectedRoles).toEqual([]);
     expect(group.sameModel).toEqual([]);
     expect(group.fallback).toEqual(['embedding']);
-    expect(projected.routeRows.has('agent')).toBe(true); // edited
-    expect(projected.routeReach.get('agent')?.reach).toBe('edited');
   });
 
   it("scopes a fallback row's delta to the roles that actually list it", () => {
-    // Both roles change, differently: agent-role gains embed and loses generate,
+    // Both roles change, differently: spare-dense gains embed and loses generate,
     // embed-role gains chat and stream. The embedding route reaches gpt-5 through
     // embed-role ONLY, so its delta is embed-role's — never the group's union.
-    const projected = projectDraft(
-      twoTypes,
-      stage([dense({ exposedCaps: ['chat', 'stream', 'embed'] })])
-    );
+    const projected = projectDraft(twoTypes, stage([joinChat(['chat', 'stream', 'embed'])]));
     const group = groupOf(projected, 'gpt-5');
     expect(group.addedCaps).toEqual(['chat', 'stream', 'embed']);
     expect(group.removedCaps).toEqual(['generate']);
+    expect(group.affectedRoles).toEqual(['spare-dense']);
     expect(group.fallback).toEqual(['embedding']);
     expect(group.fallbackDeltas.get('embedding')).toEqual({
       addedCaps: ['chat', 'stream'],
@@ -1580,23 +1592,41 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
   });
 
   it("scopes a fallback row's Think to its contributing role", () => {
-    // agent-role already Thinks auto; analysis-role does not. An override to auto
-    // changes analysis-role (and so completion, which falls back to it) but the
-    // group-level Think delta must not be attributed to a row whose chain meets
-    // only agent-role — here, none; and completion's own delta names the Think.
+    // analysis-role already Thinks auto; agent-role does not. The override to auto
+    // (with generate) changes both — so the GROUP names a Think delta — but
+    // completion's chain meets analysis-role only, whose Think does not move.
+    const analysisAuto = base.models.map((model) =>
+      model.role === 'analysis-role' ? { ...model, thinkMode: 'auto' as const } : model
+    );
     const projected = projectDraft(
-      {
-        ...base,
-        models: base.models.map((model) =>
-          model.role === 'agent-role' ? { ...model, thinkMode: 'auto' } : model
-        ),
-      },
-      stage([override({ exposedCaps: GPT5, thinkMode: 'auto' })])
+      { ...base, models: analysisAuto },
+      stage([override({ thinkMode: 'auto' })])
     );
     const group = groupOf(projected, 'gpt-5');
     expect(group.think).toBe('auto');
     expect(group.fallbackDeltas.get('completion')).toEqual({
-      addedCaps: [],
+      addedCaps: ['generate'],
+      removedCaps: [],
+      think: null,
+    });
+    // Contrast: when the contributing role's Think does move, the row's delta says so.
+    const moving = projectDraft(base, stage([override({ thinkMode: 'auto' })]));
+    expect(groupOf(moving, 'gpt-5').fallbackDeltas.get('completion')?.think).toBe('auto');
+    // Several contributing roles: the row's delta is THEIR union. agent-role ('') and
+    // analysis-role (auto) both list completion; Think moves for agent-role.
+    const both = projectDraft(
+      {
+        ...base,
+        models: analysisAuto.map((model) =>
+          model.role === 'agent-role'
+            ? { ...model, routedUseCases: ['agent', 'completion'] }
+            : model
+        ),
+      },
+      stage([override({ thinkMode: 'auto' })])
+    );
+    expect(groupOf(both, 'gpt-5').fallbackDeltas.get('completion')).toEqual({
+      addedCaps: ['generate'],
       removedCaps: [],
       think: 'auto',
     });
@@ -1620,12 +1650,13 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
       projectDraft(withSpare, { ...draft, needsReview: ['route:agent'] }).roleRows.get('spare-role')
         ?.needsReview
     ).toBe(true);
-    // Contrast: a spare role already exposing generate is untouched.
+    // Contrast: when every role on gpt-5 already exposes what the override asserts
+    // (one explicit override, folded across the selector), nothing changes.
     const already = projectDraft(
       {
         ...withSpare,
         models: withSpare.models.map((m) =>
-          m.role === 'spare-role' ? { ...m, ...caps([...GPT5, 'generate']) } : m
+          m.modelName === 'gpt-5' ? { ...m, ...caps([...GPT5, 'generate']) } : m
         ),
       },
       draft

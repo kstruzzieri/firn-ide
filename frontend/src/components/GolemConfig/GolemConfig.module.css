@@ -2228,10 +2228,10 @@ select.input {
 /* ── [W6] reach: how a staged model change reaches a row ────────────────── */
 
 /* Edited here: the stripe widens to 4px and the row takes the staged tint.
-   Specificity (0,3,0), later in source: the zebra and hover rules above are
-   (0,3,0) too and would otherwise paint over the tint on every even row. */
-.table > .row[data-mark='edited'],
-.editGroup > .row[data-mark='edited'] {
+   `.row.row` lifts the specificity to (0,3,0) under EVERY parent (.table,
+   .editGroup, .noticeGroup); later in source, it wins the tie with the
+   zebra and hover rules above, which would otherwise paint over the tint. */
+.row.row[data-mark='edited'] {
   background-color: color-mix(in srgb, var(--status-warning) 9%, transparent);
 }
 
@@ -2240,9 +2240,13 @@ select.input {
 }
 
 /* Same model: the change arrives through the selector, so a softer stripe and tint. */
-.table > .row[data-mark='same-model'],
-.editGroup > .row[data-mark='same-model'] {
+.row.row[data-mark='same-model'] {
   background-color: color-mix(in srgb, var(--status-warning) 5%, transparent);
+}
+
+/* Hover still answers on a tinted row. */
+.row.row[data-mark]:hover {
+  background-color: var(--surface-hover);
 }
 
 .row[data-mark='same-model']::before {
@@ -2304,7 +2308,9 @@ select.input {
   margin-top: 3px;
 }
 
-/* The eyebrow, visible at every width (unlike .recordLabel, the record-form echo). */
+/* The eyebrow: .recordLabel's face, but not hidden with it at >= 600 container px
+   (the stylesheet guard reads `.recordLabel {` as its own rule, so this is not
+   merged into it). */
 .capsLabel {
   display: inline;
   margin-right: 6px;
@@ -2334,7 +2340,7 @@ select.input {
   color: var(--text-secondary);
 }
 
-.capPill s {
+.capPill del {
   color: var(--text-muted);
 }
 

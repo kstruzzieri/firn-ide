@@ -1379,6 +1379,12 @@ export interface ReachGroup {
   fallbackDeltas: ReadonlyMap<string, ReachDelta>;
   /** Roles on the selector routing nothing whose values change (the override is per selector). Sorted. */
   affectedRoles: string[];
+  /**
+   * `field value` for each model fact an edited route changes on a role already on
+   * the selector (type, parameters, contextWindow, dimensions) — the one visible
+   * consequence of a same-name change that is not an override. Sorted, deduped.
+   */
+  factsChanged: string[];
   /** The first edited route's identity: the group header's jump target. */
   changeId: string;
 }
@@ -1744,6 +1750,19 @@ function reachGroupsOf(
             : { provider: applied.provider, model: applied.modelName },
       };
     });
+    const factsChanged = new Set<string>();
+    for (const change of group.changes) {
+      const applied = modelOf.get(roleOf.get(change.useCase) ?? '');
+      if (applied === undefined || !onSelector(applied)) continue;
+      const facts = change.modelFacts;
+      if (applied.type !== facts.type) factsChanged.add(`type ${facts.type}`);
+      if ((applied.parameters ?? '') !== (facts.parameters ?? ''))
+        factsChanged.add(`parameters ${facts.parameters ?? 'cleared'}`);
+      if ((applied.contextWindow ?? 0) !== (facts.contextWindow ?? 0))
+        factsChanged.add(`context window ${facts.contextWindow ?? 'cleared'}`);
+      if ((applied.dimensions ?? 0) !== (facts.dimensions ?? 0))
+        factsChanged.add(`dimensions ${facts.dimensions ?? 'cleared'}`);
+    }
     const joins = edited
       .filter((edit) => {
         const applied = modelOf.get(roleOf.get(edit.useCase) ?? '');
@@ -1806,6 +1825,7 @@ function reachGroupsOf(
         .filter((role) => role.routedUseCases.length === 0)
         .map((role) => role.role)
         .sort(compareString),
+      factsChanged: [...factsChanged].sort(compareString),
       changeId: changeStableID(group.changes[0]),
     });
   }

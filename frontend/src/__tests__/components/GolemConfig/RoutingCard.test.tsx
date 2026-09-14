@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RoutingCard, routeRowKey } from '../../../components/GolemConfig/RoutingCard';
 import {
@@ -663,6 +663,21 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     expect(
       within(edited).getByText('Model also serves completion and summarize')
     ).toBeInTheDocument();
+    // With a real Think change the siblings are same-model rows: the edited row's
+    // sentence names them (no marker), and a same-model row's sentence names the
+    // edited route, so ITS marker names only the rest.
+    cleanup();
+    renderProjected(
+      sharedRole,
+      [thinking({ routedUseCases: ['chat', 'completion', 'summarize'] })],
+      change()
+    );
+    const chat = screen.getByTestId('route-row-chat');
+    expect(sentence(chat)).toHaveTextContent('The model also serves completion and summarize.');
+    expect(within(chat).queryByText(/Model also serves/)).not.toBeInTheDocument();
+    const sibling = screen.getByTestId('route-row-summarize');
+    expect(sentence(sibling)).toHaveTextContent('Same model as chat — Think becomes always.');
+    expect(within(sibling).getByText('Model also serves completion')).toBeInTheDocument();
   });
 
   it('keeps the review detail on a reached row and drops it under a replaced source', () => {
@@ -718,8 +733,9 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
 
   it("tells a fallback row only what ITS chain's role changes, and marks an unrouted role", () => {
     // chat-role (chat; completion falls back to it) gains tool_call. spare-role, a defined
-    // model nothing routes on the same selector, gains thinking AND tool_call and its
-    // Think flips to auto. completion's chain meets chat-role only.
+    // model nothing routes on the same selector, shares the selector's exposure (one
+    // explicit override, folded) but Thinks '' — so it gains tool_call AND its Think
+    // flips to auto. completion's chain meets chat-role only: no Think clause.
     const routes = [
       { useCase: 'chat', role: 'chat-role' },
       { useCase: 'completion', role: 'coder-role' },
@@ -727,7 +743,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     const models = [
       thinking({ routedUseCases: ['chat', 'completion'] }),
       thinking({ role: 'coder-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
-      { ...model, role: 'spare-role', routedUseCases: [], removable: true },
+      thinking({ role: 'spare-role', routedUseCases: [], removable: true, thinkMode: '' }),
     ];
     renderProjected(
       routes,
@@ -737,10 +753,44 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     expect(sentence(screen.getByTestId('route-row-completion'))).toHaveTextContent(
       "gpt-5-mini is in this route's fallback chain — it will now have tool_call."
     );
+    // Its OWN values change, so it reads Modified — Affected is reserved for rows
+    // whose values stay — with the same sub-line a same-model route row carries.
     const spare = screen.getByTestId('defined-model-row-spare-role');
-    expect(statusOf(spare, 'Affected')).toHaveAttribute('data-tone', 'info');
-    expect(statusOf(spare, 'Affected')).toHaveTextContent('model changes');
+    expect(statusOf(spare, 'Modified')).toHaveAttribute('data-tone', 'warn');
+    expect(statusOf(spare, 'Modified')).toHaveTextContent('model changes');
+    expect(within(spare).queryByText('Affected')).not.toBeInTheDocument();
     expect(spare).not.toHaveAttribute('data-changed');
+  });
+
+  it('keeps naming a sibling that still reaches the model through its fallback chain', () => {
+    // completion is routed to coder-role and falls back to chat-role. Staging it onto
+    // gpt-6 retargets coder-role, which KEEPS its fallbacks: chat's model still serves
+    // completion after Apply, so chat's marker keeps naming it.
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'coder-role' },
+    ];
+    const models = [
+      thinking({ routedUseCases: ['chat', 'completion'] }),
+      thinking({ role: 'coder-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
+    ];
+    renderProjected(
+      routes,
+      models,
+      change({
+        useCase: 'completion',
+        modelFacts: { provider: 'hosted', model: 'gpt-6', type: 'dense' },
+      })
+    );
+    expect(
+      within(screen.getByTestId('route-row-chat')).getByText('Model also serves completion')
+    ).toBeInTheDocument();
+    // Contrast: an unassigned sibling leaves every chain.
+    cleanup();
+    renderProjected(routes, models, { kind: 'route-unassign', useCase: 'completion' });
+    expect(
+      within(screen.getByTestId('route-row-chat')).queryByText(/Model also serves/)
+    ).not.toBeInTheDocument();
   });
 
   it('shows the legend only while some row is reached or the source is replaced', () => {
@@ -769,32 +819,6 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
       />
     );
     expect(screen.getByText(/staged, not applied/)).toBeInTheDocument();
-  });
-
-  it('shows the legend only while some row is marked', () => {
-    const { unmount } = render(
-      <RoutingCard
-        routes={twoRoles}
-        models={twoRoleModels}
-        providers={[provider]}
-        draft={cleanDraft('0'.repeat(64))}
-        changes={[]}
-        rows={new Map()}
-        roleRows={new Map()}
-        selectorUseCases={new Map()}
-        routeReach={new Map()}
-        diagnostics={[]}
-        editable
-        onStage={() => {}}
-        onUnstagedChange={() => {}}
-      />
-    );
-    expect(screen.queryByText(/staged, not applied/)).not.toBeInTheDocument();
-    unmount();
-    renderProjected(twoRoles, twoRoleModels, change());
-    const legend = screen.getByText(/staged, not applied/);
-    expect(legend).toHaveTextContent('Modified');
-    expect(legend).toHaveTextContent('Affected');
   });
 });
 
