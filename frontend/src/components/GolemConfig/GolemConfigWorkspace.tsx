@@ -1977,6 +1977,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <ApplyBar
                 source={draft.source}
                 changes={projected.changes}
+                reach={projected.reachGroups}
                 count={changeCount}
                 blocked={blocked}
                 locked={locked}

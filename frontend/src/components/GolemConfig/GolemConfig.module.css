@@ -1644,6 +1644,97 @@ select.input {
   opacity: 0.6;
 }
 
+/* ── [W6] reach groups in the bar ───────────────────────────────────────── */
+
+.reachCount {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* BASE: the header stacks over its badges; the divider is dropped. Both
+   upgrade at >= 600 container px, with the tables. */
+.reachGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 6px;
+}
+
+.reachHeader {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.reachHeader b {
+  font-weight: 600;
+}
+
+.reachHeader small {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.reachDelta {
+  font-family: var(--font-ui);
+  color: var(--text-secondary);
+}
+
+.reachHeader:hover:not(:disabled) .reachDelta {
+  color: var(--text-primary);
+}
+
+.reachHeader:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.reachHeader:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The badge is a chip whose dot says how the route is reached. */
+.badge[data-kind='same-model']::before {
+  opacity: 0.6;
+}
+
+.badge[data-kind='fallback'] {
+  border-style: dashed;
+}
+
+.badge[data-kind='fallback']::before {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--palette-blue) inset;
+}
+
+.badge .was {
+  display: inline;
+  margin-left: 6px;
+}
+
+.reachDivider {
+  display: none;
+}
+
 /* ── result panels: consent, drops, conflict, recovery ──────────────────── */
 
 .panel {
@@ -2077,6 +2168,20 @@ select.input {
 
   .emptyActions .button {
     flex: none;
+  }
+
+  /* [W6] The bar's reach group lies flat once the tables do; the divider returns. */
+  .reachGroup {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .reachDivider {
+    display: inline-block;
+    align-self: stretch;
+    width: 1px;
+    background-color: var(--surface-border);
   }
 }
 

@@ -1,19 +1,26 @@
 /**
- * The Apply bar (#263 spec §4.1 item 4, §3.3, mockup v10).
+ * The Apply bar (#263 spec §4.1 item 4, §3.3, mockup v10; wave 6 groups).
  *
- * Dirty only, and honest about what "dirty" means: `N staged changes`, one
- * chip per change reading `target · field` (ruling 7), then Discard and Apply.
- * A chip is not decoration — it is the only handle some changes have
- * (a staged provider-add has no applied row to sit on), so every chip opens and
- * focuses the editor that produced it.
+ * Dirty only, and honest about what "dirty" means: `N staged changes`, then
+ * what those changes reach. Route changes render as GROUPS, one per model
+ * they land on: a header naming the model and what changes on it, then one
+ * badge per route it reaches — edited (with `was old-model` for a retarget),
+ * same model, a divider, fallback. `M models · K routes affected` counts each
+ * route once across groups; a staged unassign, provider and role chips are
+ * outside K. Every other change keeps its `target · field` chip (ruling 7).
+ * A chip or badge is not decoration — it is the only handle some changes
+ * have (a staged provider-add has no applied row to sit on), so every one
+ * opens and focuses the row or editor behind it.
  *
  * The bar renders no result state. Consent, drops, conflict, busy, and recovery
  * are their own panels above it, because each one replaces the whole question
  * the bar is asking rather than decorating it.
  */
 
-import type { ApplySource, Change } from '../../types/golemConfig';
+import type { ApplySource, Change, ReachGroup } from '../../types/golemConfig';
 import { changeStableID } from '../../types/golemConfig';
+import { listUseCases } from '../../utils/listUseCases';
+import { Was } from './Cell';
 import styles from './GolemConfig.module.css';
 
 /**
@@ -76,11 +83,48 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
+/**
+ * What changes on the group's model, for its header. A selector nothing sat on
+ * shows the configuration the new route sets (`routes X · capabilities … ·
+ * Think …`) rather than a delta against nothing; an override that changes
+ * nothing visible reads `staged`.
+ */
+function reachDeltaLine(group: ReachGroup): string {
+  const parts = group.selectorHadRoles
+    ? [
+        group.addedCaps.length > 0 ? `capabilities + ${group.addedCaps.join(', ')}` : '',
+        group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
+        group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
+        group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
+      ]
+    : [
+        `routes ${listUseCases(group.joins)}`,
+        `capabilities ${group.staged.exposedCaps.join(', ')}`,
+        group.staged.thinkMode === '' ? '' : `Think ${group.staged.thinkMode}`,
+      ];
+  const line = parts.filter((part) => part !== '').join(' · ');
+  return line === '' ? 'staged' : line;
+}
+
+/** K: every route some group reaches, counted once. */
+const routesAffected = (reach: readonly ReachGroup[]): number =>
+  new Set(
+    reach.flatMap((group) => [
+      ...group.edited.map((edit) => edit.useCase),
+      ...group.sameModel,
+      ...group.fallback,
+    ])
+  ).size;
+
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
 export interface ApplyBarProps {
   /** The draft source, so a replacement gets the chip it is counted as. */
   source: ApplySource;
   /** The COALESCED changes — what Apply actually sends (§3.3). */
   changes: readonly Change[];
+  /** [W6] One group per staged selector, first-staged order (`projectDraft`). */
+  reach: readonly ReachGroup[];
   /** `changes.length` plus one when the source itself is a replacement. */
   count: number;
   /** Why Apply is unavailable, or null when it is available. */
@@ -108,6 +152,7 @@ export interface ApplyBarProps {
 export function ApplyBar({
   source,
   changes,
+  reach,
   count,
   blocked,
   locked,
@@ -118,17 +163,67 @@ export function ApplyBar({
   onOpenSource,
 }: ApplyBarProps) {
   const sourceChip = sourceChipLabel(source);
+  const badge = (useCase: string, kind: 'edited' | 'same-model' | 'fallback', was?: string) => (
+    <button
+      key={`${kind}:${useCase}`}
+      type="button"
+      className={`${styles.chip} ${styles.badge}`}
+      data-kind={kind}
+      disabled={locked}
+      onClick={() => onOpenChange(`route:${useCase}`)}
+    >
+      {useCase}
+      {was !== undefined && <Was value={was} />}
+      <span className={styles.srOnly}>{kind === 'same-model' ? 'same model' : kind}</span>
+    </button>
+  );
 
   return (
     <div className={styles.draftBar} data-testid="golem-config-draft">
-      <span className={styles.draftCount}>{`${count} staged change${count === 1 ? '' : 's'}`}</span>
+      <span className={styles.draftCount}>{plural(count, 'staged change')}</span>
+      {reach.length > 0 && (
+        <span className={styles.reachCount}>
+          {`${plural(reach.length, 'model')} · ${plural(routesAffected(reach), 'route')} affected`}
+        </span>
+      )}
       <span className={styles.chips}>
         {sourceChip !== null && (
           <button type="button" className={styles.chip} disabled={locked} onClick={onOpenSource}>
             {sourceChip}
           </button>
         )}
+        {reach.map((group) => (
+          <span
+            key={group.key}
+            className={styles.reachGroup}
+            data-testid={`reach-group-${group.model}`}
+          >
+            <button
+              type="button"
+              className={styles.reachHeader}
+              disabled={locked}
+              onClick={() => onOpenChange(group.changeId)}
+            >
+              <b>{group.model}</b>
+              <small>{group.provider}</small>
+              <span className={styles.reachDelta}>{reachDeltaLine(group)}</span>
+            </button>
+            <span className={styles.badges}>
+              {group.edited.map((edit) => badge(edit.useCase, 'edited', edit.was?.model))}
+              {group.sameModel.map((useCase) => badge(useCase, 'same-model'))}
+              {group.fallback.length > 0 && (
+                <span
+                  className={styles.reachDivider}
+                  data-testid="reach-divider"
+                  aria-hidden="true"
+                />
+              )}
+              {group.fallback.map((useCase) => badge(useCase, 'fallback'))}
+            </span>
+          </span>
+        ))}
         {changes.map((change) => {
+          if (change.kind === 'route') return null; // rendered in its group above
           const id = changeStableID(change);
           return (
             <button

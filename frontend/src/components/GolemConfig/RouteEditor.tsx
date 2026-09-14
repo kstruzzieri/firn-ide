@@ -65,6 +65,7 @@ import {
   type ModelFacts,
   type RouteChange,
 } from '../../types/golemConfig';
+import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
 import { ModelBand, canonicalCaps, type ManualModel } from './ModelBand';
@@ -91,16 +92,10 @@ const THINK_LABEL: Record<ThinkMode, string> = {
 };
 
 /**
- * Plain English for a list of use cases (NOT a hook — the `use` prefix would
- * make the linter, and a reader, think it were one), with the verb that agrees with it:
- * "chat also uses" but "chat and completion also use". Getting this wrong is
- * the kind of thing that makes a careful notice read as machine output.
+ * The verb that agrees with a `listUseCases` list: "chat also uses" but "chat
+ * and completion also use". Getting this wrong is the kind of thing that makes
+ * a careful notice read as machine output.
  */
-export const listUseCases = (useCases: readonly string[]): string =>
-  useCases.length <= 1
-    ? (useCases[0] ?? '')
-    : `${useCases.slice(0, -1).join(', ')} and ${useCases[useCases.length - 1]}`;
-
 const agrees = (useCases: readonly string[], singular: string, plural: string): string =>
   useCases.length === 1 ? singular : plural;
 

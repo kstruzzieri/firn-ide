@@ -46,12 +46,13 @@ import {
   type RowMarkers,
 } from '../../types/golemConfig';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
+import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
 import { AssignList, type AssignOption } from './AssignList';
 import { Cell, Was } from './Cell';
 import styles from './GolemConfig.module.css';
-import { RouteEditor, listUseCases } from './RouteEditor';
+import { RouteEditor } from './RouteEditor';
 import { StatusText, type StatusTone } from './StatusText';
 
 /**

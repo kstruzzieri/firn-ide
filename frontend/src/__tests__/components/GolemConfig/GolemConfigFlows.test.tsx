@@ -2044,16 +2044,49 @@ describe('route picker floors (wave 4c)', () => {
 // ---------------------------------------------------------------------------
 
 describe('selector-wide siblings (firn-ide#315)', () => {
+  const thinking = (over: Partial<ModelProjection>) =>
+    model({
+      effectiveCapabilities: ['chat', 'stream', 'thinking'],
+      capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['chat', 'stream', 'thinking'],
+      thinkMode: 'auto',
+      hasThinkTags: false,
+      ...over,
+    });
+
+  // [W6] The bar's badge for a row that has NO staged change of its own must
+  // still land on that row: the card resolves any known route, staged or not.
+  it('lands a same-model badge click on the sibling row, opening its editor', async () => {
+    reload({
+      ...readyProjection,
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        thinking({ routedUseCases: ['chat'] }),
+        thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
+      ],
+    });
+    await mountWorkspace();
+    await openRoute('chat');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByText('1 model · 2 routes affected')).toBeInTheDocument();
+    const groupEl = within(bar).getByTestId('reach-group-gpt-5-mini');
+    expect(within(groupEl).getAllByRole('button')[0]).toHaveTextContent('Think always');
+    expect(screen.queryByRole('group', { name: 'Route summarize' })).not.toBeInTheDocument();
+
+    await userEvent.click(within(groupEl).getByRole('button', { name: /^summarize/ }));
+    expect(screen.getByRole('group', { name: 'Route summarize' })).toBeInTheDocument();
+    expect(screen.getByTestId('route-row-summarize')).toHaveAttribute('data-flash');
+    expect(screen.getByLabelText('Filter models')).toHaveFocus();
+  });
+
   it('paints a think change on the sibling row before Apply, and sends one change', async () => {
-    const thinking = (over: Partial<ModelProjection>) =>
-      model({
-        effectiveCapabilities: ['chat', 'stream', 'thinking'],
-        capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
-        exposedCapabilities: ['chat', 'stream', 'thinking'],
-        thinkMode: 'auto',
-        hasThinkTags: false,
-        ...over,
-      });
     reload({
       ...readyProjection,
       routes: [
