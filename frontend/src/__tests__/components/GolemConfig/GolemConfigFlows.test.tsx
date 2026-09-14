@@ -21,7 +21,7 @@ import {
 import * as golemConfig from '../../../types/golemConfig';
 import { ACTIVE_PROFILE_KEY } from '../../../types/golemConfig';
 import { GolemContractError, CAPABILITY_NAMES } from '../../../types/golem';
-import type { ModelProjection, ProviderProjection } from '../../../types/golem';
+import type { CapabilityName, ModelProjection, ProviderProjection } from '../../../types/golem';
 
 jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
@@ -2084,6 +2084,118 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     expect(screen.getByRole('group', { name: 'Route summarize' })).toBeInTheDocument();
     expect(screen.getByTestId('route-row-summarize')).toHaveAttribute('data-flash');
     expect(screen.getByLabelText('Filter models')).toHaveFocus();
+  });
+
+  // [W6] Keith's screenshot (#307 defect 1): editing `reasoning` on deepseek-v4-pro
+  // and ticking tool_call painted agent, analysis, chat and completion Modified
+  // with no evidence on any row, and the bar showed one chip. Every row now says
+  // how it is reached, the bar groups the change by the model, and Apply still
+  // sends ONE change.
+  it('explains every row a capability override reaches, and sends one change', async () => {
+    // The projection contract: effective = the declared caps, exposed ⊆ known.
+    const declares = (caps: CapabilityName[], exposed: CapabilityName[] = caps) => ({
+      effectiveCapabilities: caps,
+      capabilityFacts: { caps, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: exposed,
+    });
+    reload({
+      ...readyProjection,
+      routes: [
+        { useCase: 'agent', role: 'fast' },
+        { useCase: 'analysis', role: 'cloud-pro' },
+        { useCase: 'chat', role: 'general' },
+        { useCase: 'completion', role: 'coding' },
+        { useCase: 'reasoning', role: 'cloud-pro' },
+      ],
+      // Role order, as the contract requires.
+      models: [
+        // cloud-pro serves analysis and reasoning directly; agent, chat and
+        // completion reach it through their roles' fallback chains (roleUsage is
+        // fallback-inclusive). It declares tool_call but does not expose it.
+        model({
+          role: 'cloud-pro',
+          modelName: 'deepseek-v4-pro',
+          type: 'moe',
+          ...declares(['chat', 'stream', 'tool_call'], ['chat', 'stream']),
+          routedUseCases: ['agent', 'analysis', 'chat', 'completion', 'reasoning'],
+        }),
+        model({
+          role: 'coding',
+          modelName: 'qwen3-coder-next:latest',
+          type: 'moe',
+          routedUseCases: ['completion'],
+        }),
+        model({
+          role: 'fast',
+          modelName: 'qwen3.6:35b-a3b',
+          type: 'moe',
+          ...declares(['chat', 'stream', 'tool_call']),
+          routedUseCases: ['agent'],
+        }),
+        model({ role: 'general', modelName: 'gemma4:31b', routedUseCases: ['chat'] }),
+      ],
+    });
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+
+    await openRoute('reasoning');
+    await userEvent.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
+    // analysis, completion and reasoning have no floor on record: acknowledge the reach.
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+
+    const rowOf = (useCase: string) => screen.getByTestId(`route-row-${useCase}`);
+    const sentenceOf = (useCase: string) => within(rowOf(useCase)).getByTestId('reach-sentence');
+    expect(rowOf('reasoning')).toHaveAttribute('data-mark', 'edited');
+    expect(sentenceOf('reasoning')).toHaveTextContent(
+      'You edited this route. The model also serves analysis and is the fallback for agent, chat and completion.'
+    );
+    expect(rowOf('analysis')).toHaveAttribute('data-mark', 'same-model');
+    expect(within(rowOf('analysis')).getByText('Modified')).toHaveTextContent('model changes');
+    expect(sentenceOf('analysis')).toHaveTextContent(
+      'Same model as reasoning — capabilities belong to the model, so it gets tool_call too.'
+    );
+    for (const useCase of ['agent', 'chat', 'completion']) {
+      expect(rowOf(useCase)).toHaveAttribute('data-mark', 'fallback');
+      expect(rowOf(useCase)).not.toHaveAttribute('data-changed');
+      expect(within(rowOf(useCase)).getByText('Affected')).toHaveTextContent('fallback changes');
+      expect(sentenceOf(useCase)).toHaveTextContent(
+        "deepseek-v4-pro is in this route's fallback chain — it will now have tool_call."
+      );
+    }
+    // Nothing else is touched: embedding and planning stay bare offers.
+    expect(rowOf('embedding')).not.toHaveAttribute('data-mark');
+
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByText('1 staged change')).toBeInTheDocument();
+    expect(within(bar).getByText('1 model · 5 routes affected')).toBeInTheDocument();
+    const group = within(bar).getByTestId('reach-group-deepseek-v4-pro');
+    expect(within(group).getAllByRole('button')[0]).toHaveTextContent('capabilities + tool_call');
+    expect(
+      within(group)
+        .getAllByRole('button')
+        .slice(1)
+        .map((badge) => badge.textContent)
+    ).toEqual([
+      'reasoningedited',
+      'analysissame model',
+      'agentfallback',
+      'chatfallback',
+      'completionfallback',
+    ]);
+
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
+    expect(lastApply().changes).toEqual([
+      expect.objectContaining({
+        kind: 'route',
+        useCase: 'reasoning',
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+      }),
+    ]);
   });
 
   it('paints a think change on the sibling row before Apply, and sends one change', async () => {
