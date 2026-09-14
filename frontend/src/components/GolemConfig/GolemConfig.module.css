@@ -2116,6 +2116,125 @@ select.input {
   border-radius: 2px;
 }
 
+/* ── [W6] reach: how a staged model change reaches a row ────────────────── */
+
+/* Edited here: the stripe widens to 4px and the row takes the staged tint. */
+.row[data-mark='edited'] {
+  background-color: color-mix(in srgb, var(--status-warning) 9%, transparent);
+}
+
+.row[data-mark='edited']::before {
+  width: 4px;
+}
+
+/* Same model: the change arrives through the selector, so a softer stripe and tint. */
+.row[data-mark='same-model'] {
+  background-color: color-mix(in srgb, var(--status-warning) 5%, transparent);
+}
+
+.row[data-mark='same-model']::before {
+  opacity: 0.6;
+}
+
+/* Fallback: the row's own values stay, so no tint — a dashed blue stripe only,
+   drawn as a repeating gradient on the same inset pseudo-element the staged
+   stripe uses (the stylesheet guard forbids one-sided borders for a reason).
+   These rows carry no data-changed, so the stripe is drawn here. */
+.row[data-mark='fallback'] {
+  position: relative;
+}
+
+.row[data-mark='fallback']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--palette-blue) 0 4px,
+    transparent 4px 7px
+  );
+}
+
+.editGroup > .row[data-mark='fallback']::before {
+  left: 5px;
+}
+
+/* A value with a WAS line is staged, not applied (legend). */
+.stagedValue {
+  font-style: italic;
+  color: var(--status-warning);
+}
+
+/* Hollow blue dot: reached, own values unchanged. */
+.status[data-tone='info'] .statusDot {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--palette-blue) inset;
+}
+
+/* The status sub-line wraps under the label, aligned past the dot (7px + 7px gap). */
+.status {
+  flex-wrap: wrap;
+}
+
+.statusDetail {
+  flex-basis: 100%;
+  padding-left: 14px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* This row's exposure before → after, under the model. */
+.capsRow {
+  display: block;
+  margin-top: 3px;
+}
+
+.capPills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+.capPill {
+  padding: 0 5px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.capPill s {
+  color: var(--text-muted);
+}
+
+/* One sentence, font-ui, ≤ 46ch: how the change reaches this row. */
+.reachSentence {
+  display: block;
+  max-width: 46ch;
+  margin-top: 2px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.legend {
+  margin: 8px 0 0;
+  padding: 0 14px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .was {
   display: block;
   font-family: var(--font-mono);

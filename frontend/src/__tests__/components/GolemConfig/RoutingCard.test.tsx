@@ -50,6 +50,7 @@ it('keeps an unstaged route edit mounted when Edit is clicked again', async () =
       rows={new Map()}
       roleRows={new Map()}
       selectorUseCases={new Map()}
+      routeReach={new Map()}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -88,6 +89,7 @@ it('keeps an unstaged route assignment mounted when Assign is clicked again', as
       rows={new Map()}
       roleRows={new Map()}
       selectorUseCases={new Map()}
+      routeReach={new Map()}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -124,6 +126,7 @@ describe('route editor Done (firn-ide#284)', () => {
     rows: new Map(),
     roleRows: new Map(),
     selectorUseCases: new Map(),
+    routeReach: new Map(),
     diagnostics: [],
     editable: true,
     onStage: jest.fn(),
@@ -348,10 +351,11 @@ describe('route editor Done (firn-ide#284)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Wave 4b (firn-ide#315): a selector-wide change reaches its sibling rows.
+// Wave 4b (firn-ide#315) → wave 6: a selector-wide change reaches its sibling
+// rows, and each reached row says HOW (edited / same model / fallback).
 // ---------------------------------------------------------------------------
 
-describe('selector-wide siblings (firn-ide#315)', () => {
+describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
   const thinking = (over: Partial<ModelProjection> = {}): ModelProjection => ({
     ...model,
     effectiveCapabilities: ['chat', 'stream', 'thinking'],
@@ -370,13 +374,16 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     confirmUnknown: false,
     ...over,
   });
-  /** Exactly what the workspace hands over: the projection of ONE staged change. */
+  /** Exactly what the workspace hands over: the projection of the staged changes. */
   const renderProjected = (
     routes: { useCase: string; role: string }[],
     models: ModelProjection[],
-    staged: RouteChange
+    ...staged: Change[]
   ) => {
-    const draft = stageChange(cleanDraft('0'.repeat(64)), staged, new KeyVault(new Map()));
+    const draft = staged.reduce(
+      (current, next) => stageChange(current, next, new KeyVault(new Map())),
+      cleanDraft('0'.repeat(64))
+    );
     const projected = projectDraft({ routes, models }, draft);
     render(
       <RoutingCard
@@ -388,6 +395,7 @@ describe('selector-wide siblings (firn-ide#315)', () => {
         rows={projected.routeRows}
         roleRows={projected.roleRows}
         selectorUseCases={projected.selectorUseCases}
+        routeReach={projected.routeReach}
         diagnostics={[]}
         editable
         onStage={() => {}}
@@ -404,33 +412,58 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     thinking({ routedUseCases: ['chat'] }),
     thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
   ];
+  const sentence = (row: HTMLElement) => within(row).queryByTestId('reach-sentence');
+  const statusOf = (row: HTMLElement, label: string) =>
+    within(row).getByText(label).closest('[data-tone]');
 
-  it('paints a selector-wide think change on the sibling row, with its own was line', () => {
+  it('paints a selector-wide think change on the sibling row as the same model, with its own was line', () => {
     renderProjected(twoRoles, twoRoleModels, change());
     const sibling = screen.getByTestId('route-row-summarize');
     expect(sibling).toHaveAttribute('data-changed', 'true');
-    expect(within(sibling).getByText('always')).toBeInTheDocument();
+    expect(sibling).toHaveAttribute('data-mark', 'same-model');
+    // The incoming value is staged, not applied: amber italic.
+    expect(within(sibling).getByText('always').tagName).toBe('EM');
     expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
-    expect(within(sibling).getByText('Modified')).toBeInTheDocument();
+    expect(statusOf(sibling, 'Modified')).toHaveAttribute('data-tone', 'warn');
+    expect(statusOf(sibling, 'Modified')).toHaveTextContent('model changes');
     // The model did not change — it is the same selector — so there is exactly one was line…
     expect(within(sibling).getAllByText(/^was$/i)).toHaveLength(1);
-    // …and the reach is told once, on the row that was edited.
-    expect(within(sibling).queryByText(/also affects/)).not.toBeInTheDocument();
+    // …the row says why it changes, in words, without a capabilities row (no caps delta)…
+    expect(sentence(sibling)).toHaveTextContent('Same model as chat — Think becomes always.');
+    expect(within(sibling).queryByText('Capabilities')).not.toBeInTheDocument();
+    // …and the edited row names what its model also serves.
     const edited = screen.getByTestId('route-row-chat');
-    expect(within(edited).getByText('also affects summarize')).toBeInTheDocument();
+    expect(edited).toHaveAttribute('data-mark', 'edited');
+    expect(sentence(edited)).toHaveTextContent(
+      'You edited this route. The model also serves summarize.'
+    );
+    expect(within(edited).queryByText(/also affects/)).not.toBeInTheDocument();
+    expect(statusOf(edited, 'Modified')).toHaveTextContent('edited here');
     expect(within(edited).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
   });
 
-  it('reads the sibling as Incompatible when the governing exposure drops its floor', () => {
+  it('reads the sibling as Incompatible and strikes the capability it loses', () => {
     // summarize's override narrows the selector to chat + thinking: chat loses stream.
     renderProjected(
       twoRoles,
       twoRoleModels,
       change({ useCase: 'summarize', exposedCaps: ['chat', 'thinking'] })
     );
+    const sibling = screen.getByTestId('route-row-chat');
+    expect(sibling).toHaveAttribute('data-mark', 'same-model');
+    expect(within(sibling).getByText('Incompatible')).toBeInTheDocument();
+    // Applied caps plain, the removed one struck: chat · − stream · thinking.
+    const pills = within(sibling).getByRole('list', { name: 'Capabilities' });
     expect(
-      within(screen.getByTestId('route-row-chat')).getByText('Incompatible')
-    ).toBeInTheDocument();
+      within(pills)
+        .getAllByRole('listitem')
+        .map((pill) => pill.textContent)
+    ).toEqual(['chat', '− stream', 'thinking']);
+    expect(within(pills).getByText('− stream').tagName).toBe('S');
+    // An override writes Think selector-wide too: both deltas, one sentence.
+    expect(sentence(sibling)).toHaveTextContent(
+      'Same model as summarize — capabilities belong to the model, so it loses stream, and Think becomes always.'
+    );
   });
 
   it('paints a joining change onto the sibling for the status verdict but not for think', () => {
@@ -454,11 +487,24 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     );
     const sibling = screen.getByTestId('route-row-chat');
     expect(sibling).toHaveAttribute('data-changed', 'true');
+    expect(sibling).toHaveAttribute('data-mark', 'same-model');
     // The capability override reaches the selector: chat loses stream.
     expect(within(sibling).getByText('Incompatible')).toBeInTheDocument();
-    // Think does not: no `always`, no was line.
+    // Think does not: no `always`, no was line, and the sentence says caps only.
     expect(within(sibling).queryByText('always')).not.toBeInTheDocument();
     expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
+    expect(sentence(sibling)).toHaveTextContent(
+      'Same model as summarize — capabilities belong to the model, so it loses stream.'
+    );
+    // The joining row paints its staged model as a staged value; its two WAS lines
+    // are the model it leaves and the Think it changes.
+    const edited = screen.getByTestId('route-row-summarize');
+    expect(within(edited).getByText('gpt-5').tagName).toBe('EM');
+    expect(
+      within(edited)
+        .getAllByText(/^was$/i)
+        .map((was) => was.parentElement?.textContent)
+    ).toEqual(['wasgpt-5-mini', 'wasauto']);
   });
 
   it('does not treat a same-name, different-facts change as an override', () => {
@@ -474,13 +520,18 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     // [W6] The join asserts the exposure the selector already has and its Think
     // lands on its own role: nothing changes for summarize, so it is not marked.
     expect(sibling).not.toHaveAttribute('data-changed');
+    expect(sibling).not.toHaveAttribute('data-mark');
+    expect(sentence(sibling)).toBeNull();
     expect(within(sibling).queryByText('always')).not.toBeInTheDocument();
     expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
+    expect(within(sibling).getByText('Ready')).toBeInTheDocument();
+    // Contrast: the edited row is marked.
+    expect(screen.getByTestId('route-row-chat')).toHaveAttribute('data-mark', 'edited');
   });
 
-  it('leaves a fork sibling on its applied values', () => {
+  it('leaves a fork sibling on its applied values, unmarked', () => {
     // chat and summarize share ONE role; retargeting chat forks it (spec 5.2b) and
-    // summarize keeps gpt-5-mini — only the projection's marker reaches it.
+    // summarize keeps gpt-5-mini — confirmation-only, so no mark at all.
     const sharedRole = [
       { useCase: 'chat', role: 'chat-role' },
       { useCase: 'summarize', role: 'chat-role' },
@@ -498,12 +549,124 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     expect(within(sibling).getByText('gpt-5-mini')).toBeInTheDocument();
     expect(within(sibling).getByText('auto')).toBeInTheDocument();
     expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
-    // [W6] Confirmation-only: the fork leaves the source role as it is, so the
-    // sibling carries no mark — the backend still asks for its acknowledgement.
     expect(sibling).not.toHaveAttribute('data-changed');
+    expect(sibling).not.toHaveAttribute('data-mark');
+    expect(sentence(sibling)).toBeNull();
+    // The edited row: staged model as a staged value, and nothing else is reached
+    // (other-role already exposes what the change asserts).
     const edited = screen.getByTestId('route-row-chat');
-    expect(within(edited).getByText('gpt-5')).toBeInTheDocument();
-    expect(within(edited).getByText('also affects summarize')).toBeInTheDocument();
+    expect(edited).toHaveAttribute('data-mark', 'edited');
+    expect(within(edited).getByText('gpt-5').tagName).toBe('EM');
+    expect(sentence(edited)).toHaveTextContent(/^You edited this route\.$/);
+    expect(within(edited).queryByText(/also affects/)).not.toBeInTheDocument();
+  });
+
+  it('marks a route reached only through its fallback chain as Affected, on its own values', () => {
+    // completion resolves to gpt-coder and falls back to chat-role (chat-role lists it).
+    // chat's override adds tool_call: completion's own row keeps every value.
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'coder-role' },
+    ];
+    const models = [
+      thinking({ routedUseCases: ['chat', 'completion'] }),
+      thinking({ role: 'coder-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
+    ];
+    renderProjected(
+      routes,
+      models,
+      change({ exposedCaps: ['chat', 'stream', 'thinking', 'tool_call'], thinkMode: 'auto' })
+    );
+    const reached = screen.getByTestId('route-row-completion');
+    expect(reached).toHaveAttribute('data-mark', 'fallback');
+    expect(reached).not.toHaveAttribute('data-changed');
+    expect(within(reached).getByText('gpt-coder')).toBeInTheDocument();
+    expect(within(reached).queryByText(/^was$/i)).not.toBeInTheDocument();
+    expect(within(reached).queryByRole('list', { name: 'Capabilities' })).not.toBeInTheDocument();
+    expect(statusOf(reached, 'Affected')).toHaveAttribute('data-tone', 'info');
+    expect(statusOf(reached, 'Affected')).toHaveTextContent('fallback changes');
+    expect(sentence(reached)).toHaveTextContent(
+      "gpt-5-mini is in this route's fallback chain — it will now have tool_call."
+    );
+    // The edited row: the added capability is a staged value; the sentence names the fallback.
+    const edited = screen.getByTestId('route-row-chat');
+    const pills = within(edited).getByRole('list', { name: 'Capabilities' });
+    // Canonical capability order, added pill in place: tool_call precedes thinking.
+    expect(
+      within(pills)
+        .getAllByRole('listitem')
+        .map((pill) => pill.textContent)
+    ).toEqual(['chat', 'stream', '+ tool_call', 'thinking']);
+    expect(within(pills).getByText('+ tool_call').tagName).toBe('EM');
+    expect(sentence(edited)).toHaveTextContent(
+      'You edited this route. The model is the fallback for completion.'
+    );
+  });
+
+  it('keeps a staged unassignment on its stripe with no reach mark', () => {
+    renderProjected(twoRoles, twoRoleModels, { kind: 'route-unassign', useCase: 'chat' });
+    const row = screen.getByTestId('route-row-chat');
+    expect(row).toHaveAttribute('data-changed', 'true');
+    expect(row).not.toHaveAttribute('data-mark');
+    expect(sentence(row)).toBeNull();
+    expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent('wasgpt-5-mini');
+    // §3.3: No model outranks Modified; the stripe and the WAS line carry the staging.
+    expect(within(row).getByText('No model')).toBeInTheDocument();
+  });
+
+  it('names what an unchanged model also serves, and yields to the staged model', () => {
+    const sharedRole = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'chat-role' },
+      { useCase: 'summarize', role: 'chat-role' },
+    ];
+    const models = [thinking({ routedUseCases: ['chat', 'completion', 'summarize'] })];
+    renderProjected(
+      sharedRole,
+      models,
+      change({
+        useCase: 'summarize',
+        modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      })
+    );
+    // Names visible, no count, no hover: chat's applied model also serves completion (and
+    // summarize, which is leaving — its applied truth still lists it).
+    expect(
+      within(screen.getByTestId('route-row-chat')).getByText(
+        'Model also serves completion and summarize'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/shared with/)).not.toBeInTheDocument();
+    // The row staged onto another model paints THAT model: the old coupling is suppressed.
+    expect(
+      within(screen.getByTestId('route-row-summarize')).queryByText(/Model also serves/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the legend only while some row is marked', () => {
+    const { unmount } = render(
+      <RoutingCard
+        routes={twoRoles}
+        models={twoRoleModels}
+        providers={[provider]}
+        draft={cleanDraft('0'.repeat(64))}
+        changes={[]}
+        rows={new Map()}
+        roleRows={new Map()}
+        selectorUseCases={new Map()}
+        routeReach={new Map()}
+        diagnostics={[]}
+        editable
+        onStage={() => {}}
+        onUnstagedChange={() => {}}
+      />
+    );
+    expect(screen.queryByText(/staged, not applied/)).not.toBeInTheDocument();
+    unmount();
+    renderProjected(twoRoles, twoRoleModels, change());
+    const legend = screen.getByText(/staged, not applied/);
+    expect(legend).toHaveTextContent('Modified');
+    expect(legend).toHaveTextContent('Affected');
   });
 });
 
@@ -528,6 +691,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     rows: new Map(),
     roleRows: new Map(),
     selectorUseCases: new Map(),
+    routeReach: new Map(),
     diagnostics: [],
     editable: true,
     onStage: jest.fn(),
@@ -578,6 +742,7 @@ describe('Defined models — Assign (wave 4d)', () => {
           changes={projected.changes}
           rows={projected.routeRows}
           selectorUseCases={projected.selectorUseCases}
+          routeReach={projected.routeReach}
         />
       );
       await userEvent.click(assign());
@@ -778,6 +943,7 @@ describe('Defined models — Assign (wave 4d)', () => {
         changes={projected.changes}
         rows={projected.routeRows}
         selectorUseCases={projected.selectorUseCases}
+        routeReach={projected.routeReach}
       />
     );
     await user.click(assign());

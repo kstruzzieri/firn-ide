@@ -96,7 +96,7 @@ const THINK_LABEL: Record<ThinkMode, string> = {
  * "chat also uses" but "chat and completion also use". Getting this wrong is
  * the kind of thing that makes a careful notice read as machine output.
  */
-const listUseCases = (useCases: readonly string[]): string =>
+export const listUseCases = (useCases: readonly string[]): string =>
   useCases.length <= 1
     ? (useCases[0] ?? '')
     : `${useCases.slice(0, -1).join(', ')} and ${useCases[useCases.length - 1]}`;

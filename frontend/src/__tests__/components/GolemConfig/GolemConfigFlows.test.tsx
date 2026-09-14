@@ -2082,8 +2082,8 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     expect(within(sibling).getByText('always')).toBeInTheDocument();
     expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
     expect(
-      within(screen.getByTestId('route-row-chat')).getByText('also affects summarize')
-    ).toBeInTheDocument();
+      within(screen.getByTestId('route-row-chat')).getByTestId('reach-sentence')
+    ).toHaveTextContent('You edited this route. The model also serves summarize.');
     // One change, one chip: the sibling is reached by the selector, not staged twice.
     const bar = screen.getByTestId('golem-config-draft');
     expect(within(bar).getByText('1 staged change')).toBeInTheDocument();

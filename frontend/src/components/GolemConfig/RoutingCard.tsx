@@ -20,6 +20,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  CAPABILITY_NAMES,
   compareString,
   type CapabilityName,
   type ModelProjection,
@@ -40,6 +41,8 @@ import {
   type Change,
   type Draft,
   type RouteChange,
+  type RouteReach,
+  type RouteReachEntry,
   type RowMarkers,
 } from '../../types/golemConfig';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
@@ -48,7 +51,7 @@ import type { EditorFocusRequest } from './ApplyBar';
 import { AssignList, type AssignOption } from './AssignList';
 import { Cell, Was } from './Cell';
 import styles from './GolemConfig.module.css';
-import { RouteEditor } from './RouteEditor';
+import { RouteEditor, listUseCases } from './RouteEditor';
 import { StatusText, type StatusTone } from './StatusText';
 
 /**
@@ -83,20 +86,103 @@ interface RouteView {
   caps: readonly CapabilityName[];
 }
 
+/** [W6] The status sub-line: why a reached row reads Modified / Affected. */
+const REACH_DETAIL: Record<RouteReach, string> = {
+  edited: 'edited here',
+  'same-model': 'model changes',
+  fallback: 'fallback changes',
+};
+
 function routeStatus(
   view: RouteView | null,
   useCase: string,
   markers: RowMarkers | undefined,
+  reach: RouteReach | undefined,
   sourceReplaced: boolean
-): { label: string; tone: StatusTone } {
+): { label: string; tone: StatusTone; detail?: string } {
   // §3.3: No model and Incompatible take precedence over Modified.
   if (view === null) return { label: 'No model', tone: 'dim' };
   if (!meetsUseCaseFloor(useCase, view.caps)) return { label: 'Incompatible', tone: 'bad' };
   if (markers?.needsReview === true) return { label: 'Needs review', tone: 'warn' };
+  const detail = reach === undefined ? undefined : REACH_DETAIL[reach];
   // A profile or blank source has nothing applied underneath it, so every
   // populated row is a pending change.
-  if (markers?.modified === true || sourceReplaced) return { label: 'Modified', tone: 'warn' };
+  if (markers?.modified === true || sourceReplaced)
+    return { label: 'Modified', tone: 'warn', detail };
+  // [W6] Reached through a fallback only: the row's own values stay.
+  if (markers?.affected === true) return { label: 'Affected', tone: 'info', detail };
   return { label: 'Ready', tone: 'ok' };
+}
+
+/** Canonical order over both sides, as every capability list on this surface reads. */
+const capDiff = (
+  before: readonly CapabilityName[],
+  after: readonly CapabilityName[]
+): { added: CapabilityName[]; removed: CapabilityName[]; all: CapabilityName[] } => ({
+  added: CAPABILITY_NAMES.filter((cap) => after.includes(cap) && !before.includes(cap)),
+  removed: CAPABILITY_NAMES.filter((cap) => before.includes(cap) && !after.includes(cap)),
+  all: CAPABILITY_NAMES.filter((cap) => before.includes(cap) || after.includes(cap)),
+});
+
+/** `Think becomes auto` / `Think is cleared`, or null when Think does not change. */
+const thinkClause = (think: ThinkMode | null, owner = ''): string | null =>
+  think === null
+    ? null
+    : think === ''
+      ? `${owner}Think is cleared`
+      : `${owner}Think becomes ${think}`;
+
+/**
+ * [W6] One sentence per reached row saying HOW the staged change reaches it.
+ * An edited row names what its model also serves; a same-model row describes
+ * ITS OWN before/after (two roles on one selector may start from different
+ * baselines, so the group's union would overstate one of them); a fallback
+ * row describes the model in its chain, never a first-hop order (chains are
+ * A → B → X).
+ */
+function reachSentence(
+  entry: RouteReachEntry,
+  own: { added: CapabilityName[]; removed: CapabilityName[]; think: ThinkMode | null }
+): string {
+  const { group } = entry;
+  switch (entry.reach) {
+    case 'edited': {
+      const clauses = [
+        group.sameModel.length > 0 ? `also serves ${listUseCases(group.sameModel)}` : '',
+        group.fallback.length > 0 ? `is the fallback for ${listUseCases(group.fallback)}` : '',
+      ].filter((clause) => clause !== '');
+      return clauses.length === 0
+        ? 'You edited this route.'
+        : `You edited this route. The model ${clauses.join(' and ')}.`;
+    }
+    case 'same-model': {
+      const caps = [
+        own.added.length > 0 ? `gets ${listUseCases(own.added)} too` : '',
+        own.removed.length > 0 ? `loses ${listUseCases(own.removed)}` : '',
+      ]
+        .filter((clause) => clause !== '')
+        .join(' and ');
+      const think = thinkClause(own.think);
+      const body =
+        caps === ''
+          ? (think ?? '')
+          : `capabilities belong to the model, so it ${caps}${think === null ? '' : `, and ${think}`}`;
+      return `Same model as ${listUseCases(group.edited.map((edit) => edit.useCase))} — ${body}.`;
+    }
+    case 'fallback': {
+      const caps = [
+        group.addedCaps.length > 0 ? `now have ${listUseCases(group.addedCaps)}` : '',
+        group.removedCaps.length > 0 ? `lose ${listUseCases(group.removedCaps)}` : '',
+      ]
+        .filter((clause) => clause !== '')
+        .join(' and ');
+      const parts = [
+        caps === '' ? '' : `it will ${caps}`,
+        thinkClause(group.think, 'its ') ?? '',
+      ].filter((part) => part !== '');
+      return `${group.model} is in this route's fallback chain — ${parts.join(', and ')}.`;
+    }
+  }
 }
 
 export interface RoutingCardProps {
@@ -122,6 +208,8 @@ export interface RoutingCardProps {
    * editor is opened.
    */
   selectorUseCases: ReadonlyMap<string, readonly string[]>;
+  /** [W6] Use case → how a staged model change reaches its row (`projectDraft`). */
+  routeReach: ReadonlyMap<string, RouteReachEntry>;
   diagnostics: readonly SettingsDiagnostic[];
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
@@ -143,6 +231,7 @@ export function RoutingCard({
   rows,
   roleRows,
   selectorUseCases,
+  routeReach,
   diagnostics,
   editable,
   focusRequest = null,
@@ -413,7 +502,8 @@ export function RoutingCard({
                           : applied.exposedCapabilities,
                     };
             const markers = rows.get(useCase);
-            const status = routeStatus(view, useCase, markers, sourceReplaced);
+            const reach = routeReach.get(useCase);
+            const status = routeStatus(view, useCase, markers, reach?.reach, sourceReplaced);
             const expanded = open.has(useCase);
             const editorId = `golem-route-editor-${index}`;
             const notices = rowDiagnostics(useCase);
@@ -465,9 +555,17 @@ export function RoutingCard({
                 : null;
             const wasAssigned =
               staged?.kind === 'route-unassign' && applied !== null ? applied.modelName : null;
-            const alsoAffects = (selectorUseCases.get(useCase) ?? []).filter(
-              (other) => other !== useCase
-            );
+            // [W6] This row's own exposure before → after; pills only where the row's
+            // own values change (edited / same-model), never on a fallback row.
+            const caps =
+              reach !== undefined && reach.reach !== 'fallback' && applied !== null && view !== null
+                ? capDiff(applied.exposedCapabilities, view.caps)
+                : null;
+            const showCaps = caps !== null && (caps.added.length > 0 || caps.removed.length > 0);
+            const ownThink =
+              wasThink !== null && incomingThink !== undefined ? incomingThink : null;
+            /** A value with a WAS line is staged, not applied: amber italic (legend). */
+            const stagedValue = (value: string) => <em className={styles.stagedValue}>{value}</em>;
 
             const row = (
               <div
@@ -478,6 +576,7 @@ export function RoutingCard({
                 className={styles.row}
                 data-expanded={expanded || undefined}
                 data-changed={changed || undefined}
+                data-mark={reach?.reach}
                 data-flash={flashNonce(`route:${useCase}`)}
               >
                 <Cell className={styles.useCase}>
@@ -485,7 +584,15 @@ export function RoutingCard({
                   {expanded && <span className={styles.editingTag}>editing</span>}
                 </Cell>
                 <Cell className={styles.providerCell}>
-                  {view ? view.provider : <span className={styles.absent}>—</span>}
+                  {view ? (
+                    wasProvider !== null ? (
+                      stagedValue(view.provider)
+                    ) : (
+                      view.provider
+                    )
+                  ) : (
+                    <span className={styles.absent}>—</span>
+                  )}
                   {wasProvider !== null && <Was value={wasProvider} />}
                 </Cell>
                 <Cell className={styles.modelCell}>
@@ -494,14 +601,15 @@ export function RoutingCard({
                       meaningful copy rather than an inert placeholder. */}
                   {view ? (
                     <>
-                      {view.model}
-                      {/* The coupling, surfaced BEFORE the editor opens: a
-                          neutral fact, the sibling names one hover away.
-                          Hidden while the row is expanded — the editor's
-                          info notice tells the same fact in full. */}
-                      {!expanded && shared.length > 0 && (
-                        <span className={styles.sharedMarker} title={shared.join(', ')}>
-                          {`shared with ${shared.length} other${shared.length === 1 ? '' : 's'}`}
+                      {wasModel !== null ? stagedValue(view.model) : view.model}
+                      {/* The coupling, surfaced BEFORE the editor opens: a neutral
+                          fact, the sibling names visible [W6]. Hidden while the row
+                          is expanded — the editor's info notice tells the same fact
+                          in full — and while the row is reached (the sentence below
+                          carries it). */}
+                      {!expanded && reach === undefined && shared.length > 0 && (
+                        <span className={styles.sharedMarker}>
+                          {`Model also serves ${listUseCases(shared)}`}
                         </span>
                       )}
                     </>
@@ -511,17 +619,43 @@ export function RoutingCard({
                     <span className={styles.absent}>—</span>
                   )}
                   {(wasModel ?? wasAssigned) !== null && <Was value={(wasModel ?? wasAssigned)!} />}
-                  {/* Shared-selector changes retarget siblings: the fact the
-                      editor's disclosure already tells, surfaced on the row. */}
-                  {changed && alsoAffects.length > 0 && (
-                    <small
-                      className={styles.usedBy}
-                    >{`also affects ${alsoAffects.join(', ')}`}</small>
+                  {showCaps && caps !== null && (
+                    <span className={styles.capsRow}>
+                      <b className={styles.recordLabel}>Capabilities</b>
+                      <span role="list" aria-label="Capabilities" className={styles.capPills}>
+                        {caps.all.map((cap) => (
+                          <span role="listitem" key={cap} className={styles.capPill}>
+                            {caps.added.includes(cap) ? (
+                              stagedValue(`+ ${cap}`)
+                            ) : caps.removed.includes(cap) ? (
+                              <s>{`− ${cap}`}</s>
+                            ) : (
+                              cap
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                  )}
+                  {/* [W6] How the staged change reaches this row, in words — the
+                      fact the editor's disclosure tells, surfaced on the row. */}
+                  {reach !== undefined && (
+                    <small className={styles.reachSentence} data-testid="reach-sentence">
+                      {reachSentence(reach, {
+                        added: caps?.added ?? [],
+                        removed: caps?.removed ?? [],
+                        think: ownThink,
+                      })}
+                    </small>
                   )}
                 </Cell>
                 <Cell label="Think" className={styles.metaCell}>
                   {view && view.think !== '' ? (
-                    view.think
+                    wasThink !== null ? (
+                      stagedValue(view.think)
+                    ) : (
+                      view.think
+                    )
                   ) : (
                     <span className={styles.absent}>—</span>
                   )}
@@ -530,7 +664,11 @@ export function RoutingCard({
                 {/* Ruling 6: an open row carries the EDITING tag beside its use
                     case, so the status column reports nothing while it edits. */}
                 <Cell className={styles.statusCell}>
-                  {!expanded && <StatusText tone={status.tone}>{status.label}</StatusText>}
+                  {!expanded && (
+                    <StatusText tone={status.tone} detail={status.detail}>
+                      {status.label}
+                    </StatusText>
+                  )}
                 </Cell>
                 <Cell className={styles.actionsCell}>
                   {editable && (
@@ -620,6 +758,17 @@ export function RoutingCard({
             );
           })}
         </div>
+
+        {/* [W6] The legend, only while some row carries a mark to explain. */}
+        {rows.size > 0 && (
+          <p className={styles.legend}>
+            {
+              'Modified — this route\u2019s model or values change · Affected — only what it falls back to changes · '
+            }
+            <em className={styles.stagedValue}>amber italic</em>
+            {' — staged, not applied'}
+          </p>
+        )}
 
         <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
           {announcement}

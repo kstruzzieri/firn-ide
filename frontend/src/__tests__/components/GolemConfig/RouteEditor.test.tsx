@@ -90,6 +90,7 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
     rows: new Map(),
     roleRows: new Map(),
     selectorUseCases: projection.selectorUseCases,
+    routeReach: projection.routeReach,
     diagnostics: [],
     editable: true,
     onStage,
@@ -591,7 +592,7 @@ describe('RouteEditor', () => {
   // The coupling surfaces BEFORE the editor opens: a neutral strip marker
   // derived from the same `routedUseCases` the in-editor notice reads, so the
   // two can never disagree.
-  it('marks a strip whose model also serves other routes, naming them on hover', () => {
+  it('marks a strip whose model also serves other routes, naming them', () => {
     renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -601,16 +602,17 @@ describe('RouteEditor', () => {
       models: [model({ routedUseCases: ['chat', 'completion', 'summarize'] }), other],
     });
 
-    const marker = within(routeCells('chat')).getByText('shared with 2 others');
-    expect(marker).toHaveAttribute('title', 'completion, summarize');
+    // [W6] The names are visible, not a count one hover away.
+    expect(
+      within(routeCells('chat')).getByText('Model also serves completion and summarize')
+    ).toBeInTheDocument();
     // The sibling rows carry their own markers, each naming its own others.
-    expect(within(routeCells('summarize')).getByText('shared with 2 others')).toHaveAttribute(
-      'title',
-      'chat, completion'
-    );
+    expect(
+      within(routeCells('summarize')).getByText('Model also serves chat and completion')
+    ).toBeInTheDocument();
   });
 
-  it('agrees the marker with a single sibling and marks nothing when unshared', () => {
+  it('names a single sibling and marks nothing when unshared', () => {
     renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -618,12 +620,9 @@ describe('RouteEditor', () => {
       ],
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
-    expect(within(routeCells('chat')).getByText('shared with 1 other')).toHaveAttribute(
-      'title',
-      'summarize'
-    );
+    expect(within(routeCells('chat')).getByText('Model also serves summarize')).toBeInTheDocument();
     // agent resolves to nothing here, and nothing else is shared.
-    expect(within(routeCells('agent')).queryByText(/shared with/)).not.toBeInTheDocument();
+    expect(within(routeCells('agent')).queryByText(/Model also serves/)).not.toBeInTheDocument();
   });
 
   it('yields the marker to the editor notice while the row is open', async () => {
@@ -634,12 +633,12 @@ describe('RouteEditor', () => {
       ],
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
-    expect(within(routeCells('chat')).getByText('shared with 1 other')).toBeInTheDocument();
+    expect(within(routeCells('chat')).getByText('Model also serves summarize')).toBeInTheDocument();
 
     await openRoute('chat');
     // One coupling, told once: the marker hides and the info notice names the
-    // same sibling the marker's title named.
-    expect(within(routeCells('chat')).queryByText(/shared with 1 other/)).not.toBeInTheDocument();
+    // same sibling the marker named.
+    expect(within(routeCells('chat')).queryByText(/Model also serves/)).not.toBeInTheDocument();
     expect(screen.getByText(/share this model/)).toHaveTextContent(
       'chat and summarize share this model.'
     );
@@ -672,8 +671,8 @@ describe('RouteEditor', () => {
 
     const row = routeCells('chat');
     expect(within(row).getByText('gpt-5')).toBeInTheDocument();
-    expect(within(row).queryByText(/shared with/)).not.toBeInTheDocument();
-    expect(within(routeCells('summarize')).getByText('shared with 1 other')).toBeInTheDocument();
+    expect(within(row).queryByText(/Model also serves/)).not.toBeInTheDocument();
+    expect(within(routeCells('summarize')).getByText('Model also serves chat')).toBeInTheDocument();
   });
 
   it('discloses the selector-wide reach of the change from the projected draft', async () => {

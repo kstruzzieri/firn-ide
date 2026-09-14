@@ -1817,6 +1817,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   rows={projected.routeRows}
                   roleRows={projected.roleRows}
                   selectorUseCases={projected.selectorUseCases}
+                  routeReach={projected.routeReach}
                   diagnostics={diagnostics}
                   editable={canEdit}
                   focusRequest={focusRequest}

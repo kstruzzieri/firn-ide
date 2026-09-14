@@ -5,13 +5,27 @@
 
 import styles from './GolemConfig.module.css';
 
-export type StatusTone = 'ok' | 'warn' | 'bad' | 'dim' | 'limited';
+export type StatusTone = 'ok' | 'warn' | 'bad' | 'dim' | 'limited' | 'info';
 
-export function StatusText({ tone, children }: { tone: StatusTone; children: string }) {
+/**
+ * `detail` is the [W6] sub-line under the label — why the row reads as it does
+ * (`edited here`, `model changes`, `fallback changes`). `info` is the hollow
+ * blue dot of a row whose own values stay while what it falls back to changes.
+ */
+export function StatusText({
+  tone,
+  detail,
+  children,
+}: {
+  tone: StatusTone;
+  detail?: string;
+  children: string;
+}) {
   return (
     <span className={styles.status} data-tone={tone}>
       <span className={styles.statusDot} aria-hidden="true" />
       {children}
+      {detail !== undefined && <small className={styles.statusDetail}>{detail}</small>}
     </span>
   );
 }
