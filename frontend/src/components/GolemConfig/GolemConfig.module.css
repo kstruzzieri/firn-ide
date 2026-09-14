@@ -674,7 +674,8 @@
 }
 
 .table > .row:hover,
-.editGroup > .row:hover {
+.editGroup > .row:hover,
+.noticeGroup > .row:hover {
   background-color: var(--surface-hover);
 }
 
@@ -2245,10 +2246,12 @@ select.input {
 }
 
 /* Hover still answers on a tinted row, keeping a trace of the tint so the mark
-   survives the pointer (a fallback row has no tint and keeps the plain hover). */
+   survives the pointer. 92% holds --text-muted at 4.81:1 on the mix (85% fell to
+   4.21:1, under the 4.5:1 floor tokens.css enforces for every hover surface). A
+   fallback row has no tint and takes the plain hover above. */
 .row.row[data-mark='edited']:hover,
 .row.row[data-mark='same-model']:hover {
-  background-color: color-mix(in srgb, var(--surface-hover) 85%, var(--status-warning));
+  background-color: color-mix(in srgb, var(--surface-hover) 92%, var(--status-warning));
 }
 
 .row[data-mark='same-model']::before {

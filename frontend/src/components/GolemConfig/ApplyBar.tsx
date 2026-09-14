@@ -112,7 +112,7 @@ function reachDeltaLine(group: ReachGroup): string {
     group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
     group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
     // A same-name change that is not an override differs in its facts: name them.
-    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(' · ')}` : '',
+    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : '',
   ].filter((part) => part !== '');
   if (parts.length > 0) return parts.join(' · ');
   const [caps, think] = stagedConfiguration(group);

@@ -119,13 +119,16 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toMatch(/\.row\.row\[data-mark='same-model'\]/);
     expect(text).not.toMatch(/\.table > \.row\[data-mark/);
     // Equal specificity is settled by source order: the tint follows zebra and hover.
-    expect(text.indexOf(".row.row[data-mark='edited']")).toBeGreaterThan(
-      text.indexOf('.table > .row:hover')
-    );
-    // Hover keeps a trace of the tint rather than erasing the mark.
+    const tintAt = text.indexOf(".row.row[data-mark='edited']");
+    expect(tintAt).toBeGreaterThan(text.indexOf('.table > .row:hover'));
+    expect(tintAt).toBeGreaterThan(text.indexOf('.table > .row:nth-child(even)'));
+    // Hover keeps a trace of the tint rather than erasing the mark — at a mix that
+    // holds --text-muted above 4.5:1 (92% → 4.81:1; 85% fell to 4.21:1).
     expect(text).toMatch(
-      /\.row\.row\[data-mark='edited'\]:hover,\s*\.row\.row\[data-mark='same-model'\]:hover \{[^}]*color-mix/
+      /\.row\.row\[data-mark='edited'\]:hover,\s*\.row\.row\[data-mark='same-model'\]:hover \{[^}]*color-mix\(in srgb, var\(--surface-hover\) 92%, var\(--status-warning\)\)/
     );
+    // A row wrapped for its diagnostic hovers like any other row.
+    expect(text).toMatch(/\.noticeGroup > \.row:hover/);
     expect(text).toMatch(/\.capPill del \{/);
     expect(text).not.toMatch(/\.capPill s \{/);
   });

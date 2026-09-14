@@ -779,6 +779,41 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     const spare = screen.getByTestId('defined-model-row-spare-role');
     expect(statusOf(spare, 'Modified')).toHaveTextContent('model changes');
     expect(screen.getByRole('button', { name: /Unstage removal/ })).toBeInTheDocument();
+    // The removal is the stronger fact: its stripe stays at full strength, so the
+    // same-model mark (which dims the stripe) is not applied alongside it.
+    expect(spare).toHaveAttribute('data-changed', 'true');
+    expect(spare).not.toHaveAttribute('data-mark');
+  });
+
+  it('keeps the model-changes sub-line on a role row under review', () => {
+    const routes = [{ useCase: 'chat', role: 'chat-role' }];
+    const models = [
+      thinking({ routedUseCases: ['chat'] }),
+      thinking({ role: 'spare-role', routedUseCases: [], removable: true, thinkMode: '' }),
+    ];
+    const staged = change({ exposedCaps: ['chat', 'stream', 'thinking', 'tool_call'] });
+    const draft = stageChange(cleanDraft('0'.repeat(64)), staged, new KeyVault(new Map()));
+    const reviewed = { ...draft, needsReview: ['route:chat'] };
+    const projected = projectDraft({ routes, models }, reviewed);
+    render(
+      <RoutingCard
+        routes={routes}
+        models={models}
+        providers={[provider]}
+        draft={reviewed}
+        changes={projected.changes}
+        rows={projected.routeRows}
+        roleRows={projected.roleRows}
+        selectorUseCases={projected.selectorUseCases}
+        routeReach={projected.routeReach}
+        diagnostics={[]}
+        editable
+        onStage={() => {}}
+        onUnstagedChange={() => {}}
+      />
+    );
+    const spare = screen.getByTestId('defined-model-row-spare-role');
+    expect(statusOf(spare, 'Needs review')).toHaveTextContent('model changes');
   });
 
   it('keeps naming a fallback-reached sibling staged elsewhere, and drops an unassigned one', () => {

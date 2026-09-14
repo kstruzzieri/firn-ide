@@ -526,9 +526,9 @@ export function RoutingCard({
             /**
              * The routes this row's APPLIED model also serves after Apply, from the
              * same `routedUseCases` RouteEditor's `sharedRole` reads — that notice
-             * still lists the unfiltered applied set (a follow-up candidate); the
-             * two are never on screen together, since this marker hides while the
-             * row is expanded.
+             * still lists the unfiltered applied set (a follow-up candidate); for
+             * any ONE row the two are never on screen together, since this marker
+             * hides while that row is expanded.
              * While a RETARGET is staged the row paints another model and this
              * coupling belongs to the one being replaced, so the marker is
              * suppressed; an override paints the applied model, whose coupling
@@ -864,11 +864,17 @@ export function RoutingCard({
                     // [X11] A staged `role-remove` stripes its row like every other
                     // staged change, and a landed `role:` jump flashes it. [W6] So does
                     // a selector override that rewrites this role: the same stripe and
-                    // tint a same-model route row carries.
+                    // tint a same-model route row carries — unless a removal is staged
+                    // too, whose full-strength stripe is the stronger fact (the mark
+                    // would dim it).
                     data-changed={
                       markers?.modified === true || markers?.affected === true || undefined
                     }
-                    data-mark={markers?.affected === true ? 'same-model' : undefined}
+                    data-mark={
+                      markers?.affected === true && markers.modified !== true
+                        ? ('same-model' satisfies RouteReach)
+                        : undefined
+                    }
                     data-flash={flashNonce(`role:${model.role}`)}
                   >
                     {/* [W4-3] A role and a use case may share a name (`agent`): the record
@@ -880,7 +886,14 @@ export function RoutingCard({
                     <Cell className={styles.modelCell}>{model.modelName}</Cell>
                     <Cell className={styles.actionsCell}>
                       {markers?.needsReview === true && (
-                        <StatusText tone="warn">Needs review</StatusText>
+                        <StatusText
+                          tone="warn"
+                          detail={
+                            markers.affected === true ? REACH_DETAIL['same-model'] : undefined
+                          }
+                        >
+                          Needs review
+                        </StatusText>
                       )}
                       {/* [W6] A selector override rewrites this role's OWN values too,
                           though nothing routes it — Modified, as a same-model route row
