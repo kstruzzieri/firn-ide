@@ -46,6 +46,7 @@ import {
   USE_CASE_FLOORS,
   type ApplyMode,
   type Change,
+  type ProjectedDraft,
   type DestinationGrantsStatus,
   type Draft,
   type DraftBaseProjection,
@@ -665,7 +666,7 @@ describe('projected draft normalization', () => {
     expect(forked.governedUseCases.get('chat')).toEqual(['chat']);
   });
 
-  it('marks shared selector siblings Modified and inherits Needs review', () => {
+  it('marks a same-model sibling only when the override changes its model, inheriting Needs review', () => {
     const base: DraftBaseProjection = {
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -673,23 +674,22 @@ describe('projected draft normalization', () => {
       ],
       models: [modelRow({ routedUseCases: ['chat', 'summarize'] })],
     };
-    const draft = stage([routeChange({ useCase: 'chat' })]);
-    const projected = projectDraft(base, draft);
-    expect(projected.routeRows.get('chat')?.modified).toBe(true);
-    expect(projected.routeRows.get('summarize')?.modified).toBe(true);
-    expect(projected.routeRows.get('summarize')?.needsReview).toBe(false);
-
-    const conflicted = settleDraft(
-      draft,
-      {
-        kind: 'result',
-        result: { status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' },
-      },
-      vaultOf()
-    );
-    const reviewed = projectDraft(base, conflicted);
-    expect(reviewed.routeRows.get('chat')?.needsReview).toBe(true);
-    expect(reviewed.routeRows.get('summarize')?.needsReview).toBe(true);
+    // Identical exposure and Think: the override changes nothing on the model, so the
+    // sibling is confirmation-only — acknowledged, never marked.
+    const same = projectDraft(base, stage([routeChange({ useCase: 'chat' })]));
+    expect(same.routeRows.get('chat')?.modified).toBe(true);
+    expect(same.routeRows.has('summarize')).toBe(false);
+    expect(same.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    // A real delta reaches the sibling, and it inherits the group's review state.
+    const draft = stage([
+      routeChange({ useCase: 'chat', exposedCaps: ['chat', 'stream', 'generate'] }),
+    ]);
+    const projected = projectDraft(base, { ...draft, needsReview: ['route:chat'] });
+    expect(projected.routeRows.get('summarize')).toMatchObject({
+      modified: true,
+      needsReview: true,
+    });
+    expect(projected.routeReach.get('summarize')?.reach).toBe('same-model');
   });
 
   it('marks provider rows Modified and Key staged separately', () => {
@@ -707,6 +707,7 @@ describe('projected draft normalization', () => {
       modified: true,
       keyStaged: true,
       needsReview: false,
+      affected: false,
     });
     expect(projected.roleRows.get('orphan')?.modified).toBe(true);
   });
@@ -1389,5 +1390,260 @@ describe('retargetOf', () => {
       thinkMode: 'always',
     });
     expect(retargetOf(base, stagedRoutes([sameSelector]), chatRole)).toBeUndefined();
+  });
+});
+
+describe('reach (wave 6): what a staged model change reaches, by projected configuration', () => {
+  const caps = (list: CapabilityName[]) => ({
+    effectiveCapabilities: list,
+    capabilityFacts: { caps: list, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: list,
+  });
+  const GPT5: CapabilityName[] = ['chat', 'stream', 'tool_call', 'thinking'];
+  const gpt5 = { provider: 'hosted', model: 'gpt-5', type: 'dense' } as const;
+  // chat-role serves chat AND summarize (a shared role); agent-role and
+  // analysis-role share gpt-5; completion reaches gpt-5 only through its
+  // fallback chain (analysis-role lists it); coding-role is its own model.
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'analysis', role: 'analysis-role' },
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'coding-role' },
+      { useCase: 'summarize', role: 'chat-role' },
+    ],
+    models: [
+      modelRow({
+        role: 'agent-role',
+        modelName: 'gpt-5',
+        ...caps(GPT5),
+        routedUseCases: ['agent'],
+      }),
+      modelRow({
+        role: 'analysis-role',
+        modelName: 'gpt-5',
+        ...caps(GPT5),
+        routedUseCases: ['analysis', 'completion'],
+      }),
+      modelRow({ routedUseCases: ['chat', 'summarize'] }),
+      modelRow({ role: 'coding-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
+    ],
+  };
+  const override = (over: Partial<RouteChange> = {}) =>
+    routeChange({
+      useCase: 'agent',
+      modelFacts: gpt5,
+      capabilityFacts: { caps: GPT5, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: [...GPT5, 'generate'],
+      ...over,
+    });
+  const groupOf = (projected: ProjectedDraft, model: string) => {
+    const group = projected.reachGroups.find((candidate) => candidate.model === model);
+    if (group === undefined) throw new Error(`no reach group for ${model}`);
+    return group;
+  };
+
+  it('marks the changed sibling and the fallback-reached route, and nothing else, for an override', () => {
+    const projected = projectDraft(base, stage([override()]));
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.edited).toEqual([{ useCase: 'agent', was: null }]);
+    expect(group.joins).toEqual([]);
+    expect(group.addedCaps).toEqual(['generate']);
+    expect(group.removedCaps).toEqual([]);
+    expect(group.think).toBeNull();
+    expect(group.selectorHadRoles).toBe(true);
+    // analysis-role sits on gpt-5 and takes the override; completion only falls back to it.
+    expect(group.sameModel).toEqual(['analysis']);
+    expect(group.fallback).toEqual(['completion']);
+    expect(projected.routeReach.get('agent')?.reach).toBe('edited');
+    expect(projected.routeReach.get('analysis')?.reach).toBe('same-model');
+    expect(projected.routeReach.get('completion')?.reach).toBe('fallback');
+    expect(projected.routeRows.get('analysis')?.modified).toBe(true);
+    expect(projected.routeRows.get('completion')).toMatchObject({
+      modified: false,
+      affected: true,
+    });
+    // The confirmation set is still what the backend asks to acknowledge…
+    expect(projected.selectorUseCases.get('agent')).toEqual(['agent', 'analysis', 'completion']);
+    // …but chat and summarize are outside every reach: no mark at all.
+    expect(projected.routeReach.has('chat')).toBe(false);
+    expect(projected.routeRows.has('summarize')).toBe(false);
+  });
+
+  it('leaves a fork source sibling unmarked while marking the destination siblings it joins', () => {
+    // chat-role serves chat and summarize: retargeting chat forks it (summarize keeps
+    // gpt-5-mini, confirmation-only). The join asserts generate on gpt-5, so the
+    // roles ALREADY there change — agent and analysis directly, completion via fallback.
+    const projected = projectDraft(base, stage([override({ useCase: 'chat' })]));
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.edited).toEqual([
+      { useCase: 'chat', was: { provider: 'hosted', model: 'gpt-5-mini' } },
+    ]);
+    expect(group.joins).toEqual(['chat']);
+    expect(group.sameModel).toEqual(['agent', 'analysis']);
+    expect(group.fallback).toEqual(['completion']);
+    expect(projected.routeReach.has('summarize')).toBe(false);
+    expect(projected.routeRows.has('summarize')).toBe(false);
+    expect(projected.selectorUseCases.get('chat')).toContain('summarize');
+  });
+
+  it('reaches nobody but the edited route when a join asserts what the selector already exposes', () => {
+    const projected = projectDraft(base, stage([override({ useCase: 'chat', exposedCaps: GPT5 })]));
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.addedCaps).toEqual([]);
+    expect(group.sameModel).toEqual([]);
+    expect(group.fallback).toEqual([]);
+    expect(projected.routeReach.get('chat')?.reach).toBe('edited');
+    expect(projected.routeRows.has('agent')).toBe(false);
+    expect(projected.routeRows.has('completion')).toBe(false);
+  });
+
+  it('judges each role on the selector by its own baseline', () => {
+    // analysis-role already exposes generate: only agent-role changes, so analysis is
+    // not reached and neither is completion, which only falls back to analysis-role.
+    const uneven: DraftBaseProjection = {
+      ...base,
+      models: base.models.map((model) =>
+        model.role === 'analysis-role' ? { ...model, ...caps([...GPT5, 'generate']) } : model
+      ),
+    };
+    const projected = projectDraft(uneven, stage([override()]));
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.addedCaps).toEqual(['generate']);
+    expect(group.sameModel).toEqual([]);
+    expect(group.fallback).toEqual([]);
+  });
+
+  it('carries Think as a model delta only for an override group', () => {
+    const joined = projectDraft(
+      base,
+      stage([override({ useCase: 'chat', exposedCaps: GPT5, thinkMode: 'always' })])
+    );
+    expect(groupOf(joined, 'gpt-5').think).toBeNull();
+    expect(groupOf(joined, 'gpt-5').sameModel).toEqual([]);
+    const overridden = projectDraft(
+      base,
+      stage([override({ exposedCaps: GPT5, thinkMode: 'always' })])
+    );
+    const group = groupOf(overridden, 'gpt-5');
+    expect(group.addedCaps).toEqual([]);
+    expect(group.think).toBe('always');
+    expect(group.sameModel).toEqual(['analysis']);
+    expect(group.fallback).toEqual(['completion']);
+  });
+
+  it('names a removal-only delta and a cleared Think', () => {
+    const narrowed = projectDraft(
+      base,
+      stage([override({ exposedCaps: ['chat', 'stream', 'tool_call'] })])
+    );
+    expect(groupOf(narrowed, 'gpt-5').removedCaps).toEqual(['thinking']);
+    expect(groupOf(narrowed, 'gpt-5').sameModel).toEqual(['analysis']);
+    const thinking: DraftBaseProjection = {
+      ...base,
+      models: base.models.map((model) =>
+        model.modelName === 'gpt-5' ? { ...model, thinkMode: 'auto' } : model
+      ),
+    };
+    const cleared = projectDraft(thinking, stage([override({ exposedCaps: GPT5, thinkMode: '' })]));
+    expect(groupOf(cleared, 'gpt-5').think).toBe('');
+    expect(groupOf(cleared, 'gpt-5').sameModel).toEqual(['analysis']);
+  });
+
+  it('describes a join onto an empty selector by the configuration it sets', () => {
+    const projected = projectDraft(
+      base,
+      stage([
+        override({
+          useCase: 'chat',
+          modelFacts: { provider: 'hosted', model: 'gpt-6', type: 'dense' },
+          thinkMode: 'auto',
+        }),
+      ])
+    );
+    const group = groupOf(projected, 'gpt-6');
+    expect(group.selectorHadRoles).toBe(false);
+    expect(group.staged).toEqual({
+      exposedCaps: CAPABILITY_NAMES.filter((cap) => [...GPT5, 'generate'].includes(cap)),
+      thinkMode: 'auto',
+    });
+    expect(group.addedCaps).toEqual([]);
+    expect(group.think).toBeNull();
+    expect(group.joins).toEqual(['chat']);
+    expect(group.sameModel).toEqual([]);
+    expect(group.fallback).toEqual([]);
+  });
+
+  it("keeps a route moving off an overridden selector out of that selector's reach", () => {
+    // analysis leaves gpt-5 for gpt-5-mini while agent overrides gpt-5. analysis-role
+    // still routes completion, so it forks and stays: completion is still reached.
+    const projected = projectDraft(
+      base,
+      stage([
+        override(),
+        override({
+          useCase: 'analysis',
+          modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+          exposedCaps: ['chat', 'stream'],
+        }),
+      ])
+    );
+    const gpt5Group = groupOf(projected, 'gpt-5');
+    expect(gpt5Group.sameModel).toEqual([]);
+    expect(gpt5Group.fallback).toEqual(['completion']);
+    expect(projected.routeReach.get('analysis')).toMatchObject({ reach: 'edited' });
+    expect(projected.routeReach.get('analysis')?.group.model).toBe('gpt-5-mini');
+  });
+
+  it('gives a route reached by two groups its highest reach, once', () => {
+    // chat-role also lists analysis as a fallback; overriding both selectors reaches
+    // analysis directly on gpt-5 and as a fallback on gpt-5-mini: same-model wins.
+    const chained: DraftBaseProjection = {
+      ...base,
+      models: base.models.map((model) =>
+        model.role === 'chat-role'
+          ? { ...model, routedUseCases: ['chat', 'summarize', 'analysis'] }
+          : model
+      ),
+    };
+    const projected = projectDraft(
+      chained,
+      stage([
+        override(),
+        override({
+          useCase: 'chat',
+          modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+          capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCaps: ['chat', 'stream', 'generate'],
+        }),
+      ])
+    );
+    expect(groupOf(projected, 'gpt-5').sameModel).toEqual(['analysis']);
+    expect(groupOf(projected, 'gpt-5-mini').fallback).toEqual(['analysis']);
+    expect(groupOf(projected, 'gpt-5-mini').sameModel).toEqual(['summarize']);
+    expect(projected.routeReach.get('analysis')?.reach).toBe('same-model');
+    expect(projected.routeRows.get('analysis')).toMatchObject({ modified: true, affected: true });
+    const reached = new Set(
+      projected.reachGroups.flatMap((group) => [
+        ...group.edited.map((edit) => edit.useCase),
+        ...group.sameModel,
+        ...group.fallback,
+      ])
+    );
+    expect([...reached].sort()).toEqual(['agent', 'analysis', 'chat', 'completion', 'summarize']);
+  });
+
+  it('keeps a staged unassignment on its own marker, outside every group', () => {
+    const projected = projectDraft(base, stage([{ kind: 'route-unassign', useCase: 'chat' }]));
+    expect(projected.reachGroups).toEqual([]);
+    expect(projected.routeRows.get('chat')).toMatchObject({ modified: true, affected: false });
+    expect(projected.routeReach.has('chat')).toBe(false);
+  });
+
+  it('ORs review state over every group that reaches a row', () => {
+    const draft = stage([override()]);
+    const projected = projectDraft({ ...base }, { ...draft, needsReview: ['route:agent'] });
+    expect(projected.routeRows.get('analysis')?.needsReview).toBe(true);
+    expect(projected.routeRows.get('completion')?.needsReview).toBe(true);
   });
 });

@@ -54,7 +54,12 @@ describe('usage and change trace (ruling 7)', () => {
       <ProvidersCard
         {...cardProps({
           changes: [staged],
-          rows: new Map([['llama-swap', { modified: true, keyStaged: false, needsReview: false }]]),
+          rows: new Map([
+            [
+              'llama-swap',
+              { modified: true, keyStaged: false, needsReview: false, affected: false },
+            ],
+          ]),
         })}
       />
     );
@@ -76,7 +81,12 @@ describe('usage and change trace (ruling 7)', () => {
       <ProvidersCard
         {...cardProps({
           changes: [staged],
-          rows: new Map([['llama-swap', { modified: true, keyStaged: false, needsReview: false }]]),
+          rows: new Map([
+            [
+              'llama-swap',
+              { modified: true, keyStaged: false, needsReview: false, affected: false },
+            ],
+          ]),
         })}
       />
     );

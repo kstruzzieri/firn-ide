@@ -405,7 +405,9 @@ describe('ProviderEditor', () => {
   it('disables key entry for a provider already staged for removal', async () => {
     renderCard({
       changes: [{ kind: 'provider-remove', name: 'llama-swap' }],
-      rows: new Map([['llama-swap', { modified: true, keyStaged: false, needsReview: false }]]),
+      rows: new Map([
+        ['llama-swap', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
     await openEditor();
 
@@ -461,7 +463,9 @@ describe('ProviderEditor', () => {
 
   it('shows the staged row markers beside the row', async () => {
     renderCard({
-      rows: new Map([['llama-swap', { modified: true, keyStaged: true, needsReview: false }]]),
+      rows: new Map([
+        ['llama-swap', { modified: true, keyStaged: true, needsReview: false, affected: false }],
+      ]),
     });
     const row = screen.getByTestId('provider-row-llama-swap');
     expect(within(row).getByText('Modified')).toBeInTheDocument();

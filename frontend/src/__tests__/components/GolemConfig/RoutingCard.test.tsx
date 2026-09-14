@@ -217,7 +217,11 @@ describe('route editor Done (firn-ide#284)', () => {
         {...baseProps()}
         draft={{ ...cleanDraft('0'.repeat(64)), changes: [staged] }}
         changes={[staged]}
-        rows={new Map([['chat', { modified: true, keyStaged: false, needsReview: false }]])}
+        rows={
+          new Map([
+            ['chat', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+          ])
+        }
       />
     );
     const row = screen.getByTestId('route-row-chat');
@@ -248,7 +252,11 @@ describe('route editor Done (firn-ide#284)', () => {
         {...baseProps()}
         draft={{ ...cleanDraft('0'.repeat(64)), changes: [staged] }}
         changes={[staged]}
-        rows={new Map([['chat', { modified: true, keyStaged: false, needsReview: false }]])}
+        rows={
+          new Map([
+            ['chat', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+          ])
+        }
       />
     );
     const row = screen.getByTestId('route-row-chat');
@@ -286,7 +294,9 @@ describe('route editor Done (firn-ide#284)', () => {
     const props = () => ({
       ...baseProps(),
       models: [model, unrouted],
-      roleRows: new Map([['spare', { modified: true, keyStaged: false, needsReview: false }]]),
+      roleRows: new Map([
+        ['spare', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
     const { rerender } = render(<RoutingCard {...props()} focusRequest={null} />);
     const row = screen.getByTestId('defined-model-row-spare');
@@ -461,7 +471,9 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     ];
     renderProjected(twoRoles, models, change());
     const sibling = screen.getByTestId('route-row-summarize');
-    expect(sibling).toHaveAttribute('data-changed', 'true');
+    // [W6] The join asserts the exposure the selector already has and its Think
+    // lands on its own role: nothing changes for summarize, so it is not marked.
+    expect(sibling).not.toHaveAttribute('data-changed');
     expect(within(sibling).queryByText('always')).not.toBeInTheDocument();
     expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
   });
@@ -486,7 +498,9 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     expect(within(sibling).getByText('gpt-5-mini')).toBeInTheDocument();
     expect(within(sibling).getByText('auto')).toBeInTheDocument();
     expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
-    expect(sibling).toHaveAttribute('data-changed', 'true');
+    // [W6] Confirmation-only: the fork leaves the source role as it is, so the
+    // sibling carries no mark — the backend still asks for its acknowledgement.
+    expect(sibling).not.toHaveAttribute('data-changed');
     const edited = screen.getByTestId('route-row-chat');
     expect(within(edited).getByText('gpt-5')).toBeInTheDocument();
     expect(within(edited).getByText('also affects summarize')).toBeInTheDocument();
@@ -694,7 +708,7 @@ describe('Defined models — Assign (wave 4d)', () => {
   });
 
   it('offers no Assign while the row is staged for removal', () => {
-    const removal = { modified: true, keyStaged: false, needsReview: false };
+    const removal = { modified: true, keyStaged: false, needsReview: false, affected: false };
     const { rerender } = render(
       <RoutingCard {...props()} roleRows={new Map([['spare', removal]])} />
     );
@@ -708,7 +722,7 @@ describe('Defined models — Assign (wave 4d)', () => {
   it('leaves a list closed by Remove closed once the removal is unstaged', async () => {
     const user = userEvent.setup();
     const p = props();
-    const removal = { modified: true, keyStaged: false, needsReview: false };
+    const removal = { modified: true, keyStaged: false, needsReview: false, affected: false };
     const { rerender } = render(<RoutingCard {...p} />);
     await user.click(assign());
     expect(list()).toHaveFocus();

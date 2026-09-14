@@ -219,7 +219,9 @@ describe('RoutingCard rows', () => {
         thinkMode: '',
         confirmUnknown: false,
       }),
-      rows: new Map([['chat', { modified: true, keyStaged: false, needsReview: false }]]),
+      rows: new Map([
+        ['chat', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
 
     const row = routeCells('chat');
@@ -236,7 +238,9 @@ describe('RoutingCard rows', () => {
 
   it('prefers Needs review over Modified', () => {
     renderRouting({
-      rows: new Map([['chat', { modified: true, keyStaged: false, needsReview: true }]]),
+      rows: new Map([
+        ['chat', { modified: true, keyStaged: false, needsReview: true, affected: false }],
+      ]),
     });
     expect(within(routeCells('chat')).getByText('Needs review')).toBeInTheDocument();
   });
@@ -303,7 +307,9 @@ describe('RoutingCard defined models', () => {
 
   it('marks a role staged for removal Modified', () => {
     renderRouting({
-      roleRows: new Map([['other-role', { modified: true, keyStaged: false, needsReview: false }]]),
+      roleRows: new Map([
+        ['other-role', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
     expect(
       within(screen.getByTestId('defined-model-row-other-role')).getByText('Modified')
@@ -345,7 +351,9 @@ describe('RoutingCard defined models', () => {
   // staged removal swaps the control for its undo.
   it('offers the staged removal an undo instead of a re-stage', async () => {
     const { onStage } = renderRouting({
-      roleRows: new Map([['other-role', { modified: true, keyStaged: false, needsReview: false }]]),
+      roleRows: new Map([
+        ['other-role', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
     expect(
       screen.queryByRole('button', { name: 'Remove model role other-role' })
