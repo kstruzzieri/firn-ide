@@ -1646,4 +1646,108 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
     expect(projected.routeRows.get('analysis')?.needsReview).toBe(true);
     expect(projected.routeRows.get('completion')?.needsReview).toBe(true);
   });
+
+  // Codex round-2 (plan rev 3): a staged route keeps its role's fallbacks
+  // (SetRoleModel preserves them, ForkRoleModel copies them), so a use case
+  // edited onto T is still reached through a changed role on S its chain meets.
+  it('keeps a route edited elsewhere in the fallback reach of a selector its chain still meets', () => {
+    // completion retargets coding-role (completion only) onto gpt-6 while agent
+    // overrides gpt-5 with generate. analysis-role changes and still lists completion.
+    const draft = stage([
+      override(),
+      override({
+        useCase: 'completion',
+        modelFacts: { provider: 'hosted', model: 'gpt-6', type: 'dense' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+      }),
+    ]);
+    const projected = projectDraft(base, draft);
+    expect(groupOf(projected, 'gpt-5').fallback).toEqual(['completion']);
+    expect(groupOf(projected, 'gpt-6').edited).toEqual([
+      { useCase: 'completion', was: { provider: 'hosted', model: 'gpt-coder' } },
+    ]);
+    // Its own edit wins the row; both memberships mark it; K counts it once.
+    expect(projected.routeReach.get('completion')?.reach).toBe('edited');
+    expect(projected.routeRows.get('completion')).toMatchObject({ modified: true, affected: true });
+    const reached = new Set(
+      projected.reachGroups.flatMap((group) => [
+        ...group.edited.map((edit) => edit.useCase),
+        ...group.sameModel,
+        ...group.fallback,
+      ])
+    );
+    expect([...reached].sort()).toEqual(['agent', 'analysis', 'completion']);
+    // Review on gpt-5 alone reaches completion through the fallback membership.
+    const reviewed = projectDraft(base, { ...draft, needsReview: ['route:agent'] });
+    expect(reviewed.routeRows.get('completion')?.needsReview).toBe(true);
+    // Contrast: an UNASSIGNED route leaves every chain, so it is in no group.
+    const unassigned = projectDraft(
+      base,
+      stage([override(), { kind: 'route-unassign', useCase: 'completion' }])
+    );
+    expect(groupOf(unassigned, 'gpt-5').fallback).toEqual([]);
+    expect(unassigned.routeReach.has('completion')).toBe(false);
+  });
+
+  it('reaches a route through a changed fallback role even when its own role shares the selector', () => {
+    // agent-role and analysis-role both sit on gpt-5. analysis-role lists agent as a
+    // fallback. agent-role already Thinks auto, so analysis's override to auto (with
+    // the selector's own exposure) leaves agent-role unchanged — yet agent still
+    // falls back to analysis-role, which changes. Fallback is decided by the
+    // CONTRIBUTING ROLE's identity, never by the selectors differing.
+    const listsAgent = (model: ModelProjection): ModelProjection =>
+      model.role === 'analysis-role'
+        ? { ...model, routedUseCases: ['agent', 'analysis', 'completion'] }
+        : model;
+    const shared: DraftBaseProjection = {
+      ...base,
+      models: base.models.map((model) =>
+        model.role === 'agent-role' ? { ...model, thinkMode: 'auto' } : listsAgent(model)
+      ),
+    };
+    const change = override({ useCase: 'analysis', exposedCaps: GPT5, thinkMode: 'auto' });
+    const projected = projectDraft(shared, stage([change]));
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.think).toBe('auto');
+    expect(group.sameModel).toEqual([]);
+    expect(group.fallback).toEqual(['agent', 'completion']);
+    expect(projected.routeReach.get('agent')?.reach).toBe('fallback');
+    // Contrast: when agent-role's own Think changes too, agent is same-model, not fallback.
+    const own = projectDraft({ ...base, models: base.models.map(listsAgent) }, stage([change]));
+    expect(groupOf(own, 'gpt-5').sameModel).toEqual(['agent']);
+    expect(groupOf(own, 'gpt-5').fallback).toEqual(['completion']);
+  });
+
+  it('leaves a role departing the selector out of the Think delta', () => {
+    // agent-role (agent only) retargets to gpt-6 keeping Think ''; analysis overrides
+    // gpt-5 with generate at Think auto, which analysis-role already has. The
+    // departing role's '' → auto is not a change on gpt-5: nothing staying changes Think.
+    const auto: DraftBaseProjection = {
+      ...base,
+      models: base.models.map((model) =>
+        model.role === 'analysis-role' ? { ...model, thinkMode: 'auto' } : model
+      ),
+    };
+    const departing = stage([
+      override({
+        modelFacts: { provider: 'hosted', model: 'gpt-6', type: 'dense' },
+        exposedCaps: GPT5,
+      }),
+      override({ useCase: 'analysis', thinkMode: 'auto' }),
+    ]);
+    const projected = projectDraft(auto, departing);
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.think).toBeNull();
+    expect(group.addedCaps).toEqual(['generate']);
+    expect(group.sameModel).toEqual([]);
+    expect(group.fallback).toEqual(['completion']);
+    // Contrast: with agent-role staying, its '' → auto IS the selector's Think delta.
+    const staying = projectDraft(
+      auto,
+      stage([override({ useCase: 'analysis', thinkMode: 'auto' })])
+    );
+    expect(groupOf(staying, 'gpt-5').think).toBe('auto');
+    expect(groupOf(staying, 'gpt-5').sameModel).toEqual(['agent']);
+  });
 });

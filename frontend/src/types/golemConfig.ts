@@ -1323,9 +1323,11 @@ export interface RowMarkers {
  * - `same-model`: the row's applied ROLE sits on the selector and its projected
  *   values change (the capability override is per selector; Think only for an
  *   override group), and its final route is still that selector.
- * - `fallback`: the row's own model is elsewhere; a role on the selector that
- *   changes lists it in `routedUseCases` (fallback-inclusive), so what it falls
- *   back to changes.
+ * - `fallback`: a role on the selector OTHER than the row's own applied role
+ *   changes and lists it in `routedUseCases` (fallback-inclusive), so what it
+ *   falls back to changes. Its own role may share the selector unchanged, or
+ *   carry a staged route elsewhere (a retarget keeps the role's fallbacks and a
+ *   fork copies them); only a staged unassign leaves every chain.
  * A confirmation-only sibling (a fork's source role's other use cases; an
  * unchanged role) has no reach and no mark.
  */
@@ -1668,10 +1670,11 @@ function reachGroupsOf(
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
   const staged = stagedRoutes(changes);
-  const settled = new Set(
-    changes.flatMap((change) =>
-      change.kind === 'route' || change.kind === 'route-unassign' ? [change.useCase] : []
-    )
+  // Only an UNASSIGN leaves every chain. A use case with a staged route elsewhere
+  // keeps its role's fallbacks (SetRoleModel preserves them, ForkRoleModel copies
+  // them), so it can be edited on T and still a fallback member of S.
+  const unassigned = new Set(
+    changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
   );
   const final = effectiveRoutes(base, changes);
   const out: ReachGroup[] = [];
@@ -1719,7 +1722,7 @@ function reachGroupsOf(
     const fallback: string[] = [];
     for (const route of base.routes) {
       const useCase = route.useCase;
-      if (editedSet.has(useCase) || settled.has(useCase)) continue;
+      if (editedSet.has(useCase) || unassigned.has(useCase)) continue;
       const applied = modelOf.get(route.role);
       const destination = final.get(useCase);
       if (
@@ -1733,7 +1736,14 @@ function reachGroupsOf(
         sameModel.push(useCase);
         continue;
       }
-      if (!onSelector(applied) && changed.some((role) => role.routedUseCases.includes(useCase)))
+      // By the CONTRIBUTING role's identity, never by the selectors differing: a
+      // fallback role may share the primary's selector while the primary itself
+      // is unchanged (same exposure, Think already at the override's value).
+      if (
+        changed.some(
+          (candidate) => candidate.role !== route.role && candidate.routedUseCases.includes(useCase)
+        )
+      )
         fallback.push(useCase);
     }
     out.push({
