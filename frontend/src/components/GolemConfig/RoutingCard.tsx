@@ -866,7 +866,8 @@ export function RoutingCard({
                     // a selector override that rewrites this role: the same stripe and
                     // tint a same-model route row carries — unless a removal is staged
                     // too, whose full-strength stripe is the stronger fact (the mark
-                    // would dim it).
+                    // would dim it); the row then forfeits the same-model tint and the
+                    // `model changes` sub-line alone says the override reaches it.
                     data-changed={
                       markers?.modified === true || markers?.affected === true || undefined
                     }
@@ -885,31 +886,24 @@ export function RoutingCard({
                     <Cell className={styles.providerCell}>{model.provider}</Cell>
                     <Cell className={styles.modelCell}>{model.modelName}</Cell>
                     <Cell className={styles.actionsCell}>
-                      {markers?.needsReview === true && (
+                      {/* [W6] A selector override rewrites this role's OWN values too,
+                          though nothing routes it — Modified, as a same-model route row
+                          reads (Affected is reserved for rows whose values stay). Review
+                          outranks the label; the sub-line rides `affected` alone, whose
+                          only source is `affectedRoles` in projectDraft — the role
+                          analogue of same-model — so it is kept beside a staged removal. */}
+                      {(markers?.needsReview === true ||
+                        markers?.modified === true ||
+                        markers?.affected === true) && (
                         <StatusText
                           tone="warn"
                           detail={
-                            markers.affected === true ? REACH_DETAIL['same-model'] : undefined
+                            markers?.affected === true ? REACH_DETAIL['same-model'] : undefined
                           }
                         >
-                          Needs review
+                          {markers?.needsReview === true ? 'Needs review' : 'Modified'}
                         </StatusText>
                       )}
-                      {/* [W6] A selector override rewrites this role's OWN values too,
-                          though nothing routes it — Modified, as a same-model route row
-                          reads (Affected is reserved for rows whose values stay), with
-                          the sub-line kept even when a removal is staged alongside. */}
-                      {markers?.needsReview !== true &&
-                        (markers?.modified === true || markers?.affected === true) && (
-                          <StatusText
-                            tone="warn"
-                            detail={
-                              markers?.affected === true ? REACH_DETAIL['same-model'] : undefined
-                            }
-                          >
-                            Modified
-                          </StatusText>
-                        )}
                       {/* An inline disclosure (W4-3), so no aria-haspopup: expanded +
                           controls describe it. It routes the MODEL — the backend never
                           binds the defined role itself — so the name says which model. */}

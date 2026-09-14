@@ -2247,7 +2247,9 @@ select.input {
 
 /* Hover still answers on a tinted row, keeping a trace of the tint so the mark
    survives the pointer. 92% holds --text-muted at 4.81:1 on the mix (85% fell to
-   4.21:1, under the 4.5:1 floor tokens.css enforces for every hover surface). A
+   4.21:1, under the 4.5:1 floor). The token guard in
+   __tests__/styles/tokens.test.ts pairs muted text with the raw surfaces only and
+   cannot see this composed mix, so that file carries a computed check for it. A
    fallback row has no tint and takes the plain hover above. */
 .row.row[data-mark='edited']:hover,
 .row.row[data-mark='same-model']:hover {

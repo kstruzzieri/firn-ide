@@ -201,7 +201,7 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(header).toHaveTextContent('capabilities + generate − thinking');
   });
 
-  it('names the facts a same-name change declares when nothing else is visible', () => {
+  it('names the facts a same-name change declares when nothing else is visible, comma-joined', () => {
     // Same provider+model, different parameters: not an override (the facts differ),
     // not a join (the role is already there), no exposure or Think delta. The one
     // thing the user changed is what the header says.
@@ -217,6 +217,26 @@ describe('Apply bar reach groups (wave 6)', () => {
     const header = within(group('gpt-5-mini')).getAllByRole('button')[0];
     expect(header).toHaveTextContent('declares parameters 7b');
     expect(header).not.toHaveTextContent('re-asserts');
+    // Several facts are comma-joined inside the one `declares` part (sorted).
+    cleanup();
+    renderBar(
+      route({
+        useCase: 'chat',
+        modelFacts: {
+          provider: 'hosted',
+          model: 'gpt-5-mini',
+          type: 'dense',
+          parameters: '7b',
+          contextWindow: 32000,
+        },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+      })
+    );
+    expect(within(group('gpt-5-mini')).getAllByRole('button')[0]).toHaveTextContent(
+      'declares context window 32000, parameters 7b'
+    );
   });
 
   it('names the provider a fork leaves when only the provider changes', () => {

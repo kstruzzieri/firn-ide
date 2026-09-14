@@ -127,8 +127,10 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toMatch(
       /\.row\.row\[data-mark='edited'\]:hover,\s*\.row\.row\[data-mark='same-model'\]:hover \{[^}]*color-mix\(in srgb, var\(--surface-hover\) 92%, var\(--status-warning\)\)/
     );
-    // A row wrapped for its diagnostic hovers like any other row.
+    // A row wrapped for its diagnostic hovers like any other row — from the shared
+    // base rule, AHEAD of the tints, so a tinted notice-group row keeps its tint.
     expect(text).toMatch(/\.noticeGroup > \.row:hover/);
+    expect(tintAt).toBeGreaterThan(text.indexOf('.noticeGroup > .row:hover'));
     expect(text).toMatch(/\.capPill del \{/);
     expect(text).not.toMatch(/\.capPill s \{/);
   });
