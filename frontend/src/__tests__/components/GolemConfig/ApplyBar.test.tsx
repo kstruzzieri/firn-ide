@@ -105,9 +105,10 @@ function renderBar(...changes: Change[]) {
   return { onOpenChange, bar: screen.getByTestId('golem-config-draft') };
 }
 
-const group = (model: string) => screen.getByTestId(`reach-group-${model}`);
-const badgeNames = (model: string) =>
-  within(group(model))
+const group = (model: string, provider = 'hosted') =>
+  screen.getByTestId(`reach-group-${provider}/${model}`);
+const badgeNames = (model: string, provider = 'hosted') =>
+  within(group(model, provider))
     .getAllByRole('button')
     .slice(1) // the header is the first button
     .map((badge) => badge.textContent);
@@ -124,6 +125,7 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(header).toHaveTextContent('gpt-5');
     expect(header).toHaveTextContent('hosted');
     expect(header).toHaveTextContent('capabilities + generate');
+    expect(header).not.toHaveTextContent('re-asserts');
     // No Think delta: analysis-role already Thinks auto; agent-role's '' → auto is a delta…
     // …so the header names it. (Per-role baselines; the override writes Think selector-wide.)
     expect(header).toHaveTextContent('Think auto');
@@ -185,8 +187,43 @@ describe('Apply bar reach groups (wave 6)', () => {
   it('names a removal-only delta and a cleared Think', () => {
     renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call'], thinkMode: '' }));
     const header = within(group('gpt-5')).getAllByRole('button')[0];
-    expect(header).toHaveTextContent('− thinking · Think cleared');
-    expect(header).not.toHaveTextContent('capabilities +');
+    // One capabilities clause carries both signs, so a removal keeps its noun.
+    expect(header).toHaveTextContent('capabilities − thinking · Think cleared');
+    expect(header).not.toHaveTextContent('+');
+  });
+
+  it('names the provider a retarget leaves when only the provider changes', () => {
+    // Two providers serving one model name is ordinary; a WAS that repeats the group
+    // header's model would read as "nothing changed".
+    renderBar(
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'local', model: 'gpt-5-mini', type: 'dense' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+      })
+    );
+    expect(badgeNames('gpt-5-mini', 'local')).toEqual(['chatwashosted · gpt-5-miniedited']);
+  });
+
+  it('says what a no-op override re-asserts instead of a placeholder', () => {
+    // Done on an untouched editor stages an override identical to the applied
+    // configuration: nothing on the model changes, and the header must still say
+    // something derived from the change.
+    const { bar } = renderBar(
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+      })
+    );
+    const header = within(group('gpt-5-mini')).getAllByRole('button')[0];
+    expect(header).toHaveTextContent('re-asserts capabilities chat, stream');
+    expect(header).not.toHaveTextContent('staged');
+    expect(within(bar).getByText('1 model · 1 route affected')).toBeInTheDocument();
   });
 
   it('prints no reach line and no group when only non-route changes are staged', () => {

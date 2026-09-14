@@ -1309,8 +1309,12 @@ export interface RowMarkers {
   modified: boolean;
   keyStaged: boolean;
   needsReview: boolean;
-  /** [W6] Reached by a model change through a fallback only: the row's own values stay. */
-  affected: boolean;
+  /**
+   * [W6] Reached by a model change without its own values changing: a route row
+   * through a fallback only, a defined-model row whose selector is overridden.
+   * Only those rows ever set it; provider rows never do.
+   */
+  affected?: boolean;
 }
 
 /**
@@ -1339,6 +1343,14 @@ export interface ReachEdit {
   was: { provider: string; model: string } | null;
 }
 
+/** What changes for a set of roles on a selector: caps as a union, Think when any differs. */
+export interface ReachDelta {
+  addedCaps: CapabilityName[];
+  removedCaps: CapabilityName[];
+  /** The Think an override writes when some role's Think changes; '' = cleared; null = no delta. */
+  think: ThinkMode | null;
+}
+
 /** One staged selector: what changes on the model and every route it reaches. */
 export interface ReachGroup {
   key: string;
@@ -1351,7 +1363,7 @@ export interface ReachGroup {
   removedCaps: CapabilityName[];
   /** The Think an override writes to every role on the selector when some role's Think changes; '' = cleared; null = no delta. */
   think: ThinkMode | null;
-  /** The authority's values — what an edited route sets; the whole configuration on an empty selector. */
+  /** The authority's values: what the bar prints for a selector nothing sat on, or that nothing visible changes on. */
   staged: { exposedCaps: CapabilityName[]; thinkMode: ThinkMode };
   /** Staging order. */
   edited: ReachEdit[];
@@ -1360,6 +1372,13 @@ export interface ReachGroup {
   /** Disjoint, sorted. */
   sameModel: string[];
   fallback: string[];
+  /**
+   * Per fallback use case: the delta of the changed roles that actually list it —
+   * never the group's union, which may include roles outside its chain.
+   */
+  fallbackDeltas: ReadonlyMap<string, ReachDelta>;
+  /** Roles on the selector routing nothing whose values change (the override is per selector). Sorted. */
+  affectedRoles: string[];
   /** The first edited route's identity: the group header's jump target. */
   changeId: string;
 }
@@ -1634,7 +1653,7 @@ const markRow = (rows: Map<string, RowMarkers>, key: string, patch: Partial<RowM
     modified: current.modified || patch.modified === true,
     keyStaged: current.keyStaged || patch.keyStaged === true,
     needsReview: current.needsReview || patch.needsReview === true,
-    affected: current.affected || patch.affected === true,
+    affected: current.affected === true || patch.affected === true,
   });
 };
 
@@ -1692,14 +1711,28 @@ function reachGroupsOf(
         !sameCaps(role.exposedCapabilities, authority.exposedCaps) ||
         (override && role.thinkMode !== authority.thinkMode)
     );
-    const added = new Set<CapabilityName>();
-    const removed = new Set<CapabilityName>();
-    for (const role of changed) {
-      for (const cap of authority.exposedCaps)
-        if (!role.exposedCapabilities.includes(cap)) added.add(cap);
-      for (const cap of role.exposedCapabilities)
-        if (!authority.exposedCaps.includes(cap)) removed.add(cap);
-    }
+    /** What changes for THESE roles: caps as a union, Think when any of them differs. */
+    const deltaOver = (roles: readonly ModelProjection[]): ReachDelta => {
+      const added = new Set<CapabilityName>();
+      const removed = new Set<CapabilityName>();
+      for (const role of roles) {
+        for (const cap of authority.exposedCaps)
+          if (!role.exposedCapabilities.includes(cap)) added.add(cap);
+        for (const cap of role.exposedCapabilities)
+          if (!authority.exposedCaps.includes(cap)) removed.add(cap);
+      }
+      return {
+        addedCaps: canonicalCapList([...added]),
+        removedCaps: canonicalCapList([...removed]),
+        think:
+          override && roles.some((role) => role.thinkMode !== authority.thinkMode)
+            ? authority.thinkMode
+            : null,
+      };
+    };
+    const delta = deltaOver(changed);
+    // One route change per use case: `stageChange` replaces by stable id, so a
+    // use case is edited in at most one group.
     const editedSet = new Set(group.changes.map((change) => change.useCase));
     const edited: ReachEdit[] = group.changes.map((change) => {
       const applied = modelOf.get(roleOf.get(change.useCase) ?? '');
@@ -1720,6 +1753,7 @@ function reachGroupsOf(
       .sort(compareString);
     const sameModel: string[] = [];
     const fallback: string[] = [];
+    const fallbackDeltas = new Map<string, ReachDelta>();
     for (const route of base.routes) {
       const useCase = route.useCase;
       if (editedSet.has(useCase) || unassigned.has(useCase)) continue;
@@ -1738,25 +1772,27 @@ function reachGroupsOf(
       }
       // By the CONTRIBUTING role's identity, never by the selectors differing: a
       // fallback role may share the primary's selector while the primary itself
-      // is unchanged (same exposure, Think already at the override's value).
-      if (
-        changed.some(
-          (candidate) => candidate.role !== route.role && candidate.routedUseCases.includes(useCase)
-        )
-      )
+      // is unchanged (same exposure, Think already at the override's value). The
+      // row's delta is those roles' alone — the group's union may carry roles
+      // outside its chain (another routed role, a defined model nothing routes).
+      const contributing = changed.filter(
+        (candidate) => candidate.role !== route.role && candidate.routedUseCases.includes(useCase)
+      );
+      if (contributing.length > 0) {
         fallback.push(useCase);
+        fallbackDeltas.set(useCase, deltaOver(contributing));
+      }
     }
     out.push({
       key,
       provider,
       model,
-      selectorHadRoles: base.models.some((candidate) => onSelector(candidate)),
-      addedCaps: canonicalCapList([...added]),
-      removedCaps: canonicalCapList([...removed]),
-      think:
-        override && changed.some((role) => role.thinkMode !== authority.thinkMode)
-          ? authority.thinkMode
-          : null,
+      // Over the roles STAYING: a selector whose only role is leaving is empty at
+      // override time, so a join onto it "routes X", not "also".
+      selectorHadRoles: rolesOn.length > 0,
+      addedCaps: delta.addedCaps,
+      removedCaps: delta.removedCaps,
+      think: delta.think,
       staged: {
         exposedCaps: canonicalCapList(authority.exposedCaps),
         thinkMode: authority.thinkMode,
@@ -1765,6 +1801,11 @@ function reachGroupsOf(
       joins,
       sameModel: sameModel.sort(compareString),
       fallback: fallback.sort(compareString),
+      fallbackDeltas,
+      affectedRoles: changed
+        .filter((role) => role.routedUseCases.length === 0)
+        .map((role) => role.role)
+        .sort(compareString),
       changeId: changeStableID(group.changes[0]),
     });
   }
@@ -1819,6 +1860,10 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
       if (!routeReach.has(useCase)) routeReach.set(useCase, { reach: 'fallback', group });
       markRow(routeRows, useCase, { affected: true, needsReview: reviewOf(group) });
     }
+    // A defined model nothing routes still takes the selector's override
+    // (SetRoleOverrides is keyed by selector): its row says so.
+    for (const role of group.affectedRoles)
+      markRow(roleRows, role, { affected: true, needsReview: reviewOf(group) });
   }
 
   for (const change of draft.changes) {

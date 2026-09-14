@@ -459,7 +459,9 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         .getAllByRole('listitem')
         .map((pill) => pill.textContent)
     ).toEqual(['chat', '− stream', 'thinking']);
-    expect(within(pills).getByText('− stream').tagName).toBe('S');
+    expect(within(pills).getByText('− stream').tagName).toBe('DEL');
+    // The eyebrow is a visual echo; the list is named for AT by its own label.
+    expect(within(sibling).getByText('Capabilities')).toHaveAttribute('aria-hidden', 'true');
     // An override writes Think selector-wide too: both deltas, one sentence.
     expect(sentence(sibling)).toHaveTextContent(
       'Same model as summarize — capabilities belong to the model, so it loses stream, and Think becomes always.'
@@ -629,18 +631,144 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
       })
     );
-    // Names visible, no count, no hover: chat's applied model also serves completion (and
-    // summarize, which is leaving — its applied truth still lists it).
+    // Names visible, no count, no hover: chat's applied model also serves completion.
+    // summarize is staged AWAY from it, so naming it would describe a routing Apply
+    // undoes.
     expect(
-      within(screen.getByTestId('route-row-chat')).getByText(
-        'Model also serves completion and summarize'
-      )
+      within(screen.getByTestId('route-row-chat')).getByText('Model also serves completion')
     ).toBeInTheDocument();
     expect(screen.queryByText(/shared with/)).not.toBeInTheDocument();
     // The row staged onto another model paints THAT model: the old coupling is suppressed.
     expect(
       within(screen.getByTestId('route-row-summarize')).queryByText(/Model also serves/)
     ).not.toBeInTheDocument();
+  });
+
+  it('keeps the coupling fact on an edited row whose sentence does not name it', () => {
+    // chat-role serves chat, completion and summarize. chat re-asserts the selector's own
+    // exposure: nothing else changes, the sentence has no siblings to name — but the
+    // model still serves the others, and the editor asked for consent about them.
+    const sharedRole = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'chat-role' },
+      { useCase: 'summarize', role: 'chat-role' },
+    ];
+    renderProjected(
+      sharedRole,
+      [thinking({ routedUseCases: ['chat', 'completion', 'summarize'] })],
+      change({ thinkMode: 'auto' })
+    );
+    const edited = screen.getByTestId('route-row-chat');
+    expect(sentence(edited)).toHaveTextContent(/^You edited this route\.$/);
+    expect(
+      within(edited).getByText('Model also serves completion and summarize')
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the review detail on a reached row and drops it under a replaced source', () => {
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'coder-role' },
+    ];
+    const models = [
+      thinking({ routedUseCases: ['chat', 'completion'] }),
+      thinking({ role: 'coder-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
+    ];
+    const staged = change({ exposedCaps: ['chat', 'stream', 'thinking', 'tool_call'] });
+    const draft = stageChange(cleanDraft('0'.repeat(64)), staged, new KeyVault(new Map()));
+    const reviewed = { ...draft, needsReview: ['route:chat'] };
+    const projected = projectDraft({ routes, models }, reviewed);
+    const props = {
+      routes,
+      models,
+      providers: [provider],
+      changes: projected.changes,
+      rows: projected.routeRows,
+      roleRows: projected.roleRows,
+      selectorUseCases: projected.selectorUseCases,
+      routeReach: projected.routeReach,
+      diagnostics: [],
+      editable: true,
+      onStage: () => {},
+      onUnstagedChange: () => {},
+    };
+    const { unmount } = render(<RoutingCard {...props} draft={reviewed} />);
+    // Needs review outranks Affected, but the row still says how it is reached.
+    expect(statusOf(screen.getByTestId('route-row-completion'), 'Needs review')).toHaveTextContent(
+      'fallback changes'
+    );
+    unmount();
+    // A blank source paints every populated row Modified; a fallback row must not then
+    // contradict itself with `fallback changes`. (No review this time.)
+    const blank = { ...draft, source: { kind: 'blank' as const } };
+    const plain = projectDraft({ routes, models }, blank);
+    render(
+      <RoutingCard
+        {...props}
+        draft={blank}
+        rows={plain.routeRows}
+        roleRows={plain.roleRows}
+        routeReach={plain.routeReach}
+      />
+    );
+    const reached = screen.getByTestId('route-row-completion');
+    expect(statusOf(reached, 'Modified')).not.toHaveTextContent('fallback changes');
+    expect(within(reached).queryByText('Affected')).not.toBeInTheDocument();
+  });
+
+  it("tells a fallback row only what ITS chain's role changes, and marks an unrouted role", () => {
+    // chat-role (chat; completion falls back to it) gains tool_call. spare-role, a defined
+    // model nothing routes on the same selector, gains thinking AND tool_call and its
+    // Think flips to auto. completion's chain meets chat-role only.
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'coder-role' },
+    ];
+    const models = [
+      thinking({ routedUseCases: ['chat', 'completion'] }),
+      thinking({ role: 'coder-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
+      { ...model, role: 'spare-role', routedUseCases: [], removable: true },
+    ];
+    renderProjected(
+      routes,
+      models,
+      change({ exposedCaps: ['chat', 'stream', 'thinking', 'tool_call'], thinkMode: 'auto' })
+    );
+    expect(sentence(screen.getByTestId('route-row-completion'))).toHaveTextContent(
+      "gpt-5-mini is in this route's fallback chain — it will now have tool_call."
+    );
+    const spare = screen.getByTestId('defined-model-row-spare-role');
+    expect(statusOf(spare, 'Affected')).toHaveAttribute('data-tone', 'info');
+    expect(statusOf(spare, 'Affected')).toHaveTextContent('model changes');
+    expect(spare).not.toHaveAttribute('data-changed');
+  });
+
+  it('shows the legend only while some row is reached or the source is replaced', () => {
+    // A staged unassign marks a row without any reach: nothing the legend explains is
+    // on screen.
+    renderProjected(twoRoles, twoRoleModels, { kind: 'route-unassign', useCase: 'chat' });
+    expect(screen.queryByText(/staged, not applied/)).not.toBeInTheDocument();
+  });
+
+  it('shows the legend under a replaced source, where every row reads Modified', () => {
+    render(
+      <RoutingCard
+        routes={twoRoles}
+        models={twoRoleModels}
+        providers={[provider]}
+        draft={{ ...cleanDraft('0'.repeat(64)), source: { kind: 'blank' } }}
+        changes={[]}
+        rows={new Map()}
+        roleRows={new Map()}
+        selectorUseCases={new Map()}
+        routeReach={new Map()}
+        diagnostics={[]}
+        editable
+        onStage={() => {}}
+        onUnstagedChange={() => {}}
+      />
+    );
+    expect(screen.getByText(/staged, not applied/)).toBeInTheDocument();
   });
 
   it('shows the legend only while some row is marked', () => {

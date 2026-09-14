@@ -538,6 +538,7 @@
 
 .status {
   display: inline-flex;
+  flex-wrap: wrap; /* [W6] a detail sub-line wraps under the label */
   align-items: center;
   gap: 7px;
   font-size: 12px;
@@ -1657,6 +1658,7 @@ select.input {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-width: 0;
   padding: 5px 9px;
   border: 1px solid var(--surface-border-subtle);
   border-radius: 6px;
@@ -1667,6 +1669,8 @@ select.input {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere; /* [A3] identifiers can be 256 bytes */
   padding: 0;
   border: 0;
   background: none;
@@ -1907,7 +1911,7 @@ select.input {
 /*
  * A neutral fact under the model name: this route's resolved model also
  * serves others. Muted ink, no tone — it is coupling information, not a
- * warning; the sibling names ride the title attribute.
+ * warning; the sibling names are the text itself [W6].
  */
 .sharedMarker {
   display: block;
@@ -2223,8 +2227,11 @@ select.input {
 
 /* ── [W6] reach: how a staged model change reaches a row ────────────────── */
 
-/* Edited here: the stripe widens to 4px and the row takes the staged tint. */
-.row[data-mark='edited'] {
+/* Edited here: the stripe widens to 4px and the row takes the staged tint.
+   Specificity (0,3,0), later in source: the zebra and hover rules above are
+   (0,3,0) too and would otherwise paint over the tint on every even row. */
+.table > .row[data-mark='edited'],
+.editGroup > .row[data-mark='edited'] {
   background-color: color-mix(in srgb, var(--status-warning) 9%, transparent);
 }
 
@@ -2233,7 +2240,8 @@ select.input {
 }
 
 /* Same model: the change arrives through the selector, so a softer stripe and tint. */
-.row[data-mark='same-model'] {
+.table > .row[data-mark='same-model'],
+.editGroup > .row[data-mark='same-model'] {
   background-color: color-mix(in srgb, var(--status-warning) 5%, transparent);
 }
 
@@ -2280,11 +2288,8 @@ select.input {
   box-shadow: 0 0 0 1px var(--palette-blue) inset;
 }
 
-/* The status sub-line wraps under the label, aligned past the dot (7px + 7px gap). */
-.status {
-  flex-wrap: wrap;
-}
-
+/* The status sub-line wraps under the label, aligned past the dot (7px + 7px gap);
+   `.status` itself wraps (declared once, above). */
 .statusDetail {
   flex-basis: 100%;
   padding-left: 14px;
@@ -2297,6 +2302,19 @@ select.input {
 .capsRow {
   display: block;
   margin-top: 3px;
+}
+
+/* The eyebrow, visible at every width (unlike .recordLabel, the record-form echo). */
+.capsLabel {
+  display: inline;
+  margin-right: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .capPills {

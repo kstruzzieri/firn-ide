@@ -684,7 +684,18 @@ describe('projected draft normalization', () => {
     const draft = stage([
       routeChange({ useCase: 'chat', exposedCaps: ['chat', 'stream', 'generate'] }),
     ]);
-    const projected = projectDraft(base, { ...draft, needsReview: ['route:chat'] });
+    expect(projectDraft(base, draft).routeRows.get('summarize')?.needsReview).toBe(false);
+    // …through the real settle path: a conflict result marks the group for review.
+    const conflicted = settleDraft(
+      draft,
+      {
+        kind: 'result',
+        result: { status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' },
+      },
+      vaultOf()
+    );
+    const projected = projectDraft(base, conflicted);
+    expect(projected.routeRows.get('chat')?.needsReview).toBe(true);
     expect(projected.routeRows.get('summarize')).toMatchObject({
       modified: true,
       needsReview: true,
@@ -1498,20 +1509,166 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
     expect(projected.routeRows.has('completion')).toBe(false);
   });
 
+  // Two roles on one selector can only DIFFER in exposure while neither carries an
+  // explicit override — the projection derives each role's exposure from its TYPE
+  // (dense: chat, generate, stream; embedding: embed). An explicit override folds
+  // across the selector. These fixtures are those derived baselines.
+  const DENSE: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const twoTypes: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'embedding', role: 'vector-role' },
+    ],
+    models: [
+      modelRow({
+        role: 'agent-role',
+        modelName: 'gpt-5',
+        ...caps(DENSE),
+        routedUseCases: ['agent'],
+      }),
+      // An embedding role on the SAME selector; the embedding route falls back to it.
+      modelRow({
+        role: 'embed-role',
+        modelName: 'gpt-5',
+        type: 'embedding',
+        ...caps(['embed']),
+        routedUseCases: ['embedding'],
+      }),
+      modelRow({
+        role: 'vector-role',
+        modelName: 'qwen-embed',
+        type: 'embedding',
+        ...caps(['embed']),
+        routedUseCases: ['embedding'],
+      }),
+    ],
+  };
+  const dense = (over: Partial<RouteChange> = {}) =>
+    override({ capabilityFacts: { caps: DENSE, knownCaps: [...CAPABILITY_NAMES] }, ...over });
+
   it('judges each role on the selector by its own baseline', () => {
-    // analysis-role already exposes generate: only agent-role changes, so analysis is
-    // not reached and neither is completion, which only falls back to analysis-role.
-    const uneven: DraftBaseProjection = {
-      ...base,
-      models: base.models.map((model) =>
-        model.role === 'analysis-role' ? { ...model, ...caps([...GPT5, 'generate']) } : model
-      ),
-    };
-    const projected = projectDraft(uneven, stage([override()]));
+    // agent re-asserts exactly what its dense role derives: agent-role does not change,
+    // embed-role (embed → chat, generate, stream) does, and so does the route that
+    // falls back to it.
+    const projected = projectDraft(twoTypes, stage([dense({ exposedCaps: DENSE })]));
     const group = groupOf(projected, 'gpt-5');
-    expect(group.addedCaps).toEqual(['generate']);
+    expect(group.addedCaps).toEqual(['chat', 'generate', 'stream']);
+    expect(group.removedCaps).toEqual(['embed']);
     expect(group.sameModel).toEqual([]);
-    expect(group.fallback).toEqual([]);
+    expect(group.fallback).toEqual(['embedding']);
+    expect(projected.routeRows.has('agent')).toBe(true); // edited
+    expect(projected.routeReach.get('agent')?.reach).toBe('edited');
+  });
+
+  it("scopes a fallback row's delta to the roles that actually list it", () => {
+    // Both roles change, differently: agent-role gains embed and loses generate,
+    // embed-role gains chat and stream. The embedding route reaches gpt-5 through
+    // embed-role ONLY, so its delta is embed-role's — never the group's union.
+    const projected = projectDraft(
+      twoTypes,
+      stage([dense({ exposedCaps: ['chat', 'stream', 'embed'] })])
+    );
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.addedCaps).toEqual(['chat', 'stream', 'embed']);
+    expect(group.removedCaps).toEqual(['generate']);
+    expect(group.fallback).toEqual(['embedding']);
+    expect(group.fallbackDeltas.get('embedding')).toEqual({
+      addedCaps: ['chat', 'stream'],
+      removedCaps: [],
+      think: null,
+    });
+  });
+
+  it("scopes a fallback row's Think to its contributing role", () => {
+    // agent-role already Thinks auto; analysis-role does not. An override to auto
+    // changes analysis-role (and so completion, which falls back to it) but the
+    // group-level Think delta must not be attributed to a row whose chain meets
+    // only agent-role — here, none; and completion's own delta names the Think.
+    const projected = projectDraft(
+      {
+        ...base,
+        models: base.models.map((model) =>
+          model.role === 'agent-role' ? { ...model, thinkMode: 'auto' } : model
+        ),
+      },
+      stage([override({ exposedCaps: GPT5, thinkMode: 'auto' })])
+    );
+    const group = groupOf(projected, 'gpt-5');
+    expect(group.think).toBe('auto');
+    expect(group.fallbackDeltas.get('completion')).toEqual({
+      addedCaps: [],
+      removedCaps: [],
+      think: 'auto',
+    });
+  });
+
+  it('marks a defined model nothing routes as affected when its selector is overridden', () => {
+    // spare-role sits on gpt-5 and routes nothing: SetRoleOverrides still rewrites it
+    // (the override is keyed by selector), so its Defined-models row must say so.
+    const withSpare: DraftBaseProjection = {
+      ...base,
+      models: [
+        ...base.models,
+        modelRow({ role: 'spare-role', modelName: 'gpt-5', ...caps(GPT5), routedUseCases: [] }),
+      ],
+    };
+    const draft = stage([override()]);
+    const projected = projectDraft(withSpare, draft);
+    expect(groupOf(projected, 'gpt-5').affectedRoles).toEqual(['spare-role']);
+    expect(projected.roleRows.get('spare-role')).toMatchObject({ affected: true, modified: false });
+    expect(
+      projectDraft(withSpare, { ...draft, needsReview: ['route:agent'] }).roleRows.get('spare-role')
+        ?.needsReview
+    ).toBe(true);
+    // Contrast: a spare role already exposing generate is untouched.
+    const already = projectDraft(
+      {
+        ...withSpare,
+        models: withSpare.models.map((m) =>
+          m.role === 'spare-role' ? { ...m, ...caps([...GPT5, 'generate']) } : m
+        ),
+      },
+      draft
+    );
+    expect(groupOf(already, 'gpt-5').affectedRoles).toEqual([]);
+    expect(already.roleRows.has('spare-role')).toBe(false);
+  });
+
+  it('reads a selector as empty when its only role is leaving', () => {
+    // coding-role (completion only) retargets off gpt-coder while chat joins it: at
+    // override time nothing sits there, so the join "routes chat" — not "also".
+    const projected = projectDraft(
+      base,
+      stage([
+        override({
+          useCase: 'completion',
+          modelFacts: { provider: 'hosted', model: 'gpt-6', type: 'dense' },
+          capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCaps: ['chat', 'stream'],
+        }),
+        override({
+          useCase: 'chat',
+          modelFacts: { provider: 'hosted', model: 'gpt-coder', type: 'dense' },
+          capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCaps: ['chat', 'stream'],
+        }),
+      ])
+    );
+    expect(groupOf(projected, 'gpt-coder').selectorHadRoles).toBe(false);
+    expect(groupOf(projected, 'gpt-coder').joins).toEqual(['chat']);
+    // Contrast: with completion staying, the selector had a role.
+    const staying = projectDraft(
+      base,
+      stage([
+        override({
+          useCase: 'chat',
+          modelFacts: { provider: 'hosted', model: 'gpt-coder', type: 'dense' },
+          capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCaps: ['chat', 'stream'],
+        }),
+      ])
+    );
+    expect(groupOf(staying, 'gpt-coder').selectorHadRoles).toBe(true);
   });
 
   it('carries Think as a model delta only for an override group', () => {

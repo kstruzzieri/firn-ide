@@ -672,7 +672,11 @@ describe('RouteEditor', () => {
     const row = routeCells('chat');
     expect(within(row).getByText('gpt-5')).toBeInTheDocument();
     expect(within(row).queryByText(/Model also serves/)).not.toBeInTheDocument();
-    expect(within(routeCells('summarize')).getByText('Model also serves chat')).toBeInTheDocument();
+    // [W6] summarize's model will no longer serve chat once the retarget lands, so its
+    // marker names nobody: it describes what Apply leaves, never what it undoes.
+    expect(
+      within(routeCells('summarize')).queryByText(/Model also serves/)
+    ).not.toBeInTheDocument();
   });
 
   it('discloses the selector-wide reach of the change from the projected draft', async () => {

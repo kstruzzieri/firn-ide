@@ -83,27 +83,37 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
+/** `capabilities …` for the staged configuration, with its Think when set. */
+const stagedConfiguration = (group: ReachGroup): string[] => [
+  `capabilities ${group.staged.exposedCaps.join(', ')}`,
+  group.staged.thinkMode === '' ? '' : `Think ${group.staged.thinkMode}`,
+];
+
 /**
  * What changes on the group's model, for its header. A selector nothing sat on
  * shows the configuration the new route sets (`routes X · capabilities … ·
- * Think …`) rather than a delta against nothing; an override that changes
- * nothing visible reads `staged`.
+ * Think …`) rather than a delta against nothing. An override that changes
+ * nothing in the projection (Done on an untouched editor; a change to facts
+ * this surface does not show) says what it re-asserts — derived from the
+ * change, never a placeholder.
  */
 function reachDeltaLine(group: ReachGroup): string {
-  const parts = group.selectorHadRoles
-    ? [
-        group.addedCaps.length > 0 ? `capabilities + ${group.addedCaps.join(', ')}` : '',
-        group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
-        group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
-        group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
-      ]
-    : [
-        `routes ${listUseCases(group.joins)}`,
-        `capabilities ${group.staged.exposedCaps.join(', ')}`,
-        group.staged.thinkMode === '' ? '' : `Think ${group.staged.thinkMode}`,
-      ];
-  const line = parts.filter((part) => part !== '').join(' · ');
-  return line === '' ? 'staged' : line;
+  if (!group.selectorHadRoles)
+    return [`routes ${listUseCases(group.joins)}`, ...stagedConfiguration(group)]
+      .filter((part) => part !== '')
+      .join(' · ');
+  const signs = [
+    group.addedCaps.length > 0 ? `+ ${group.addedCaps.join(', ')}` : '',
+    group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
+  ].filter((sign) => sign !== '');
+  const parts = [
+    signs.length > 0 ? `capabilities ${signs.join(', ')}` : '',
+    group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
+    group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
+  ].filter((part) => part !== '');
+  if (parts.length > 0) return parts.join(' · ');
+  const [caps, think] = stagedConfiguration(group);
+  return `re-asserts ${caps}${think === '' ? '' : ` · ${think}`}`;
 }
 
 /** K: every route some group reaches, counted once. */
@@ -163,6 +173,8 @@ export function ApplyBar({
   onOpenSource,
 }: ApplyBarProps) {
   const sourceChip = sourceChipLabel(source);
+  // Keyed by kind and use case: a use case is edited in at most one group
+  // (`stageChange` replaces by stable id) and the three memberships are disjoint.
   const badge = (useCase: string, kind: 'edited' | 'same-model' | 'fallback', was?: string) => (
     <button
       key={`${kind}:${useCase}`}
@@ -196,7 +208,7 @@ export function ApplyBar({
           <span
             key={group.key}
             className={styles.reachGroup}
-            data-testid={`reach-group-${group.model}`}
+            data-testid={`reach-group-${group.provider}/${group.model}`}
           >
             <button
               type="button"
@@ -209,7 +221,18 @@ export function ApplyBar({
               <span className={styles.reachDelta}>{reachDeltaLine(group)}</span>
             </button>
             <span className={styles.badges}>
-              {group.edited.map((edit) => badge(edit.useCase, 'edited', edit.was?.model))}
+              {group.edited.map((edit) =>
+                badge(
+                  edit.useCase,
+                  'edited',
+                  // A provider-only move would otherwise print a WAS equal to the header.
+                  edit.was === null
+                    ? undefined
+                    : edit.was.provider === group.provider
+                      ? edit.was.model
+                      : `${edit.was.provider} · ${edit.was.model}`
+                )
+              )}
               {group.sameModel.map((useCase) => badge(useCase, 'same-model'))}
               {group.fallback.length > 0 && (
                 <span

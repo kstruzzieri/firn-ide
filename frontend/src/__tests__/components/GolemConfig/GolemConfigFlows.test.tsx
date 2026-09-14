@@ -2076,7 +2076,7 @@ describe('selector-wide siblings (firn-ide#315)', () => {
 
     const bar = screen.getByTestId('golem-config-draft');
     expect(within(bar).getByText('1 model · 2 routes affected')).toBeInTheDocument();
-    const groupEl = within(bar).getByTestId('reach-group-gpt-5-mini');
+    const groupEl = within(bar).getByTestId('reach-group-hosted/gpt-5-mini');
     expect(within(groupEl).getAllByRole('button')[0]).toHaveTextContent('Think always');
     expect(screen.queryByRole('group', { name: 'Route summarize' })).not.toBeInTheDocument();
 
@@ -2093,10 +2093,10 @@ describe('selector-wide siblings (firn-ide#315)', () => {
   // sends ONE change.
   it('explains every row a capability override reaches, and sends one change', async () => {
     // The projection contract: effective = the declared caps, exposed ⊆ known.
-    const declares = (caps: CapabilityName[], exposed: CapabilityName[] = caps) => ({
+    const declares = (caps: CapabilityName[]) => ({
       effectiveCapabilities: caps,
       capabilityFacts: { caps, knownCaps: [...CAPABILITY_NAMES] },
-      exposedCapabilities: exposed,
+      exposedCapabilities: caps,
     });
     reload({
       ...readyProjection,
@@ -2111,12 +2111,13 @@ describe('selector-wide siblings (firn-ide#315)', () => {
       models: [
         // cloud-pro serves analysis and reasoning directly; agent, chat and
         // completion reach it through their roles' fallback chains (roleUsage is
-        // fallback-inclusive). It declares tool_call but does not expose it.
+        // fallback-inclusive). No explicit override: exposure = the derived caps
+        // (the projection cannot expose less than an explicit override declares).
         model({
           role: 'cloud-pro',
           modelName: 'deepseek-v4-pro',
           type: 'moe',
-          ...declares(['chat', 'stream', 'tool_call'], ['chat', 'stream']),
+          ...declares(['chat', 'stream']),
           routedUseCases: ['agent', 'analysis', 'chat', 'completion', 'reasoning'],
         }),
         model({
@@ -2172,7 +2173,7 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     const bar = screen.getByTestId('golem-config-draft');
     expect(within(bar).getByText('1 staged change')).toBeInTheDocument();
     expect(within(bar).getByText('1 model · 5 routes affected')).toBeInTheDocument();
-    const group = within(bar).getByTestId('reach-group-deepseek-v4-pro');
+    const group = within(bar).getByTestId('reach-group-hosted/deepseek-v4-pro');
     expect(within(group).getAllByRole('button')[0]).toHaveTextContent('capabilities + tool_call');
     expect(
       within(group)

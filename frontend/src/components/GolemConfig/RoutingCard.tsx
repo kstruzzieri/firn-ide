@@ -40,6 +40,7 @@ import {
   shortfallLine,
   type Change,
   type Draft,
+  type ReachDelta,
   type RouteChange,
   type RouteReach,
   type RouteReachEntry,
@@ -104,12 +105,14 @@ function routeStatus(
   // §3.3: No model and Incompatible take precedence over Modified.
   if (view === null) return { label: 'No model', tone: 'dim' };
   if (!meetsUseCaseFloor(useCase, view.caps)) return { label: 'Incompatible', tone: 'bad' };
-  if (markers?.needsReview === true) return { label: 'Needs review', tone: 'warn' };
   const detail = reach === undefined ? undefined : REACH_DETAIL[reach];
+  // Review outranks the reach labels, but the row still says how it is reached.
+  if (markers?.needsReview === true) return { label: 'Needs review', tone: 'warn', detail };
+  if (markers?.modified === true) return { label: 'Modified', tone: 'warn', detail };
   // A profile or blank source has nothing applied underneath it, so every
-  // populated row is a pending change.
-  if (markers?.modified === true || sourceReplaced)
-    return { label: 'Modified', tone: 'warn', detail };
+  // populated row is a pending change — "its own values stay" would be false,
+  // so Affected yields, and no sub-line contradicts the label.
+  if (sourceReplaced) return { label: 'Modified', tone: 'warn' };
   // [W6] Reached through a fallback only: the row's own values stay.
   if (markers?.affected === true) return { label: 'Affected', tone: 'info', detail };
   return { label: 'Ready', tone: 'ok' };
@@ -142,12 +145,15 @@ const thinkClause = (think: ThinkMode | null, owner = ''): string | null =>
  * A → B → X).
  */
 function reachSentence(
+  useCase: string,
   entry: RouteReachEntry,
   own: { added: CapabilityName[]; removed: CapabilityName[]; think: ThinkMode | null }
 ): string {
   const { group } = entry;
   switch (entry.reach) {
     case 'edited': {
+      // Co-edited routes on the same selector carry their own `edited` badge and
+      // sentence, so this names only what the change REACHES beyond the edits.
       const clauses = [
         group.sameModel.length > 0 ? `also serves ${listUseCases(group.sameModel)}` : '',
         group.fallback.length > 0 ? `is the fallback for ${listUseCases(group.fallback)}` : '',
@@ -164,24 +170,30 @@ function reachSentence(
         .filter((clause) => clause !== '')
         .join(' and ');
       const think = thinkClause(own.think);
+      // A same-model row is one whose own values change, so one clause is always
+      // non-empty; the last arm keeps the sentence honest should that ever not hold.
       const body =
         caps === ''
-          ? (think ?? '')
+          ? (think ?? "the model's configuration changes")
           : `capabilities belong to the model, so it ${caps}${think === null ? '' : `, and ${think}`}`;
       return `Same model as ${listUseCases(group.edited.map((edit) => edit.useCase))} — ${body}.`;
     }
     case 'fallback': {
+      // The delta of the roles in THIS row's chain, never the group's union.
+      const delta: ReachDelta | undefined = group.fallbackDeltas.get(useCase);
+      const lead = `${group.model} is in this route's fallback chain — `;
+      if (delta === undefined) return `${lead}its configuration changes.`;
       const caps = [
-        group.addedCaps.length > 0 ? `now have ${listUseCases(group.addedCaps)}` : '',
-        group.removedCaps.length > 0 ? `lose ${listUseCases(group.removedCaps)}` : '',
+        delta.addedCaps.length > 0 ? `now have ${listUseCases(delta.addedCaps)}` : '',
+        delta.removedCaps.length > 0 ? `lose ${listUseCases(delta.removedCaps)}` : '',
       ]
         .filter((clause) => clause !== '')
         .join(' and ');
       const parts = [
         caps === '' ? '' : `it will ${caps}`,
-        thinkClause(group.think, 'its ') ?? '',
+        thinkClause(delta.think, 'its ') ?? '',
       ].filter((part) => part !== '');
-      return `${group.model} is in this route's fallback chain — ${parts.join(', and ')}.`;
+      return `${lead}${parts.join(', and ')}.`;
     }
   }
 }
@@ -518,10 +530,43 @@ export function RoutingCard({
              * displayed model with the old model's marker would be a lie, so
              * the marker is suppressed until the row shows the applied truth.
              */
-            const shared =
-              staged?.kind === 'route'
-                ? []
-                : (applied?.routedUseCases ?? []).filter((other) => other !== useCase);
+            // While a RETARGET is staged the row paints another model and the coupling
+            // belongs to the one being replaced; an override paints the applied model,
+            // whose coupling still holds.
+            const paintsAnotherModel =
+              staged?.kind === 'route' &&
+              (applied === null ||
+                staged.modelFacts.provider !== applied.provider ||
+                staged.modelFacts.model !== applied.modelName);
+            const shared = paintsAnotherModel
+              ? []
+              : (applied?.routedUseCases ?? []).filter((other) => {
+                  if (other === useCase) return false;
+                  // [W6] A sibling this draft moves off the model, or unassigns, is
+                  // a routing Apply undoes: naming it would describe the past.
+                  const away = stagedFor(other);
+                  return (
+                    away === undefined ||
+                    (away.kind === 'route' &&
+                      applied !== null &&
+                      away.modelFacts.provider === applied.provider &&
+                      away.modelFacts.model === applied.modelName)
+                  );
+                });
+            /**
+             * [W6] The coupling fact stays wherever the reach sentence does not
+             * already name it: an edited row's sentence names the same-model and
+             * fallback routes its change reaches, nothing else; a fallback row's
+             * sentence is about ANOTHER model, so its own model's siblings stay.
+             */
+            const unsaid =
+              reach?.reach === 'edited'
+                ? shared.filter(
+                    (other) =>
+                      !reach.group.sameModel.includes(other) &&
+                      !reach.group.fallback.includes(other)
+                  )
+                : shared;
             // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
             // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
             // row marker — the shipped definition of "this row has a staged change" — so
@@ -608,9 +653,9 @@ export function RoutingCard({
                           is expanded — the editor's info notice tells the same fact
                           in full — and while the row is reached (the sentence below
                           carries it). */}
-                      {!expanded && reach === undefined && shared.length > 0 && (
+                      {!expanded && unsaid.length > 0 && (
                         <span className={styles.sharedMarker}>
-                          {`Model also serves ${listUseCases(shared)}`}
+                          {`Model also serves ${listUseCases(unsaid)}`}
                         </span>
                       )}
                     </>
@@ -622,14 +667,17 @@ export function RoutingCard({
                   {(wasModel ?? wasAssigned) !== null && <Was value={(wasModel ?? wasAssigned)!} />}
                   {showCaps && caps !== null && (
                     <span className={styles.capsRow}>
-                      <b className={styles.recordLabel}>Capabilities</b>
+                      {/* A visual echo at every width; the list carries the name for AT. */}
+                      <b className={styles.capsLabel} aria-hidden="true">
+                        Capabilities
+                      </b>
                       <span role="list" aria-label="Capabilities" className={styles.capPills}>
                         {caps.all.map((cap) => (
                           <span role="listitem" key={cap} className={styles.capPill}>
                             {caps.added.includes(cap) ? (
                               stagedValue(`+ ${cap}`)
                             ) : caps.removed.includes(cap) ? (
-                              <s>{`− ${cap}`}</s>
+                              <del>{`− ${cap}`}</del>
                             ) : (
                               cap
                             )}
@@ -642,7 +690,7 @@ export function RoutingCard({
                       fact the editor's disclosure tells, surfaced on the row. */}
                   {reach !== undefined && (
                     <small className={styles.reachSentence} data-testid="reach-sentence">
-                      {reachSentence(reach, {
+                      {reachSentence(useCase, reach, {
                         added: caps?.added ?? [],
                         removed: caps?.removed ?? [],
                         think: ownThink,
@@ -760,8 +808,9 @@ export function RoutingCard({
           })}
         </div>
 
-        {/* [W6] The legend, only while some row carries a mark to explain. */}
-        {rows.size > 0 && (
+        {/* [W6] The legend, only while a row is reached or every row reads Modified
+            under a replaced source — never for a lone unassign, which nothing here explains. */}
+        {(routeReach.size > 0 || sourceReplaced) && (
           <p className={styles.legend}>
             {
               'Modified — this route\u2019s model or values change · Affected — only what it falls back to changes · '
@@ -830,6 +879,15 @@ export function RoutingCard({
                       {markers?.needsReview !== true && markers?.modified === true && (
                         <StatusText tone="warn">Modified</StatusText>
                       )}
+                      {/* [W6] Its selector is overridden by a staged route change: the
+                          override rewrites this role too, though nothing routes it. */}
+                      {markers?.needsReview !== true &&
+                        markers?.modified !== true &&
+                        markers?.affected === true && (
+                          <StatusText tone="info" detail="model changes">
+                            Affected
+                          </StatusText>
+                        )}
                       {/* An inline disclosure (W4-3), so no aria-haspopup: expanded +
                           controls describe it. It routes the MODEL — the backend never
                           binds the defined role itself — so the name says which model. */}
