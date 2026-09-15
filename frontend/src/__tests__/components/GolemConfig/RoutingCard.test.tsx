@@ -177,8 +177,10 @@ describe('route editor Done (firn-ide#284)', () => {
     expect(announcementRegion()).toHaveTextContent('chat model staged: gpt-5-mini');
 
     // Re-opening the editor EMPTIES the persistent region, so a second staging
-    // of the same model (here: the edit undone) is a fresh write the live region
-    // actually announces — identical consecutive text is silent to AT (§4.7).
+    // of the same model is a fresh write the live region actually announces —
+    // identical consecutive text is silent to AT (§4.7). (`onStage` is a mock
+    // and the draft stays clean, so the reopened editor seeds from the applied
+    // model and the same tick is made again.)
     await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
     expect(announcementRegion()).toHaveTextContent('');
     await user.click(screen.getByRole('checkbox', { name: /^tool_call/ }));

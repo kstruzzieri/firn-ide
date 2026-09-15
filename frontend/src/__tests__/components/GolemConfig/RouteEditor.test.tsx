@@ -106,6 +106,10 @@ const openRoute = async (useCase: string, label = 'Edit') =>
 
 const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 
+/** The footer's Pending summary without its eyebrow. */
+const summary = () =>
+  (screen.getByTestId('editor-changes').textContent ?? '').replace(/^Pending\s*/, '');
+
 /** Choose a model card in the band. Card text is name + type + facts, so the
  *  card is found by its NAME node rather than its whole accessible name. */
 async function pickModel(name: string) {
@@ -537,6 +541,11 @@ describe('RouteEditor', () => {
     expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
 
     await userEvent.click(screen.getByLabelText('Apply anyway'));
+    expect(screen.getByLabelText('Apply anyway').closest('label')).toHaveAttribute(
+      'data-changed',
+      'true'
+    );
+    expect(summary()).toMatch(/· Apply anyway acknowledged$/);
     await stage();
     // Staging must not re-widen what `summarize` narrowed: the override is
     // selector-wide, so a wider set here would rewrite the sibling's contract.
@@ -1608,12 +1617,16 @@ describe('RouteEditor', () => {
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
 
+    const quiet = screen.getByRole('button', { name: 'Close' });
     const toolCall = screen.getByRole('checkbox', { name: /^tool_call/ });
     await userEvent.click(toolCall);
-    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveAccessibleDescription(
+      'Pending + tool_call'
+    );
+    // The quiet button is the same element relabelled, so focus on it survives the flip.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBe(quiet);
     expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
-    expect(screen.getByTestId('editor-changes')).toHaveTextContent('+ tool_call');
+    expect(summary()).toBe('+ tool_call');
     // The changed control carries the staged-value mark.
     expect(toolCall.closest('label')).toHaveAttribute('data-changed', 'true');
     expect(screen.getByLabelText('chat required').closest('label')).not.toHaveAttribute(
@@ -1621,20 +1634,21 @@ describe('RouteEditor', () => {
     );
 
     await userEvent.click(toolCall);
-    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBe(quiet);
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
     expect(toolCall.closest('label')).not.toHaveAttribute('data-changed');
   });
 
-  it('summarises a model pick, its exposure delta and a Think change before Done', async () => {
+  it('summarises a model pick and its whole exposure delta before Done', async () => {
     renderRouting({ models: [model({ thinkMode: 'auto' }), other] });
     await openRoute('chat');
     await pickModel('gpt-5');
-    // gpt-5 declares tool_call, which chat's baseline did not expose.
-    expect(screen.getByTestId('editor-changes')).toHaveTextContent(
-      'Model gpt-5 (was gpt-5-mini) · + tool_call'
-    );
+    // The WHOLE summary: gpt-5 exposes tool_call and thinking, which chat's
+    // baseline did not; the fixture's Think `auto` sat behind an unexposed
+    // `thinking`, so Done was never going to stage it and no Think clause
+    // appears (routeEdit.ts counts Think only while thinking is exposed).
+    expect(summary()).toBe('Model gpt-5 (was gpt-5-mini) · + tool_call, thinking');
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
@@ -1656,10 +1670,133 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
-    expect(screen.getByTestId('editor-changes')).toHaveTextContent('Think Always (was Auto)');
-    expect(screen.getByLabelText('Think mode').closest('[data-changed]')).not.toBeNull();
+    expect(summary()).toBe('Think Always (was Auto)');
+    expect(screen.getByLabelText('Think mode').parentElement).toHaveAttribute(
+      'data-changed',
+      'true'
+    );
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
+  // Review of the footer (Codex, 2026-09-15): `unstaged` and the summary read
+  // ONE derivation (routeEdit.ts), so every state that keeps Done on screen has
+  // a clause, and states Done would stage identically read as clean.
+  it('keeps naming a declaration an exposure tick made, after the tick is undone', async () => {
+    // A hand-declared model reopens from its staged facts: no tool_call.
+    const handmade: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'handmade', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(handmade) });
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+
+    const exposure = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from handmade',
+    });
+    const toolCall = within(exposure).getByLabelText('tool_call');
+    // Ticking exposes tool_call AND declares it (a hand-declared model cannot
+    // expose what it does not declare); unticking only withdraws the exposure.
+    await userEvent.click(toolCall);
+    expect(summary()).toBe('Declares + tool_call · + tool_call');
+    await userEvent.click(toolCall);
+    expect(summary()).toBe('Declares + tool_call');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(toolCall.closest('label')).not.toHaveAttribute('data-changed');
+    expect(
+      within(
+        screen.getByRole('group', { name: 'Capabilities this model supports' })
+      ).getByLabelText('tool_call')
+    ).toBeChecked();
+  });
+
+  it('counts Think only while thinking is exposed: unticking clears it, re-ticking finds it', async () => {
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+        }),
+        other,
+      ],
+    });
+    await openRoute('chat');
+    const thinking = screen.getByRole('checkbox', { name: /^thinking/ });
+
+    // Unticking alone clears the mode Done stages; the summary says so.
+    await userEvent.click(thinking);
+    expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+    expect(summary()).toBe('− thinking · Think cleared (was Auto)');
+    await userEvent.click(thinking);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+
+    // A value chosen and then hidden behind an untick is not something Done
+    // would stage: the summary reads the cleared mode, not the hidden select.
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(summary()).toBe('Think Always (was Auto)');
+    await userEvent.click(thinking);
+    expect(summary()).toBe('− thinking · Think cleared (was Auto)');
+    await userEvent.click(thinking);
+    expect(summary()).toBe('Think Always (was Auto)');
+    expect(screen.getByLabelText('Think mode').parentElement).toHaveAttribute(
+      'data-changed',
+      'true'
+    );
+  });
+
+  it('reads as clean when the picker hands back the same model under another role', async () => {
+    // Two roles on one selector are one picker card; the card carries the
+    // FIRST projection, which is not chat's own.
+    const completion = model({ role: 'completion-role', routedUseCases: ['completion'] });
+    renderRouting({
+      routes: [
+        { useCase: 'completion', role: 'completion-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [completion, model(), other],
+    });
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await pickModel('gpt-5-mini');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+  });
+
+  it('names a hand declaration that reuses the row model’s name', async () => {
+    renderRouting();
+    await openRoute('chat');
+    // The picker refuses to declare an exact list match, but the declare form's
+    // name field does not: declare something else, then type the name back.
+    await declareModel('temp-model');
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    expect(summary()).toBe('Model gpt-5-mini declared by hand');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('still refuses Done without a provider: the blank option is an edit', async () => {
+    const { onStage } = renderRouting();
+    await openRoute('chat');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), '');
+    expect(summary()).toBe(
+      'Provider — (was hosted) · Model — (was gpt-5-mini) · Type — (was dense) · − chat, stream'
+    );
+    await stage();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Choose a provider first/);
+    expect(onStage).not.toHaveBeenCalled();
   });
 
   it('reverts unstaged fields on Cancel and releases the Apply gate', async () => {

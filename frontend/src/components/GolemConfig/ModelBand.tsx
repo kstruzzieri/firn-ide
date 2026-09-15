@@ -35,6 +35,7 @@ import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
+import { factsLine } from './routeEdit';
 
 const TYPE_LABEL: Record<ModelType, string> = {
   dense: 'Dense',
@@ -111,23 +112,6 @@ export function buildModelRows(models: readonly ModelProjection[], provider: str
 
 const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
   a !== null && rowKey(a) === rowKey(b);
-
-/**
- * What a compact card says beside its type tag: the numbers that tell two
- * same-named models apart. The TYPE is its own tag, so it is not in here.
- * Context reads human-scale ("256K ctx"); the exact count travels in the
- * facts span's title. Dimensions stay raw — small numbers, different unit.
- */
-const factsLine = (model: ModelProjection): string =>
-  [
-    model.parameters,
-    model.contextWindow === undefined
-      ? undefined
-      : `${formatContextWindow(model.contextWindow)} ctx`,
-    model.dimensions === undefined ? undefined : `${model.dimensions} dim`,
-  ]
-    .filter((part): part is string => part !== undefined)
-    .join(' · ');
 
 /** Hover detail wherever the abbreviated context renders: the exact count. */
 const contextTitle = (model: ModelProjection): string | undefined =>

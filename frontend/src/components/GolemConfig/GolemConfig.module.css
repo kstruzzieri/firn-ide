@@ -1057,10 +1057,12 @@ select.input {
   line-height: 1.5;
   font-style: italic;
   color: var(--status-warning);
+  /* [A3] identifiers can be 256 bytes; never let the card scroll for them. */
+  overflow-wrap: anywhere;
 }
 
 .editorChanges b {
-  margin-right: 8px;
+  margin-right: 4px;
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-style: normal;

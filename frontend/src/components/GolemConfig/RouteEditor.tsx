@@ -69,6 +69,7 @@ import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
 import { ModelBand, canonicalCaps, type ManualModel } from './ModelBand';
+import { THINK_LABEL, effectiveThink, pendingOf, snapshotOf, type Seed } from './routeEdit';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -82,14 +83,6 @@ const EMPTY_EXPOSURE =
 
 /** Transport order, the order the backend's drop set is compared in. */
 const DROP_ORDER: readonly DropField[] = ['slots', 'think_tags'];
-
-const THINK_LABEL: Record<ThinkMode, string> = {
-  '': 'Default',
-  none: 'None',
-  always: 'Always',
-  toggle: 'Toggle',
-  auto: 'Auto',
-};
 
 /**
  * The verb that agrees with a `listUseCases` list: "chat also uses" but "chat
@@ -159,16 +152,6 @@ export interface RouteEditorProps {
 
 /** The `factsKey` of a hand-declared model: its declared set, canonical. */
 const declarationKey = (caps: readonly CapabilityName[]): string => `manual\u0000${caps.join(',')}`;
-
-interface Seed {
-  provider: string;
-  defined: ModelProjection | null;
-  manual: ManualModel | null;
-  exposed: CapabilityName[];
-  think: ThinkMode;
-  ackUnknown: boolean;
-  ackDrops: boolean;
-}
 
 /**
  * Reopening shows what is waiting for Apply, not the applied document
@@ -506,52 +489,32 @@ export function RouteEditor({
     };
   }, [base, draft, useCase]);
 
-  /** The editor's state as one comparable string: what Done would stage, minus the derivations. */
-  const snapshotOf = (state: Seed): string =>
-    JSON.stringify({
-      provider: state.provider,
-      defined: state.defined?.role ?? null,
-      manual: state.manual,
-      exposed: state.exposed,
-      think: state.think,
-      ackUnknown: state.ackUnknown,
-      ackDrops: state.ackDrops,
-    });
-  const snapshot = snapshotOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
+  // An acknowledgement counts only while its control is on screen: submit()
+  // sends `confirmDrops` only with drops to confirm, and gates on `ackUnknown`
+  // only with unknown use cases, so a tick left behind a change that removed
+  // the question is nothing Done would stage.
+  const now: Seed = {
+    provider,
+    defined,
+    manual,
+    exposed,
+    think,
+    ackUnknown: ackUnknown && unknownUseCases.length > 0,
+    ackDrops: ackDrops && drops.length > 0,
+  };
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
   const [baseline] = useState(() =>
     seedFrom(staged, current, models, selectorAuthority(current, draft.changes))
   );
-  const committed = snapshotOf(baseline);
-  const unstaged = snapshot !== committed;
-
+  const unstaged = snapshotOf(now) !== snapshotOf(baseline);
   /**
    * What differs from the baseline, in words, for the footer — the same facts
-   * `unstaged` is computed from, so the summary and the Done/Cancel offer can
-   * never disagree. Keith's wave-6 live gate: an edit undone by hand looked no
-   * different from a pending one.
+   * `unstaged` reads (routeEdit.ts), so the summary and the Done/Cancel offer
+   * can never disagree. Keith's wave-6 live gate: an edit undone by hand looked
+   * no different from a pending one.
    */
-  const modelNameOf = (seed: Seed): string =>
-    (seed.defined?.modelName ?? (seed.manual !== null ? seed.manual.model : '')) || '—';
-  const pending: string[] = [];
-  if (provider !== baseline.provider)
-    pending.push(`Provider ${provider || '—'} (was ${baseline.provider || '—'})`);
-  const modelNow = modelNameOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
-  const modelWas = modelNameOf(baseline);
-  if (modelNow !== modelWas) pending.push(`Model ${modelNow} (was ${modelWas})`);
-  if (manual !== null && baseline.manual !== null && manual.type !== baseline.manual.type)
-    pending.push(`Type ${manual.type || '—'} (was ${baseline.manual.type || '—'})`);
-  const capsAdded = exposed.filter((cap) => !baseline.exposed.includes(cap));
-  const capsRemoved = baseline.exposed.filter((cap) => !exposed.includes(cap));
-  if (capsAdded.length > 0) pending.push(`+ ${capsAdded.join(', ')}`);
-  if (capsRemoved.length > 0) pending.push(`− ${capsRemoved.join(', ')}`);
-  if (think !== baseline.think)
-    pending.push(`Think ${THINK_LABEL[think]} (was ${THINK_LABEL[baseline.think]})`);
-  if (ackUnknown !== baseline.ackUnknown)
-    pending.push(ackUnknown ? 'Apply anyway acknowledged' : 'Apply anyway withdrawn');
-  if (ackDrops !== baseline.ackDrops)
-    pending.push(ackDrops ? 'Removal acknowledged' : 'Removal acknowledgement withdrawn');
+  const pending = pendingOf(now, baseline);
 
   useEffect(() => {
     onUnstagedChange(rowKey, unstaged);
@@ -760,7 +723,7 @@ export function RouteEditor({
                 <div className={styles.column}>
                   <div
                     className={styles.field}
-                    data-changed={think !== baseline.think || undefined}
+                    data-changed={think !== effectiveThink(baseline) || undefined}
                   >
                     <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
                       Think mode
@@ -898,7 +861,10 @@ export function RouteEditor({
             so it cannot check this model for {agrees(unknownUseCases, 'it', 'them')}. Mark{' '}
             <strong>Apply anyway</strong> to accept that.
           </p>
-          <label className={styles.checkbox}>
+          <label
+            className={styles.checkbox}
+            data-changed={now.ackUnknown !== baseline.ackUnknown || undefined}
+          >
             <input
               className={styles.checkboxInput}
               type="checkbox"
@@ -909,7 +875,7 @@ export function RouteEditor({
               }}
             />
             <span className={styles.checkboxBox} aria-hidden="true" />
-            Apply anyway
+            <span className={styles.checkboxText}>Apply anyway</span>
           </label>
         </div>
       )}
@@ -923,7 +889,10 @@ export function RouteEditor({
             They live in the configuration file and are not shown here. Golem confirms exactly what
             goes when you apply.
           </p>
-          <label className={styles.checkbox}>
+          <label
+            className={styles.checkbox}
+            data-changed={now.ackDrops !== baseline.ackDrops || undefined}
+          >
             <input
               className={styles.checkboxInput}
               type="checkbox"
@@ -934,7 +903,7 @@ export function RouteEditor({
               }}
             />
             <span className={styles.checkboxBox} aria-hidden="true" />
-            Remove them and continue
+            <span className={styles.checkboxText}>Remove them and continue</span>
           </label>
         </div>
       )}
@@ -963,38 +932,33 @@ export function RouteEditor({
       {/* What Done would stage, said before it is pressed: the same facts
           `unstaged` reads, so an edit undone by hand reads as no change. */}
       {unstaged && (
-        <p className={styles.editorChanges} data-testid="editor-changes">
-          <b>Pending</b>
-          {pending.join(' · ')}
+        <p className={styles.editorChanges} id={`${id}-changes`} data-testid="editor-changes">
+          <b>Pending</b> {pending.join(' · ')}
         </p>
       )}
 
       <div className={styles.editorFooter}>
-        {unstaged ? (
-          <>
-            {/* Always enabled once something differs: this button IS the
-                validator's entry point, and the refusals above are how the
-                editor answers. The global Apply gate is held by
-                `onUnstagedChange`, not by a disabled control. */}
-            <button
-              type="button"
-              className={`${styles.button} ${styles.primary}`}
-              onClick={submit}
-              data-unstaged="true"
-            >
-              Done
-            </button>
-            <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
-              Cancel
-            </button>
-          </>
-        ) : (
-          /* Nothing differs from the row, so there is nothing to stage and
-             nothing to cancel: one control, which only collapses the editor. */
-          <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
-            Close
+        {/* Always enabled once something differs: this button IS the
+            validator's entry point, and the refusals above are how the editor
+            answers. The global Apply gate is held by `onUnstagedChange`, not
+            by a disabled control. Focusing it reads the summary. */}
+        {unstaged && (
+          <button
+            type="button"
+            className={`${styles.button} ${styles.primary}`}
+            onClick={submit}
+            data-unstaged="true"
+            aria-describedby={`${id}-changes`}
+          >
+            Done
           </button>
         )}
+        {/* One element either way, so focus never falls to body when the
+            footer flips under it: Cancel discards an edit, Close only collapses
+            an editor that matches its row — nothing to stage, nothing to cancel. */}
+        <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
+          {unstaged ? 'Cancel' : 'Close'}
+        </button>
         {/* §4.3: optional use cases only. The agent route is Firn's own run
             path, and the backend refuses to unbind it independently (§5.2). */}
         {/* v9 right-aligns the destructive action away from Done/Cancel. */}
