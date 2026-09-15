@@ -438,11 +438,11 @@ it.each(['text-muted', 'text-secondary'])(
 // [W6] The Affected mark is --palette-sky: a FIXED literal that duplicates
 // --accent-project's on purpose (like --files-key duplicates --accent-go), so
 // the mark never moves when a workspace accent is repointed — and never reads
-// purple like --palette-blue did. It equals the live accent only on the
-// project-accent workspace.
-it('pins --palette-sky to the Glacier sky literal, apart from the workspace accent', () => {
+// purple like --palette-blue did. Only the literal is pinned: an equality with
+// --accent-project would fail in exactly the repointing case the token exists
+// to survive, and a ΔE seat is impossible at distance 0 from the accent.
+it('pins --palette-sky to the Glacier sky literal', () => {
   expect(token('palette-sky')).toBe('#38bdf8');
-  expect(token('palette-sky')).toBe(token('accent-project'));
 });
 
 it.each([

@@ -572,7 +572,13 @@ describe('ModelBand stylesheet coverage', () => {
     const text = css.match(/^\.checkboxText \{[^}]*\}/ms)?.[0] ?? '';
     const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
 
+    // Block, not the base flex column: that is what makes the wrapper's 8px exact
+    // (the base gap would add 5px) and keeps the legend out of any flex/grid case.
+    expect(fieldset).toMatch(/display: block/);
     expect(fieldset).toMatch(/border: 0/);
+    expect(css.match(/\.detail \.capabilities > \.fieldHint \{[^}]*\}/s)?.[0] ?? '').toMatch(
+      /display: block;\s*margin-top: 8px/
+    );
     expect(grid).toMatch(/display: grid/);
     expect(grid).toMatch(/grid-template-columns: repeat\(auto-fill, minmax\(118px, 1fr\)\)/);
     expect(grid).toMatch(/gap: 8px 16px/);

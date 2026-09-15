@@ -1532,6 +1532,8 @@ describe('RouteEditor', () => {
     expect(text).not.toBeNull();
     expect(text).toHaveTextContent(/^chat/);
     expect(text?.querySelector('.requiredTag')).toHaveTextContent('required');
+    // The boxes sit in the grid wrapper under the legend, here as in the declare form.
+    expect(box.closest('.capabilityGrid')).not.toBeNull();
     // Decorative: the input alone carries the state to assistive tech.
     expect(box.nextElementSibling).toHaveAttribute('aria-hidden', 'true');
   });
