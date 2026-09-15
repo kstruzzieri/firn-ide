@@ -876,7 +876,7 @@ describe('RouteEditor', () => {
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/chat needs chat/);
-    expect(screen.getByRole('alert')).not.toHaveTextContent(/Tick at least one/);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/Mark at least one/);
   });
 
   it('opens a join on the Think and exposure its selector already carries in the draft', async () => {
@@ -1347,7 +1347,7 @@ describe('RouteEditor', () => {
     await pickModel('gpt-5');
 
     expect(screen.getByText(/Firn has/)).toHaveTextContent(
-      'Firn has no requirements on record for summarize, so it cannot check this model for it. Tick Apply anyway to accept that.'
+      'Firn has no requirements on record for summarize, so it cannot check this model for it. Mark Apply anyway to accept that.'
     );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
@@ -1433,7 +1433,7 @@ describe('RouteEditor', () => {
     await openRoute('summarize');
     await userEvent.click(screen.getByLabelText('chat'));
     // Disclosed as soon as the last cap goes, like every other blocking clause.
-    expect(screen.getByText(/Tick at least one capability/).closest('div')).toHaveAttribute(
+    expect(screen.getByText(/Mark at least one capability/).closest('div')).toHaveAttribute(
       'data-tone',
       'blocking'
     );
@@ -1441,12 +1441,12 @@ describe('RouteEditor', () => {
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(
-      "Tick at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
+      "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
     );
 
     await userEvent.click(screen.getByLabelText('chat'));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Tick at least one capability/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Mark at least one capability/)).not.toBeInTheDocument();
     await stage();
     expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat']);
   });
@@ -1465,14 +1465,14 @@ describe('RouteEditor', () => {
     expect(
       screen
         .getByText(
-          "Tick at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
+          "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
         )
         .closest('div')
     ).toHaveAttribute('data-tone', 'blocking');
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     expect(onStage).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent(/Tick at least one capability/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Mark at least one capability/);
   });
 
   it('offers Unassign for an optional route and never for the agent', async () => {
@@ -1526,6 +1526,12 @@ describe('RouteEditor', () => {
     expect(box).toBeChecked();
     expect(box).toHaveClass('checkboxInput');
     expect(box.nextElementSibling).toHaveClass('checkboxBox');
+    // The name and its `required` tag stack in their own column beside the box,
+    // so a wrapped grid never lets a tag read as the next item's name.
+    const text = box.parentElement?.querySelector('.checkboxText');
+    expect(text).not.toBeNull();
+    expect(text).toHaveTextContent(/^chat/);
+    expect(text?.querySelector('.requiredTag')).toHaveTextContent('required');
     // Decorative: the input alone carries the state to assistive tech.
     expect(box.nextElementSibling).toHaveAttribute('aria-hidden', 'true');
   });
@@ -2016,7 +2022,7 @@ describe('RouteEditor union floor (wave 4c)', () => {
     expect(toolCall()).toBeEnabled();
     const notice = screen.getByText(/does not declare/);
     expect(notice).toHaveTextContent(
-      'gpt-5-mini does not declare tool_call: agent needs tool_call. Pick a model that does, or tick it here to declare that it can.'
+      'gpt-5-mini does not declare tool_call: agent needs tool_call. Pick a model that does, or mark it here to declare that it can.'
     );
     expect(notice.closest('div')).toHaveAttribute('data-tone', 'blocking');
     await stage();

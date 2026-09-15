@@ -549,20 +549,35 @@ describe('ModelBand stylesheet coverage', () => {
     expect(detail).not.toMatch(/position: sticky/);
   });
 
-  // Mockup density: inside the strip the capability checklist flows as a
-  // wrapping row of columns and sheds its boxed chrome — one tall column was
-  // most of the strip's height. Its 4px row gap is the same overline-to-content
-  // rhythm the facts half uses, so the two sides of the hairline match.
-  it('flows the strip checklist as wrapping columns on the facts-half rhythm', () => {
+  // Mockup density: inside the strip the capability checklist sheds its boxed
+  // chrome — one tall column was most of the strip's height. Keith's live gate
+  // (wave 6) found the wrapping flex row jumbled: uneven columns, a 4px row gap,
+  // and `required` tags reading as the next item's name. It is an even grid now,
+  // with room between rows; the legend and hint span it.
+  it('lays the strip checklist out as an even grid with room between rows', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
     const rule = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
-    const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
+    const span =
+      css.match(
+        /\.detail \.capabilities > legend,\s*\.detail \.capabilities > \.fieldHint \{[^}]*\}/s
+      )?.[0] ?? '';
 
-    expect(rule).toMatch(/flex-flow: row wrap/);
+    expect(rule).toMatch(/display: grid/);
+    expect(rule).toMatch(/grid-template-columns: repeat\(auto-fill, minmax\(150px, 1fr\)\)/);
+    expect(rule).toMatch(/gap: 8px 16px/);
     expect(rule).toMatch(/border: 0/);
-    expect(rule).toMatch(/gap: 4px 14px/);
-    expect(stat).toMatch(/gap: 4px/);
+    expect(rule).not.toMatch(/flex-flow/);
+    expect(span).toMatch(/grid-column: 1 \/ -1/);
+  });
+
+  // An unchecked box was --surface-base ringed by --surface-border: two dark
+  // blues, near-invisible on the panel. The ring is muted ink now.
+  it('draws an unchecked box with a visible ring', () => {
+    const dir = path.resolve(__dirname, '../../../components/GolemConfig');
+    const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
+    const box = css.match(/^\.checkboxBox \{[^}]*\}/ms)?.[0] ?? '';
+    expect(box).toMatch(/border: 1\.5px solid var\(--text-muted\)/);
   });
 });
 

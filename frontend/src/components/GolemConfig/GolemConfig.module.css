@@ -974,7 +974,9 @@ select.input {
   place-items: center;
   width: 16px;
   height: 16px;
-  border: 1px solid var(--surface-border);
+  /* Muted ink, not --surface-border: two dark blues left an unchecked box
+     near-invisible on the panel (Keith's wave-6 live gate). */
+  border: 1.5px solid var(--text-muted);
   border-radius: 4px;
   background-color: var(--surface-base);
 }
@@ -1018,6 +1020,14 @@ select.input {
 /* A capability the use-case floor requires: checked, disabled, and labelled. */
 .checkboxLocked {
   color: var(--text-muted);
+}
+
+/* The name, with its `required` tag under it rather than beside it. */
+.checkboxText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
 }
 
 /*
@@ -1491,23 +1501,24 @@ select.input {
 }
 
 /*
- * Mockup density inside the strip: the capability checklist flows as a
- * wrapping row of columns instead of one tall column, and sheds the boxed
- * chrome — the strip already draws the surface, and the stacked column was
- * most of the strip's height. The 4px row gap matches the overline-to-content
- * rhythm of the facts half (.detailStat / .detailDeclares), so the legend sits
- * over its checkboxes exactly as TYPE sits over its value across the hairline.
+ * Mockup density inside the strip: the capability checklist sheds the boxed
+ * chrome — the strip already draws the surface, and one tall column was most
+ * of the strip's height. It is an even grid (Keith's wave-6 live gate found the
+ * wrapping flex row jumbled: uneven columns, a 4px row gap, tags reading as the
+ * next item's name): every item the same width, room between rows, the legend
+ * and hint spanning the columns.
  */
 .detail .capabilities {
-  flex-flow: row wrap;
-  gap: 4px 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 16px;
   padding: 0;
   border: 0;
 }
 
 .detail .capabilities > legend,
 .detail .capabilities > .fieldHint {
-  flex-basis: 100%;
+  grid-column: 1 / -1;
 }
 
 /*
@@ -1521,10 +1532,14 @@ select.input {
   float: left;
 }
 
-/* Even columns, per the mockup's minmax(118px, 1fr) checkbox grid. */
+/* The box sits on the name's first line; the tag drops below the name. */
 .detail .capabilities .checkbox {
-  flex: 0 0 auto;
-  min-width: 118px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.detail .capabilities .checkboxBox {
+  margin-top: 1px;
 }
 
 /* The think control inline, per the mockup: label beside a narrow select. */
@@ -1728,7 +1743,7 @@ select.input {
 
 .badge[data-kind='fallback']::before {
   background-color: transparent;
-  box-shadow: 0 0 0 1px var(--palette-blue) inset;
+  box-shadow: 0 0 0 1px var(--palette-sky) inset;
 }
 
 .badge .was {
@@ -2278,7 +2293,7 @@ select.input {
   border-radius: 0 2px 2px 0;
   background-image: repeating-linear-gradient(
     to bottom,
-    var(--palette-blue) 0 4px,
+    var(--palette-sky) 0 4px,
     transparent 4px 7px
   );
 }
@@ -2296,7 +2311,7 @@ select.input {
 /* Hollow blue dot: reached, own values unchanged. */
 .status[data-tone='info'] .statusDot {
   background-color: transparent;
-  box-shadow: 0 0 0 1px var(--palette-blue) inset;
+  box-shadow: 0 0 0 1px var(--palette-sky) inset;
 }
 
 /* The status sub-line wraps under the label, aligned past the dot (7px + 7px gap);

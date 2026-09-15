@@ -78,7 +78,7 @@ const MODEL_INVALID = copy('model_invalid');
 const INELIGIBLE = copy('eligibility_ineligible');
 /** [W5-1] What an all-unticked checklist would actually persist. */
 const EMPTY_EXPOSURE =
-  "Tick at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing.";
+  "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing.";
 
 /** Transport order, the order the backend's drop set is compared in. */
 const DROP_ORDER: readonly DropField[] = ['slots', 'think_tags'];
@@ -691,15 +691,20 @@ export function RouteEditor({
                           }}
                         />
                         <span className={styles.checkboxBox} aria-hidden="true" />
-                        {cap}
-                        {/* v9 names the reason beside the control rather than
-                        leaving a locked box to explain itself. */}
-                        {required && (
-                          <>
-                            {' '}
-                            <span className={styles.requiredTag}>required</span>
-                          </>
-                        )}
+                        {/* The name and its reason stack in one column beside the
+                            box, so a wrapped grid never lets `required` read as the
+                            next item's name (Keith's wave-6 live gate). */}
+                        <span className={styles.checkboxText}>
+                          {cap}
+                          {/* v9 names the reason beside the control rather than
+                          leaving a locked box to explain itself. */}
+                          {required && (
+                            <>
+                              {' '}
+                              <span className={styles.requiredTag}>required</span>
+                            </>
+                          )}
+                        </span>
                       </label>
                     );
                   })}
@@ -850,7 +855,7 @@ export function RouteEditor({
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
             Firn has <strong>no requirements on record for {listUseCases(unknownUseCases)}</strong>,
-            so it cannot check this model for {agrees(unknownUseCases, 'it', 'them')}. Tick{' '}
+            so it cannot check this model for {agrees(unknownUseCases, 'it', 'them')}. Mark{' '}
             <strong>Apply anyway</strong> to accept that.
           </p>
           <label className={styles.checkbox}>
@@ -901,7 +906,7 @@ export function RouteEditor({
           <p className={styles.disclosureText}>
             <strong>{facts.model}</strong> does not declare{' '}
             <strong>{short.map(({ cap }) => cap).join(', ')}</strong>: {shortfallLine(short)}. Pick
-            a model that does, or tick {short.length === 1 ? 'it' : 'them'} here to declare that it
+            a model that does, or mark {short.length === 1 ? 'it' : 'them'} here to declare that it
             can.
           </p>
         </div>

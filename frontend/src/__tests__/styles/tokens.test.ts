@@ -423,6 +423,12 @@ it.each([
 // blend `composite` performs, so the token guard above — which only pairs
 // muted text with the raw surface — is extended to the mix it cannot see:
 // 85% fell to 4.21:1, 92% holds 4.81:1.
+// [W6] The Affected mark is sky — the neutral ramp's light blue — so it never
+// borrows a workspace accent and never reads purple like --palette-blue did.
+it('defines --palette-sky in the neutral ramp as the Glacier sky', () => {
+  expect(token('palette-sky')).toBe('#38bdf8');
+});
+
 it.each(['text-muted', 'text-secondary'])(
   'keeps --%s at 4.5:1 or better on the hovered reach-row mix',
   (text) => {

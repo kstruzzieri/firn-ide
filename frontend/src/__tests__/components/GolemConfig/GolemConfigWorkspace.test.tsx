@@ -127,6 +127,12 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toMatch(
       /\.row\.row\[data-mark='edited'\]:hover,\s*\.row\.row\[data-mark='same-model'\]:hover \{[^}]*color-mix\(in srgb, var\(--surface-hover\) 92%, var\(--status-warning\)\)/
     );
+    // Affected is sky blue (the mockup's), never --palette-blue, which read purple
+    // against the slate rows: the dashed stripe, the hollow dot, the badge dot.
+    expect(text).not.toMatch(/--palette-blue/);
+    expect(text).toMatch(/\.row\[data-mark='fallback'\]::before \{[^}]*var\(--palette-sky\)/s);
+    expect(text).toMatch(/\.status\[data-tone='info'\] \.statusDot \{[^}]*var\(--palette-sky\)/s);
+    expect(text).toMatch(/\.badge\[data-kind='fallback'\]::before \{[^}]*var\(--palette-sky\)/s);
     // A row wrapped for its diagnostic hovers like any other row — from the shared
     // base rule, AHEAD of the tints, so a tinted notice-group row keeps its tint.
     expect(text).toMatch(/\.noticeGroup > \.row:hover/);
