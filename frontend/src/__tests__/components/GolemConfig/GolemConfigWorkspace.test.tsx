@@ -468,10 +468,13 @@ describe('GolemConfigWorkspace', () => {
     await userEvent.click(
       within(screen.getByTestId('route-row-agent')).getByRole('button', { name: /^Edit/ })
     );
-    // An untouched route editor offers Close (nothing to cancel); same landing.
+    // The agent row holds Think `auto` behind an unexposed thinking, which the
+    // editor cannot stage (Done would clear it), so even untouched it offers
+    // Done and Cancel; Cancel and an untouched editor's Close are one button
+    // with one landing.
     await userEvent.click(
       within(screen.getByRole('group', { name: 'Route agent' })).getByRole('button', {
-        name: 'Close',
+        name: 'Cancel',
       })
     );
     expect(

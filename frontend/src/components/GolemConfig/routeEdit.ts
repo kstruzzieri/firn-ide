@@ -2,15 +2,24 @@
  * Pure model of a route edit's distance from what its row holds, consumed by
  * RouteEditor's footer. Keith's wave-6 live gate: an edit undone by hand looked
  * no different from a pending one, and Done/Cancel never said what they would
- * change. `snapshotOf` decides whether anything differs; `pendingOf` says what.
- * Both read ONE derivation (`facetsOf`), and `pendingOf` names a clause for
- * every facet in it, so the footer and its summary cannot disagree
- * (routeEdit.test.ts pins that biconditional).
+ * change. `pendingOf` names what Done would stage that the row does not hold;
+ * the editor is dirty exactly when that list is non-empty. One derivation
+ * (`facetsOf`) feeds it and the test oracle `snapshotOf`: every facet that
+ * differs is named by a clause (the model's identity facets share one), and
+ * routeEdit.test.ts pins that biconditional. A new stageable field belongs in
+ * `facetsOf` first, then in `pendingOf`'s wording.
  */
 import type { CapabilityName, ModelProjection, ModelType, ThinkMode } from '../../types/golem';
 import { modelFactsOf } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
-import type { ManualModel } from './ModelBand';
+
+/** A hand-declared model: authoritative facts, not detected ones (§4.4). */
+export interface ManualModel {
+  model: string;
+  /** Required before staging; `''` is "not chosen yet", never a default. */
+  type: ModelType | '';
+  caps: CapabilityName[];
+}
 
 /** The editor's state: a chosen provider, a model from the list OR a hand declaration, and the rest. */
 export interface Seed {
@@ -58,46 +67,81 @@ export const effectiveThink = (seed: Seed): ThinkMode =>
   seed.exposed.includes('thinking') ? seed.think : '';
 
 /**
+ * Which side of the comparison a seed stands on. The editor's state is read
+ * as what Done would STAGE; the baseline as what the ROW holds — raw, because
+ * a row can hold a Think mode behind an unexposed `thinking` (go-llm ties the
+ * two nowhere), and Done then clears it: `Think cleared (was Auto)` before a
+ * single edit is the honest reading, not a clean footer.
+ */
+export type Side = 'stage' | 'row';
+
+/**
  * What Done would stage, as comparable fields. The model is its FACTS, never
  * its role: two roles on one selector are one picker card, and re-picking it
- * changes nothing. `detail` is what tells two same-named list models apart
- * (parameters, context, dimensions); `declared` is whether the model is a hand
- * declaration, since that alone changes the capability facts Done sends.
+ * changes nothing. `facts` holds the raw numbers that tell two same-named
+ * list models apart (parameters, context, dimensions) — raw, because the
+ * formatted line collapses 256000 and 262144 into one "256K ctx". Whether the
+ * model is a hand declaration is NOT a facet: a declaration that repeats a
+ * list model's facts and capabilities stages the same payload, so it reads as
+ * clean; provenance only words a clause once something differs.
  */
 interface EditFacets {
   provider: string;
   model: string;
   type: ModelType | '';
-  detail: string;
-  declared: boolean;
-  /** The declared capability set, `null` while no model is chosen. */
-  caps: CapabilityName[] | null;
+  facts: string;
+  /** The declared capability set; empty while no model is chosen. */
+  caps: CapabilityName[];
   exposed: CapabilityName[];
   think: ThinkMode;
   ackUnknown: boolean;
   ackDrops: boolean;
 }
 
-const facetsOf = (seed: Seed): EditFacets => {
+const facetsOf = (seed: Seed, side: Side): EditFacets => {
   const facts = seed.defined === null ? null : modelFactsOf(seed.defined);
+  // A list model that carries none of the optional facts reads exactly like a
+  // hand declaration of it: both stage {provider, model, type}.
+  const optional = facts === null ? [] : [facts.parameters, facts.contextWindow, facts.dimensions];
   return {
     provider: seed.provider,
     model: facts?.model ?? seed.manual?.model ?? '',
     type: facts?.type ?? seed.manual?.type ?? '',
-    detail: seed.defined === null ? '' : factsLine(seed.defined),
-    declared: seed.manual !== null,
-    caps: seed.manual?.caps ?? seed.defined?.capabilityFacts.caps ?? null,
+    facts: optional.some((value) => value !== undefined)
+      ? JSON.stringify(optional.map((value) => value ?? null))
+      : '',
+    caps: seed.manual?.caps ?? seed.defined?.capabilityFacts.caps ?? [],
     exposed: seed.exposed,
-    think: effectiveThink(seed),
+    think: side === 'stage' ? effectiveThink(seed) : seed.think,
     ackUnknown: seed.ackUnknown,
     ackDrops: seed.ackDrops,
   };
 };
 
-/** The editor's state as one comparable string: what Done would stage, minus the derivations. */
-export const snapshotOf = (seed: Seed): string => JSON.stringify(facetsOf(seed));
+/** One side as a comparable string — the test oracle for `pendingOf`'s emptiness. */
+export const snapshotOf = (seed: Seed, side: Side): string => JSON.stringify(facetsOf(seed, side));
 
 const shown = (value: string): string => value || '—';
+
+/**
+ * How a same-named model is told apart in the summary: a hand declaration by
+ * its provenance, a list model by its facts line — or, when two list models'
+ * lines read alike (256000 and 262144 are both "256K ctx"), by the raw counts.
+ */
+const identityText = (seed: Seed, exact: boolean): string => {
+  if (seed.defined === null) return seed.manual === null ? '—' : 'declared by hand';
+  if (!exact) return shown(factsLine(seed.defined));
+  const facts = modelFactsOf(seed.defined);
+  return shown(
+    [
+      facts.parameters,
+      facts.contextWindow === undefined ? undefined : `${facts.contextWindow} ctx`,
+      facts.dimensions === undefined ? undefined : `${facts.dimensions} dim`,
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(' · ')
+  );
+};
 
 /** `+ a, b` and `− c` clauses for one capability set against its baseline, canonical order kept. */
 const setDelta = (
@@ -114,35 +158,34 @@ const setDelta = (
 };
 
 /**
- * What differs from the baseline, in words, in the order the editor lays the
- * controls out. Empty exactly when `snapshotOf` agrees for both seeds.
+ * What Done would stage from `now` that the row (`was`) does not hold, in
+ * words, in the order the editor lays the controls out. Empty exactly when
+ * `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed): string[] => {
-  const a = facetsOf(now);
-  const b = facetsOf(was);
+  const a = facetsOf(now, 'stage');
+  const b = facetsOf(was, 'row');
   const pending: string[] = [];
   if (a.provider !== b.provider)
     pending.push(`Provider ${shown(a.provider)} (was ${shown(b.provider)})`);
   if (a.model !== b.model) {
     pending.push(`Model ${shown(a.model)} (was ${shown(b.model)})`);
-  } else if (a.declared !== b.declared) {
-    // The same name from the other source: a hand declaration sends its own
-    // capability facts, a list model the projection's. (A declaration whose
-    // name is still empty reads with the placeholder.)
-    pending.push(
-      a.declared
-        ? `Model ${shown(a.model)} declared by hand`
-        : `Model ${shown(a.model)} from the list`
-    );
-  } else if (a.detail !== b.detail) {
-    // Two list models of one name: the picker tells them apart by their facts.
-    pending.push(`Model ${a.model} ${shown(a.detail)} (was ${shown(b.detail)})`);
-  } else if (a.caps !== null && b.caps !== null) {
-    // The same model, its declaration edited: only a hand declaration can be.
-    // (Another model's facts are its own; the Model clause already says so.)
+  } else if (a.facts !== b.facts) {
+    // The same name, other facts: two list models the picker tells apart, or
+    // a hand declaration standing in for one. Exact counts when the lines
+    // would read alike.
+    const exact = identityText(now, false) === identityText(was, false);
+    pending.push(`Model ${a.model} ${identityText(now, exact)} (was ${identityText(was, exact)})`);
+  } else {
+    // The same model, other declared capabilities: a hand declaration edited,
+    // or the picker's one card for a selector carrying another role's resolved
+    // set. (Another model's capabilities are its own; the Model clause covers them.)
     pending.push(...setDelta('Declares ', a.caps, b.caps));
   }
-  if (a.type !== b.type) pending.push(`Type ${shown(a.type)} (was ${shown(b.type)})`);
+  // Another model's type is its own, like its capabilities: the Model clause
+  // covers it. Type stands alone only for the declare form's own select.
+  if (a.model === b.model && a.type !== b.type)
+    pending.push(`Type ${shown(a.type)} (was ${shown(b.type)})`);
   pending.push(...setDelta('', a.exposed, b.exposed));
   if (a.think !== b.think) {
     // The select reads "Default" while it is on screen; once `thinking` is

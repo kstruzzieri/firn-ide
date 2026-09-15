@@ -35,21 +35,13 @@ import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
-import { factsLine } from './routeEdit';
+import { factsLine, type ManualModel } from './routeEdit';
 
 const TYPE_LABEL: Record<ModelType, string> = {
   dense: 'Dense',
   moe: 'Mixture of experts',
   embedding: 'Embedding',
 };
-
-/** A hand-declared model: authoritative facts, not detected ones (§4.4). */
-export interface ManualModel {
-  model: string;
-  /** Required before staging; `''` is "not chosen yet", never a default. */
-  type: ModelType | '';
-  caps: CapabilityName[];
-}
 
 /** Capability arrays cross the transport in CAPABILITY_NAMES order or not at all. */
 export const canonicalCaps = (caps: Iterable<CapabilityName>): CapabilityName[] => {

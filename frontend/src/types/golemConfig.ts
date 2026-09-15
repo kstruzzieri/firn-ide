@@ -1667,7 +1667,7 @@ const markRow = (rows: Map<string, RowMarkers>, key: string, patch: Partial<RowM
 const canonicalCapList = (caps: readonly CapabilityName[]): CapabilityName[] =>
   CAPABILITY_NAMES.filter((cap) => caps.includes(cap));
 
-const sameCaps = (a: readonly CapabilityName[], b: readonly CapabilityName[]): boolean => {
+export const sameCaps = (a: readonly CapabilityName[], b: readonly CapabilityName[]): boolean => {
   const left = canonicalCapList(a);
   const right = canonicalCapList(b);
   return left.length === right.length && left.every((cap, index) => cap === right[index]);

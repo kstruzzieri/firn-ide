@@ -51,6 +51,7 @@ import {
   overridesSelector,
   probeRouteChange,
   retargetOf,
+  sameCaps,
   sameModelFacts,
   selectorAuthority,
   shortfallLine,
@@ -68,8 +69,8 @@ import {
 import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
-import { ModelBand, canonicalCaps, type ManualModel } from './ModelBand';
-import { THINK_LABEL, effectiveThink, pendingOf, snapshotOf, type Seed } from './routeEdit';
+import { ModelBand, canonicalCaps } from './ModelBand';
+import { THINK_LABEL, pendingOf, type ManualModel, type Seed } from './routeEdit';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -170,7 +171,15 @@ function seedFrom(
   // truth, so only the user's own tick may assert one.
   if (staged?.kind === 'route') {
     const facts = staged.modelFacts;
-    const defined = models.find((model) => sameModelFacts(model, facts)) ?? null;
+    // The same facts AND the same declared capabilities: a hand declaration
+    // that widened a list model's set must read back as that declaration, or
+    // a reopen would hold caps Done no longer sends.
+    const defined =
+      models.find(
+        (model) =>
+          sameModelFacts(model, facts) &&
+          sameCaps(model.capabilityFacts.caps, staged.capabilityFacts.caps)
+      ) ?? null;
     return {
       provider: facts.provider,
       defined,
@@ -489,32 +498,33 @@ export function RouteEditor({
     };
   }, [base, draft, useCase]);
 
-  // An acknowledgement counts only while its control is on screen: submit()
-  // sends `confirmDrops` only with drops to confirm, and gates on `ackUnknown`
-  // only with unknown use cases, so a tick left behind a change that removed
-  // the question is nothing Done would stage.
-  const now: Seed = {
-    provider,
-    defined,
-    manual,
-    exposed,
-    think,
-    ackUnknown: ackUnknown && unknownUseCases.length > 0,
-    ackDrops: ackDrops && drops.length > 0,
-  };
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
   const [baseline] = useState(() =>
     seedFrom(staged, current, models, selectorAuthority(current, draft.changes))
   );
-  const unstaged = snapshotOf(now) !== snapshotOf(baseline);
+  // An acknowledgement counts only while its question is on screen — on BOTH
+  // sides. submit() sends `confirmDrops` only with drops to confirm and gates
+  // on `ackUnknown` only with unknown use cases, so a tick left behind a
+  // change that removed the question is nothing Done would stage; and a
+  // staged `confirmUnknown` outlives its question when the unknown use case
+  // has since been staged elsewhere (coalescing copies the flag), so an
+  // untouched editor must not read it as an edit withdrawn.
+  const asked = (seed: Seed): Seed => ({
+    ...seed,
+    ackUnknown: seed.ackUnknown && unknownUseCases.length > 0,
+    ackDrops: seed.ackDrops && drops.length > 0,
+  });
+  const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
+  const was = asked(baseline);
   /**
-   * What differs from the baseline, in words, for the footer — the same facts
-   * `unstaged` reads (routeEdit.ts), so the summary and the Done/Cancel offer
-   * can never disagree. Keith's wave-6 live gate: an edit undone by hand looked
-   * no different from a pending one.
+   * What Done would stage that the row does not hold, in words, for the
+   * footer — and the one fact the Done/Cancel offer reads (routeEdit.ts), so
+   * the two can never disagree. Keith's wave-6 live gate: an edit undone by
+   * hand looked no different from a pending one.
    */
-  const pending = pendingOf(now, baseline);
+  const pending = pendingOf(now, was);
+  const unstaged = pending.length > 0;
 
   useEffect(() => {
     onUnstagedChange(rowKey, unstaged);
@@ -723,7 +733,7 @@ export function RouteEditor({
                 <div className={styles.column}>
                   <div
                     className={styles.field}
-                    data-changed={think !== effectiveThink(baseline) || undefined}
+                    data-changed={think !== baseline.think || undefined}
                   >
                     <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
                       Think mode
@@ -863,7 +873,7 @@ export function RouteEditor({
           </p>
           <label
             className={styles.checkbox}
-            data-changed={now.ackUnknown !== baseline.ackUnknown || undefined}
+            data-changed={now.ackUnknown !== was.ackUnknown || undefined}
           >
             <input
               className={styles.checkboxInput}
@@ -891,7 +901,7 @@ export function RouteEditor({
           </p>
           <label
             className={styles.checkbox}
-            data-changed={now.ackDrops !== baseline.ackDrops || undefined}
+            data-changed={now.ackDrops !== was.ackDrops || undefined}
           >
             <input
               className={styles.checkboxInput}

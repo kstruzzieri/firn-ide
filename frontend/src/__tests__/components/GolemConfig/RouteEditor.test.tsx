@@ -1645,10 +1645,11 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     // The WHOLE summary: gpt-5 exposes tool_call and thinking, which chat's
-    // baseline did not; the fixture's Think `auto` sat behind an unexposed
-    // `thinking`, so Done was never going to stage it and no Think clause
-    // appears (routeEdit.ts counts Think only while thinking is exposed).
-    expect(summary()).toBe('Model gpt-5 (was gpt-5-mini) · + tool_call, thinking');
+    // baseline did not, and re-seeds Think to its own Default — while the row
+    // held `auto` (behind an unexposed thinking, but held: Done clears it).
+    expect(summary()).toBe(
+      'Model gpt-5 (was gpt-5-mini) · + tool_call, thinking · Think Default (was Auto)'
+    );
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
@@ -1774,29 +1775,123 @@ describe('RouteEditor', () => {
     expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
   });
 
-  it('names a hand declaration that reuses the row model’s name', async () => {
+  it('reads a hand declaration that repeats the row model as clean, until its declaration differs', async () => {
     renderRouting();
     await openRoute('chat');
     // The picker refuses to declare an exact list match, but the declare form's
     // name field does not: declare something else, then type the name back.
     await declareModel('temp-model');
+    expect(summary()).toBe('Model temp-model (was gpt-5-mini)');
     await userEvent.clear(screen.getByLabelText('Model name'));
     await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
-    expect(summary()).toBe('Model gpt-5-mini declared by hand');
+    // Same provider, name, type, declared capabilities and exposure as the
+    // list model: Done would stage the same payload, so there is no Done.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(
+        screen.getByRole('group', { name: 'Capabilities this model supports' })
+      ).getByLabelText('tool_call')
+    );
+    expect(summary()).toBe('Declares + tool_call · + tool_call');
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
-  it('still refuses Done without a provider: the blank option is an edit', async () => {
-    const { onStage } = renderRouting();
+  it('reopens clean when the unknown use case its acknowledgement answered has since left the model', async () => {
+    // summarize (no floor on record) was staged onto the unrouted gpt-5; chat
+    // then staged onto gpt-5 and acknowledged the unknown member; summarize was
+    // restaged onto gpt-5-nano. Coalescing keeps chat's `confirmUnknown`
+    // (the authority's flag copies unconditionally) though the question is gone.
+    const routeTo = (useCase: string, modelName: string, confirmUnknown = false): RouteChange => ({
+      kind: 'route',
+      useCase,
+      modelFacts: { provider: 'hosted', model: modelName, type: 'dense' },
+      capabilityFacts: model().capabilityFacts,
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown,
+    });
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        model(),
+        model({ role: 'summarize-role', modelName: 'gpt-4', routedUseCases: ['summarize'] }),
+        model({ role: 'b-role', modelName: 'gpt-5', routedUseCases: [] }),
+        model({ role: 'c-role', modelName: 'gpt-5-nano', routedUseCases: [] }),
+      ],
+      draft: draftWith(
+        routeTo('summarize', 'gpt-5'),
+        routeTo('chat', 'gpt-5', true),
+        routeTo('summarize', 'gpt-5-nano')
+      ),
+    });
     await openRoute('chat');
-    await userEvent.selectOptions(screen.getByLabelText('Provider'), '');
-    expect(summary()).toBe(
-      'Provider — (was hosted) · Model — (was gpt-5-mini) · Type — (was dense) · − chat, stream'
-    );
-    await stage();
-    expect(screen.getByRole('alert')).toHaveTextContent(/Choose a provider first/);
-    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+  });
+
+  it('says Done clears a Think mode the row holds behind an unexposed thinking', async () => {
+    // go-llm ties think_mode to no capability, so a row can hold `auto` with
+    // thinking unexposed; the editor cannot stage that (thinkMode '' clears
+    // the override), so an untouched editor already says what Done would do.
+    renderRouting({ models: [model({ thinkMode: 'auto' }), other] });
+    await openRoute('chat');
+    expect(summary()).toBe('Think cleared (was Auto)');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    // Exposing thinking lets the held `auto` stage as it is: nothing to say about Think.
+    await userEvent.click(screen.getByRole('checkbox', { name: /^thinking/ }));
+    expect(summary()).toBe('+ thinking');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    expect(screen.getByLabelText('Think mode').parentElement).not.toHaveAttribute('data-changed');
+  });
+
+  it('reopens a staged hand declaration that widened a list model as that declaration', async () => {
+    // Same provider, name and type as gpt-5-mini, but tool_call declared by
+    // hand: read back as the list model, a reopen would hold a narrower set
+    // than what is staged and Done would silently drop the declared cap.
+    const widened: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(widened) });
+    await openRoute('chat');
+    const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
+    expect(within(declared).getByLabelText('tool_call')).toBeChecked();
+    expect(screen.getByLabelText('Model name')).toHaveValue('gpt-5-mini');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+  });
+
+  it('drops a removal acknowledgement with the question it answered', async () => {
+    // Declaring another model on a row with hidden slot fields asks to confirm
+    // their removal; declaring the row's own model back is an override that
+    // removes nothing, and the tick left behind must not read as an edit.
+    renderRouting({ models: [model({ hasSlots: true }), other] });
+    await openRoute('chat');
+    await declareModel('elsewhere');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    const remove = screen.getByLabelText('Remove them and continue');
+    await userEvent.click(remove);
+    expect(remove.closest('label')).toHaveAttribute('data-changed', 'true');
+    expect(summary()).toBe('Model elsewhere (was gpt-5-mini) · Removal acknowledged');
+
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
+    expect(screen.queryByLabelText('Remove them and continue')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
   });
 
   it('reverts unstaged fields on Cancel and releases the Apply gate', async () => {
@@ -1866,7 +1961,9 @@ describe('RouteEditor', () => {
         kind: 'route',
         useCase: 'chat',
         modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
-        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        // A card pick carries the card's own declared set (a narrower set would
+        // be a hand declaration, and read back as one).
+        capabilityFacts: other.capabilityFacts,
         exposedCaps: ['chat', 'stream'],
         thinkMode: '',
         confirmUnknown: false,
