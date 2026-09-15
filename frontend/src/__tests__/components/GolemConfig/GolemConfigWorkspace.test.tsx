@@ -468,9 +468,10 @@ describe('GolemConfigWorkspace', () => {
     await userEvent.click(
       within(screen.getByTestId('route-row-agent')).getByRole('button', { name: /^Edit/ })
     );
+    // An untouched route editor offers Close (nothing to cancel); same landing.
     await userEvent.click(
       within(screen.getByRole('group', { name: 'Route agent' })).getByRole('button', {
-        name: 'Cancel',
+        name: 'Close',
       })
     );
     expect(

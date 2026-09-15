@@ -520,10 +520,38 @@ export function RouteEditor({
   const snapshot = snapshotOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
-  const [committed] = useState(() =>
-    snapshotOf(seedFrom(staged, current, models, selectorAuthority(current, draft.changes)))
+  const [baseline] = useState(() =>
+    seedFrom(staged, current, models, selectorAuthority(current, draft.changes))
   );
+  const committed = snapshotOf(baseline);
   const unstaged = snapshot !== committed;
+
+  /**
+   * What differs from the baseline, in words, for the footer — the same facts
+   * `unstaged` is computed from, so the summary and the Done/Cancel offer can
+   * never disagree. Keith's wave-6 live gate: an edit undone by hand looked no
+   * different from a pending one.
+   */
+  const modelNameOf = (seed: Seed): string =>
+    (seed.defined?.modelName ?? (seed.manual !== null ? seed.manual.model : '')) || '—';
+  const pending: string[] = [];
+  if (provider !== baseline.provider)
+    pending.push(`Provider ${provider || '—'} (was ${baseline.provider || '—'})`);
+  const modelNow = modelNameOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
+  const modelWas = modelNameOf(baseline);
+  if (modelNow !== modelWas) pending.push(`Model ${modelNow} (was ${modelWas})`);
+  if (manual !== null && baseline.manual !== null && manual.type !== baseline.manual.type)
+    pending.push(`Type ${manual.type || '—'} (was ${baseline.manual.type || '—'})`);
+  const capsAdded = exposed.filter((cap) => !baseline.exposed.includes(cap));
+  const capsRemoved = baseline.exposed.filter((cap) => !exposed.includes(cap));
+  if (capsAdded.length > 0) pending.push(`+ ${capsAdded.join(', ')}`);
+  if (capsRemoved.length > 0) pending.push(`− ${capsRemoved.join(', ')}`);
+  if (think !== baseline.think)
+    pending.push(`Think ${THINK_LABEL[think]} (was ${THINK_LABEL[baseline.think]})`);
+  if (ackUnknown !== baseline.ackUnknown)
+    pending.push(ackUnknown ? 'Apply anyway acknowledged' : 'Apply anyway withdrawn');
+  if (ackDrops !== baseline.ackDrops)
+    pending.push(ackDrops ? 'Removal acknowledged' : 'Removal acknowledgement withdrawn');
 
   useEffect(() => {
     onUnstagedChange(rowKey, unstaged);
@@ -662,6 +690,10 @@ export function RouteEditor({
                         <label
                           key={cap}
                           className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                          // The staged-value mark: this box differs from the baseline.
+                          data-changed={
+                            exposed.includes(cap) !== baseline.exposed.includes(cap) || undefined
+                          }
                         >
                           <input
                             className={styles.checkboxInput}
@@ -726,7 +758,10 @@ export function RouteEditor({
               {/* Think sits under the capabilities inside the strip's exposure half. */}
               {exposed.includes('thinking') && (
                 <div className={styles.column}>
-                  <div className={styles.field}>
+                  <div
+                    className={styles.field}
+                    data-changed={think !== baseline.think || undefined}
+                  >
                     <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
                       Think mode
                     </label>
@@ -925,21 +960,41 @@ export function RouteEditor({
         </div>
       )}
 
+      {/* What Done would stage, said before it is pressed: the same facts
+          `unstaged` reads, so an edit undone by hand reads as no change. */}
+      {unstaged && (
+        <p className={styles.editorChanges} data-testid="editor-changes">
+          <b>Pending</b>
+          {pending.join(' · ')}
+        </p>
+      )}
+
       <div className={styles.editorFooter}>
-        {/* Always enabled: this button IS the validator's entry point, and the
-            refusals above are how the editor answers. The global Apply gate is
-            held by `onUnstagedChange`, not by a disabled control. */}
-        <button
-          type="button"
-          className={`${styles.button} ${styles.primary}`}
-          onClick={submit}
-          data-unstaged={unstaged || undefined}
-        >
-          Done
-        </button>
-        <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
-          Cancel
-        </button>
+        {unstaged ? (
+          <>
+            {/* Always enabled once something differs: this button IS the
+                validator's entry point, and the refusals above are how the
+                editor answers. The global Apply gate is held by
+                `onUnstagedChange`, not by a disabled control. */}
+            <button
+              type="button"
+              className={`${styles.button} ${styles.primary}`}
+              onClick={submit}
+              data-unstaged="true"
+            >
+              Done
+            </button>
+            <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          /* Nothing differs from the row, so there is nothing to stage and
+             nothing to cancel: one control, which only collapses the editor. */
+          <button type="button" className={`${styles.button} ${styles.quiet}`} onClick={onClose}>
+            Close
+          </button>
+        )}
         {/* §4.3: optional use cases only. The agent route is Firn's own run
             path, and the backend refuses to unbind it independently (§5.2). */}
         {/* v9 right-aligns the destructive action away from Done/Cancel. */}

@@ -1048,6 +1048,38 @@ select.input {
   margin-top: 16px;
 }
 
+/* What Done would stage, above the footer — amber italic, the staged-value
+   grammar the rows use, so a pending edit reads the same before and after Done. */
+.editorChanges {
+  margin: 14px 0 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--status-warning);
+}
+
+.editorChanges b {
+  margin-right: 8px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* A control that differs from the baseline carries the same mark. */
+.checkbox[data-changed] .checkboxText {
+  font-style: italic;
+  color: var(--status-warning);
+}
+
+.field[data-changed] > .fieldLabel {
+  font-style: italic;
+  color: var(--status-warning);
+}
+
 .primary {
   border-color: var(--accent);
   background-color: var(--accent);

@@ -151,7 +151,8 @@ describe('route editor Done (firn-ide#284)', () => {
     render(<RoutingCard {...props} />);
 
     await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
-    // The seeded applied model satisfies the chat floor, so Done stages as-is.
+    // A real edit: Done only appears once something differs from the row.
+    await user.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
 
     expect(props.onStage).toHaveBeenCalledTimes(1);
@@ -171,14 +172,16 @@ describe('route editor Done (firn-ide#284)', () => {
     render(<RoutingCard {...props} />);
 
     await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
+    await user.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(announcementRegion()).toHaveTextContent('chat model staged: gpt-5-mini');
 
-    // Re-opening the editor EMPTIES the persistent region, so an identical
-    // second staging is a fresh write the live region actually announces —
-    // identical consecutive text is silent to AT (§4.7).
+    // Re-opening the editor EMPTIES the persistent region, so a second staging
+    // of the same model (here: the edit undone) is a fresh write the live region
+    // actually announces — identical consecutive text is silent to AT (§4.7).
     await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
     expect(announcementRegion()).toHaveTextContent('');
+    await user.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(props.onStage).toHaveBeenCalledTimes(2);
     expect(announcementRegion()).toHaveTextContent('chat model staged: gpt-5-mini');
@@ -190,6 +193,7 @@ describe('route editor Done (firn-ide#284)', () => {
     const view = render(<RoutingCard {...props} />);
 
     await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
+    await user.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(announcementRegion()).toHaveTextContent('chat model staged: gpt-5-mini');
 
@@ -199,6 +203,7 @@ describe('route editor Done (firn-ide#284)', () => {
     // text the region never announces.
     view.rerender(<RoutingCard {...props} focusRequest={{ changeId: 'route:chat', nonce: 1 }} />);
     expect(announcementRegion()).toHaveTextContent('');
+    await user.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(props.onStage).toHaveBeenCalledTimes(2);
     expect(announcementRegion()).toHaveTextContent('chat model staged: gpt-5-mini');
@@ -342,11 +347,13 @@ describe('route editor Done (firn-ide#284)', () => {
     render(<RoutingCard {...props} />);
 
     await user.click(screen.getByRole('button', { name: /assign route embedding/i }));
+    // Done appears once something differs (a provider chosen, no model yet).
+    await user.selectOptions(screen.getByLabelText('Provider'), 'hosted');
     await user.click(screen.getByRole('button', { name: 'Done' }));
 
     expect(props.onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('group', { name: 'Route embedding' })).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent(/choose a provider/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/choose a model/i);
   });
 });
 
@@ -1129,7 +1136,9 @@ describe('Defined models — Assign (wave 4d)', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
     expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5-mini');
-    expect(screen.getByRole('button', { name: 'Done' })).not.toHaveAttribute('data-unstaged');
+    // Nothing differs from the row: Close alone, no Done.
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
     expect(p.onStage).not.toHaveBeenCalled();
   });
 

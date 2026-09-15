@@ -1551,9 +1551,9 @@ describe('RouteEditor', () => {
     const { onStage } = renderRouting({ providers: [providerRow(), providerRow({ name: 'lan' })] });
     await openRoute('embedding', 'Assign');
 
-    // Nothing is chosen yet, so there is nothing to stage.
-    await stage();
-    expect(screen.getByRole('alert')).toHaveTextContent(/Choose a provider/);
+    // Nothing is chosen yet, so there is nothing to stage — and no Done to press.
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
     // The declare card carries the typed name into the facts editor.
@@ -1594,6 +1594,72 @@ describe('RouteEditor', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('A model entry is invalid.');
     expect(onStage).not.toHaveBeenCalled();
+  });
+
+  // Keith's wave-6 live gate: Done/Cancel gave no signal about whether anything
+  // differed from what the row holds, so an edit undone by hand still looked
+  // pending. The footer now says so: Close alone while the editor matches its
+  // baseline; Done, Cancel and a summary of what changes once something differs.
+  it('offers Close while nothing differs, Done and Cancel with a summary once it does, and Close again when undone', async () => {
+    renderRouting();
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+
+    const toolCall = screen.getByRole('checkbox', { name: /^tool_call/ });
+    await userEvent.click(toolCall);
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('editor-changes')).toHaveTextContent('+ tool_call');
+    // The changed control carries the staged-value mark.
+    expect(toolCall.closest('label')).toHaveAttribute('data-changed', 'true');
+    expect(screen.getByLabelText('chat required').closest('label')).not.toHaveAttribute(
+      'data-changed'
+    );
+
+    await userEvent.click(toolCall);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+    expect(toolCall.closest('label')).not.toHaveAttribute('data-changed');
+  });
+
+  it('summarises a model pick, its exposure delta and a Think change before Done', async () => {
+    renderRouting({ models: [model({ thinkMode: 'auto' }), other] });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    // gpt-5 declares tool_call, which chat's baseline did not expose.
+    expect(screen.getByTestId('editor-changes')).toHaveTextContent(
+      'Model gpt-5 (was gpt-5-mini) · + tool_call'
+    );
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('marks and summarises a Think change', async () => {
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+        }),
+        other,
+      ],
+    });
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByTestId('editor-changes')).toHaveTextContent('Think Always (was Auto)');
+    expect(screen.getByLabelText('Think mode').closest('[data-changed]')).not.toBeNull();
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
   });
 
   it('reverts unstaged fields on Cancel and releases the Apply gate', async () => {
@@ -2027,9 +2093,10 @@ describe('RouteEditor union floor (wave 4c)', () => {
       'gpt-5-mini does not declare tool_call: agent needs tool_call. Pick a model that does, or mark it here to declare that it can.'
     );
     expect(notice.closest('div')).toHaveAttribute('data-tone', 'blocking');
-    await stage();
+    // Nothing differs from the row yet, so there is no Done to refuse: the
+    // blocking notice above is the refusal.
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     expect(onStage).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent(/agent needs tool_call/);
 
     await userEvent.click(toolCall());
     expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();

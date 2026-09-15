@@ -304,6 +304,8 @@ describe('masthead profile select', () => {
     await mountReady();
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /edit route/i }));
+    // Done appears once something differs from the row: mark a capability.
+    await user.click(screen.getByRole('checkbox', { name: /^thinking/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     await pickSource(user, /mine/, 'Yours');
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
@@ -343,6 +345,8 @@ describe('masthead profile select', () => {
     await pickSource(user, 'local', 'Curated');
     await waitFor(() => expect(sourceValue()).toBe('curated/local'));
     await user.click(screen.getByRole('button', { name: /edit route/i }));
+    // Done appears once something differs from the row: mark a capability.
+    await user.click(screen.getByRole('checkbox', { name: /^thinking/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(screen.getByTestId('golem-config-draft')).toBeInTheDocument();
     (LoadGolemProfile as jest.Mock).mockClear();
@@ -380,6 +384,8 @@ describe('masthead profile select', () => {
     // One staged change and the shipped discard copy is back, key sentence and all.
     await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
     await user.click(screen.getByRole('button', { name: /edit route/i }));
+    // Done appears once something differs from the row: mark a capability.
+    await user.click(screen.getByRole('checkbox', { name: /^thinking/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     await pickSource(user, /mine/, 'Yours');
     expect(await screen.findByRole('alertdialog')).toHaveTextContent(
@@ -394,6 +400,8 @@ describe('masthead profile select', () => {
     // Dirty the draft through a real editor staging (reuse the flow used by
     // GolemConfigFlows.test.tsx: open the chat route editor and press Done).
     await user.click(screen.getByRole('button', { name: /edit route/i }));
+    // Done appears once something differs from the row: mark a capability.
+    await user.click(screen.getByRole('checkbox', { name: /^thinking/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     await pickSource(user, /mine/, 'Yours');
     // §4.6a: the prompt intercepts; Keep editing cancels the switch.
@@ -667,6 +675,8 @@ describe('Save as profile', () => {
     const user = userEvent.setup();
     // Stage one change; the Apply bar appears.
     await user.click(screen.getByRole('button', { name: /edit route/i }));
+    // Done appears once something differs from the row: mark a capability.
+    await user.click(screen.getByRole('checkbox', { name: /^thinking/ }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
     await screen.findByText(/1 staged change/i);
 
