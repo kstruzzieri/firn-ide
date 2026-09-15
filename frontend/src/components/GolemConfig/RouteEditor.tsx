@@ -132,7 +132,7 @@ export interface RouteEditorProps {
   /** Routes + models the draft is layered on, for the candidate projection. */
   base: DraftBaseProjection;
   draft: Draft;
-  /** The change already staged on this route identity, if any — as COALESCED (the group's authority). */
+  /** The change already staged on this route identity, if any — as COALESCED (its selector-scoped members are the group authority's). */
   staged?: Change;
   /**
    * [W4-3] A defined model the Assign list chose: the editor opens with it

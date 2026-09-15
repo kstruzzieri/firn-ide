@@ -323,8 +323,11 @@ export function ModelBand({
    * the exposure editor stays bound to.
    */
   const previewRow = previewing ? matches[activeIndex]?.model : undefined;
-  const detail = previewRow ?? selected;
   const previewingOther = previewRow !== undefined && !sameModel(selected, previewRow);
+  // Walking onto the assigned card previews the SELECTION, not the list row:
+  // a reopened route's selection carries the staged declaration, which the
+  // list row does not (RouteEditor's `seedFrom`), and the head says "assigned".
+  const detail = previewingOther ? previewRow : selected;
   const detailState =
     manual !== null
       ? 'declaring'

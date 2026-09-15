@@ -1939,17 +1939,21 @@ describe('RouteEditor', () => {
     };
     renderRouting({ draft: draftWith(widened) });
     await openRoute('chat');
-    // The detail head's "declares" strip reads the declaration Done re-sends —
+    // The detail body's "declares" row reads the declaration Done re-sends —
     // tool_call declared though not exposed — not the card's own set.
-    const strip = screen.getByText('declares').parentElement;
-    if (strip === null) throw new Error('no declares strip');
-    expect(
-      within(strip)
-        .getAllByText(/^[a-z_]+$/)
-        .map((chip) => chip.textContent)
-        .filter((text) => text !== 'declares')
-    ).toEqual(['chat', 'stream', 'tool_call']);
+    const chips = () =>
+      [...(screen.getByText('declares').nextElementSibling?.children ?? [])].map(
+        (chip) => chip.textContent
+      );
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    // Walking onto the assigned card previews the selection, declaration and all.
+    within(screen.getByRole('listbox', { name: /Models/ }))
+      .getByRole('option', { selected: true })
+      .focus();
+    await userEvent.keyboard('{Home}');
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    await userEvent.keyboard('{Escape}');
     // The card is the one affordance for undoing a hand-widened declaration.
     await pickModel('gpt-5-mini');
     expect(summary()).toBe('Declares − tool_call');
@@ -1972,9 +1976,9 @@ describe('RouteEditor', () => {
       draft: draftWith({ kind: 'route-unassign', useCase: 'chat' }),
     });
     await userEvent.click(screen.getByRole('button', { name: /route chat$/ }));
-    expect(summary()).toBe(
-      'Provider hosted (was —) · Model gpt-5-mini (was —) · + chat, stream, thinking · Think Auto (was —)'
-    );
+    // The wiring (empty baseline through `heldSeed`); the wording and order
+    // are the pure module's, pinned in routeEdit.test.ts.
+    expect(summary()).toContain('Think Auto (was —)');
   });
 
   it('holds nothing for a staged unassignment: restoring the model is an edit', async () => {
