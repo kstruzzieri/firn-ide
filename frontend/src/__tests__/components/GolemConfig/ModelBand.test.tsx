@@ -364,6 +364,13 @@ describe('ModelBand declare path', () => {
       expect(box).toBeDisabled();
     }
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
+    // Same checklist grammar as the route editor's: the boxes sit in a grid
+    // wrapper under the legend, each name over its `required` tag in a column.
+    expect(caps.querySelector('.capabilityGrid')).not.toBeNull();
+    const chat = within(caps).getByLabelText('chat required');
+    const text = chat.parentElement?.querySelector('.checkboxText');
+    expect(text).toHaveTextContent(/^chat/);
+    expect(text?.querySelector('.requiredTag')).toHaveTextContent('required');
   });
 
   it('reports every manual edit as complete facts in canonical order', async () => {
@@ -552,23 +559,29 @@ describe('ModelBand stylesheet coverage', () => {
   // Mockup density: inside the strip the capability checklist sheds its boxed
   // chrome — one tall column was most of the strip's height. Keith's live gate
   // (wave 6) found the wrapping flex row jumbled: uneven columns, a 4px row gap,
-  // and `required` tags reading as the next item's name. It is an even grid now,
-  // with room between rows; the legend and hint span it.
-  it('lays the strip checklist out as an even grid with room between rows', () => {
+  // and `required` tags reading as the next item's name. The boxes now sit in
+  // their own grid wrapper UNDER the legend — a fieldset's legend never joins a
+  // grid or flex container in WebKit (bug 220793), so the wrapper carries the
+  // spacing itself — on the mockup's minmax(118px, 1fr) columns with room between
+  // rows; each name stacks over its tag. The facts half keeps its own 4px rhythm.
+  it('lays the strip checklist out as an even grid under its legend', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
-    const rule = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
-    const span =
-      css.match(
-        /\.detail \.capabilities > legend,\s*\.detail \.capabilities > \.fieldHint \{[^}]*\}/s
-      )?.[0] ?? '';
+    const fieldset = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
+    const grid = css.match(/^\.capabilityGrid \{[^}]*\}/ms)?.[0] ?? '';
+    const text = css.match(/^\.checkboxText \{[^}]*\}/ms)?.[0] ?? '';
+    const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
 
-    expect(rule).toMatch(/display: grid/);
-    expect(rule).toMatch(/grid-template-columns: repeat\(auto-fill, minmax\(150px, 1fr\)\)/);
-    expect(rule).toMatch(/gap: 8px 16px/);
-    expect(rule).toMatch(/border: 0/);
-    expect(rule).not.toMatch(/flex-flow/);
-    expect(span).toMatch(/grid-column: 1 \/ -1/);
+    expect(fieldset).toMatch(/border: 0/);
+    expect(grid).toMatch(/display: grid/);
+    expect(grid).toMatch(/grid-template-columns: repeat\(auto-fill, minmax\(118px, 1fr\)\)/);
+    expect(grid).toMatch(/gap: 8px 16px/);
+    expect(grid).toMatch(/margin-top: 8px/);
+    expect(css).not.toMatch(/\.detail \.capabilities > legend \{/);
+    // The declaration that actually stacks the tag under the name.
+    expect(text).toMatch(/display: flex/);
+    expect(text).toMatch(/flex-direction: column/);
+    expect(stat).toMatch(/gap: 4px/);
   });
 
   // An unchecked box was --surface-base ringed by --surface-border: two dark

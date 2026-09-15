@@ -398,42 +398,48 @@ export function ModelBand({
         </div>
         <fieldset className={styles.capabilities}>
           <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
-          {CAPABILITY_NAMES.map((cap) => {
-            // A required cap the declaration lacks stays unchecked and enabled:
-            // ticking it is the user's assertion, never the form's (§4.4).
-            const needed = required.includes(cap);
-            const locked = needed && manual.caps.includes(cap);
-            return (
-              <label
-                key={cap}
-                className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-              >
-                <input
-                  className={styles.checkboxInput}
-                  type="checkbox"
-                  disabled={locked}
-                  checked={manual.caps.includes(cap)}
-                  onChange={(event) =>
-                    patch({
-                      caps: canonicalCaps(
-                        event.target.checked
-                          ? [...manual.caps, cap]
-                          : manual.caps.filter((other) => other !== cap)
-                      ),
-                    })
-                  }
-                />
-                <span className={styles.checkboxBox} aria-hidden="true" />
-                {cap}
-                {needed && (
-                  <>
-                    {' '}
-                    <span className={styles.requiredTag}>required</span>
-                  </>
-                )}
-              </label>
-            );
-          })}
+          {/* Same grammar as the route editor's checklist: a grid wrapper under the
+              legend (WebKit never lets a legend join the grid), name over tag. */}
+          <div className={styles.capabilityGrid}>
+            {CAPABILITY_NAMES.map((cap) => {
+              // A required cap the declaration lacks stays unchecked and enabled:
+              // ticking it is the user's assertion, never the form's (§4.4).
+              const needed = required.includes(cap);
+              const locked = needed && manual.caps.includes(cap);
+              return (
+                <label
+                  key={cap}
+                  className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                >
+                  <input
+                    className={styles.checkboxInput}
+                    type="checkbox"
+                    disabled={locked}
+                    checked={manual.caps.includes(cap)}
+                    onChange={(event) =>
+                      patch({
+                        caps: canonicalCaps(
+                          event.target.checked
+                            ? [...manual.caps, cap]
+                            : manual.caps.filter((other) => other !== cap)
+                        ),
+                      })
+                    }
+                  />
+                  <span className={styles.checkboxBox} aria-hidden="true" />
+                  <span className={styles.checkboxText}>
+                    {cap}
+                    {needed && (
+                      <>
+                        {' '}
+                        <span className={styles.requiredTag}>required</span>
+                      </>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
           <span className={styles.fieldHint}>
             What you declare here is what Golem may use. The route needs the capabilities tagged
             required.

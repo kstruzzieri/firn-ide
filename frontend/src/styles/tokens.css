@@ -60,7 +60,12 @@
   --palette-blue: #2563eb;
   --palette-green: #22c55e;
   --palette-cyan: #06b6d4;
-  --palette-sky: #38bdf8; /* the Glacier sky, as a neutral ramp step */
+  /* The Golem config Affected mark. Deliberately a literal that duplicates
+   * --accent-project (like --files-key duplicates --accent-go): the mark must
+   * not move when a workspace accent is repointed, and it must be the mockup's
+   * sky, not --palette-blue, which reads purple on slate. Pinned in
+   * __tests__/styles/tokens.test.ts. */
+  --palette-sky: #38bdf8;
   --palette-orange: #f97316;
   --palette-purple: #a855f7;
   --palette-amber: #f59e0b;

@@ -110,6 +110,17 @@ describe('GolemConfig stylesheet', () => {
     expect(css()).not.toContain('data-blocking');
   });
 
+  // Affected is sky (the mockup's light blue) on all three marks — the dashed
+  // stripe, the hollow status dot, the badge dot — never --palette-blue, which
+  // read purple against the slate rows (Keith's wave-6 live gate).
+  it('paints every Affected mark in --palette-sky', () => {
+    const text = css();
+    expect(text).toMatch(/\.row\[data-mark='fallback'\]::before \{[^}]*var\(--palette-sky\)/s);
+    expect(text).toMatch(/\.status\[data-tone='info'\] \.statusDot \{[^}]*var\(--palette-sky\)/s);
+    expect(text).toMatch(/\.badge\[data-kind='fallback'\]::before \{[^}]*var\(--palette-sky\)/s);
+    expect(text).not.toMatch(/var\(--palette-blue\)/);
+  });
+
   // [W6] jsdom computes no cascade, so the reach tint's specificity and the
   // removed-pill rule are pinned as text: the tint must win over the (0,3,0)
   // zebra/hover rules under EVERY row parent, and a removed pill is a <del>.
@@ -127,12 +138,6 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toMatch(
       /\.row\.row\[data-mark='edited'\]:hover,\s*\.row\.row\[data-mark='same-model'\]:hover \{[^}]*color-mix\(in srgb, var\(--surface-hover\) 92%, var\(--status-warning\)\)/
     );
-    // Affected is sky blue (the mockup's), never --palette-blue, which read purple
-    // against the slate rows: the dashed stripe, the hollow dot, the badge dot.
-    expect(text).not.toMatch(/--palette-blue/);
-    expect(text).toMatch(/\.row\[data-mark='fallback'\]::before \{[^}]*var\(--palette-sky\)/s);
-    expect(text).toMatch(/\.status\[data-tone='info'\] \.statusDot \{[^}]*var\(--palette-sky\)/s);
-    expect(text).toMatch(/\.badge\[data-kind='fallback'\]::before \{[^}]*var\(--palette-sky\)/s);
     // A row wrapped for its diagnostic hovers like any other row — from the shared
     // base rule, AHEAD of the tints, so a tinted notice-group row keeps its tint.
     expect(text).toMatch(/\.noticeGroup > \.row:hover/);

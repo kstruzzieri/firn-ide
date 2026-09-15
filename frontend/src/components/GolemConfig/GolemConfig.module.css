@@ -1471,8 +1471,9 @@ select.input {
   gap: 8px 22px;
 }
 
-/* One overline-to-content distance for the whole strip: these 4px are the
-   rhythm the DECLARES block and the checklist legend share. */
+/* The facts half's overline-to-content distance: these 4px are the rhythm the
+   DECLARES block shares. The checklist across the hairline deliberately left it
+   (wave 6 live gate): its rows breathe at 8px. */
 .detailStat {
   display: flex;
   flex-direction: column;
@@ -1503,43 +1504,39 @@ select.input {
 /*
  * Mockup density inside the strip: the capability checklist sheds the boxed
  * chrome — the strip already draws the surface, and one tall column was most
- * of the strip's height. It is an even grid (Keith's wave-6 live gate found the
- * wrapping flex row jumbled: uneven columns, a 4px row gap, tags reading as the
- * next item's name): every item the same width, room between rows, the legend
- * and hint spanning the columns.
+ * of the strip's height. Keith's wave-6 live gate found the wrapping flex row
+ * jumbled (uneven columns, a 4px row gap, `required` tags reading as the next
+ * item's name), so the boxes now sit in their own grid wrapper: every item the
+ * same width on the mockup's minmax(118px, 1fr) columns, room between rows.
+ *
+ * The fieldset itself is a plain block: WebKit never lets a fieldset's legend
+ * join a grid or flex container (bug 220793 — the legend stays in the border
+ * area and a float on it is ignored), so no gap or grid on the fieldset can
+ * space the legend from the first row. The wrapper and the hint carry their own
+ * top margins instead, which every engine honours.
  */
 .detail .capabilities {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px 16px;
+  display: block;
   padding: 0;
   border: 0;
 }
 
-.detail .capabilities > legend,
-.detail .capabilities > .fieldHint {
-  grid-column: 1 / -1;
+.capabilityGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px 16px;
+  margin-top: 8px;
 }
 
-/*
- * Engines pull a fieldset legend into the border area, where it sits flush on
- * the first checkbox row with no gap at all. A floated legend is exempt from
- * that special-casing, and floats are inert inside a flex container — so this
- * only forces the legend to lay out as a normal flex item, where the row gap
- * above actually applies to it.
- */
-.detail .capabilities > legend {
-  float: left;
+.detail .capabilities > .fieldHint {
+  display: block;
+  margin-top: 8px;
 }
 
 /* The box sits on the name's first line; the tag drops below the name. */
 .detail .capabilities .checkbox {
   align-items: flex-start;
   min-width: 0;
-}
-
-.detail .capabilities .checkboxBox {
-  margin-top: 1px;
 }
 
 /* The think control inline, per the mockup: label beside a narrow select. */
