@@ -1947,13 +1947,20 @@ describe('RouteEditor', () => {
       );
     expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
-    // Walking onto the assigned card previews the selection, declaration and all.
+    // Walking the grid previews the walked card; walking back onto the
+    // assigned card previews the SELECTION, declaration and all — and Escape
+    // leaves the strip on it.
     within(screen.getByRole('listbox', { name: /Models/ }))
       .getByRole('option', { selected: true })
       .focus();
+    await userEvent.keyboard('{End}');
+    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'previewing');
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
     await userEvent.keyboard('{Home}');
+    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'assigned');
     expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
     await userEvent.keyboard('{Escape}');
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
     // The card is the one affordance for undoing a hand-widened declaration.
     await pickModel('gpt-5-mini');
     expect(summary()).toBe('Declares − tool_call');

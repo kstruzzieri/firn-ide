@@ -331,7 +331,7 @@ export function ModelBand({
   const detailState =
     manual !== null
       ? 'declaring'
-      : detail === null || detail === undefined
+      : detail === null
         ? 'empty'
         : previewingOther
           ? 'previewing'
