@@ -145,8 +145,15 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.dims1024, variants.dims768)).toEqual([
       'Model gpt-5-mini 1024 dim (was 768 dim)',
     ]);
-    // Another provider's same-named model: one clause, the model implied.
+    // Another provider's same-named model: one clause, the model implied — its
+    // facts, declaration and type included.
     expect(pendingOf(variants.otherProviderSameName, base)).toEqual(['Provider lan (was hosted)']);
+    expect(pendingOf(variants.provider, variants.otherRoleOtherCaps)).toEqual([
+      'Provider lan (was hosted)',
+    ]);
+    expect(pendingOf(variants.provider, variants.declaredOtherType)).toEqual([
+      'Provider lan (was hosted)',
+    ]);
   });
 
   it('reads a hand declaration that repeats a list model as clean: Done would stage the same', () => {

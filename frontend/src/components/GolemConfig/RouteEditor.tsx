@@ -132,7 +132,7 @@ export interface RouteEditorProps {
   /** Routes + models the draft is layered on, for the candidate projection. */
   base: DraftBaseProjection;
   draft: Draft;
-  /** The change already staged on this route identity, if any. */
+  /** The change already staged on this route identity, if any — as COALESCED (the group's authority). */
   staged?: Change;
   /**
    * [W4-3] A defined model the Assign list chose: the editor opens with it
@@ -182,7 +182,12 @@ function seedFrom(
     const defined =
       listed === null || sameCaps(listed.capabilityFacts.caps, staged.capabilityFacts.caps)
         ? listed
-        : { ...listed, capabilityFacts: staged.capabilityFacts };
+        : {
+            ...listed,
+            capabilityFacts: staged.capabilityFacts,
+            // The projection's invariant, kept: effective equals declared.
+            effectiveCapabilities: staged.capabilityFacts.caps,
+          };
     return {
       provider: facts.provider,
       defined,
@@ -203,7 +208,9 @@ function seedFrom(
   if (current !== null) {
     // [W5-5] Another route already staged onto this selector: coalescing will
     // hand the group whatever Done stages here, so open on the group's own
-    // exposure and Think — a Done that touches neither keeps them.
+    // exposure and Think — a Done that touches neither keeps them for the
+    // group. For a row a JOIN governs, that Done is itself a change to the
+    // row's own Think, and the footer names it (see `heldSeed`).
     return {
       provider: current.provider,
       defined: current,
@@ -245,7 +252,7 @@ function heldSeed(
   if (staged?.kind === 'route-unassign') return seedFrom(undefined, null, models, undefined);
   const authority = selectorAuthority(current, others);
   const seed = seedFrom(staged, current, models, authority);
-  if (staged?.kind === 'route' || current === null || authority === undefined) return seed;
+  if (staged?.kind === 'route' || current === null) return seed;
   const overrides = overridesSelector(base, others, {
     provider: current.provider,
     model: current.modelName,

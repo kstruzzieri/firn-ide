@@ -651,7 +651,9 @@ export function ModelBand({
                 <div className={styles.detailDeclares}>
                   <span className={styles.detailStatKey}>declares</span>
                   <span className={styles.capChips}>
-                    {detail.exposedCapabilities.map((cap) => (
+                    {/* The declaration, as the label says: what the model can do,
+                        floor caps marked — the exposure is the checklist beside it. */}
+                    {detail.capabilityFacts.caps.map((cap) => (
                       <span
                         key={cap}
                         className={`${styles.capChip} ${required.includes(cap) ? styles.capChipFloor : ''}`}

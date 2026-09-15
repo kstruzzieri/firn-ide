@@ -1837,8 +1837,9 @@ describe('RouteEditor', () => {
   it('reopens clean when the unknown use case its acknowledgement answered has since left the model', async () => {
     // summarize (no floor on record) was staged onto the unrouted gpt-5; chat
     // then staged onto gpt-5 and acknowledged the unknown member; summarize was
-    // restaged onto gpt-5-nano. chat's own `confirmUnknown` stays on its record
-    // (coalescing re-derives the SET, never the flag) though the question is gone.
+    // restaged onto gpt-5-nano. Coalescing copies the authority's flag, and chat
+    // is the authority once summarize leaves: its `confirmUnknown` stays on its
+    // record though the question is gone.
     const routeTo = (useCase: string, modelName: string, confirmUnknown = false): RouteChange => ({
       kind: 'route',
       useCase,
@@ -1924,6 +1925,56 @@ describe('RouteEditor', () => {
       type: 'dense',
       contextWindow: 262144,
     });
+  });
+
+  it('shows the staged declaration on the reopened card, and re-picking the card narrows it', async () => {
+    const widened: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(widened) });
+    await openRoute('chat');
+    // The detail head's "declares" strip reads the declaration Done re-sends —
+    // tool_call declared though not exposed — not the card's own set.
+    const strip = screen.getByText('declares').parentElement;
+    if (strip === null) throw new Error('no declares strip');
+    expect(
+      within(strip)
+        .getAllByText(/^[a-z_]+$/)
+        .map((chip) => chip.textContent)
+        .filter((text) => text !== 'declares')
+    ).toEqual(['chat', 'stream', 'tool_call']);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    // The card is the one affordance for undoing a hand-widened declaration.
+    await pickModel('gpt-5-mini');
+    expect(summary()).toBe('Declares − tool_call');
+  });
+
+  it('names the Think an unassigned row would get back with its model', async () => {
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+        }),
+        other,
+      ],
+      draft: draftWith({ kind: 'route-unassign', useCase: 'chat' }),
+    });
+    await userEvent.click(screen.getByRole('button', { name: /route chat$/ }));
+    expect(summary()).toBe(
+      'Provider hosted (was —) · Model gpt-5-mini (was —) · + chat, stream, thinking · Think Auto (was —)'
+    );
   });
 
   it('holds nothing for a staged unassignment: restoring the model is an edit', async () => {
