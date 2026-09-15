@@ -1,9 +1,4 @@
-import {
-  effectiveThink,
-  pendingOf,
-  snapshotOf,
-  type Seed,
-} from '../../../components/GolemConfig/routeEdit';
+import { pendingOf, snapshotOf, type Seed } from '../../../components/GolemConfig/routeEdit';
 import { CAPABILITY_NAMES, type ModelProjection } from '../../../types/golem';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
@@ -58,6 +53,14 @@ const variants: Record<string, Seed> = {
   // 256000 and 262144 both format as "256K ctx": the picker keeps two cards.
   ctxDecimal: seed({ defined: model({ role: 'dec-role', contextWindow: 256000 }) }),
   ctxBinary: seed({ defined: model({ role: 'bin-role', contextWindow: 262144 }) }),
+  // Two embedding twins differing in dimensions only.
+  dims768: seed({ defined: model({ role: 'd768', type: 'embedding', dimensions: 768 }) }),
+  dims1024: seed({ defined: model({ role: 'd1024', type: 'embedding', dimensions: 1024 }) }),
+  // The same name on another provider is another model: the Provider clause says so.
+  otherProviderSameName: seed({
+    provider: 'lan',
+    defined: model({ role: 'lan-role', provider: 'lan', parameters: '7B' }),
+  }),
   declaredSameName: seed({
     defined: null,
     manual: { model: 'gpt-5-mini', type: 'dense', caps: ['chat', 'stream'] },
@@ -108,7 +111,6 @@ describe('routeEdit', () => {
   });
 
   it('stages Think only while thinking is exposed, but the row holds it raw', () => {
-    expect(effectiveThink(variants.inactiveThink)).toBe('');
     // A value left behind an untick is nothing Done would stage: no edit.
     expect(snapshotOf(variants.inactiveThink, 'stage')).toBe(snapshotOf(base, 'row'));
     expect(pendingOf(variants.inactiveThink, base)).toEqual([]);
@@ -140,6 +142,11 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.ctxBinary, variants.ctxDecimal)).toEqual([
       'Model gpt-5-mini 262144 ctx (was 256000 ctx)',
     ]);
+    expect(pendingOf(variants.dims1024, variants.dims768)).toEqual([
+      'Model gpt-5-mini 1024 dim (was 768 dim)',
+    ]);
+    // Another provider's same-named model: one clause, the model implied.
+    expect(pendingOf(variants.otherProviderSameName, base)).toEqual(['Provider lan (was hosted)']);
   });
 
   it('reads a hand declaration that repeats a list model as clean: Done would stage the same', () => {
@@ -176,6 +183,13 @@ describe('routeEdit', () => {
       '− chat, stream',
     ]);
     expect(pendingOf(variants.providerOnly, variants.nothing)).toEqual(['Provider hosted (was —)']);
+    // Assigning a thinking model onto an unbound row: the row showed no Think.
+    expect(pendingOf(variants.thinkOn, variants.nothing)).toEqual([
+      'Provider hosted (was —)',
+      'Model gpt-5-mini (was —)',
+      '+ chat, stream, thinking',
+      'Think Auto (was —)',
+    ]);
     // An empty declare form with nothing chosen stages nothing either: clean.
     expect(snapshotOf(variants.declaredNoName, 'stage')).toBe(snapshotOf(variants.nothing, 'row'));
     expect(pendingOf(variants.declaredNoName, variants.nothing)).toEqual([]);

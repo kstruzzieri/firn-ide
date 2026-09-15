@@ -63,7 +63,7 @@ export const THINK_LABEL: Record<ThinkMode, string> = {
  * `thinking` is exposed. Unticking `thinking` clears it; re-ticking finds it
  * where it was left.
  */
-export const effectiveThink = (seed: Seed): ThinkMode =>
+const effectiveThink = (seed: Seed): ThinkMode =>
   seed.exposed.includes('thinking') ? seed.think : '';
 
 /**
@@ -129,7 +129,8 @@ const shown = (value: string): string => value || '—';
  * lines read alike (256000 and 262144 are both "256K ctx"), by the raw counts.
  */
 const identityText = (seed: Seed, exact: boolean): string => {
-  if (seed.defined === null) return seed.manual === null ? '—' : 'declared by hand';
+  // Only reached with a model on both sides (equal, non-empty names).
+  if (seed.defined === null) return 'declared by hand';
   if (!exact) return shown(factsLine(seed.defined));
   const facts = modelFactsOf(seed.defined);
   return shown(
@@ -168,30 +169,34 @@ export const pendingOf = (now: Seed, was: Seed): string[] => {
   const pending: string[] = [];
   if (a.provider !== b.provider)
     pending.push(`Provider ${shown(a.provider)} (was ${shown(b.provider)})`);
+  // One model on both sides means the same provider AND name: only then can
+  // its facts, declaration or type differ on their own. Another provider's
+  // same-named model is another model, and the Provider clause says so.
+  const sameModel = a.provider === b.provider && a.model === b.model;
   if (a.model !== b.model) {
     pending.push(`Model ${shown(a.model)} (was ${shown(b.model)})`);
-  } else if (a.facts !== b.facts) {
+  } else if (sameModel && a.facts !== b.facts) {
     // The same name, other facts: two list models the picker tells apart, or
     // a hand declaration standing in for one. Exact counts when the lines
     // would read alike.
     const exact = identityText(now, false) === identityText(was, false);
     pending.push(`Model ${a.model} ${identityText(now, exact)} (was ${identityText(was, exact)})`);
-  } else {
+  } else if (sameModel) {
     // The same model, other declared capabilities: a hand declaration edited,
     // or the picker's one card for a selector carrying another role's resolved
     // set. (Another model's capabilities are its own; the Model clause covers them.)
     pending.push(...setDelta('Declares ', a.caps, b.caps));
   }
-  // Another model's type is its own, like its capabilities: the Model clause
-  // covers it. Type stands alone only for the declare form's own select.
-  if (a.model === b.model && a.type !== b.type)
-    pending.push(`Type ${shown(a.type)} (was ${shown(b.type)})`);
+  // A type stands alone only for the declare form's own select, like Declares.
+  if (sameModel && a.type !== b.type) pending.push(`Type ${shown(a.type)} (was ${shown(b.type)})`);
   pending.push(...setDelta('', a.exposed, b.exposed));
   if (a.think !== b.think) {
     // The select reads "Default" while it is on screen; once `thinking` is
     // unticked there is no select, and Done clears the mode.
     const nowLabel = now.exposed.includes('thinking') ? THINK_LABEL[a.think] : 'cleared';
-    pending.push(`Think ${nowLabel} (was ${THINK_LABEL[b.think]})`);
+    // A row holding no model shows no Think either.
+    const wasLabel = b.model === '' ? '—' : THINK_LABEL[b.think];
+    pending.push(`Think ${nowLabel} (was ${wasLabel})`);
   }
   if (a.ackUnknown !== b.ackUnknown)
     pending.push(a.ackUnknown ? 'Apply anyway acknowledged' : 'Apply anyway withdrawn');

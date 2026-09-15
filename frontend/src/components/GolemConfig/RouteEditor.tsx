@@ -157,8 +157,9 @@ const declarationKey = (caps: readonly CapabilityName[]): string => `manual\u000
 /**
  * Reopening shows what is waiting for Apply, not the applied document
  * underneath it. A staged change whose facts match a defined model reads back
- * as that model; anything else was declared by hand and reads back as a manual
- * declaration, because there is no other lossless way to restore it.
+ * as that model, carrying the declared capabilities as staged; anything else
+ * was declared by hand and reads back as a manual declaration, because there
+ * is no other lossless way to restore it.
  */
 function seedFrom(
   staged: Change | undefined,
@@ -171,15 +172,17 @@ function seedFrom(
   // truth, so only the user's own tick may assert one.
   if (staged?.kind === 'route') {
     const facts = staged.modelFacts;
-    // The same facts AND the same declared capabilities: a hand declaration
-    // that widened a list model's set must read back as that declaration, or
-    // a reopen would hold caps Done no longer sends.
+    const listed = models.find((model) => sameModelFacts(model, facts)) ?? null;
+    // The declared capabilities on a staged route are the SELECTOR's: coalescing
+    // writes the group's authority onto every change in it. Read them from the
+    // record, never from the card, so a reopen re-stages exactly what is staged
+    // (a declaration widened by hand, or a sibling's) and keeps the card's own
+    // facts — context window, parameters, dimensions — which a declaration
+    // rebuilt from the record alone would lose.
     const defined =
-      models.find(
-        (model) =>
-          sameModelFacts(model, facts) &&
-          sameCaps(model.capabilityFacts.caps, staged.capabilityFacts.caps)
-      ) ?? null;
+      listed === null || sameCaps(listed.capabilityFacts.caps, staged.capabilityFacts.caps)
+        ? listed
+        : { ...listed, capabilityFacts: staged.capabilityFacts };
     return {
       provider: facts.provider,
       defined,
@@ -220,6 +223,34 @@ function seedFrom(
     ackUnknown: false,
     ackDrops: false,
   };
+}
+
+/**
+ * What the ROW holds — the baseline the footer compares against. Its own
+ * staged route, as coalesced; a staged unassignment holds nothing; otherwise
+ * the applied model with the selector group's exposure (selector-wide, so the
+ * row already shows it) but the group's Think only when the group OVERRIDES
+ * the selector — a join writes no Think onto a neighbour, and RoutingCard
+ * reads the row the same way. The editor still OPENS on the group's Think
+ * ([W5-5], `seedFrom`), so a Done from here that carries a join's Think is a
+ * change the summary names rather than a clean footer that hides it.
+ */
+function heldSeed(
+  staged: Change | undefined,
+  current: ModelProjection | null,
+  models: readonly ModelProjection[],
+  base: DraftBaseProjection,
+  others: readonly Change[]
+): Seed {
+  if (staged?.kind === 'route-unassign') return seedFrom(undefined, null, models, undefined);
+  const authority = selectorAuthority(current, others);
+  const seed = seedFrom(staged, current, models, authority);
+  if (staged?.kind === 'route' || current === null || authority === undefined) return seed;
+  const overrides = overridesSelector(base, others, {
+    provider: current.provider,
+    model: current.modelName,
+  });
+  return overrides ? seed : { ...seed, think: current.thinkMode };
 }
 
 export function RouteEditor({
@@ -500,9 +531,7 @@ export function RouteEditor({
 
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
-  const [baseline] = useState(() =>
-    seedFrom(staged, current, models, selectorAuthority(current, draft.changes))
-  );
+  const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
   // An acknowledgement counts only while its question is on screen — on BOTH
   // sides. submit() sends `confirmDrops` only with drops to confirm and gates
   // on `ackUnknown` only with unknown use cases, so a tick left behind a
