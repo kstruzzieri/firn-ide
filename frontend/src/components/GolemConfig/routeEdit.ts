@@ -144,63 +144,64 @@ const identityText = (seed: Seed, exact: boolean): string => {
   );
 };
 
-/** `+ a, b` and `− c` clauses for one capability set against its baseline, canonical order kept. */
+/** `Label: + a, b` and `Label: − c` clauses for one capability set against its baseline, canonical order kept. */
 const setDelta = (
-  prefix: string,
+  label: string,
   now: readonly CapabilityName[],
   was: readonly CapabilityName[]
 ): string[] => {
   const added = now.filter((cap) => !was.includes(cap));
   const removed = was.filter((cap) => !now.includes(cap));
   return [
-    ...(added.length > 0 ? [`${prefix}+ ${added.join(', ')}`] : []),
-    ...(removed.length > 0 ? [`${prefix}− ${removed.join(', ')}`] : []),
+    ...(added.length > 0 ? [`${label}: + ${added.join(', ')}`] : []),
+    ...(removed.length > 0 ? [`${label}: − ${removed.join(', ')}`] : []),
   ];
 };
 
 /**
  * What Done would stage from `now` that the row (`was`) does not hold, in
- * words, in the order the editor lays the controls out. Empty exactly when
- * `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
+ * words — one `Control: value (was value)` clause per changed control, in the
+ * order the editor lays them out. Empty exactly when `snapshotOf(now, 'stage')`
+ * equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed): string[] => {
   const a = facetsOf(now, 'stage');
   const b = facetsOf(was, 'row');
   const pending: string[] = [];
   if (a.provider !== b.provider)
-    pending.push(`Provider ${shown(a.provider)} (was ${shown(b.provider)})`);
+    pending.push(`Provider: ${shown(a.provider)} (was ${shown(b.provider)})`);
   // One model on both sides means the same provider AND name: only then can
   // its facts, declaration or type differ on their own. Another provider's
   // same-named model is another model, and the Provider clause says so.
   const sameModel = a.provider === b.provider && a.model === b.model;
   if (a.model !== b.model) {
-    pending.push(`Model ${shown(a.model)} (was ${shown(b.model)})`);
+    pending.push(`Model: ${shown(a.model)} (was ${shown(b.model)})`);
   } else if (sameModel && a.facts !== b.facts) {
     // The same name, other facts: two list models the picker tells apart, or
     // a hand declaration standing in for one. Exact counts when the lines
     // would read alike.
     const exact = identityText(now, false) === identityText(was, false);
-    pending.push(`Model ${a.model} ${identityText(now, exact)} (was ${identityText(was, exact)})`);
+    pending.push(`Model: ${a.model} ${identityText(now, exact)} (was ${identityText(was, exact)})`);
   } else if (sameModel) {
     // The same model, other declared capabilities: a hand declaration edited,
     // or the picker's one card for a selector carrying another role's resolved
     // set. (Another model's capabilities are its own; the Model clause covers them.)
-    pending.push(...setDelta('Declares ', a.caps, b.caps));
+    pending.push(...setDelta('Declares', a.caps, b.caps));
   }
   // A type stands alone only for the declare form's own select, like Declares.
-  if (sameModel && a.type !== b.type) pending.push(`Type ${shown(a.type)} (was ${shown(b.type)})`);
-  pending.push(...setDelta('', a.exposed, b.exposed));
+  if (sameModel && a.type !== b.type) pending.push(`Type: ${shown(a.type)} (was ${shown(b.type)})`);
+  pending.push(...setDelta('Capabilities', a.exposed, b.exposed));
   if (a.think !== b.think) {
     // The select reads "Default" while it is on screen; once `thinking` is
     // unticked there is no select, and Done clears the mode.
     const nowLabel = now.exposed.includes('thinking') ? THINK_LABEL[a.think] : 'cleared';
     // A row holding no model shows no Think either.
     const wasLabel = b.model === '' ? '—' : THINK_LABEL[b.think];
-    pending.push(`Think ${nowLabel} (was ${wasLabel})`);
+    pending.push(`Think mode: ${nowLabel} (was ${wasLabel})`);
   }
   if (a.ackUnknown !== b.ackUnknown)
-    pending.push(a.ackUnknown ? 'Apply anyway acknowledged' : 'Apply anyway withdrawn');
+    pending.push(a.ackUnknown ? 'Apply anyway: acknowledged' : 'Apply anyway: withdrawn');
   if (a.ackDrops !== b.ackDrops)
-    pending.push(a.ackDrops ? 'Removal acknowledged' : 'Removal acknowledgement withdrawn');
+    pending.push(a.ackDrops ? 'Removal: acknowledged' : 'Removal: withdrawn');
   return pending;
 };

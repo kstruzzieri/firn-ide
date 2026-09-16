@@ -411,7 +411,7 @@ export function ModelBand({
                     {needed && (
                       <>
                         {' '}
-                        <span className={styles.requiredTag}>required</span>
+                        <span className={styles.requiredTag}>(required)</span>
                       </>
                     )}
                   </span>

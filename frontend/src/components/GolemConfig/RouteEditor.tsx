@@ -686,113 +686,109 @@ export function RouteEditor({
         exposure={
           defined === null && manual === null ? undefined : (
             <>
-              <div className={styles.column}>
-                <fieldset className={styles.capabilities}>
-                  <legend className={styles.fieldLabel}>{capsLegend}</legend>
-                  {/* The boxes sit in their own grid UNDER the legend: a fieldset's
+              {/* Plain block flow, no flex wrapper: WebKit sizes a fieldset flex
+                  item without its rendered legend's border area, so the Think
+                  control below landed on the hint (Keith's wave-6 live gate). */}
+              <fieldset className={styles.capabilities}>
+                <legend className={styles.fieldLabel}>{capsLegend}</legend>
+                {/* The boxes sit in their own grid UNDER the legend: a fieldset's
                       legend never joins a grid or flex container in WebKit, so the
                       wrapper carries the spacing itself. */}
-                  <div className={styles.capabilityGrid}>
-                    {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
-                      const required = floor.includes(cap);
-                      // A required cap locks only once it is checked: the tick is
-                      // the user's assertion, never the checklist's (§4.4).
-                      const locked = required && exposed.includes(cap);
-                      return (
-                        <label
-                          key={cap}
-                          className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-                          // The staged-value mark: this box differs from the baseline.
-                          data-changed={
-                            exposed.includes(cap) !== baseline.exposed.includes(cap) || undefined
-                          }
-                        >
-                          <input
-                            className={styles.checkboxInput}
-                            type="checkbox"
-                            disabled={locked}
-                            checked={exposed.includes(cap)}
-                            onChange={(event) => {
-                              setExposed((currentCaps) =>
-                                canonicalCaps(
-                                  event.target.checked
-                                    ? [...currentCaps, cap]
-                                    : currentCaps.filter((other) => other !== cap)
-                                )
-                              );
-                              // A hand-declared model cannot expose what it does not
-                              // declare: this tick is the declare form's assertion too.
-                              // Adding only — unticking never withdraws a declaration.
-                              // The key advances with it: this tick IS the exposure
-                              // edit, so the changed declaration must not re-seed the
-                              // checklist, Think or the acknowledgements over it.
-                              if (
-                                event.target.checked &&
-                                manual !== null &&
-                                !manual.caps.includes(cap)
-                              ) {
-                                const caps = canonicalCaps([...manual.caps, cap]);
-                                setManual({ ...manual, caps });
-                                setSeenKey(declarationKey(caps));
-                              }
-                              clearRefusal();
-                            }}
-                          />
-                          <span className={styles.checkboxBox} aria-hidden="true" />
-                          {/* The name and its reason stack in one column beside the
-                            box, so a wrapped grid never lets `required` read as the
-                            next item's name (Keith's wave-6 live gate). */}
-                          <span className={styles.checkboxText}>
-                            {cap}
-                            {/* v9 names the reason beside the control rather than
+                <div className={styles.capabilityGrid}>
+                  {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
+                    const required = floor.includes(cap);
+                    // A required cap locks only once it is checked: the tick is
+                    // the user's assertion, never the checklist's (§4.4).
+                    const locked = required && exposed.includes(cap);
+                    return (
+                      <label
+                        key={cap}
+                        className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                        // The staged-value mark: this box differs from the baseline.
+                        data-changed={
+                          exposed.includes(cap) !== baseline.exposed.includes(cap) || undefined
+                        }
+                      >
+                        <input
+                          className={styles.checkboxInput}
+                          type="checkbox"
+                          disabled={locked}
+                          checked={exposed.includes(cap)}
+                          onChange={(event) => {
+                            setExposed((currentCaps) =>
+                              canonicalCaps(
+                                event.target.checked
+                                  ? [...currentCaps, cap]
+                                  : currentCaps.filter((other) => other !== cap)
+                              )
+                            );
+                            // A hand-declared model cannot expose what it does not
+                            // declare: this tick is the declare form's assertion too.
+                            // Adding only — unticking never withdraws a declaration.
+                            // The key advances with it: this tick IS the exposure
+                            // edit, so the changed declaration must not re-seed the
+                            // checklist, Think or the acknowledgements over it.
+                            if (
+                              event.target.checked &&
+                              manual !== null &&
+                              !manual.caps.includes(cap)
+                            ) {
+                              const caps = canonicalCaps([...manual.caps, cap]);
+                              setManual({ ...manual, caps });
+                              setSeenKey(declarationKey(caps));
+                            }
+                            clearRefusal();
+                          }}
+                        />
+                        <span className={styles.checkboxBox} aria-hidden="true" />
+                        {/* The name and its reason read as one phrase — `chat
+                            (required)` — so a wrapped grid never lets the reason
+                            read as the next item's name (Keith's wave-6 live gate). */}
+                        <span className={styles.checkboxText}>
+                          {cap}
+                          {/* v9 names the reason beside the control rather than
                           leaving a locked box to explain itself. */}
-                            {required && (
-                              <>
-                                {' '}
-                                <span className={styles.requiredTag}>required</span>
-                              </>
-                            )}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <span className={styles.fieldHint}>
-                    {`What this route may use.${
-                      floorOwners.length > 0
-                        ? ` Required by ${listUseCases(floorOwners)}: ${floor.join(', ')}.`
-                        : ''
-                    }`}
-                  </span>
-                </fieldset>
-              </div>
+                          {required && (
+                            <>
+                              {' '}
+                              <span className={styles.requiredTag}>(required)</span>
+                            </>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <span className={styles.fieldHint}>
+                  {`What this route may use.${
+                    floorOwners.length > 0
+                      ? ` Required by ${listUseCases(floorOwners)}: ${floor.join(', ')}.`
+                      : ''
+                  }`}
+                </span>
+              </fieldset>
 
               {/* Think sits under the capabilities inside the strip's exposure half. */}
               {exposed.includes('thinking') && (
-                <div className={styles.column}>
-                  <div
-                    className={styles.field}
-                    data-changed={think !== baseline.think || undefined}
+                <div className={styles.field} data-changed={think !== baseline.think || undefined}>
+                  <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
+                    Think mode
+                  </label>
+                  <select
+                    className={styles.input}
+                    id={`${id}-think`}
+                    value={think}
+                    onChange={(event) => {
+                      setThink(event.target.value as ThinkMode);
+                      clearRefusal();
+                    }}
                   >
-                    <label className={styles.fieldLabel} htmlFor={`${id}-think`}>
-                      Think mode
-                    </label>
-                    <select
-                      className={styles.input}
-                      id={`${id}-think`}
-                      value={think}
-                      onChange={(event) => {
-                        setThink(event.target.value as ThinkMode);
-                        clearRefusal();
-                      }}
-                    >
-                      {THINK_MODES.map((mode) => (
-                        <option key={mode} value={mode}>
-                          {THINK_LABEL[mode]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                    {THINK_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {THINK_LABEL[mode]}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
             </>

@@ -1023,9 +1023,8 @@ select.input {
 }
 
 /* The name, with its `required` tag under it rather than beside it. */
+/* The name and its reason as one wrapping phrase: `chat (required)`. */
 .checkboxText {
-  display: flex;
-  flex-direction: column;
   min-width: 0;
   line-height: 1.25;
 }
@@ -1034,9 +1033,8 @@ select.input {
  * The mockup greys this to its --td. Here it names WHY a control is locked, so
  * it is instructional copy and holds the §4.7 --text-muted floor instead.
  */
+/* Muted, the name's own size: a parenthetical, not a tag. */
 .requiredTag {
-  font-size: 10px;
-  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 
@@ -1140,14 +1138,6 @@ select.input {
 .diagnostic[data-tone='blocking'] {
   border-color: var(--palette-red);
   background-color: color-mix(in srgb, var(--palette-red) 10%, var(--surface-panel));
-}
-
-/* One side of the editor below the band: capabilities, or the think control. */
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
 }
 
 /* A checklist is a real fieldset — the legend is its accessible name. */
@@ -1567,10 +1557,19 @@ select.input {
   margin-top: 8px;
 }
 
-/* The box sits on the name's first line; the tag drops below the name. */
+/* The box sits on the name's first line when the phrase wraps. */
 .detail .capabilities .checkbox {
   align-items: flex-start;
   min-width: 0;
+}
+
+/* The exposure half is plain block flow (see RouteEditor): the Think control
+   follows the checklist with room, and the fieldset is measured as a block —
+   as a flex item WebKit drops its legend's border area and the control lands
+   on the hint. */
+.detailExposure > * + *,
+.detailDeclaredExposure > * + * {
+  margin-top: 12px;
 }
 
 /* The think control inline, per the mockup: label beside a narrow select. */

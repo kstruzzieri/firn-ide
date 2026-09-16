@@ -359,18 +359,18 @@ describe('ModelBand declare path', () => {
 
     const caps = within(manual).getByRole('group', { name: 'Capabilities this model supports' });
     for (const locked of ['chat', 'stream']) {
-      const box = within(caps).getByLabelText(locked + ' required');
+      const box = within(caps).getByLabelText(locked + ' (required)');
       expect(box).toBeChecked();
       expect(box).toBeDisabled();
     }
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
     // Same checklist grammar as the route editor's: the boxes sit in a grid
-    // wrapper under the legend, each name over its `required` tag in a column.
+    // wrapper under the legend, each name and its reason one phrase.
     expect(caps.querySelector('.capabilityGrid')).not.toBeNull();
-    const chat = within(caps).getByLabelText('chat required');
+    const chat = within(caps).getByLabelText('chat (required)');
     const text = chat.parentElement?.querySelector('.checkboxText');
     expect(text).toHaveTextContent(/^chat/);
-    expect(text?.querySelector('.requiredTag')).toHaveTextContent('required');
+    expect(text?.querySelector('.requiredTag')).toHaveTextContent('(required)');
   });
 
   it('reports every manual edit as complete facts in canonical order', async () => {
@@ -410,10 +410,10 @@ describe('ModelBand declare path', () => {
       manual: { model: 'gpt-5', type: '', caps: ['chat', 'stream'] },
     });
     const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
-    expect(within(declared).getByLabelText('tool_call required')).not.toBeChecked();
-    expect(within(declared).getByLabelText('tool_call required')).toBeEnabled();
-    expect(within(declared).getByLabelText('chat required')).toBeChecked();
-    expect(within(declared).getByLabelText('chat required')).toBeDisabled();
+    expect(within(declared).getByLabelText('tool_call (required)')).not.toBeChecked();
+    expect(within(declared).getByLabelText('tool_call (required)')).toBeEnabled();
+    expect(within(declared).getByLabelText('chat (required)')).toBeChecked();
+    expect(within(declared).getByLabelText('chat (required)')).toBeDisabled();
     expect(screen.getByText('filter: chat · stream')).toBeVisible();
     // A fresh declaration still starts from the band floor alone.
     await userEvent.type(screen.getByLabelText('Filter models'), 'llama-4');
@@ -563,7 +563,7 @@ describe('ModelBand stylesheet coverage', () => {
   // their own grid wrapper UNDER the legend — a fieldset's legend never joins a
   // grid or flex container in WebKit (bug 220793), so the wrapper carries the
   // spacing itself — on the mockup's minmax(118px, 1fr) columns with room between
-  // rows; each name stacks over its tag. The facts half keeps its own 4px rhythm.
+  // rows; each name and its reason read as one phrase. The facts half keeps its own 4px rhythm.
   it('lays the strip checklist out as an even grid under its legend', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
@@ -584,9 +584,17 @@ describe('ModelBand stylesheet coverage', () => {
     expect(grid).toMatch(/gap: 8px 16px/);
     expect(grid).toMatch(/margin-top: 8px/);
     expect(css).not.toMatch(/\.detail \.capabilities > legend \{/);
-    // The declaration that actually stacks the tag under the name.
-    expect(text).toMatch(/display: flex/);
-    expect(text).toMatch(/flex-direction: column/);
+    // The exposure half spaces its blocks itself; the flex `.column` wrapper is gone.
+    expect(
+      css.match(
+        /\.detailExposure > \* \+ \*,\s*\.detailDeclaredExposure > \* \+ \* \{[^}]*\}/s
+      )?.[0] ?? ''
+    ).toMatch(/margin-top: 12px/);
+    expect(css).not.toMatch(/^\.column \{/m);
+    // The name and its reason read as one wrapping phrase — `chat (required)` —
+    // never a stacked tag that a wrapped grid could hand to the next item.
+    expect(text).not.toMatch(/flex-direction: column/);
+    expect(css.match(/^\.requiredTag \{[^}]*\}/ms)?.[0] ?? '').not.toMatch(/font-size/);
     expect(stat).toMatch(/gap: 4px/);
   });
 

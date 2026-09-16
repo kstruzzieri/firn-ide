@@ -107,7 +107,7 @@ describe('routeEdit', () => {
     expect(snapshotOf(variants.otherRoleSameFacts, 'stage')).toBe(snapshotOf(base, 'row'));
     expect(pendingOf(variants.otherRoleSameFacts, base)).toEqual([]);
     // …unless the card carries another role's resolved capabilities.
-    expect(pendingOf(variants.otherRoleOtherCaps, base)).toEqual(['Declares + tool_call']);
+    expect(pendingOf(variants.otherRoleOtherCaps, base)).toEqual(['Declares: + tool_call']);
   });
 
   it('stages Think only while thinking is exposed, but the row holds it raw', () => {
@@ -116,86 +116,91 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.inactiveThink, base)).toEqual([]);
     // A row holding `auto` behind an unexposed thinking: Done clears it, and
     // says so before a single edit.
-    expect(pendingOf(base, variants.inactiveThink)).toEqual(['Think cleared (was Auto)']);
+    expect(pendingOf(base, variants.inactiveThink)).toEqual(['Think mode: cleared (was Auto)']);
     expect(pendingOf(variants.inactiveThink, variants.inactiveThink)).toEqual([
-      'Think cleared (was Auto)',
+      'Think mode: cleared (was Auto)',
     ]);
   });
 
   it('says what Done clears when thinking is unticked, and what the select reads while it is on', () => {
-    expect(pendingOf(base, variants.thinkOn)).toEqual(['− thinking', 'Think cleared (was Auto)']);
+    expect(pendingOf(base, variants.thinkOn)).toEqual([
+      'Capabilities: − thinking',
+      'Think mode: cleared (was Auto)',
+    ]);
     expect(pendingOf(variants.thinkOnDefault, variants.thinkOn)).toEqual([
-      'Think Default (was Auto)',
+      'Think mode: Default (was Auto)',
     ]);
     expect(pendingOf(variants.thinkOn, variants.thinkOnDefault)).toEqual([
-      'Think Auto (was Default)',
+      'Think mode: Auto (was Default)',
     ]);
   });
 
   it('tells two same-named list models apart by their facts, raw when the lines read alike', () => {
-    expect(pendingOf(variants.sameNameTwin, base)).toEqual(['Model gpt-5-mini 7B (was —)']);
-    expect(pendingOf(base, variants.sameNameTwin)).toEqual(['Model gpt-5-mini — (was 7B)']);
-    expect(pendingOf(variants.ctxDecimal, base)).toEqual(['Model gpt-5-mini 256K ctx (was —)']);
+    expect(pendingOf(variants.sameNameTwin, base)).toEqual(['Model: gpt-5-mini 7B (was —)']);
+    expect(pendingOf(base, variants.sameNameTwin)).toEqual(['Model: gpt-5-mini — (was 7B)']);
+    expect(pendingOf(variants.ctxDecimal, base)).toEqual(['Model: gpt-5-mini 256K ctx (was —)']);
     expect(snapshotOf(variants.ctxBinary, 'stage')).not.toBe(
       snapshotOf(variants.ctxDecimal, 'row')
     );
     expect(pendingOf(variants.ctxBinary, variants.ctxDecimal)).toEqual([
-      'Model gpt-5-mini 262144 ctx (was 256000 ctx)',
+      'Model: gpt-5-mini 262144 ctx (was 256000 ctx)',
     ]);
     expect(pendingOf(variants.dims1024, variants.dims768)).toEqual([
-      'Model gpt-5-mini 1024 dim (was 768 dim)',
+      'Model: gpt-5-mini 1024 dim (was 768 dim)',
     ]);
     // Another provider's same-named model: one clause, the model implied — its
     // facts, declaration and type included.
-    expect(pendingOf(variants.otherProviderSameName, base)).toEqual(['Provider lan (was hosted)']);
+    expect(pendingOf(variants.otherProviderSameName, base)).toEqual(['Provider: lan (was hosted)']);
     expect(pendingOf(variants.provider, variants.otherRoleOtherCaps)).toEqual([
-      'Provider lan (was hosted)',
+      'Provider: lan (was hosted)',
     ]);
     expect(pendingOf(variants.provider, variants.declaredOtherType)).toEqual([
-      'Provider lan (was hosted)',
+      'Provider: lan (was hosted)',
     ]);
   });
 
   it('reads a hand declaration that repeats a list model as clean: Done would stage the same', () => {
     expect(snapshotOf(variants.declaredSameName, 'stage')).toBe(snapshotOf(base, 'row'));
     expect(pendingOf(variants.declaredSameName, base)).toEqual([]);
-    expect(pendingOf(variants.declaredOtherType, base)).toEqual(['Type moe (was dense)']);
-    expect(pendingOf(variants.declaredMoreCaps, base)).toEqual(['Declares + tool_call']);
+    expect(pendingOf(variants.declaredOtherType, base)).toEqual(['Type: moe (was dense)']);
+    expect(pendingOf(variants.declaredMoreCaps, base)).toEqual(['Declares: + tool_call']);
     expect(pendingOf(variants.declaredSameName, variants.declaredMoreCaps)).toEqual([
-      'Declares − tool_call',
+      'Declares: − tool_call',
     ]);
     // Provenance words the clause once the facts differ.
     expect(pendingOf(variants.declaredSameName, variants.sameNameTwin)).toEqual([
-      'Model gpt-5-mini declared by hand (was 7B)',
+      'Model: gpt-5-mini declared by hand (was 7B)',
     ]);
     expect(pendingOf(variants.sameNameTwin, variants.declaredSameName)).toEqual([
-      'Model gpt-5-mini 7B (was declared by hand)',
+      'Model: gpt-5-mini 7B (was declared by hand)',
     ]);
   });
 
   it('lets the Model clause carry another model’s facts and type: no Declares or Type clause for a pick', () => {
-    expect(pendingOf(variants.otherModel, base)).toEqual(['Model gpt-5 (was gpt-5-mini)']);
+    expect(pendingOf(variants.otherModel, base)).toEqual(['Model: gpt-5 (was gpt-5-mini)']);
     expect(pendingOf(variants.declaredMoreCaps, variants.otherModel)).toEqual([
-      'Model gpt-5-mini (was gpt-5)',
+      'Model: gpt-5-mini (was gpt-5)',
     ]);
     expect(
       pendingOf(seed({ defined: model({ role: 'moe-role', modelName: 'mix', type: 'moe' }) }), base)
-    ).toEqual(['Model mix (was gpt-5-mini)']);
+    ).toEqual(['Model: mix (was gpt-5-mini)']);
   });
 
   it('reads the placeholders for an empty editor', () => {
     expect(pendingOf(variants.nothing, base)).toEqual([
-      'Provider — (was hosted)',
-      'Model — (was gpt-5-mini)',
-      '− chat, stream',
+      'Provider: — (was hosted)',
+      'Model: — (was gpt-5-mini)',
+      'Capabilities: − chat, stream',
     ]);
-    expect(pendingOf(variants.providerOnly, variants.nothing)).toEqual(['Provider hosted (was —)']);
+    expect(pendingOf(variants.providerOnly, variants.nothing)).toEqual([
+      'Provider: hosted (was —)',
+    ]);
     // Assigning a thinking model onto an unbound row: the row showed no Think.
     expect(pendingOf(variants.thinkOn, variants.nothing)).toEqual([
-      'Provider hosted (was —)',
-      'Model gpt-5-mini (was —)',
-      '+ chat, stream, thinking',
-      'Think Auto (was —)',
+      'Provider: hosted (was —)',
+      'Model: gpt-5-mini (was —)',
+      'Capabilities: + chat, stream, thinking',
+      'Think mode: Auto (was —)',
     ]);
     // An empty declare form with nothing chosen stages nothing either: clean.
     expect(snapshotOf(variants.declaredNoName, 'stage')).toBe(snapshotOf(variants.nothing, 'row'));
@@ -203,9 +208,9 @@ describe('routeEdit', () => {
   });
 
   it('names the acknowledgements both ways', () => {
-    expect(pendingOf(variants.ackUnknown, base)).toEqual(['Apply anyway acknowledged']);
-    expect(pendingOf(base, variants.ackUnknown)).toEqual(['Apply anyway withdrawn']);
-    expect(pendingOf(variants.ackDrops, base)).toEqual(['Removal acknowledged']);
-    expect(pendingOf(base, variants.ackDrops)).toEqual(['Removal acknowledgement withdrawn']);
+    expect(pendingOf(variants.ackUnknown, base)).toEqual(['Apply anyway: acknowledged']);
+    expect(pendingOf(base, variants.ackUnknown)).toEqual(['Apply anyway: withdrawn']);
+    expect(pendingOf(variants.ackDrops, base)).toEqual(['Removal: acknowledged']);
+    expect(pendingOf(base, variants.ackDrops)).toEqual(['Removal: withdrawn']);
   });
 });
