@@ -611,7 +611,7 @@ describe('ModelBand stylesheet coverage', () => {
     expect(back).toMatch(/width: 100%/);
     // The grouped chrome rule no longer lays anything out.
     const group = css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '';
-    expect(group).toMatch(/padding: 8px 10px 10px/);
+    expect(group).toMatch(/min-width: 0/);
     expect(group).not.toMatch(/display|gap/);
     // The name and its reason read as one wrapping phrase — `chat (required)` —
     // never a stacked tag that a wrapped grid could hand to the next item.

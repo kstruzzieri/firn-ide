@@ -173,7 +173,8 @@ const setDelta = (
  * facts differ), `Control: + a, b` and `Control: − c` for a checklist (one
  * clause per side it gains or loses), `Control: acknowledged` / `not
  * acknowledged` for a tick. In the order Provider, Model (or, for the same
- * model, Declares), Type, Capabilities, Think mode, then the acknowledgements. Empty
+ * model with the same facts, Declares), Type, Capabilities, Think mode, then
+ * the acknowledgements. Empty
  * exactly when `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed): string[] => {

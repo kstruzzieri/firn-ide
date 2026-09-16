@@ -1142,9 +1142,9 @@ select.input {
 
 /* A checklist is a real fieldset — the legend is its accessible name. Every
    checklist today lives inside `.detail` and sheds the box, so the chrome
-   below is effectively the declare form's; `min-width` and `margin` are the
-   live half for both, cancelling the UA fieldset's min-content inline size and
-   2px side margins. */
+   below is effectively the declare form's; `min-width: 0` is the live half
+   for both, cancelling the UA fieldset's min-content inline size (its 2px side
+   margins already fall to reset.css). */
 .capabilities,
 .manual {
   min-width: 0;
