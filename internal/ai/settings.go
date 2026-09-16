@@ -23,6 +23,9 @@ const (
 	maxProjectionEntries       = 256
 	maxProjectionIdentifierLen = 256
 	maxProjectionEndpointLen   = 1024
+	// §5.6 profile description bound — its own constant, so retuning the
+	// endpoint bound never silently retunes descriptions.
+	maxProfileDescriptionLen = 1024
 	// maxProjectionDiagnostics is the contract cap (fixed by the TS validator
 	// and the shared corpus — never raise it without a breaking-change
 	// review). appendDiagnostic always emits, in order, at most one

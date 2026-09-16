@@ -16,7 +16,9 @@
 import {
   CAPABILITY_NAMES,
   MAX_DIAGNOSTICS,
+  FORBIDDEN_IDENTIFIER_RUNES,
   MAX_ENDPOINT_BYTES,
+  MAX_PROFILE_DESCRIPTION_BYTES,
   MAX_PROJECTION_ENTRIES,
   MODEL_TYPES,
   NON_ASCII_RUNE,
@@ -451,6 +453,10 @@ function readRouteChange(value: Record<string, unknown>): Change | null {
   const capabilityFacts = readRequestCapabilityFacts(value.capabilityFacts);
   const exposedCaps = isCapabilityList(value.exposedCaps);
   if (modelFacts === null || capabilityFacts === null || exposedCaps === null) return null;
+  // An empty exposure is a break, not a clear: the backend would hand upstream
+  // a nil override and the model's capabilities would derive from its type
+  // again — never the empty set the checklist showed (§4.4).
+  if (exposedCaps.length === 0) return null;
   if (!isSubsetOf(exposedCaps, capabilityFacts.knownCaps)) return null;
 
   // Confirmation arrays are omitted when empty; an explicit [] is a break.
@@ -890,6 +896,162 @@ export function parseGolemProfileLoadResult(value: unknown): GolemProfileLoadRes
 }
 
 // ---------------------------------------------------------------------------
+// Slice C profile transport (§5.6): the list projection and the SaveAs
+// request/result behind ListGolemProfiles / SaveGolemProfileAs.
+// ---------------------------------------------------------------------------
+
+const USER_PROFILE_ID = /^user\/[a-z0-9][a-z0-9-]{0,63}$/;
+/** The §5.6 user-profile grammar; the save flow writes only this namespace. */
+export const isUserProfileID = (value: unknown): value is string =>
+  typeof value === 'string' && USER_PROFILE_ID.test(value);
+/** The slug half of the grammar, for the inline name field ('user/' is fixed). */
+export const PROFILE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export interface ProfileInfo {
+  id: string;
+  description?: string;
+  curated: boolean;
+  revision?: string;
+}
+
+export type GolemProfileListResult =
+  | { status: 'loaded'; profiles: ProfileInfo[] }
+  | { status: 'limited'; profiles: ProfileInfo[] }
+  | { status: 'diagnostics'; diagnostics: ProfileDiagnostic[] };
+
+export interface SaveGolemProfileAsRequest {
+  id: string;
+  expectedRevision?: string;
+  appliedRevision: string;
+}
+
+export type GolemProfileSaveResult =
+  | {
+      status: 'saved';
+      profile: { id: string; revision: string };
+      warning?: 'durability_uncertain';
+    }
+  | { status: 'conflict'; conflict: 'active_revision' | 'profile_target' }
+  | { status: 'diagnostics'; diagnostics: ProfileDiagnostic[] };
+
+function readProfileInfo(value: unknown): ProfileInfo | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['id', 'description', 'curated', 'revision']))
+    return null;
+  if (!isProfileID(value.id) || typeof value.curated !== 'boolean') return null;
+  // §4.8: the curated flag must agree with the namespace.
+  if (value.curated !== value.id.startsWith('curated/')) return null;
+  const description = readOptional(value, 'description', (entry) =>
+    // The producer sanitizes Cc/Cf to U+FFFD; this boundary is independent (§5.6),
+    // so a control or format rune in a description is a break here too.
+    isBoundedString(entry, MAX_PROFILE_DESCRIPTION_BYTES) &&
+    entry !== '' &&
+    !FORBIDDEN_IDENTIFIER_RUNES.test(entry)
+      ? entry
+      : null
+  );
+  if (description === null) return null;
+  const revision = readOptional(value, 'revision', (entry) => (isRevision(entry) ? entry : null));
+  if (revision === null) return null;
+  return {
+    id: value.id,
+    curated: value.curated,
+    ...(description.present ? { description: description.value } : {}),
+    ...(revision.present ? { revision: revision.value } : {}),
+  };
+}
+
+function readProfileInfos(value: unknown): ProfileInfo[] | null {
+  const profiles = readCappedArray(value, MAX_PROJECTION_ENTRIES, readProfileInfo);
+  if (profiles === null) return null;
+  // §5.6: ascending UTF-8 byte order and duplicate-free — which also puts the
+  // curated block before the user block ('c' < 'u').
+  return isStrictlyOrdered(
+    profiles.map((profile) => profile.id),
+    compareString
+  )
+    ? profiles
+    : null;
+}
+
+export function parseGolemProfileListResult(value: unknown): GolemProfileListResult {
+  if (!isRecord(value)) return contractError();
+  switch (value.status) {
+    case 'loaded':
+    case 'limited': {
+      if (!hasOnlyKeys(value, ['status', 'profiles'])) return contractError();
+      const profiles = readProfileInfos(value.profiles);
+      if (profiles === null) return contractError();
+      return { status: value.status, profiles };
+    }
+    case 'diagnostics': {
+      if (!hasOnlyKeys(value, ['status', 'diagnostics'])) return contractError();
+      const diagnostics = readProfileDiagnostics(value.diagnostics);
+      if (diagnostics === null) return contractError();
+      return { status: 'diagnostics', diagnostics };
+    }
+    default:
+      return contractError();
+  }
+}
+
+/**
+ * Validated on the way OUT as well as in: buildSaveRequest callers route
+ * through this parser so a drafting bug fails at the boundary that produced
+ * it. Absent expectedRevision is create-only; §5.3 forbids the empty-string
+ * sentinel, so present-and-invalid (including '') is a contract break.
+ */
+export function parseSaveGolemProfileAsRequest(value: unknown): SaveGolemProfileAsRequest {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['id', 'expectedRevision', 'appliedRevision']))
+    return contractError();
+  if (!isUserProfileID(value.id) || !isRevision(value.appliedRevision)) return contractError();
+  const expected = readOptional(value, 'expectedRevision', (entry) =>
+    isRevision(entry) ? entry : null
+  );
+  if (expected === null) return contractError();
+  return {
+    id: value.id,
+    appliedRevision: value.appliedRevision,
+    ...(expected.present ? { expectedRevision: expected.value } : {}),
+  };
+}
+
+const SAVE_CONFLICT_KINDS = ['active_revision', 'profile_target'] as const;
+
+export function parseGolemProfileSaveResult(value: unknown): GolemProfileSaveResult {
+  if (!isRecord(value)) return contractError();
+  switch (value.status) {
+    case 'saved': {
+      if (!hasOnlyKeys(value, ['status', 'profile', 'warning'])) return contractError();
+      const profile = value.profile;
+      if (!isRecord(profile) || !hasOnlyKeys(profile, ['id', 'revision'])) return contractError();
+      if (!isUserProfileID(profile.id) || !isRevision(profile.revision)) return contractError();
+      const warning = readOptional(value, 'warning', (entry) =>
+        entry === 'durability_uncertain' ? entry : null
+      );
+      if (warning === null) return contractError();
+      return {
+        status: 'saved',
+        profile: { id: profile.id, revision: profile.revision },
+        ...(warning.present ? { warning: warning.value } : {}),
+      };
+    }
+    case 'conflict': {
+      if (!hasOnlyKeys(value, ['status', 'conflict'])) return contractError();
+      if (!isOneOf(value.conflict, SAVE_CONFLICT_KINDS)) return contractError();
+      return { status: 'conflict', conflict: value.conflict };
+    }
+    case 'diagnostics': {
+      if (!hasOnlyKeys(value, ['status', 'diagnostics'])) return contractError();
+      const diagnostics = readProfileDiagnostics(value.diagnostics);
+      if (diagnostics === null) return contractError();
+      return { status: 'diagnostics', diagnostics };
+    }
+    default:
+      return contractError();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Draft model (§3.3)
 //
 // The draft is the request-in-progress: a source, the staged changes keyed by
@@ -1147,22 +1309,122 @@ export interface RowMarkers {
   modified: boolean;
   keyStaged: boolean;
   needsReview: boolean;
+  /**
+   * [W6] Reached by a model change without its own values changing: a route row
+   * through a fallback only, a defined-model row whose selector is overridden.
+   * Only those rows ever set it; provider rows never do.
+   */
+  affected?: boolean;
+}
+
+/**
+ * [W6] How a staged model change reaches a route row. REACH IS PROJECTED
+ * CONFIGURATION — what the row will display after Apply (the projection's
+ * override-folded `exposedCapabilities` and per-role `thinkMode`) — never
+ * runtime behaviour (the provider bootstrap's selector-level Think is out of
+ * scope here).
+ * - `edited`: the row has its own staged route change onto the selector.
+ * - `same-model`: the row's applied ROLE sits on the selector and its projected
+ *   values change (the capability override is per selector; Think only for an
+ *   override group), and its final route is still that selector.
+ * - `fallback`: a role on the selector OTHER than the row's own applied role
+ *   changes and lists it in `routedUseCases` (fallback-inclusive), so what it
+ *   falls back to changes. Its own role may share the selector unchanged, or
+ *   carry a staged route elsewhere (a retarget keeps the role's fallbacks and a
+ *   fork copies them); only a staged unassign leaves every chain.
+ * A confirmation-only sibling (a fork's source role's other use cases; an
+ * unchanged role) has no reach and no mark.
+ */
+export type RouteReach = 'edited' | 'same-model' | 'fallback';
+
+export interface ReachEdit {
+  useCase: string;
+  /** The applied provider/model this route leaves; null for an override or an unrouted use case. */
+  was: { provider: string; model: string } | null;
+}
+
+/** What changes for a set of roles on a selector: caps as a union, Think when any differs. */
+export interface ReachDelta {
+  addedCaps: CapabilityName[];
+  removedCaps: CapabilityName[];
+  /** The Think an override writes when some role's Think changes; '' = cleared; null = no delta. */
+  think: ThinkMode | null;
+}
+
+/** One staged selector: what changes on the model and every route it reaches. */
+export interface ReachGroup {
+  key: string;
+  provider: string;
+  model: string;
+  /** Some applied role already sits on the selector (a join onto an empty one "routes X"). */
+  selectorHadRoles: boolean;
+  /** Union over the roles on the selector whose projected exposure changes. */
+  addedCaps: CapabilityName[];
+  removedCaps: CapabilityName[];
+  /** The Think an override writes to every role on the selector when some role's Think changes; '' = cleared; null = no delta. */
+  think: ThinkMode | null;
+  /** The authority's values: what the bar prints for a selector nothing sat on, or that nothing visible changes on. */
+  staged: { exposedCaps: CapabilityName[]; thinkMode: ThinkMode };
+  /** Staging order. */
+  edited: ReachEdit[];
+  /** Edited use cases whose applied model is not this selector. Sorted. */
+  joins: string[];
+  /** Disjoint, sorted. */
+  sameModel: string[];
+  fallback: string[];
+  /**
+   * Per fallback use case: the delta of the changed roles that actually list it —
+   * never the group's union, which may include roles outside its chain.
+   */
+  fallbackDeltas: ReadonlyMap<string, ReachDelta>;
+  /** Roles on the selector routing nothing whose values change (the override is per selector). Sorted. */
+  affectedRoles: string[];
+  /**
+   * `field value` for each model fact an edited route changes on a role already on
+   * the selector (type, parameters, contextWindow, dimensions) — the one visible
+   * consequence of a same-name change that is not an override. Sorted, deduped.
+   */
+  factsChanged: string[];
+  /** The first edited route's identity: the group header's jump target. */
+  changeId: string;
+}
+
+export interface RouteReachEntry {
+  reach: RouteReach;
+  group: ReachGroup;
 }
 
 export interface ProjectedDraft {
   /** The staged changes, normalized, in staging order — what Apply sends. */
   changes: Change[];
-  /** Keyed by use case; includes selector-wide siblings. */
+  /** Keyed by use case: edited and same-model rows are `modified`, fallback rows `affected`. */
   routeRows: Map<string, RowMarkers>;
+  /** [W6] One group per staged selector, first-staged order. */
+  reachGroups: ReachGroup[];
+  /** [W6] Use case → its one reach (edited > same-model > fallback across groups). */
+  routeReach: Map<string, RouteReachEntry>;
   /** Keyed by role. */
   roleRows: Map<string, RowMarkers>;
   /** Keyed by provider name. */
   providerRows: Map<string, RowMarkers>;
   /**
-   * Staged use case → every use case its selector governs, for the editor's
-   * "also governs" disclosure (§4.5).
+   * Staged use case → the use cases the backend asks the user to CONFIRM
+   * (`gateRolesFor`): the ones its current role serves, plus the ones the
+   * target selector's roles serve when the change overrides or asserts
+   * exposure. Sorted. Wider than what changes — a fork leaves the source
+   * role's other use cases as they are — so this feeds row markers and the
+   * unknown-requirements acknowledgement, never a floor.
    */
   selectorUseCases: Map<string, string[]>;
+  /**
+   * Staged use case → the use cases the change actually GOVERNS (go-llm's
+   * `gateRoleEligibility`): the changed one, plus the ones the roles already
+   * on the target selector serve under the same override-or-asserted-exposure
+   * condition. Sorted. The current role counts only when it sits on that
+   * selector. This is the eligibility set: what the picker's floors and the
+   * editor's caution notice must read.
+   */
+  governedUseCases: Map<string, string[]>;
 }
 
 // NUL cannot occur inside an identifier (Cc is forbidden), so it separates the
@@ -1186,17 +1448,118 @@ export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boole
   (model.contextWindow ?? 0) === (facts.contextWindow ?? 0) &&
   (model.dimensions ?? 0) === (facts.dimensions ?? 0);
 
+/**
+ * Whether a staged route change onto `selector` is an OVERRIDE — the same
+ * full facts its use case's role already names. That is the one change the
+ * backend runs through `SetRoleOverrides`, selector-wide; and since
+ * `projectDraft` coalesces a selector group onto its latest change, an
+ * override anywhere in the group carries the group's Think to every role on
+ * the selector — a join beside it reaches them too. Reads only `modelFacts`,
+ * which coalescing never rewrites, so raw and projected changes give the same
+ * answer.
+ */
+export const overridesSelector = (
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  selector: { readonly provider: string; readonly model: string }
+): boolean => {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((current) => [current.role, current]));
+  return changes.some((change) => {
+    if (
+      change.kind !== 'route' ||
+      change.modelFacts.provider !== selector.provider ||
+      change.modelFacts.model !== selector.model
+    )
+      return false;
+    const role = roleOf.get(change.useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    return current !== undefined && sameModelFacts(current, change.modelFacts);
+  });
+};
+
+/**
+ * Every use case whose route this draft moves or clears — the staged `route`
+ * and `route-unassign` changes. The question `providerUsage` asks: what does
+ * a provider serve once the WHOLE request has landed? Both kinds have left by
+ * then. The gates ask a narrower question — what is still bound when one
+ * route plan runs — and read `stagedRoutes` instead: the apply phases are
+ * route plans (stable-id order) → overrides → binds → unassigns → removals,
+ * so an unassigned route is still bound at every join.
+ */
+const stagedAwayUseCases = (changes: readonly Change[]): Set<string> =>
+  new Set(
+    changes.flatMap((change) =>
+      change.kind === 'route' || change.kind === 'route-unassign' ? [change.useCase] : []
+    )
+  );
+
+/** The staged `route` changes by use case: where each staged route is going. */
+export const stagedRoutes = (changes: readonly Change[]): Map<string, RouteChange> =>
+  new Map(changes.flatMap((change) => (change.kind === 'route' ? [[change.useCase, change]] : [])));
+
+/**
+ * The routed use cases `model` loses when the staged routes land, each with
+ * the route taking it: those the draft routes onto ANOTHER selector whose
+ * applied role is `model.role` — the role a retarget rewrites or a fork
+ * copies from. A use case the role reaches only as a fallback stays: the
+ * retarget rewrites the use case's own role and preserves that role's
+ * fallbacks, so the chain still runs through `model`. Unassigns are not
+ * departures here — see `stagedAwayUseCases`.
+ */
+export const leavingRoutes = (
+  base: DraftBaseProjection,
+  staged: ReadonlyMap<string, RouteChange>,
+  model: ModelProjection
+): Map<string, RouteChange> => {
+  const out = new Map<string, RouteChange>();
+  for (const useCase of model.routedUseCases) {
+    const target = staged.get(useCase);
+    if (
+      target !== undefined &&
+      (target.modelFacts.provider !== model.provider ||
+        target.modelFacts.model !== model.modelName) &&
+      base.routes.some((route) => route.useCase === useCase && route.role === model.role)
+    )
+      out.set(useCase, target);
+  }
+  return out;
+};
+
+/**
+ * The one staged route that truly retargets `model` off this selector: a
+ * role routing EXACTLY one use case (fallback-inclusive `routedUseCases`)
+ * whose use case is among `leavingRoutes(base, staged, model)`. Mirrors the
+ * backend's own split in `planRouteChanges` — fork iff
+ * `len(routed[role]) > 1 || fallbacks[role]` — for the `len` half only; the
+ * `fallbacks[role]` half stays the ceiling already named at both call sites.
+ */
+export const retargetOf = (
+  base: DraftBaseProjection,
+  staged: ReadonlyMap<string, RouteChange>,
+  model: ModelProjection
+): RouteChange | undefined =>
+  model.routedUseCases.length === 1
+    ? leavingRoutes(base, staged, model).get(model.routedUseCases[0])
+    : undefined;
+
 interface SelectorGroup {
   changes: RouteChange[];
+  /** The confirmation set (`ProjectedDraft.selectorUseCases`). */
   affected: Set<string>;
+  /** The eligibility set (`ProjectedDraft.governedUseCases`). */
+  governed: Set<string>;
 }
 
 /**
- * Groups staged route changes by provider+model and collects, per group, every
- * use case the resulting override governs — the mirror of the backend's
- * gateRolesFor: the role the use case resolves to today, plus every role
+ * Groups staged route changes by provider+model and collects, per group, two
+ * sets. `affected` mirrors the backend's gateRolesFor — what the user is asked
+ * to confirm: the role each use case resolves to today, plus every role
  * already sharing the selector when the change is an override or asserts
- * capabilities explicitly.
+ * capabilities explicitly. `governed` mirrors go-llm's gateRoleEligibility —
+ * what the change actually gates: the changed use cases plus the selector's
+ * roles under that same condition, never the current role's other use cases
+ * unless that role sits on the selector (a fork leaves it as it is).
  */
 function selectorGroups(
   base: DraftBaseProjection,
@@ -1204,32 +1567,59 @@ function selectorGroups(
 ): Map<string, SelectorGroup> {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  // [W4-10] A sibling contributes what it still routes when the join is
+  // gated. The backend applies a request in phases — route plans in stable-id
+  // order, then overrides, binds, unassigns, removals — and forks a role
+  // (ForkRoleModel) whenever it still routes more than one use case: the
+  // source role's Defaults binding stays on ALL of them, including the one
+  // this draft moves, until the binds phase, so a fork source's use cases
+  // still gate every join, in every order. Only a true retarget
+  // (SetRoleModel) — a role routing exactly this one use case — moves the
+  // role itself, so only then has a route sent to ANOTHER selector left it (a
+  // change onto THIS selector is in the group, governed by construction). An
+  // unassigned route is still bound at every join too. Ceilings, not mirrored
+  // here: a retarget whose plan sorts after the join is a transient conflict
+  // the backend still refuses; and a sibling routed by exactly one use case
+  // that an unrouted role lists as a fallback is forked too
+  // (`fallbacks[role]`), invisible to this projection — the pre-check may
+  // mark it gone and the backend refuses late.
+  const staged = stagedRoutes(changes);
   const groups = new Map<string, SelectorGroup>();
   for (const change of changes) {
     if (change.kind !== 'route') continue;
     const key = selectorKey(change.modelFacts.provider, change.modelFacts.model);
     let group = groups.get(key);
     if (group === undefined) {
-      group = { changes: [], affected: new Set() };
+      group = { changes: [], affected: new Set(), governed: new Set() };
       groups.set(key, group);
     }
     group.changes.push(change);
     group.affected.add(change.useCase);
+    group.governed.add(change.useCase);
 
     const role = roleOf.get(change.useCase);
     const current = role === undefined ? undefined : modelOf.get(role);
-    const gateRoles = new Set<string>();
-    if (role !== undefined) gateRoles.add(role);
+    // The current role feeds the confirmation set only.
+    for (const useCase of current?.routedUseCases ?? []) group.affected.add(useCase);
+    // Every change the editor stages or the parsers accept carries a non-empty
+    // exposure [W5-1], so the roles already on the selector feed both sets for
+    // every real change; the guard stays for hand-built changes (probes, tests).
     if (
       (current !== undefined && sameModelFacts(current, change.modelFacts)) ||
       change.exposedCaps.length > 0
     ) {
+      // The roles already on the selector feed both.
       for (const model of base.models) {
-        if (selectorKey(model.provider, model.modelName) === key) gateRoles.add(model.role);
+        if (selectorKey(model.provider, model.modelName) !== key) continue;
+        const retarget = retargetOf(base, staged, model);
+        for (const useCase of model.routedUseCases) {
+          group.affected.add(useCase);
+          // A fork keeps the source role bound to every one of its use cases
+          // until the binds phase; only a true retarget — a role routing
+          // exactly this one use case — actually leaves.
+          if (retarget === undefined || retarget.useCase !== useCase) group.governed.add(useCase);
+        }
       }
-    }
-    for (const name of gateRoles) {
-      for (const useCase of modelOf.get(name)?.routedUseCases ?? []) group.affected.add(useCase);
     }
   }
   return groups;
@@ -1259,13 +1649,191 @@ const coalesceRouteChange = (
 });
 
 const markRow = (rows: Map<string, RowMarkers>, key: string, patch: Partial<RowMarkers>): void => {
-  const current = rows.get(key) ?? { modified: false, keyStaged: false, needsReview: false };
+  const current = rows.get(key) ?? {
+    modified: false,
+    keyStaged: false,
+    needsReview: false,
+    affected: false,
+  };
   rows.set(key, {
     modified: current.modified || patch.modified === true,
     keyStaged: current.keyStaged || patch.keyStaged === true,
     needsReview: current.needsReview || patch.needsReview === true,
+    affected: current.affected === true || patch.affected === true,
   });
 };
+
+/** Canonical order, as every capability array crosses the transport. */
+const canonicalCapList = (caps: readonly CapabilityName[]): CapabilityName[] =>
+  CAPABILITY_NAMES.filter((cap) => caps.includes(cap));
+
+export const sameCaps = (a: readonly CapabilityName[], b: readonly CapabilityName[]): boolean => {
+  const left = canonicalCapList(a);
+  const right = canonicalCapList(b);
+  return left.length === right.length && left.every((cap, index) => cap === right[index]);
+};
+
+/**
+ * [W6] One reach group per staged selector. Per-role before/after on the
+ * DESTINATION selector: every role already on it takes the authority's
+ * exposure (the override is per selector); Think only for an override group
+ * (a join writes Think to its own role). A role truly retargeted off the
+ * selector by this draft leaves before the overrides phase and is not counted.
+ * Ceilings, named rather than drawn: a SOURCE selector left by a retarget can
+ * change its remaining roles' projected exposure when the leaver carried the
+ * selector's only explicit override (the projection cannot tell explicit from
+ * derived caps — #335); a fallback role forked by an unrouted referrer
+ * (`fallbacks[role]`) is invisible here as in `selectorGroups`; reasserting an
+ * identical override can change EFFECTIVE caps without changing the
+ * projection, which is outside the definition of reach.
+ */
+function reachGroupsOf(
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  groups: ReadonlyMap<string, SelectorGroup>
+): ReachGroup[] {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  const staged = stagedRoutes(changes);
+  // Only an UNASSIGN leaves every chain. A use case with a staged route elsewhere
+  // keeps its role's fallbacks (SetRoleModel preserves them, ForkRoleModel copies
+  // them), so it can be edited on T and still a fallback member of S.
+  const unassigned = new Set(
+    changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
+  );
+  const final = effectiveRoutes(base, changes);
+  const out: ReachGroup[] = [];
+  for (const [key, group] of groups) {
+    const authority = group.changes[group.changes.length - 1];
+    const { provider, model } = authority.modelFacts;
+    const onSelector = (candidate: ModelProjection | undefined): boolean =>
+      candidate !== undefined && candidate.provider === provider && candidate.modelName === model;
+    const override = overridesSelector(base, group.changes, { provider, model });
+    const rolesOn = base.models.filter(
+      (candidate) => onSelector(candidate) && retargetOf(base, staged, candidate) === undefined
+    );
+    const changed = rolesOn.filter(
+      (role) =>
+        !sameCaps(role.exposedCapabilities, authority.exposedCaps) ||
+        (override && role.thinkMode !== authority.thinkMode)
+    );
+    /** What changes for THESE roles: caps as a union, Think when any of them differs. */
+    const deltaOver = (roles: readonly ModelProjection[]): ReachDelta => {
+      const added = new Set<CapabilityName>();
+      const removed = new Set<CapabilityName>();
+      for (const role of roles) {
+        for (const cap of authority.exposedCaps)
+          if (!role.exposedCapabilities.includes(cap)) added.add(cap);
+        for (const cap of role.exposedCapabilities)
+          if (!authority.exposedCaps.includes(cap)) removed.add(cap);
+      }
+      return {
+        addedCaps: canonicalCapList([...added]),
+        removedCaps: canonicalCapList([...removed]),
+        think:
+          override && roles.some((role) => role.thinkMode !== authority.thinkMode)
+            ? authority.thinkMode
+            : null,
+      };
+    };
+    const delta = deltaOver(changed);
+    // One route change per use case: `stageChange` replaces by stable id, so a
+    // use case is edited in at most one group.
+    const editedSet = new Set(group.changes.map((change) => change.useCase));
+    const edited: ReachEdit[] = group.changes.map((change) => {
+      const applied = modelOf.get(roleOf.get(change.useCase) ?? '');
+      return {
+        useCase: change.useCase,
+        was:
+          applied === undefined || onSelector(applied)
+            ? null
+            : { provider: applied.provider, model: applied.modelName },
+      };
+    });
+    // The four optional facts below are the set `sameModelFacts` compares (with the
+    // same ''/0 reading of an omitted one): keep the two in step, or a new fact
+    // would read as an override here and print `re-asserts` for a real change.
+    const factsChanged = new Set<string>();
+    for (const change of group.changes) {
+      const applied = modelOf.get(roleOf.get(change.useCase) ?? '');
+      if (applied === undefined || !onSelector(applied)) continue;
+      const facts = change.modelFacts;
+      if (applied.type !== facts.type) factsChanged.add(`type ${facts.type}`);
+      if ((applied.parameters ?? '') !== (facts.parameters ?? ''))
+        factsChanged.add(`parameters ${facts.parameters ?? 'cleared'}`);
+      if ((applied.contextWindow ?? 0) !== (facts.contextWindow ?? 0))
+        factsChanged.add(`context window ${facts.contextWindow ?? 'cleared'}`);
+      if ((applied.dimensions ?? 0) !== (facts.dimensions ?? 0))
+        factsChanged.add(`dimensions ${facts.dimensions ?? 'cleared'}`);
+    }
+    const joins = edited
+      .filter((edit) => {
+        const applied = modelOf.get(roleOf.get(edit.useCase) ?? '');
+        return !onSelector(applied);
+      })
+      .map((edit) => edit.useCase)
+      .sort(compareString);
+    const sameModel: string[] = [];
+    const fallback: string[] = [];
+    const fallbackDeltas = new Map<string, ReachDelta>();
+    for (const route of base.routes) {
+      const useCase = route.useCase;
+      if (editedSet.has(useCase) || unassigned.has(useCase)) continue;
+      const applied = modelOf.get(route.role);
+      const destination = final.get(useCase);
+      if (
+        onSelector(applied) &&
+        destination !== null &&
+        destination !== undefined &&
+        destination.provider === provider &&
+        destination.model === model &&
+        changed.some((role) => role.role === route.role)
+      ) {
+        sameModel.push(useCase);
+        continue;
+      }
+      // By the CONTRIBUTING role's identity, never by the selectors differing: a
+      // fallback role may share the primary's selector while the primary itself
+      // is unchanged (same exposure, Think already at the override's value). The
+      // row's delta is those roles' alone — the group's union may carry roles
+      // outside its chain (another routed role, a defined model nothing routes).
+      const contributing = changed.filter(
+        (candidate) => candidate.role !== route.role && candidate.routedUseCases.includes(useCase)
+      );
+      if (contributing.length > 0) {
+        fallback.push(useCase);
+        fallbackDeltas.set(useCase, deltaOver(contributing));
+      }
+    }
+    out.push({
+      key,
+      provider,
+      model,
+      // Over the roles STAYING: a selector whose only role is leaving is empty at
+      // override time, so a join onto it "routes X", not "also".
+      selectorHadRoles: rolesOn.length > 0,
+      addedCaps: delta.addedCaps,
+      removedCaps: delta.removedCaps,
+      think: delta.think,
+      staged: {
+        exposedCaps: canonicalCapList(authority.exposedCaps),
+        thinkMode: authority.thinkMode,
+      },
+      edited,
+      joins,
+      sameModel: sameModel.sort(compareString),
+      fallback: fallback.sort(compareString),
+      fallbackDeltas,
+      affectedRoles: changed
+        .filter((role) => role.routedUseCases.length === 0)
+        .map((role) => role.role)
+        .sort(compareString),
+      factsChanged: [...factsChanged].sort(compareString),
+      changeId: changeStableID(group.changes[0]),
+    });
+  }
+  return out;
+}
 
 export function projectDraft(base: DraftBaseProjection, draft: Draft): ProjectedDraft {
   const review = new Set(draft.needsReview);
@@ -1273,22 +1841,52 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
   const roleRows = new Map<string, RowMarkers>();
   const providerRows = new Map<string, RowMarkers>();
   const selectorUseCases = new Map<string, string[]>();
+  const governedUseCases = new Map<string, string[]>();
   const normalized = new Map<string, RouteChange>();
+  const groups = selectorGroups(base, draft.changes);
 
-  for (const group of selectorGroups(base, draft.changes).values()) {
+  for (const group of groups.values()) {
     const affected = [...group.affected].sort(compareString);
+    const governed = [...group.governed].sort(compareString);
     const unknownUseCases = affected.filter((useCase) => !USE_CASE_FLOORS.has(useCase));
     const authority = group.changes[group.changes.length - 1];
-    const inReview = group.changes.some((change) => review.has(changeStableID(change)));
     for (const change of group.changes) {
       normalized.set(change.useCase, coalesceRouteChange(change, authority, unknownUseCases));
       selectorUseCases.set(change.useCase, affected);
+      governedUseCases.set(change.useCase, governed);
     }
-    // Selector-wide fields mark every affected sibling row, and siblings
-    // inherit the originating operation's review state (§3.3, §4.6).
-    for (const useCase of affected) {
-      markRow(routeRows, useCase, { modified: true, needsReview: inReview });
+  }
+
+  // [W6] Rows are marked by REACH, not by the confirmation set: edited and
+  // same-model rows are modified (their own values change), fallback rows are
+  // affected (what they fall back to changes), confirmation-only siblings are
+  // left alone. A row reached by several groups keeps its highest reach; its
+  // review state is the OR over every group that reaches it (§3.3, §4.6).
+  const reachGroups = reachGroupsOf(base, draft.changes, groups);
+  const routeReach = new Map<string, RouteReachEntry>();
+  const reviewOf = (group: ReachGroup): boolean =>
+    groups.get(group.key)?.changes.some((change) => review.has(changeStableID(change))) === true;
+  for (const group of reachGroups) {
+    for (const edit of group.edited) {
+      routeReach.set(edit.useCase, { reach: 'edited', group });
+      markRow(routeRows, edit.useCase, { modified: true, needsReview: reviewOf(group) });
     }
+  }
+  for (const group of reachGroups) {
+    for (const useCase of group.sameModel) {
+      if (!routeReach.has(useCase)) routeReach.set(useCase, { reach: 'same-model', group });
+      markRow(routeRows, useCase, { modified: true, needsReview: reviewOf(group) });
+    }
+  }
+  for (const group of reachGroups) {
+    for (const useCase of group.fallback) {
+      if (!routeReach.has(useCase)) routeReach.set(useCase, { reach: 'fallback', group });
+      markRow(routeRows, useCase, { affected: true, needsReview: reviewOf(group) });
+    }
+    // A defined model nothing routes still takes the selector's override
+    // (SetRoleOverrides is keyed by selector): its row says so.
+    for (const role of group.affectedRoles)
+      markRow(roleRows, role, { affected: true, needsReview: reviewOf(group) });
   }
 
   for (const change of draft.changes) {
@@ -1322,8 +1920,233 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
     roleRows,
     providerRows,
     selectorUseCases,
+    governedUseCases,
+    reachGroups,
+    routeReach,
   };
 }
+
+/**
+ * [A2] The routes as they WILL stand after Apply: the staged route wins, a
+ * staged unassign empties the slot, everything else is the base. ONE derivation
+ * for row values, provider usage and impact copy, so no card computes a
+ * different partial answer.
+ */
+export function effectiveRoutes(
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Map<string, { provider: string; model: string } | null> {
+  const byRole = new Map(base.models.map((model) => [model.role, model]));
+  const out = new Map<string, { provider: string; model: string } | null>();
+  for (const route of base.routes) {
+    const model = byRole.get(route.role);
+    out.set(
+      route.useCase,
+      model === undefined ? null : { provider: model.provider, model: model.modelName }
+    );
+  }
+  for (const change of changes) {
+    if (change.kind === 'route')
+      out.set(change.useCase, {
+        provider: change.modelFacts.provider,
+        model: change.modelFacts.model,
+      });
+    if (change.kind === 'route-unassign') out.set(change.useCase, null);
+  }
+  return out;
+}
+
+/**
+ * provider → use cases that reach it, sorted; providers nothing reaches are absent.
+ *
+ * [X3] A direct route is not the only way a use case reaches a provider: the
+ * backend resolves fallback chains and reports the result per model as
+ * `routedUseCases`. Passing `base` folds that fallback-inclusive truth in, so a
+ * provider reached only through a fallback is not reported as `not routed`. A use
+ * case whose route this draft STAGES is answered by the staged target alone — the
+ * base model's claim on it is what the change is replacing.
+ *
+ * ponytail: the fold reuses the backend's applied `routedUseCases`; a STAGED
+ * retarget's own fallback chain is not recomputed client-side, so a use case with
+ * a staged route contributes only its direct target until Apply lands. Recompute
+ * the chain here only if the row's `used by` line proves misleading in practice.
+ */
+export function providerUsage(
+  routes: ReadonlyMap<string, { provider: string; model: string } | null>,
+  // [K10][C8] Both REQUIRED. Omitting them is not a smaller question, it is a
+  // DIFFERENT and quietly wrong answer — a provider reached only through a
+  // fallback chain reports as `not routed` — and an optional parameter is an
+  // invitation to ask for that answer by accident.
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Map<string, string[]> {
+  const out = new Map<string, Set<string>>();
+  const add = (provider: string, useCase: string) => {
+    const seen = out.get(provider);
+    if (seen === undefined) out.set(provider, new Set([useCase]));
+    else seen.add(useCase);
+  };
+  for (const [useCase, target] of routes) {
+    if (target === null) continue;
+    add(target.provider, useCase);
+  }
+  const staged = stagedAwayUseCases(changes);
+  for (const model of base.models)
+    for (const useCase of model.routedUseCases)
+      if (!staged.has(useCase)) add(model.provider, useCase);
+  return new Map(
+    [...out].map(([provider, seen]) => [provider, [...seen].sort(compareString)] as const)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Floors across a selector (#263 wave 4c)
+//
+// A route change governs every use case its selector reaches (§4.5), so the
+// model it picks must meet EVERY one of their floors, not only the edited use
+// case's — Apply is gated on the whole set. The helpers below derive that set
+// through `projectDraft`, the same reducer whose normalization Apply sends, so
+// the picker's verdict and the request cannot disagree.
+// ---------------------------------------------------------------------------
+
+/** The facts a defined model carries, in the shape a route change sends. */
+export const modelFactsOf = (model: ModelProjection): ModelFacts => ({
+  provider: model.provider,
+  model: model.modelName,
+  type: model.type,
+  ...(model.parameters === undefined ? {} : { parameters: model.parameters }),
+  ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+  ...(model.dimensions === undefined ? {} : { dimensions: model.dimensions }),
+});
+
+/** The union of the Firn floors of `useCases`, in canonical capability order. */
+export const unionFloor = (useCases: readonly string[]): CapabilityName[] =>
+  CAPABILITY_NAMES.filter((cap) =>
+    useCases.some((useCase) => (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap))
+  );
+
+/** `change` staged over the draft as it stands, projected. Route changes never
+ *  touch a key ref, so a throwaway vault is honest here. */
+const probeProjection = (base: DraftBaseProjection, draft: Draft, change: RouteChange) =>
+  projectDraft(base, stageChange(draft, change, new KeyVault(new Map())));
+
+const changedFirst = (useCase: string, set: readonly string[] | undefined): string[] => [
+  useCase,
+  ...(set ?? []).filter((other) => other !== useCase),
+];
+
+/**
+ * Every use case the backend would ask the user to CONFIRM for `change`, the
+ * changed one first: `projectDraft`'s `selectorUseCases` for its selector
+ * group. Wider than what the change governs — the editor reads it for the
+ * unknown-requirements acknowledgement only; floors read `governedUseCasesOf`.
+ */
+export function affectedUseCases(
+  base: DraftBaseProjection,
+  draft: Draft,
+  change: RouteChange
+): string[] {
+  return changedFirst(
+    change.useCase,
+    probeProjection(base, draft, change).selectorUseCases.get(change.useCase)
+  );
+}
+
+/**
+ * Every use case `change` would GOVERN, the changed one first, then the rest
+ * sorted: `projectDraft`'s `governedUseCases` for its selector group. The
+ * eligibility set — what the picker's floors, the exposure checklist's
+ * required caps and the caution notice read.
+ */
+export function governedUseCasesOf(
+  base: DraftBaseProjection,
+  draft: Draft,
+  change: RouteChange
+): string[] {
+  return changedFirst(
+    change.useCase,
+    probeProjection(base, draft, change).governedUseCases.get(change.useCase)
+  );
+}
+
+/**
+ * The change the editor would stage for a defined model before any exposure
+ * edit: the selector's staged exposure when present, else the model's own.
+ * This is the question
+ * `governedUseCasesOf` asks per card — the picker's verdicts and the Assign
+ * list's reasons — and a floor that exposure misses is the verdict, never
+ * something the probe asserts on the user's behalf.
+ */
+export function probeRouteChange(
+  useCase: string,
+  model: ModelProjection,
+  changes: readonly Change[] = []
+): RouteChange {
+  const authority = selectorAuthority(model, changes);
+  const exposed = authority?.exposedCaps ?? model.exposedCapabilities;
+  return {
+    kind: 'route',
+    useCase,
+    modelFacts: modelFactsOf(model),
+    capabilityFacts: model.capabilityFacts,
+    // Canonical order, as every capability array crosses the transport.
+    exposedCaps: CAPABILITY_NAMES.filter((cap) => exposed.includes(cap)),
+    thinkMode: authority?.thinkMode ?? model.thinkMode,
+    confirmUnknown: false,
+  };
+}
+
+/** The latest raw staging is the authority projectDraft coalesces this selector onto. */
+export const selectorAuthority = (
+  model: Pick<ModelProjection, 'provider' | 'modelName'> | null,
+  changes: readonly Change[]
+): RouteChange | undefined =>
+  model === null
+    ? undefined
+    : [...changes]
+        .reverse()
+        .find(
+          (change): change is RouteChange =>
+            change.kind === 'route' &&
+            change.modelFacts.provider === model.provider &&
+            change.modelFacts.model === model.modelName
+        );
+
+/** One floor capability a model lacks, and the use cases whose floor asks for it. */
+export interface FloorShortfall {
+  cap: CapabilityName;
+  useCases: string[];
+}
+
+/**
+ * What `caps` is missing against the floors of `useCases`, in canonical
+ * capability order; the use cases keep the order they were given (the edited
+ * one first, from `governedUseCasesOf`). Empty means the model can serve them all.
+ */
+export function floorShortfalls(
+  caps: readonly CapabilityName[],
+  useCases: readonly string[]
+): FloorShortfall[] {
+  return CAPABILITY_NAMES.flatMap((cap) => {
+    if (caps.includes(cap)) return [];
+    const needing = useCases.filter((useCase) =>
+      (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap)
+    );
+    return needing.length === 0 ? [] : [{ cap, useCases: needing }];
+  });
+}
+
+/**
+ * `agent needs tool_call` / `chat, agent need tool_call` — a shortfall as one
+ * clause per missing capability: the picker's blocked-card line, the Assign
+ * list's reason and the editor's refusal, so all three say the same thing.
+ */
+export const shortfallLine = (short: readonly FloorShortfall[]): string =>
+  short
+    .map(
+      ({ cap, useCases }) => `${useCases.join(', ')} need${useCases.length === 1 ? 's' : ''} ${cap}`
+    )
+    .join('; ');
 
 /**
  * The request the draft currently means, validated by the same parser that

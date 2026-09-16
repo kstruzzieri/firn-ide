@@ -31,23 +31,11 @@ import {
   type ModelType,
   type ProviderProjection,
 } from '../../types/golem';
+import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
-
-const TYPE_LABEL: Record<ModelType, string> = {
-  dense: 'Dense',
-  moe: 'Mixture of experts',
-  embedding: 'Embedding',
-};
-
-/** A hand-declared model: authoritative facts, not detected ones (§4.4). */
-export interface ManualModel {
-  model: string;
-  /** Required before staging; `''` is "not chosen yet", never a default. */
-  type: ModelType | '';
-  caps: CapabilityName[];
-}
+import { TYPE_LABEL, factsLine, type ManualModel } from './routeEdit';
 
 /** Capability arrays cross the transport in CAPABILITY_NAMES order or not at all. */
 export const canonicalCaps = (caps: Iterable<CapabilityName>): CapabilityName[] => {
@@ -111,36 +99,35 @@ export function buildModelRows(models: readonly ModelProjection[], provider: str
 const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
   a !== null && rowKey(a) === rowKey(b);
 
-/**
- * What a compact card says beside its type tag: the numbers that tell two
- * same-named models apart. The TYPE is its own tag, so it is not in here.
- * Context reads human-scale ("256K ctx"); the exact count travels in the
- * facts span's title. Dimensions stay raw — small numbers, different unit.
- */
-const factsLine = (model: ModelProjection): string =>
-  [
-    model.parameters,
-    model.contextWindow === undefined
-      ? undefined
-      : `${formatContextWindow(model.contextWindow)} ctx`,
-    model.dimensions === undefined ? undefined : `${model.dimensions} dim`,
-  ]
-    .filter((part): part is string => part !== undefined)
-    .join(' · ');
-
 /** Hover detail wherever the abbreviated context renders: the exact count. */
 const contextTitle = (model: ModelProjection): string | undefined =>
   model.contextWindow === undefined ? undefined : `${model.contextWindow} tokens`;
 
-const missingFloor = (model: ModelProjection, floor: readonly CapabilityName[]): CapabilityName[] =>
-  floor.filter((cap) => !model.exposedCapabilities.includes(cap));
-
 export interface ModelBandProps {
   /** DOM id root; the grid is `<id>-grid` and its cards `<id>-card-N`. */
   id: string;
+  /** The use case being routed — the one thing every card below can serve. */
   useCase: string;
-  /** The use case's Firn floor; these capabilities are the filter. */
+  /**
+   * That use case's own floor: the filter label, and what a fresh declaration
+   * starts with (a new name has no selector siblings yet).
+   */
   floor: readonly CapabilityName[];
+  /**
+   * The union floor of everything the CURRENT candidate governs — `floor` plus
+   * whatever its own selector siblings need: the declare form's `(required)`
+   * marks (a declared name can join an existing selector) and the readout's
+   * highlighted chips. A mark is not a lock: only a cap the declaration already
+   * carries locks, because a declaration is what the user asserts.
+   */
+  required: readonly CapabilityName[];
+  /**
+   * One card's verdict: each floor capability the model lacks, with the use
+   * cases that need it. A card's OWN selector siblings count beyond `useCase`,
+   * which is why this is a question per card rather than one floor. Empty
+   * means the card can be chosen.
+   */
+  shortfalls: (model: ModelProjection) => readonly FloorShortfall[];
   /** Every model the document defines, across providers. */
   models: readonly ModelProjection[];
   provider: string;
@@ -157,13 +144,16 @@ export interface ModelBandProps {
   exposure?: ReactNode;
   onProviderChange: (provider: string) => void;
   onSelect: (model: ModelProjection) => void;
-  onManual: (manual: ManualModel | null) => void;
+  /** `commitName` marks Declare or leaving the name field, never a keystroke. */
+  onManual: (manual: ManualModel | null, commitName?: boolean) => void;
 }
 
 export function ModelBand({
   id,
   useCase,
   floor,
+  required,
+  shortfalls,
   models,
   provider,
   providers,
@@ -190,9 +180,14 @@ export function ModelBand({
 
   const gridId = `${id}-grid`;
 
-  const rows = buildModelRows(models, provider);
-  const eligible = rows.filter((row) => missingFloor(row.model, floor).length === 0);
-  const blocked = rows.filter((row) => missingFloor(row.model, floor).length > 0);
+  // The verdict rides on the row: one call per card per render, and a blocked
+  // card renders the very shortfall that blocked it.
+  const judged = buildModelRows(models, provider).map((row) => ({
+    ...row,
+    short: shortfalls(row.model),
+  }));
+  const eligible = judged.filter((row) => row.short.length === 0);
+  const blocked = judged.filter((row) => row.short.length > 0);
 
   const needle = query.trim().toLowerCase();
   const matches = eligible.filter((row) => row.model.modelName.toLowerCase().includes(needle));
@@ -234,7 +229,7 @@ export function ModelBand({
       choose(row.model);
       return;
     }
-    if (declaring) onManual({ model: query.trim(), type: '', caps: canonicalCaps(floor) });
+    if (declaring) onManual({ model: query.trim(), type: '', caps: canonicalCaps(floor) }, true);
   };
 
   /** One edit of the hand-declared facts; null-safe because the fieldset only
@@ -322,12 +317,15 @@ export function ModelBand({
    * the exposure editor stays bound to.
    */
   const previewRow = previewing ? matches[activeIndex]?.model : undefined;
-  const detail = previewRow ?? selected;
   const previewingOther = previewRow !== undefined && !sameModel(selected, previewRow);
+  // Walking onto the assigned card previews the SELECTION, not the list row:
+  // a reopened route's selection carries the staged declaration, which the
+  // list row does not (RouteEditor's `seedFrom`), and the head says "assigned".
+  const detail = previewingOther ? previewRow : selected;
   const detailState =
     manual !== null
       ? 'declaring'
-      : detail === null || detail === undefined
+      : detail === null
         ? 'empty'
         : previewingOther
           ? 'previewing'
@@ -346,6 +344,7 @@ export function ModelBand({
             id={`${id}-manual-model`}
             value={manual.model}
             onChange={(event) => patch({ model: event.target.value })}
+            onBlur={() => onManual(manual, true)}
           />
         </div>
         <div className={styles.field}>
@@ -372,42 +371,51 @@ export function ModelBand({
         </div>
         <fieldset className={styles.capabilities}>
           <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
-          {CAPABILITY_NAMES.map((cap) => {
-            const locked = floor.includes(cap);
-            return (
-              <label
-                key={cap}
-                className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-              >
-                <input
-                  className={styles.checkboxInput}
-                  type="checkbox"
-                  disabled={locked}
-                  checked={locked || manual.caps.includes(cap)}
-                  onChange={(event) =>
-                    patch({
-                      caps: canonicalCaps(
-                        event.target.checked
-                          ? [...manual.caps, cap]
-                          : manual.caps.filter((other) => other !== cap)
-                      ),
-                    })
-                  }
-                />
-                <span className={styles.checkboxBox} aria-hidden="true" />
-                {cap}
-                {locked && (
-                  <>
-                    {' '}
-                    <span className={styles.requiredTag}>required</span>
-                  </>
-                )}
-              </label>
-            );
-          })}
+          {/* Same grammar as the route editor's checklist: a grid wrapper under the
+              legend (WebKit never lets a legend join the grid), `chat (required)`. */}
+          <div className={styles.capabilityGrid}>
+            {CAPABILITY_NAMES.map((cap) => {
+              // A required cap the declaration lacks stays unchecked and enabled:
+              // ticking it is the user's assertion, never the form's (§4.4).
+              const needed = required.includes(cap);
+              const locked = needed && manual.caps.includes(cap);
+              return (
+                <label
+                  key={cap}
+                  className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
+                >
+                  <input
+                    className={styles.checkboxInput}
+                    type="checkbox"
+                    disabled={locked}
+                    checked={manual.caps.includes(cap)}
+                    onChange={(event) =>
+                      patch({
+                        caps: canonicalCaps(
+                          event.target.checked
+                            ? [...manual.caps, cap]
+                            : manual.caps.filter((other) => other !== cap)
+                        ),
+                      })
+                    }
+                  />
+                  <span className={styles.checkboxBox} aria-hidden="true" />
+                  <span className={styles.checkboxText}>
+                    {cap}
+                    {needed && (
+                      <>
+                        {' '}
+                        <span className={styles.requiredTag}>(required)</span>
+                      </>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
           <span className={styles.fieldHint}>
-            What you declare here is what Golem may use. The capabilities this use case requires are
-            checked and locked.
+            What you declare here is what Golem may use. The route needs the capabilities marked
+            (required).
           </span>
         </fieldset>
         <button
@@ -542,7 +550,7 @@ export function ModelBand({
             >
               <span className={styles.modelCardTop}>
                 <span className={styles.modelName}>{row.model.modelName}</span>
-                <span className={styles.modelCardFacts}>{`not eligible for ${useCase}`}</span>
+                <span className={styles.modelCardFacts}>{shortfallLine(row.short)}</span>
               </span>
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
@@ -551,7 +559,7 @@ export function ModelBand({
                 </span>
               </span>
               <span className={styles.capChips}>
-                {missingFloor(row.model, floor).map((cap) => (
+                {row.short.map(({ cap }) => (
                   <span key={cap} className={`${styles.capChip} ${styles.capChipMissing}`}>
                     {`✕ ${cap}`}
                   </span>
@@ -640,10 +648,12 @@ export function ModelBand({
                 <div className={styles.detailDeclares}>
                   <span className={styles.detailStatKey}>declares</span>
                   <span className={styles.capChips}>
-                    {detail.exposedCapabilities.map((cap) => (
+                    {/* The declaration, as the label says: what the model can do,
+                        floor caps marked — the exposure is the checklist beside it. */}
+                    {detail.capabilityFacts.caps.map((cap) => (
                       <span
                         key={cap}
-                        className={`${styles.capChip} ${floor.includes(cap) ? styles.capChipFloor : ''}`}
+                        className={`${styles.capChip} ${required.includes(cap) ? styles.capChipFloor : ''}`}
                       >
                         {cap}
                       </span>
@@ -673,7 +683,7 @@ export function ModelBand({
           <span className={styles.hiddenCount}>
             {`${blocked.length} model${blocked.length === 1 ? '' : 's'}`}
           </span>
-          {` do${blocked.length === 1 ? 'es' : ''} not meet ${floor.join(' · ')} — `}
+          {` ${blocked.length === 1 ? 'is' : 'are'} not eligible — `}
           <span className={styles.hiddenToggle}>
             {`${showHidden ? 'hide' : 'show'} ${blocked.length === 1 ? 'it' : 'them'}`}
           </span>
