@@ -69,6 +69,10 @@ const variants: Record<string, Seed> = {
     defined: null,
     manual: { model: 'gpt-5-mini', type: 'moe', caps: ['chat', 'stream'] },
   }),
+  declaredNoType: seed({
+    defined: null,
+    manual: { model: 'gpt-5-mini', type: '', caps: ['chat', 'stream'] },
+  }),
   declaredMoreCaps: seed({
     defined: null,
     manual: { model: 'gpt-5-mini', type: 'dense', caps: ['chat', 'stream', 'tool_call'] },
@@ -165,6 +169,7 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.declaredOtherType, base)).toEqual([
       'Type: Mixture of experts (was Dense)',
     ]);
+    expect(pendingOf(variants.declaredNoType, base)).toEqual(['Type: — (was Dense)']);
     expect(pendingOf(variants.declaredMoreCaps, base)).toEqual(['Declares: + tool_call']);
     expect(pendingOf(variants.declaredSameName, variants.declaredMoreCaps)).toEqual([
       'Declares: − tool_call',

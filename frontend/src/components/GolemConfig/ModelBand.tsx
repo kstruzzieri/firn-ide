@@ -115,9 +115,9 @@ export interface ModelBandProps {
   floor: readonly CapabilityName[];
   /**
    * The union floor of everything the CURRENT candidate governs — `floor` plus
-   * whatever its own selector siblings need: the declare form's `required`
-   * tags (a declared name can join an existing selector) and the readout's
-   * highlighted chips. A tag is not a lock: only a cap the declaration already
+   * whatever its own selector siblings need: the declare form's `(required)`
+   * marks (a declared name can join an existing selector) and the readout's
+   * highlighted chips. A mark is not a lock: only a cap the declaration already
    * carries locks, because a declaration is what the user asserts.
    */
   required: readonly CapabilityName[];

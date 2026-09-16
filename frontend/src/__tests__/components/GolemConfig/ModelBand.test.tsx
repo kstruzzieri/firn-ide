@@ -358,6 +358,10 @@ describe('ModelBand declare path', () => {
     expect(within(manual).getByLabelText('Type')).toHaveValue('');
 
     const caps = within(manual).getByRole('group', { name: 'Capabilities this model supports' });
+    // Direct child of the form, followed by the Back button: what `.manual`'s
+    // block-flow spacing rule addresses.
+    expect(caps.parentElement).toBe(manual);
+    expect(caps.nextElementSibling).toHaveTextContent('Back to the model list');
     for (const locked of ['chat', 'stream']) {
       const box = within(caps).getByLabelText(locked + ' (required)');
       expect(box).toBeChecked();
@@ -400,7 +404,7 @@ describe('ModelBand declare path', () => {
     expect(onManual).toHaveBeenCalledWith(null);
   });
 
-  it('tags the required caps of the current candidate in the declare form, locking only what is declared', async () => {
+  it('marks the required caps of the current candidate in the declare form, locking only what is declared', async () => {
     // The candidate's selector serves agent: tool_call is required, but a
     // declaration is what the user asserts — an undeclared cap stays unchecked
     // and enabled, marked (required); a declared one locks. The band
@@ -572,8 +576,8 @@ describe('ModelBand stylesheet coverage', () => {
     const text = css.match(/^\.checkboxText \{[^}]*\}/ms)?.[0] ?? '';
     const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
 
-    // Block, not the base flex column: that is what makes the wrapper's 8px exact
-    // (the base gap would add 5px) and keeps the legend out of any flex/grid case.
+    // Block, explicitly: the wrapper's 8px is exact and the legend stays out of
+    // any flex/grid case.
     expect(fieldset).toMatch(/display: block/);
     expect(fieldset).toMatch(/border: 0/);
     expect(css.match(/\.detail \.capabilities > \.fieldHint \{[^}]*\}/s)?.[0] ?? '').toMatch(
@@ -592,16 +596,25 @@ describe('ModelBand stylesheet coverage', () => {
     ).toMatch(/margin-top: 12px/);
     expect(css).not.toMatch(/^\.column \{/m);
     // The declare form is block flow for the same reason: its own checklist is a
-    // fieldset with a legend, followed by the Back button.
+    // fieldset with a legend, followed by the Back button. The legend is no
+    // sibling for the spacing rule, and the Back button keeps its full width.
     expect(css).toMatch(/^\.manual \{\s*display: block;\s*\}/m);
-    expect(css.match(/^\.manual > \* \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(/margin-top: 10px/);
+    expect(css.match(/^\.manual > :not\(legend\) \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
+      /margin-top: 10px/
+    );
+    expect(css.match(/^\.manual > \.button \{[^}]*\}/ms)?.[0] ?? '').toMatch(/display: flex/);
+    // The grouped chrome rule no longer lays anything out.
+    expect(css.match(/^\.capabilities,\n\.manual \{[^}]*\}/ms)?.[0] ?? '').not.toMatch(
+      /display|gap/
+    );
     // The name and its reason read as one wrapping phrase — `chat (required)` —
     // never a stacked tag that a wrapped grid could hand to the next item.
     expect(text).toMatch(/min-width: 0/);
+    expect(text).not.toMatch(/display: flex/);
     expect(text).not.toMatch(/flex-direction: column/);
     const tag = css.match(/^\.requiredTag \{[^}]*\}/ms)?.[0] ?? '';
     expect(tag).toMatch(/color: var\(--text-muted\)/);
-    expect(tag).not.toMatch(/font-size/);
+    expect(tag).not.toMatch(/font-size|letter-spacing/);
     expect(stat).toMatch(/gap: 4px/);
   });
 

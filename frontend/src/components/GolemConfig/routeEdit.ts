@@ -168,11 +168,13 @@ const setDelta = (
 
 /**
  * What Done would stage from `now` that the row (`was`) does not hold, in
- * words, each clause named for its control and in the order the editor lays
- * them out: `Control: value (was value)` for a single value, `Control: + a, b`
- * and `Control: − c` for a checklist (one clause per side it gains or loses),
- * `Control: acknowledged` / `not acknowledged` for a tick. Empty exactly when
- * `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
+ * words, each clause named for its control: `Control: value (was value)` for
+ * a single value (the Model clause prefixes the shared name when only the
+ * facts differ), `Control: + a, b` and `Control: − c` for a checklist (one
+ * clause per side it gains or loses), `Control: acknowledged` / `not
+ * acknowledged` for a tick. In the order Provider, Model (with Declares riding
+ * on it), Type, Capabilities, Think mode, then the acknowledgements. Empty
+ * exactly when `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed): string[] => {
   const a = facetsOf(now, 'stage');

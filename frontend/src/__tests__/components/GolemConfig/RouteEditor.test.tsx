@@ -1824,12 +1824,14 @@ describe('RouteEditor', () => {
     // name field does not: declare something else, then type the name back.
     await declareModel('temp-model');
     expect(summary()).toBe('Model: temp-model (was gpt-5-mini)');
-    // The declare form mounts the same exposure block, in block flow too.
+    // The same exposure block, mounted beside the declare form, in block flow too.
     expect(
       screen.getByRole('group', { name: /^Capabilities exposed to/ }).parentElement
     ).toHaveClass('detailDeclaredExposure');
     await userEvent.clear(screen.getByLabelText('Model name'));
     await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
+    // The same name with no type chosen yet: the Type clause reads the placeholder.
+    expect(summary()).toBe('Type: — (was Dense)');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
     // Same provider, name, type, declared capabilities and exposure as the
     // list model: Done would stage the same payload, so there is no Done.
@@ -2044,7 +2046,7 @@ describe('RouteEditor', () => {
   it('drops a staged removal acknowledgement when the applied model is picked back', async () => {
     // A staged retarget carried confirmDrops; picking the row's own model back
     // is an override that removes nothing, so the baseline's acknowledgement
-    // is as gone as the question — no "withdrawn" clause for the user to read.
+    // is as gone as the question — no "Removal: not acknowledged" clause to read.
     const retarget: RouteChange = {
       kind: 'route',
       useCase: 'chat',

@@ -1030,9 +1030,9 @@ select.input {
 
 /*
  * The reason, at the name's own size — a parenthetical, not a tag. Its muted
- * ink is a hair off the name's --text-secondary at rest (the §4.7 floor for
- * instructional copy); the difference shows under the amber staged-value
- * mark, where the name turns and the reason does not.
+ * ink (the §4.7 floor for instructional copy) is a hair off the name's
+ * --text-secondary at rest; under the amber staged-value mark the name
+ * recolours and the reason keeps its muted ink.
  */
 .requiredTag {
   color: var(--text-muted);
@@ -1140,12 +1140,10 @@ select.input {
   background-color: color-mix(in srgb, var(--palette-red) 10%, var(--surface-panel));
 }
 
-/* A checklist is a real fieldset — the legend is its accessible name. */
+/* A checklist is a real fieldset — the legend is its accessible name. The
+   boxed chrome is the declare form's; a checklist inside `.detail` sheds it. */
 .capabilities,
 .manual {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
   min-width: 0;
   margin: 0;
   padding: 8px 10px 10px;
@@ -1562,24 +1560,30 @@ select.input {
 /* The exposure half (and the declare form's) is plain block flow, its blocks
    spaced by this rule rather than by a flex column around each. Observed live
    in WKWebView (Keith's wave-6 live gate): with the checklist fieldset as a
-   flex item, the Think control below landed on the fieldset's hint — WebKit
-   lays a legend out as an excluded child and adds its space to the border
-   after the flex item's extent is taken, and the two columns had no gap
-   between them anyway. Block flow reads the fieldset's border box as laid out,
-   and the margin is explicit, whatever the exact flex-sizing path. */
+   flex item, the Think control below landed on the fieldset's hint — possibly
+   WebKit's separate legend sizing (a legend is laid out as an excluded child
+   whose space joins the border), and the two blocks had no gap between them
+   anyway. Block flow reads the fieldset's border box as laid out, and the
+   margin is explicit, whatever the exact flex-sizing path. */
 .detailExposure > * + *,
 .detailDeclaredExposure > * + * {
   margin-top: 12px;
 }
 
-/* The declare form itself: the same block flow for the same reason — its own
-   checklist is a fieldset with a legend, followed by the Back button. */
+/* The declare form itself: block flow for the same reason — its own checklist
+   is a fieldset with a legend, followed by the Back button. The legend sits in
+   the border area and never took the old flex gap, so it is not a sibling
+   here; the Back button keeps the full width it had as a stretched flex item. */
 .manual {
   display: block;
 }
 
-.manual > * + * {
+.manual > :not(legend) + * {
   margin-top: 10px;
+}
+
+.manual > .button {
+  display: flex;
 }
 
 /* The think control inline, per the mockup: label beside a narrow select. */
