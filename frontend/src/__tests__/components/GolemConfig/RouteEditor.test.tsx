@@ -1824,7 +1824,7 @@ describe('RouteEditor', () => {
     // name field does not: declare something else, then type the name back.
     await declareModel('temp-model');
     expect(summary()).toBe('Model: temp-model (was gpt-5-mini)');
-    // The same exposure block, mounted beside the declare form, in block flow too.
+    // The same exposure block, mounted under the declare form, in block flow too.
     expect(
       screen.getByRole('group', { name: /^Capabilities exposed to/ }).parentElement
     ).toHaveClass('detailDeclaredExposure');

@@ -360,8 +360,10 @@ describe('ModelBand declare path', () => {
     const caps = within(manual).getByRole('group', { name: 'Capabilities this model supports' });
     // Direct child of the form, followed by the Back button: what `.manual`'s
     // block-flow spacing rule addresses.
+    expect(manual.firstElementChild?.tagName).toBe('LEGEND');
     expect(caps.parentElement).toBe(manual);
     expect(caps.nextElementSibling).toHaveTextContent('Back to the model list');
+    expect(caps.nextElementSibling).toHaveClass('button');
     for (const locked of ['chat', 'stream']) {
       const box = within(caps).getByLabelText(locked + ' (required)');
       expect(box).toBeChecked();
@@ -602,11 +604,15 @@ describe('ModelBand stylesheet coverage', () => {
     expect(css.match(/^\.manual > :not\(legend\) \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
       /margin-top: 10px/
     );
-    expect(css.match(/^\.manual > \.button \{[^}]*\}/ms)?.[0] ?? '').toMatch(/display: flex/);
+    const back = css.match(/^\.manual > \.button \{[^}]*\}/ms)?.[0] ?? '';
+    expect(back).toMatch(/display: flex/);
+    // A button's auto width fits its content even as a block-level flex
+    // container: the stretch it had as a column-flex item is an explicit width now.
+    expect(back).toMatch(/width: 100%/);
     // The grouped chrome rule no longer lays anything out.
-    expect(css.match(/^\.capabilities,\n\.manual \{[^}]*\}/ms)?.[0] ?? '').not.toMatch(
-      /display|gap/
-    );
+    const group = css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '';
+    expect(group).toMatch(/padding: 8px 10px 10px/);
+    expect(group).not.toMatch(/display|gap/);
     // The name and its reason read as one wrapping phrase — `chat (required)` —
     // never a stacked tag that a wrapped grid could hand to the next item.
     expect(text).toMatch(/min-width: 0/);

@@ -1031,8 +1031,8 @@ select.input {
 /*
  * The reason, at the name's own size — a parenthetical, not a tag. Its muted
  * ink (the §4.7 floor for instructional copy) is a hair off the name's
- * --text-secondary at rest; under the amber staged-value mark the name
- * recolours and the reason keeps its muted ink.
+ * --text-secondary at rest, unlocked; under the amber staged-value mark the
+ * name recolours and the reason keeps its muted ink.
  */
 .requiredTag {
   color: var(--text-muted);
@@ -1140,8 +1140,11 @@ select.input {
   background-color: color-mix(in srgb, var(--palette-red) 10%, var(--surface-panel));
 }
 
-/* A checklist is a real fieldset — the legend is its accessible name. The
-   boxed chrome is the declare form's; a checklist inside `.detail` sheds it. */
+/* A checklist is a real fieldset — the legend is its accessible name. Every
+   checklist today lives inside `.detail` and sheds the box, so the chrome
+   below is effectively the declare form's; `min-width` and `margin` are the
+   live half for both, cancelling the UA fieldset's min-content inline size and
+   2px side margins. */
 .capabilities,
 .manual {
   min-width: 0;
@@ -1561,7 +1564,7 @@ select.input {
    spaced by this rule rather than by a flex column around each. Observed live
    in WKWebView (Keith's wave-6 live gate): with the checklist fieldset as a
    flex item, the Think control below landed on the fieldset's hint — possibly
-   WebKit's separate legend sizing (a legend is laid out as an excluded child
+   the engine's separate legend sizing (a legend is laid out as an excluded child
    whose space joins the border), and the two blocks had no gap between them
    anyway. Block flow reads the fieldset's border box as laid out, and the
    margin is explicit, whatever the exact flex-sizing path. */
@@ -1584,6 +1587,9 @@ select.input {
 
 .manual > .button {
   display: flex;
+  /* A button's auto width fits its content even as a block-level flex
+     container; it stretched only as a column-flex item. */
+  width: 100%;
 }
 
 /* The think control inline, per the mockup: label beside a narrow select. */
