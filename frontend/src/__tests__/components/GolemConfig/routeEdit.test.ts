@@ -162,7 +162,9 @@ describe('routeEdit', () => {
   it('reads a hand declaration that repeats a list model as clean: Done would stage the same', () => {
     expect(snapshotOf(variants.declaredSameName, 'stage')).toBe(snapshotOf(base, 'row'));
     expect(pendingOf(variants.declaredSameName, base)).toEqual([]);
-    expect(pendingOf(variants.declaredOtherType, base)).toEqual(['Type: moe (was dense)']);
+    expect(pendingOf(variants.declaredOtherType, base)).toEqual([
+      'Type: Mixture of experts (was Dense)',
+    ]);
     expect(pendingOf(variants.declaredMoreCaps, base)).toEqual(['Declares: + tool_call']);
     expect(pendingOf(variants.declaredSameName, variants.declaredMoreCaps)).toEqual([
       'Declares: − tool_call',
@@ -207,10 +209,18 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.declaredNoName, variants.nothing)).toEqual([]);
   });
 
+  it('names each side a checklist gains or loses, and the Think a hidden select would clear', () => {
+    expect(pendingOf(variants.exposure, variants.thinkOn)).toEqual([
+      'Capabilities: + tool_call',
+      'Capabilities: − thinking',
+      'Think mode: cleared (was Auto)',
+    ]);
+  });
+
   it('names the acknowledgements both ways', () => {
     expect(pendingOf(variants.ackUnknown, base)).toEqual(['Apply anyway: acknowledged']);
-    expect(pendingOf(base, variants.ackUnknown)).toEqual(['Apply anyway: withdrawn']);
+    expect(pendingOf(base, variants.ackUnknown)).toEqual(['Apply anyway: not acknowledged']);
     expect(pendingOf(variants.ackDrops, base)).toEqual(['Removal: acknowledged']);
-    expect(pendingOf(base, variants.ackDrops)).toEqual(['Removal: withdrawn']);
+    expect(pendingOf(base, variants.ackDrops)).toEqual(['Removal: not acknowledged']);
   });
 });

@@ -686,9 +686,8 @@ export function RouteEditor({
         exposure={
           defined === null && manual === null ? undefined : (
             <>
-              {/* Plain block flow, no flex wrapper: WebKit sizes a fieldset flex
-                  item without its rendered legend's border area, so the Think
-                  control below landed on the hint (Keith's wave-6 live gate). */}
+              {/* Direct children of the exposure half, in block flow — see the
+                  `.detailExposure > * + *` rule for why no flex wrapper. */}
               <fieldset className={styles.capabilities}>
                 <legend className={styles.fieldLabel}>{capsLegend}</legend>
                 {/* The boxes sit in their own grid UNDER the legend: a fieldset's
@@ -978,7 +977,9 @@ export function RouteEditor({
           `unstaged` reads, so an edit undone by hand reads as no change. */}
       {unstaged && (
         <p className={styles.editorChanges} id={`${id}-changes`} data-testid="editor-changes">
-          <b>Pending</b> {pending.join(' · ')}
+          {/* The colon keeps the eyebrow (uppercase by CSS only) from running
+              into the first clause's own capitalised label, for AT and eye alike. */}
+          <b>Pending:</b> {pending.join(' · ')}
         </p>
       )}
 

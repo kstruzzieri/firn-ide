@@ -49,6 +49,12 @@ export const factsLine = (model: ModelProjection): string =>
     .filter((part): part is string => part !== undefined)
     .join(' · ');
 
+export const TYPE_LABEL: Record<ModelType, string> = {
+  dense: 'Dense',
+  moe: 'Mixture of experts',
+  embedding: 'Embedding',
+};
+
 export const THINK_LABEL: Record<ThinkMode, string> = {
   '': 'Default',
   none: 'None',
@@ -70,7 +76,7 @@ const effectiveThink = (seed: Seed): ThinkMode =>
  * Which side of the comparison a seed stands on. The editor's state is read
  * as what Done would STAGE; the baseline as what the ROW holds — raw, because
  * a row can hold a Think mode behind an unexposed `thinking` (go-llm ties the
- * two nowhere), and Done then clears it: `Think cleared (was Auto)` before a
+ * two nowhere), and Done then clears it: `Think mode: cleared (was Auto)` before a
  * single edit is the honest reading, not a clean footer.
  */
 export type Side = 'stage' | 'row';
@@ -122,6 +128,8 @@ const facetsOf = (seed: Seed, side: Side): EditFacets => {
 export const snapshotOf = (seed: Seed, side: Side): string => JSON.stringify(facetsOf(seed, side));
 
 const shown = (value: string): string => value || '—';
+/** The declare form's own Type label, or the placeholder while none is chosen. */
+const typeLabel = (type: ModelType | ''): string => (type === '' ? '—' : TYPE_LABEL[type]);
 
 /**
  * How a same-named model is told apart in the summary: a hand declaration by
@@ -160,9 +168,11 @@ const setDelta = (
 
 /**
  * What Done would stage from `now` that the row (`was`) does not hold, in
- * words — one `Control: value (was value)` clause per changed control, in the
- * order the editor lays them out. Empty exactly when `snapshotOf(now, 'stage')`
- * equals `snapshotOf(was, 'row')`.
+ * words, each clause named for its control and in the order the editor lays
+ * them out: `Control: value (was value)` for a single value, `Control: + a, b`
+ * and `Control: − c` for a checklist (one clause per side it gains or loses),
+ * `Control: acknowledged` / `not acknowledged` for a tick. Empty exactly when
+ * `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed): string[] => {
   const a = facetsOf(now, 'stage');
@@ -189,7 +199,8 @@ export const pendingOf = (now: Seed, was: Seed): string[] => {
     pending.push(...setDelta('Declares', a.caps, b.caps));
   }
   // A type stands alone only for the declare form's own select, like Declares.
-  if (sameModel && a.type !== b.type) pending.push(`Type: ${shown(a.type)} (was ${shown(b.type)})`);
+  if (sameModel && a.type !== b.type)
+    pending.push(`Type: ${typeLabel(a.type)} (was ${typeLabel(b.type)})`);
   pending.push(...setDelta('Capabilities', a.exposed, b.exposed));
   if (a.think !== b.think) {
     // The select reads "Default" while it is on screen; once `thinking` is
@@ -200,8 +211,8 @@ export const pendingOf = (now: Seed, was: Seed): string[] => {
     pending.push(`Think mode: ${nowLabel} (was ${wasLabel})`);
   }
   if (a.ackUnknown !== b.ackUnknown)
-    pending.push(a.ackUnknown ? 'Apply anyway: acknowledged' : 'Apply anyway: withdrawn');
+    pending.push(a.ackUnknown ? 'Apply anyway: acknowledged' : 'Apply anyway: not acknowledged');
   if (a.ackDrops !== b.ackDrops)
-    pending.push(a.ackDrops ? 'Removal: acknowledged' : 'Removal: withdrawn');
+    pending.push(a.ackDrops ? 'Removal: acknowledged' : 'Removal: not acknowledged');
   return pending;
 };

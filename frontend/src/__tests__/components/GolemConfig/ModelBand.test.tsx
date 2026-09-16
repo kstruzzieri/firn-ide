@@ -403,7 +403,7 @@ describe('ModelBand declare path', () => {
   it('tags the required caps of the current candidate in the declare form, locking only what is declared', async () => {
     // The candidate's selector serves agent: tool_call is required, but a
     // declaration is what the user asserts — an undeclared cap stays unchecked
-    // and enabled under its `required` tag; a declared one locks. The band
+    // and enabled, marked (required); a declared one locks. The band
     // still filters on chat's floor.
     const { onManual } = renderBand({
       required: ['chat', 'stream', 'tool_call'],
@@ -591,10 +591,17 @@ describe('ModelBand stylesheet coverage', () => {
       )?.[0] ?? ''
     ).toMatch(/margin-top: 12px/);
     expect(css).not.toMatch(/^\.column \{/m);
+    // The declare form is block flow for the same reason: its own checklist is a
+    // fieldset with a legend, followed by the Back button.
+    expect(css).toMatch(/^\.manual \{\s*display: block;\s*\}/m);
+    expect(css.match(/^\.manual > \* \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(/margin-top: 10px/);
     // The name and its reason read as one wrapping phrase — `chat (required)` —
     // never a stacked tag that a wrapped grid could hand to the next item.
+    expect(text).toMatch(/min-width: 0/);
     expect(text).not.toMatch(/flex-direction: column/);
-    expect(css.match(/^\.requiredTag \{[^}]*\}/ms)?.[0] ?? '').not.toMatch(/font-size/);
+    const tag = css.match(/^\.requiredTag \{[^}]*\}/ms)?.[0] ?? '';
+    expect(tag).toMatch(/color: var\(--text-muted\)/);
+    expect(tag).not.toMatch(/font-size/);
     expect(stat).toMatch(/gap: 4px/);
   });
 

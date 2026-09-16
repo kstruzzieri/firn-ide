@@ -108,7 +108,7 @@ const stage = async () => await userEvent.click(screen.getByRole('button', { nam
 
 /** The footer's Pending summary without its eyebrow. */
 const summary = () =>
-  (screen.getByTestId('editor-changes').textContent ?? '').replace(/^Pending\s*/, '');
+  (screen.getByTestId('editor-changes').textContent ?? '').replace(/^Pending:?\s*/, '');
 
 /** Choose a model card in the band. Card text is name + type + facts, so the
  *  card is found by its NAME node rather than its whole accessible name. */
@@ -1570,17 +1570,16 @@ describe('RouteEditor', () => {
     expect(box).toBeChecked();
     expect(box).toHaveClass('checkboxInput');
     expect(box.nextElementSibling).toHaveClass('checkboxBox');
-    // The name and its `required` tag stack in their own column beside the box,
-    // so a wrapped grid never lets a tag read as the next item's name.
+    // The name and its reason are one phrase beside the box — `chat (required)` —
+    // so a wrapped grid never lets the reason read as the next item's name.
     const text = box.parentElement?.querySelector('.checkboxText');
     expect(text).not.toBeNull();
     expect(text).toHaveTextContent(/^chat/);
     expect(text?.querySelector('.requiredTag')).toHaveTextContent('(required)');
     // The boxes sit in the grid wrapper under the legend, here as in the declare form.
     expect(box.closest('.capabilityGrid')).not.toBeNull();
-    // The fieldset is a direct child of the exposure half — plain block flow,
-    // no flex wrapper: as a flex item WebKit measures it without its legend's
-    // border area and the Think control lands on the hint (Keith's live gate).
+    // The fieldset is a direct child of the exposure half — block flow, no flex
+    // wrapper (the `.detailExposure > * + *` rule says why).
     expect(box.closest('fieldset')?.parentElement).toHaveClass('detailExposure');
     // Decorative: the input alone carries the state to assistive tech.
     expect(box.nextElementSibling).toHaveAttribute('aria-hidden', 'true');
@@ -1660,7 +1659,7 @@ describe('RouteEditor', () => {
     const toolCall = screen.getByRole('checkbox', { name: /^tool_call/ });
     await userEvent.click(toolCall);
     expect(screen.getByRole('button', { name: 'Done' })).toHaveAccessibleDescription(
-      'Pending Capabilities: + tool_call'
+      'Pending: Capabilities: + tool_call'
     );
     // The quiet button is the same element relabelled, so focus on it survives the flip.
     expect(screen.getByRole('button', { name: 'Cancel' })).toBe(quiet);
@@ -1773,6 +1772,10 @@ describe('RouteEditor', () => {
     });
     await openRoute('chat');
     const thinking = screen.getByRole('checkbox', { name: /^thinking/ });
+    // The Think field follows the checklist fieldset as its sibling in block flow.
+    const thinkField = screen.getByLabelText('Think mode').closest('.field');
+    expect(thinkField?.previousElementSibling?.tagName).toBe('FIELDSET');
+    expect(thinkField?.parentElement).toHaveClass('detailExposure');
 
     // Unticking alone clears the mode Done stages; the summary says so.
     await userEvent.click(thinking);
@@ -1821,6 +1824,10 @@ describe('RouteEditor', () => {
     // name field does not: declare something else, then type the name back.
     await declareModel('temp-model');
     expect(summary()).toBe('Model: temp-model (was gpt-5-mini)');
+    // The declare form mounts the same exposure block, in block flow too.
+    expect(
+      screen.getByRole('group', { name: /^Capabilities exposed to/ }).parentElement
+    ).toHaveClass('detailDeclaredExposure');
     await userEvent.clear(screen.getByLabelText('Model name'));
     await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');

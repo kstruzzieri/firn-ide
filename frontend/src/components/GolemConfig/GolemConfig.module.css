@@ -1022,7 +1022,6 @@ select.input {
   color: var(--text-muted);
 }
 
-/* The name, with its `required` tag under it rather than beside it. */
 /* The name and its reason as one wrapping phrase: `chat (required)`. */
 .checkboxText {
   min-width: 0;
@@ -1030,10 +1029,11 @@ select.input {
 }
 
 /*
- * The mockup greys this to its --td. Here it names WHY a control is locked, so
- * it is instructional copy and holds the §4.7 --text-muted floor instead.
+ * The reason, at the name's own size — a parenthetical, not a tag. Its muted
+ * ink is a hair off the name's --text-secondary at rest (the §4.7 floor for
+ * instructional copy); the difference shows under the amber staged-value
+ * mark, where the name turns and the reason does not.
  */
-/* Muted, the name's own size: a parenthetical, not a tag. */
 .requiredTag {
   color: var(--text-muted);
 }
@@ -1151,10 +1151,6 @@ select.input {
   padding: 8px 10px 10px;
   border: 1px solid var(--surface-border-subtle);
   border-radius: 8px;
-}
-
-.manual {
-  gap: 10px;
 }
 
 /*
@@ -1563,13 +1559,27 @@ select.input {
   min-width: 0;
 }
 
-/* The exposure half is plain block flow (see RouteEditor): the Think control
-   follows the checklist with room, and the fieldset is measured as a block —
-   as a flex item WebKit drops its legend's border area and the control lands
-   on the hint. */
+/* The exposure half (and the declare form's) is plain block flow, its blocks
+   spaced by this rule rather than by a flex column around each. Observed live
+   in WKWebView (Keith's wave-6 live gate): with the checklist fieldset as a
+   flex item, the Think control below landed on the fieldset's hint — WebKit
+   lays a legend out as an excluded child and adds its space to the border
+   after the flex item's extent is taken, and the two columns had no gap
+   between them anyway. Block flow reads the fieldset's border box as laid out,
+   and the margin is explicit, whatever the exact flex-sizing path. */
 .detailExposure > * + *,
 .detailDeclaredExposure > * + * {
   margin-top: 12px;
+}
+
+/* The declare form itself: the same block flow for the same reason — its own
+   checklist is a fieldset with a legend, followed by the Back button. */
+.manual {
+  display: block;
+}
+
+.manual > * + * {
+  margin-top: 10px;
 }
 
 /* The think control inline, per the mockup: label beside a narrow select. */

@@ -35,13 +35,7 @@ import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
-import { factsLine, type ManualModel } from './routeEdit';
-
-const TYPE_LABEL: Record<ModelType, string> = {
-  dense: 'Dense',
-  moe: 'Mixture of experts',
-  embedding: 'Embedding',
-};
+import { TYPE_LABEL, factsLine, type ManualModel } from './routeEdit';
 
 /** Capability arrays cross the transport in CAPABILITY_NAMES order or not at all. */
 export const canonicalCaps = (caps: Iterable<CapabilityName>): CapabilityName[] => {
@@ -378,7 +372,7 @@ export function ModelBand({
         <fieldset className={styles.capabilities}>
           <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
           {/* Same grammar as the route editor's checklist: a grid wrapper under the
-              legend (WebKit never lets a legend join the grid), name over tag. */}
+              legend (WebKit never lets a legend join the grid), `chat (required)`. */}
           <div className={styles.capabilityGrid}>
             {CAPABILITY_NAMES.map((cap) => {
               // A required cap the declaration lacks stays unchecked and enabled:
@@ -420,8 +414,8 @@ export function ModelBand({
             })}
           </div>
           <span className={styles.fieldHint}>
-            What you declare here is what Golem may use. The route needs the capabilities tagged
-            required.
+            What you declare here is what Golem may use. The route needs the capabilities marked
+            (required).
           </span>
         </fieldset>
         <button
