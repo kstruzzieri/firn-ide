@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -772,6 +773,62 @@ func TestBuildSettingsProjectionSanitizesIdentifiers(t *testing.T) {
 	}
 }
 
+func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Description = "Agent / tool-use\nwith native ‮function\tcalling."
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	got := projectedModel(t, p, "agent-m")
+	if want := "Agent / tool-use with native �function calling."; got.Description != want {
+		t.Fatalf("description = %q, want %q", got.Description, want)
+	}
+}
+
+func TestSettingsProjectionTrimsModelDescriptionWithoutSplittingARune(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	// 342 three-byte runes = 1026 bytes: the 1024-byte cut lands inside a rune.
+	m.Description = strings.Repeat("€", 342)
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if p.State != "ready" {
+		t.Fatalf("state = %q; a long note never withholds the projection", p.State)
+	}
+	got := projectedModel(t, p, "agent-m").Description
+	if len(got) != 1023 || !utf8.ValidString(got) {
+		t.Fatalf("description = %d bytes, valid=%v", len(got), utf8.ValidString(got))
+	}
+}
+
+func TestSettingsProjectionTrimsLeadingBlanksBeforeTheBound(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Description = strings.Repeat(" ", 1024) + "kept"
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if got := projectedModel(t, p, "agent-m").Description; got != "kept" {
+		t.Fatalf("description = %q; leading blanks spent the budget", got)
+	}
+}
+
+func TestSettingsProjectionOmitsAnAbsentOrBlankModelDescription(t *testing.T) {
+	for _, desc := range []string{"", "  ", "\n\t"} {
+		cfg := projectionConfig()
+		m := cfg.Models["agent-m"]
+		m.Description = desc
+		cfg.Models["agent-m"] = m
+		p := buildSettingsProjection(projectionLoaded(cfg), nil)
+		raw, err := json.Marshal(projectedModel(t, p, "agent-m"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte(`"description"`)) {
+			t.Fatalf("description %q serialized: %s", desc, raw)
+		}
+	}
+}
+
 // TestSettingsProjectionSerializationLeaksNothing is the boundary proof.
 func TestSettingsProjectionSerializationLeaksNothing(t *testing.T) {
 	projections := []SettingsProjection{
@@ -923,6 +980,10 @@ func validateSettingsProjection(p SettingsProjection) error {
 		}
 		if model.Parameters != "" && !contractIdentifier(model.Parameters) {
 			return fmt.Errorf("model[%d].parameters", i)
+		}
+		if model.Description != "" && (len(model.Description) > maxModelDescriptionLen ||
+			strings.ContainsFunc(model.Description, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) })) {
+			return fmt.Errorf("model[%d].description", i)
 		}
 		if model.ContextWindow < 0 || model.ContextWindow > 2147483647 ||
 			model.Dimensions < 0 || model.Dimensions > 2147483647 {
@@ -1077,6 +1138,25 @@ func contractOptionalIdentifierField(object map[string]json.RawMessage, key, whe
 	return nil
 }
 
+// contractOptionalNoteField accepts an optional prose string: non-empty, at
+// most limit bytes, free of Cc/Cf runes — the identifier rule with its own
+// bound, and no ASCII restriction. Used for the model note.
+func contractOptionalNoteField(object map[string]json.RawMessage, key, where string, limit int) error {
+	if _, ok := object[key]; !ok {
+		return nil
+	}
+	value, err := contractStringField(object, key, where)
+	if err != nil {
+		return err
+	}
+	if value == "" || len(value) > limit || strings.ContainsFunc(value, func(r rune) bool {
+		return unicode.In(r, unicode.Cc, unicode.Cf)
+	}) {
+		return fmt.Errorf("%s.%s is not a bounded note", where, key)
+	}
+	return nil
+}
+
 func contractOptionalPositiveIntField(object map[string]json.RawMessage, key, where string) error {
 	raw, ok := object[key]
 	if !ok {
@@ -1191,6 +1271,9 @@ func projectionEntitiesStructuralCheck(root map[string]json.RawMessage, where st
 			}
 		}
 		if err := contractOptionalIdentifierField(fields, "parameters", where); err != nil {
+			return err
+		}
+		if err := contractOptionalNoteField(fields, "description", where, maxModelDescriptionLen); err != nil {
 			return err
 		}
 		for _, key := range []string{"contextWindow", "dimensions"} {
