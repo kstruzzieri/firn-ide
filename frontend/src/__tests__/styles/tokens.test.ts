@@ -465,6 +465,34 @@ it.each([
   );
 });
 
+// [W6] The routing card's hovered reach rows use
+// `color-mix(in srgb, var(--surface-hover) 92%, var(--status-warning))`
+// (GolemConfig.module.css). With two opaque colours that is the same linear
+// blend `composite` performs, so the token guard above — which only pairs
+// muted text with the raw surface — is extended to the mix it cannot see:
+// 85% fell to 4.21:1, 92% holds 4.81:1.
+it.each(['text-muted', 'text-secondary'])(
+  'keeps --%s at 4.5:1 or better on the hovered reach-row mix',
+  (text) => {
+    const mix = composite(
+      parseHex(token('status-warning')),
+      parseHex(token('surface-hover')),
+      0.08
+    );
+    expect(contrast(parseHex(token(text)), mix)).toBeGreaterThanOrEqual(4.5);
+  }
+);
+
+// [W6] The Affected mark is --palette-sky: a FIXED literal that duplicates
+// --accent-project's on purpose (like --files-key duplicates --accent-go), so
+// the mark never moves when a workspace accent is repointed — and never reads
+// purple like --palette-blue did. Only the literal is pinned: an equality with
+// --accent-project would fail in exactly the repointing case the token exists
+// to survive, and a ΔE seat is impossible at distance 0 from the accent.
+it('pins --palette-sky to the Glacier sky literal', () => {
+  expect(token('palette-sky')).toBe('#38bdf8');
+});
+
 it.each([
   ['Terminal problem source', terminalCss, '.problemsSource', 'surface-panel'],
   ['hidden folder name', treeRowCss, '.row[data-hidden] .name', 'surface-panel'],

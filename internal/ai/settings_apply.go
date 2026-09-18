@@ -1042,6 +1042,12 @@ func validateRouteChange(change Change) error {
 	if change.ModelFacts == nil || change.CapabilityFacts == nil || change.ExposedCaps == nil {
 		return errApplyMissingField
 	}
+	// An empty exposure is a break, not a clear: overrideCapabilities would
+	// hand upstream a nil override and the model's capabilities would derive
+	// from its type again — never the empty set the client showed.
+	if len(change.ExposedCaps) == 0 {
+		return errApplyInvalidField
+	}
 	facts := *change.ModelFacts
 	if !validRequestIdentifier(facts.Provider) || !validRequestIdentifier(facts.Model) ||
 		!modelFactTypes[facts.Type] {
@@ -1504,19 +1510,19 @@ func verifyRouteConfirmations(base *config.Config, routed map[string][]string, p
 }
 
 // gateRolesFor mirrors upstream's eligibility gate: the role being changed,
-// plus — when the change asserts an explicit capability override, or is itself
-// selector-wide — every role already sharing the target selector, because that
-// override becomes their persisted truth too.
+// plus every role already sharing the target selector. Every validated route
+// change carries a non-empty exposure (validateRouteChange), i.e. an explicit
+// capability override that becomes the selector's persisted truth, so the
+// selector's roles always gate — an override plan by identity, a join by the
+// override it asserts.
 func gateRolesFor(base *config.Config, plan routePlan) map[string]bool {
 	roles := map[string]bool{}
 	if plan.role != "" {
 		roles[plan.role] = true
 	}
-	if plan.action == routeOverride || len(plan.change.ExposedCaps) > 0 {
-		for role, m := range base.Models {
-			if (modelSelector{provider: m.Provider, model: m.Name}) == plan.selector {
-				roles[role] = true
-			}
+	for role, m := range base.Models {
+		if (modelSelector{provider: m.Provider, model: m.Name}) == plan.selector {
+			roles[role] = true
 		}
 	}
 	return roles
@@ -1826,7 +1832,8 @@ func floorRequirements() map[string]provider.Capability {
 
 // overrideCapabilities maps the exposed-capability contract onto upstream's
 // override semantics: a non-empty list is the explicit selector-wide override,
-// an empty one clears it so capabilities derive from the model type again.
+// an empty one clears it so capabilities derive from the model type again —
+// which validateRouteChange refuses, so no request reaches that branch.
 func overrideCapabilities(values []string) []string {
 	if len(values) == 0 {
 		return nil

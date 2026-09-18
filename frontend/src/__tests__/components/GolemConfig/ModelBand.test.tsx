@@ -8,6 +8,7 @@ import {
   type ModelBandProps,
 } from '../../../components/GolemConfig/ModelBand';
 import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../../../types/golem';
+import { floorShortfalls } from '../../../types/golemConfig';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
   role: 'chat-role',
@@ -49,6 +50,8 @@ function renderBand(over: Partial<ModelBandProps> = {}) {
     id: 'route-editor-chat',
     useCase: 'chat',
     floor: ['chat', 'stream'] as readonly CapabilityName[],
+    required: ['chat', 'stream'] as readonly CapabilityName[],
+    shortfalls: (candidate) => floorShortfalls(candidate.exposedCapabilities, ['chat']),
     models: [model(), agentModel, embedModel],
     provider: 'hosted',
     providers: [
@@ -242,7 +245,7 @@ describe('ModelBand floor filter', () => {
 
   it('reveals the hidden models with a reason chip per failing capability', async () => {
     renderBand();
-    const line = screen.getByRole('button', { name: /does not meet chat · stream/ });
+    const line = screen.getByRole('button', { name: /is not eligible/ });
     expect(line).toHaveTextContent('1 model');
 
     await userEvent.click(line);
@@ -250,12 +253,52 @@ describe('ModelBand floor filter', () => {
     expect(blocked).toHaveAttribute('aria-disabled', 'true');
     expect(within(blocked).getByText('✕ chat')).toBeVisible();
     expect(within(blocked).getByText('✕ stream')).toBeVisible();
-    expect(within(blocked).getByText('not eligible for chat')).toBeVisible();
+    expect(within(blocked).getByText('chat needs chat; chat needs stream')).toBeVisible();
 
     // One hidden model: the toggle agrees in number — "it", not "them".
     await userEvent.click(screen.getByRole('button', { name: /hide it/ }));
     expect(cards().some((card) => within(card).queryByText('nomic-embed') !== null)).toBe(false);
     expect(screen.getByRole('button', { name: /show it/ })).toBeInTheDocument();
+  });
+
+  it('hides a card that serves the edited use case but fails a sibling floor, naming the sibling', async () => {
+    // The caller's verdict says every card governs agent too: each must carry
+    // tool_call, while the headline still names only the use case being routed.
+    renderBand({
+      floor: ['chat', 'stream', 'tool_call'],
+      required: ['chat', 'stream', 'tool_call'],
+      shortfalls: (candidate) => floorShortfalls(candidate.exposedCapabilities, ['chat', 'agent']),
+    });
+    expect(screen.getByText('Model — every card below can serve chat')).toBeVisible();
+    expect(screen.getByText('filter: chat · stream · tool_call')).toBeVisible();
+    expect(cards().map((card) => within(card).getByText(/gpt|nomic/).textContent)).toEqual([
+      'gpt-5',
+    ]);
+
+    await userEvent.click(screen.getByRole('button', { name: /2 models are not eligible/ }));
+    const blocked = cardNamed('gpt-5-mini');
+    expect(blocked).toHaveAttribute('aria-disabled', 'true');
+    expect(within(blocked).getByText('agent needs tool_call')).toBeVisible();
+    expect(within(blocked).getByText('✕ tool_call')).toBeVisible();
+  });
+
+  it('asks the verdict per card, so a selector sibling can block one card only', async () => {
+    // The verdict is the caller's: here gpt-5-mini's own selector serves agent.
+    renderBand({
+      shortfalls: (candidate) =>
+        candidate.modelName === 'gpt-5-mini'
+          ? [{ cap: 'tool_call', useCases: ['agent'] }]
+          : floorShortfalls(candidate.exposedCapabilities, ['chat']),
+    });
+    expect(screen.getByText('Model — every card below can serve chat')).toBeVisible();
+    expect(cards().map((card) => within(card).getByText(/gpt|nomic/).textContent)).toEqual([
+      'gpt-5',
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: /show them/ }));
+    expect(within(cardNamed('gpt-5-mini')).getByText('agent needs tool_call')).toBeVisible();
+    expect(
+      within(cardNamed('nomic-embed')).getByText('chat needs chat; chat needs stream')
+    ).toBeVisible();
   });
 
   it('narrows the grid as the filter is typed', async () => {
@@ -287,11 +330,14 @@ describe('ModelBand declare path', () => {
 
     await userEvent.click(declare);
     // Floor caps come pre-declared; the type stays unchosen (§4.4).
-    expect(onManual).toHaveBeenCalledWith({
-      model: 'llama-4',
-      type: '',
-      caps: ['chat', 'stream'],
-    });
+    expect(onManual).toHaveBeenCalledWith(
+      {
+        model: 'llama-4',
+        type: '',
+        caps: ['chat', 'stream'],
+      },
+      true
+    );
   });
 
   it('offers no declare card once the typed name matches exactly', async () => {
@@ -312,12 +358,25 @@ describe('ModelBand declare path', () => {
     expect(within(manual).getByLabelText('Type')).toHaveValue('');
 
     const caps = within(manual).getByRole('group', { name: 'Capabilities this model supports' });
+    // Direct child of the form, followed by the Back button: what `.manual`'s
+    // block-flow spacing rule addresses.
+    expect(manual.firstElementChild?.tagName).toBe('LEGEND');
+    expect(caps.parentElement).toBe(manual);
+    expect(caps.nextElementSibling).toHaveTextContent('Back to the model list');
+    expect(caps.nextElementSibling).toHaveClass('button');
     for (const locked of ['chat', 'stream']) {
-      const box = within(caps).getByLabelText(locked + ' required');
+      const box = within(caps).getByLabelText(locked + ' (required)');
       expect(box).toBeChecked();
       expect(box).toBeDisabled();
     }
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
+    // Same checklist grammar as the route editor's: the boxes sit in a grid
+    // wrapper under the legend, each name and its reason one phrase.
+    expect(caps.querySelector('.capabilityGrid')).not.toBeNull();
+    const chat = within(caps).getByLabelText('chat (required)');
+    const text = chat.parentElement?.querySelector('.checkboxText');
+    expect(text).toHaveTextContent(/^chat/);
+    expect(text?.querySelector('.requiredTag')).toHaveTextContent('(required)');
   });
 
   it('reports every manual edit as complete facts in canonical order', async () => {
@@ -345,6 +404,34 @@ describe('ModelBand declare path', () => {
     });
     await userEvent.click(screen.getByRole('button', { name: 'Back to the model list' }));
     expect(onManual).toHaveBeenCalledWith(null);
+  });
+
+  it('marks the required caps of the current candidate in the declare form, locking only what is declared', async () => {
+    // The candidate's selector serves agent: tool_call is required, but a
+    // declaration is what the user asserts — an undeclared cap stays unchecked
+    // and enabled, marked (required); a declared one locks. The band
+    // still filters on chat's floor.
+    const { onManual } = renderBand({
+      required: ['chat', 'stream', 'tool_call'],
+      manual: { model: 'gpt-5', type: '', caps: ['chat', 'stream'] },
+    });
+    const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
+    expect(within(declared).getByLabelText('tool_call (required)')).not.toBeChecked();
+    expect(within(declared).getByLabelText('tool_call (required)')).toBeEnabled();
+    expect(within(declared).getByLabelText('chat (required)')).toBeChecked();
+    expect(within(declared).getByLabelText('chat (required)')).toBeDisabled();
+    expect(screen.getByText('filter: chat · stream')).toBeVisible();
+    // A fresh declaration still starts from the band floor alone.
+    await userEvent.type(screen.getByLabelText('Filter models'), 'llama-4');
+    await userEvent.click(screen.getByRole('option', { name: /Declare "llama-4"/ }));
+    expect(onManual).toHaveBeenLastCalledWith(
+      {
+        model: 'llama-4',
+        type: '',
+        caps: ['chat', 'stream'],
+      },
+      true
+    );
   });
 });
 
@@ -475,20 +562,75 @@ describe('ModelBand stylesheet coverage', () => {
     expect(detail).not.toMatch(/position: sticky/);
   });
 
-  // Mockup density: inside the strip the capability checklist flows as a
-  // wrapping row of columns and sheds its boxed chrome — one tall column was
-  // most of the strip's height. Its 4px row gap is the same overline-to-content
-  // rhythm the facts half uses, so the two sides of the hairline match.
-  it('flows the strip checklist as wrapping columns on the facts-half rhythm', () => {
+  // Mockup density: inside the strip the capability checklist sheds its boxed
+  // chrome — one tall column was most of the strip's height. Keith's live gate
+  // (wave 6) found the wrapping flex row jumbled: uneven columns, a 4px row gap,
+  // and `required` tags reading as the next item's name. The boxes now sit in
+  // their own grid wrapper UNDER the legend — a fieldset's legend never joins a
+  // grid or flex container in WebKit (bug 220793), so the wrapper carries the
+  // spacing itself — on the mockup's minmax(118px, 1fr) columns with room between
+  // rows; each name and its reason read as one phrase. The facts half keeps its own 4px rhythm.
+  it('lays the strip checklist out as an even grid under its legend', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
-    const rule = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
+    const fieldset = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
+    const grid = css.match(/^\.capabilityGrid \{[^}]*\}/ms)?.[0] ?? '';
+    const text = css.match(/^\.checkboxText \{[^}]*\}/ms)?.[0] ?? '';
     const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
 
-    expect(rule).toMatch(/flex-flow: row wrap/);
-    expect(rule).toMatch(/border: 0/);
-    expect(rule).toMatch(/gap: 4px 14px/);
+    // Block, explicitly: the wrapper's 8px is exact and the legend stays out of
+    // any flex/grid case.
+    expect(fieldset).toMatch(/display: block/);
+    expect(fieldset).toMatch(/border: 0/);
+    expect(css.match(/\.detail \.capabilities > \.fieldHint \{[^}]*\}/s)?.[0] ?? '').toMatch(
+      /display: block;\s*margin-top: 8px/
+    );
+    expect(grid).toMatch(/display: grid/);
+    expect(grid).toMatch(/grid-template-columns: repeat\(auto-fill, minmax\(118px, 1fr\)\)/);
+    expect(grid).toMatch(/gap: 8px 16px/);
+    expect(grid).toMatch(/margin-top: 8px/);
+    expect(css).not.toMatch(/\.detail \.capabilities > legend \{/);
+    // The exposure half spaces its blocks itself; the flex `.column` wrapper is gone.
+    expect(
+      css.match(
+        /\.detailExposure > \* \+ \*,\s*\.detailDeclaredExposure > \* \+ \* \{[^}]*\}/s
+      )?.[0] ?? ''
+    ).toMatch(/margin-top: 12px/);
+    expect(css).not.toMatch(/^\.column \{/m);
+    // The declare form is block flow for the same reason: its own checklist is a
+    // fieldset with a legend, followed by the Back button. The legend is no
+    // sibling for the spacing rule, and the Back button keeps its full width.
+    expect(css).toMatch(/^\.manual \{\s*display: block;\s*\}/m);
+    expect(css.match(/^\.manual > :not\(legend\) \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
+      /margin-top: 10px/
+    );
+    const back = css.match(/^\.manual > \.button \{[^}]*\}/ms)?.[0] ?? '';
+    expect(back).toMatch(/display: flex/);
+    // A button's auto width fits its content even as a block-level flex
+    // container: the stretch it had as a column-flex item is an explicit width now.
+    expect(back).toMatch(/width: 100%/);
+    // The grouped chrome rule no longer lays anything out.
+    const group = css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '';
+    expect(group).toMatch(/min-width: 0/);
+    expect(group).not.toMatch(/display|gap/);
+    // The name and its reason read as one wrapping phrase — `chat (required)` —
+    // never a stacked tag that a wrapped grid could hand to the next item.
+    expect(text).toMatch(/min-width: 0/);
+    expect(text).not.toMatch(/display: flex/);
+    expect(text).not.toMatch(/flex-direction: column/);
+    const tag = css.match(/^\.requiredTag \{[^}]*\}/ms)?.[0] ?? '';
+    expect(tag).toMatch(/color: var\(--text-muted\)/);
+    expect(tag).not.toMatch(/font-size|letter-spacing/);
     expect(stat).toMatch(/gap: 4px/);
+  });
+
+  // An unchecked box was --surface-base ringed by --surface-border: two dark
+  // blues, near-invisible on the panel. The ring is muted ink now.
+  it('draws an unchecked box with a visible ring', () => {
+    const dir = path.resolve(__dirname, '../../../components/GolemConfig');
+    const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
+    const box = css.match(/^\.checkboxBox \{[^}]*\}/ms)?.[0] ?? '';
+    expect(box).toMatch(/border: 1\.5px solid var\(--text-muted\)/);
   });
 });
 

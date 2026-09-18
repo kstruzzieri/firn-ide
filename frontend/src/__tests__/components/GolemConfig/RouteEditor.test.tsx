@@ -78,6 +78,7 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
   const routes = over.routes ?? [{ useCase: 'chat', role: 'chat-role' }];
   const models = over.models ?? [model(), other];
   const draft = over.draft ?? cleanDraft(testRevision);
+  const projection = projectDraft({ routes, models }, draft);
   const props: RoutingCardProps = {
     routes,
     models,
@@ -85,9 +86,11 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
     draft,
     // Exactly what the workspace hands over: the COALESCED changes, so every
     // test below exercises the same values Apply would send.
-    changes: projectDraft({ routes, models }, draft).changes,
+    changes: projection.changes,
     rows: new Map(),
     roleRows: new Map(),
+    selectorUseCases: projection.selectorUseCases,
+    routeReach: projection.routeReach,
     diagnostics: [],
     editable: true,
     onStage,
@@ -102,6 +105,10 @@ const openRoute = async (useCase: string, label = 'Edit') =>
   await userEvent.click(screen.getByRole('button', { name: `${label} route ${useCase}` }));
 
 const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+/** The footer's Pending summary without its eyebrow. */
+const summary = () =>
+  (screen.getByTestId('editor-changes').textContent ?? '').replace(/^Pending:?\s*/, '');
 
 /** Choose a model card in the band. Card text is name + type + facts, so the
  *  card is found by its NAME node rather than its whole accessible name. */
@@ -121,6 +128,51 @@ async function declareModel(name: string) {
 }
 
 const routeCells = (useCase: string) => screen.getByTestId(`route-row-${useCase}`);
+
+it.each([true, false])(
+  'judges picker eligibility from staged exposure (eligible: %s)',
+  async (eligible) => {
+    const narrow = ['chat', 'stream'] as const;
+    const wide = ['chat', 'stream', 'tool_call'] as const;
+    const target = model({
+      ...other,
+      exposedCapabilities: [...(eligible ? narrow : wide)],
+    });
+    const peer: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: target.modelName, type: 'dense' },
+      capabilityFacts: target.capabilityFacts,
+      exposedCaps: [...(eligible ? wide : narrow)],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ models: [model(), target], draft: draftWith(peer) });
+    await openRoute('agent', 'Assign');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+    if (!eligible) {
+      await userEvent.click(screen.getByRole('button', { name: /not eligible/ }));
+    }
+    const card = within(screen.getByRole('listbox', { name: 'Models for agent' }))
+      .queryAllByRole('option')
+      .find((option) => within(option).queryByText(target.modelName) !== null);
+    expect(card).toBeDefined();
+    if (card === undefined) throw new Error('eligible model was hidden');
+    if (eligible) {
+      expect(card).not.toHaveAttribute('aria-disabled');
+      await userEvent.click(card);
+      expect(screen.getByRole('checkbox', { name: /^tool_call/ })).toBeChecked();
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(wide);
+    } else {
+      expect(card).toHaveAttribute('aria-disabled', 'true');
+      expect(card).toHaveTextContent('agent needs tool_call');
+      await userEvent.click(card);
+      expect(screen.queryByRole('checkbox', { name: /^tool_call/ })).not.toBeInTheDocument();
+    }
+  }
+);
 
 // ---------------------------------------------------------------------------
 // The rows themselves.
@@ -172,7 +224,9 @@ describe('RoutingCard rows', () => {
         thinkMode: '',
         confirmUnknown: false,
       }),
-      rows: new Map([['chat', { modified: true, keyStaged: false, needsReview: false }]]),
+      rows: new Map([
+        ['chat', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
 
     const row = routeCells('chat');
@@ -189,7 +243,9 @@ describe('RoutingCard rows', () => {
 
   it('prefers Needs review over Modified', () => {
     renderRouting({
-      rows: new Map([['chat', { modified: true, keyStaged: false, needsReview: true }]]),
+      rows: new Map([
+        ['chat', { modified: true, keyStaged: false, needsReview: true, affected: false }],
+      ]),
     });
     expect(within(routeCells('chat')).getByText('Needs review')).toBeInTheDocument();
   });
@@ -206,7 +262,8 @@ describe('RoutingCard rows', () => {
       ],
     });
     const text = 'This model does not meet every affected use-case requirement.';
-    expect(within(routeCells('chat')).getByText(text)).toBeInTheDocument();
+    // [C6] A row-owned diagnostic is a sibling detail row in the row's rowgroup.
+    expect(within(routeCells('chat').parentElement!).getByText(text)).toBeInTheDocument();
     expect(within(routeCells('agent')).queryByText(text)).not.toBeInTheDocument();
   });
 
@@ -236,9 +293,12 @@ describe('RoutingCard defined models', () => {
 
     expect(screen.queryByTestId('defined-model-row-fallback-role')).not.toBeInTheDocument();
     expect(screen.getByTestId('defined-model-row-orphan-role')).toBeInTheDocument();
+    // Every defined row can be assigned; only a removable one offers Remove.
+    const orphan = screen.getByTestId('defined-model-row-orphan-role');
     expect(
-      within(screen.getByTestId('defined-model-row-orphan-role')).queryByRole('button')
-    ).not.toBeInTheDocument();
+      within(orphan).getByRole('button', { name: 'Assign… model orphan-m, role orphan-role' })
+    ).toBeInTheDocument();
+    expect(within(orphan).queryByRole('button', { name: /Remove/ })).not.toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Remove model role other-role' })
     ).toBeInTheDocument();
@@ -252,7 +312,9 @@ describe('RoutingCard defined models', () => {
 
   it('marks a role staged for removal Modified', () => {
     renderRouting({
-      roleRows: new Map([['other-role', { modified: true, keyStaged: false, needsReview: false }]]),
+      roleRows: new Map([
+        ['other-role', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
     expect(
       within(screen.getByTestId('defined-model-row-other-role')).getByText('Modified')
@@ -276,10 +338,11 @@ describe('RoutingCard defined models', () => {
       providers: [providerRow(), providerRow({ name: 'zeta-local' })],
     });
 
-    const defined = screen.getByRole('list', { name: 'Defined models' });
+    const defined = screen.getByRole('table', { name: 'Defined models' });
     expect(
       within(defined)
-        .getAllByRole('listitem')
+        .getAllByRole('row')
+        .slice(1)
         .map((row) => row.getAttribute('data-testid'))
     ).toEqual([
       'defined-model-row-a-hosted',
@@ -293,7 +356,9 @@ describe('RoutingCard defined models', () => {
   // staged removal swaps the control for its undo.
   it('offers the staged removal an undo instead of a re-stage', async () => {
     const { onStage } = renderRouting({
-      roleRows: new Map([['other-role', { modified: true, keyStaged: false, needsReview: false }]]),
+      roleRows: new Map([
+        ['other-role', { modified: true, keyStaged: false, needsReview: false, affected: false }],
+      ]),
     });
     expect(
       screen.queryByRole('button', { name: 'Remove model role other-role' })
@@ -316,7 +381,12 @@ describe('RouteEditor', () => {
     const edit = screen.getByRole('button', { name: 'Edit route chat' });
     expect(edit).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(edit);
-    expect(edit).toHaveAttribute('aria-expanded', 'true');
+    // [C6] Re-query: expanding wrapped the row in a rowgroup keyed differently,
+    // so the node captured above is detached.
+    expect(screen.getByRole('button', { name: 'Edit route chat' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
 
     const editor = screen.getByRole('group', { name: 'Route chat' });
     expect(within(editor).getByLabelText('Provider')).toHaveValue('hosted');
@@ -329,8 +399,8 @@ describe('RouteEditor', () => {
       name: 'Capabilities exposed to chat — from gpt-5-mini',
     });
     // A locked box names WHY it is locked (v9 renders `required` beside it).
-    expect(within(caps).getByLabelText('chat required')).toBeChecked();
-    expect(within(caps).getByLabelText('chat required')).toBeDisabled();
+    expect(within(caps).getByLabelText('chat (required)')).toBeChecked();
+    expect(within(caps).getByLabelText('chat (required)')).toBeDisabled();
     expect(within(caps).getByLabelText('insert')).not.toBeChecked();
   });
 
@@ -465,12 +535,17 @@ describe('RouteEditor', () => {
     const caps = screen.getByRole('group', {
       name: 'Capabilities exposed to chat — from gpt-5',
     });
-    expect(within(caps).getByLabelText('chat required')).toBeChecked();
-    expect(within(caps).getByLabelText('chat required')).toBeDisabled();
+    expect(within(caps).getByLabelText('chat (required)')).toBeChecked();
+    expect(within(caps).getByLabelText('chat (required)')).toBeDisabled();
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
     expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
 
     await userEvent.click(screen.getByLabelText('Apply anyway'));
+    expect(screen.getByLabelText('Apply anyway').closest('label')).toHaveAttribute(
+      'data-changed',
+      'true'
+    );
+    expect(summary()).toMatch(/· Apply anyway: acknowledged$/);
     await stage();
     // Staging must not re-widen what `summarize` narrowed: the override is
     // selector-wide, so a wider set here would rewrite the sibling's contract.
@@ -486,12 +561,20 @@ describe('RouteEditor', () => {
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
     await openRoute('chat');
-    expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Choosing a different model here changes chat only; summarize keeps using the current model.'
-      )
-    ).toBeInTheDocument();
+    const share = screen.getByText(/share this model/);
+    expect(share).toHaveTextContent('chat and summarize share this model.');
+    // The names carry the weight: every route named is emphasised, the grammar is not.
+    expect([...share.querySelectorAll('strong')].map((node) => node.textContent)).toEqual([
+      'chat',
+      'summarize',
+    ]);
+    expect(screen.getByText(/Picking a different model/)).toHaveTextContent(
+      'Picking a different model here changes chat only; summarize keeps gpt-5-mini.'
+    );
+    // A pure fork governs chat alone: summarize stays on its role, so nothing
+    // here reaches it and no caution claims otherwise.
+    await pickModel('gpt-5');
+    expect(screen.queryByText(/not the route/)).not.toBeInTheDocument();
   });
 
   // The verb has to agree with the list, or a careful notice reads as machine
@@ -507,20 +590,18 @@ describe('RouteEditor', () => {
     });
     await openRoute('chat');
 
-    expect(
-      screen.getByText('This model also serves completion and summarize.')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Choosing a different model here changes chat only; completion and summarize keep using the current model.'
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText(/share this model/)).toHaveTextContent(
+      'chat, completion and summarize share this model.'
+    );
+    expect(screen.getByText(/Picking a different model/)).toHaveTextContent(
+      'Picking a different model here changes chat only; completion and summarize keep gpt-5-mini.'
+    );
   });
 
   // The coupling surfaces BEFORE the editor opens: a neutral strip marker
   // derived from the same `routedUseCases` the in-editor notice reads, so the
   // two can never disagree.
-  it('marks a strip whose model also serves other routes, naming them on hover', () => {
+  it('marks a strip whose model also serves other routes, naming them', () => {
     renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -530,16 +611,17 @@ describe('RouteEditor', () => {
       models: [model({ routedUseCases: ['chat', 'completion', 'summarize'] }), other],
     });
 
-    const marker = within(routeCells('chat')).getByText('shared with 2 others');
-    expect(marker).toHaveAttribute('title', 'completion, summarize');
+    // [W6] The names are visible, not a count one hover away.
+    expect(
+      within(routeCells('chat')).getByText('Model also serves completion and summarize')
+    ).toBeInTheDocument();
     // The sibling rows carry their own markers, each naming its own others.
-    expect(within(routeCells('summarize')).getByText('shared with 2 others')).toHaveAttribute(
-      'title',
-      'chat, completion'
-    );
+    expect(
+      within(routeCells('summarize')).getByText('Model also serves chat and completion')
+    ).toBeInTheDocument();
   });
 
-  it('agrees the marker with a single sibling and marks nothing when unshared', () => {
+  it('names a single sibling and marks nothing when unshared', () => {
     renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -547,12 +629,9 @@ describe('RouteEditor', () => {
       ],
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
-    expect(within(routeCells('chat')).getByText('shared with 1 other')).toHaveAttribute(
-      'title',
-      'summarize'
-    );
+    expect(within(routeCells('chat')).getByText('Model also serves summarize')).toBeInTheDocument();
     // agent resolves to nothing here, and nothing else is shared.
-    expect(within(routeCells('agent')).queryByText(/shared with/)).not.toBeInTheDocument();
+    expect(within(routeCells('agent')).queryByText(/Model also serves/)).not.toBeInTheDocument();
   });
 
   it('yields the marker to the editor notice while the row is open', async () => {
@@ -563,13 +642,15 @@ describe('RouteEditor', () => {
       ],
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
-    expect(within(routeCells('chat')).getByText('shared with 1 other')).toBeInTheDocument();
+    expect(within(routeCells('chat')).getByText('Model also serves summarize')).toBeInTheDocument();
 
     await openRoute('chat');
     // One coupling, told once: the marker hides and the info notice names the
-    // same sibling the marker's title named.
-    expect(within(routeCells('chat')).queryByText(/shared with 1 other/)).not.toBeInTheDocument();
-    expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
+    // same sibling the marker named.
+    expect(within(routeCells('chat')).queryByText(/Model also serves/)).not.toBeInTheDocument();
+    expect(screen.getByText(/share this model/)).toHaveTextContent(
+      'chat and summarize share this model.'
+    );
   });
 
   it('suppresses the marker while a staged retarget paints a different model', () => {
@@ -599,8 +680,12 @@ describe('RouteEditor', () => {
 
     const row = routeCells('chat');
     expect(within(row).getByText('gpt-5')).toBeInTheDocument();
-    expect(within(row).queryByText(/shared with/)).not.toBeInTheDocument();
-    expect(within(routeCells('summarize')).getByText('shared with 1 other')).toBeInTheDocument();
+    expect(within(row).queryByText(/Model also serves/)).not.toBeInTheDocument();
+    // [W6] summarize's model will no longer serve chat once the retarget lands, so its
+    // marker names nobody: it describes what Apply leaves, never what it undoes.
+    expect(
+      within(routeCells('summarize')).queryByText(/Model also serves/)
+    ).not.toBeInTheDocument();
   });
 
   it('discloses the selector-wide reach of the change from the projected draft', async () => {
@@ -626,11 +711,669 @@ describe('RouteEditor', () => {
     });
     await openRoute('chat');
     // Staging chat onto the agent's selector makes the capability edit govern
-    // the agent route too.
+    // the agent route too — but chat JOINS that selector, and only an override
+    // writes Think selector-wide, so the notice says Think stays on this route.
     await pickModel('gpt-5');
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities are a property of the model, not the route. Changing them here also changes them for agent; Think applies to this route only.'
+    );
+  });
+
+  it('says Think reaches the selector when the draft already holds an override on it', async () => {
+    // agent sits on gpt-5 with no Think, and the draft already stages an OVERRIDE
+    // of that route (same facts) that sets one. The reducer coalesces the whole
+    // selector group onto its latest change and the backend runs the group's
+    // override selector-wide (SetRoleOverrides), so a route JOINING gpt-5 now sets
+    // Think for agent too — the notice must say so, not "this route only".
+    const agentModel = model({
+      role: 'agent-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      routedUseCases: ['agent'],
+    });
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: agentModel.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'agent', role: 'agent-role' },
+    ];
+    const models = [model(), agentModel];
+    const { onStage } = renderRouting({ routes, models, draft: draftWith(override) });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities and Think are properties of the model, not the route. Changing them here also changes them for agent.'
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    // What Apply sends: the join is the group's latest change, so its Think is
+    // the override's Think too.
+    const projected = projectDraft({ routes, models }, draftWith(override, staged));
     expect(
-      screen.getByText(/agent uses this same model, so these changes apply/)
-    ).toBeInTheDocument();
+      projected.changes.map((change) => (change.kind === 'route' ? change.thinkMode : change.kind))
+    ).toEqual(['auto', 'auto']);
+  });
+
+  it('does not count its own earlier staging as the override a reopen replaces', async () => {
+    // chat staged an OVERRIDE of its model (same full facts) that sets Think.
+    // Reopened, the editor picks the same provider/model under DIFFERENT facts —
+    // a retarget, which Done stages in place of the override (`stageChange`
+    // replaces the identity). No override is left on the selector then, so
+    // Think stays on this route: the notice must not read the replaced change.
+    const shared: Pick<
+      ModelProjection,
+      'effectiveCapabilities' | 'capabilityFacts' | 'exposedCapabilities'
+    > = {
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+    };
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'agent', role: 'agent-role' },
+    ];
+    const models = [
+      model({ ...shared, contextWindow: 32768 }),
+      model({ ...shared, role: 'agent-role', parameters: '7B', routedUseCases: ['agent'] }),
+    ];
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', contextWindow: 32768 },
+      capabilityFacts: shared.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    renderRouting({ routes, models, draft: draftWith(override) });
+    await openRoute('chat');
+    // Two cards share the name; the 7B facts line tells the agent's apart.
+    const card = within(screen.getByRole('listbox', { name: /Models/ }))
+      .getAllByRole('option')
+      .find((option) => within(option).queryByText(/7B/) !== null);
+    if (card === undefined) throw new Error('no 7B card');
+    await userEvent.click(card);
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities are a property of the model, not the route. Changing them here also changes them for agent; Think applies to this route only.'
+    );
+  });
+
+  it('says Think reaches every other staged route on the selector, override or not', async () => {
+    // planning is already staged onto gpt-5 with Think always; summarize is
+    // applied there. The reducer coalesces every staged route on a selector
+    // onto the LATEST change, so a chat join makes its Think planning's Think
+    // too — while summarize, applied and unstaged, keeps its own without an
+    // override. The notice names exactly that split.
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'planning', role: 'planning-role' },
+      { useCase: 'analysis', role: 'analysis-role' },
+      { useCase: 'summarize', role: 'other-role' },
+    ];
+    const models = [
+      model(),
+      model({ role: 'planning-role', modelName: 'gpt-4', routedUseCases: ['planning'] }),
+      model({ role: 'analysis-role', modelName: 'gpt-4', routedUseCases: ['analysis'] }),
+      { ...other, routedUseCases: ['summarize'] },
+    ];
+    const join = (useCase: string): RouteChange => ({
+      kind: 'route',
+      useCase,
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: other.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    });
+    const { onStage } = renderRouting({
+      routes,
+      models,
+      draft: draftWith(join('planning'), join('analysis')),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    // Two peers: the clause lists them after this route, one conjunction.
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities are a property of the model, not the route. Changing them here also changes them for analysis, planning and summarize; Think applies to this route, analysis and planning.'
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    const projected = projectDraft(
+      { routes, models },
+      draftWith(join('planning'), join('analysis'), staged)
+    );
+    expect(
+      projected.changes.map((change) => (change.kind === 'route' ? change.thinkMode : change.kind))
+    ).toEqual(['auto', 'auto', 'auto']);
+  });
+
+  it('names the floor before the empty set when both clauses stand', async () => {
+    // A floored route on a model that never met it: unticking the last cap
+    // leaves both refusals standing, and Done answers with the one naming what
+    // chat is missing — the backend's own clause — not the generic one.
+    const { onStage } = renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['generate'],
+          capabilityFacts: { caps: ['generate'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ['generate'],
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await userEvent.click(screen.getByLabelText('generate'));
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/chat needs chat/);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/Mark at least one/);
+  });
+
+  it('opens a join on the Think and exposure its selector already carries in the draft', async () => {
+    // agent's staged override sets Think always on gpt-5. A chat join coalesces
+    // onto whatever Done stages here, so the editor opens on always — a Done
+    // that leaves Think alone keeps the override's value instead of wiping it
+    // to the applied ''.
+    const agentModel = model({
+      role: 'agent-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+      routedUseCases: ['agent'],
+    });
+    // The override narrowed the exposure (no generate): the join must open on
+    // THAT set, not on the applied five.
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: agentModel.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'agent', role: 'agent-role' },
+    ];
+    const { onStage } = renderRouting({
+      routes,
+      models: [model(), agentModel],
+      draft: draftWith(override),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('always');
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.thinkMode).toBe('always');
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+  });
+
+  it('opens an applied route on the Think a staged join already gives its selector', async () => {
+    // chat staged a join onto gpt-5 — agent's applied model — with Think auto.
+    // Opening agent starts from auto: an untouched Done would otherwise stage
+    // agent's applied '' as the group's authority and wipe the join's Think.
+    const agentModel = model({
+      role: 'agent-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      routedUseCases: ['agent'],
+    });
+    const join: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: agentModel.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'auto',
+      confirmUnknown: false,
+    };
+    const { onUnstagedChange } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+      draft: draftWith(join),
+    });
+    await openRoute('agent');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    // A join writes no Think onto its neighbour, so agent's ROW still shows
+    // its applied Default; the editor opens on the group's auto and says what
+    // Done would make of it — the Apply gate is held from the first render.
+    expect(summary()).toBe('Think mode: Auto (was Default)');
+    expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('agent'), true);
+  });
+
+  it('opens an applied route clean when the staged group already overrides its selector', async () => {
+    // chat staged an OVERRIDE (its own applied model) with Think auto; agent
+    // shares the selector, so its row already shows auto: nothing to say.
+    const shared = model({
+      role: 'agent-role',
+      routedUseCases: ['agent'],
+      exposedCapabilities: ['chat', 'stream', 'thinking'],
+      capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+      effectiveCapabilities: ['chat', 'stream', 'thinking'],
+    });
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: shared.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'thinking'],
+      thinkMode: 'auto',
+      confirmUnknown: false,
+    };
+    const { onUnstagedChange } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model({ ...shared, role: 'chat-role', routedUseCases: ['chat'] }), shared],
+      draft: draftWith(override),
+    });
+    await openRoute('agent');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('agent'), false);
+  });
+
+  it.each([
+    ['hosted', 'fresh-model', true],
+    ['other-provider', 'fresh-model', false],
+    ['hosted', 'different-model', false],
+  ] as const)(
+    'seeds a manual join from its exact staged selector (%s/%s)',
+    async (provider, name, sharesSelector) => {
+      const peer: RouteChange = {
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+        thinkMode: 'always',
+        confirmUnknown: false,
+      };
+      const draft = draftWith(peer);
+      const base = { routes: [{ useCase: 'chat', role: 'chat-role' }], models: [model()] };
+      const { onStage } = renderRouting({
+        ...base,
+        draft,
+        providers: [providerRow(), providerRow({ name: 'other-provider' })],
+      });
+      await openRoute('agent', 'Assign');
+      await userEvent.selectOptions(screen.getByLabelText('Provider'), provider);
+      await declareModel(name);
+      await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+      if (sharesSelector) {
+        expect(screen.getByLabelText('Think mode')).toHaveValue('always');
+        const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
+        const exposure = screen.getByRole('group', {
+          name: 'Capabilities exposed to agent — from fresh-model',
+        });
+        expect(within(declared).getByLabelText('generate')).toBeChecked();
+        expect(within(exposure).getByLabelText('generate')).not.toBeChecked();
+      } else {
+        expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+      }
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      const joined = onStage.mock.calls[0][0][0] as RouteChange;
+      expect(joined.exposedCaps).toEqual(
+        sharesSelector ? peer.exposedCaps : ['chat', 'stream', 'tool_call']
+      );
+      expect(joined.thinkMode).toBe(sharesSelector ? 'always' : '');
+      if (sharesSelector) expect(joined.capabilityFacts).toEqual(peer.capabilityFacts);
+      const request = buildApplyRequest(
+        base,
+        stageChange(draft, joined, vault()),
+        vault(),
+        'apply'
+      );
+      expect(
+        request.changes.find((change) => change.kind === 'route' && change.useCase === 'chat')
+      ).toEqual(peer);
+    }
+  );
+
+  it.each(['fresh-model', 'fresh-model-custom'])(
+    'adopts only the completed manual name when Done blurs it (%s)',
+    async (name) => {
+      const peer: RouteChange = {
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call', 'thinking'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+        thinkMode: 'always',
+        confirmUnknown: false,
+      };
+      const { onStage } = renderRouting({ models: [model()], draft: draftWith(peer) });
+      await openRoute('agent', 'Assign');
+      await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+      await declareModel('scratch');
+      await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+      const input = screen.getByLabelText('Model name');
+      await userEvent.clear(input);
+      await userEvent.type(input, name);
+      // A staged name can be only the prefix of the one still being typed.
+      expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      const joined = onStage.mock.calls[0][0][0] as RouteChange;
+      const caps = name === 'fresh-model' ? peer.exposedCaps : ['chat', 'stream', 'tool_call'];
+      expect(joined.modelFacts.model).toBe(name);
+      expect(joined.capabilityFacts.caps).toEqual(caps);
+      expect(joined.exposedCaps).toEqual(caps);
+      expect(joined.thinkMode).toBe(name === 'fresh-model' ? 'always' : '');
+    }
+  );
+
+  it('keeps explicit manual exposure and Think edits after adopting staged values', async () => {
+    const peer: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+      capabilityFacts: {
+        caps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCaps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ models: [model()], draft: draftWith(peer) });
+    await openRoute('agent', 'Assign');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+    await declareModel('fresh-model');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    const exposure = screen.getByRole('group', {
+      name: 'Capabilities exposed to agent — from fresh-model',
+    });
+    await userEvent.click(within(exposure).getByLabelText('generate'));
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'toggle');
+    // Returning to an unchanged name must not reapply its original seed.
+    await userEvent.click(screen.getByLabelText('Model name'));
+    await userEvent.tab();
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    expect(within(exposure).getByLabelText('generate')).not.toBeChecked();
+    // Half-typed names and non-selector facts must not re-seed over explicit edits.
+    await userEvent.type(screen.getByLabelText('Model name'), '-custom');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'moe');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    await stage();
+    const joined = onStage.mock.calls[0][0][0] as RouteChange;
+    expect(joined.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+    expect(joined.thinkMode).toBe('toggle');
+    expect(joined.capabilityFacts.caps).toEqual(peer.capabilityFacts.caps);
+  });
+
+  it('re-seeds from its own coalesced staging when a pick returns to that model', async () => {
+    // chat staged an override on its model that narrows the exposure and sets
+    // Think. Reopened, the user picks another model, then the original again:
+    // the checklist and Think come back from the staged change — the group's
+    // current values — not from the model's raw declared exposure, which
+    // would silently widen the override and drop its Think.
+    const current = model({
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+    });
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: current.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'thinking'],
+      thinkMode: 'toggle',
+      confirmUnknown: false,
+    };
+    renderRouting({ models: [current, other], draft: draftWith(override) });
+    await openRoute('chat');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    expect(screen.getByLabelText('tool_call')).not.toBeChecked();
+
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('');
+    expect(screen.getByLabelText('tool_call')).toBeChecked();
+
+    await pickModel('gpt-5-mini');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    expect(screen.getByLabelText('tool_call')).not.toBeChecked();
+    expect(screen.getByLabelText('thinking')).toBeChecked();
+  });
+
+  it('refuses a join whose Think differs from what a sibling already sets on the model', async () => {
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [
+        model(),
+        model({
+          role: 'agent-role',
+          modelName: 'gpt-5',
+          effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+          thinkMode: 'auto',
+          routedUseCases: ['agent'],
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+
+    // go-llm refuses the finished document when two roles on one selector set
+    // different non-empty think modes (selectorPairConflict): say so before Apply.
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    const conflict = screen.getByText(/already sets Think/);
+    expect(conflict).toHaveTextContent(
+      'agent already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    expect(conflict.closest('div')).toHaveAttribute('data-tone', 'blocking');
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/already sets Think to auto/);
+
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    expect(screen.queryByText(/already sets Think/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].thinkMode).toBe('auto');
+  });
+
+  /** gpt-5 as a sibling role that sets Think, so a join has something to conflict with. */
+  const thinkingGpt5 = (over: Partial<ModelProjection>): ModelProjection =>
+    model({
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'auto',
+      ...over,
+    });
+
+  it('ignores a Think-setting sibling the draft already moves off the model', async () => {
+    // [W4-10] agent-role sets Think to auto on gpt-5, but the draft already
+    // routes agent elsewhere: once applied, nothing of agent-role is left on
+    // the selector for chat to conflict with.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), thinkingGpt5({ role: 'agent-role', routedUseCases: ['agent'] })],
+      draft: draftWith({
+        kind: 'route',
+        useCase: 'agent',
+        modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+        thinkMode: '',
+        confirmUnknown: false,
+      }),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.queryByText(/already sets Think/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].thinkMode).toBe('always');
+  });
+
+  /** A staged route of `useCase` onto claude — a selector nothing else is on. */
+  const routedAway = (useCase: string): Change => ({
+    kind: 'route',
+    useCase,
+    modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+    capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'stream', 'tool_call'],
+    thinkMode: '',
+    confirmUnknown: false,
+  });
+
+  it('still names a sibling role whose only route the draft unassigns', async () => {
+    // Unassigns run after every route plan: plan-role is still bound, with its
+    // Think, when chat joins. With no route left to name, the role is named.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [model(), thinkingGpt5({ role: 'plan-role', routedUseCases: ['planning'] })],
+      draft: draftWith({ kind: 'route-unassign', useCase: 'planning' }),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'role plan-role already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the conflict when the leaving sibling is retargeted after this join', async () => {
+    // Route plans run in stable-id order: `route:agent` joins gpt-5 before
+    // `route:chat` moves chat-role off it, so the backend meets the conflict
+    // and refuses. A transient conflict is still a refusal; say so.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', routedUseCases: ['agent'] }),
+        thinkingGpt5({ role: 'chat-role', routedUseCases: ['chat'] }),
+      ],
+      draft: draftWith(routedAway('chat')),
+    });
+    await openRoute('agent');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'role chat-role (its chat route leaves after this join) already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('names what a fork source keeps serving when one of its routes leaves', async () => {
+    // pair-role serves chat and summarize; the draft moves chat elsewhere. A
+    // fork leaves the source role on gpt-5 with summarize and its Think.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', routedUseCases: ['agent'] }),
+        thinkingGpt5({ role: 'pair-role', routedUseCases: ['chat', 'summarize'] }),
+      ],
+      draft: draftWith(routedAway('chat')),
+    });
+    await openRoute('agent');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'summarize already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('names a route once in the Think conflict, however many sibling roles reach it', async () => {
+    // routedUseCases is fallback-inclusive: judge-role is reached only through
+    // agent-role's chain, so both roles name agent. The notice says it once.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [
+        model(),
+        thinkingGpt5({ role: 'agent-role', routedUseCases: ['agent'] }),
+        thinkingGpt5({ role: 'judge-role', routedUseCases: ['agent'] }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets? Think/)).toHaveTextContent(
+      /^agent already sets Think to auto on this model; a route joining it cannot set a different Think mode\.$/
+    );
   });
 
   it('requires the unknown-requirement acknowledgement and sets confirmUnknown', async () => {
@@ -647,9 +1390,9 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
 
-    expect(
-      screen.getByText(/no capability requirements on record for summarize/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'Firn has no requirements on record for summarize, so it cannot check this model for it. Mark Apply anyway to accept that.'
+    );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/requirements are unknown/i);
@@ -714,6 +1457,68 @@ describe('RouteEditor', () => {
     expect(staged.thinkMode).toBe('');
   });
 
+  it('refuses an empty exposure, which would fall back to the type defaults rather than to nothing', async () => {
+    // A floorless route: no shortfall stands in the way, only the acknowledgement.
+    // go-llm reads an empty override as "clear it": the model's capabilities
+    // derive from its type again (dense → chat, generate, stream), so an
+    // all-unticked checklist would persist MORE than it shows.
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'summarize', role: 'summarize-role' }],
+      models: [
+        model({
+          role: 'summarize-role',
+          effectiveCapabilities: ['chat'],
+          capabilityFacts: { caps: ['chat'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ['chat'],
+          routedUseCases: ['summarize'],
+        }),
+      ],
+    });
+    await openRoute('summarize');
+    await userEvent.click(screen.getByLabelText('chat'));
+    // Disclosed as soon as the last cap goes, like every other blocking clause.
+    expect(screen.getByText(/Mark at least one capability/).closest('div')).toHaveAttribute(
+      'data-tone',
+      'blocking'
+    );
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
+    );
+
+    await userEvent.click(screen.getByLabelText('chat'));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Mark at least one capability/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat']);
+  });
+
+  it('refuses a hand-declared model with nothing ticked on a floorless route', async () => {
+    // A floorless route seeds no caps into a fresh declaration (§4.4), so the
+    // checklist opens empty — and go-llm would derive the type's defaults for
+    // that join exactly as for an override. Said before Done, refused on Done.
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'summarize', role: 'summarize-role' }],
+      models: [model({ role: 'summarize-role', routedUseCases: ['summarize'] })],
+    });
+    await openRoute('summarize');
+    await declareModel('fresh-model');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    expect(
+      screen
+        .getByText(
+          "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
+        )
+        .closest('div')
+    ).toHaveAttribute('data-tone', 'blocking');
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Mark at least one capability/);
+  });
+
   it('offers Unassign for an optional route and never for the agent', async () => {
     const { onStage } = renderRouting({
       routes: [
@@ -760,11 +1565,22 @@ describe('RouteEditor', () => {
   it('draws its own capability indicator over a real, labelled input', async () => {
     renderRouting();
     await openRoute('chat');
-    const box = screen.getByLabelText('chat required');
+    const box = screen.getByLabelText('chat (required)');
 
     expect(box).toBeChecked();
     expect(box).toHaveClass('checkboxInput');
     expect(box.nextElementSibling).toHaveClass('checkboxBox');
+    // The name and its reason are one phrase beside the box — `chat (required)` —
+    // so a wrapped grid never lets the reason read as the next item's name.
+    const text = box.parentElement?.querySelector('.checkboxText');
+    expect(text).not.toBeNull();
+    expect(text).toHaveTextContent(/^chat/);
+    expect(text?.querySelector('.requiredTag')).toHaveTextContent('(required)');
+    // The boxes sit in the grid wrapper under the legend, here as in the declare form.
+    expect(box.closest('.capabilityGrid')).not.toBeNull();
+    // The fieldset is a direct child of the exposure half — block flow, no flex
+    // wrapper (the `.detailExposure > * + *` rule says why).
+    expect(box.closest('fieldset')?.parentElement).toHaveClass('detailExposure');
     // Decorative: the input alone carries the state to assistive tech.
     expect(box.nextElementSibling).toHaveAttribute('aria-hidden', 'true');
   });
@@ -782,9 +1598,9 @@ describe('RouteEditor', () => {
     const { onStage } = renderRouting({ providers: [providerRow(), providerRow({ name: 'lan' })] });
     await openRoute('embedding', 'Assign');
 
-    // Nothing is chosen yet, so there is nothing to stage.
-    await stage();
-    expect(screen.getByRole('alert')).toHaveTextContent(/Choose a provider/);
+    // Nothing is chosen yet, so there is nothing to stage — and no Done to press.
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
     // The declare card carries the typed name into the facts editor.
@@ -827,6 +1643,429 @@ describe('RouteEditor', () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 
+  // Keith's wave-6 live gate: Done/Cancel gave no signal about whether anything
+  // differed from what the row holds, so an edit undone by hand still looked
+  // pending. The footer now says so: Close alone while the editor matches its
+  // baseline; Done, Cancel and a summary of what changes once something differs.
+  it('offers Close while nothing differs, Done and Cancel with a summary once it does, and Close again when undone', async () => {
+    renderRouting();
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+
+    const quiet = screen.getByRole('button', { name: 'Close' });
+    const toolCall = screen.getByRole('checkbox', { name: /^tool_call/ });
+    await userEvent.click(toolCall);
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveAccessibleDescription(
+      'Pending: Capabilities: + tool_call'
+    );
+    // The quiet button is the same element relabelled, so focus on it survives the flip.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBe(quiet);
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    expect(summary()).toBe('Capabilities: + tool_call');
+    // The changed control carries the staged-value mark.
+    expect(toolCall.closest('label')).toHaveAttribute('data-changed', 'true');
+    expect(screen.getByLabelText('chat (required)').closest('label')).not.toHaveAttribute(
+      'data-changed'
+    );
+
+    await userEvent.click(toolCall);
+    expect(screen.getByRole('button', { name: 'Close' })).toBe(quiet);
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+    expect(toolCall.closest('label')).not.toHaveAttribute('data-changed');
+  });
+
+  it('summarises a model pick and its whole exposure delta before Done', async () => {
+    renderRouting({ models: [model({ thinkMode: 'auto' }), other] });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    // The WHOLE summary: gpt-5 exposes tool_call and thinking, which chat's
+    // baseline did not, and re-seeds Think to its own Default — while the row
+    // held `auto` (behind an unexposed thinking, but held: Done clears it).
+    expect(summary()).toBe(
+      'Model: gpt-5 (was gpt-5-mini) · Capabilities: + tool_call, thinking · Think mode: Default (was Auto)'
+    );
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('marks and summarises a Think change', async () => {
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+        }),
+        other,
+      ],
+    });
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(summary()).toBe('Think mode: Always (was Auto)');
+    expect(screen.getByLabelText('Think mode').parentElement).toHaveAttribute(
+      'data-changed',
+      'true'
+    );
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
+  // Review of the footer (Codex, 2026-09-15): `unstaged` and the summary read
+  // ONE derivation (routeEdit.ts), so every state that keeps Done on screen has
+  // a clause, and states Done would stage identically read as clean.
+  it('keeps naming a declaration an exposure tick made, after the tick is undone', async () => {
+    // A hand-declared model reopens from its staged facts: no tool_call.
+    const handmade: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'handmade', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(handmade) });
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+
+    const exposure = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from handmade',
+    });
+    const toolCall = within(exposure).getByLabelText('tool_call');
+    // Ticking exposes tool_call AND declares it (a hand-declared model cannot
+    // expose what it does not declare); unticking only withdraws the exposure.
+    await userEvent.click(toolCall);
+    expect(summary()).toBe('Declares: + tool_call · Capabilities: + tool_call');
+    await userEvent.click(toolCall);
+    expect(summary()).toBe('Declares: + tool_call');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(toolCall.closest('label')).not.toHaveAttribute('data-changed');
+    expect(
+      within(
+        screen.getByRole('group', { name: 'Capabilities this model supports' })
+      ).getByLabelText('tool_call')
+    ).toBeChecked();
+  });
+
+  it('counts Think only while thinking is exposed: unticking clears it, re-ticking finds it', async () => {
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+        }),
+        other,
+      ],
+    });
+    await openRoute('chat');
+    const thinking = screen.getByRole('checkbox', { name: /^thinking/ });
+    // The Think field follows the checklist fieldset as its sibling in block flow.
+    const thinkField = screen.getByLabelText('Think mode').closest('.field');
+    expect(thinkField?.previousElementSibling?.tagName).toBe('FIELDSET');
+    expect(thinkField?.parentElement).toHaveClass('detailExposure');
+
+    // Unticking alone clears the mode Done stages; the summary says so.
+    await userEvent.click(thinking);
+    expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+    expect(summary()).toBe('Capabilities: − thinking · Think mode: cleared (was Auto)');
+    await userEvent.click(thinking);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+
+    // A value chosen and then hidden behind an untick is not something Done
+    // would stage: the summary reads the cleared mode, not the hidden select.
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(summary()).toBe('Think mode: Always (was Auto)');
+    await userEvent.click(thinking);
+    expect(summary()).toBe('Capabilities: − thinking · Think mode: cleared (was Auto)');
+    await userEvent.click(thinking);
+    expect(summary()).toBe('Think mode: Always (was Auto)');
+    expect(screen.getByLabelText('Think mode').parentElement).toHaveAttribute(
+      'data-changed',
+      'true'
+    );
+  });
+
+  it('reads as clean when the picker hands back the same model under another role', async () => {
+    // Two roles on one selector are one picker card; the card carries the
+    // FIRST projection, which is not chat's own.
+    const completion = model({ role: 'completion-role', routedUseCases: ['completion'] });
+    renderRouting({
+      routes: [
+        { useCase: 'completion', role: 'completion-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [completion, model(), other],
+    });
+    await openRoute('chat');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await pickModel('gpt-5-mini');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+  });
+
+  it('reads a hand declaration that repeats the row model as clean, until its declaration differs', async () => {
+    renderRouting();
+    await openRoute('chat');
+    // The picker refuses to declare an exact list match, but the declare form's
+    // name field does not: declare something else, then type the name back.
+    await declareModel('temp-model');
+    expect(summary()).toBe('Model: temp-model (was gpt-5-mini)');
+    // The same exposure block, mounted under the declare form, in block flow too.
+    expect(
+      screen.getByRole('group', { name: /^Capabilities exposed to/ }).parentElement
+    ).toHaveClass('detailDeclaredExposure');
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
+    // The same name with no type chosen yet: the Type clause reads the placeholder.
+    expect(summary()).toBe('Type: — (was Dense)');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    // Same provider, name, type, declared capabilities and exposure as the
+    // list model: Done would stage the same payload, so there is no Done.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(
+        screen.getByRole('group', { name: 'Capabilities this model supports' })
+      ).getByLabelText('tool_call')
+    );
+    expect(summary()).toBe('Declares: + tool_call · Capabilities: + tool_call');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('reopens clean when the unknown use case its acknowledgement answered has since left the model', async () => {
+    // summarize (no floor on record) was staged onto the unrouted gpt-5; chat
+    // then staged onto gpt-5 and acknowledged the unknown member; summarize was
+    // restaged onto gpt-5-nano. Coalescing copies the authority's flag, and chat
+    // is the authority once summarize leaves: its `confirmUnknown` stays on its
+    // record though the question is gone.
+    const routeTo = (useCase: string, modelName: string, confirmUnknown = false): RouteChange => ({
+      kind: 'route',
+      useCase,
+      modelFacts: { provider: 'hosted', model: modelName, type: 'dense' },
+      capabilityFacts: model().capabilityFacts,
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown,
+    });
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        model(),
+        model({ role: 'summarize-role', modelName: 'gpt-4', routedUseCases: ['summarize'] }),
+        model({ role: 'b-role', modelName: 'gpt-5', routedUseCases: [] }),
+        model({ role: 'c-role', modelName: 'gpt-5-nano', routedUseCases: [] }),
+      ],
+      draft: draftWith(
+        routeTo('summarize', 'gpt-5'),
+        routeTo('chat', 'gpt-5', true),
+        routeTo('summarize', 'gpt-5-nano')
+      ),
+    });
+    await openRoute('chat');
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+  });
+
+  it('says Done clears a Think mode the row holds behind an unexposed thinking', async () => {
+    // go-llm ties think_mode to no capability, so a row can hold `auto` with
+    // thinking unexposed; the editor cannot stage that (thinkMode '' clears
+    // the override), so an untouched editor already says what Done would do.
+    renderRouting({ models: [model({ thinkMode: 'auto' }), other] });
+    await openRoute('chat');
+    expect(summary()).toBe('Think mode: cleared (was Auto)');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    // Exposing thinking lets the held `auto` stage as it is: nothing to say about Think.
+    await userEvent.click(screen.getByRole('checkbox', { name: /^thinking/ }));
+    expect(summary()).toBe('Capabilities: + thinking');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    expect(screen.getByLabelText('Think mode').parentElement).not.toHaveAttribute('data-changed');
+  });
+
+  it('reopens a staged route on its list card with the declaration as staged, facts kept', async () => {
+    // A declaration that widened gpt-5-mini's set by hand (or a sibling's,
+    // coalesced onto this change) is the SELECTOR's: reopening shows the card,
+    // exposes what is staged, and Done re-sends the staged declaration with
+    // the card's own context window — not a hand declaration rebuilt from the
+    // record, which would lose it.
+    const listed = model({ contextWindow: 262144 });
+    const widened: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', contextWindow: 262144 },
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ models: [listed, other], draft: draftWith(widened) });
+    await openRoute('chat');
+    expect(screen.queryByLabelText('Model name')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('listbox', { name: /Models/ })).getByRole('option', {
+        selected: true,
+      })
+    ).toHaveTextContent('gpt-5-mini');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /^generate/ }));
+    expect(summary()).toBe('Capabilities: + generate');
+    await stage();
+    const sent = onStage.mock.calls[0][0][0];
+    expect(sent.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call']);
+    expect(sent.modelFacts).toEqual({
+      provider: 'hosted',
+      model: 'gpt-5-mini',
+      type: 'dense',
+      contextWindow: 262144,
+    });
+  });
+
+  it('shows the staged declaration on the reopened card, and re-picking the card narrows it', async () => {
+    const widened: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(widened) });
+    await openRoute('chat');
+    // The detail body's "declares" row reads the declaration Done re-sends —
+    // tool_call declared though not exposed — not the card's own set.
+    const chips = () =>
+      [...(screen.getByText('declares').nextElementSibling?.children ?? [])].map(
+        (chip) => chip.textContent
+      );
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    // Walking the grid previews the walked card; walking back onto the
+    // assigned card previews the SELECTION, declaration and all — and Escape
+    // leaves the strip on it.
+    within(screen.getByRole('listbox', { name: /Models/ }))
+      .getByRole('option', { selected: true })
+      .focus();
+    await userEvent.keyboard('{End}');
+    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'previewing');
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+    await userEvent.keyboard('{Home}');
+    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'assigned');
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    await userEvent.keyboard('{Escape}');
+    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    // The card is the one affordance for undoing a hand-widened declaration.
+    await pickModel('gpt-5-mini');
+    expect(summary()).toBe('Declares: − tool_call');
+  });
+
+  it('names the Think an unassigned row would get back with its model', async () => {
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+        }),
+        other,
+      ],
+      draft: draftWith({ kind: 'route-unassign', useCase: 'chat' }),
+    });
+    await userEvent.click(screen.getByRole('button', { name: /route chat$/ }));
+    // The wiring (empty baseline through `heldSeed`); the wording and order
+    // are the pure module's, pinned in routeEdit.test.ts.
+    expect(summary()).toContain('Think mode: Auto (was —)');
+  });
+
+  it('holds nothing for a staged unassignment: restoring the model is an edit', async () => {
+    renderRouting({ draft: draftWith({ kind: 'route-unassign', useCase: 'chat' }) });
+    await userEvent.click(screen.getByRole('button', { name: /route chat$/ }));
+    // The editor opens on the applied model (one Done restores it) and says so.
+    expect(summary()).toBe(
+      'Provider: hosted (was —) · Model: gpt-5-mini (was —) · Capabilities: + chat, stream'
+    );
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('drops a removal acknowledgement with the question it answered', async () => {
+    // Declaring another model on a row with hidden slot fields asks to confirm
+    // their removal; declaring the row's own model back is an override that
+    // removes nothing, and the tick left behind must not read as an edit.
+    renderRouting({ models: [model({ hasSlots: true }), other] });
+    await openRoute('chat');
+    await declareModel('elsewhere');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    const remove = screen.getByLabelText('Remove them and continue');
+    await userEvent.click(remove);
+    expect(remove.closest('label')).toHaveAttribute('data-changed', 'true');
+    expect(summary()).toBe('Model: elsewhere (was gpt-5-mini) · Removal: acknowledged');
+
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5-mini');
+    expect(screen.queryByLabelText('Remove them and continue')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+  });
+
+  it('still refuses Done without a provider: the blank option is an edit', async () => {
+    const { onStage } = renderRouting();
+    await openRoute('chat');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), '');
+    expect(summary()).toBe(
+      'Provider: — (was hosted) · Model: — (was gpt-5-mini) · Capabilities: − chat, stream'
+    );
+    await stage();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Choose a provider first/);
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('drops a staged removal acknowledgement when the applied model is picked back', async () => {
+    // A staged retarget carried confirmDrops; picking the row's own model back
+    // is an override that removes nothing, so the baseline's acknowledgement
+    // is as gone as the question — no "Removal: not acknowledged" clause to read.
+    const retarget: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: other.capabilityFacts,
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+      confirmDrops: ['slots'],
+    };
+    renderRouting({ models: [model({ hasSlots: true }), other], draft: draftWith(retarget) });
+    await openRoute('chat');
+    expect(screen.getByLabelText('Remove them and continue')).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await pickModel('gpt-5-mini');
+    expect(screen.queryByLabelText('Remove them and continue')).not.toBeInTheDocument();
+    expect(summary()).toBe('Model: gpt-5-mini (was gpt-5)');
+  });
+
   it('reverts unstaged fields on Cancel and releases the Apply gate', async () => {
     const { onStage, onUnstagedChange } = renderRouting();
     await openRoute('chat');
@@ -854,25 +2093,29 @@ describe('RouteEditor', () => {
       routes: [
         { useCase: 'chat', role: 'chat-role' },
         { useCase: 'summarize', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
       ],
-      models: [shared, other],
+      // agent is already on gpt-5: joining that selector governs agent, so the
+      // caution renders (the join copy); the fork of chat-role never reaches summarize.
+      models: [shared, { ...other, role: 'agent-role', routedUseCases: ['agent'] }],
     });
     await openRoute('chat');
 
     // A fact about the fork: nothing is asked of the reader.
-    const sharedRole = screen.getByText(/This model also serves/).closest('div');
+    const sharedRole = screen.getByText(/share this model/).closest('div');
     expect(sharedRole).toHaveAttribute('data-tone', 'info');
 
-    // Retargeting reaches the sibling use case and drops authored fields.
+    // Retargeting reaches the selector sibling, needs the summarize acknowledgement
+    // and drops authored fields.
     await pickModel('gpt-5');
-    expect(screen.getByText(/belong to the model itself/).closest('div')).toHaveAttribute(
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Changing them here also changes them for agent; Think applies to this route only.'
+    );
+    expect(screen.getByText(/not the route/).closest('div')).toHaveAttribute(
       'data-tone',
       'caution'
     );
-    expect(screen.getByText(/no capability requirements on record/).closest('div')).toHaveAttribute(
-      'data-tone',
-      'caution'
-    );
+    expect(screen.getByText(/Firn has/).closest('div')).toHaveAttribute('data-tone', 'caution');
     expect(screen.getByText(/set up by hand/).closest('div')).toHaveAttribute(
       'data-tone',
       'blocking'
@@ -890,7 +2133,9 @@ describe('RouteEditor', () => {
         kind: 'route',
         useCase: 'chat',
         modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
-        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        // A card pick carries the card's own declared set (a narrower set would
+        // be a hand declaration, and read back as one).
+        capabilityFacts: other.capabilityFacts,
         exposedCaps: ['chat', 'stream'],
         thinkMode: '',
         confirmUnknown: false,
@@ -1010,11 +2255,14 @@ describe('GolemConfigWorkspace route editing', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     await stage();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
     expect(
       screen.queryByText(/Apply is unavailable while an editor has unstaged changes/)
     ).not.toBeInTheDocument();
 
+    // #284: Done on success now closes the editor, so making a further edit
+    // on the same route means reopening it first.
+    await openRoute('chat');
     // An edit made after staging is what closes the global Apply gate (§4.2).
     await userEvent.click(screen.getByLabelText('insert'));
     expect(
@@ -1025,7 +2273,7 @@ describe('GolemConfigWorkspace route editing', () => {
     // §4.2: an open row reports only that it is being edited; the collapsed row
     // is where the staged state shows.
     expect(within(screen.getByTestId('route-row-chat')).getByText('Modified')).toBeInTheDocument();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
   });
 
   it('marks every selector sibling Modified from the projected draft', async () => {
@@ -1048,8 +2296,9 @@ describe('GolemConfigWorkspace route editing', () => {
     // The override reaches `summarize`, which has no Firn floor, so the
     // acknowledgement is what unlocks the stage.
     await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // #284: a successful Done closes the editor itself now — no Cancel
+    // needed to collapse it back to its row.
     await stage();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(within(screen.getByTestId('route-row-chat')).getByText('Modified')).toBeInTheDocument();
     expect(
@@ -1082,11 +2331,12 @@ describe('GolemConfigWorkspace route editing', () => {
     await screen.findByTestId('route-row-chat');
 
     // Stage chat onto the summarize selector, keeping `thinking` and Auto.
+    // #284: a successful Done closes the editor itself now — no Cancel
+    // needed to collapse it back to its row.
     await openRoute('chat');
     await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(within(screen.getByTestId('route-row-chat')).getByText('auto')).toBeInTheDocument();
 
     // Now narrow the SAME selector from the summarize row. That staging becomes
@@ -1096,12 +2346,11 @@ describe('GolemConfigWorkspace route editing', () => {
     await userEvent.click(screen.getByLabelText('thinking'));
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(
       within(screen.getByTestId('route-row-chat')).queryByText('auto')
     ).not.toBeInTheDocument();
-    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('2 staged changes')).toBeInTheDocument();
   });
 
   it('keeps a route diagnostic on its row and the rest on the page', async () => {
@@ -1128,9 +2377,258 @@ describe('GolemConfigWorkspace route editing', () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
     const row = await screen.findByTestId('route-row-chat');
 
-    expect(within(row).getByText('Model eligibility is still unverified.')).toBeInTheDocument();
+    // [C6] The row-owned diagnostic is a sibling `detailRow` in the row's rowgroup.
+    expect(
+      within(row.parentElement!).getByText('Model eligibility is still unverified.')
+    ).toBeInTheDocument();
     const page = screen.getByRole('list', { name: 'Configuration diagnostics' });
     expect(within(page).getAllByRole('listitem')).toHaveLength(1);
     expect(within(page).getByText('use case ghost')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 4c: the picker's floor is every use case a card would govern.
+// ---------------------------------------------------------------------------
+
+describe('RouteEditor union floor (wave 4c)', () => {
+  const agentModel = model({
+    role: 'agent-role',
+    modelName: 'gpt-5',
+    effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+    capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ['chat', 'stream', 'tool_call'],
+    routedUseCases: ['agent'],
+  });
+  const grid = () => within(screen.getByRole('listbox', { name: /Models/ }));
+  const names = () =>
+    grid()
+      .getAllByRole('option')
+      .map((card) => within(card).getByText(/gpt/).textContent);
+  const cardNamed = (name: string) => {
+    const card = grid()
+      .getAllByRole('option')
+      .find((option) => within(option).queryByText(name) !== null);
+    if (card === undefined) throw new Error(`no card named ${name}`);
+    return card;
+  };
+
+  it('blocks the current model as an override, because its chain siblings govern', async () => {
+    // chat-role reaches agent through a fallback chain. Keeping gpt-5-mini is an
+    // OVERRIDE of that selector, so agent's floor governs it; gpt-5 is a fork of
+    // chat alone (agent-role already serves agent from it), so only chat's floor
+    // and agent's own apply — and gpt-5 meets both.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model({ routedUseCases: ['agent', 'chat'] }), agentModel],
+    });
+    await openRoute('chat');
+    expect(screen.getByText('Model — every card below can serve chat')).toBeInTheDocument();
+    expect(screen.getByText('filter: chat · stream')).toBeInTheDocument();
+    expect(names()).toEqual(['gpt-5']);
+
+    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
+    const blocked = cardNamed('gpt-5-mini');
+    expect(blocked).toHaveAttribute('aria-disabled', 'true');
+    expect(within(blocked).getByText('agent needs tool_call')).toBeInTheDocument();
+  });
+
+  it('hides a card its own selector siblings refuse, and names the sibling', async () => {
+    // gpt-5-mid serves chat's floor, but agent is routed to it and needs tool_call.
+    const mid = model({ role: 'agent-role', modelName: 'gpt-5-mid', routedUseCases: ['agent'] });
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), mid, other],
+    });
+    await openRoute('chat');
+    // The band's own line names only what EVERY card serves…
+    expect(screen.getByText('Model — every card below can serve chat')).toBeInTheDocument();
+    // …(cards are role-alpha within the provider: chat-role, then other-role)…
+    expect(names()).toEqual(['gpt-5-mini', 'gpt-5']);
+    // …and the card agent already uses says why it is out.
+    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
+    expect(within(cardNamed('gpt-5-mid')).getByText('agent needs tool_call')).toBeInTheDocument();
+  });
+
+  it('locks a sibling floor in the exposure checklist once the card is chosen', async () => {
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+
+    const caps = screen.getByRole('group', { name: 'Capabilities exposed to chat — from gpt-5' });
+    const toolCall = within(caps).getByLabelText('tool_call (required)');
+    expect(toolCall).toBeChecked();
+    expect(toolCall).toBeDisabled();
+    expect(within(caps).getByText(/Required by/)).toHaveTextContent(
+      'What this route may use. Required by chat and agent: chat, stream, tool_call.'
+    );
+    await stage();
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('never asserts a floor cap the applied model lacks: it names the shortfall and refuses', async () => {
+    // agent on gpt-5-mini (the Incompatible row): tool_call is required but NOT
+    // declared, so nothing ticks it for the user. Ticking it is an explicit
+    // assertion go-llm takes as truth; until then Done refuses with the clause
+    // the backend would.
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'agent', role: 'chat-role' }],
+      models: [model({ routedUseCases: ['agent'] })],
+    });
+    await openRoute('agent');
+    const caps = screen.getByRole('group', {
+      name: 'Capabilities exposed to agent — from gpt-5-mini',
+    });
+    const toolCall = () => within(caps).getByLabelText('tool_call (required)');
+    expect(toolCall()).not.toBeChecked();
+    expect(toolCall()).toBeEnabled();
+    const notice = screen.getByText(/does not declare/);
+    expect(notice).toHaveTextContent(
+      'gpt-5-mini does not declare tool_call: agent needs tool_call. Pick a model that does, or mark it here to declare that it can.'
+    );
+    expect(notice.closest('div')).toHaveAttribute('data-tone', 'blocking');
+    // Nothing differs from the row yet, so there is no Done to refuse: the
+    // blocking notice above is the refusal.
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(onStage).not.toHaveBeenCalled();
+
+    await userEvent.click(toolCall());
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    expect(toolCall()).toBeChecked();
+    expect(toolCall()).toBeDisabled();
+    await stage();
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('locks a sibling floor in the declare form when a declared name joins that selector', async () => {
+    // A hand-declared name is a fresh selector — until it is edited into an
+    // existing model's name, at which point its siblings' floors apply and the
+    // checked set must be what is sent (spec 4.4).
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5x');
+    const declared = () => screen.getByRole('group', { name: 'Capabilities this model supports' });
+    expect(within(declared()).getByLabelText('tool_call')).not.toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call')).toBeEnabled();
+
+    const name = screen.getByLabelText('Model name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    // Joining agent-role's selector makes tool_call required — but a declaration
+    // is what the user asserts, so nothing ticks it for them; the notice names
+    // the sibling and Done refuses until they do.
+    const toolCall = () => within(declared()).getByLabelText('tool_call (required)');
+    expect(toolCall()).not.toBeChecked();
+    expect(toolCall()).toBeEnabled();
+    expect(screen.getByText(/does not declare/)).toHaveTextContent(
+      'gpt-5 does not declare tool_call: agent needs tool_call.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/agent needs tool_call/);
+
+    await userEvent.click(toolCall());
+    expect(toolCall()).toBeChecked();
+    expect(toolCall()).toBeDisabled();
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    const exposed = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from gpt-5',
+    });
+    expect(within(exposed).getByLabelText('tool_call (required)')).toBeDisabled();
+
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call']);
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  /** chat declared onto gpt-5 by hand, beside agent-role's gpt-5: tool_call is required, not declared. */
+  const declareOntoAgentSelector = async () => {
+    const view = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5x');
+    const name = screen.getByLabelText('Model name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    return view;
+  };
+  const declared = () => screen.getByRole('group', { name: 'Capabilities this model supports' });
+  const exposed = () =>
+    screen.getByRole('group', { name: 'Capabilities exposed to chat — from gpt-5' });
+
+  it('declares a cap ticked in the exposure checklist of a hand-declared model', async () => {
+    // A route cannot expose what its model does not declare: the tick in the
+    // exposure checklist is the same assertion as the tick in the declare form.
+    const { onStage } = await declareOntoAgentSelector();
+    expect(within(declared()).getByLabelText('tool_call (required)')).not.toBeChecked();
+
+    await userEvent.click(within(exposed()).getByLabelText('tool_call (required)'));
+    expect(within(declared()).getByLabelText('tool_call (required)')).toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call (required)')).toBeDisabled();
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call']);
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('never withdraws a declared cap when the exposure unticks it', async () => {
+    await declareOntoAgentSelector();
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(within(declared()).getByLabelText('thinking')).toBeChecked();
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(within(exposed()).getByLabelText('thinking')).not.toBeChecked();
+    expect(within(declared()).getByLabelText('thinking')).toBeChecked();
+  });
+
+  it('keeps Think and the other exposure edits when an exposure tick declares a cap', async () => {
+    // The write-through changes the declaration, and a changed declaration
+    // normally re-seeds the exposure and Think from it. This tick IS the
+    // exposure edit, so nothing else the user set may be thrown away.
+    const { onStage } = await declareOntoAgentSelector();
+    await userEvent.click(within(declared()).getByLabelText('thinking'));
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+
+    await userEvent.click(within(exposed()).getByLabelText('tool_call (required)'));
+    expect(within(declared()).getByLabelText('tool_call (required)')).toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call (required)')).toBeDisabled();
+    expect(within(exposed()).getByLabelText('thinking')).not.toBeChecked();
+    // Think is only visible while thinking is exposed; re-expose it to read it.
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(screen.getByLabelText('Think mode')).toHaveValue('always');
+
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.thinkMode).toBe('always');
+    expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
   });
 });
