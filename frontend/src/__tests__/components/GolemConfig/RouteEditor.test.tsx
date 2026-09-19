@@ -928,14 +928,7 @@ describe('RouteEditor', () => {
 
     await userEvent.keyboard(' ');
     expect(generateCheckbox).not.toBeChecked();
-    // U+2212 MINUS SIGN, not a literal in the source: Prettier's string
-    // printer decodes a unicode string escape back to its raw glyph on
-    // every --write (confirmed even under prettier-ignore), so a plain
-    // escape sequence cannot survive this repo's format gate. fromCharCode
-    // keeps the source byte-clean while asserting the exact character
-    // setDelta emits.
-    const minusSign = String.fromCharCode(0x2212);
-    expect(summary()).toBe(`Capabilities: ${minusSign} generate`);
+    expect(summary()).toBe('Capabilities: \u2212 generate');
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
