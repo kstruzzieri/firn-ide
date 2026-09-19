@@ -197,7 +197,8 @@ type RouteProjection struct {
 // loss before staging. The values themselves never cross the boundary.
 //
 // Description is the entry's authored note (config `description`): prose,
-// not an identifier. Line breaks and tabs collapse to single spaces, every
+// not an identifier. ASCII line breaks, tabs, NEL (U+0085), and the Unicode
+// LINE/PARAGRAPH SEPARATORS (U+2028/U+2029) collapse to single spaces, every
 // other Cc/Cf rune is scrubbed to U+FFFD, the result is trimmed to
 // maxModelDescriptionLen bytes without splitting a rune, and a note that is
 // blank after that is absent.
@@ -343,7 +344,16 @@ func sanitizeIdentifier(s string) string {
 	}, s)
 }
 
-var noteBreaks = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ")
+// noteBreaks collapses every line-breaking whitespace rune to a single space:
+// the four ASCII break sequences and tab, plus NEL (U+0085), LINE SEPARATOR
+// (U+2028), and PARAGRAPH SEPARATOR (U+2029) — none of which sanitizeIdentifier
+// would otherwise touch (U+2028/U+2029 are not Cc/Cf at all, and U+0085 IS Cc,
+// so without this it would surface as a literal U+FFFD instead of a space).
+// "\r\n" is listed first so a CRLF collapses to one space, not two.
+var noteBreaks = strings.NewReplacer(
+	"\r\n", " ", "\n", " ", "\r", " ", "\t", " ",
+	"", " ", " ", " ", " ", " ",
+)
 
 // sanitizeNote is the projection's one policy for prose: breaks become
 // spaces, the identifier scrub covers the rest, the whitespace trim runs

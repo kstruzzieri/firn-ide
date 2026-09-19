@@ -774,14 +774,37 @@ func TestBuildSettingsProjectionSanitizesIdentifiers(t *testing.T) {
 }
 
 func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
-	cfg := projectionConfig()
-	m := cfg.Models["agent-m"]
-	m.Description = "Agent / tool-use\nwith native ‮function\tcalling."
-	cfg.Models["agent-m"] = m
-	p := buildSettingsProjection(projectionLoaded(cfg), nil)
-	got := projectedModel(t, p, "agent-m")
-	if want := "Agent / tool-use with native �function calling."; got.Description != want {
-		t.Fatalf("description = %q, want %q", got.Description, want)
+	cases := []struct {
+		name string
+		desc string
+		want string
+	}{
+		{
+			name: "ascii breaks tab and bidi override",
+			desc: "Agent / tool-use\nwith native ‮function\tcalling.",
+			want: "Agent / tool-use with native �function calling.",
+		},
+		{
+			// U+2028 (LINE SEPARATOR) and U+0085 (NEL) sit mid-string between
+			// words: noteBreaks must collapse both to a single space rather
+			// than leaving U+2028 untouched (it is neither Cc nor Cf) or
+			// letting sanitizeIdentifier turn U+0085 (Cc) into U+FFFD.
+			name: "line separator and NEL collapse to spaces",
+			desc: "Agent tool-useready.",
+			want: "Agent tool-use ready.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := projectionConfig()
+			m := cfg.Models["agent-m"]
+			m.Description = tc.desc
+			cfg.Models["agent-m"] = m
+			p := buildSettingsProjection(projectionLoaded(cfg), nil)
+			if got := projectedModel(t, p, "agent-m").Description; got != tc.want {
+				t.Fatalf("description = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -809,6 +832,24 @@ func TestSettingsProjectionTrimsLeadingBlanksBeforeTheBound(t *testing.T) {
 	p := buildSettingsProjection(projectionLoaded(cfg), nil)
 	if got := projectedModel(t, p, "agent-m").Description; got != "kept" {
 		t.Fatalf("description = %q; leading blanks spent the budget", got)
+	}
+}
+
+// TestSettingsProjectionTrimsABlankExposedByTheCut pins sanitizeNote's OUTER
+// TrimSpace (the one after trimToBytes): the 1024-byte cut lands exactly on
+// the space before "tail", so the trimmed description ends in a blank unless
+// that second trim runs. Without it this test fails: it would see 1024 bytes
+// ending in a trailing space instead of the 1023 bare 'x' bytes wanted.
+func TestSettingsProjectionTrimsABlankExposedByTheCut(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Description = strings.Repeat("x", 1023) + " " + "tail"
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	want := strings.Repeat("x", 1023)
+	if got := projectedModel(t, p, "agent-m").Description; got != want {
+		t.Fatalf("description = %q (%d bytes), want %q (%d bytes); the post-cut trim did not run",
+			got, len(got), want, len(want))
 	}
 }
 
