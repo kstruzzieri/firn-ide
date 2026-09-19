@@ -608,9 +608,16 @@ describe('RouteEditor', () => {
         { useCase: 'summarize', role: 'chat-role' },
         { useCase: 'completion', role: 'coding-role' },
       ],
+      // chat-role falls back to coding-role too, so every use case here is in
+      // BOTH models' routed sets: only the routes table tells assigned from
+      // fallback, and subtracting another model's set cannot pass.
       models: [
         model({ routedUseCases: ['chat', 'completion', 'summarize'] }),
-        model({ role: 'coding-role', modelName: 'gpt-5-codex', routedUseCases: ['completion'] }),
+        model({
+          role: 'coding-role',
+          modelName: 'gpt-5-codex',
+          routedUseCases: ['chat', 'completion', 'summarize'],
+        }),
         other,
       ],
     });

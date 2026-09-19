@@ -294,9 +294,12 @@ export function RouteEditor({
    * The routes ASSIGNED to this model beside the edited one, read from the
    * applied routes like "used by". The fork notice's "run on" and "keep" are
    * claims about assignment, so it never reads the fallback-inclusive
-   * `sharedRole` (which stays the backend's own fork test for the Think
-   * pre-check): a route that only falls back to the model keeps its chain
-   * either way, and the row's reach sentence says so.
+   * `sharedRole` (which stays the `len(routed[role]) > 1` half of the
+   * backend's fork test for the Think pre-check): a route that only falls
+   * back to the model keeps its chain either way — nothing on its row
+   * changes; a change landing on its chain is what the reach sentence
+   * reports. Staged departures and unassigns are not filtered out here, as
+   * the row marker does (a follow-up candidate).
    */
   const assignedSiblings =
     current === null
@@ -980,9 +983,8 @@ export function RouteEditor({
         </p>
       )}
 
-      {/* Done is what refuses, so its answer sits directly above it — beside
-          the acknowledgement it most often asks for, not at the top of the
-          editor. */}
+      {/* Done is what refuses, so its answer sits directly above it, not at
+          the top of the editor. */}
       {refusal !== '' && (
         <p className={styles.fieldError} role="alert">
           {refusal}

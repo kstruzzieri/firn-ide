@@ -527,9 +527,10 @@ export function RoutingCard({
              * The routes this row's APPLIED model also serves after Apply, from
              * the fallback-inclusive `routedUseCases` — "also serves" is true of a
              * fallback route, where RouteEditor's fork notice ("run on") names
-             * the assigned routes only (`usedByOf`); for any ONE row the two are
-             * never on screen together, since this marker hides while that row
-             * is expanded.
+             * the assigned routes only (`usedByOf`). That notice does not drop
+             * staged departures and unassigns as this marker does below (a
+             * follow-up candidate); for any ONE row the two are never on screen
+             * together, since this marker hides while that row is expanded.
              * While a RETARGET is staged the row paints another model and this
              * coupling belongs to the one being replaced, so the marker is
              * suppressed; an override paints the applied model, whose coupling
@@ -652,9 +653,10 @@ export function RoutingCard({
                       {wasModel !== null ? stagedValue(view.model) : view.model}
                       {/* The coupling, surfaced BEFORE the editor opens: a neutral
                           fact, the sibling names visible [W6]. Hidden while the row
-                          is expanded — the editor's info notice tells the same fact
-                          in full — and while the row is reached (the sentence below
-                          carries it). */}
+                          is expanded — the editor's notice names the routes assigned
+                          to the model (its fork sentence) and whatever the chosen
+                          model reaches (its reach sentence) — and while the row is
+                          reached (the sentence below carries it). */}
                       {!expanded && unsaid.length > 0 && (
                         <span className={styles.sharedMarker}>
                           {`Model also serves ${listUseCases(unsaid)}`}
