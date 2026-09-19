@@ -399,24 +399,41 @@ function opacity(source: string, selector: string): number {
 }
 
 /**
- * --text-on-accent for one accent: the [data-accent] override if declared, else
- * the :root value, following one level of var(). Reads through cssRule so a
- * commented-out declaration is absent rather than matched, and refuses any
+ * A per-accent ink variable's colour: the [data-accent] override if declared,
+ * else the :root value, following one level of var(). Reads through cssRule so
+ * a commented-out declaration is absent rather than matched, and refuses any
  * value it cannot measure (a keyword such as `white`) instead of silently
  * falling back to the default and passing on the wrong colour.
  */
-function textOnAccent(accent: (typeof WORKSPACE_ACCENTS)[number]): string {
-  const declared = (selector: string) =>
-    cssRule(css, selector)
-      .match(/--text-on-accent:\s*([^;]+);/)?.[1]
-      .trim();
+function textOnAccent(
+  accent: (typeof WORKSPACE_ACCENTS)[number],
+  variable = '--text-on-accent'
+): string {
+  const pattern = new RegExp(`${variable}:\\s*([^;]+);`);
+  const declared = (selector: string) => cssRule(css, selector).match(pattern)?.[1].trim();
   const value = declared(`[data-accent='${accent}']`) ?? declared(':root');
-  if (!value) throw new Error('Missing --text-on-accent in :root');
+  if (!value) throw new Error(`Missing ${variable} in :root`);
   const hex = value.match(/^#[0-9a-f]{6}$/i)?.[0];
   if (hex) return hex;
   const alias = value.match(/^var\(--([\w-]+)\)$/)?.[1];
   if (alias) return token(alias);
-  throw new Error(`Unmeasurable --text-on-accent for ${accent}: ${value}`);
+  throw new Error(`Unmeasurable ${variable} for ${accent}: ${value}`);
+}
+
+/**
+ * --accent-dark for one accent, read the same way as --text-on-accent above:
+ * the [data-accent] override if declared, else :root.
+ */
+function accentDarkFor(accent: (typeof WORKSPACE_ACCENTS)[number]): string {
+  const declared = (selector: string) =>
+    cssRule(css, selector)
+      .match(/--accent-dark:\s*([^;]+);/)?.[1]
+      .trim();
+  const value = declared(`[data-accent='${accent}']`) ?? declared(':root');
+  if (!value) throw new Error('Missing --accent-dark in :root');
+  const hex = value.match(/^#[0-9a-f]{6}$/i)?.[0];
+  if (!hex) throw new Error(`Unmeasurable --accent-dark for ${accent}: ${value}`);
+  return hex;
 }
 
 function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]): string {
@@ -615,6 +632,36 @@ it.each(WORKSPACE_ACCENTS)(
     ).toBeGreaterThanOrEqual(4.5);
   }
 );
+
+it.each(WORKSPACE_ACCENTS)(
+  "paints a locked ability chip's text at 4.5:1 on every accent-dark",
+  (accent) => {
+    // A locked chip (.abilityChipInput:checked:disabled) fills with
+    // --accent-dark, one step back from the live --accent, so --text-on-accent
+    // (tuned against the live accent) is not guaranteed to clear the floor
+    // here — --text-on-accent-dark is its own per-accent token.
+    expect(
+      contrast(
+        parseHex(textOnAccent(accent, '--text-on-accent-dark')),
+        parseHex(accentDarkFor(accent))
+      )
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  'declares --text-on-accent-dark everywhere it declares --accent-dark (%s)',
+  (accent) => {
+    const body = cssRule(css, `[data-accent='${accent}']`);
+    expect(body).toMatch(/--text-on-accent-dark:\s*(?:#[0-9a-f]{6}|var\(--[\w-]+\))/);
+  }
+);
+
+it('declares --text-on-accent-dark in :root alongside --accent-dark', () => {
+  const body = cssRule(css, ':root');
+  expect(body).toMatch(/--accent-dark:\s*#[0-9a-f]{6}/);
+  expect(body).toMatch(/--text-on-accent-dark:\s*(?:#[0-9a-f]{6}|var\(--[\w-]+\))/);
+});
 
 it.each(WORKSPACE_ACCENTS)(
   'keeps the active Golem status segment at 4.5:1 or better under the %s accent',

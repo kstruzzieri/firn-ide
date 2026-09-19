@@ -1038,6 +1038,190 @@ select.input {
   color: var(--text-muted);
 }
 
+/* ── ability chips (#263, mockup rev 7) ──────────────────────────────────────
+ *
+ * The fieldset is a plain block — a legend never joins a grid or flex
+ * container in WebKit (bug 220793) — and the two groups are a WRAPPING ROW,
+ * never an `auto | 1fr` grid (rev 1 starved the optional track into
+ * overflow): side by side while both fit, the optional group below the
+ * required one otherwise, chips wrapping inside each. No breakpoint. A chip
+ * wider than the strip truncates with an ellipsis rather than overflowing.
+ * Distinct from ApplyBar's `.chip` on purpose.
+ */
+.abilityColumns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+}
+
+.capabilities > legend:not(.srOnly) + .abilityColumns {
+  margin-top: 8px;
+}
+
+.abilityGroup {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.abilityGroup > legend {
+  padding: 0;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* Use-case names keep their case inside the uppercase eyebrow. */
+.abilityOwners {
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
+.abilityChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.abilityChip {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* The real input covers the chip, transparent: keyboard, AT state and label
+   clicks are untouched (the drawn-checkbox pattern, on a pill). */
+.abilityChipInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.abilityChipInput:disabled {
+  cursor: default;
+}
+
+.abilityChipFace {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 10px 3px 9px;
+  border: 1px solid var(--text-muted);
+  border-radius: 999px;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* The name is the one shrinkable part: an oversized chip loses letters to an
+   ellipsis, never the tick or the footnote mark (flex items after it). */
+.abilityChipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.abilityChip:hover .abilityChipFace {
+  border-color: var(--text-secondary);
+}
+
+.abilityChipInput:disabled:not(:checked) + .abilityChipFace {
+  border-color: var(--text-muted);
+}
+
+.abilityChipTick {
+  display: none;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* ON: filled, ticked. */
+.abilityChipInput:checked + .abilityChipFace {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+
+.abilityChipInput:checked + .abilityChipFace .abilityChipTick {
+  display: inline;
+}
+
+/* LOCKED ON by the floor: one step back from the live accent, as the locked
+   box was; its own ink token (tokens.test.ts guards every accent). */
+.abilityChipInput:checked:disabled + .abilityChipFace {
+  border-color: var(--accent-dark);
+  background-color: var(--accent-dark);
+  color: var(--text-on-accent-dark);
+}
+
+/* A preview is inert, not locked: every chip is disabled, so a checked one
+   keeps the live accent and the whole row sits back. */
+.abilityChips[data-readonly] .abilityChipInput:checked + .abilityChipFace {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.abilityChips[data-readonly] .abilityChip {
+  opacity: 0.72;
+}
+
+.abilityChipInput:focus-visible + .abilityChipFace {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* On, but the card does not list it: the footnote mark. */
+.abilityChip[data-asserted] .abilityChipFace::after {
+  content: '*';
+  margin-left: 1px;
+  font-weight: 700;
+}
+
+/* Differs from what the row holds: the staged-value grammar. */
+.abilityChip[data-changed] .abilityChipFace {
+  border-color: var(--status-warning);
+  font-style: italic;
+}
+
+.abilityChip[data-changed] .abilityChipInput:not(:checked) + .abilityChipFace {
+  color: var(--status-warning);
+}
+
+/* The footnote names a model id: it wraps, never scrolls. */
+.capabilities > .fieldHint {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+/* The strip's plain-sentence readout of the card (what DECLARES used to show as chips). */
+.detailCard {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .editorFooter {
   display: flex;
   flex-wrap: wrap;
