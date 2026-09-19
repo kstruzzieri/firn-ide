@@ -9,7 +9,14 @@
  * routeEdit.test.ts pins that biconditional. A new stageable field belongs in
  * `facetsOf` first, then in `pendingOf`'s wording.
  */
-import type { CapabilityName, ModelProjection, ModelType, ThinkMode } from '../../types/golem';
+import type {
+  CapabilityName,
+  ModelProjection,
+  ModelType,
+  RouteProjection,
+  ThinkMode,
+} from '../../types/golem';
+import { CAPABILITY_NAMES } from '../../types/golem';
 import { modelFactsOf } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 
@@ -62,6 +69,32 @@ export const THINK_LABEL: Record<ThinkMode, string> = {
   toggle: 'Toggle',
   auto: 'Auto',
 };
+
+/** Exposed beyond the model's card: the chips that carry the footnote mark. */
+export const assertedOf = (
+  exposed: readonly CapabilityName[],
+  declared: readonly CapabilityName[]
+): CapabilityName[] =>
+  CAPABILITY_NAMES.filter((cap) => exposed.includes(cap) && !declared.includes(cap));
+
+/**
+ * The use cases routed DIRECTLY to any of these roles — the applied
+ * document's `routes`, never the fallback-inclusive `routedUseCases` and
+ * never a staged retarget. The card and the strip label it "used by".
+ */
+export const usedByOf = (routes: readonly RouteProjection[], roles: readonly string[]): string[] =>
+  [
+    ...new Set(routes.filter((route) => roles.includes(route.role)).map((route) => route.useCase)),
+  ].sort();
+
+/** A card's abilities as one line; the line never reads empty. */
+export const abilitiesLine = (caps: readonly CapabilityName[]): string =>
+  caps.length === 0 ? '—' : caps.join(' ');
+
+/** The card's note: the first in role order; the popup and the strip list them all. */
+export const noteOf = (
+  descriptions: readonly { role: string; description: string }[]
+): string | undefined => descriptions[0]?.description;
 
 /**
  * The Think mode Done would stage: a mode is meaningless without the

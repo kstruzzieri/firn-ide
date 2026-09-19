@@ -1,4 +1,12 @@
-import { pendingOf, snapshotOf, type Seed } from '../../../components/GolemConfig/routeEdit';
+import {
+  abilitiesLine,
+  assertedOf,
+  noteOf,
+  pendingOf,
+  snapshotOf,
+  type Seed,
+  usedByOf,
+} from '../../../components/GolemConfig/routeEdit';
 import { CAPABILITY_NAMES, type ModelProjection } from '../../../types/golem';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
@@ -227,5 +235,38 @@ describe('routeEdit', () => {
     expect(pendingOf(base, variants.ackUnknown)).toEqual(['Apply anyway: not acknowledged']);
     expect(pendingOf(variants.ackDrops, base)).toEqual(['Removal: acknowledged']);
     expect(pendingOf(base, variants.ackDrops)).toEqual(['Removal: not acknowledged']);
+  });
+});
+
+describe('card helpers', () => {
+  it('assertedOf is exposed minus declared, canonical', () => {
+    expect(assertedOf(['tool_call', 'chat', 'thinking'], ['chat', 'stream'])).toEqual([
+      'tool_call',
+      'thinking',
+    ]);
+    expect(assertedOf(['chat'], ['chat'])).toEqual([]);
+  });
+  it('usedByOf lists the use cases routed to any of the roles, sorted and unique', () => {
+    const routes = [
+      { useCase: 'reasoning', role: 'cloud-pro' },
+      { useCase: 'analysis', role: 'cloud-pro' },
+      { useCase: 'chat', role: 'general' },
+    ];
+    expect(usedByOf(routes, ['cloud-pro'])).toEqual(['analysis', 'reasoning']);
+    expect(usedByOf(routes, ['general', 'cloud-pro'])).toEqual(['analysis', 'chat', 'reasoning']);
+    expect(usedByOf(routes, ['judge'])).toEqual([]);
+  });
+  it('abilitiesLine joins with spaces and never reads empty', () => {
+    expect(abilitiesLine(['chat', 'stream', 'tool_call'])).toBe('chat stream tool_call');
+    expect(abilitiesLine([])).toBe('—');
+  });
+  it('noteOf takes the first note in the order given', () => {
+    expect(
+      noteOf([
+        { role: 'agent', description: 'A' },
+        { role: 'general', description: 'G' },
+      ])
+    ).toBe('A');
+    expect(noteOf([])).toBeUndefined();
   });
 });
