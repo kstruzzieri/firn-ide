@@ -146,6 +146,18 @@ describe('GolemConfig stylesheet', () => {
     expect(text).not.toMatch(/\.capPill s \{/);
   });
 
+  // Keith's live pass: the pills render only on rows with a staged diff, so they
+  // always sit on the amber reach tint, where --surface-border-subtle measured
+  // 1.12:1 — no outline at all. --text-muted is the editor's own off-state chip
+  // border (5.9:1 on the edited tint over --surface-panel). And the "Defined
+  // models" heading needs the module's divider, or it reads as part of the last
+  // routing row, whose bottom border the table drops.
+  it('outlines capability pills in --text-muted and rules off the Defined models subgroup', () => {
+    const text = css();
+    expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--text-muted\)/);
+    expect(text).toMatch(/\.subgroup \{[^}]*border-top: 1px solid var\(--surface-border-subtle\)/);
+  });
+
   it('upgrades records to subgrid tables only where subgrid exists, squeezing only the long columns', () => {
     const text = css();
     // [A7] The BASE is the record form: the header row is hidden VISUALLY (never removed

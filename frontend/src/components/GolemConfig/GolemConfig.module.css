@@ -2276,9 +2276,14 @@ select.input {
   color: var(--text-disabled);
 }
 
+/* The last routing row drops its bottom border, so without a rule of its own the
+   heading reads as part of that row. The same divider the table draws after an
+   editing group (.editGroup + .row) and above a row diagnostic (.rowDiagnostic).
+   Guarded in GolemConfigWorkspace.test.tsx. */
 .subgroup {
   margin: 10px 0 0;
-  padding: 0 14px;
+  padding: 10px 14px 0;
+  border-top: 1px solid var(--surface-border-subtle);
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -2663,9 +2668,15 @@ select.input {
   vertical-align: middle;
 }
 
+/* The pills render only on an edited or same-model row (showCaps), so they
+   always sit on the amber reach tint over --surface-panel, where
+   --surface-border-subtle measured 1.12:1 (edited) and 1.20:1 (same-model) —
+   no outline at all (WCAG 1.4.11 asks 3:1). --text-muted is the editor's own
+   off-state ability-chip border: 5.9:1 and 6.3:1 there. Guarded in
+   GolemConfigWorkspace.test.tsx. */
 .capPill {
   padding: 0 5px;
-  border: 1px solid var(--surface-border-subtle);
+  border: 1px solid var(--text-muted);
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 10px;
