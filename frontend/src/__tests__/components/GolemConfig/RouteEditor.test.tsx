@@ -888,6 +888,46 @@ describe('RouteEditor', () => {
     expect(screen.getByRole('alert')).not.toHaveTextContent(/Mark at least one/);
   });
 
+  it('toggles an exposure off from the keyboard: Tab into the block, Space on generate, Pending and Done follow', async () => {
+    // generate is optional for chat (the floor is only chat + stream), so it
+    // stays an enabled chip while chat/stream lock as required-and-on. The
+    // native checkbox does the work here — no keydown handler to test.
+    renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'generate', 'stream'],
+          capabilityFacts: {
+            caps: ['chat', 'generate', 'stream'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'generate', 'stream'],
+        }),
+        other,
+      ],
+    });
+    await openRoute('chat');
+    const generateCheckbox = screen.getByRole('checkbox', { name: /^generate/ });
+    expect(generateCheckbox).toBeChecked();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+
+    // Tab from wherever opening the editor left focus, into the exposure
+    // block: a bounded walk rather than one hop, because the model grid's
+    // roving-tabindex card (and the Task-5 popup it opens on focus) sits
+    // ahead of the chips in DOM order. The popup is not an error; only the
+    // exposure block, the Pending line and Done are asserted below.
+    let stops = 0;
+    while (document.activeElement !== generateCheckbox) {
+      stops += 1;
+      if (stops > 40) throw new Error('Tab never reached the generate chip within 40 stops');
+      await userEvent.tab();
+    }
+
+    await userEvent.keyboard(' ');
+    expect(generateCheckbox).not.toBeChecked();
+    expect(summary()).toBe('Capabilities: − generate');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
   it('opens a join on the Think and exposure its selector already carries in the draft', async () => {
     // agent's staged override sets Think always on gpt-5. A chat join coalesces
     // onto whatever Done stages here, so the editor opens on always — a Done
