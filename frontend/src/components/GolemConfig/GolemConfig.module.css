@@ -2675,9 +2675,9 @@ select.input {
    same-model) and 1.01:1 / 1.08:1 (elevated) — no outline at all, against the
    3:1 WCAG 1.4.11 asks. --text-muted, the editor's own off-state ability-chip
    border, holds 5.9:1 / 6.3:1 on the panel tints and 5.3:1 / 5.7:1 on the
-   elevated ones (a hovered row paints the 92% mix below, 4.8:1). The
-   declaration is guarded in GolemConfigWorkspace.test.tsx, the 3:1 floor on
-   all four tints in tokens.test.ts. */
+   elevated ones (a hovered row paints the 92% hover mix beneath them,
+   4.8:1). The declaration is guarded in GolemConfigWorkspace.test.tsx, the
+   3:1 floor on all four tints in tokens.test.ts. */
 .capPill {
   padding: 0 5px;
   border: 1px solid var(--text-muted);

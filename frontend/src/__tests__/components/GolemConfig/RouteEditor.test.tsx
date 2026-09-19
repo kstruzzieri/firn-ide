@@ -616,7 +616,7 @@ describe('RouteEditor', () => {
       models: [
         model({ routedUseCases: ['chat', 'completion', 'summarize'] }),
         model({ role: 'coding-role', modelName: 'gpt-5-codex', routedUseCases: ['completion'] }),
-        { ...other, routedUseCases: ['chat', 'completion', 'summarize'] },
+        { ...other, routedUseCases: ['chat', 'completion', 'summarize'], removable: false },
       ],
     });
     await openRoute('chat');
