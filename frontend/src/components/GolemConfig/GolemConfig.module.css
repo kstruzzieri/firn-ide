@@ -1017,11 +1017,6 @@ select.input {
   outline-offset: 2px;
 }
 
-/* A capability the use-case floor requires: checked, disabled, and labelled. */
-.checkboxLocked {
-  color: var(--text-muted);
-}
-
 /* The acknowledgement labels — the band's capability checklist became chips, so
    the two disclosure ticks are all that is left — wrap as one phrase. */
 .checkboxText {
@@ -1798,16 +1793,20 @@ select.input {
 /* ── the card popup (#263, mockup rev 7) ───────────────────────────────────
  *
  * Everything a three-line card cut short, beside the card. Fixed-position and
- * placed from the card's rect, because the grid is a scroll region that would
- * clip an absolutely positioned child — and without a portal, which the band's
- * "nothing floats" rule spends nowhere else. It is HOVERABLE (WCAG 1.4.13):
- * pointer events stay on, and the owner keeps it open while the pointer is
- * inside it. A long note scrolls inside the cap rather than off the viewport;
- * the strip's own note line is the keyboard-reachable copy.
+ * placed from the card's rect; it is portaled to document.body because `.root`
+ * is a query container (WebKit bug 284945, fixed ~Safari 18.2 — below Firn's
+ * macOS 12 / Safari 17.6 floor) that becomes the fixed containing block and
+ * clips it otherwise. It is HOVERABLE (WCAG 1.4.13): pointer events stay on,
+ * and the owner keeps it open while the pointer is inside it. A long note
+ * scrolls inside the cap rather than off the viewport; the strip's own note
+ * line is the keyboard-reachable copy.
  */
 .cardPop {
   position: fixed;
-  z-index: 10;
+  /* Portaled to document.body, so it competes in the ROOT stacking context,
+   * not the band's — 1000 is the tier the repo's other body portal uses
+   * (BranchSwitcher.module.css's .popup); tokens.css has no z-index token. */
+  z-index: 1000;
   width: 300px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 16px);

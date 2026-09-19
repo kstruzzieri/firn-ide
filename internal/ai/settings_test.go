@@ -781,8 +781,8 @@ func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
 	}{
 		{
 			name: "ascii breaks tab and bidi override",
-			desc: "Agent / tool-use\nwith native ‮function\tcalling.",
-			want: "Agent / tool-use with native �function calling.",
+			desc: "Agent / tool-use\nwith native \u202efunction\tcalling.",
+			want: "Agent / tool-use with native \ufffdfunction calling.",
 		},
 		{
 			// U+2028 (LINE SEPARATOR) and U+0085 (NEL) sit mid-string between
@@ -790,8 +790,16 @@ func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
 			// than leaving U+2028 untouched (it is neither Cc nor Cf) or
 			// letting sanitizeIdentifier turn U+0085 (Cc) into U+FFFD.
 			name: "line separator and NEL collapse to spaces",
-			desc: "Agent tool-useready.",
+			desc: "Agent\u2028tool-use\u0085ready.",
 			want: "Agent tool-use ready.",
+		},
+		{
+			// CRLF must yield ONE space (not two, from LF+CR each matching), and
+			// the paragraph separator (U+2029) collapses alongside CR/CRLF in the
+			// same description rather than only ever appearing alone.
+			name: "CRLF, CR and paragraph separator collapse to one space each",
+			desc: "a\r\nb\rc\u2029d",
+			want: "a b c d",
 		},
 	}
 	for _, tc := range cases {

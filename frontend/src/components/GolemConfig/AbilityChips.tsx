@@ -76,7 +76,9 @@ export function AbilityChips({
     const title = readOnly
       ? undefined
       : [
-          isRequired ? `Required by ${ownersText}${locked ? ' — cannot be turned off' : ''}` : '',
+          isRequired
+            ? `${ownersText === '' ? 'Required' : `Required by ${ownersText}`}${locked ? ' — cannot be turned off' : ''}`
+            : '',
           isAsserted ? `Turned on by hand, not on ${model}'s card — unverified` : '',
         ]
           .filter(Boolean)

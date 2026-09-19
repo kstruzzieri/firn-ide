@@ -344,15 +344,15 @@ func sanitizeIdentifier(s string) string {
 	}, s)
 }
 
-// noteBreaks collapses every line-breaking whitespace rune to a single space:
-// the four ASCII break sequences and tab, plus NEL (U+0085), LINE SEPARATOR
-// (U+2028), and PARAGRAPH SEPARATOR (U+2029) — none of which sanitizeIdentifier
-// would otherwise touch (U+2028/U+2029 are not Cc/Cf at all, and U+0085 IS Cc,
-// so without this it would surface as a literal U+FFFD instead of a space).
-// "\r\n" is listed first so a CRLF collapses to one space, not two.
+// noteBreaks collapses seven line-breaking sequences to a single space each:
+// CRLF, LF, CR, TAB, NEL (U+0085), LINE SEPARATOR (U+2028), and PARAGRAPH
+// SEPARATOR (U+2029). CRLF is listed first so it collapses to ONE space, not
+// two (LF and CR would each match separately otherwise). NEL is the one
+// sanitizeIdentifier's Cc/Cf scrub would otherwise turn into U+FFFD instead
+// of a space; LS and PS are not Cc/Cf at all, so they need this replacer too.
 var noteBreaks = strings.NewReplacer(
 	"\r\n", " ", "\n", " ", "\r", " ", "\t", " ",
-	"", " ", " ", " ", " ", " ",
+	"\u0085", " ", "\u2028", " ", "\u2029", " ",
 )
 
 // sanitizeNote is the projection's one policy for prose: breaks become

@@ -137,6 +137,17 @@ describe('AbilityChips', () => {
     expect(screen.getByRole('group', { name: 'Capabilities' })).toBeInTheDocument();
   });
 
+  it('falls back to plain "Required" in a chip title when owners is empty, matching the group legend', () => {
+    // In practice owners is never empty when required is non-empty — this
+    // pins symmetry with the group legend's own '' -> 'Required' fallback,
+    // not a live bug.
+    render(<AbilityChips {...base} owners={[]} selected={['chat']} />);
+    expect(screen.getByRole('checkbox', { name: 'tool_call' }).closest('label')).toHaveAttribute(
+      'title',
+      'Required'
+    );
+  });
+
   it('never footnotes in declaration mode', () => {
     render(
       <AbilityChips {...base} mode="declaration" declared={[]} selected={['chat', 'embed']} />

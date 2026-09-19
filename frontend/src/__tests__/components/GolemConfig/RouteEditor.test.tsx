@@ -2041,8 +2041,10 @@ describe('RouteEditor', () => {
     const caps = screen.getByRole('group', {
       name: 'Capabilities exposed to chat — from gpt-5-mini',
     });
+    // Anchored: a substring matcher would still pass for a readout that
+    // gained a cap.
     expect(screen.getByTestId('card-readout')).toHaveTextContent(
-      "gpt-5-mini's card lists: chat stream tool_call"
+      /^gpt-5-mini's card lists: chat stream tool_call$/
     );
     const toolCall = within(caps).getByRole('checkbox', { name: 'tool_call' });
     expect(toolCall.closest('label')).toHaveAttribute('data-oncard');

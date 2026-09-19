@@ -680,6 +680,9 @@ describe('ModelBand stylesheet coverage', () => {
     expect(pop).toMatch(/position: fixed/);
     expect(pop).toMatch(/max-height: calc\(100vh - 16px\);\s*overflow: auto/);
     expect(pop).not.toMatch(/pointer-events: none/);
+    // Portaled to document.body (#263 final fix I-2): it competes in the root
+    // stacking context, not the band's, so it needs the body-portal tier.
+    expect(pop).toMatch(/z-index: 1000/);
     // Only a card with a popup ellipsises: a blocked card and the declare card
     // have none, so their text has to wrap.
     for (const selector of ['.modelName', '.modelCardFacts'])
@@ -712,6 +715,14 @@ describe('ModelBand stylesheet coverage', () => {
     // The strip body spaces its blocks itself, whichever host they sit in.
     expect(css.match(/^\.detailBody > \* \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
       /margin-top: 12px/
+    );
+    // The declaration form spaces its own blocks the same way (Global Constraints).
+    expect(css.match(/^\.detailDeclaredExposure > \* \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
+      /margin-top: 12px/
+    );
+    // The footnote wraps and sits 8px under the chips, wherever it is hosted.
+    expect(css.match(/^\.capabilities > \.fieldHint \{[^}]*\}/ms)?.[0] ?? '').toMatch(
+      /display: block;\s*margin-top: 8px/
     );
     // The Think row keeps its inline layout on both hosts.
     expect(
@@ -1215,23 +1226,31 @@ describe('ModelBand card popup timing', () => {
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     const add = jest.spyOn(document, 'addEventListener');
     const remove = jest.spyOn(document, 'removeEventListener');
-    const { unmount } = renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
-    // Pressed and held: the release listener is live, waiting for a mouseup
-    // that will never come from this component.
-    await user.pointer({
-      keys: '[MouseLeft>]',
-      target: screen.getByRole('option', { name: /gemma4:31b/ }),
-    });
-    const registered = add.mock.calls.filter(([type]) => type === 'mouseup').map(([, fn]) => fn);
-    expect(registered).toHaveLength(1);
+    // try/finally: a thrown assertion below must not leak these spies into
+    // later tests.
+    try {
+      const { unmount } = renderBand({
+        id: 'band',
+        models: [model({ modelName: 'gemma4:31b' })],
+      });
+      // Pressed and held: the release listener is live, waiting for a mouseup
+      // that will never come from this component.
+      await user.pointer({
+        keys: '[MouseLeft>]',
+        target: screen.getByRole('option', { name: /gemma4:31b/ }),
+      });
+      const registered = add.mock.calls.filter(([type]) => type === 'mouseup').map(([, fn]) => fn);
+      expect(registered).toHaveLength(1);
 
-    unmount();
-    expect(remove.mock.calls.some(([type, fn]) => type === 'mouseup' && fn === registered[0])).toBe(
-      true
-    );
-    expect(() => fireEvent.mouseUp(document)).not.toThrow();
-    add.mockRestore();
-    remove.mockRestore();
+      unmount();
+      expect(
+        remove.mock.calls.some(([type, fn]) => type === 'mouseup' && fn === registered[0])
+      ).toBe(true);
+      expect(() => fireEvent.mouseUp(document)).not.toThrow();
+    } finally {
+      add.mockRestore();
+      remove.mockRestore();
+    }
   });
 
   it('does not open the popup for a completed touch tap', async () => {
