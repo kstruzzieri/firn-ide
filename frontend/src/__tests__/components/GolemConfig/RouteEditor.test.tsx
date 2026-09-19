@@ -1644,6 +1644,22 @@ describe('RouteEditor', () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 
+  it('drops the dangling dash from the declare form legend while the model name is blank', async () => {
+    renderRouting();
+    await openRoute('chat');
+    const editor = screen.getByRole('group', { name: 'Route chat' });
+    await declareModel('temp');
+    await userEvent.clear(screen.getByLabelText('Model name'));
+
+    expect(within(editor).getByRole('group', { name: 'What chat may use' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /— from $/ })).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Model name'), 'temp-model');
+    expect(
+      within(editor).getByRole('group', { name: 'What chat may use — from temp-model' })
+    ).toBeInTheDocument();
+  });
+
   // Keith's wave-6 live gate: Done/Cancel gave no signal about whether anything
   // differed from what the row holds, so an edit undone by hand still looked
   // pending. The footer now says so: Close alone while the editor matches its
@@ -1931,6 +1947,19 @@ describe('RouteEditor', () => {
     ).toHaveTextContent('gpt-5-mini');
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
 
+    // The reopened route reads its STAGED card, not the list card's own two
+    // caps — the fact the payload assertions below protect, said in plain
+    // words on the readout and on the chip's own provenance mark.
+    const caps = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from gpt-5-mini',
+    });
+    expect(screen.getByTestId('card-readout')).toHaveTextContent(
+      "gpt-5-mini's card lists: chat stream tool_call"
+    );
+    const toolCall = within(caps).getByRole('checkbox', { name: 'tool_call' });
+    expect(toolCall.closest('label')).toHaveAttribute('data-oncard');
+    expect(toolCall.closest('label')).not.toHaveAttribute('data-asserted');
+
     await userEvent.click(screen.getByRole('checkbox', { name: /^generate/ }));
     expect(summary()).toBe('Capabilities: + generate');
     await stage();
@@ -1964,6 +1993,18 @@ describe('RouteEditor', () => {
       );
     expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    // The right-hand readout is the same STAGED card the "declares" row
+    // above reads — plain words, not just chips — and the unchecked
+    // tool_call chip is marked as ON that card, never as a bare assertion.
+    expect(screen.getByTestId('card-readout')).toHaveTextContent(
+      "gpt-5-mini's card lists: chat stream tool_call"
+    );
+    const caps = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from gpt-5-mini',
+    });
+    const toolCall = within(caps).getByRole('checkbox', { name: 'tool_call' });
+    expect(toolCall.closest('label')).toHaveAttribute('data-oncard');
+    expect(toolCall.closest('label')).not.toHaveAttribute('data-asserted');
     // Walking the grid previews the walked card; walking back onto the
     // assigned card previews the SELECTION, declaration and all — and Escape
     // leaves the strip on it.
@@ -1981,6 +2022,11 @@ describe('RouteEditor', () => {
     // The card is the one affordance for undoing a hand-widened declaration.
     await pickModel('gpt-5-mini');
     expect(summary()).toBe('Declares: − tool_call');
+    // The readout narrows with the declaration: tool_call is gone from the
+    // card, not just from the exposure checklist.
+    expect(screen.getByTestId('card-readout')).toHaveTextContent(
+      "gpt-5-mini's card lists: chat stream"
+    );
   });
 
   it('names the Think an unassigned row would get back with its model', async () => {
@@ -2109,19 +2155,29 @@ describe('RouteEditor', () => {
     // A fact about the fork: nothing is asked of the reader. Before any edit
     // the candidate still mirrors the applied model exactly — an override,
     // which reaches the whole selector — so the merged notice already
-    // carries the reach sentence alongside the fork one; both share the one
-    // caution tone (Step 3's merge).
-    const merged = screen.getByText(/run on/).closest('div');
+    // carries the reach sentence (naming summarize) alongside the fork one;
+    // both share the one caution tone (Step 3's merge). Locate the ONE
+    // container by its `data-tone` attribute, once, so a wrongly toned or
+    // wrongly placed reach notice cannot pass unnoticed.
+    const merged = screen.getByText(/run on/).closest('[data-tone]') as HTMLElement;
     expect(merged).toHaveAttribute('data-tone', 'caution');
+    expect(within(merged).getByText(/run on/)).toHaveTextContent(
+      'chat and summarize run on gpt-5-mini. Picking a different model here changes chat only; summarize keeps gpt-5-mini.'
+    );
+    expect(within(merged).getByText(/belong to/)).toHaveTextContent(
+      'The abilities and Think mode above belong to the model chosen above and change for summarize too.'
+    );
+    expect(merged.querySelectorAll('p')).toHaveLength(2);
 
     // Retargeting reaches the selector sibling, needs the summarize acknowledgement
     // and drops authored fields.
     await pickModel('gpt-5');
-    expect(screen.getByText(/run on/).closest('div')).toBe(merged);
+    expect(screen.getByText(/run on/).closest('[data-tone]')).toBe(merged);
     expect(merged).toHaveAttribute('data-tone', 'caution');
-    expect(screen.getByText(/belong to/)).toHaveTextContent(
+    expect(within(merged).getByText(/belong to/)).toHaveTextContent(
       'The abilities above belong to the model chosen above and change for agent too; Think applies to this route only.'
     );
+    expect(merged.querySelectorAll('p')).toHaveLength(2);
     expect(screen.getByText(/Firn has/).closest('div')).toHaveAttribute('data-tone', 'caution');
     expect(screen.getByText(/set up by hand/).closest('div')).toHaveAttribute(
       'data-tone',

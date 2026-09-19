@@ -676,7 +676,9 @@ export function RouteEditor({
 
   const capsLegend =
     manual !== null
-      ? `What ${useCase} may use — from ${manual.model}`
+      ? manual.model.trim() === ''
+        ? `What ${useCase} may use`
+        : `What ${useCase} may use — from ${manual.model}`
       : facts === null
         ? `Capabilities exposed to ${useCase}`
         : `Capabilities exposed to ${useCase} — from ${facts.model}`;
