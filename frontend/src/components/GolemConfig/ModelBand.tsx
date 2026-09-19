@@ -30,6 +30,7 @@ import {
   type ModelProjection,
   type ModelType,
   type ProviderProjection,
+  type RouteProjection,
 } from '../../types/golem';
 import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
@@ -142,6 +143,24 @@ export interface ModelBandProps {
    * as a node keeps the staging state where it already lives.
    */
   exposure?: ReactNode;
+  /**
+   * The applied routes, for the preview strip's "used by" reading. Optional
+   * for now (#263 exposure-chips task 4); task 5 wires the preview chips that
+   * consume it and makes it required.
+   */
+  routes?: readonly RouteProjection[];
+  /** The declare form's own REQUIRED group owners. Optional for now; see `routes`. */
+  owners?: readonly string[];
+  /**
+   * What a given card would expose and the floor it would meet, for the
+   * preview strip — derived the way `shortfalls` is, cached per role next to
+   * it. Optional for now; see `routes`.
+   */
+  preview?: (model: ModelProjection) => {
+    required: CapabilityName[];
+    owners: string[];
+    offered: CapabilityName[];
+  };
   onProviderChange: (provider: string) => void;
   onSelect: (model: ModelProjection) => void;
   /** `commitName` marks Declare or leaving the name field, never a keystroke. */
