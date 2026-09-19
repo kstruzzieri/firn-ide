@@ -524,11 +524,12 @@ export function RoutingCard({
             const editorId = `golem-route-editor-${index}`;
             const notices = rowDiagnostics(useCase);
             /**
-             * The routes this row's APPLIED model also serves after Apply, from the
-             * same `routedUseCases` RouteEditor's `sharedRole` reads — that notice
-             * still lists the unfiltered applied set (a follow-up candidate); for
-             * any ONE row the two are never on screen together, since this marker
-             * hides while that row is expanded.
+             * The routes this row's APPLIED model also serves after Apply, from
+             * the fallback-inclusive `routedUseCases` — "also serves" is true of a
+             * fallback route, where RouteEditor's fork notice ("run on") names
+             * the assigned routes only (`usedByOf`); for any ONE row the two are
+             * never on screen together, since this marker hides while that row
+             * is expanded.
              * While a RETARGET is staged the row paints another model and this
              * coupling belongs to the one being replaced, so the marker is
              * suppressed; an override paints the applied model, whose coupling

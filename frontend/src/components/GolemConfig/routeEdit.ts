@@ -81,7 +81,8 @@ export const assertedOf = (
 /**
  * The use cases routed DIRECTLY to any of these roles — the applied
  * document's `routes`, never the fallback-inclusive `routedUseCases` and
- * never a staged retarget. The card and the strip label it "used by".
+ * never a staged retarget. The card and the strip label it "used by"; the
+ * editor's fork notice reads it as the routes that "run on" the model.
  */
 export const usedByOf = (routes: readonly RouteProjection[], roles: readonly string[]): string[] =>
   [

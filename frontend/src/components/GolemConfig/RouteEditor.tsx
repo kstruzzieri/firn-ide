@@ -71,7 +71,14 @@ import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { AbilityChips } from './AbilityChips';
 import styles from './GolemConfig.module.css';
 import { ModelBand, canonicalCaps } from './ModelBand';
-import { abilitiesLine, THINK_LABEL, pendingOf, type ManualModel, type Seed } from './routeEdit';
+import {
+  abilitiesLine,
+  THINK_LABEL,
+  pendingOf,
+  usedByOf,
+  type ManualModel,
+  type Seed,
+} from './routeEdit';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -283,6 +290,18 @@ export function RouteEditor({
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
   const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
+  /**
+   * The routes ASSIGNED to this model beside the edited one, read from the
+   * applied routes like "used by". The fork notice's "run on" and "keep" are
+   * claims about assignment, so it never reads the fallback-inclusive
+   * `sharedRole` (which stays the backend's own fork test for the Think
+   * pre-check): a route that only falls back to the model keeps its chain
+   * either way, and the row's reach sentence says so.
+   */
+  const assignedSiblings =
+    current === null
+      ? []
+      : usedByOf(base.routes, [current.role]).filter((other) => other !== useCase);
   /**
    * The draft minus this route's own staging: Done replaces that identity
    * (`stageChange`), so nothing below may read it as a sibling.
@@ -691,12 +710,6 @@ export function RouteEditor({
           leave a gap across the top, so the accessible name is sr-only. */}
       <legend className={styles.srOnly}>{`Route ${useCase}`}</legend>
 
-      {refusal !== '' && (
-        <p className={styles.fieldError} role="alert">
-          {refusal}
-        </p>
-      )}
-
       {/*
        * Treatment 1: band, then one master-detail strip. The exposure editor
        * lives in that strip beside the selected model, so what is being
@@ -833,13 +846,14 @@ export function RouteEditor({
           it); the reach is about the model chosen ABOVE (its abilities and
           Think belong to it and reach every route on it: [W4-8]/[W5-2]/[W5-4],
           Think reaching the applied siblings only through an override). */}
-      {(current !== null && sharedRole.length > 0) || alsoGoverns.length > 0 ? (
+      {(current !== null && assignedSiblings.length > 0) || alsoGoverns.length > 0 ? (
         <div className={styles.disclosure} data-tone="caution">
-          {current !== null && sharedRole.length > 0 && (
+          {current !== null && assignedSiblings.length > 0 && (
             <p className={styles.disclosureText}>
-              {boldList([useCase, ...sharedRole])} run on {current.modelName}. Picking a different
-              model here changes <strong>{useCase} only</strong>; {listUseCases(sharedRole)}{' '}
-              {agrees(sharedRole, 'keeps', 'keep')} {current.modelName}.
+              {boldList([useCase, ...assignedSiblings])} run on {current.modelName}. Picking a
+              different model here changes <strong>{useCase} only</strong>;{' '}
+              {listUseCases(assignedSiblings)} {agrees(assignedSiblings, 'keeps', 'keep')}{' '}
+              {current.modelName}.
             </p>
           )}
           {alsoGoverns.length > 0 && (
@@ -966,9 +980,18 @@ export function RouteEditor({
         </p>
       )}
 
+      {/* Done is what refuses, so its answer sits directly above it — beside
+          the acknowledgement it most often asks for, not at the top of the
+          editor. */}
+      {refusal !== '' && (
+        <p className={styles.fieldError} role="alert">
+          {refusal}
+        </p>
+      )}
+
       <div className={styles.editorFooter}>
         {/* Always enabled once something differs: this button IS the
-            validator's entry point, and the refusals above are how the editor
+            validator's entry point, and the refusal above is how the editor
             answers. The global Apply gate is held by `onUnstagedChange`, not
             by a disabled control. Focusing it reads the summary. */}
         {unstaged && (

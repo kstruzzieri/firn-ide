@@ -598,9 +598,49 @@ describe('RouteEditor', () => {
     );
   });
 
+  // `routedUseCases` is fallback-inclusive (a route whose chain reaches the
+  // model is listed too), but "run on" and "keep" are claims about assignment:
+  // the fork sentence reads the applied routes directly, like "used by".
+  it('names only the routes assigned to the shared model, not the ones that fall back to it', async () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+        { useCase: 'completion', role: 'coding-role' },
+      ],
+      models: [
+        model({ routedUseCases: ['chat', 'completion', 'summarize'] }),
+        model({ role: 'coding-role', modelName: 'gpt-5-codex', routedUseCases: ['completion'] }),
+        other,
+      ],
+    });
+    await openRoute('chat');
+
+    expect(screen.getByText(/run on/)).toHaveTextContent(
+      'chat and summarize run on gpt-5-mini. Picking a different model here changes chat only; summarize keeps gpt-5-mini.'
+    );
+  });
+
+  it('says nothing about a fork when every other route only falls back to the model', async () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        model({ routedUseCases: ['chat', 'summarize'] }),
+        model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
+      ],
+    });
+    await openRoute('chat');
+
+    expect(screen.queryByText(/run on/)).not.toBeInTheDocument();
+  });
+
   // The coupling surfaces BEFORE the editor opens: a neutral strip marker
-  // derived from the same `routedUseCases` the in-editor notice reads, so the
-  // two can never disagree.
+  // read from the fallback-inclusive `routedUseCases` ("also serves" is true
+  // of a fallback route); the in-editor fork notice names assigned routes
+  // only, and the two are never on screen together for one row.
   it('marks a strip whose model also serves other routes, naming them', () => {
     renderRouting({
       routes: [
@@ -1447,6 +1487,32 @@ describe('RouteEditor', () => {
     expect(staged.confirmUnknown).toBe(true);
     // The reducer owns the exact set; the editor supplies the acknowledgement.
     expect(staged.confirmUnknownUseCases).toBeUndefined();
+  });
+
+  // Done is what refuses, so the refusal answers beside it: after the Pending
+  // line, directly above the footer — not at the top of an editor whose
+  // acknowledgement sits forty rows down.
+  it('answers a refused Done directly above the footer', async () => {
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        model(),
+        model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await stage();
+
+    const refusal = screen.getByRole('alert');
+    expect(refusal).toHaveTextContent(/requirements are unknown/i);
+    expect(screen.getByTestId('editor-changes').nextElementSibling).toBe(refusal);
+    expect(refusal.nextElementSibling).toContainElement(
+      screen.getByRole('button', { name: 'Done' })
+    );
   });
 
   it('stages a capability and think-mode override, hiding Think until thinking is exposed', async () => {
