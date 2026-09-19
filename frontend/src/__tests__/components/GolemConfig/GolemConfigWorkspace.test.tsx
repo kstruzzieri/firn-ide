@@ -157,6 +157,9 @@ describe('GolemConfig stylesheet', () => {
   it('outlines capability pills in --palette-cyan and rules off the Defined models subgroup', () => {
     const text = css();
     expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--palette-cyan\)/);
+    // The editor's off-state ability chip keeps its own border: a global edit of
+    // the pill rule once recoloured it by accident (live gate, f2ae5674).
+    expect(text).toMatch(/\.abilityChipFace \{[^}]*border: 1px solid var\(--text-muted\)/);
     expect(text).toMatch(/\.subgroup \{[^}]*border-top: 1px solid var\(--surface-border-subtle\)/);
   });
 
