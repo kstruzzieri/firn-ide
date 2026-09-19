@@ -1794,19 +1794,24 @@ select.input {
  *
  * Everything a three-line card cut short, beside the card. Fixed-position and
  * placed from the card's rect; it is portaled to document.body because `.root`
- * is a query container (WebKit bug 284945, fixed ~Safari 18.2 — below Firn's
- * macOS 12 / Safari 17.6 floor) that becomes the fixed containing block and
- * clips it otherwise. It is HOVERABLE (WCAG 1.4.13): pointer events stay on,
- * and the owner keeps it open while the pointer is inside it. A long note
- * scrolls inside the cap rather than off the viewport; the strip's own note
- * line is the keyboard-reachable copy.
+ * is a query container that becomes the fixed containing block and clips it
+ * otherwise. Firn's macOS 12 floor ships Safari 17.6, which PREDATES the
+ * WebKit fix for bug 284945 (fixed in Safari Technology Preview 209; stable
+ * Safari 18.2 is still affected) — that is why the portal is kept. It is
+ * HOVERABLE (WCAG 1.4.13): pointer events stay on, and the owner keeps it
+ * open while the pointer is inside it. A long note scrolls inside the cap
+ * rather than off the viewport; the strip's own note line is the
+ * keyboard-reachable copy.
  */
 .cardPop {
   position: fixed;
-  /* Portaled to document.body, so it competes in the ROOT stacking context,
-   * not the band's — 1000 is the tier the repo's other body portal uses
-   * (BranchSwitcher.module.css's .popup); tokens.css has no z-index token. */
-  z-index: 1000;
+  /* Portaled to document.body, so it competes in the ROOT stacking context:
+   * 400 sits above the in-app chrome (Header 100, the picker/save popovers
+   * 30) and below the Toast layer (500) so an asynchronous alert (e.g. an
+   * LSP error) always stays visible and reachable over an open popup; native
+   * dialogs live in the top layer regardless. tokens.css has no z-index
+   * token. */
+  z-index: 400;
   width: 300px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 16px);

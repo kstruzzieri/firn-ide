@@ -680,9 +680,23 @@ describe('ModelBand stylesheet coverage', () => {
     expect(pop).toMatch(/position: fixed/);
     expect(pop).toMatch(/max-height: calc\(100vh - 16px\);\s*overflow: auto/);
     expect(pop).not.toMatch(/pointer-events: none/);
-    // Portaled to document.body (#263 final fix I-2): it competes in the root
-    // stacking context, not the band's, so it needs the body-portal tier.
-    expect(pop).toMatch(/z-index: 1000/);
+    // Portaled to document.body (#263 final fix I-2 / final2): it competes in
+    // the root stacking context, above the in-app chrome and below the Toast
+    // layer so an asynchronous alert always stays reachable over an open popup.
+    expect(pop).toMatch(/z-index: 400/);
+    // Cross-module guard: the popup must stay under the Toast layer, numerically
+    // — not just "some value below 500" pinned by hand, which would silently
+    // stop meaning anything the day either file's number moves.
+    const toastCss = fs.readFileSync(
+      path.resolve(__dirname, '../../../components/Toast/Toast.module.css'),
+      'utf8'
+    );
+    const toastRoot = toastCss.match(/^\.toast \{[^}]*\}/ms)?.[0] ?? '';
+    const cardPopZ = Number(pop.match(/z-index:\s*(\d+)/)?.[1]);
+    const toastZ = Number(toastRoot.match(/z-index:\s*(\d+)/)?.[1]);
+    expect(cardPopZ).toBeGreaterThan(0); // fails loudly if .cardPop's z-index vanishes
+    expect(toastZ).toBeGreaterThan(0); // fails loudly if .toast's z-index vanishes
+    expect(cardPopZ).toBeLessThan(toastZ); // named in the failure: e.g. "Received: 1000, Expected: < 500"
     // Only a card with a popup ellipsises: a blocked card and the declare card
     // have none, so their text has to wrap.
     for (const selector of ['.modelName', '.modelCardFacts'])
