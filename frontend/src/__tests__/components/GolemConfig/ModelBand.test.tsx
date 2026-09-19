@@ -275,18 +275,20 @@ describe('buildModelRows', () => {
   });
 
   it("orders a row's roles by the projection's own byte order, not UTF-16", () => {
-    // U+FF21 (fullwidth A) sorts BEFORE U+1F600 in UTF-8 bytes and AFTER it in
-    // UTF-16 code units, where the emoji's surrogate pair starts at D83D. Which
-    // note lands on the card rides on this, so it has to be compareString's
-    // order — the same the Go projection emits.
+    // Escapes on purpose: U+FF21 (FULLWIDTH LATIN CAPITAL LETTER A) is a
+    // homoglyph of a plain A and would be unreadable raw, and U+1F600 (GRINNING
+    // FACE) is a surrogate pair. U+FF21 sorts BEFORE U+1F600 in UTF-8 bytes
+    // (EF BC A1 < F0 9F 98 80) and AFTER it in UTF-16 code units, where the pair
+    // starts at D83D. Which note lands on the card rides on this, so it has to
+    // be compareString's order — the same the Go projection emits.
     const rows = buildModelRows(
       [
-        model({ role: 'x😀', modelName: 'gemma4:31b', description: 'Emoji role.' }),
-        model({ role: 'xＡ', modelName: 'gemma4:31b', description: 'Fullwidth role.' }),
+        model({ role: 'x\uD83D\uDE00', modelName: 'gemma4:31b', description: 'Emoji role.' }),
+        model({ role: 'x\uFF21', modelName: 'gemma4:31b', description: 'Fullwidth role.' }),
       ],
       'hosted'
     );
-    expect(rows[0].roles).toEqual(['xＡ', 'x😀']);
+    expect(rows[0].roles).toEqual(['x\uFF21', 'x\uD83D\uDE00']);
     expect(rows[0].descriptions.map((note) => note.description)).toEqual([
       'Fullwidth role.',
       'Emoji role.',
@@ -1122,13 +1124,72 @@ describe('ModelBand card popup timing', () => {
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
   });
 
-  it('closes when the grid scrolls the card out from under it', () => {
+  it('closes when the grid scrolls out from under a HOVERED card', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
-    act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
+    await user.hover(screen.getByRole('option', { name: /gemma4:31b/ }));
+    act(() => jest.advanceTimersByTime(200));
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
     // The grid is the bounded scroller: re-placing onto a clipped card's rect
     // would put the popup over the band head, so this one scroll closes it.
     fireEvent.scroll(screen.getByRole('listbox', { name: /Models/ }));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it("keeps a focused card's popup through the grid scroll that focus itself caused", () => {
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Focusing an off-screen card scrolls the grid to it natively (the roving
+    // focus relies on that), so this scroll arrives right behind the open and
+    // must not undo it. The window capture listener re-places it instead.
+    fireEvent.scroll(screen.getByRole('listbox', { name: /Models/ }));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
+
+  it('clears the pointer flag when a press is released off the card, so the next focus still opens', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({ modelName: 'gemma4:31b' }),
+        model({ role: 'other', modelName: 'qwen3.5:9b' }),
+      ],
+    });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    const other = screen.getByRole('option', { name: /qwen3.5:9b/ });
+    act(() => card.focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Pressing an ALREADY focused card fires no focus event to consume the
+    // flag, and releasing off the card fires no mouseup on it either (a mouse
+    // has no implicit pointer capture): the document-level release is the only
+    // thing that can clear it.
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: card },
+      { target: other },
+      { keys: '[/MouseLeft]' },
+      { target: document.body }, // off both cards, so no hover holds anything
+    ]);
+    act(() => card.blur());
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    act(() => card.focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // a stale flag would have suppressed this
+  });
+
+  it('does not open the popup for a completed touch tap', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    // A tap dispatches pointerdown > pointerup > mousedown > focus > mouseup >
+    // click (verified against user-event; a mouse press is pointerdown >
+    // mousedown > focus > pointerup > mouseup > click). The compatibility
+    // mousedown precedes focus in BOTH, which is why the flag hangs off it.
+    await user.pointer({ keys: '[TouchA]', target: card });
+    expect(card).toHaveFocus();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    act(() => jest.advanceTimersByTime(500));
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 

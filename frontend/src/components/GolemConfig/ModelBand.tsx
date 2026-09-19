@@ -151,10 +151,16 @@ interface PopupHold {
   /** The card that has focus. */
   focusKey: string | null;
   /**
-   * The card a pointer is currently pressing. The focus a click brings must NOT
+   * The card a press is on, set on MOUSEDOWN. The focus a click brings must NOT
    * open the popup — it would land over the strip the click was aiming at — while
    * keyboard and programmatic focus still open at once. `:focus-visible` cannot
    * tell them apart here: jsdom aliases it to `:focus`.
+   *
+   * Mousedown, not pointerdown, because the compatibility mouse event is the one
+   * that precedes focus in BOTH modalities: a mouse press is pointerdown >
+   * mousedown > focus, and a touch tap is pointerdown > pointerup > mousedown >
+   * focus. A cancelled touch (a scroll, a drag away) fires no mouse events at
+   * all, so there is nothing to clear.
    */
   pointerKey: string | null;
   /** A pending hover-open, for `pendingKey`. */
@@ -369,6 +375,7 @@ export function ModelBand({
     const h = hold.current;
     if (h.hoverKey !== null && !shown.has(h.hoverKey)) h.hoverKey = null;
     if (h.focusKey !== null && !shown.has(h.focusKey)) h.focusKey = null;
+    if (h.pointerKey !== null && !shown.has(h.pointerKey)) h.pointerKey = null;
     if (h.pendingKey !== null && !shown.has(h.pendingKey)) cancelOpen();
   };
   /**
@@ -729,7 +736,16 @@ export function ModelBand({
         // of moving the popup with it, so re-placing onto the card's rect would
         // put the popup over the band head. One narrowing of "scroll re-places":
         // an ancestor or page scroll still does.
-        onScroll={closePopup}
+        //
+        // Focus is the exception. Focusing an off-screen card scrolls the grid to
+        // it natively — the roving focus relies on that — so that scroll arrives
+        // right behind the open it caused and must not undo it; the window
+        // capture listener re-places it instead. A pointer-opened popup has no
+        // such excuse: the card under it has moved away from the pointer.
+        onScroll={() => {
+          if (popup !== null && document.activeElement === popup.anchor) return;
+          closePopup();
+        }}
         onBlur={(event) => {
           // Card-to-card moves stay inside the grid; only leaving it entirely
           // ends the preview.
@@ -757,7 +773,14 @@ export function ModelBand({
                 setActive(index);
                 choose(row.model);
               }}
-              onMouseEnter={(event) => {
+              // A hover-open needs a real hover, which only a mouse or a pen
+              // has. A touch tap dispatches its COMPATIBILITY mouseenter after
+              // pointerdown (pointerenter > pointerdown > pointerleave >
+              // mouseenter > mousedown > focus), so a mouse-keyed hover would
+              // schedule an open the press cannot cancel and pin a popup over
+              // the strip the tap was aiming at.
+              onPointerEnter={(event) => {
+                if (event.pointerType === 'touch') return;
                 const anchor = event.currentTarget; // captured: React clears currentTarget after dispatch
                 hold.current.hoverKey = key;
                 if (popup?.key === key) {
@@ -770,25 +793,31 @@ export function ModelBand({
                   if (hold.current.pendingKey === key) open(key, anchor, cardInfo(row));
                 }, 160);
               }}
-              onMouseLeave={() => {
+              onPointerLeave={() => {
                 if (hold.current.hoverKey === key) hold.current.hoverKey = null;
                 if (hold.current.pendingKey === key) cancelOpen();
                 settle();
               }}
               onPointerDown={() => {
-                hold.current.pointerKey = key;
                 // A press is a choice, not a request to read: whatever the
                 // pointer started 160 ms ago on the way in is dropped, and the
                 // open popup (if any) is taken away by the document listener.
                 cancelOpen();
               }}
-              // A press on an ALREADY focused card fires no focus event, so the
-              // flag has to be cleared when the press ends either way.
-              onPointerUp={() => {
-                hold.current.pointerKey = null;
-              }}
-              onPointerCancel={() => {
-                hold.current.pointerKey = null;
+              onMouseDown={() => {
+                hold.current.pointerKey = key;
+                // A press on an ALREADY focused card fires no focus event to
+                // consume the flag, and a release off the card fires no mouseup
+                // ON it (a mouse has no implicit pointer capture), so the
+                // release is heard at the document. One shot, capture, and
+                // independent of whether any popup is open.
+                document.addEventListener(
+                  'mouseup',
+                  () => {
+                    if (hold.current.pointerKey === key) hold.current.pointerKey = null;
+                  },
+                  { once: true, capture: true }
+                );
               }}
               onFocus={(event) => {
                 hold.current.focusKey = key;

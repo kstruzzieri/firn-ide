@@ -2058,21 +2058,24 @@ describe('RouteEditor', () => {
     ).toBeInTheDocument();
     await userEvent.keyboard('{Home}');
     expect(strip()).toHaveAttribute('data-state', 'assigned');
-    // Exact, not a substring: a readout that GAINED a cap would still contain
-    // this line, and "chat stream" is a prefix of every wider reading.
-    expect(
-      within(strip()).getByText("gpt-5-mini's card lists: chat stream tool_call")
-    ).toBeInTheDocument();
+    // Anchored, and read off the readout element itself: a substring matcher
+    // passes for a readout that GAINED a cap, and "chat stream" is a prefix of
+    // every wider reading.
+    expect(within(strip()).getByTestId('card-readout')).toHaveTextContent(
+      /^gpt-5-mini's card lists: chat stream tool_call$/
+    );
     await userEvent.keyboard('{Escape}');
-    expect(
-      within(strip()).getByText("gpt-5-mini's card lists: chat stream tool_call")
-    ).toBeInTheDocument();
+    expect(within(strip()).getByTestId('card-readout')).toHaveTextContent(
+      /^gpt-5-mini's card lists: chat stream tool_call$/
+    );
     // The card is the one affordance for undoing a hand-widened declaration.
     await pickModel('gpt-5-mini');
     expect(summary()).toBe('Declares: − tool_call');
     // The readout narrows with the declaration: tool_call is gone from the
     // card, not just from the exposure checklist.
-    expect(within(strip()).getByText("gpt-5-mini's card lists: chat stream")).toBeInTheDocument();
+    expect(within(strip()).getByTestId('card-readout')).toHaveTextContent(
+      /^gpt-5-mini's card lists: chat stream$/
+    );
   });
 
   it('names the Think an unassigned row would get back with its model', async () => {
