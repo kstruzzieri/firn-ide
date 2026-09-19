@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   ModelBand,
@@ -107,12 +107,19 @@ describe('ModelBand compact cards', () => {
     expect(within(card).getByText('gpt-5-mini')).toBeVisible();
     expect(within(card).getByText('dense')).toBeVisible();
     // The metadata row after the badge, joined per the mockup — the context
-    // human-scale, with the exact count on hover.
-    const facts = within(card).getByText('30B-A3B · 256K ctx');
-    expect(facts).toBeVisible();
-    expect(facts).toHaveAttribute('title', '262144 tokens');
+    // human-scale. NO `title`: the popup this card opens on the very same hover
+    // carries the exact count, and two tooltips on one target is one too many.
+    expect(within(card).getByText('30B-A3B · 256K ctx')).toBeVisible();
+    expect(card.querySelector('[title]')).toBeNull();
     // Even the assigned card stays compact.
     expect(within(card).queryByText('stream')).not.toBeInTheDocument();
+  });
+
+  it('keeps the exact count on a blocked card, which has no popup to carry it', async () => {
+    renderBand({ models: [model(), { ...embedModel, contextWindow: 262144 }] });
+    await userEvent.click(screen.getByRole('button', { name: /show it/ }));
+    const blocked = cardNamed('nomic-embed');
+    expect(within(blocked).getByText('256K ctx')).toHaveAttribute('title', '262144 tokens');
   });
 
   it('formats the detail readout context exactly like the card', () => {
@@ -264,6 +271,25 @@ describe('buildModelRows', () => {
     expect(rows[0].descriptions).toEqual([
       { role: 'agent', description: 'Agent / tool-use.' },
       { role: 'general', description: 'Dense reasoning.' },
+    ]);
+  });
+
+  it("orders a row's roles by the projection's own byte order, not UTF-16", () => {
+    // U+FF21 (fullwidth A) sorts BEFORE U+1F600 in UTF-8 bytes and AFTER it in
+    // UTF-16 code units, where the emoji's surrogate pair starts at D83D. Which
+    // note lands on the card rides on this, so it has to be compareString's
+    // order — the same the Go projection emits.
+    const rows = buildModelRows(
+      [
+        model({ role: 'x😀', modelName: 'gemma4:31b', description: 'Emoji role.' }),
+        model({ role: 'xＡ', modelName: 'gemma4:31b', description: 'Fullwidth role.' }),
+      ],
+      'hosted'
+    );
+    expect(rows[0].roles).toEqual(['xＡ', 'x😀']);
+    expect(rows[0].descriptions.map((note) => note.description)).toEqual([
+      'Fullwidth role.',
+      'Emoji role.',
     ]);
   });
 });
@@ -652,6 +678,15 @@ describe('ModelBand stylesheet coverage', () => {
     expect(pop).toMatch(/position: fixed/);
     expect(pop).toMatch(/max-height: calc\(100vh - 16px\);\s*overflow: auto/);
     expect(pop).not.toMatch(/pointer-events: none/);
+    // Only a card with a popup ellipsises: a blocked card and the declare card
+    // have none, so their text has to wrap.
+    for (const selector of ['.modelName', '.modelCardFacts'])
+      expect(css).toContain(
+        `.modelCard:not(.modelCardBlocked):not(.modelCardDeclare) ${selector} {`
+      );
+    // The note's own margin reset must not out-order the sibling spacing: equal
+    // specificity, so the later rule wins and the notes need the 12px.
+    expect(css.indexOf('.detailBody > * + * {')).toBeGreaterThan(css.indexOf('.detailNote {'));
     // Retired with the facts half.
     for (const gone of [
       '.capabilityGrid',
@@ -664,6 +699,14 @@ describe('ModelBand stylesheet coverage', () => {
     ])
       expect(css).not.toContain(gone);
     expect(css).not.toMatch(/@container golem-config \(max-width: 720px\)/);
+    // Kept from wave 6: the strip's capability fieldset is a plain block, so a
+    // legend WebKit keeps in the border area cannot swallow the spacing, and the
+    // flex `.column` wrapper that used to space the halves is gone.
+    const fieldset = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
+    expect(fieldset).toMatch(/display: block/);
+    expect(fieldset).toMatch(/border: 0/);
+    expect(css).not.toMatch(/^\.column \{/m);
+    expect(css).not.toMatch(/\.detail \.capabilities > legend \{/);
     // The strip body spaces its blocks itself, whichever host they sit in.
     expect(css.match(/^\.detailBody > \* \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
       /margin-top: 12px/
@@ -680,7 +723,9 @@ describe('ModelBand stylesheet coverage', () => {
     const back = css.match(/^\.manual > \.button \{[^}]*\}/ms)?.[0] ?? '';
     expect(back).toMatch(/display: flex/);
     expect(back).toMatch(/width: 100%/);
-    expect(css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '').toMatch(/min-width: 0/);
+    const chrome = css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '';
+    expect(chrome).toMatch(/min-width: 0/);
+    expect(chrome).not.toMatch(/display|gap/); // the grouped chrome rule lays nothing out
   });
 
   // An unchecked box was --surface-base ringed by --surface-border: two dark
@@ -793,6 +838,45 @@ describe('ModelBand detail strip', () => {
     expect(within(detail).getByText('Dense reasoning.')).toBeInTheDocument();
     expect(within(detail).queryByText(/declares/i)).toBeNull();
     expect(detail.querySelector('[data-asserted], [aria-describedby]')).toBeNull();
+  });
+
+  it("prints the assigned model's note in the strip too, every role named when there are several", () => {
+    // The card ellipsises it and the popup needs a pointer: the strip is where a
+    // keyboard reaches the full text, in EITHER state.
+    renderBand({
+      models: [
+        model({ role: 'general', modelName: 'gemma4:31b', description: 'Dense reasoning.' }),
+        model({ role: 'agent', modelName: 'gemma4:31b', description: 'Agent / tool-use.' }),
+      ],
+      selected: model({
+        role: 'general',
+        modelName: 'gemma4:31b',
+        description: 'Dense reasoning.',
+      }),
+    });
+    const detail = strip();
+    expect(detail).toHaveAttribute('data-state', 'assigned');
+    expect(within(detail).getByText('Dense reasoning.')).toBeVisible();
+    expect(within(detail).getByText('Agent / tool-use.')).toBeVisible();
+    // Several notes, so each says whose it is; the roles are in the row's order.
+    expect([...detail.querySelectorAll('.detailNoteRole')].map((role) => role.textContent)).toEqual(
+      ['agent', 'general']
+    );
+  });
+
+  it('prints an assigned model with no row of its own from the model itself', () => {
+    // A filter can hide the assigned card, and a reopened route can carry a
+    // model this provider no longer lists: its note still belongs in the strip.
+    renderBand({
+      models: [model({ modelName: 'gpt-5-mini' })],
+      selected: model({
+        role: 'gone-role',
+        modelName: 'retired-7b',
+        description: 'Kept for one route.',
+      }),
+    });
+    expect(within(strip()).getByText('Kept for one route.')).toBeVisible();
+    expect(strip().querySelector('.detailNoteRole')).toBeNull(); // one note names no role
   });
 
   it('returns the preview to the selection on Escape', async () => {
@@ -932,7 +1016,11 @@ describe('ModelBand card popup timing', () => {
     expect(pop).toHaveTextContent('31B parameters · 256000-token context');
     expect(pop).toHaveTextContent('chat stream');
     expect(pop).toHaveTextContent('Agent / tool-use.');
+    // The portal moved the node out of the band; an id reference crosses that
+    // boundary, so the card's description still resolves to it.
     expect(card).toHaveAttribute('aria-describedby', 'band-card-pop');
+    expect(document.getElementById('band-card-pop')).toBe(pop);
+    expect(card.closest('.band')).not.toContainElement(pop);
     await user.unhover(card);
     await user.hover(pop);
     act(() => jest.advanceTimersByTime(200));
@@ -988,7 +1076,59 @@ describe('ModelBand card popup timing', () => {
     });
     act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Filter models'), 'qwen');
+    // Keyboard only: a pointerdown anywhere outside dismisses the popup on its
+    // own, and what this pins is the card leaving the shown set.
+    act(() => screen.getByLabelText('Filter models').focus());
+    await user.keyboard('qwen');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('is dismissed by a pointerdown outside it, and a pointerdown inside it is not a dismissal', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    // A pointerdown on the popup itself is a scrollbar drag or a text
+    // selection on a long note, never a dismissal.
+    await user.pointer({ keys: '[MouseLeft>]', target: screen.getByRole('tooltip') });
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    await user.pointer({ keys: '[/MouseLeft]' });
+
+    // The popup is opaque and covers the cards under it: a press anywhere else
+    // takes it away before the click lands.
+    await user.pointer({ keys: '[MouseLeft>]', target: card });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await user.pointer({ keys: '[/MouseLeft]' });
+    // Still hovered, and it stays gone: only a fresh entry or focus reopens it.
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('does not open the popup for the focus a click brings, but still does for the keyboard', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const { onSelect } = renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+
+    await user.click(card);
+    expect(onSelect).toHaveBeenCalled(); // the click still chooses the model
+    expect(card).toHaveFocus();
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    // Programmatic or keyboard focus is not a pointer: it opens at once.
+    act(() => card.blur());
+    act(() => card.focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
+
+  it('closes when the grid scrolls the card out from under it', () => {
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // The grid is the bounded scroller: re-placing onto a clipped card's rect
+    // would put the popup over the band head, so this one scroll closes it.
+    fireEvent.scroll(screen.getByRole('listbox', { name: /Models/ }));
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
@@ -1152,6 +1292,9 @@ describe('ModelBand card popup timing', () => {
     const native = (Object.keys(size) as (keyof typeof size)[]).map(
       (key) => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)!] as const
     );
+    const nativeViewport = (Object.keys(viewport) as (keyof typeof viewport)[]).map(
+      (key) => [key, Object.getOwnPropertyDescriptor(window, key)!] as const
+    );
 
     beforeEach(() => {
       // jsdom implements no layout: every offset reads 0, and a 0-height popup
@@ -1161,13 +1304,17 @@ describe('ModelBand card popup timing', () => {
           ...descriptor,
           get: () => size[key],
         });
-      for (const [key, value] of Object.entries(viewport))
-        Object.defineProperty(window, key, { configurable: true, value });
+      for (const [key, descriptor] of nativeViewport)
+        Object.defineProperty(window, key, { ...descriptor, value: viewport[key] });
     });
 
     afterEach(() => {
       for (const [key, descriptor] of native)
         Object.defineProperty(HTMLElement.prototype, key, descriptor);
+      // The viewport is global too: 1024x768 left behind would silently seed
+      // every later suite in this worker.
+      for (const [key, descriptor] of nativeViewport)
+        Object.defineProperty(window, key, descriptor);
     });
 
     /** The anchor's box, as jsdom will never compute it. */
@@ -1223,8 +1370,12 @@ describe('ModelBand card popup timing', () => {
       expect(screen.getByRole('tooltip').style.top).toBe('106px');
 
       rectOf(card, 20, 140); // the revealed card stretches the row it shares
-      await user.click(screen.getByRole('button', { name: /show it/ }));
-      // The click blurred the card, which only SCHEDULES the 120 ms close.
+      // Taken by the keyboard: a pointerdown would dismiss the popup, and this
+      // pins the re-placement. Moving focus to the line only SCHEDULES the
+      // 120 ms close, so the popup is still open at the assertion.
+      const line = screen.getByRole('button', { name: /show it/ });
+      act(() => line.focus());
+      await user.keyboard('{Enter}');
       const pop = screen.getByRole('tooltip');
       expect(pop).toBeInTheDocument();
       expect(pop.style.top).toBe('146px');

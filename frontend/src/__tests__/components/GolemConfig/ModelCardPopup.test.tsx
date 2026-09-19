@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ModelCardPopup, type CardInfo } from '../../../components/GolemConfig/ModelCardPopup';
 
@@ -22,10 +22,8 @@ const native = (Object.keys(OFFSETS) as (keyof typeof OFFSETS)[]).map(
 
 const anchors: HTMLElement[] = [];
 
-/** An anchor outside React's tree, with the box jsdom will never compute. */
-const anchorAt = (left: number, top: number, bottom: number): HTMLElement => {
-  const node = document.createElement('div');
-  document.body.append(node);
+/** The box jsdom will never compute. */
+const mockRect = (node: HTMLElement, left: number, top: number, bottom: number) => {
   node.getBoundingClientRect = () =>
     ({
       x: left,
@@ -38,20 +36,35 @@ const anchorAt = (left: number, top: number, bottom: number): HTMLElement => {
       height: bottom - top,
       toJSON: () => ({}),
     }) as DOMRect;
-  anchors.push(node);
+};
+
+/** An anchor outside React's tree, optionally inside its own scroller. */
+const anchorAt = (left: number, top: number, bottom: number, host?: HTMLElement): HTMLElement => {
+  const node = document.createElement('div');
+  (host ?? document.body).append(node);
+  mockRect(node, left, top, bottom);
+  anchors.push(host ?? node);
   return node;
 };
+
+const VIEWPORT = { innerWidth: 1024, innerHeight: 768 } as const;
+const nativeViewport = (Object.keys(VIEWPORT) as (keyof typeof VIEWPORT)[]).map(
+  (key) => [key, Object.getOwnPropertyDescriptor(window, key)!] as const
+);
 
 beforeEach(() => {
   for (const [key, descriptor] of native)
     Object.defineProperty(HTMLElement.prototype, key, { ...descriptor, get: () => OFFSETS[key] });
-  for (const [key, value] of Object.entries({ innerWidth: 1024, innerHeight: 768 }))
-    Object.defineProperty(window, key, { configurable: true, value });
+  for (const [key, descriptor] of nativeViewport)
+    Object.defineProperty(window, key, { ...descriptor, value: VIEWPORT[key] });
 });
 
 afterEach(() => {
   for (const [key, descriptor] of native)
     Object.defineProperty(HTMLElement.prototype, key, descriptor);
+  // The viewport is global too: 1024x768 left behind would silently seed every
+  // later suite in this worker.
+  for (const [key, descriptor] of nativeViewport) Object.defineProperty(window, key, descriptor);
   for (const node of anchors.splice(0)) node.remove();
 });
 
@@ -77,6 +90,17 @@ describe('ModelCardPopup', () => {
     const { container } = renderPopup({ open: false });
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('hangs off the body, so no ancestor can clip it', () => {
+    // `.root` is a query container with `overflow: auto`: WebKit before 18.2
+    // (bug 284945) treats it as the containing block for a fixed child, and
+    // Firn's macOS floor ships Safari 17.6. The portal is what keeps the popup
+    // out of that subtree — and out of the grid's own scroller everywhere else.
+    const { container } = renderPopup();
+    const pop = screen.getByRole('tooltip');
+    expect(container).not.toContainElement(pop);
+    expect(pop.parentElement).toBe(document.body);
   });
 
   it('reads every row of the card out in full', () => {
@@ -136,22 +160,38 @@ describe('ModelCardPopup', () => {
     expect(screen.getByRole('tooltip').style.left).toBe('40px');
 
     // The grid moved the anchor: same node, same info, new key.
-    anchor.getBoundingClientRect = () =>
-      ({
-        x: 300,
-        y: 240,
-        left: 300,
-        top: 240,
-        right: 490,
-        bottom: 300,
-        width: 190,
-        height: 60,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    mockRect(anchor, 300, 240, 300);
     rerender(<ModelCardPopup {...props} layoutKey="two" />);
     const pop = screen.getByRole('tooltip');
     expect(pop.style.left).toBe('300px');
     expect(pop.style.top).toBe('306px');
+  });
+
+  it('re-places when the window resizes', () => {
+    const anchor = anchorAt(40, 40, 100);
+    renderPopup({ anchor });
+    expect(screen.getByRole('tooltip').style.left).toBe('40px');
+
+    mockRect(anchor, 300, 240, 300);
+    fireEvent(window, new Event('resize'));
+    const pop = screen.getByRole('tooltip');
+    expect(pop.style.left).toBe('300px');
+    expect(pop.style.top).toBe('306px');
+  });
+
+  it('re-places on an ancestor scroll that does not bubble', () => {
+    // A scroller's own `scroll` event does not bubble, so only a CAPTURE
+    // listener on window hears it — this is what the `true` third argument
+    // buys, and a bubble-phase listener would leave the popup behind.
+    const scroller = document.createElement('div');
+    document.body.append(scroller);
+    const anchor = anchorAt(40, 40, 100, scroller);
+    renderPopup({ anchor });
+    expect(screen.getByRole('tooltip').style.top).toBe('106px');
+
+    mockRect(anchor, 40, 180, 240);
+    fireEvent(scroller, new Event('scroll', { bubbles: false }));
+    expect(screen.getByRole('tooltip').style.top).toBe('246px');
   });
 
   it('tells its owner when the pointer arrives and leaves, so it can hold itself open', async () => {

@@ -2,9 +2,11 @@
  * The inline model band (#263 spec §4.4/§4.7, picker revamp v2 Treatment 1).
  *
  * The editor row GROWS instead of overlaying: provider select, filter field and
- * a card grid, then one master-detail strip. Nothing floats, nothing clips,
- * nothing needs a portal — the models, the declare path and the hidden-by-floor
- * set are all permanently visible surfaces.
+ * a card grid, then one master-detail strip. The models, the declare path and
+ * the hidden-by-floor set are all permanently visible surfaces — nothing about
+ * CHOOSING a model hides behind a layer. The one floating thing is a card's
+ * detail popup, which portals out so no ancestor clips it and is dismissed by
+ * Escape, by a pointerdown outside it, or by the pointer simply leaving.
  *
  * Cards are uniformly COMPACT and never expand: a name, then the numbers or the
  * abilities, then the note or the abilities — two or three lines, each ONE line
@@ -28,6 +30,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   CAPABILITY_NAMES,
   MODEL_TYPES,
+  compareString,
   type CapabilityName,
   type ModelProjection,
   type ModelType,
@@ -120,7 +123,9 @@ export function buildModelRows(models: readonly ModelProjection[], provider: str
     models.filter((model) => model.provider === provider).map((model) => [model.role, model])
   );
   for (const row of byKey.values()) {
-    row.roles.sort();
+    // The projection's own order (UTF-8 bytes), not UTF-16: which note the card
+    // shows and which role heads the strip both ride on it.
+    row.roles.sort(compareString);
     row.descriptions = row.roles.flatMap((role) => {
       const description = byRole.get(role)?.description;
       return description === undefined ? [] : [{ role, description }];
@@ -133,9 +138,10 @@ export function buildModelRows(models: readonly ModelProjection[], provider: str
 }
 
 /**
- * Why the card popup is open, held by up to three independent facts at once.
- * Every one names the CARD it belongs to, so a hold can neither outlive its
- * card nor be inherited by the card React mounts in its place.
+ * Why the card popup is open, held by up to three independent facts at once,
+ * plus the pointer modality that decides whether a focus opens it at all. Every
+ * one names the CARD it belongs to, so a hold can neither outlive its card nor
+ * be inherited by the card React mounts in its place.
  */
 interface PopupHold {
   /** The card the pointer is on. */
@@ -144,6 +150,13 @@ interface PopupHold {
   popHovered: boolean;
   /** The card that has focus. */
   focusKey: string | null;
+  /**
+   * The card a pointer is currently pressing. The focus a click brings must NOT
+   * open the popup — it would land over the strip the click was aiming at — while
+   * keyboard and programmatic focus still open at once. `:focus-visible` cannot
+   * tell them apart here: jsdom aliases it to `:focus`.
+   */
+  pointerKey: string | null;
   /** A pending hover-open, for `pendingKey`. */
   openTimer: number;
   pendingKey: string | null;
@@ -318,6 +331,7 @@ export function ModelBand({
     hoverKey: null,
     popHovered: false,
     focusKey: null,
+    pointerKey: null,
     openTimer: 0,
     pendingKey: null,
     closeTimer: 0,
@@ -325,8 +339,6 @@ export function ModelBand({
   const [popup, setPopup] = useState<{ key: string; anchor: HTMLElement; info: CardInfo } | null>(
     null
   );
-  const popupRef = useRef(popup);
-  popupRef.current = popup; // read inside timers
 
   const cancelOpen = () => {
     clearTimeout(hold.current.openTimer);
@@ -359,18 +371,22 @@ export function ModelBand({
     if (h.focusKey !== null && !shown.has(h.focusKey)) h.focusKey = null;
     if (h.pendingKey !== null && !shown.has(h.pendingKey)) cancelOpen();
   };
-  /** Closes 120 ms later unless the OPEN card is still hovered or REALLY focused, or the popup is hovered. */
+  /**
+   * Closes 120 ms later unless the OPEN card is still hovered or REALLY focused,
+   * or the popup is hovered. The updater reads the popup React holds now, not a
+   * copy this render captured — the timer may outlive several renders.
+   */
   const settle = () => {
     clearTimeout(hold.current.closeTimer);
     hold.current.closeTimer = window.setTimeout(() => {
-      const h = hold.current;
-      const open = popupRef.current;
-      if (open === null) return;
-      // A focus hold counts only while the document agrees: a removed card kept
-      // its key without a blur, and its replacement must not inherit the hold.
-      const focused = h.focusKey === open.key && document.activeElement === open.anchor;
-      if (h.hoverKey === open.key || focused || h.popHovered) return;
-      setPopup(null);
+      setPopup((current) => {
+        if (current === null) return current;
+        const h = hold.current;
+        // A focus hold counts only while the document agrees: a removed card kept
+        // its key without a blur, and its replacement must not inherit the hold.
+        const focused = h.focusKey === current.key && document.activeElement === current.anchor;
+        return h.hoverKey === current.key || focused || h.popHovered ? current : null;
+      });
     }, 120);
   };
   /** Opens (or replaces) the popup for one card; a pending hover-open for any card is dropped. */
@@ -389,29 +405,45 @@ export function ModelBand({
   useEffect(() => {
     const shown = new Set(matches.map((row) => rowKey(row.model)));
     dropHoldsNotIn(shown); // also cancels a PENDING open whose card just left
-    if (popupRef.current !== null && !shown.has(popupRef.current.key)) closePopup();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- matches is derived from the same inputs as shownKey
+    if (popup !== null && !shown.has(popup.key)) closePopup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shownKey is derived FROM matches, and the popup only ever leaves with a card, so the string alone is the honest trigger
   }, [shownKey]);
   // Belt and braces for anything else that takes the anchor out of the
   // document: React never observes `isConnected`, so it has to be read on every
   // commit. It cannot loop — the close renders once more with no popup.
   useEffect(() => {
-    if (popupRef.current !== null && !popupRef.current.anchor.isConnected) {
+    if (popup !== null && !popup.anchor.isConnected) {
       dropHoldsNotIn(new Set(matches.map((row) => rowKey(row.model))));
       closePopup();
     }
   });
-  // Escape closes the popup wherever focus is, including outside the band —
-  // hovering a card takes no focus, so the band's own handler never hears it.
+  /*
+   * Two things dismiss an open popup from anywhere.
+   *
+   * Escape, wherever focus is: hovering a card takes no focus, so the band's own
+   * handler would never hear it. And a pointerdown OUTSIDE the popup — it is
+   * opaque and sits over the cards below it (or over the strip), so a press
+   * heading for something underneath has to take it away first, before the click
+   * lands on it and is swallowed. A pointerdown INSIDE it is a scrollbar drag or
+   * a text selection on a long note, and never a dismissal.
+   */
   useEffect(() => {
     if (popup === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closePopup();
     };
+    const onPointerDown = (event: PointerEvent) => {
+      const node = document.getElementById(`${id}-card-pop`);
+      if (node === null || !node.contains(event.target as Node)) closePopup();
+    };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- closePopup only touches refs and setPopup; listing it would re-register the listener every render
-  }, [popup]);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closePopup only touches the hold ref and setPopup; listing it would re-register both listeners every render
+  }, [popup, id]);
   // A pending timer would fire into an unmounted tree.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- clearTimers only touches the hold ref, whose identity never changes
   useEffect(() => clearTimers, []);
@@ -528,6 +560,24 @@ export function ModelBand({
   const detail = previewed?.model ?? selected;
   const detailFacts = detail === null ? '' : factsLine(detail);
   const previewUsedBy = previewed === undefined ? [] : usedByOf(routes, previewed.roles);
+  /**
+   * The notes of whatever the strip is reading out. The card ellipsises the
+   * first and the popup needs a pointer, so this is where a keyboard reaches
+   * them all — in EITHER state, not only while previewing.
+   *
+   * For the selection that means its ROW, found by identity and independent of
+   * the filter (a hidden card's model is still assigned). A selection with no row
+   * on this provider at all — a reopened route naming a model the document no
+   * longer lists — falls back to the model's own note.
+   */
+  const detailNotes =
+    previewed?.descriptions ??
+    (detail === null
+      ? []
+      : (judged.find((row) => sameModel(detail, row.model))?.descriptions ??
+        (detail.description === undefined
+          ? []
+          : [{ role: detail.role, description: detail.description }])));
   const detailState =
     manual !== null
       ? 'declaring'
@@ -615,10 +665,11 @@ export function ModelBand({
   return (
     <div
       className={styles.band}
-      // Capture, so the popup is dismissed BEFORE the grid's own Escape branch
-      // returns the preview to the selection: the topmost thing goes first, and
-      // one key can honestly do both. Focus outside the band is the document
-      // listener's case.
+      // Capture only REORDERS: both handlers run in either phase, so one Escape
+      // dismisses the popup AND returns the preview to the selection — by
+      // design, topmost first. The same handler sees Escape from the filter, the
+      // selects and the declare form, where closePopup() is a no-op. Focus
+      // outside the band entirely is the document listener's case.
       onKeyDownCapture={(event) => {
         if (event.key === 'Escape') closePopup();
       }}
@@ -674,6 +725,11 @@ export function ModelBand({
         aria-label={`Models for ${useCase}`}
         className={styles.modelGrid}
         onKeyDown={onGridKeyDown}
+        // The grid is the bounded scroller: its scroll CLIPS the anchor instead
+        // of moving the popup with it, so re-placing onto the card's rect would
+        // put the popup over the band head. One narrowing of "scroll re-places":
+        // an ancestor or page scroll still does.
+        onScroll={closePopup}
         onBlur={(event) => {
           // Card-to-card moves stay inside the grid; only leaving it entirely
           // ends the preview.
@@ -704,7 +760,7 @@ export function ModelBand({
               onMouseEnter={(event) => {
                 const anchor = event.currentTarget; // captured: React clears currentTarget after dispatch
                 hold.current.hoverKey = key;
-                if (popupRef.current?.key === key) {
+                if (popup?.key === key) {
                   clearTimeout(hold.current.closeTimer); // re-entry: keep it
                   return;
                 }
@@ -719,9 +775,26 @@ export function ModelBand({
                 if (hold.current.pendingKey === key) cancelOpen();
                 settle();
               }}
+              onPointerDown={() => {
+                hold.current.pointerKey = key;
+                // A press is a choice, not a request to read: whatever the
+                // pointer started 160 ms ago on the way in is dropped, and the
+                // open popup (if any) is taken away by the document listener.
+                cancelOpen();
+              }}
+              // A press on an ALREADY focused card fires no focus event, so the
+              // flag has to be cleared when the press ends either way.
+              onPointerUp={() => {
+                hold.current.pointerKey = null;
+              }}
+              onPointerCancel={() => {
+                hold.current.pointerKey = null;
+              }}
               onFocus={(event) => {
                 hold.current.focusKey = key;
-                open(key, event.currentTarget, cardInfo(row));
+                const byPointer = hold.current.pointerKey === key;
+                hold.current.pointerKey = null;
+                if (!byPointer) open(key, event.currentTarget, cardInfo(row));
               }}
               onBlur={() => {
                 if (hold.current.focusKey === key) hold.current.focusKey = null;
@@ -743,9 +816,7 @@ export function ModelBand({
                 {facts === '' ? (
                   <span className={styles.modelCardAbilities}>{abilities}</span>
                 ) : (
-                  <span className={styles.modelCardFacts} title={contextTitle(row.model)}>
-                    {facts}
-                  </span>
+                  <span className={styles.modelCardFacts}>{facts}</span>
                 )}
               </span>
               {note !== undefined ? (
@@ -922,18 +993,18 @@ export function ModelBand({
                   <span className={styles.detailCard}>
                     {`${detail.modelName}'s card lists: ${abilitiesLine(detail.capabilityFacts.caps)}`}
                   </span>
-                  {/* The note in full, where a keyboard reaches it: the card
-                      ellipsises it and the popup needs a pointer. */}
-                  {previewed.descriptions.map((note) => (
-                    <p key={note.role} className={styles.detailNote}>
-                      {previewed.descriptions.length > 1 && (
-                        <span className={styles.detailNoteRole}>{note.role}</span>
-                      )}
-                      {note.description}
-                    </p>
-                  ))}
                 </>
               )}
+
+              {/* The note in full, whichever state the body is in. */}
+              {detailNotes.map((note) => (
+                <p key={note.role} className={styles.detailNote}>
+                  {detailNotes.length > 1 && (
+                    <span className={styles.detailNoteRole}>{note.role}</span>
+                  )}
+                  {note.description}
+                </p>
+              ))}
             </div>
           </>
         )}

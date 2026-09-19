@@ -1,11 +1,19 @@
 /**
- * Everything a card cut short, in full, beside the card: fixed-position and
- * placed from the card's rect so the grid's own scroll region cannot clip it —
- * no portal, consistent with the band's "nothing floats" rule. Hoverable
- * (WCAG 1.4.13): the owner keeps it open while the pointer is on it. The
- * strip's note line is the keyboard-reachable copy of the long text.
+ * Everything a card cut short, in full, beside the card: fixed-position, placed
+ * from the card's rect, and PORTALED to the body so no ancestor can clip it —
+ * the git BranchSwitcher's pattern, the one the spec names for this. Both halves
+ * are load-bearing: the grid is a bounded scroller, and `.root` is a query
+ * container with `overflow: auto`, which WebKit before 18.2 treats as the
+ * containing block for a fixed descendant (bug 284945). Firn's macOS floor still
+ * ships Safari 17.6, so left inside that subtree the popup would be placed
+ * against the workspace and clipped by it. Every token it reads is `:root`-scoped,
+ * so the portal costs it nothing.
+ *
+ * Hoverable (WCAG 1.4.13): the owner keeps it open while the pointer is on it.
+ * The strip's note line is the keyboard-reachable copy of the long text.
  */
 import { useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './GolemConfig.module.css';
 
 export interface CardInfo {
@@ -37,7 +45,9 @@ export function ModelCardPopup({
   const ref = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ left: 16, top: 8 });
   useLayoutEffect(() => {
-    if (!open || anchor === null) return;
+    // Same condition the render bails on: no listeners around a measure that
+    // could only ever return early.
+    if (!open || anchor === null || info === null) return;
     const measure = () => {
       const node = ref.current;
       if (node === null) return;
@@ -71,7 +81,7 @@ export function ModelCardPopup({
     // React compares these by identity, so the key re-runs placement then.
   }, [open, anchor, info, layoutKey]);
   if (!open || info === null) return null;
-  return (
+  return createPortal(
     <div
       ref={ref}
       className={styles.cardPop}
@@ -117,6 +127,7 @@ export function ModelCardPopup({
           {info.usedBy.length > 0 ? info.usedBy.join(', ') : '—'}
         </span>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

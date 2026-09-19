@@ -1022,7 +1022,8 @@ select.input {
   color: var(--text-muted);
 }
 
-/* The name and its reason as one wrapping phrase: `chat (required)`. */
+/* The acknowledgement labels — the band's capability checklist became chips, so
+   the two disclosure ticks are all that is left — wrap as one phrase. */
 .checkboxText {
   min-width: 0;
   line-height: 1.25;
@@ -1684,10 +1685,6 @@ select.input {
   display: block;
 }
 
-.detailBody > * + * {
-  margin-top: 12px;
-}
-
 /* The numbers beside the name, and a preview's "used by". */
 .detailFacts {
   color: var(--text-muted);
@@ -1696,7 +1693,9 @@ select.input {
   overflow-wrap: anywhere;
 }
 
-/* The note in full, keyboard-reachable through the strip. */
+/* The note in full, keyboard-reachable through the strip. A <p>'s own margin has
+   to go; the sibling-spacing rule right after puts the 12px back — in that
+   order, because the two have equal specificity and the later one wins. */
 .detailNote {
   margin: 0;
   font-family: var(--font-ui);
@@ -1711,6 +1710,10 @@ select.input {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.detailBody > * + * {
+  margin-top: 12px;
 }
 
 /* The declaration's exposure editor, under its facts form rather than beside
