@@ -240,7 +240,7 @@ describe('routeEdit', () => {
 
 describe('card helpers', () => {
   it('assertedOf is exposed minus declared, canonical', () => {
-    expect(assertedOf(['tool_call', 'chat', 'thinking'], ['chat', 'stream'])).toEqual([
+    expect(assertedOf(['thinking', 'chat', 'tool_call'], ['chat', 'stream'])).toEqual([
       'tool_call',
       'thinking',
     ]);
@@ -251,22 +251,30 @@ describe('card helpers', () => {
       { useCase: 'reasoning', role: 'cloud-pro' },
       { useCase: 'analysis', role: 'cloud-pro' },
       { useCase: 'chat', role: 'general' },
+      { useCase: 'analysis', role: 'cloud-pro' },
     ];
     expect(usedByOf(routes, ['cloud-pro'])).toEqual(['analysis', 'reasoning']);
     expect(usedByOf(routes, ['general', 'cloud-pro'])).toEqual(['analysis', 'chat', 'reasoning']);
     expect(usedByOf(routes, ['judge'])).toEqual([]);
+    // UTF-8 byte order: 'xＡ' (U+FF21, EF BC A1) sorts before 'x😀' (U+1F600, F0 9F 98 80)
+    // in UTF-8, but after in UTF-16 (surrogate D83D < FF21)
+    const routes2 = [
+      { useCase: 'x\u{1F600}', role: 'r' },
+      { useCase: 'xＡ', role: 'r' },
+    ];
+    expect(usedByOf(routes2, ['r'])).toEqual(['xＡ', 'x\u{1F600}']);
   });
   it('abilitiesLine joins with spaces and never reads empty', () => {
-    expect(abilitiesLine(['chat', 'stream', 'tool_call'])).toBe('chat stream tool_call');
+    expect(abilitiesLine(['tool_call', 'chat', 'stream'])).toBe('tool_call chat stream');
     expect(abilitiesLine([])).toBe('—');
   });
   it('noteOf takes the first note in the order given', () => {
     expect(
       noteOf([
-        { role: 'agent', description: 'A' },
         { role: 'general', description: 'G' },
+        { role: 'agent', description: 'A' },
       ])
-    ).toBe('A');
+    ).toBe('G');
     expect(noteOf([])).toBeUndefined();
   });
 });
