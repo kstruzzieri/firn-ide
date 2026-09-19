@@ -148,13 +148,15 @@ describe('GolemConfig stylesheet', () => {
 
   // Keith's live pass: the pills render only on rows with a staged diff, so they
   // always sit on the amber reach tint, where --surface-border-subtle measured
-  // 1.12:1 — no outline at all. --text-muted is the editor's own off-state chip
-  // border (5.9:1 on the edited tint over --surface-panel). And the "Defined
-  // models" heading needs the module's divider, or it reads as part of the last
-  // routing row, whose bottom border the table drops.
-  it('outlines capability pills in --text-muted and rules off the Defined models subgroup', () => {
+  // 1.12:1 — no outline at all. --palette-cyan, the band's chosen-card colour,
+  // was Keith's pick over --text-muted (which read white against the amber)
+  // and --palette-sky (the card's Affected mark): 6.4:1 on the edited tint over
+  // --surface-panel. And the "Defined models" heading needs the module's
+  // divider, or it reads as part of the last routing row, whose bottom border
+  // the table drops.
+  it('outlines capability pills in --palette-cyan and rules off the Defined models subgroup', () => {
     const text = css();
-    expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--text-muted\)/);
+    expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--palette-cyan\)/);
     expect(text).toMatch(/\.subgroup \{[^}]*border-top: 1px solid var\(--surface-border-subtle\)/);
   });
 
