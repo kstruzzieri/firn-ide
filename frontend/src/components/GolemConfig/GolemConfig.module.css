@@ -1068,8 +1068,10 @@ select.input {
 }
 
 .abilityGroup > legend {
+  min-width: 0;
   padding: 0;
   margin-bottom: 6px;
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 9px;

@@ -5,7 +5,9 @@ import { AbilityChips } from '../../../components/GolemConfig/AbilityChips';
 const base = {
   id: 'x',
   legend: 'Capabilities exposed to reasoning — from deepseek-v4-pro',
-  required: ['chat', 'stream', 'tool_call'] as const,
+  // Shuffled on purpose: the REQUIRED group must read in CAPABILITY_NAMES'
+  // canonical order (chat, stream, tool_call) regardless of this array's order.
+  required: ['tool_call', 'chat', 'stream'] as const,
   owners: ['agent', 'chat'],
   declared: ['chat', 'generate', 'stream'] as const,
   model: 'deepseek-v4-pro',
@@ -27,6 +29,25 @@ describe('AbilityChips', () => {
         .map((box) => box.getAttribute('data-cap'))
     ).toEqual(['generate', 'embed', 'thinking', 'insert']);
     expect(screen.getByRole('group', { name: base.legend })).toBeInTheDocument();
+    // data-oncard follows `declared` (chat, generate, stream), independent of
+    // whether the chip is required, selected, locked or asserted.
+    expect(
+      screen.getByRole('checkbox', { name: 'chat, required' }).closest('label')
+    ).toHaveAttribute('data-oncard');
+    expect(screen.getByRole('checkbox', { name: 'generate' }).closest('label')).toHaveAttribute(
+      'data-oncard'
+    );
+    expect(
+      screen.getByRole('checkbox', { name: 'stream, required' }).closest('label')
+    ).toHaveAttribute('data-oncard');
+    expect(
+      screen
+        .getByRole('checkbox', { name: "tool_call, required, not on the model's card" })
+        .closest('label')
+    ).not.toHaveAttribute('data-oncard');
+    expect(screen.getByRole('checkbox', { name: 'embed' }).closest('label')).not.toHaveAttribute(
+      'data-oncard'
+    );
   });
 
   it('locks a required chip once it is on, and names the reason', () => {
@@ -43,6 +64,10 @@ describe('AbilityChips', () => {
     });
     expect(chip.closest('label')).toHaveAttribute('data-asserted');
     expect(chip).toHaveAttribute('aria-describedby', 'x-footnote');
+    expect(chip.closest('label')).toHaveAttribute(
+      'title',
+      "Required by agent and chat — cannot be turned off. Turned on by hand, not on deepseek-v4-pro's card — unverified"
+    );
     expect(document.getElementById('x-footnote')).toHaveTextContent(
       "* Turned on by hand, not on deepseek-v4-pro's card: tool_call. Golem does not check; if the model cannot really do it, the routes that need it fail when they try."
     );
@@ -99,6 +124,11 @@ describe('AbilityChips', () => {
     expect(document.querySelector('[data-asserted], [data-changed], [title]')).toBeNull();
     expect(document.getElementById('x-footnote')).toBeNull();
     expect(screen.getByRole('checkbox', { name: 'tool_call, required' })).toBeChecked();
+    // data-oncard is not a "live" mark like data-asserted/data-changed: it stays
+    // under readOnly, only the marks/titles/describedby/footnote are suppressed.
+    expect(
+      screen.getByRole('checkbox', { name: 'chat, required' }).closest('label')
+    ).toHaveAttribute('data-oncard');
   });
 
   it('collapses to one group with no floor', () => {
