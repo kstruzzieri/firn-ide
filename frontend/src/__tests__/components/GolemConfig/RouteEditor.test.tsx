@@ -909,6 +909,10 @@ describe('RouteEditor', () => {
     const generateCheckbox = screen.getByRole('checkbox', { name: /^generate/ });
     expect(generateCheckbox).toBeChecked();
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    // The precondition the Tab walk relies on: chat/stream are locked
+    // required-and-on, so they are disabled and Tab skips straight past them.
+    expect(screen.getByRole('checkbox', { name: 'chat, required' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'stream, required' })).toBeDisabled();
 
     // Tab from wherever opening the editor left focus, into the exposure
     // block: a bounded walk rather than one hop, because the model grid's
@@ -924,7 +928,14 @@ describe('RouteEditor', () => {
 
     await userEvent.keyboard(' ');
     expect(generateCheckbox).not.toBeChecked();
-    expect(summary()).toBe('Capabilities: − generate');
+    // U+2212 MINUS SIGN, not a literal in the source: Prettier's string
+    // printer decodes a unicode string escape back to its raw glyph on
+    // every --write (confirmed even under prettier-ignore), so a plain
+    // escape sequence cannot survive this repo's format gate. fromCharCode
+    // keeps the source byte-clean while asserting the exact character
+    // setDelta emits.
+    const minusSign = String.fromCharCode(0x2212);
+    expect(summary()).toBe(`Capabilities: ${minusSign} generate`);
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
