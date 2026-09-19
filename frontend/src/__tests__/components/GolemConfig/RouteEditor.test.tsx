@@ -608,17 +608,15 @@ describe('RouteEditor', () => {
         { useCase: 'summarize', role: 'chat-role' },
         { useCase: 'completion', role: 'coding-role' },
       ],
-      // chat-role falls back to coding-role too, so every use case here is in
-      // BOTH models' routed sets: only the routes table tells assigned from
-      // fallback, and subtracting another model's set cannot pass.
+      // Chains coding-role -> chat-role -> other-role (acyclic: go-llm rejects a
+      // circular fallback), so summarize, assigned to chat-role, is in
+      // other-role's routed set too and completion in every set: only the
+      // routes table tells assigned from fallback, and subtracting the other
+      // models' sets cannot pass.
       models: [
         model({ routedUseCases: ['chat', 'completion', 'summarize'] }),
-        model({
-          role: 'coding-role',
-          modelName: 'gpt-5-codex',
-          routedUseCases: ['chat', 'completion', 'summarize'],
-        }),
-        other,
+        model({ role: 'coding-role', modelName: 'gpt-5-codex', routedUseCases: ['completion'] }),
+        { ...other, routedUseCases: ['chat', 'completion', 'summarize'] },
       ],
     });
     await openRoute('chat');

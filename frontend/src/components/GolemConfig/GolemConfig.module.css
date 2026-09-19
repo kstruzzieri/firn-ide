@@ -2669,11 +2669,15 @@ select.input {
 }
 
 /* The pills render only on an edited or same-model row (showCaps), so they
-   always sit on the amber reach tint over --surface-panel, where
-   --surface-border-subtle measured 1.12:1 (edited) and 1.20:1 (same-model) —
-   no outline at all (WCAG 1.4.11 asks 3:1). --text-muted is the editor's own
-   off-state ability-chip border: 5.9:1 and 6.3:1 there. Guarded in
-   GolemConfigWorkspace.test.tsx. */
+   always sit on the amber reach tint — over --surface-panel in the table,
+   --surface-elevated while the row is open inside its editing group. There
+   --surface-border-subtle measured 1.12:1 / 1.20:1 (panel, edited /
+   same-model) and 1.01:1 / 1.08:1 (elevated) — no outline at all, against the
+   3:1 WCAG 1.4.11 asks. --text-muted, the editor's own off-state ability-chip
+   border, holds 5.9:1 / 6.3:1 on the panel tints and 5.3:1 / 5.7:1 on the
+   elevated ones (a hovered row paints the 92% mix below, 4.8:1). The
+   declaration is guarded in GolemConfigWorkspace.test.tsx, the 3:1 floor on
+   all four tints in tokens.test.ts. */
 .capPill {
   padding: 0 5px;
   border: 1px solid var(--text-muted);

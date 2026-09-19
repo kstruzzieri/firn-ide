@@ -500,6 +500,25 @@ it.each(['text-muted', 'text-secondary'])(
   }
 );
 
+// The routing card's capability pills (`.capPill`, GolemConfig.module.css)
+// render only on an edited (9%) or same-model (5%) reach row, over the card's
+// panel or, while the row is open in its editing group, --surface-elevated.
+// Their border is --text-muted: a component boundary, so the floor is WCAG
+// 1.4.11's 3:1, not the 4.5:1 text floor above. --surface-border-subtle,
+// the border they had, sat at 1.01:1 to 1.20:1 on these four backdrops.
+it.each([
+  ['surface-panel', 0.09],
+  ['surface-panel', 0.05],
+  ['surface-elevated', 0.09],
+  ['surface-elevated', 0.05],
+])(
+  'keeps the capability-pill border at 3:1 or better on the reach tint over --%s at %d',
+  (surface, tint) => {
+    const backdrop = composite(parseHex(token('status-warning')), parseHex(token(surface)), tint);
+    expect(contrast(parseHex(token('text-muted')), backdrop)).toBeGreaterThanOrEqual(3);
+  }
+);
+
 // [W6] The Affected mark is --palette-sky: a FIXED literal that duplicates
 // --accent-project's on purpose (like --files-key duplicates --accent-go), so
 // the mark never moves when a workspace accent is repointed — and never reads
