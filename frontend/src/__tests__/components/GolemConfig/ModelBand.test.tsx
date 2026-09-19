@@ -994,6 +994,22 @@ describe('ModelBand card popup timing', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers()); // restored even when an assertion throws
 
+  /** A 190x60 box at (left, bottom), as jsdom will never compute one. */
+  const rectOf = (node: HTMLElement, left: number, bottom: number) => {
+    node.getBoundingClientRect = () =>
+      ({
+        x: left,
+        y: bottom - 60,
+        left,
+        top: bottom - 60,
+        right: left + 190,
+        bottom,
+        width: 190,
+        height: 60,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  };
+
   it('opens the popup on hover after the delay, keeps it while the pointer is on it, and closes on Escape', async () => {
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     renderBand({
@@ -1136,6 +1152,21 @@ describe('ModelBand card popup timing', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
+  it('closes when a wheel scroll clips the focused card out of the grid', () => {
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    const grid = screen.getByRole('listbox', { name: /Models/ });
+    act(() => card.focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Focus alone is not the exemption: the card has to still BE in the grid's
+    // box. Here the wheel has taken it above the top edge, so the popup would
+    // be re-placed onto a clipped card, over the band head.
+    rectOf(card, 20, 60);
+    rectOf(grid, 0, 476);
+    fireEvent.scroll(grid);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   it("keeps a focused card's popup through the grid scroll that focus itself caused", () => {
     renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
     act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
@@ -1161,21 +1192,46 @@ describe('ModelBand card popup timing', () => {
     act(() => card.focus());
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
     // Pressing an ALREADY focused card fires no focus event to consume the
-    // flag, and releasing off the card fires no mouseup on it either (a mouse
-    // has no implicit pointer capture): the document-level release is the only
-    // thing that can clear it.
+    // flag, and the release happens over NOTHING — not over a sibling card,
+    // which would have fired its own events — so the document-level release is
+    // the only thing that can clear it.
     await user.pointer([
       { keys: '[MouseLeft>]', target: card },
       { target: other },
+      { target: document.body },
       { keys: '[/MouseLeft]' },
-      { target: document.body }, // off both cards, so no hover holds anything
     ]);
     act(() => card.blur());
     act(() => jest.advanceTimersByTime(500));
+    // Nothing of the neighbour's is left open either, so the reopen below can
+    // only be this card's.
     expect(screen.queryByRole('tooltip')).toBeNull();
 
     act(() => card.focus());
-    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // a stale flag would have suppressed this
+    expect(screen.getByRole('tooltip')).toHaveTextContent('gemma4:31b'); // a stale flag would have suppressed this
+  });
+
+  it('takes its per-press release listener with it when the band unmounts', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const add = jest.spyOn(document, 'addEventListener');
+    const remove = jest.spyOn(document, 'removeEventListener');
+    const { unmount } = renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    // Pressed and held: the release listener is live, waiting for a mouseup
+    // that will never come from this component.
+    await user.pointer({
+      keys: '[MouseLeft>]',
+      target: screen.getByRole('option', { name: /gemma4:31b/ }),
+    });
+    const registered = add.mock.calls.filter(([type]) => type === 'mouseup').map(([, fn]) => fn);
+    expect(registered).toHaveLength(1);
+
+    unmount();
+    expect(remove.mock.calls.some(([type, fn]) => type === 'mouseup' && fn === registered[0])).toBe(
+      true
+    );
+    expect(() => fireEvent.mouseUp(document)).not.toThrow();
+    add.mockRestore();
+    remove.mockRestore();
   });
 
   it('does not open the popup for a completed touch tap', async () => {
@@ -1377,22 +1433,6 @@ describe('ModelBand card popup timing', () => {
       for (const [key, descriptor] of nativeViewport)
         Object.defineProperty(window, key, descriptor);
     });
-
-    /** The anchor's box, as jsdom will never compute it. */
-    const rectOf = (node: HTMLElement, left: number, bottom: number) => {
-      node.getBoundingClientRect = () =>
-        ({
-          x: left,
-          y: bottom - 60,
-          left,
-          top: bottom - 60,
-          right: left + 190,
-          bottom,
-          width: 190,
-          height: 60,
-          toJSON: () => ({}),
-        }) as DOMRect;
-    };
 
     it('re-places the open popup when a neighbour leaves the grid under it', () => {
       const { rerender, props } = renderBand({

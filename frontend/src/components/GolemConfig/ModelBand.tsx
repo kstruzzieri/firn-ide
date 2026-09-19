@@ -163,6 +163,13 @@ interface PopupHold {
    * all, so there is nothing to clear.
    */
   pointerKey: string | null;
+  /**
+   * Removes the live per-press `mouseup` listener. It is registered at the
+   * DOCUMENT (a release off the card is heard nowhere else), so it outlives the
+   * card that set it and has to be taken away by hand: on the next press, when
+   * it fires, and on unmount.
+   */
+  releaseListener: (() => void) | null;
   /** A pending hover-open, for `pendingKey`. */
   openTimer: number;
   pendingKey: string | null;
@@ -338,6 +345,7 @@ export function ModelBand({
     popHovered: false,
     focusKey: null,
     pointerKey: null,
+    releaseListener: null,
     openTimer: 0,
     pendingKey: null,
     closeTimer: 0,
@@ -451,9 +459,16 @@ export function ModelBand({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- closePopup only touches the hold ref and setPopup; listing it would re-register both listeners every render
   }, [popup, id]);
-  // A pending timer would fire into an unmounted tree.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- clearTimers only touches the hold ref, whose identity never changes
-  useEffect(() => clearTimers, []);
+  // A pending timer, or a press still waiting for its release, would reach into
+  // an unmounted tree.
+  useEffect(
+    () => () => {
+      clearTimers();
+      hold.current.releaseListener?.();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clearTimers only touches the hold ref, whose identity never changes
+    []
+  );
 
   const choose = (model: ModelProjection) => {
     setPreviewing(false);
@@ -737,13 +752,20 @@ export function ModelBand({
         // put the popup over the band head. One narrowing of "scroll re-places":
         // an ancestor or page scroll still does.
         //
-        // Focus is the exception. Focusing an off-screen card scrolls the grid to
-        // it natively — the roving focus relies on that — so that scroll arrives
-        // right behind the open it caused and must not undo it; the window
-        // capture listener re-places it instead. A pointer-opened popup has no
-        // such excuse: the card under it has moved away from the pointer.
-        onScroll={() => {
-          if (popup !== null && document.activeElement === popup.anchor) return;
+        // Focus is the exception, and only while its card is still IN this box.
+        // Focusing an off-screen card scrolls the grid to it natively — the
+        // roving focus relies on that — so that scroll arrives right behind the
+        // open it caused and must not undo it; the window capture listener
+        // re-places it instead. A WHEEL scroll of the same focused card is not
+        // the same thing: once the card is clipped out of the grid, the popup
+        // would be re-placed onto its rect over the band head. jsdom computes no
+        // rects, so a zero-rect anchor reads as visible there.
+        onScroll={(event) => {
+          if (popup !== null && document.activeElement === popup.anchor) {
+            const anchor = popup.anchor.getBoundingClientRect();
+            const grid = event.currentTarget.getBoundingClientRect();
+            if (!(anchor.bottom < grid.top || anchor.top > grid.bottom)) return;
+          }
           closePopup();
         }}
         onBlur={(event) => {
@@ -778,7 +800,9 @@ export function ModelBand({
               // pointerdown (pointerenter > pointerdown > pointerleave >
               // mouseenter > mousedown > focus), so a mouse-keyed hover would
               // schedule an open the press cannot cancel and pin a popup over
-              // the strip the tap was aiming at.
+              // the strip the tap was aiming at. The LEAVE ignores touch for the
+              // mirror reason: on a hybrid device a finger's leave must not drop
+              // the hover or the pending open a mouse is holding.
               onPointerEnter={(event) => {
                 if (event.pointerType === 'touch') return;
                 const anchor = event.currentTarget; // captured: React clears currentTarget after dispatch
@@ -793,7 +817,8 @@ export function ModelBand({
                   if (hold.current.pendingKey === key) open(key, anchor, cardInfo(row));
                 }, 160);
               }}
-              onPointerLeave={() => {
+              onPointerLeave={(event) => {
+                if (event.pointerType === 'touch') return;
                 if (hold.current.hoverKey === key) hold.current.hoverKey = null;
                 if (hold.current.pendingKey === key) cancelOpen();
                 settle();
@@ -805,19 +830,23 @@ export function ModelBand({
                 cancelOpen();
               }}
               onMouseDown={() => {
-                hold.current.pointerKey = key;
+                const h = hold.current;
+                h.pointerKey = key;
                 // A press on an ALREADY focused card fires no focus event to
                 // consume the flag, and a release off the card fires no mouseup
                 // ON it (a mouse has no implicit pointer capture), so the
                 // release is heard at the document. One shot, capture, and
                 // independent of whether any popup is open.
-                document.addEventListener(
-                  'mouseup',
-                  () => {
-                    if (hold.current.pointerKey === key) hold.current.pointerKey = null;
-                  },
-                  { once: true, capture: true }
-                );
+                h.releaseListener?.(); // a press whose release never arrived
+                const onRelease = () => {
+                  h.releaseListener = null; // `once` already took it off
+                  if (h.pointerKey === key) h.pointerKey = null;
+                };
+                h.releaseListener = () => {
+                  document.removeEventListener('mouseup', onRelease, true);
+                  h.releaseListener = null;
+                };
+                document.addEventListener('mouseup', onRelease, { once: true, capture: true });
               }}
               onFocus={(event) => {
                 hold.current.focusKey = key;
