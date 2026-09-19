@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   RoutingCard,
@@ -1581,9 +1581,53 @@ describe('RouteEditor', () => {
     expect(group).toHaveAccessibleName('Required by chat');
     expect(box.closest('.abilityColumns')).not.toBeNull();
     // `closest('fieldset')` now resolves to the inner group; the OUTER block
-    // is a direct child of the exposure half — block flow, no flex wrapper
-    // (the `.detailExposure > * + *` rule says why).
-    expect(box.closest('.capabilities')?.parentElement).toHaveClass('detailExposure');
+    // is a direct child of the strip body — block flow, no flex wrapper
+    // (the `.detailBody > * + *` rule says why).
+    expect(box.closest('.capabilities')?.parentElement).toHaveClass('detailBody');
+  });
+
+  it("derives a preview card's floor from the card, not the candidate", async () => {
+    // `agent` already sits on gpt-5's selector, so assigning chat to that card
+    // would govern agent too: the PREVIEW's floor is the union the CARD would
+    // meet — tool_call included — never the candidate's own chat floor. A card
+    // no other use case sits on previews against chat alone.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [
+        model(),
+        model({
+          role: 'agent-role',
+          modelName: 'gpt-5',
+          effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'tool_call'],
+          routedUseCases: ['agent'],
+        }),
+        model({ role: 'lone-role', modelName: 'gpt-5-lone', routedUseCases: [] }),
+      ],
+    });
+    await openRoute('chat');
+    const strip = () => screen.getByTestId('model-detail');
+    act(() =>
+      within(screen.getByRole('listbox', { name: /Models/ }))
+        .getByRole('option', { selected: true })
+        .focus()
+    );
+
+    await userEvent.keyboard('{Home}'); // gpt-5 — the card agent already sits on
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+    const shared = within(strip()).getByRole('group', { name: 'Required by chat and agent' });
+    expect(within(shared).getByRole('checkbox', { name: 'tool_call, required' })).toBeChecked();
+
+    await userEvent.keyboard('{End}'); // gpt-5-lone — no siblings
+    const lone = within(strip()).getByRole('group', { name: 'Required by chat' });
+    expect(within(lone).queryByRole('checkbox', { name: /tool_call/ })).toBeNull();
   });
 
   it('keeps the fieldset name out of the border line', async () => {
@@ -1795,7 +1839,7 @@ describe('RouteEditor', () => {
     const readout = thinkField?.previousElementSibling;
     expect(readout).toHaveAttribute('data-testid', 'card-readout');
     expect(readout?.previousElementSibling?.tagName).toBe('FIELDSET');
-    expect(thinkField?.parentElement).toHaveClass('detailExposure');
+    expect(thinkField?.parentElement).toHaveClass('detailBody');
 
     // Unticking alone clears the mode Done stages; the summary says so.
     await userEvent.click(thinking);
@@ -1985,16 +2029,10 @@ describe('RouteEditor', () => {
     };
     renderRouting({ draft: draftWith(widened) });
     await openRoute('chat');
-    // The detail body's "declares" row reads the declaration Done re-sends —
-    // tool_call declared though not exposed — not the card's own set.
-    const chips = () =>
-      [...(screen.getByText('declares').nextElementSibling?.children ?? [])].map(
-        (chip) => chip.textContent
-      );
-    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    const strip = () => screen.getByTestId('model-detail');
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
-    // The right-hand readout is the same STAGED card the "declares" row
-    // above reads — plain words, not just chips — and the unchecked
+    // The readout reads the declaration Done re-sends — tool_call declared
+    // though not exposed — not the list card's own set, and the unchecked
     // tool_call chip is marked as ON that card, never as a bare assertion.
     expect(screen.getByTestId('card-readout')).toHaveTextContent(
       "gpt-5-mini's card lists: chat stream tool_call"
@@ -2005,20 +2043,28 @@ describe('RouteEditor', () => {
     const toolCall = within(caps).getByRole('checkbox', { name: 'tool_call' });
     expect(toolCall.closest('label')).toHaveAttribute('data-oncard');
     expect(toolCall.closest('label')).not.toHaveAttribute('data-asserted');
-    // Walking the grid previews the walked card; walking back onto the
-    // assigned card previews the SELECTION, declaration and all — and Escape
-    // leaves the strip on it.
-    within(screen.getByRole('listbox', { name: /Models/ }))
-      .getByRole('option', { selected: true })
-      .focus();
+    // Walking the grid previews the walked card — its OWN card, read out in the
+    // same words — while walking back onto the assigned card previews the
+    // SELECTION, declaration and all; Escape leaves the strip on it.
+    act(() =>
+      within(screen.getByRole('listbox', { name: /Models/ }))
+        .getByRole('option', { selected: true })
+        .focus()
+    );
     await userEvent.keyboard('{End}');
-    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'previewing');
-    expect(chips()).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+    expect(
+      within(strip()).getByText("gpt-5's card lists: chat stream tool_call thinking")
+    ).toBeInTheDocument();
     await userEvent.keyboard('{Home}');
-    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'assigned');
-    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    expect(strip()).toHaveAttribute('data-state', 'assigned');
+    expect(screen.getByTestId('card-readout')).toHaveTextContent(
+      "gpt-5-mini's card lists: chat stream tool_call"
+    );
     await userEvent.keyboard('{Escape}');
-    expect(chips()).toEqual(['chat', 'stream', 'tool_call']);
+    expect(screen.getByTestId('card-readout')).toHaveTextContent(
+      "gpt-5-mini's card lists: chat stream tool_call"
+    );
     // The card is the one affordance for undoing a hand-widened declaration.
     await pickModel('gpt-5-mini');
     expect(summary()).toBe('Declares: − tool_call');
@@ -2637,7 +2683,9 @@ describe('RouteEditor union floor (wave 4c)', () => {
     // Joining agent-role's selector makes tool_call required — but a declaration
     // is what the user asserts, so nothing ticks it for them; the notice names
     // the sibling and Done refuses until they do.
-    const toolCall = () => within(declared()).getByLabelText('tool_call (required)');
+    // The chip is `tool_call` while it is off and `tool_call, required` once the
+    // tick locks it, so the walk reads it by its capability alone.
+    const toolCall = () => within(declared()).getByRole('checkbox', { name: /^tool_call/ });
     expect(toolCall()).not.toBeChecked();
     expect(toolCall()).toBeEnabled();
     expect(screen.getByText(/does not declare/)).toHaveTextContent(
@@ -2686,11 +2734,14 @@ describe('RouteEditor union floor (wave 4c)', () => {
     // A route cannot expose what its model does not declare: the tick in the
     // exposure checklist is the same assertion as the tick in the declare form.
     const { onStage } = await declareOntoAgentSelector();
-    expect(within(declared()).getByLabelText('tool_call (required)')).not.toBeChecked();
+    expect(within(declared()).getByRole('checkbox', { name: 'tool_call' })).not.toBeChecked();
 
     await userEvent.click(within(exposed()).getByLabelText('tool_call'));
-    expect(within(declared()).getByLabelText('tool_call (required)')).toBeChecked();
-    expect(within(declared()).getByLabelText('tool_call (required)')).toBeDisabled();
+    const declaredToolCall = within(declared()).getByRole('checkbox', {
+      name: 'tool_call, required',
+    });
+    expect(declaredToolCall).toBeChecked();
+    expect(declaredToolCall).toBeDisabled();
     expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
     await stage();
     const staged = onStage.mock.calls[0][0][0];
@@ -2718,8 +2769,11 @@ describe('RouteEditor union floor (wave 4c)', () => {
     expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
 
     await userEvent.click(within(exposed()).getByLabelText('tool_call'));
-    expect(within(declared()).getByLabelText('tool_call (required)')).toBeChecked();
-    expect(within(declared()).getByLabelText('tool_call (required)')).toBeDisabled();
+    const declaredToolCall = within(declared()).getByRole('checkbox', {
+      name: 'tool_call, required',
+    });
+    expect(declaredToolCall).toBeChecked();
+    expect(declaredToolCall).toBeDisabled();
     expect(within(exposed()).getByLabelText('thinking')).not.toBeChecked();
     // Think is only visible while thinking is exposed; re-expose it to read it.
     await userEvent.click(within(exposed()).getByLabelText('thinking'));

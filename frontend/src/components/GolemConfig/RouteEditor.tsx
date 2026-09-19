@@ -720,8 +720,8 @@ export function RouteEditor({
         exposure={
           defined === null && manual === null ? undefined : (
             <>
-              {/* Direct children of the exposure half, in block flow — see the
-                  `.detailExposure > * + *` rule for why no flex wrapper. */}
+              {/* Direct children of the strip body, in block flow — see the
+                  `.detailBody > * + *` rule for why no flex wrapper. */}
               <AbilityChips
                 id={`${id}-caps`}
                 legend={capsLegend}

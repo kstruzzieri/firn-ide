@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   ModelBand,
@@ -65,6 +65,10 @@ function renderBand(over: Partial<ModelBandProps> = {}) {
     ],
     selected: null,
     manual: null,
+    routes: [],
+    owners: ['chat'],
+    // A card previews against its OWN floor; a fixture that cares passes its own.
+    preview: () => ({ required: [], owners: [], offered: [] }),
     onProviderChange,
     onSelect,
     onManual,
@@ -86,9 +90,10 @@ const cardNamed = (name: string) =>
   cards().find((card) => within(card).queryByText(name) !== null) as HTMLElement;
 
 // ---------------------------------------------------------------------------
-// Uniform compact cards, always. Treatment 1 removes in-cell expansion: the
-// detail strip owns every fact beyond name and type, so a grid row can never
-// inflate and the geometry never moves under the cursor.
+// Uniform compact cards, always. Treatment 1 removes in-cell expansion: a card
+// is two or three ONE-LINE rows — name, the numbers or the abilities, then the
+// note or the abilities — so a grid row can never inflate and the geometry
+// never moves under the cursor. The popup and the strip carry the rest.
 // ---------------------------------------------------------------------------
 
 describe('ModelBand compact cards', () => {
@@ -117,10 +122,32 @@ describe('ModelBand compact cards', () => {
     });
     const strip = screen.getByTestId('model-detail');
 
-    const value = within(strip).getByText('256K');
-    expect(value).toBeVisible();
-    expect(value).toHaveAttribute('title', '262144 tokens');
+    // One facts line in the strip head, the same line the card carries; the
+    // exact count lives in the card's popup, not in two places here.
+    expect(within(strip).getByText('256K ctx')).toBeVisible();
     expect(within(strip).queryByText('262144')).not.toBeInTheDocument();
+    expect(within(cardNamed('gpt-5-mini')).getByText('256K ctx')).toBeVisible();
+  });
+
+  it('gives a numberless card its abilities on line 2 and the note on line 3', () => {
+    renderBand({
+      models: [model({ modelName: 'deepseek-v4-pro', description: 'Mid-tier generalist.' })],
+    });
+    const card = screen.getByRole('option', { name: /deepseek-v4-pro/ });
+    expect(within(card).getByText('dense')).toBeInTheDocument();
+    expect(within(card).getByText('chat stream')).toBeInTheDocument();
+    expect(within(card).getByText('Mid-tier generalist.')).toBeInTheDocument();
+    expect(within(card).queryByText(/used by/)).toBeNull();
+    expect(card.querySelector('[title]')).toBeNull();
+  });
+
+  it('puts the numbers on line 2 and the abilities on line 3 when there is no note', () => {
+    renderBand({
+      models: [model({ modelName: 'gemma4:31b', parameters: '31B', contextWindow: 256000 })],
+    });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    expect(within(card).getByText('31B · 256K ctx')).toBeInTheDocument();
+    expect(within(card).getByText('chat stream')).toBeInTheDocument();
   });
 
   it('omits an absent fact entirely — no dash, no unknown, no stray separator', () => {
@@ -132,13 +159,14 @@ describe('ModelBand compact cards', () => {
     expect(card.textContent).not.toMatch(/ctx|·|—|unknown/);
   });
 
-  it('keeps the metadata row with no facts at all: the badge alone, no placeholder', () => {
+  it('keeps the metadata row with no facts at all: the abilities take their place', () => {
     renderBand({ models: [model()] });
     const card = cardNamed('gpt-5-mini');
 
     expect(within(card).getByText('dense')).toBeVisible();
-    // Name and badge only — nothing stands in for the absent facts.
-    expect(card.textContent).toBe('gpt-5-minidense');
+    // The abilities move up beside the badge — nothing stands in for the absent
+    // numbers, and the card never repeats its abilities on a third line.
+    expect(card.textContent).toBe('gpt-5-minidensechat stream');
   });
 });
 
@@ -149,7 +177,7 @@ describe('ModelBand compact cards', () => {
 describe('ModelBand keyboard navigation', () => {
   it('moves across the grid with the arrows and selects on Enter', async () => {
     const { onSelect } = renderBand();
-    cards()[0].focus();
+    act(() => cards()[0].focus());
 
     // Cards are role-alpha, so agent-role (gpt-5) leads and owns the tab stop.
     expect(cardNamed('gpt-5')).toHaveAttribute('tabindex', '0');
@@ -164,7 +192,7 @@ describe('ModelBand keyboard navigation', () => {
 
   it('steps by a row with ArrowDown and ArrowUp', async () => {
     const { onSelect } = renderBand();
-    cards()[0].focus();
+    act(() => cards()[0].focus());
 
     // jsdom reports every offsetTop as 0, so the grid measures one column and a
     // row step is a single card. In a browser it is the real column count.
@@ -179,7 +207,7 @@ describe('ModelBand keyboard navigation', () => {
 
   it('never walks past either end of the grid', async () => {
     renderBand();
-    cards()[0].focus();
+    act(() => cards()[0].focus());
 
     await userEvent.keyboard('{ArrowLeft}{ArrowLeft}{ArrowLeft}');
     expect(cardNamed('gpt-5')).toHaveFocus();
@@ -191,7 +219,7 @@ describe('ModelBand keyboard navigation', () => {
 
   it('never steals focus from the filter after a clamped step past the end', async () => {
     renderBand();
-    cards()[0].focus();
+    act(() => cards()[0].focus());
 
     // A real move consumes the focus flag; the clamped step at the end must
     // not re-arm it — the stale flag used to fire on the filter's first
@@ -219,6 +247,24 @@ describe('buildModelRows', () => {
     // Role-alpha within the provider: the shared display order.
     expect(rows.map((row) => row.model.modelName)).toEqual(['gpt-5', 'gpt-5-mini']);
     expect(rows.every((row) => row.provenance === 'authored')).toBe(true);
+  });
+
+  it('collapses roles with identical facts into one row carrying every role and note, in role order', () => {
+    const rows = buildModelRows(
+      [
+        model({ role: 'general', modelName: 'gemma4:31b', description: 'Dense reasoning.' }),
+        model({ role: 'agent', modelName: 'gemma4:31b', description: 'Agent / tool-use.' }),
+        model({ role: 'judge', modelName: 'gemma4:31b' }),
+      ],
+      'hosted'
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].model.role).toBe('general'); // first seen keeps the card's identity, as before
+    expect(rows[0].roles).toEqual(['agent', 'general', 'judge']);
+    expect(rows[0].descriptions).toEqual([
+      { role: 'agent', description: 'Agent / tool-use.' },
+      { role: 'general', description: 'Dense reasoning.' },
+    ]);
   });
 });
 
@@ -358,25 +404,26 @@ describe('ModelBand declare path', () => {
     expect(within(manual).getByLabelText('Type')).toHaveValue('');
 
     const caps = within(manual).getByRole('group', { name: 'Capabilities this model supports' });
-    // Direct child of the form, followed by the Back button: what `.manual`'s
-    // block-flow spacing rule addresses.
+    // Direct child of the form, then the hint and the Back button: what
+    // `.manual`'s block-flow spacing rule addresses.
     expect(manual.firstElementChild?.tagName).toBe('LEGEND');
     expect(caps.parentElement).toBe(manual);
-    expect(caps.nextElementSibling).toHaveTextContent('Back to the model list');
-    expect(caps.nextElementSibling).toHaveClass('button');
+    expect(caps.nextElementSibling).toHaveTextContent("This becomes the model's card.");
+    const back = caps.nextElementSibling?.nextElementSibling;
+    expect(back).toHaveTextContent('Back to the model list');
+    expect(back).toHaveClass('button');
     for (const locked of ['chat', 'stream']) {
-      const box = within(caps).getByLabelText(locked + ' (required)');
+      const box = within(caps).getByRole('checkbox', { name: `${locked}, required` });
       expect(box).toBeChecked();
       expect(box).toBeDisabled();
     }
-    expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
-    // Same checklist grammar as the route editor's: the boxes sit in a grid
-    // wrapper under the legend, each name and its reason one phrase.
-    expect(caps.querySelector('.capabilityGrid')).not.toBeNull();
-    const chat = within(caps).getByLabelText('chat (required)');
-    const text = chat.parentElement?.querySelector('.checkboxText');
-    expect(text).toHaveTextContent(/^chat/);
-    expect(text?.querySelector('.requiredTag')).toHaveTextContent('(required)');
+    expect(within(caps).getByRole('checkbox', { name: 'tool_call' })).not.toBeChecked();
+    // Same chip grammar as the route editor's exposure: wrapping groups, the
+    // requirement carried by the group's name and by the chip's own.
+    expect(caps.querySelector('.abilityColumns')).not.toBeNull();
+    const chat = within(caps).getByRole('checkbox', { name: 'chat, required' });
+    expect(chat.closest('.abilityGroup')).toHaveAccessibleName('Required by chat');
+    expect(chat.nextElementSibling?.querySelector('.abilityChipName')).toHaveTextContent('chat');
   });
 
   it('reports every manual edit as complete facts in canonical order', async () => {
@@ -413,13 +460,17 @@ describe('ModelBand declare path', () => {
     // still filters on chat's floor.
     const { onManual } = renderBand({
       required: ['chat', 'stream', 'tool_call'],
+      owners: ['chat', 'agent'],
       manual: { model: 'gpt-5', type: '', caps: ['chat', 'stream'] },
     });
     const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
-    expect(within(declared).getByLabelText('tool_call (required)')).not.toBeChecked();
-    expect(within(declared).getByLabelText('tool_call (required)')).toBeEnabled();
-    expect(within(declared).getByLabelText('chat (required)')).toBeChecked();
-    expect(within(declared).getByLabelText('chat (required)')).toBeDisabled();
+    // An unticked required chip names no requirement of its own: the REQUIRED
+    // group it sits in carries that, and only a locked chip says ", required".
+    const required = within(declared).getByRole('group', { name: 'Required by chat and agent' });
+    expect(within(required).getByRole('checkbox', { name: 'tool_call' })).not.toBeChecked();
+    expect(within(required).getByRole('checkbox', { name: 'tool_call' })).toBeEnabled();
+    expect(within(required).getByRole('checkbox', { name: 'chat, required' })).toBeChecked();
+    expect(within(required).getByRole('checkbox', { name: 'chat, required' })).toBeDisabled();
     expect(screen.getByText('filter: chat · stream')).toBeVisible();
     // A fresh declaration still starts from the band floor alone.
     await userEvent.type(screen.getByLabelText('Filter models'), 'llama-4');
@@ -508,7 +559,7 @@ describe('ModelBand Home and End', () => {
   // §4.7 names Home/End beside the arrows.
   it('jumps to the first and last card in the walk', async () => {
     renderBand();
-    cards()[0].focus();
+    act(() => cards()[0].focus());
 
     await userEvent.keyboard('{End}');
     expect(cards().at(-1)).toHaveFocus();
@@ -546,82 +597,90 @@ describe('ModelBand stylesheet coverage', () => {
     }
   });
   // The grid is the one deliberate scroll region: bounded so the editor has a
-  // predictable height, with a partial fifth row as the scroll affordance. The
+  // predictable height, with a partial fourth row as the scroll affordance. The
   // strip must NOT be sticky — that overlaid the last card row and gave the
   // band a second scroll context fighting the workspace scroll.
-  it('bounds the grid at four card rows and leaves the strip in normal flow', () => {
+  it('bounds the grid at three card rows and leaves the strip in normal flow', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
     const grid = css.match(/\.modelGrid \{[^}]*\}/s)?.[0] ?? '';
     const detail = css.match(/\.detail \{[^}]*\}/s)?.[0] ?? '';
 
+    expect(grid).toMatch(/--golem-card-height: 80px/);
     expect(grid).toMatch(
-      /max-height: calc\(4 \* var\(--golem-card-height\) \+ 3 \* var\(--golem-grid-gap\) \+ 20px\)/
+      /max-height: calc\(3 \* var\(--golem-card-height\) \+ 2 \* var\(--golem-grid-gap\) \+ 20px\)/
     );
     expect(grid).toMatch(/overflow-y: auto/);
     expect(detail).not.toMatch(/position: sticky/);
   });
 
-  // Mockup density: inside the strip the capability checklist sheds its boxed
-  // chrome — one tall column was most of the strip's height. Keith's live gate
-  // (wave 6) found the wrapping flex row jumbled: uneven columns, a 4px row gap,
-  // and `required` tags reading as the next item's name. The boxes now sit in
-  // their own grid wrapper UNDER the legend — a fieldset's legend never joins a
-  // grid or flex container in WebKit (bug 220793), so the wrapper carries the
-  // spacing itself — on the mockup's minmax(118px, 1fr) columns with room between
-  // rows; each name and its reason read as one phrase. The facts half keeps its own 4px rhythm.
-  it('lays the strip checklist out as an even grid under its legend', () => {
+  // rev 7 retires the strip's facts half with the checkbox grid that lived in
+  // it: the capabilities are chips in a wrapping row of block groups, the facts
+  // are one line in the strip head, and the card's own readout is a sentence.
+  // Every rule those three replaced has to be GONE, or it goes on styling
+  // something by accident the day a class name comes back.
+  it('lays the ability chips out as a wrapping row of block groups, and the old strip rules are gone', () => {
     const dir = path.resolve(__dirname, '../../../components/GolemConfig');
     const css = fs.readFileSync(path.join(dir, 'GolemConfig.module.css'), 'utf8');
-    const fieldset = css.match(/\.detail \.capabilities \{[^}]*\}/s)?.[0] ?? '';
-    const grid = css.match(/^\.capabilityGrid \{[^}]*\}/ms)?.[0] ?? '';
-    const text = css.match(/^\.checkboxText \{[^}]*\}/ms)?.[0] ?? '';
-    const stat = css.match(/\.detailStat \{[^}]*\}/s)?.[0] ?? '';
-
-    // Block, explicitly: the wrapper's 8px is exact and the legend stays out of
-    // any flex/grid case.
-    expect(fieldset).toMatch(/display: block/);
-    expect(fieldset).toMatch(/border: 0/);
-    expect(css.match(/\.detail \.capabilities > \.fieldHint \{[^}]*\}/s)?.[0] ?? '').toMatch(
-      /display: block;\s*margin-top: 8px/
-    );
-    expect(grid).toMatch(/display: grid/);
-    expect(grid).toMatch(/grid-template-columns: repeat\(auto-fill, minmax\(118px, 1fr\)\)/);
-    expect(grid).toMatch(/gap: 8px 16px/);
-    expect(grid).toMatch(/margin-top: 8px/);
-    expect(css).not.toMatch(/\.detail \.capabilities > legend \{/);
-    // The exposure half spaces its blocks itself; the flex `.column` wrapper is gone.
-    expect(
+    const columns = css.match(/^\.abilityColumns \{[^}]*\}/ms)?.[0] ?? '';
+    const group = css.match(/^\.abilityGroup \{[^}]*\}/ms)?.[0] ?? '';
+    const face = css.match(/^\.abilityChipFace \{[^}]*\}/ms)?.[0] ?? '';
+    const on = css.match(/^\.abilityChipInput:checked \+ \.abilityChipFace \{[^}]*\}/ms)?.[0] ?? '';
+    const locked =
+      css.match(/^\.abilityChipInput:checked:disabled \+ \.abilityChipFace \{[^}]*\}/ms)?.[0] ?? '';
+    const readonly =
       css.match(
-        /\.detailExposure > \* \+ \*,\s*\.detailDeclaredExposure > \* \+ \* \{[^}]*\}/s
-      )?.[0] ?? ''
-    ).toMatch(/margin-top: 12px/);
-    expect(css).not.toMatch(/^\.column \{/m);
-    // The declare form is block flow for the same reason: its own checklist is a
-    // fieldset with a legend, followed by the Back button. The legend is no
-    // sibling for the spacing rule, and the Back button keeps its full width.
+        /^\.abilityChips\[data-readonly\] \.abilityChipInput:checked \+ \.abilityChipFace \{[^}]*\}/ms
+      )?.[0] ?? '';
+    const pop = css.match(/^\.cardPop \{[^}]*\}/ms)?.[0] ?? '';
+
+    expect(columns).toMatch(/display: flex;\s*flex-wrap: wrap/);
+    expect(columns).not.toMatch(/grid/);
+    expect(group).toMatch(/flex: 0 1 auto;\s*min-width: 0;\s*max-width: 100%/);
+    expect(face).toMatch(/white-space: nowrap/);
+    expect(css.match(/^\.abilityChipName \{[^}]*\}/ms)?.[0] ?? '').toMatch(
+      /min-width: 0;\s*overflow: hidden;\s*text-overflow: ellipsis/
+    );
+    expect(on).toMatch(/background-color: var\(--accent\);\s*color: var\(--text-on-accent\)/);
+    expect(locked).toMatch(
+      /background-color: var\(--accent-dark\);\s*color: var\(--text-on-accent-dark\)/
+    );
+    expect(readonly).toMatch(/background-color: var\(--accent\)/);
+    expect(css).toMatch(
+      /\.abilityChip\[data-asserted\] \.abilityChipFace::after \{\s*content: '\*'/
+    );
+    expect(pop).toMatch(/position: fixed/);
+    expect(pop).toMatch(/max-height: calc\(100vh - 16px\);\s*overflow: auto/);
+    expect(pop).not.toMatch(/pointer-events: none/);
+    // Retired with the facts half.
+    for (const gone of [
+      '.capabilityGrid',
+      '.detailDeclares',
+      '.capChipFloor',
+      '.detailStats',
+      '.detailExposure',
+      '.detailBody[data-split]',
+      '.requiredTag',
+    ])
+      expect(css).not.toContain(gone);
+    expect(css).not.toMatch(/@container golem-config \(max-width: 720px\)/);
+    // The strip body spaces its blocks itself, whichever host they sit in.
+    expect(css.match(/^\.detailBody > \* \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
+      /margin-top: 12px/
+    );
+    // The Think row keeps its inline layout on both hosts.
+    expect(
+      css.match(/\.detailBody > \.field,\s*\.detailDeclaredExposure \.field \{[^}]*\}/s)?.[0] ?? ''
+    ).toMatch(/flex-flow: row wrap/);
+    // Kept from wave 6: the declare form's block flow and full-width Back button.
     expect(css).toMatch(/^\.manual \{\s*display: block;\s*\}/m);
     expect(css.match(/^\.manual > :not\(legend\) \+ \* \{[^}]*\}/ms)?.[0] ?? '').toMatch(
       /margin-top: 10px/
     );
     const back = css.match(/^\.manual > \.button \{[^}]*\}/ms)?.[0] ?? '';
     expect(back).toMatch(/display: flex/);
-    // A button's auto width fits its content even as a block-level flex
-    // container: the stretch it had as a column-flex item is an explicit width now.
     expect(back).toMatch(/width: 100%/);
-    // The grouped chrome rule no longer lays anything out.
-    const group = css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '';
-    expect(group).toMatch(/min-width: 0/);
-    expect(group).not.toMatch(/display|gap/);
-    // The name and its reason read as one wrapping phrase — `chat (required)` —
-    // never a stacked tag that a wrapped grid could hand to the next item.
-    expect(text).toMatch(/min-width: 0/);
-    expect(text).not.toMatch(/display: flex/);
-    expect(text).not.toMatch(/flex-direction: column/);
-    const tag = css.match(/^\.requiredTag \{[^}]*\}/ms)?.[0] ?? '';
-    expect(tag).toMatch(/color: var\(--text-muted\)/);
-    expect(tag).not.toMatch(/font-size|letter-spacing/);
-    expect(stat).toMatch(/gap: 4px/);
+    expect(css.match(/^\.capabilities,\s*\.manual \{[^}]*\}/ms)?.[0] ?? '').toMatch(/min-width: 0/);
   });
 
   // An unchecked box was --surface-base ringed by --surface-border: two dark
@@ -657,15 +716,17 @@ describe('ModelBand detail strip', () => {
     expect(within(cardNamed('gpt-5')).getByText('assigned')).toBeVisible();
   });
 
-  it('never expands a card: capabilities live in the strip, not the cell', () => {
+  it('never expands a card: its abilities are one line, never the strip chips', () => {
     renderBand({ selected: agentModel });
-    expect(within(cardNamed('gpt-5')).queryByText('tool_call')).not.toBeInTheDocument();
-    expect(within(strip()).getByText('tool_call')).toBeVisible();
+    const card = cardNamed('gpt-5');
+    // One line, one element: the editable chips are the strip's alone.
+    expect(within(card).getByText('chat stream tool_call')).toBeVisible();
+    expect(within(card).queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
   it('previews the focused card without changing the assignment', async () => {
     const { onSelect } = renderBand({ selected: agentModel });
-    cards()[0].focus();
+    act(() => cards()[0].focus());
     await userEvent.keyboard('{ArrowRight}');
 
     // The strip follows focus, read-only, and says how to commit.
@@ -679,23 +740,64 @@ describe('ModelBand detail strip', () => {
     expect(within(cardNamed('gpt-5')).getByText('assigned')).toBeVisible();
   });
 
-  it('keeps the exposure editor bound to the selection while previewing', async () => {
+  it('hands the strip body to the preview while previewing, and back on Escape', async () => {
     renderBand({
       selected: agentModel,
       exposure: <div data-testid="exposure">exposure for the selection</div>,
     });
     expect(within(strip()).getByTestId('exposure')).toBeVisible();
 
-    cards()[0].focus();
+    act(() => cards()[0].focus());
     await userEvent.keyboard('{ArrowRight}');
-    // Editing what you have not chosen would stage a lie.
-    expect(within(strip()).getByTestId('exposure')).toBeVisible();
+    // Editing what you have not chosen would stage a lie, so the editor leaves
+    // and the walked card reads out inert in its place.
+    expect(within(strip()).queryByTestId('exposure')).not.toBeInTheDocument();
     expect(within(strip()).getByText('gpt-5-mini')).toBeVisible();
+    for (const box of within(strip()).getAllByRole('checkbox')) expect(box).toBeDisabled();
+
+    await userEvent.keyboard('{Escape}');
+    expect(within(strip()).getByTestId('exposure')).toBeVisible();
+  });
+
+  it('previews a walked-onto card as inert chips with the floor it is handed, names who uses it, and prints its card and note', async () => {
+    // A constant mock proves ModelBand CONSUMES `preview`; that `previewFor`
+    // derives the right floor is RouteEditor's test.
+    // Annotated: an unannotated literal infers string[] and fails the typed renderBand helper.
+    const preview = jest.fn(
+      (): ReturnType<ModelBandProps['preview']> => ({
+        required: ['chat', 'stream', 'tool_call'],
+        owners: ['agent'],
+        offered: ['chat', 'stream', 'tool_call'],
+      })
+    );
+    renderBand({
+      routes: [{ useCase: 'chat', role: 'general' }],
+      preview,
+      models: [
+        agentModel,
+        model({ role: 'general', modelName: 'gemma4:31b', description: 'Dense reasoning.' }),
+      ],
+      selected: agentModel,
+    });
+    act(() => cards()[0].focus());
+    await userEvent.keyboard('{ArrowRight}');
+
+    const detail = strip();
+    expect(detail).toHaveAttribute('data-state', 'previewing');
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ modelName: 'gemma4:31b' }));
+    expect(within(detail).getByRole('group', { name: 'Required by agent' })).toBeInTheDocument();
+    expect(within(detail).getByRole('checkbox', { name: 'tool_call, required' })).toBeChecked();
+    for (const box of within(detail).getAllByRole('checkbox')) expect(box).toBeDisabled();
+    expect(within(detail).getByText('used by chat')).toBeInTheDocument();
+    expect(within(detail).getByText("gemma4:31b's card lists: chat stream")).toBeInTheDocument();
+    expect(within(detail).getByText('Dense reasoning.')).toBeInTheDocument();
+    expect(within(detail).queryByText(/declares/i)).toBeNull();
+    expect(detail.querySelector('[data-asserted], [aria-describedby]')).toBeNull();
   });
 
   it('returns the preview to the selection on Escape', async () => {
     renderBand({ selected: agentModel });
-    cards()[0].focus();
+    act(() => cards()[0].focus());
     await userEvent.keyboard('{ArrowRight}');
     expect(strip()).toHaveAttribute('data-state', 'previewing');
 
@@ -752,11 +854,15 @@ describe('ModelBand declare readout', () => {
     expect(within(strip()).getByText(/declare "llama-4"/)).toBeVisible();
   });
 
-  it('gives the facts half the full width when there is no exposure half', () => {
-    renderBand({ selected: agentModel });
+  it('hosts the exposure node as direct children of the strip body', () => {
+    renderBand({
+      selected: agentModel,
+      exposure: <div className="field" data-testid="think-probe" />,
+    });
     expect(within(strip()).getByText('gpt-5')).toBeVisible();
-    // No exposure node passed, so the strip must not leave 7/12 blank.
-    expect(strip().querySelector(`[class*='detailBody']`)).not.toHaveAttribute('data-split');
+    // No wrapper between: the Think row is the `.detailBody > .field` the
+    // inline-layout rule addresses, and the body is one column, never two.
+    expect(screen.getByTestId('think-probe').parentElement).toHaveClass('detailBody');
   });
 });
 
@@ -769,7 +875,7 @@ describe('ModelBand preview lifetime', () => {
 
   it('ends the preview when focus leaves the grid', async () => {
     renderBand({ selected: agentModel });
-    cards()[0].focus();
+    act(() => cards()[0].focus());
     await userEvent.keyboard('{ArrowRight}');
     expect(strip()).toHaveAttribute('data-state', 'previewing');
 
@@ -781,13 +887,348 @@ describe('ModelBand preview lifetime', () => {
 
   it('ends the preview when the filter is typed', async () => {
     renderBand({ selected: agentModel });
-    cards()[0].focus();
+    act(() => cards()[0].focus());
     await userEvent.keyboard('{ArrowRight}');
     expect(strip()).toHaveAttribute('data-state', 'previewing');
 
     // The filter re-points the active index with no navigation at all.
     await userEvent.type(screen.getByLabelText('Filter models'), 'g');
     expect(strip()).toHaveAttribute('data-state', 'assigned');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card popup: everything a three-line card cut short, beside the card.
+// Held open by three independent facts — the pointer on the card, the pointer
+// on the popup, the card's focus — each OWNED by one card, so a hold can never
+// outlive its card or be inherited by the next mount.
+// ---------------------------------------------------------------------------
+
+describe('ModelBand card popup timing', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers()); // restored even when an assertion throws
+
+  it('opens the popup on hover after the delay, keeps it while the pointer is on it, and closes on Escape', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({
+          role: 'agent',
+          modelName: 'gemma4:31b',
+          parameters: '31B',
+          contextWindow: 256000,
+          description: 'Agent / tool-use.',
+        }),
+      ],
+    });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    expect(pop).toHaveAttribute('id', 'band-card-pop');
+    expect(pop).toHaveTextContent('Dense');
+    expect(pop).toHaveTextContent('31B parameters · 256000-token context');
+    expect(pop).toHaveTextContent('chat stream');
+    expect(pop).toHaveTextContent('Agent / tool-use.');
+    expect(card).toHaveAttribute('aria-describedby', 'band-card-pop');
+    await user.unhover(card);
+    await user.hover(pop);
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Focus is on the body here: the document listener is what hears this.
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('closes 120 ms after the pointer leaves both the card and the popup', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(card);
+    await user.hover(pop);
+    await user.unhover(pop);
+    act(() => jest.advanceTimersByTime(100));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(30));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('stays open while the card keeps focus after the pointer leaves, and a quick re-entry cancels the close', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    act(() => card.focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    await user.hover(card);
+    await user.unhover(card);
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // focus still holds it
+    act(() => card.blur());
+    act(() => jest.advanceTimersByTime(60));
+    await user.hover(card); // re-entry inside the 120 ms window cancels the close
+    act(() => jest.advanceTimersByTime(70)); // past the original deadline, before any fresh 160 ms open could fire
+    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // never closed — not closed-and-reopened
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
+
+  it('closes when the filter removes its card', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({ modelName: 'gemma4:31b' }),
+        model({ role: 'other', modelName: 'qwen3.5:9b' }),
+      ],
+    });
+    act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Filter models'), 'qwen');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('opens the popup at once on focus and closes it 120 ms after blur', () => {
+    // Inside the fake-timer suite: blur schedules settle(), it does not close at once.
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    act(() => card.focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    act(() => card.blur());
+    act(() => jest.advanceTimersByTime(100));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(30));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('cancels a pending hover-open when its card becomes ineligible, and never opens it', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const { rerender, props } = renderBand({
+      id: 'band',
+      shortfalls: () => [],
+      models: [model({ modelName: 'gemma4:31b' })],
+    });
+    await user.hover(screen.getByRole('option', { name: /gemma4:31b/ }));
+    act(() => jest.advanceTimersByTime(50));
+    expect(jest.getTimerCount()).toBe(1); // the 160 ms open is pending — this fixture schedules nothing else
+    // The draft changed under the band: the same card is now blocked (same identity, new verdict).
+    rerender(
+      <ModelBand {...props} shortfalls={() => [{ cap: 'tool_call', useCases: ['agent'] }]} />
+    );
+    expect(jest.getTimerCount()).toBe(0); // cancelled at once, not merely closed later by the connectivity check
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('does not let a re-mounted card inherit the focus hold its removed predecessor never released', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const { rerender, props } = renderBand({
+      id: 'band',
+      shortfalls: () => [],
+      models: [model({ modelName: 'gemma4:31b' })],
+    });
+    act(() => screen.getByRole('option', { name: /gemma4:31b/ }).focus());
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Blocked: React removes the eligible card without firing its onBlur.
+    rerender(
+      <ModelBand {...props} shortfalls={() => [{ cap: 'tool_call', useCases: ['agent'] }]} />
+    );
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    // Eligible again: a fresh card, no focus, no hover.
+    rerender(<ModelBand {...props} shortfalls={() => []} />);
+    const again = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(again);
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    await user.unhover(again);
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.queryByRole('tooltip')).toBeNull(); // a stale focus hold would have kept it open
+  });
+
+  it("keeps each hold with its own card: focusing B drops A's pending open, and A's focus never holds B's popup", async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({ modelName: 'gemma4:31b' }),
+        model({ role: 'other', modelName: 'qwen3.5:9b' }),
+      ],
+    });
+    const a = screen.getByRole('option', { name: /gemma4:31b/ });
+    const b = screen.getByRole('option', { name: /qwen3.5:9b/ });
+    await user.hover(a);
+    act(() => jest.advanceTimersByTime(50));
+    act(() => b.focus());
+    expect(screen.getByRole('tooltip')).toHaveTextContent('qwen3.5:9b');
+    act(() => jest.advanceTimersByTime(500)); // A's 160 ms timer would have fired by now
+    expect(screen.getByRole('tooltip')).toHaveTextContent('qwen3.5:9b');
+    await user.unhover(a);
+    act(() => b.blur());
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    // Focus A, hover B: B's popup shows; leaving B closes it although A still has focus.
+    act(() => a.focus());
+    await user.hover(b);
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('qwen3.5:9b');
+    await user.unhover(b);
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('after Escape, a card that is still focused holds its reopened popup', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    act(() => card.focus());
+    await user.hover(card);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await user.unhover(card);
+    await user.hover(card); // re-entry reopens (focus alone does not, Escape asked for it closed)
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    await user.unhover(card);
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // still focused: the hold survived Escape
+  });
+
+  it('after Escape, a card the pointer never left holds the popup its focus reopened', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    act(() => card.focus()); // pointer still on the card
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    act(() => card.blur());
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // still hovered: the hold survived Escape
+  });
+
+  it("a neighbour becoming ineligible neither closes an open popup nor drops its card's holds", async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const { rerender, props } = renderBand({
+      id: 'band',
+      shortfalls: () => [],
+      models: [
+        model({ modelName: 'gemma4:31b' }),
+        model({ role: 'other', modelName: 'qwen3.5:9b' }),
+      ],
+    });
+    const a = screen.getByRole('option', { name: /gemma4:31b/ });
+    act(() => a.focus());
+    expect(screen.getByRole('tooltip')).toHaveTextContent('gemma4:31b');
+    rerender(
+      <ModelBand
+        {...props}
+        shortfalls={(candidate) =>
+          candidate.modelName === 'qwen3.5:9b' ? [{ cap: 'tool_call', useCases: ['agent'] }] : []
+        }
+      />
+    );
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('gemma4:31b');
+    await user.hover(a);
+    await user.unhover(a);
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument(); // focus hold intact
+  });
+
+  // Placement is recomputed from the anchor's rect. The grid can move a
+  // SURVIVING anchor with no scroll and no resize event — a neighbour leaving,
+  // a blocked card being revealed into its row — which is what `layoutKey` is
+  // for. Jest's setupTests installs a no-op ResizeObserver, so nothing here
+  // rides on the observer: these two cases pass only on the key.
+  describe('placement', () => {
+    const size = { offsetWidth: 300, offsetHeight: 200 };
+    const viewport = { innerWidth: 1024, innerHeight: 768 };
+    const native = (Object.keys(size) as (keyof typeof size)[]).map(
+      (key) => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)!] as const
+    );
+
+    beforeEach(() => {
+      // jsdom implements no layout: every offset reads 0, and a 0-height popup
+      // never flips or clamps.
+      for (const [key, descriptor] of native)
+        Object.defineProperty(HTMLElement.prototype, key, {
+          ...descriptor,
+          get: () => size[key],
+        });
+      for (const [key, value] of Object.entries(viewport))
+        Object.defineProperty(window, key, { configurable: true, value });
+    });
+
+    afterEach(() => {
+      for (const [key, descriptor] of native)
+        Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    });
+
+    /** The anchor's box, as jsdom will never compute it. */
+    const rectOf = (node: HTMLElement, left: number, bottom: number) => {
+      node.getBoundingClientRect = () =>
+        ({
+          x: left,
+          y: bottom - 60,
+          left,
+          top: bottom - 60,
+          right: left + 190,
+          bottom,
+          width: 190,
+          height: 60,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    };
+
+    it('re-places the open popup when a neighbour leaves the grid under it', () => {
+      const { rerender, props } = renderBand({
+        id: 'band',
+        shortfalls: () => [],
+        models: [
+          model({ modelName: 'gemma4:31b' }),
+          model({ role: 'other', modelName: 'qwen3.5:9b' }),
+        ],
+      });
+      const b = screen.getByRole('option', { name: /qwen3.5:9b/ });
+      rectOf(b, 240, 100); // column two
+      act(() => b.focus());
+      const pop = screen.getByRole('tooltip');
+      expect(pop.style.left).toBe('240px');
+
+      rectOf(b, 20, 100); // B slides into column one as A leaves
+      rerender(
+        <ModelBand
+          {...props}
+          shortfalls={(candidate) =>
+            candidate.modelName === 'gemma4:31b' ? [{ cap: 'tool_call', useCases: ['agent'] }] : []
+          }
+        />
+      );
+      expect(screen.getByRole('tooltip')).toBe(pop); // the same popup, moved
+      expect(pop.style.left).toBe('20px');
+    });
+
+    it('re-places the open popup when a revealed blocked card grows its row', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' }), embedModel] });
+      const card = screen.getByRole('option', { name: /gemma4:31b/ });
+      rectOf(card, 20, 100);
+      act(() => card.focus());
+      expect(screen.getByRole('tooltip').style.top).toBe('106px');
+
+      rectOf(card, 20, 140); // the revealed card stretches the row it shares
+      await user.click(screen.getByRole('button', { name: /show it/ }));
+      // The click blurred the card, which only SCHEDULES the 120 ms close.
+      const pop = screen.getByRole('tooltip');
+      expect(pop).toBeInTheDocument();
+      expect(pop.style.top).toBe('146px');
+    });
   });
 });
 

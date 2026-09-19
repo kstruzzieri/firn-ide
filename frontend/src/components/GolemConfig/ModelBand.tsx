@@ -6,16 +6,18 @@
  * nothing needs a portal — the models, the declare path and the hidden-by-floor
  * set are all permanently visible surfaces.
  *
- * Cards are uniformly COMPACT and never expand: name, type, one facts line. The
- * strip below owns everything else, so a grid row can never inflate and the
- * geometry never moves under the cursor. It has three states — the declare
- * form, a one-line placeholder, or the readout (facts left, exposure editor
- * right of a hairline) — so the surface never jumps into existence.
+ * Cards are uniformly COMPACT and never expand: a name, then the numbers or the
+ * abilities, then the note or the abilities — two or three lines, each ONE line
+ * with an ellipsis. A hover or focus popup carries what they cut short, and the
+ * strip below owns the rest, so a grid row can never inflate and the geometry
+ * never moves under the cursor. The strip has three states — the declare form, a
+ * one-line placeholder, or the readout — so it never jumps into existence.
  *
- * Arrowing the grid PREVIEWS the focused card in the strip's left half without
- * assigning it; the exposure editor on the right always belongs to what is
- * actually selected, because editing exposure you have not chosen would stage a
- * lie.
+ * Arrowing the grid PREVIEWS the focused card in the strip: its facts in the
+ * head, what it would expose as INERT chips, its own card in words and its note
+ * in full. The editable exposure editor belongs to what is actually selected and
+ * steps aside while previewing, because editing exposure you have not chosen
+ * would stage a lie.
  *
  * Everything here is a filter and a pre-check. The backend independently
  * re-derives eligibility and refuses a model that does not meet the affected
@@ -33,10 +35,18 @@ import {
   type RouteProjection,
 } from '../../types/golem';
 import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
-import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
+import { AbilityChips } from './AbilityChips';
 import styles from './GolemConfig.module.css';
-import { TYPE_LABEL, factsLine, type ManualModel } from './routeEdit';
+import { ModelCardPopup, type CardInfo } from './ModelCardPopup';
+import {
+  TYPE_LABEL,
+  abilitiesLine,
+  factsLine,
+  noteOf,
+  usedByOf,
+  type ManualModel,
+} from './routeEdit';
 
 /** Capability arrays cross the transport in CAPABILITY_NAMES order or not at all. */
 export const canonicalCaps = (caps: Iterable<CapabilityName>): CapabilityName[] => {
@@ -60,6 +70,10 @@ export type ModelProvenance = 'authored' | 'discovered';
 export interface ModelRow {
   model: ModelProjection;
   provenance: ModelProvenance;
+  /** Every role the card collapses, sorted; the card is a MODEL, its roles ride along. */
+  roles: string[];
+  /** The roles' notes, in role order — the card shows the first, the popup and the strip all. */
+  descriptions: { role: string; description: string }[];
 }
 
 /** The tuple `sameModelFacts` compares, flattened — the identity of a card. */
@@ -80,21 +94,60 @@ const rowKey = (model: ModelProjection): string =>
  * `models` carries one entry per ROLE, so two roles naming the same model with
  * byte-identical facts arrive twice. The band picks a MODEL, not a role, so
  * they collapse to one card here — otherwise they would share a React key and
- * both answer to `sameModel`, marking two cards selected at once.
+ * both answer to `sameModel`, marking two cards selected at once. The roles
+ * and their notes ride along on the row: the card, the popup and the strip all
+ * read a MODEL that several roles may name.
+ *
+ * Roles are globally unique (pinned by `internal/ai/settings_test.go`), so the
+ * by-role lookup below is unambiguous; two roles that share provider+name but
+ * differ in facts are different cards and never share a row.
  */
 export function buildModelRows(models: readonly ModelProjection[], provider: string): ModelRow[] {
-  const seen = new Set<string>();
-  const unique = models.filter((model) => {
-    if (model.provider !== provider) return false;
-    const key = rowKey(model);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  return orderModelsForDisplay(unique, []).map((model) => ({
-    model,
-    provenance: 'authored' as const,
-  }));
+  const byKey = new Map<string, ModelRow>();
+  for (const model of models) {
+    if (model.provider !== provider) continue;
+    const row = byKey.get(rowKey(model));
+    if (row === undefined)
+      byKey.set(rowKey(model), {
+        model,
+        provenance: 'authored',
+        roles: [model.role],
+        descriptions: [],
+      });
+    else row.roles.push(model.role);
+  }
+  const byRole = new Map(
+    models.filter((model) => model.provider === provider).map((model) => [model.role, model])
+  );
+  for (const row of byKey.values()) {
+    row.roles.sort();
+    row.descriptions = row.roles.flatMap((role) => {
+      const description = byRole.get(role)?.description;
+      return description === undefined ? [] : [{ role, description }];
+    });
+  }
+  return orderModelsForDisplay(
+    [...byKey.values()].map((row) => row.model),
+    []
+  ).map((model) => byKey.get(rowKey(model))!);
+}
+
+/**
+ * Why the card popup is open, held by up to three independent facts at once.
+ * Every one names the CARD it belongs to, so a hold can neither outlive its
+ * card nor be inherited by the card React mounts in its place.
+ */
+interface PopupHold {
+  /** The card the pointer is on. */
+  hoverKey: string | null;
+  /** The pointer is on the popup itself (WCAG 1.4.13: it has to be reachable). */
+  popHovered: boolean;
+  /** The card that has focus. */
+  focusKey: string | null;
+  /** A pending hover-open, for `pendingKey`. */
+  openTimer: number;
+  pendingKey: string | null;
+  closeTimer: number;
 }
 
 const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
@@ -143,20 +196,17 @@ export interface ModelBandProps {
    * as a node keeps the staging state where it already lives.
    */
   exposure?: ReactNode;
-  /**
-   * The applied routes, for the preview strip's "used by" reading. Optional
-   * for now (#263 exposure-chips task 4); task 5 wires the preview chips that
-   * consume it and makes it required.
-   */
-  routes?: readonly RouteProjection[];
-  /** The declare form's own REQUIRED group owners. Optional for now; see `routes`. */
-  owners?: readonly string[];
+  /** The applied routes: what a card's own roles are "used by", on the card and in the strip. */
+  routes: readonly RouteProjection[];
+  /** The use cases whose floor `required` comes from — the REQUIRED group names them. */
+  owners: readonly string[];
   /**
    * What a given card would expose and the floor it would meet, for the
    * preview strip — derived the way `shortfalls` is, cached per role next to
-   * it. Optional for now; see `routes`.
+   * it. A previewed card's floor is its OWN: its selector siblings, not the
+   * candidate's.
    */
-  preview?: (model: ModelProjection) => {
+  preview: (model: ModelProjection) => {
     required: CapabilityName[];
     owners: string[];
     offered: CapabilityName[];
@@ -179,6 +229,9 @@ export function ModelBand({
   selected,
   manual,
   exposure,
+  routes,
+  owners,
+  preview,
   onProviderChange,
   onSelect,
   onManual,
@@ -236,6 +289,132 @@ export function ModelBand({
     while (count < cards.length && cards[count].offsetTop === top) count += 1;
     return count;
   };
+
+  /** A card's facts in full, for its popup: the APPLIED card, never a staged declaration. */
+  const cardInfo = (row: ModelRow): CardInfo => ({
+    name: row.model.modelName,
+    type: TYPE_LABEL[row.model.type],
+    facts: [
+      row.model.parameters === undefined ? undefined : `${row.model.parameters} parameters`,
+      row.model.contextWindow === undefined
+        ? undefined
+        : `${row.model.contextWindow}-token context`,
+      row.model.dimensions === undefined ? undefined : `${row.model.dimensions} dimensions`,
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(' · '),
+    abilities: abilitiesLine(row.model.capabilityFacts.caps),
+    notes: row.descriptions,
+    usedBy: usedByOf(routes, row.roles),
+  });
+
+  /**
+   * The popup's holds, each OWNED by a card key rather than a band-wide
+   * boolean: one card's hover or focus must never keep another card's popup
+   * alive, and a handler must never read a stale closure. Timers live here for
+   * the same reason.
+   */
+  const hold = useRef<PopupHold>({
+    hoverKey: null,
+    popHovered: false,
+    focusKey: null,
+    openTimer: 0,
+    pendingKey: null,
+    closeTimer: 0,
+  });
+  const [popup, setPopup] = useState<{ key: string; anchor: HTMLElement; info: CardInfo } | null>(
+    null
+  );
+  const popupRef = useRef(popup);
+  popupRef.current = popup; // read inside timers
+
+  const cancelOpen = () => {
+    clearTimeout(hold.current.openTimer);
+    hold.current.pendingKey = null;
+  };
+  const clearTimers = () => {
+    cancelOpen();
+    clearTimeout(hold.current.closeTimer);
+  };
+  /**
+   * Closes the popup. Card holds are NOT touched: they record where the
+   * pointer and focus really are, and Escape does not move either — a card
+   * still hovered or focused after Escape reopens on the next enter/focus and
+   * is held as before. Only the popup's own hover ends with the popup.
+   */
+  const closePopup = () => {
+    clearTimers();
+    hold.current.popHovered = false;
+    setPopup(null);
+  };
+  /**
+   * Forgets holds naming cards that are no longer shown. A card React removes
+   * fires neither `onBlur` nor `onMouseLeave` (focus moves to the body
+   * silently; the pointer is simply over nothing), so its holds would outlive
+   * it and be inherited by its next mount. Holds on cards still shown survive.
+   */
+  const dropHoldsNotIn = (shown: ReadonlySet<string>) => {
+    const h = hold.current;
+    if (h.hoverKey !== null && !shown.has(h.hoverKey)) h.hoverKey = null;
+    if (h.focusKey !== null && !shown.has(h.focusKey)) h.focusKey = null;
+    if (h.pendingKey !== null && !shown.has(h.pendingKey)) cancelOpen();
+  };
+  /** Closes 120 ms later unless the OPEN card is still hovered or REALLY focused, or the popup is hovered. */
+  const settle = () => {
+    clearTimeout(hold.current.closeTimer);
+    hold.current.closeTimer = window.setTimeout(() => {
+      const h = hold.current;
+      const open = popupRef.current;
+      if (open === null) return;
+      // A focus hold counts only while the document agrees: a removed card kept
+      // its key without a blur, and its replacement must not inherit the hold.
+      const focused = h.focusKey === open.key && document.activeElement === open.anchor;
+      if (h.hoverKey === open.key || focused || h.popHovered) return;
+      setPopup(null);
+    }, 120);
+  };
+  /** Opens (or replaces) the popup for one card; a pending hover-open for any card is dropped. */
+  const open = (key: string, anchor: HTMLElement, info: CardInfo) => {
+    cancelOpen();
+    clearTimeout(hold.current.closeTimer);
+    setPopup({ key, anchor, info });
+  };
+
+  /**
+   * What the grid actually SHOWS as a stop, as one string: eligibility and the
+   * filter both count, and React compares this by identity where the rebuilt
+   * `matches` array would differ on every render.
+   */
+  const shownKey = `${provider}\u0000${query}\u0000${matches.map((row) => rowKey(row.model)).join('\u0001')}`;
+  useEffect(() => {
+    const shown = new Set(matches.map((row) => rowKey(row.model)));
+    dropHoldsNotIn(shown); // also cancels a PENDING open whose card just left
+    if (popupRef.current !== null && !shown.has(popupRef.current.key)) closePopup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- matches is derived from the same inputs as shownKey
+  }, [shownKey]);
+  // Belt and braces for anything else that takes the anchor out of the
+  // document: React never observes `isConnected`, so it has to be read on every
+  // commit. It cannot loop — the close renders once more with no popup.
+  useEffect(() => {
+    if (popupRef.current !== null && !popupRef.current.anchor.isConnected) {
+      dropHoldsNotIn(new Set(matches.map((row) => rowKey(row.model))));
+      closePopup();
+    }
+  });
+  // Escape closes the popup wherever focus is, including outside the band —
+  // hovering a card takes no focus, so the band's own handler never hears it.
+  useEffect(() => {
+    if (popup === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePopup();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closePopup only touches refs and setPopup; listing it would re-register the listener every render
+  }, [popup]);
+  // A pending timer would fire into an unmounted tree.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- clearTimers only touches the hold ref, whose identity never changes
+  useEffect(() => clearTimers, []);
 
   const choose = (model: ModelProjection) => {
     setPreviewing(false);
@@ -335,12 +514,20 @@ export function ModelBand({
    * can describe a card the user is only walking past; the selection is what
    * the exposure editor stays bound to.
    */
-  const previewRow = previewing ? matches[activeIndex]?.model : undefined;
-  const previewingOther = previewRow !== undefined && !sameModel(selected, previewRow);
   // Walking onto the assigned card previews the SELECTION, not the list row:
   // a reopened route's selection carries the staged declaration, which the
   // list row does not (RouteEditor's `seedFrom`), and the head says "assigned".
-  const detail = previewingOther ? previewRow : selected;
+  // The ROW, not just its model: the strip reads its roles and their notes.
+  const previewEntry = previewing ? matches[activeIndex] : undefined;
+  /** A walked card: its row, plus the floor IT would meet — asked once per render. */
+  const previewed =
+    previewEntry === undefined || sameModel(selected, previewEntry.model)
+      ? undefined
+      : { ...previewEntry, shape: preview(previewEntry.model) };
+  const previewingOther = previewed !== undefined;
+  const detail = previewed?.model ?? selected;
+  const detailFacts = detail === null ? '' : factsLine(detail);
+  const previewUsedBy = previewed === undefined ? [] : usedByOf(routes, previewed.roles);
   const detailState =
     manual !== null
       ? 'declaring'
@@ -388,55 +575,31 @@ export function ModelBand({
             enter by hand.
           </span>
         </div>
-        <fieldset className={styles.capabilities}>
-          <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
-          {/* Same grammar as the route editor's checklist: a grid wrapper under the
-              legend (WebKit never lets a legend join the grid), `chat (required)`. */}
-          <div className={styles.capabilityGrid}>
-            {CAPABILITY_NAMES.map((cap) => {
-              // A required cap the declaration lacks stays unchecked and enabled:
-              // ticking it is the user's assertion, never the form's (§4.4).
-              const needed = required.includes(cap);
-              const locked = needed && manual.caps.includes(cap);
-              return (
-                <label
-                  key={cap}
-                  className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-                >
-                  <input
-                    className={styles.checkboxInput}
-                    type="checkbox"
-                    disabled={locked}
-                    checked={manual.caps.includes(cap)}
-                    onChange={(event) =>
-                      patch({
-                        caps: canonicalCaps(
-                          event.target.checked
-                            ? [...manual.caps, cap]
-                            : manual.caps.filter((other) => other !== cap)
-                        ),
-                      })
-                    }
-                  />
-                  <span className={styles.checkboxBox} aria-hidden="true" />
-                  <span className={styles.checkboxText}>
-                    {cap}
-                    {needed && (
-                      <>
-                        {' '}
-                        <span className={styles.requiredTag}>(required)</span>
-                      </>
-                    )}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-          <span className={styles.fieldHint}>
-            What you declare here is what Golem may use. The route needs the capabilities marked
-            (required).
-          </span>
-        </fieldset>
+        {/* Same chips as the exposure editor, in declaration mode: here they ARE
+            the card, so a chip outside it is no assertion to footnote. A
+            required cap the declaration lacks stays off and enabled — ticking
+            it is the user's assertion, never the form's (§4.4). */}
+        <AbilityChips
+          id={`${id}-manual-caps`}
+          legend="Capabilities this model supports"
+          legendVisible
+          required={required}
+          owners={owners}
+          declared={[]}
+          model={manual.model}
+          selected={manual.caps}
+          mode="declaration"
+          onToggle={(cap, on) =>
+            patch({
+              caps: canonicalCaps(
+                on ? [...manual.caps, cap] : manual.caps.filter((other) => other !== cap)
+              ),
+            })
+          }
+        />
+        <span className={styles.fieldHint}>
+          {`This becomes the model's card.${required.length > 0 ? ' The route needs the capabilities marked required.' : ''}`}
+        </span>
         <button
           type="button"
           className={`${styles.button} ${styles.quiet}`}
@@ -450,7 +613,16 @@ export function ModelBand({
   const filterLabel = floor.length === 0 ? 'filter: none' : `filter: ${floor.join(' · ')}`;
 
   return (
-    <div className={styles.band}>
+    <div
+      className={styles.band}
+      // Capture, so the popup is dismissed BEFORE the grid's own Escape branch
+      // returns the preview to the selection: the topmost thing goes first, and
+      // one key can honestly do both. Focus outside the band is the document
+      // listener's case.
+      onKeyDownCapture={(event) => {
+        if (event.key === 'Escape') closePopup();
+      }}
+    >
       <div className={styles.bandHead}>
         <span className={styles.fieldLabel}>{`Model — every card below can serve ${useCase}`}</span>
         <span className={styles.bandFilter}>{filterLabel}</span>
@@ -510,12 +682,17 @@ export function ModelBand({
       >
         {matches.map((row, index) => {
           const chosen = sameModel(selected, row.model);
+          const key = rowKey(row.model);
+          const facts = factsLine(row.model);
+          const abilities = abilitiesLine(row.model.capabilityFacts.caps);
+          const note = noteOf(row.descriptions);
           return (
             <div
-              key={rowKey(row.model)}
+              key={key}
               id={`${id}-card-${index}`}
               role="option"
               aria-selected={chosen}
+              aria-describedby={popup?.key === key ? `${id}-card-pop` : undefined}
               tabIndex={index === activeIndex ? 0 : -1}
               data-active={index === activeIndex || undefined}
               data-provenance={row.provenance}
@@ -524,17 +701,58 @@ export function ModelBand({
                 setActive(index);
                 choose(row.model);
               }}
+              onMouseEnter={(event) => {
+                const anchor = event.currentTarget; // captured: React clears currentTarget after dispatch
+                hold.current.hoverKey = key;
+                if (popupRef.current?.key === key) {
+                  clearTimeout(hold.current.closeTimer); // re-entry: keep it
+                  return;
+                }
+                cancelOpen();
+                hold.current.pendingKey = key;
+                hold.current.openTimer = window.setTimeout(() => {
+                  if (hold.current.pendingKey === key) open(key, anchor, cardInfo(row));
+                }, 160);
+              }}
+              onMouseLeave={() => {
+                if (hold.current.hoverKey === key) hold.current.hoverKey = null;
+                if (hold.current.pendingKey === key) cancelOpen();
+                settle();
+              }}
+              onFocus={(event) => {
+                hold.current.focusKey = key;
+                open(key, event.currentTarget, cardInfo(row));
+              }}
+              onBlur={() => {
+                if (hold.current.focusKey === key) hold.current.focusKey = null;
+                settle();
+              }}
             >
               <span className={styles.modelCardTop}>
                 <span className={styles.modelName}>{row.model.modelName}</span>
                 {chosen && <span className={styles.modelCardMark}>assigned</span>}
               </span>
+              {/*
+               * Two or three lines, each ONE line: the numbers when there are
+               * any, the abilities otherwise, then the note — so a card never
+               * repeats its abilities and never grows under the cursor. The
+               * popup and the strip carry everything these ellipsise.
+               */}
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
-                <span className={styles.modelCardFacts} title={contextTitle(row.model)}>
-                  {factsLine(row.model)}
-                </span>
+                {facts === '' ? (
+                  <span className={styles.modelCardAbilities}>{abilities}</span>
+                ) : (
+                  <span className={styles.modelCardFacts} title={contextTitle(row.model)}>
+                    {facts}
+                  </span>
+                )}
               </span>
+              {note !== undefined ? (
+                <span className={styles.modelCardNote}>{note}</span>
+              ) : (
+                facts !== '' && <span className={styles.modelCardAbilities}>{abilities}</span>
+              )}
             </div>
           );
         })}
@@ -588,6 +806,28 @@ export function ModelBand({
           ))}
       </div>
 
+      {/*
+       * One popup per band, after the grid: the card it belongs to is named by
+       * `popup.key`, and `showHidden` joins the layout key because revealing a
+       * blocked card can stretch the grid row an eligible card shares — moving
+       * the anchor's bottom edge with no scroll and no resize to hear.
+       */}
+      <ModelCardPopup
+        id={`${id}-card-pop`}
+        open={popup !== null}
+        anchor={popup?.anchor ?? null}
+        info={popup?.info ?? null}
+        layoutKey={`${shownKey}\u0000${showHidden}`}
+        onEnter={() => {
+          hold.current.popHovered = true;
+          clearTimeout(hold.current.closeTimer);
+        }}
+        onLeave={() => {
+          hold.current.popHovered = false;
+          settle();
+        }}
+      />
+
       <span className={styles.srOnly} role="status" aria-live="polite">
         {`${matches.length} model${matches.length === 1 ? ' matches' : 's match'} this filter`}
       </span>
@@ -622,7 +862,15 @@ export function ModelBand({
             </div>
             {declareForm}
             {exposure !== undefined && (
-              <div className={styles.detailDeclaredExposure}>{exposure}</div>
+              <div className={styles.detailDeclaredExposure}>
+                {exposure}
+                {/* The exposure chips write back into the card above, one way:
+                    §4.4 never withdraws a declaration on the user's behalf. */}
+                <span className={styles.fieldHint}>
+                  Turning one on here adds it to the card above; turning one off leaves the card
+                  alone.
+                </span>
+              </div>
             )}
           </>
         ) : detail === null ? (
@@ -638,56 +886,54 @@ export function ModelBand({
               ) : (
                 <span className={styles.modelCardMark}>assigned</span>
               )}
+              {detailFacts !== '' && <span className={styles.detailFacts}>{detailFacts}</span>}
+              {/* Who already routes to this card — a PREVIEW's reading. An
+                  assigned model's use cases are the rows' own business, and
+                  "used by no route" is not worth a line. */}
+              {previewUsedBy.length > 0 && (
+                <span className={styles.detailFacts}>{`used by ${previewUsedBy.join(', ')}`}</span>
+              )}
               <span className={styles.grow} />
               <span className={styles.detailOwner}>{`from ${detail.provider}`}</span>
             </div>
 
-            <div className={styles.detailBody} data-split={exposure !== undefined || undefined}>
-              <div>
-                <div className={styles.detailStats}>
-                  <span className={styles.detailStat}>
-                    <span className={styles.detailStatKey}>type</span>
-                    <span className={styles.detailStatValue}>{TYPE_LABEL[detail.type]}</span>
+            <div className={styles.detailBody}>
+              {previewed === undefined ? (
+                /*
+                 * Bound to the SELECTION (or the hand declaration), never to a
+                 * preview: editing exposure you have not chosen would stage a
+                 * lie. The owner decides whether there is anything to expose.
+                 */
+                exposure
+              ) : (
+                <>
+                  {/* Inert: the same chips as the editor, so the walked card is
+                      read in the grammar it would be edited in. */}
+                  <AbilityChips
+                    id={`${id}-preview`}
+                    legend={`Capabilities ${detail.modelName} would expose to ${useCase}`}
+                    required={previewed.shape.required}
+                    owners={previewed.shape.owners}
+                    declared={detail.capabilityFacts.caps}
+                    model={detail.modelName}
+                    selected={previewed.shape.offered}
+                    readOnly
+                  />
+                  <span className={styles.detailCard}>
+                    {`${detail.modelName}'s card lists: ${abilitiesLine(detail.capabilityFacts.caps)}`}
                   </span>
-                  {detail.parameters !== undefined && (
-                    <span className={styles.detailStat}>
-                      <span className={styles.detailStatKey}>params</span>
-                      <span className={styles.detailStatValue}>{detail.parameters}</span>
-                    </span>
-                  )}
-                  {detail.contextWindow !== undefined && (
-                    <span className={styles.detailStat}>
-                      <span className={styles.detailStatKey}>context</span>
-                      <span className={styles.detailStatValue} title={contextTitle(detail)}>
-                        {formatContextWindow(detail.contextWindow)}
-                      </span>
-                    </span>
-                  )}
-                </div>
-                <div className={styles.detailDeclares}>
-                  <span className={styles.detailStatKey}>declares</span>
-                  <span className={styles.capChips}>
-                    {/* The declaration, as the label says: what the model can do,
-                        floor caps marked — the exposure is the checklist beside it. */}
-                    {detail.capabilityFacts.caps.map((cap) => (
-                      <span
-                        key={cap}
-                        className={`${styles.capChip} ${required.includes(cap) ? styles.capChipFloor : ''}`}
-                      >
-                        {cap}
-                      </span>
-                    ))}
-                  </span>
-                </div>
-              </div>
-
-              {/*
-               * Bound to the SELECTION (or the hand declaration), never to a
-               * preview: the left half may be showing another model's facts
-               * read-only, but editing exposure you have not chosen would stage
-               * a lie. The owner decides whether there is anything to expose.
-               */}
-              {exposure !== undefined && <div className={styles.detailExposure}>{exposure}</div>}
+                  {/* The note in full, where a keyboard reaches it: the card
+                      ellipsises it and the popup needs a pointer. */}
+                  {previewed.descriptions.map((note) => (
+                    <p key={note.role} className={styles.detailNote}>
+                      {previewed.descriptions.length > 1 && (
+                        <span className={styles.detailNoteRole}>{note.role}</span>
+                      )}
+                      {note.description}
+                    </p>
+                  ))}
+                </>
+              )}
             </div>
           </>
         )}

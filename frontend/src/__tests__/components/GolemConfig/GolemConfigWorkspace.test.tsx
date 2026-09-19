@@ -225,7 +225,14 @@ describe('GolemConfig stylesheet', () => {
   });
 
   it('lays the masthead out mobile-first by container width only, never viewport', () => {
-    const text = css();
+    // The card popup is the one exemption, and only because it is POSITIONED in
+    // the viewport: a fixed box is placed from a client rect, so the viewport is
+    // the box it must stay inside. Every rule that lays anything out inside the
+    // pane reads container units, because the pane is docked and resizable and
+    // the OS viewport says nothing about its width.
+    const pop = css().match(/^\.cardPop \{[^}]*\}/ms)?.[0] ?? '';
+    expect(pop).toMatch(/position: fixed/);
+    const text = css().replace(pop, '');
     expect(text).not.toMatch(/\d(vw|vh)\b/);
     // [A7] The BASE is the stacked form: full-width picker, wrapping actions, full-row check button.
     expect(text.match(/^\.picker \{[^}]*\}/ms)?.[0]).toMatch(/flex: 1 1 100%/);

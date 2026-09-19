@@ -1028,16 +1028,6 @@ select.input {
   line-height: 1.25;
 }
 
-/*
- * The reason, at the name's own size — a parenthetical, not a tag. Its muted
- * ink (the §4.7 floor for instructional copy) is a hair off the name's
- * --text-secondary at rest, unlocked; under the amber staged-value mark the
- * name recolours and the reason keeps its muted ink.
- */
-.requiredTag {
-  color: var(--text-muted);
-}
-
 /* ── ability chips (#263, mockup rev 7) ──────────────────────────────────────
  *
  * The fieldset is a plain block — a legend never joins a grid or flex
@@ -1414,39 +1404,42 @@ select.input {
 }
 
 /*
- * Four card rows plus a peek of the fifth: the partial row is the affordance
+ * Three card rows plus a peek of the fourth: the partial row is the affordance
  * that says "this scrolls". Derived from the card height rather than a magic
  * number, so tuning the card tunes the bound with it. The 20px peek spans the
- * fourth inter-row gap plus a sliver of the fifth row's cards.
+ * third inter-row gap plus a sliver of the fourth row's cards.
  *
- * The card height is the card's own two fixed lines — 18px padding + ~16px
- * name line + 6px gap + ~17px metadata line + 2px border ≈ 59px, rounded up so
- * the bound never clips the fourth row. The metadata row renders even when its
- * facts are sparse, so every card resolves to the same height — NOMINALLY: a
- * long name wrapping to a second line or a blocked card's reason-chip row can
- * exceed the token, so "four rows plus a peek" is the ordinary geometry, not
- * a guarantee. The bound and its scroll behave the same either way.
+ * Cards grew to up to three lines (80px minimum: 18px padding + ~16px name +
+ * 5px gap + ~17px metadata + 5px gap + ~16px note + 2px border), and three rows
+ * keep the editor at the height four rows of the old card gave it. The lines
+ * that render vary — numbers, abilities, a note — so every card resolves to the
+ * same height NOMINALLY: a blocked card's reason-chip row can exceed the token,
+ * so "three rows plus a peek" is the ordinary geometry, not a guarantee. The
+ * bound and its scroll behave the same either way.
  *
  * This is the one deliberate scroll region in the editor. The strip below sits
  * in normal flow — an earlier sticky strip overlaid the last card row and its
  * implicit scroll fought the workspace's own.
  */
 .modelGrid {
-  --golem-card-height: 60px;
+  --golem-card-height: 80px;
   --golem-grid-gap: 8px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: var(--golem-grid-gap);
-  max-height: calc(4 * var(--golem-card-height) + 3 * var(--golem-grid-gap) + 20px);
+  max-height: calc(3 * var(--golem-card-height) + 2 * var(--golem-grid-gap) + 20px);
   overflow-y: auto;
   /* Scrollbar treatment is the app-wide one in styles/reset.css. */
 }
 
+/* Top-aligned, not centred: a two-line card and a three-line one share a grid
+   row, and their name lines have to start together. Blocked cards keep their
+   wrapping content but share this geometry — they are not exempt. */
 .modelCard {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 5px;
   min-height: var(--golem-card-height, 52px);
   padding: 9px 11px;
   border: 1px solid var(--surface-border-subtle);
@@ -1537,6 +1530,50 @@ select.input {
   overflow-wrap: anywhere;
 }
 
+/* rev 7 cards: up to three lines, each one line, the rest in the popup and the strip. */
+.modelCardAbilities {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.modelCardNote {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* Eligible model cards only. A blocked card keeps its wrapping name and reason,
+   and the declare card its wrapping prompt, because neither has a popup to carry
+   what an ellipsis would swallow. */
+.modelCard:not(.modelCardBlocked):not(.modelCardDeclare) .modelName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.modelCard:not(.modelCardBlocked):not(.modelCardDeclare) .modelCardFacts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelCard:not(.modelCardBlocked) .modelCardMeta {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
 .modelCardDeclare {
   border-style: dashed;
   border-color: var(--surface-border);
@@ -1573,12 +1610,6 @@ select.input {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
-}
-
-/* This capability is one the floor asked for. */
-.capChipFloor {
-  border-color: color-mix(in srgb, var(--palette-cyan) 45%, transparent);
-  color: var(--palette-cyan);
 }
 
 /* Exactly why a hidden model is hidden. */
@@ -1646,22 +1677,40 @@ select.input {
   font-size: 10px;
 }
 
+/* One column, whatever it holds: the exposure editor, or a walked card's inert
+   chips, readout and note. rev 7 retired the facts half — the numbers moved up
+   into the head — so there is no second half to divide any more. */
 .detailBody {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0 20px;
-  align-items: start;
+  display: block;
 }
 
-/* Two halves only when there is a second half to show. */
-.detailBody[data-split] {
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+.detailBody > * + * {
+  margin-top: 12px;
 }
 
-/* The hairline that separates read-only facts from the editable exposure. */
-.detailExposure {
-  padding-left: 20px;
-  border-left: 1px solid var(--surface-border-subtle);
+/* The numbers beside the name, and a preview's "used by". */
+.detailFacts {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+/* The note in full, keyboard-reachable through the strip. */
+.detailNote {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.detailNoteRole {
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 /* The declaration's exposure editor, under its facts form rather than beside
@@ -1672,55 +1721,22 @@ select.input {
   border-top: 1px solid var(--surface-border-subtle);
 }
 
-.detailStats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 22px;
-}
-
-/* The facts half's overline-to-content distance: these 4px are the rhythm the
-   DECLARES block shares. The checklist across the hairline deliberately left it
-   (wave 6 live gate): its rows breathe at 8px. */
-.detailStat {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.detailStatKey {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.detailStatValue {
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.detailDeclares {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 10px;
+/* The one-way note under the declaration's exposure chips. */
+.detailDeclaredExposure > .fieldHint {
+  display: block;
+  margin-top: 8px;
 }
 
 /*
- * Mockup density inside the strip: the capability checklist sheds the boxed
+ * Mockup density inside the strip: the capability fieldset sheds the boxed
  * chrome — the strip already draws the surface, and one tall column was most
- * of the strip's height. Keith's wave-6 live gate found the wrapping flex row
- * jumbled (uneven columns, a 4px row gap, `required` tags reading as the next
- * item's name), so the boxes now sit in their own grid wrapper: every item the
- * same width on the mockup's minmax(118px, 1fr) columns, room between rows.
+ * of the strip's height.
  *
  * The fieldset itself is a plain block: WebKit never lets a fieldset's legend
  * join a grid or flex container (bug 220793 — the legend stays in the border
  * area and a float on it is ignored), so no gap or grid on the fieldset can
- * space the legend from the first row. The wrapper and the hint carry their own
- * top margins instead, which every engine honours.
+ * space the legend from the first row. The chip columns and the hint carry their
+ * own top margins instead, which every engine honours.
  */
 .detail .capabilities {
   display: block;
@@ -1728,33 +1744,15 @@ select.input {
   border: 0;
 }
 
-.capabilityGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  gap: 8px 16px;
-  margin-top: 8px;
-}
-
-.detail .capabilities > .fieldHint {
-  display: block;
-  margin-top: 8px;
-}
-
-/* The box sits on the name's first line when the phrase wraps. */
-.detail .capabilities .checkbox {
-  align-items: flex-start;
-  min-width: 0;
-}
-
-/* The exposure half (and the declare form's) is plain block flow, its blocks
-   spaced by this rule rather than by a flex column around each. Observed live
-   in WKWebView (Keith's wave-6 live gate): with the checklist fieldset as a
-   flex item, the Think control below landed on the fieldset's hint — possibly
-   the engine's separate legend sizing (a legend is laid out as an excluded child
-   whose space joins the border), and the two blocks had no gap between them
-   anyway. Block flow reads the fieldset's border box as laid out, and the
-   margin is explicit, whatever the exact flex-sizing path. */
-.detailExposure > * + *,
+/* The declaration's exposure editor is plain block flow, its blocks spaced by
+   this rule rather than by a flex column around each. Observed live in WKWebView
+   (Keith's wave-6 live gate): with the checklist fieldset as a flex item, the
+   Think control below landed on the fieldset's hint — possibly the engine's
+   separate legend sizing (a legend is laid out as an excluded child whose space
+   joins the border), and the two blocks had no gap between them anyway. Block
+   flow reads the fieldset's border box as laid out, and the margin is explicit,
+   whatever the exact flex-sizing path. The strip body's own rule says the same
+   for the assigned state. */
 .detailDeclaredExposure > * + * {
   margin-top: 12px;
 }
@@ -1778,18 +1776,105 @@ select.input {
   width: 100%;
 }
 
-/* The think control inline, per the mockup: label beside a narrow select. */
-.detailExposure .field,
+/* The think control inline, per the mockup: label beside a narrow select. It is
+   a direct child of the strip body when a model is assigned, and of the
+   declaration's exposure block when one is being declared. */
+.detailBody > .field,
 .detailDeclaredExposure .field {
   flex-flow: row wrap;
   align-items: center;
   gap: 10px;
 }
 
-.detailExposure .field select.input,
+.detailBody > .field select.input,
 .detailDeclaredExposure .field select.input {
   flex: none;
   width: 130px;
+}
+
+/* ── the card popup (#263, mockup rev 7) ───────────────────────────────────
+ *
+ * Everything a three-line card cut short, beside the card. Fixed-position and
+ * placed from the card's rect, because the grid is a scroll region that would
+ * clip an absolutely positioned child — and without a portal, which the band's
+ * "nothing floats" rule spends nowhere else. It is HOVERABLE (WCAG 1.4.13):
+ * pointer events stay on, and the owner keeps it open while the pointer is
+ * inside it. A long note scrolls inside the cap rather than off the viewport;
+ * the strip's own note line is the keyboard-reachable copy.
+ */
+.cardPop {
+  position: fixed;
+  z-index: 10;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-frame);
+  box-shadow: var(--shadow-panel);
+}
+
+.cardPopHead {
+  margin-bottom: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.cardPopName {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.cardPopRow {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 3px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.cardPopRow + .cardPopRow {
+  margin-top: 5px;
+}
+
+.cardPopKey {
+  padding-top: 3px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.cardPopVal {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.cardPopProse {
+  font-family: var(--font-ui);
+}
+
+.cardPopVal p {
+  margin: 0;
+}
+
+.cardPopVal p + p {
+  margin-top: 3px;
+}
+
+.cardPopRole {
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .hiddenLine {
@@ -2335,23 +2420,6 @@ select.input {
   margin-right: 6px;
   font-weight: 600;
   color: var(--text-secondary);
-}
-
-/* ── narrow container: the route editor's master-detail strip stacks ─────── */
-
-@container golem-config (max-width: 720px) {
-  /* The strip stacks: facts over exposure, the hairline becoming a rule. */
-  .detailBody[data-split] {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px 0;
-  }
-
-  .detailExposure {
-    padding-top: 10px;
-    padding-left: 0;
-    border-top: 1px solid var(--surface-border-subtle);
-    border-left: none;
-  }
 }
 
 /* ── TWO-ROW form: >= 600 container px (upgrade from the stacked base) ────── */
