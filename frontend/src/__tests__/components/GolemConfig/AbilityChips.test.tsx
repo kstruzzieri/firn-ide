@@ -41,32 +41,59 @@ describe('AbilityChips', () => {
       screen.getByRole('checkbox', { name: 'stream, required' }).closest('label')
     ).toHaveAttribute('data-oncard');
     expect(
-      screen
-        .getByRole('checkbox', { name: "tool_call, required, not on the model's card" })
-        .closest('label')
+      screen.getByRole('checkbox', { name: "tool_call, not on the model's card" }).closest('label')
     ).not.toHaveAttribute('data-oncard');
     expect(screen.getByRole('checkbox', { name: 'embed' }).closest('label')).not.toHaveAttribute(
       'data-oncard'
     );
   });
 
-  it('locks a required chip once it is on, and names the reason', () => {
+  it('locks a required chip the card lists once it is on, and names the reason', () => {
     render(<AbilityChips {...base} selected={['chat', 'stream']} />);
     expect(screen.getByRole('checkbox', { name: 'chat, required' })).toBeDisabled();
     // Required but off: enabled, so the user can assert it — and its name says only what it is.
     expect(screen.getByRole('checkbox', { name: 'tool_call' })).toBeEnabled();
   });
 
+  // The lock is the card's, not the tick's: a required chip turned on by hand
+  // is an assertion the user may take back (Done still refuses a floor miss).
+  it('leaves a hand-asserted required chip enabled, so the assertion can be undone', async () => {
+    const onToggle = jest.fn();
+    render(
+      <AbilityChips {...base} selected={['chat', 'stream', 'tool_call']} onToggle={onToggle} />
+    );
+    const chip = screen.getByRole('checkbox', { name: "tool_call, not on the model's card" });
+    expect(chip).toBeChecked();
+    expect(chip).toBeEnabled();
+    expect(chip.closest('label')).toHaveAttribute(
+      'title',
+      "Required by agent and chat. Turned on by hand, not on deepseek-v4-pro's card — unverified"
+    );
+    await userEvent.click(chip);
+    expect(onToggle).toHaveBeenLastCalledWith('tool_call', false);
+  });
+
+  // The declaration form's chips ARE the card, so there every selected
+  // required chip is the floor the declaration must carry: locked.
+  it('locks every selected required chip in the declaration form', () => {
+    render(
+      <AbilityChips {...base} declared={[]} selected={['chat', 'stream']} mode="declaration" />
+    );
+    expect(screen.getByRole('checkbox', { name: 'chat, required' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'stream, required' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'tool_call' })).toBeEnabled();
+  });
+
   it('footnotes a selected chip the card does not list', () => {
     render(<AbilityChips {...base} selected={['chat', 'stream', 'tool_call']} />);
     const chip = screen.getByRole('checkbox', {
-      name: "tool_call, required, not on the model's card",
+      name: "tool_call, not on the model's card",
     });
     expect(chip.closest('label')).toHaveAttribute('data-asserted');
     expect(chip).toHaveAttribute('aria-describedby', 'x-footnote');
     expect(chip.closest('label')).toHaveAttribute(
       'title',
-      "Required by agent and chat — cannot be turned off. Turned on by hand, not on deepseek-v4-pro's card — unverified"
+      "Required by agent and chat. Turned on by hand, not on deepseek-v4-pro's card — unverified"
     );
     expect(document.getElementById('x-footnote')).toHaveTextContent(
       "* Turned on by hand, not on deepseek-v4-pro's card: tool_call. Golem does not check; if the model cannot really do it, the routes that need it fail when they try."

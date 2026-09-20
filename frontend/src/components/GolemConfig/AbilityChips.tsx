@@ -1,8 +1,11 @@
 /**
  * One chip per capability (#263, mockup rev 7): selected = exposed to the
- * route, locked once a required chip is on (§4.4: the tick is the user's
- * assertion, never the checklist's), an asterisk and a footnote for a selected
- * chip the model's card does not list. Real checkboxes under the chips:
+ * route, locked when a required chip is on AND the card lists it (§4.4: the
+ * lock is the card's, not the tick's — a required chip turned on by hand is an
+ * assertion the user may take back, and Done still refuses a floor miss; in
+ * the declaration form the chips ARE the card, so there every selected
+ * required chip is locked), an asterisk and a footnote for a selected chip the
+ * model's card does not list. Real checkboxes under the chips:
  * keyboard, screen-reader state and label clicks are the platform's. The
  * input carries the whole accessible name — jsdom's name computation puts a
  * space between child spans, and the face is decoration.
@@ -70,7 +73,9 @@ export function AbilityChips({
   const chip = (cap: CapabilityName) => {
     const on = selected.includes(cap);
     const isRequired = required.includes(cap);
-    const locked = isRequired && on;
+    // A preview has nothing to take back, so its required chips read as locked.
+    const locked =
+      isRequired && on && (readOnly || mode === 'declaration' || declared.includes(cap));
     const isAsserted = asserted.includes(cap);
     const changed = !readOnly && baseline !== undefined && on !== baseline.includes(cap);
     const title = readOnly

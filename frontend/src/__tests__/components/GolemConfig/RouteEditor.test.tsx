@@ -2729,11 +2729,13 @@ describe('RouteEditor union floor (wave 4c)', () => {
     await openRoute('chat');
 
     const caps = screen.getByRole('group', { name: 'Capabilities exposed to chat — from sandbox' });
+    // Exposed by hand, not by the card: checked, footnoted, and — the lock is
+    // the card's, not the tick's — still enabled, so the assertion can be undone.
     const toolCall = within(caps).getByRole('checkbox', {
-      name: "tool_call, required, not on the model's card",
+      name: "tool_call, not on the model's card",
     });
     expect(toolCall).toBeChecked();
-    expect(toolCall).toBeDisabled();
+    expect(toolCall).toBeEnabled();
     const footnoteId = toolCall.getAttribute('aria-describedby');
     expect(footnoteId).toBeTruthy();
     expect(document.getElementById(footnoteId as string)).toHaveTextContent(
@@ -2769,12 +2771,17 @@ describe('RouteEditor union floor (wave 4c)', () => {
     await userEvent.click(within(caps).getByLabelText('tool_call'));
     expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
     // Ticking it asserts it: the model still does not declare it, so the chip
-    // is locked (required) AND footnoted (not on the model's card).
+    // is footnoted (not on the model's card) and stays enabled — an assertion
+    // the user may take back; unticking it brings the refusal straight back.
     const toolCall = within(caps).getByRole('checkbox', {
-      name: "tool_call, required, not on the model's card",
+      name: "tool_call, not on the model's card",
     });
     expect(toolCall).toBeChecked();
-    expect(toolCall).toBeDisabled();
+    expect(toolCall).toBeEnabled();
+    await userEvent.click(toolCall);
+    expect(toolCall).not.toBeChecked();
+    expect(screen.getByText(/does not declare/)).toBeInTheDocument();
+    await userEvent.click(toolCall);
     await stage();
     expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
   });
