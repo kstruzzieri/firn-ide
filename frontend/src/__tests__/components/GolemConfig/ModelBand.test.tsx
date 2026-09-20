@@ -1146,6 +1146,47 @@ describe('ModelBand card popup timing', () => {
     selection.removeAllRanges();
   });
 
+  // The kept popup must not leave the hold believing the pointer is still on
+  // it: after one copy-by-overshoot, the next card's popup has to close on
+  // hover-out like any other.
+  it('closes the next hover popup normally after a selection was kept through a release', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({ modelName: 'gemma4:31b', description: 'Dense reasoning.' }),
+        model({ role: 'other', modelName: 'gpt-5', description: 'Hosted.' }),
+      ],
+    });
+    const first = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(first);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(first);
+    await user.hover(pop);
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    const range = document.createRange();
+    range.selectNodeContents(within(pop).getByText('Dense reasoning.'));
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.mouseUp(document.body, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    selection.removeAllRanges();
+
+    // Raw events: user-event would also synthesise a buttonless leave on the
+    // popup here, which a real pointer that dragged out and released outside
+    // never sends again.
+    const second = screen.getByRole('option', { name: /gpt-5/ });
+    fireEvent.pointerEnter(second, { pointerType: 'mouse' });
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Hosted.');
+    fireEvent.pointerLeave(second, { pointerType: 'mouse' });
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   // The popup reads the card as it stands now, not as it stood when it opened:
   // a reload that rewrites a note or a fact while the popup is up must show.
   it('shows a note that changes while the popup is open', async () => {

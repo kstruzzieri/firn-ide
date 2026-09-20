@@ -978,18 +978,24 @@ export function ModelBand({
               if (node !== null && node.contains(release.target as Node)) return;
               // Released outside with a selection anchored in the popup: the
               // drag WAS the selection, and closing now would take the DOM it
-              // lives in before it can be copied. The next press outside is
-              // the dismissal (the document listener's case), and collapses it.
+              // lives in before it can be copied. Nothing is scheduled, so the
+              // popup and its selection stand until the next thing that
+              // settles or dismisses — a card leave or blur, a press outside
+              // (which also collapses the selection), Escape. The hold still
+              // tells the truth, the pointer has left: a stale hover hold would
+              // be inherited by the next card's popup and never let it close.
               const selection = document.getSelection();
+              h.popHovered = false;
               if (
                 node !== null &&
                 selection !== null &&
                 !selection.isCollapsed &&
                 selection.anchorNode !== null &&
                 node.contains(selection.anchorNode)
-              )
+              ) {
+                clearTimeout(h.closeTimer);
                 return;
-              h.popHovered = false;
+              }
               settle();
             };
             h.selectionRelease = () => {
