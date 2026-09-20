@@ -40,7 +40,8 @@ export function ModelCardPopup({
   info: CardInfo | null;
   layoutKey: string;
   onEnter: () => void;
-  onLeave: () => void;
+  /** The pointer left the popup; `buttons` says whether a drag is still going. */
+  onLeave: (event: React.MouseEvent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ left: 16, top: 8 });

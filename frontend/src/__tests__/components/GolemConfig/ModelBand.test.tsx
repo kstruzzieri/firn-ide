@@ -1089,6 +1089,32 @@ describe('ModelBand card popup timing', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
+  // Selecting a long note drags the pointer past the popup's edge with the
+  // button still down; that leave is not a departure. The release decides:
+  // outside the popup, the usual close; back over it, nothing.
+  it('keeps the popup through a selection drag that leaves it, until the release lands outside', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(card);
+    await user.hover(pop);
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    fireEvent.mouseUp(pop, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    fireEvent.mouseUp(document.body, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(100));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(30));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   it('stays open while the card keeps focus after the pointer leaves, and a quick re-entry cancels the close', async () => {
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });

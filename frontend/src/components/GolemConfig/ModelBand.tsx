@@ -170,6 +170,13 @@ interface PopupHold {
    * it fires, and on unmount.
    */
   releaseListener: (() => void) | null;
+  /**
+   * Removes the one-shot document `mouseup` listener a selection drag out of
+   * the popup registers: the pointer leaves the popup with the button down,
+   * and the RELEASE decides — outside the popup it is the departure the leave
+   * was not; back over it, nothing. Same lifetime rules as `releaseListener`.
+   */
+  selectionRelease: (() => void) | null;
   /** A pending hover-open, for `pendingKey`. */
   openTimer: number;
   pendingKey: string | null;
@@ -346,6 +353,7 @@ export function ModelBand({
     focusKey: null,
     pointerKey: null,
     releaseListener: null,
+    selectionRelease: null,
     openTimer: 0,
     pendingKey: null,
     closeTimer: 0,
@@ -465,6 +473,7 @@ export function ModelBand({
     () => () => {
       clearTimers();
       hold.current.releaseListener?.();
+      hold.current.selectionRelease?.();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clearTimers only touches the hold ref, whose identity never changes
     []
@@ -951,8 +960,28 @@ export function ModelBand({
           hold.current.popHovered = true;
           clearTimeout(hold.current.closeTimer);
         }}
-        onLeave={() => {
-          hold.current.popHovered = false;
+        onLeave={(event) => {
+          const h = hold.current;
+          if (event.buttons !== 0) {
+            // A selection drag past the popup's edge, button still down: not a
+            // departure. The release decides, wherever it lands.
+            h.selectionRelease?.();
+            const onRelease = (release: MouseEvent) => {
+              h.selectionRelease = null; // `once` already took it off
+              const node = document.getElementById(`${id}-card-pop`);
+              if (node === null || !node.contains(release.target as Node)) {
+                h.popHovered = false;
+                settle();
+              }
+            };
+            h.selectionRelease = () => {
+              document.removeEventListener('mouseup', onRelease, true);
+              h.selectionRelease = null;
+            };
+            document.addEventListener('mouseup', onRelease, { once: true, capture: true });
+            return;
+          }
+          h.popHovered = false;
           settle();
         }}
       />
