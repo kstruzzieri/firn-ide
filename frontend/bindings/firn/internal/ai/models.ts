@@ -739,9 +739,9 @@ export class ModelFacts {
  * Description is the entry's authored note (config `description`): prose,
  * not an identifier. ASCII line breaks, tabs, NEL (U+0085), and the Unicode
  * LINE/PARAGRAPH SEPARATORS (U+2028/U+2029) collapse to single spaces, every
- * other Cc/Cf rune is scrubbed to U+FFFD, the result is trimmed to
- * maxModelDescriptionLen bytes without splitting a rune, and a note that is
- * blank after that is absent.
+ * other Cc/Cf rune bar the zero width joiner (U+200D) is scrubbed to U+FFFD,
+ * the result is trimmed to maxModelDescriptionLen bytes without splitting a
+ * rune, and a note that is blank after that is absent.
  */
 export class ModelProjection {
     "role": string;
