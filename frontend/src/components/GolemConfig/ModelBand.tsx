@@ -820,6 +820,13 @@ export function ModelBand({
               // the hover or the pending open a mouse is holding.
               onPointerEnter={(event) => {
                 if (event.pointerType === 'touch') return;
+                // A drag is not a hover: a selection drag crossing this card
+                // must not schedule its open, or lingering here past 160 ms
+                // would replace the popup the selection lives in. Nothing is
+                // held for it either; a release then re-entry hovers as usual.
+                // `> 0`, not `!== 0`: jsdom's pointer events carry no
+                // `buttons` at all, and a missing value is no button.
+                if (event.buttons > 0) return;
                 const anchor = event.currentTarget; // captured: React clears currentTarget after dispatch
                 hold.current.hoverKey = key;
                 if (popup?.key === key) {

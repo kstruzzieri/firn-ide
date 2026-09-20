@@ -1219,6 +1219,48 @@ describe('ModelBand card popup timing', () => {
     selection.removeAllRanges();
   });
 
+  // A drag is not a hover: crossing a card with the button down must not
+  // schedule its hover-open at all, or a selection drag that lingers on it
+  // past 160 ms loses the popup, and the selection, before the release.
+  it("does not open another card's popup while a selection drag lingers on it", async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({ modelName: 'gemma4:31b', description: 'Dense reasoning.' }),
+        model({ role: 'other', modelName: 'gpt-5', description: 'Hosted.' }),
+      ],
+    });
+    const first = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(first);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(first);
+    await user.hover(pop);
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    const range = document.createRange();
+    range.selectNodeContents(within(pop).getByText('Dense reasoning.'));
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    // jsdom has no PointerEvent (RTL's pointerEnter falls back to a bare
+    // Event with no `buttons`); a MouseEvent named pointerover carries the
+    // held button to React's onPointerEnter.
+    const second = screen.getByRole('option', { name: /gpt-5/ });
+    fireEvent(second, new MouseEvent('pointerover', { bubbles: true, buttons: 1 }));
+    act(() => jest.advanceTimersByTime(400));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Dense reasoning.');
+    fireEvent.mouseUp(second, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Dense reasoning.');
+    selection.removeAllRanges();
+    // Released, left and re-entered with no button: an ordinary hover opens it.
+    fireEvent.pointerLeave(second, { pointerType: 'mouse' });
+    fireEvent(second, new MouseEvent('pointerover', { bubbles: true, buttons: 0 }));
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Hosted.');
+  });
+
   // The popup reads the card as it stands now, not as it stood when it opened:
   // a reload that rewrites a note or a fact while the popup is up must show.
   it('shows a note that changes while the popup is open', async () => {
