@@ -1187,6 +1187,38 @@ describe('ModelBand card popup timing', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
+  // A release that lands on another card is still the end of the selection
+  // drag: that card's pending hover-open must not replace the popup the
+  // selection lives in.
+  it('keeps the selected popup when the release lands on another card', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [
+        model({ modelName: 'gemma4:31b', description: 'Dense reasoning.' }),
+        model({ role: 'other', modelName: 'gpt-5', description: 'Hosted.' }),
+      ],
+    });
+    const first = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(first);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(first);
+    await user.hover(pop);
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    const range = document.createRange();
+    range.selectNodeContents(within(pop).getByText('Dense reasoning.'));
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const second = screen.getByRole('option', { name: /gpt-5/ });
+    fireEvent.pointerEnter(second, { pointerType: 'mouse' });
+    fireEvent.mouseUp(second, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Dense reasoning.');
+    selection.removeAllRanges();
+  });
+
   // The popup reads the card as it stands now, not as it stood when it opened:
   // a reload that rewrites a note or a fact while the popup is up must show.
   it('shows a note that changes while the popup is open', async () => {

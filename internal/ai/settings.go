@@ -356,8 +356,8 @@ var noteBreaks = strings.NewReplacer(
 )
 
 // forbiddenProseRune is the identifier scrub's Cc/Cf test with one rune kept:
-// ZERO WIDTH JOINER (U+200D), which joins an emoji sequence or a conjunct and
-// neither reorders nor hides text; a note is display prose, never an
+// ZERO WIDTH JOINER (U+200D), which controls emoji composition and script
+// shaping and is not a bidi control; a note is display prose, never an
 // identifier, so nothing is matched or selected through it. The carve-out is
 // deliberately that one rune: the other format runes prose can carry (ZERO
 // WIDTH NON-JOINER, the emoji TAG characters of subdivision flags) and the

@@ -981,9 +981,13 @@ export function ModelBand({
               // lives in before it can be copied. Nothing is scheduled, so the
               // popup and its selection stand until the next thing that
               // settles or dismisses — a card leave or blur, a press outside
-              // (which also collapses the selection), Escape. The hold still
-              // tells the truth, the pointer has left: a stale hover hold would
-              // be inherited by the next card's popup and never let it close.
+              // (which also collapses the selection), Escape — or a later
+              // hover-open of another card, which replaces it. The card the
+              // release lands on is not that: the popup sits below its card,
+              // so an overshoot usually ends on the next one, whose pending
+              // hover-open is dropped here. The hold still tells the truth,
+              // the pointer has left: a stale hover hold would be inherited by
+              // the next card's popup and never let it close.
               const selection = document.getSelection();
               h.popHovered = false;
               if (
@@ -994,6 +998,7 @@ export function ModelBand({
                 node.contains(selection.anchorNode)
               ) {
                 clearTimeout(h.closeTimer);
+                cancelOpen();
                 return;
               }
               settle();
