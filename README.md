@@ -398,7 +398,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
+`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 Phase 1 and slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
 
 Active tracks:
 
