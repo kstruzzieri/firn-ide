@@ -1115,6 +1115,37 @@ describe('ModelBand card popup timing', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
+  // Overshooting the popup's edge and releasing is how a long note gets
+  // selected to its end; the DOM holding that selection has to survive the
+  // release, or nothing is left to copy. The next press outside closes it.
+  it('keeps the popup after an outside release while a selection is anchored inside it', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [model({ modelName: 'gemma4:31b', description: 'Dense reasoning.' })],
+    });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(card);
+    await user.hover(pop);
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    const range = document.createRange();
+    range.selectNodeContents(within(pop).getByText('Dense reasoning.'));
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.isCollapsed).toBe(false);
+    fireEvent.mouseUp(document.body, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // A press outside is the dismissal it always was (and collapses the selection).
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    selection.removeAllRanges();
+  });
+
   // The popup reads the card as it stands now, not as it stood when it opened:
   // a reload that rewrites a note or a fact while the popup is up must show.
   it('shows a note that changes while the popup is open', async () => {

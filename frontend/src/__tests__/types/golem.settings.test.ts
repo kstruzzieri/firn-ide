@@ -5,6 +5,8 @@ import {
   parseSettingsReloadResult,
   GolemContractError,
   type SettingsProjection,
+  FORBIDDEN_IDENTIFIER_RUNES,
+  FORBIDDEN_PROSE_RUNES,
 } from '../../types/golem';
 
 const validProjection = (): Record<string, unknown> => ({
@@ -64,6 +66,19 @@ const settingsDiagnosticMappingCases = JSON.parse(
     'utf8'
   )
 ) as SettingsDiagnosticMappingCase[];
+
+// The prose scrub is the identifier scrub with exactly one rune let through.
+describe('FORBIDDEN_PROSE_RUNES', () => {
+  it('lets the zero width joiner through and nothing else the identifier rule forbids', () => {
+    expect(FORBIDDEN_PROSE_RUNES.test('Pair \u{1F469}\u200D\u{1F4BB} ready.')).toBe(false);
+    expect(FORBIDDEN_IDENTIFIER_RUNES.test('\u200D')).toBe(true);
+    for (const rune of ['\u202E', '\u0085', '\u200B', '\u200C', '\u{E007F}']) {
+      expect(FORBIDDEN_PROSE_RUNES.test(`a${rune}b`)).toBe(true);
+    }
+    // A joiner beside a forbidden rune hides nothing.
+    expect(FORBIDDEN_PROSE_RUNES.test('\u200D\u202E')).toBe(true);
+  });
+});
 
 describe('parseSettingsProjection', () => {
   it('accepts a full valid projection', () => {

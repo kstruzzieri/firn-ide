@@ -779,8 +779,10 @@ const MAX_MODEL_NUMBER = 2147483647;
 export const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
 /**
  * The identifier scrub for prose, with one rune kept: ZERO WIDTH JOINER
- * (U+200D) only joins an emoji sequence in a note and cannot spoof text that
- * is never an identifier. Mirrors the backend's sanitizeProse.
+ * (U+200D) joins an emoji sequence or a conjunct and neither reorders nor
+ * hides text, and a note is display prose, never an identifier. Deliberately
+ * that one rune (ZWNJ and the emoji TAG characters stay scrubbed). Mirrors
+ * the backend's forbiddenProseRune.
  */
 export const FORBIDDEN_PROSE_RUNES = /(?!\u200D)[\p{Cc}\p{Cf}]/u;
 

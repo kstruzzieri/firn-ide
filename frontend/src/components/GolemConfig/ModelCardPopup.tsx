@@ -45,10 +45,14 @@ export function ModelCardPopup({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ left: 16, top: 8 });
+  // The parent reads the card at render and hands a fresh `info` object each
+  // time; placement depends on its CONTENT (a rewritten note re-measures), not
+  // its identity, or every band render would re-register the listeners.
+  const infoKey = info === null ? '' : JSON.stringify(info);
   useLayoutEffect(() => {
     // Same condition the render bails on: no listeners around a measure that
     // could only ever return early.
-    if (!open || anchor === null || info === null) return;
+    if (!open || anchor === null || infoKey === '') return;
     const measure = () => {
       const node = ref.current;
       if (node === null) return;
@@ -80,7 +84,7 @@ export function ModelCardPopup({
     // layoutKey: a neighbour leaving the grid, or a blocked card being
     // revealed, moves a surviving anchor with no scroll or resize event;
     // React compares these by identity, so the key re-runs placement then.
-  }, [open, anchor, info, layoutKey]);
+  }, [open, anchor, infoKey, layoutKey]);
   if (!open || info === null) return null;
   return createPortal(
     <div

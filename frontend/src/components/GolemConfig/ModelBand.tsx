@@ -975,10 +975,22 @@ export function ModelBand({
             const onRelease = (release: MouseEvent) => {
               h.selectionRelease = null; // `once` already took it off
               const node = document.getElementById(`${id}-card-pop`);
-              if (node === null || !node.contains(release.target as Node)) {
-                h.popHovered = false;
-                settle();
-              }
+              if (node !== null && node.contains(release.target as Node)) return;
+              // Released outside with a selection anchored in the popup: the
+              // drag WAS the selection, and closing now would take the DOM it
+              // lives in before it can be copied. The next press outside is
+              // the dismissal (the document listener's case), and collapses it.
+              const selection = document.getSelection();
+              if (
+                node !== null &&
+                selection !== null &&
+                !selection.isCollapsed &&
+                selection.anchorNode !== null &&
+                node.contains(selection.anchorNode)
+              )
+                return;
+              h.popHovered = false;
+              settle();
             };
             h.selectionRelease = () => {
               document.removeEventListener('mouseup', onRelease, true);

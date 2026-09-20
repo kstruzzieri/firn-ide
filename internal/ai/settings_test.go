@@ -788,7 +788,7 @@ func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
 			// U+2028 (LINE SEPARATOR) and U+0085 (NEL) sit mid-string between
 			// words: noteBreaks must collapse both to a single space rather
 			// than leaving U+2028 untouched (it is neither Cc nor Cf) or
-			// letting sanitizeIdentifier turn U+0085 (Cc) into U+FFFD.
+			// letting sanitizeProse turn U+0085 (Cc) into U+FFFD.
 			name: "line separator and NEL collapse to spaces",
 			desc: "Agent\u2028tool-use\u0085ready.",
 			want: "Agent tool-use ready.",

@@ -2711,7 +2711,8 @@ describe('RouteEditor union floor (wave 4c)', () => {
     // A sandbox-like model: its card declares chat/generate/stream, but the
     // applied exposure also carries tool_call — a hand-ticked assertion the
     // card does not back. Sharing chat-role with agent puts tool_call on the
-    // floor too (from agent+chat), so the chip is both locked and asserted.
+    // floor too (from agent+chat), so the chip is required and asserted —
+    // footnoted, and still enabled.
     const sandbox = model({
       modelName: 'sandbox',
       effectiveCapabilities: ['chat', 'generate', 'stream'],

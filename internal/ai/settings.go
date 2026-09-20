@@ -199,9 +199,9 @@ type RouteProjection struct {
 // Description is the entry's authored note (config `description`): prose,
 // not an identifier. ASCII line breaks, tabs, NEL (U+0085), and the Unicode
 // LINE/PARAGRAPH SEPARATORS (U+2028/U+2029) collapse to single spaces, every
-// other Cc/Cf rune is scrubbed to U+FFFD, the result is trimmed to
-// maxModelDescriptionLen bytes without splitting a rune, and a note that is
-// blank after that is absent.
+// other Cc/Cf rune bar the zero width joiner (U+200D) is scrubbed to U+FFFD,
+// the result is trimmed to maxModelDescriptionLen bytes without splitting a
+// rune, and a note that is blank after that is absent.
 type ModelProjection struct {
 	Role                  string          `json:"role"`
 	ModelName             string          `json:"modelName"`
@@ -348,18 +348,21 @@ func sanitizeIdentifier(s string) string {
 // CRLF, LF, CR, TAB, NEL (U+0085), LINE SEPARATOR (U+2028), and PARAGRAPH
 // SEPARATOR (U+2029). CRLF is listed first so it collapses to ONE space, not
 // two (LF and CR would each match separately otherwise). NEL is the one
-// sanitizeIdentifier's Cc/Cf scrub would otherwise turn into U+FFFD instead
-// of a space; LS and PS are not Cc/Cf at all, so they need this replacer too.
+// sanitizeProse's Cc/Cf scrub would otherwise turn into U+FFFD instead of a
+// space; LS and PS are not Cc/Cf at all, so they need this replacer too.
 var noteBreaks = strings.NewReplacer(
 	"\r\n", " ", "\n", " ", "\r", " ", "\t", " ",
 	"\u0085", " ", "\u2028", " ", "\u2029", " ",
 )
 
 // forbiddenProseRune is the identifier scrub's Cc/Cf test with one rune kept:
-// ZERO WIDTH JOINER (U+200D), which in prose only joins an emoji sequence and
-// cannot spoof text that is never an identifier. Every other format rune (the
-// bidi overrides among them) is still forbidden. The one predicate the scrub
-// and the contract's note validators share, so the two cannot drift.
+// ZERO WIDTH JOINER (U+200D), which joins an emoji sequence or a conjunct and
+// neither reorders nor hides text; a note is display prose, never an
+// identifier, so nothing is matched or selected through it. The carve-out is
+// deliberately that one rune: the other format runes prose can carry (ZERO
+// WIDTH NON-JOINER, the emoji TAG characters of subdivision flags) and the
+// bidi overrides are still scrubbed. The one predicate the scrub and the
+// contract's note validators share, so the two cannot drift.
 func forbiddenProseRune(r rune) bool {
 	return r != '\u200d' && unicode.In(r, unicode.Cc, unicode.Cf)
 }
