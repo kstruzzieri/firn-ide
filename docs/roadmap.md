@@ -36,7 +36,7 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Dependency Upgrades | **COMPLETE** | #40 |
 | Code Quality | **IN PROGRESS** | #42 closed; #41 remains an incremental extraction constraint, not a standalone refactor project |
 | Accessibility | **COMPLETE** | #43 closed via PR #201 after the WCAG AA remainder and automated evidence landed; a human VoiceOver/NVDA pass remains prudent release validation |
-| Future Features | **IN PROGRESS** | #44 implementation shipped via PR #206 (tracker still open); #45/#46 are unlocked; #226 Golem chat panel shipped via PR #262 on the #165 embedded runtime; #263 slices A and B shipped via PRs #269/#270/#272 with the upstream-gated write phases still open, #285 phase routing shipped via PR #287, and #271 center panel and undock shipped via PR #288; #264/#265 and the polish follow-ups #284/#289/#291/#293 remain open |
+| Future Features | **IN PROGRESS** | #44 implementation shipped via PR #206 (tracker still open); #45/#46 are unlocked; #226 Golem chat panel shipped via PR #262 on the #165 embedded runtime; #263 Phase 1 and slices A and B shipped via PRs #269/#270/#272, Slice C named profiles and the narrow-pane redesign via PR #333 (2026-09-18, closing #284/#308/#309/#310/#315), and exposure chips, filled model cards and the model note via PR #343 (2026-09-20), both after the release; #285 phase routing shipped via PR #287, and #271 center panel and undock shipped via PR #288; #264/#265, the polish follow-ups #289/#291, and the configuration-workspace follow-ups filed from its live gates and reviews (#293, #307, #311, #312 (its picker IA shipped in #333; tracker open), #314, #316-#323, #334-#342, #344, #345) remain open |
 | Platform | **COMPLETE** | #273 Wails v3.0.0-beta.16 host migration shipped via PRs #274/#280; macOS floor raised to 12, Linux pinned to WebKit2GTK 4.1 (GTK3); #281 (GTK4 + WebKitGTK 6.0, gates v3.1) and #282 hygiene follow-ups open |
 | Bug Fixes | **COMPLETE** | #33, #34, #194, and #204 closed; linked-worktree Git isolation shipped via PR #197; editor nav-scroll (#216/#218) and clipped run-profile adopt button (#227) fixed |
 
@@ -72,8 +72,16 @@ the previous wave are listed first:
    before v3.1, which drops the GTK3 path.
 2. **#263 — Golem configuration workspace, via PRs #269/#270/#272:** Phase 1
    read-only projection and diagnostics, Slice A complete projection with typed
-   diagnostics, and Slice B transactional writes. Slices C (profiles UI,
-   add-use-case control) and D (inventory picker) remain, gated upstream.
+   diagnostics, and Slice B transactional writes. Since the release, on
+   `develop` and unreleased: Slice C named configuration profiles with the
+   narrow-pane redesign (grouped source picker, subgrid tables, reach-marked
+   rows, staged-changes bar) via PR #333 (2026-09-18), and the exposure chips,
+   filled model cards and model note on the route editor via PR #343
+   (2026-09-20). Remaining: the add-use-case control, profile Export and
+   Delete (cut from Slice C, gated on go-llm#537/#536), and Slice D (the
+   inventory-backed picker: Refresh list, capability facts, tool_call tri-state
+   and Probe, on the go-llm inventory and probe operations Firn's pin has
+   carried since Slice B's bump to `bf94237`).
 3. **#285 — go-llm phase routing and destination admission, via PR #287:**
    consent-derived `DestinationPolicy`, `requiredAgentCaps` capability floors,
    `NormalizeEndpoint` aligned with destination/v1, reachable-set admission
@@ -106,7 +114,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 
 | Lane | Ticket | Primary ownership | Dependency and conflict rule |
 |------|--------|-------------------|------------------------------|
-| A | Golem follow-ups — #263 settings UI, #264 durable multi-conversation, #265 token/context usage | `internal/ai`, `frontend/src/components/Golem`, `golemStore` | #165 and #226 are both shipped: the embedded `go-llm` runtime replaced the commit-message shell-out, and PR #262 landed the chat panel on it. #265 is blocked on go-llm emitting usage; go-llm #393 (sanitized tool args on `tool.started`/`tool.finished`) would fill in the tool-chip detail view. #263 Phase 1 (read-only projection, diagnostics, panel view) merged as PR #269, Slice A (read-only configuration workspace and diagnostics) merged as PR #270, and Slice B (transactional settings writes) merged as PR #272. The go-llm phase-routing and destination-admission consumer slice — pin bump to go-llm `be8e259`, `requiredAgentCaps`/`agent.ModelCallCapabilities` floor with `planning` in the vocabulary, the commit-message generator behind a consent-derived `DestinationPolicy`, `NormalizeEndpoint` aligned with destination/v1, reachable-set admission mirroring upstream, batch settings-apply consent with provenance, atomic `GrantMany`, and a grant-only "Approve missing destinations" transaction — is tracked as #285 on this branch. #263 Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain; Slice D no longer owns the go-llm pin bump, which #285 satisfies. |
+| A | Golem follow-ups — #263 settings UI, #264 durable multi-conversation, #265 token/context usage | `internal/ai`, `frontend/src/components/Golem`, `golemStore` | #165 and #226 are both shipped: the embedded `go-llm` runtime replaced the commit-message shell-out, and PR #262 landed the chat panel on it. #265 is blocked on go-llm emitting usage; go-llm #393 (sanitized tool args on `tool.started`/`tool.finished`) would fill in the tool-chip detail view. #263 Phase 1 (read-only projection, diagnostics, panel view) merged as PR #269, Slice A (read-only configuration workspace and diagnostics) merged as PR #270, and Slice B (transactional settings writes) merged as PR #272. The go-llm phase-routing and destination-admission consumer slice — pin bump to go-llm `be8e259`, `requiredAgentCaps`/`agent.ModelCallCapabilities` floor with `planning` in the vocabulary, the commit-message generator behind a consent-derived `DestinationPolicy`, `NormalizeEndpoint` aligned with destination/v1, reachable-set admission mirroring upstream, batch settings-apply consent with provenance, atomic `GrantMany`, and a grant-only "Approve missing destinations" transaction — is tracked as #285 on this branch. #263 Slice C (named configuration profiles) merged inside PR #333 with the narrow-pane redesign of the workspace (2026-09-18), and PR #343 (2026-09-20) added the route editor's exposure chips, two- or three-line model cards with a hoverable popup, and the model note carried through the projection. Remaining: the add-use-case control, profile Export and Delete (cut from Slice C, gated on go-llm#537/#536), and Slice D (the inventory-backed picker: Refresh list, capability facts, tool_call tri-state and Probe); Slice D's upstream gate is met — go-llm's inventory refresh and tool_call probe (go-llm #456) have been in Firn's pin since Slice B's bump to `bf94237`, carried forward by #285 — so it no longer owns a pin bump. Open configuration follow-ups: #293, #307, #311, #312 (its picker IA shipped in #333; tracker open), #314, #316-#323, #334-#342, #344 (a routing row never shows its role name) and #345 (staged-changes bar deltas in amber italic). |
 | B | #164 merge follow-up backlog — #220, #219, #221, #223, #240, #241 | `frontend/src/components/Editor/Merge*`, merge-specific `GitPanel` seams, `gitStore` merge tests | #164 itself is closed: phase 4 shipped via PR #244, and #222 and #242 are closed. What remains is the follow-up backlog above. Do not start #166 or #46 against the same editor/Git seams. |
 | C | #45 — context menus | `FileExplorer` row/context surfaces, editor tab-bar menus, command registry entries | Unblocked: #202 released the File Explorer seams. Reuse #44's registry instead of adding a parallel action path. Keep out of the merge editor while Lane B is active. |
 
@@ -115,7 +123,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 1. Work the #164 merge follow-up backlog in Lane B — #220 auto-merged region hints, #219 key-hold preview, #221 multi-file conflict rail, #223 bulk take-Current/Incoming, #240 pre-stage diagnostics check, #241 base-relative word marks. #164 phase 4 shipped via PR #244; #222 newline metadata and #242 collapsed conflicted-file diagnostics are closed.
 2. Start #166 only after the merge surface stabilizes. Split it into safe/read-only branch metadata and later destructive merge/rebase/rename/delete operations.
 3. Start #46 after the #164 editor surface stabilizes; keep sibling navigation compatible with lazy directory loading.
-4. Work the Golem follow-ups in Lane A now that #226 has shipped. #263 settings UI Phase 1 is merged (PR #269); Slice A read-only diagnostics is merged (PR #270); Slice B write phases are merged (PR #272). The go-llm phase-routing and destination-admission consumer slice (#285) is on this branch: pin bump to go-llm `be8e259`, capability-aware chat/commit-message routing via `requiredAgentCaps`/`agent.ModelCallCapabilities`, aligned `NormalizeEndpoint` and reachable-set admission, batch settings-apply consent with provenance, and the grant-only "Approve missing destinations" transaction. #263 Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain; Slice D no longer owns the pin bump, which #285 satisfies. Take #264 durable multi-conversation next; hold #265 until go-llm emits usage.
+4. Work the Golem follow-ups in Lane A now that #226 has shipped. #263 settings UI Phase 1 is merged (PR #269); Slice A read-only diagnostics is merged (PR #270); Slice B write phases are merged (PR #272). The go-llm phase-routing and destination-admission consumer slice (#285) is on this branch: pin bump to go-llm `be8e259`, capability-aware chat/commit-message routing via `requiredAgentCaps`/`agent.ModelCallCapabilities`, aligned `NormalizeEndpoint` and reachable-set admission, batch settings-apply consent with provenance, and the grant-only "Approve missing destinations" transaction. #263 Slice C named profiles and the narrow-pane redesign are merged (PR #333), as are the exposure chips, model cards and model note (PR #343), both unreleased on `develop`; the add-use-case control, profile Export and Delete (gated on go-llm#537/#536) and Slice D (inventory-backed picker) remain, and Slice D no longer owns a pin bump — Slice B's `bf94237` already carried the inventory and probe operations. Take #264 durable multi-conversation next; hold #265 until go-llm emits usage.
 5. Close the #44 tracker as housekeeping; the implementation shipped in PR #206.
 6. Keep #148/#196 benchmark-gated and #41 unscheduled as a standalone rewrite.
 
@@ -153,7 +161,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | P2 | #241 Base-relative word marks | When git recorded a base, mark each side against it to show what that side changed rather than how the sides differ. |
 | Closed | #242 Conflicted-file diagnostics | Closed via PR #252; per-marker errors collapse into one warning keyed on git's `UU` status, with the status-bar summary aligned in PR #255. |
 | P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
-| Partly shipped | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics merged (PR #270); Slice B write phases merged (PR #272); Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain — Slice D no longer owns the go-llm pin bump, which the #285 phase-routing/destination-admission consumer slice satisfies. |
+| Partly shipped | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics merged (PR #270); Slice B write phases merged (PR #272); Slice C named configuration profiles merged with the narrow-pane redesign (PR #333, 2026-09-18); exposure chips, filled model cards and the model note merged (PR #343, 2026-09-20) — both after v0.12.0, unreleased. The add-use-case control, profile Export and Delete (cut from Slice C, gated on go-llm#537/#536) and Slice D (the inventory-backed picker: Refresh list, capability facts, tool_call tri-state and Probe) remain; Slice D's upstream gate is met — the inventory and probe operations have been in Firn's go-llm pin since Slice B's `bf94237`. |
 | Closed | #271 Golem center panel (Plan A) | Golem moves out of the right dock into a full-height center island beside the Files column: persisted per-repository order/width/collapse, an effective-layout budget that rails the non-requested panel under window pressure, command bars for both panels, drag/keyboard/palette reorder, and Files reveal on every explicit editor, configuration, diff, merge and run-output intent. Shipped via PR #288 in v0.12.0. |
 | Closed | #271 Golem undocked window (Plan B) | The same chat, optionally hosted by a second native window. Go owns the lifecycle (open, ready, closing, closed) and persists mode plus last normal bounds in `~/.firn/app.json`; the main window stays the only executing owner, projecting a `GolemView` snapshot to the satellite and admitting or refusing every action it posts. Covers the bounded draft handoff in both directions, abort and re-dock recovery, restore on relaunch, delta ingest while the main window is minimized, the undocked Files/rail geometry, and the scoped window shortcuts. Shipped via PR #288 in v0.12.0; smoke-tested on macOS, with the Windows and Linux rows of the checklist still untested. |
 | P2 | #264 Golem durable multi-conversation | Persist and switch between conversations; the New chat reset shipped with #226 is the in-memory slice of this. |
@@ -743,13 +751,17 @@ Follow-ups: #263 settings UI, #264 durable multi-conversation, #265 token/contex
 
 The assistant is no longer a future feature. #226 shipped the read-only chat
 panel on the embedded `go-llm` runtime, #165 moved commit messages onto it,
-#263 slices A and B added the configuration workspace, #285 added phase routing
-and destination admission, and #271 moved the chat into a center island that
-optionally undocks into a second native window.
+#263 added the configuration workspace (Phase 1 and slices A and B, PRs
+#269/#270/#272), #285 added phase routing and destination admission, and
+#271 moved the chat into a center island that optionally undocks into a
+second native window. Since the release, unreleased on `develop`: #263's
+named profiles with the narrow-pane redesign (Slice C, PR #333) and the
+route editor's exposure chips and model cards (PR #343).
 
-Remaining: #263 slices C and D (gated upstream), #264 durable
-multi-conversation, #265 token and context usage (blocked on `go-llm` emitting
-usage), and #261 guarded preview-and-apply.
+Remaining: #263's add-use-case control, profile Export and Delete (gated on
+go-llm#537/#536) and Slice D inventory-backed picker, #264 durable
+multi-conversation, #265 token and context usage (blocked on `go-llm`
+emitting usage), and #261 guarded preview-and-apply.
 
 ### gRPC Service Integration (v2.0+)
 Service Adapter Pattern for connecting to external backends.

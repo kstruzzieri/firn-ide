@@ -286,7 +286,7 @@ there — those stay with the repository-scoped Golem state.
 **AI (Golem)**
 - [x] Workspace chat panel (#226 phase 1) — read-only assistant on the embedded `go-llm` runtime, scoped to the bound repository with a sensitive-path floor, consent-gated remote egress with durable per-destination approval, streamed conversations that survive workspace switches, and a persistent status-bar segment (`Cmd/Ctrl+Shift+I`)
 - [x] Git commit messages on the embedded `go-llm` runtime (#165) — the CLI shell-out is gone
-- [x] Configuration workspace (#263 slices A and B) — models, roles, profiles and provider destinations as a complete projection with typed diagnostics, applied through transactional writes that never leave settings half-written, with project keys write-only so a stored secret never reads back
+- [x] Configuration workspace (#263 Phase 1 and slices A, B and C) — models, roles, profiles and provider destinations as a complete projection with typed diagnostics, applied through transactional writes that never leave settings half-written, with project keys write-only so a stored secret never reads back; named configuration profiles and a layout that works in narrow panes (a grouped source picker, subgrid tables, rows marked by how a staged change reaches them, and a staged-changes bar); a route editor with capability exposure chips (required and optional; a required chip locks once the model's card lists it and it is on; any chip asserted by hand is footnoted), two- or three-line model cards with a hoverable popup of every fact, and each model's note from the configuration
 - [x] Phase routing and destination admission from `go-llm` (#285) — consent-derived destination policy, capability floors for chat and commit-message routing, reachable-set admission mirroring upstream, and batch settings-apply consent with provenance, so a fallback destination cannot silently widen the granted scope
 - [x] Center panel and undocked window (#271) — a full-height center island beside the Files column with persisted per-repository order, width and collapse, command bars for both panels, drag/keyboard/palette reorder, and an optional second native window that shares the surface while the main window stays the only executing owner
 
@@ -297,7 +297,7 @@ If the Golem consent store becomes unavailable — a banner appears, and remote 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
-- [ ] Golem — configuration slices C and D (#263, gated on upstream `go-llm`), durable multi-conversation history (#264), token and context usage (#265), guarded preview-and-apply mode (#261)
+- [ ] Golem — #263's add-use-case control, profile Export and Delete (gated on upstream `go-llm`) and Slice D inventory-backed picker, durable multi-conversation history (#264), token and context usage (#265), guarded preview-and-apply mode (#261)
 - [ ] Linux — GTK4 and WebKitGTK 6.0 (#281), required before Wails v3.1, which drops the GTK3 path this release targets
 
 ## Project Structure
@@ -398,11 +398,11 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
+`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 Phase 1 and slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
 
 Active tracks:
 
-1. **Golem:** the configuration UI epic (#263) stays open for the write phases still gated on upstream `go-llm`. Next are durable multi-conversation history (#264) and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Readability and contrast follow-ups (#291, #293), the route-editor close affordance (#284), and the panel/undock follow-ups (#289) are queued behind them.
+1. **Golem:** the configuration UI epic (#263) stays open for the add-use-case control, profile Export and Delete (gated on upstream `go-llm`) and the Slice D inventory-backed picker. Next are durable multi-conversation history (#264) and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Readability and contrast follow-ups (#291, #293) and the panel/undock follow-ups (#289) are queued behind them.
 2. **Platform:** Linux must move to GTK4 and WebKitGTK 6.0 (#281) before Wails v3.1 can be adopted, since v3.1 drops the GTK3 path this release still targets. Migration hygiene follow-ups are tracked in #282.
 3. **Git merge:** #164 is closed; the remaining backlog is auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), bulk take-Current/Incoming (#223), and the phase 3 diagnostics follow-ups (#240, #241). Destructive VCS operations (#166) come after.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
