@@ -777,6 +777,12 @@ const MAX_MODEL_NUMBER = 2147483647;
 // two oracles. The Go builder scrubs the same categories to U+FFFD, which is
 // safe: producer stricter than contract.
 export const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
+/**
+ * The identifier scrub for prose, with one rune kept: ZERO WIDTH JOINER
+ * (U+200D) only joins an emoji sequence in a note and cannot spoof text that
+ * is never an identifier. Mirrors the backend's sanitizeProse.
+ */
+export const FORBIDDEN_PROSE_RUNES = /(?!\u200D)[\p{Cc}\p{Cf}]/u;
 
 // A canonical endpoint is always plain ASCII: NormalizeEndpoint rejects a
 // non-ASCII host outright (Cyrillic/fullwidth/ideographic-dot homoglyphs
@@ -920,15 +926,15 @@ function readModel(value: unknown): ModelProjection | null {
   if (hasDimensions && !isOptionalModelNumber(value.dimensions)) return null;
 
   const hasDescription = hasPresentKey(value, 'description');
-  // Prose, not an identifier: any bytes, but the producer scrubs Cc/Cf to
-  // U+FFFD and trims to the byte bound, and this boundary is independent
-  // (§5.6), so either fault is a break here too.
+  // Prose, not an identifier: any bytes, but the producer scrubs Cc/Cf (bar
+  // the zero width joiner) to U+FFFD and trims to the byte bound, and this
+  // boundary is independent (§5.6), so either fault is a break here too.
   if (
     hasDescription &&
     !(
       isBoundedString(value.description, MAX_MODEL_DESCRIPTION_BYTES) &&
       value.description !== '' &&
-      !FORBIDDEN_IDENTIFIER_RUNES.test(value.description)
+      !FORBIDDEN_PROSE_RUNES.test(value.description)
     )
   )
     return null;

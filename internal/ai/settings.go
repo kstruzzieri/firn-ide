@@ -355,12 +355,31 @@ var noteBreaks = strings.NewReplacer(
 	"\u0085", " ", "\u2028", " ", "\u2029", " ",
 )
 
+// forbiddenProseRune is the identifier scrub's Cc/Cf test with one rune kept:
+// ZERO WIDTH JOINER (U+200D), which in prose only joins an emoji sequence and
+// cannot spoof text that is never an identifier. Every other format rune (the
+// bidi overrides among them) is still forbidden. The one predicate the scrub
+// and the contract's note validators share, so the two cannot drift.
+func forbiddenProseRune(r rune) bool {
+	return r != '\u200d' && unicode.In(r, unicode.Cc, unicode.Cf)
+}
+
+// sanitizeProse scrubs every forbiddenProseRune to U+FFFD.
+func sanitizeProse(s string) string {
+	return strings.Map(func(r rune) rune {
+		if forbiddenProseRune(r) {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
+}
+
 // sanitizeNote is the projection's one policy for prose: breaks become
-// spaces, the identifier scrub covers the rest, the whitespace trim runs
+// spaces, the prose scrub covers the rest, the whitespace trim runs
 // BEFORE the byte bound (leading blanks must not spend the budget) and
 // again after it (a cut can expose a trailing blank).
 func sanitizeNote(s string) string {
-	scrubbed := strings.TrimSpace(sanitizeIdentifier(noteBreaks.Replace(s)))
+	scrubbed := strings.TrimSpace(sanitizeProse(noteBreaks.Replace(s)))
 	return strings.TrimSpace(trimToBytes(scrubbed, maxModelDescriptionLen))
 }
 

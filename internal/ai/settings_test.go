@@ -801,6 +801,15 @@ func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
 			desc: "a\r\nb\rc\u2029d",
 			want: "a b c d",
 		},
+		{
+			// ZERO WIDTH JOINER (U+200D) is Cf, but in prose it only joins an
+			// emoji sequence (WOMAN + ZWJ + LAPTOP here); scrubbing it broke
+			// every such glyph into pieces around U+FFFD. It stays. The bidi
+			// override beside it is still scrubbed: the carve-out is one rune.
+			name: "zero width joiner stays, bidi override beside it does not",
+			desc: "Pair \U0001F469\u200D\U0001F4BB ready\u202e.",
+			want: "Pair \U0001F469\u200D\U0001F4BB ready\ufffd.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1031,7 +1040,7 @@ func validateSettingsProjection(p SettingsProjection) error {
 			return fmt.Errorf("model[%d].parameters", i)
 		}
 		if model.Description != "" && (len(model.Description) > maxModelDescriptionLen ||
-			strings.ContainsFunc(model.Description, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) })) {
+			strings.ContainsFunc(model.Description, forbiddenProseRune)) {
 			return fmt.Errorf("model[%d].description", i)
 		}
 		if model.ContextWindow < 0 || model.ContextWindow > 2147483647 ||
@@ -1188,8 +1197,9 @@ func contractOptionalIdentifierField(object map[string]json.RawMessage, key, whe
 }
 
 // contractOptionalNoteField accepts an optional prose string: non-empty, at
-// most limit bytes, free of Cc/Cf runes — the identifier rule with its own
-// bound, and no ASCII restriction. Used for the model note.
+// most limit bytes, free of forbiddenProseRune (the identifier rule with its
+// own bound, no ASCII restriction, and the zero width joiner kept). Used for
+// the model note.
 func contractOptionalNoteField(object map[string]json.RawMessage, key, where string, limit int) error {
 	if _, ok := object[key]; !ok {
 		return nil
@@ -1198,9 +1208,7 @@ func contractOptionalNoteField(object map[string]json.RawMessage, key, where str
 	if err != nil {
 		return err
 	}
-	if value == "" || len(value) > limit || strings.ContainsFunc(value, func(r rune) bool {
-		return unicode.In(r, unicode.Cc, unicode.Cf)
-	}) {
+	if value == "" || len(value) > limit || strings.ContainsFunc(value, forbiddenProseRune) {
 		return fmt.Errorf("%s.%s is not a bounded note", where, key)
 	}
 	return nil
