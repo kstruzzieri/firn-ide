@@ -1115,6 +1115,28 @@ describe('ModelBand card popup timing', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
+  // The popup reads the card as it stands now, not as it stood when it opened:
+  // a reload that rewrites a note or a fact while the popup is up must show.
+  it('shows a note that changes while the popup is open', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const { rerender, props } = renderBand({
+      id: 'band',
+      models: [model({ modelName: 'gemma4:31b', description: 'Dense reasoning.' })],
+    });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Dense reasoning.');
+    rerender(
+      <ModelBand
+        {...props}
+        models={[model({ modelName: 'gemma4:31b', description: 'Sparse reasoning.' })]}
+      />
+    );
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Sparse reasoning.');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Dense reasoning.');
+  });
+
   it('stays open while the card keeps focus after the pointer leaves, and a quick re-entry cancels the close', async () => {
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     renderBand({ id: 'band', models: [model({ modelName: 'gemma4:31b' })] });

@@ -358,9 +358,7 @@ export function ModelBand({
     pendingKey: null,
     closeTimer: 0,
   });
-  const [popup, setPopup] = useState<{ key: string; anchor: HTMLElement; info: CardInfo } | null>(
-    null
-  );
+  const [popup, setPopup] = useState<{ key: string; anchor: HTMLElement } | null>(null);
 
   const cancelOpen = () => {
     clearTimeout(hold.current.openTimer);
@@ -412,12 +410,20 @@ export function ModelBand({
       });
     }, 120);
   };
-  /** Opens (or replaces) the popup for one card; a pending hover-open for any card is dropped. */
-  const open = (key: string, anchor: HTMLElement, info: CardInfo) => {
+  /**
+   * Opens (or replaces) the popup for one card; a pending hover-open for any
+   * card is dropped. Only the card's KEY is held: what the popup says is read
+   * from the card as it stands at render, so a reload that rewrites a note or
+   * a fact while the popup is up shows at once rather than at the next open.
+   */
+  const open = (key: string, anchor: HTMLElement) => {
     cancelOpen();
     clearTimeout(hold.current.closeTimer);
-    setPopup({ key, anchor, info });
+    setPopup({ key, anchor });
   };
+  const popupRow =
+    popup === null ? undefined : matches.find((row) => rowKey(row.model) === popup.key);
+  const popupInfo = popupRow === undefined ? null : cardInfo(popupRow);
 
   /**
    * What the grid actually SHOWS as a stop, as one string: eligibility and the
@@ -823,7 +829,7 @@ export function ModelBand({
                 cancelOpen();
                 hold.current.pendingKey = key;
                 hold.current.openTimer = window.setTimeout(() => {
-                  if (hold.current.pendingKey === key) open(key, anchor, cardInfo(row));
+                  if (hold.current.pendingKey === key) open(key, anchor);
                 }, 160);
               }}
               onPointerLeave={(event) => {
@@ -861,7 +867,7 @@ export function ModelBand({
                 hold.current.focusKey = key;
                 const byPointer = hold.current.pointerKey === key;
                 hold.current.pointerKey = null;
-                if (!byPointer) open(key, event.currentTarget, cardInfo(row));
+                if (!byPointer) open(key, event.currentTarget);
               }}
               onBlur={() => {
                 if (hold.current.focusKey === key) hold.current.focusKey = null;
@@ -954,7 +960,7 @@ export function ModelBand({
         id={`${id}-card-pop`}
         open={popup !== null}
         anchor={popup?.anchor ?? null}
-        info={popup?.info ?? null}
+        info={popupInfo}
         layoutKey={`${shownKey}\u0000${showHidden}`}
         onEnter={() => {
           hold.current.popHovered = true;
