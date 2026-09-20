@@ -1261,6 +1261,33 @@ describe('ModelBand card popup timing', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Hosted.');
   });
 
+  // The drag guard withholds only the OPEN. The hover hold still has to be
+  // recorded, or a drag out of the popup that selects nothing and releases
+  // back on its own card would close the popup under the pointer.
+  it('keeps the popup when a selection-less drag releases back on its own card', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderBand({
+      id: 'band',
+      models: [model({ modelName: 'gemma4:31b', description: 'Dense reasoning.' })],
+    });
+    const card = screen.getByRole('option', { name: /gemma4:31b/ });
+    await user.hover(card);
+    act(() => jest.advanceTimersByTime(200));
+    const pop = screen.getByRole('tooltip');
+    await user.unhover(card);
+    await user.hover(pop);
+    fireEvent.mouseLeave(pop, { buttons: 1 });
+    (window.getSelection() as Selection).removeAllRanges();
+    fireEvent(card, new MouseEvent('pointerover', { bubbles: true, buttons: 1 }));
+    fireEvent.mouseUp(card, { buttons: 0 });
+    act(() => jest.advanceTimersByTime(500));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Leaving the card is the ordinary close.
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' });
+    act(() => jest.advanceTimersByTime(130));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   // The popup reads the card as it stands now, not as it stood when it opened:
   // a reload that rewrites a note or a fact while the popup is up must show.
   it('shows a note that changes while the popup is open', async () => {
