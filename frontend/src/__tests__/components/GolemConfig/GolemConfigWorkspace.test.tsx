@@ -146,6 +146,23 @@ describe('GolemConfig stylesheet', () => {
     expect(text).not.toMatch(/\.capPill s \{/);
   });
 
+  // Keith's live pass: the pills render only on rows with a staged diff, so they
+  // always sit on the amber reach tint, where --surface-border-subtle measured
+  // 1.12:1 — no outline at all. --palette-cyan, the band's chosen-card colour,
+  // was Keith's pick over --text-muted (which read white against the amber)
+  // and --palette-sky (the card's Affected mark): 6.4:1 on the edited tint over
+  // --surface-panel. And the "Defined models" heading needs the module's
+  // divider, or it reads as part of the last routing row, whose bottom border
+  // the table drops.
+  it('outlines capability pills in --palette-cyan and rules off the Defined models subgroup', () => {
+    const text = css();
+    expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--palette-cyan\)/);
+    // The editor's off-state ability chip keeps its own border: a global edit of
+    // the pill rule once recoloured it by accident (live gate, f2ae5674).
+    expect(text).toMatch(/\.abilityChipFace \{[^}]*border: 1px solid var\(--text-muted\)/);
+    expect(text).toMatch(/\.subgroup \{[^}]*border-top: 1px solid var\(--surface-border-subtle\)/);
+  });
+
   it('upgrades records to subgrid tables only where subgrid exists, squeezing only the long columns', () => {
     const text = css();
     // [A7] The BASE is the record form: the header row is hidden VISUALLY (never removed
@@ -225,7 +242,14 @@ describe('GolemConfig stylesheet', () => {
   });
 
   it('lays the masthead out mobile-first by container width only, never viewport', () => {
-    const text = css();
+    // The card popup is the one exemption, and only because it is POSITIONED in
+    // the viewport: a fixed box is placed from a client rect, so the viewport is
+    // the box it must stay inside. Every rule that lays anything out inside the
+    // pane reads container units, because the pane is docked and resizable and
+    // the OS viewport says nothing about its width.
+    const pop = css().match(/^\.cardPop \{[^}]*\}/ms)?.[0] ?? '';
+    expect(pop).toMatch(/position: fixed/);
+    const text = css().replace(pop, '');
     expect(text).not.toMatch(/\d(vw|vh)\b/);
     // [A7] The BASE is the stacked form: full-width picker, wrapping actions, full-row check button.
     expect(text.match(/^\.picker \{[^}]*\}/ms)?.[0]).toMatch(/flex: 1 1 100%/);

@@ -26,6 +26,11 @@ const (
 	// §5.6 profile description bound — its own constant, so retuning the
 	// endpoint bound never silently retunes descriptions.
 	maxProfileDescriptionLen = 1024
+	// A model entry's authored note (config `description`), byte-bounded like
+	// the profile description: a long note is trimmed, never a reason to
+	// withhold the projection as "limited" (exceedsProjectionBounds leaves
+	// notes out on purpose).
+	maxModelDescriptionLen = 1024
 	// maxProjectionDiagnostics is the contract cap (fixed by the TS validator
 	// and the shared corpus — never raise it without a breaking-change
 	// review). appendDiagnostic always emits, in order, at most one
@@ -190,11 +195,19 @@ type RouteProjection struct {
 // HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
 // these authored, model-specific members, so the editor has to disclose the
 // loss before staging. The values themselves never cross the boundary.
+//
+// Description is the entry's authored note (config `description`): prose,
+// not an identifier. ASCII line breaks, tabs, NEL (U+0085), and the Unicode
+// LINE/PARAGRAPH SEPARATORS (U+2028/U+2029) collapse to single spaces, every
+// other Cc/Cf rune bar the zero width joiner (U+200D) is scrubbed to U+FFFD,
+// the result is trimmed to maxModelDescriptionLen bytes without splitting a
+// rune, and a note that is blank after that is absent.
 type ModelProjection struct {
 	Role                  string          `json:"role"`
 	ModelName             string          `json:"modelName"`
 	Provider              string          `json:"provider"`
 	Type                  string          `json:"type"`
+	Description           string          `json:"description,omitempty"`
 	Parameters            string          `json:"parameters,omitempty"`
 	ContextWindow         int             `json:"contextWindow,omitempty"`
 	Dimensions            int             `json:"dimensions,omitempty"`
@@ -331,6 +344,48 @@ func sanitizeIdentifier(s string) string {
 	}, s)
 }
 
+// noteBreaks collapses seven line-breaking sequences to a single space each:
+// CRLF, LF, CR, TAB, NEL (U+0085), LINE SEPARATOR (U+2028), and PARAGRAPH
+// SEPARATOR (U+2029). CRLF is listed first so it collapses to ONE space, not
+// two (LF and CR would each match separately otherwise). NEL is the one
+// sanitizeProse's Cc/Cf scrub would otherwise turn into U+FFFD instead of a
+// space; LS and PS are not Cc/Cf at all, so they need this replacer too.
+var noteBreaks = strings.NewReplacer(
+	"\r\n", " ", "\n", " ", "\r", " ", "\t", " ",
+	"\u0085", " ", "\u2028", " ", "\u2029", " ",
+)
+
+// forbiddenProseRune is the identifier scrub's Cc/Cf test with one rune kept:
+// ZERO WIDTH JOINER (U+200D), which controls emoji composition and script
+// shaping and is not a bidi control; a note is display prose, never an
+// identifier, so nothing is matched or selected through it. The carve-out is
+// deliberately that one rune: the other format runes prose can carry (ZERO
+// WIDTH NON-JOINER, the emoji TAG characters of subdivision flags) and the
+// bidi overrides are still scrubbed. The one predicate the scrub and the
+// contract's note validators share, so the two cannot drift.
+func forbiddenProseRune(r rune) bool {
+	return r != '\u200d' && unicode.In(r, unicode.Cc, unicode.Cf)
+}
+
+// sanitizeProse scrubs every forbiddenProseRune to U+FFFD.
+func sanitizeProse(s string) string {
+	return strings.Map(func(r rune) rune {
+		if forbiddenProseRune(r) {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
+}
+
+// sanitizeNote is the projection's one policy for prose: breaks become
+// spaces, the prose scrub covers the rest, the whitespace trim runs
+// BEFORE the byte bound (leading blanks must not spend the budget) and
+// again after it (a cut can expose a trailing blank).
+func sanitizeNote(s string) string {
+	scrubbed := strings.TrimSpace(sanitizeProse(noteBreaks.Replace(s)))
+	return strings.TrimSpace(trimToBytes(scrubbed, maxModelDescriptionLen))
+}
+
 // sanitizeProjectionIdentifiers scrubs every projected identifier in place —
 // the one pass every build path funnels through, so no emit site can forget
 // it. Endpoints are excluded: NormalizeEndpoint's URL parse already
@@ -351,6 +406,7 @@ func sanitizeProjectionIdentifiers(p SettingsProjection) SettingsProjection {
 		m.Type = sanitizeIdentifier(m.Type)
 		m.ThinkMode = sanitizeIdentifier(m.ThinkMode)
 		m.Parameters = sanitizeIdentifier(m.Parameters)
+		m.Description = sanitizeNote(m.Description)
 		for j := range m.RoutedUseCases {
 			m.RoutedUseCases[j] = sanitizeIdentifier(m.RoutedUseCases[j])
 		}
@@ -507,7 +563,8 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		}
 		p.Models = append(p.Models, ModelProjection{
 			Role: role, ModelName: m.Name, Provider: m.Provider, Type: m.Type,
-			Parameters: m.Parameters, ContextWindow: m.ContextWindow, Dimensions: m.Dimensions,
+			Description: m.Description,
+			Parameters:  m.Parameters, ContextWindow: m.ContextWindow, Dimensions: m.Dimensions,
 			EffectiveCapabilities: append([]string{}, effective...),
 			CapabilityFacts: CapabilityFacts{
 				Caps:      append([]string{}, effective...),

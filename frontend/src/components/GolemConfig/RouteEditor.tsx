@@ -68,9 +68,17 @@ import {
 } from '../../types/golemConfig';
 import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
+import { AbilityChips } from './AbilityChips';
 import styles from './GolemConfig.module.css';
 import { ModelBand, canonicalCaps } from './ModelBand';
-import { THINK_LABEL, pendingOf, type ManualModel, type Seed } from './routeEdit';
+import {
+  abilitiesLine,
+  THINK_LABEL,
+  pendingOf,
+  usedByOf,
+  type ManualModel,
+  type Seed,
+} from './routeEdit';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -282,6 +290,21 @@ export function RouteEditor({
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
   const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
+  /**
+   * The routes ASSIGNED to this model beside the edited one, read from the
+   * applied routes like "used by". The fork notice's "run on" and "keep" are
+   * claims about assignment, so it never reads the fallback-inclusive
+   * `sharedRole` (which stays the `len(routed[role]) > 1` half of the
+   * backend's fork test for the Think pre-check): a route that only falls
+   * back to the model keeps its chain either way — nothing on its row
+   * changes; a change landing on its chain is what the reach sentence
+   * reports. Staged departures and unassigns are not filtered out here, as
+   * the row marker does (a follow-up candidate).
+   */
+  const assignedSiblings =
+    current === null
+      ? []
+      : usedByOf(base.routes, [current.role]).filter((other) => other !== useCase);
   /**
    * The draft minus this route's own staging: Done replaces that identity
    * (`stageChange`), so nothing below may read it as a sibling.
@@ -539,6 +562,32 @@ export function RouteEditor({
     };
   }, [base, draft, useCase]);
 
+  /**
+   * [rev 7] What a card WOULD expose, and the floor it would meet, for the
+   * preview strip — per card, because a card's own selector siblings decide
+   * its governed set; the candidate's `floor` is not the previewed card's.
+   * Cached by role like `shortfalls`.
+   */
+  const previewFor = useMemo(() => {
+    const cache = new Map<
+      string,
+      { required: CapabilityName[]; owners: string[]; offered: CapabilityName[] }
+    >();
+    return (model: ModelProjection) => {
+      const cached = cache.get(model.role);
+      if (cached !== undefined) return cached;
+      const probe = probeRouteChange(useCase, model, draft.changes);
+      const governedByCard = governedUseCasesOf(base, draft, probe);
+      const verdict = {
+        required: [...unionFloor(governedByCard)],
+        owners: governedByCard.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0),
+        offered: canonicalCaps(probe.exposedCaps),
+      };
+      cache.set(model.role, verdict);
+      return verdict;
+    };
+  }, [base, draft, useCase]);
+
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
   const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
@@ -648,9 +697,13 @@ export function RouteEditor({
   };
 
   const capsLegend =
-    facts === null
-      ? `Capabilities exposed to ${useCase}`
-      : `Capabilities exposed to ${useCase} — from ${facts.model}`;
+    manual !== null
+      ? manual.model.trim() === ''
+        ? `What ${useCase} may use`
+        : `What ${useCase} may use — from ${manual.model}`
+      : facts === null
+        ? `Capabilities exposed to ${useCase}`
+        : `Capabilities exposed to ${useCase} — from ${facts.model}`;
 
   // tabIndex is how an Apply-bar chip focuses the editor it names (§3.3).
   return (
@@ -659,12 +712,6 @@ export function RouteEditor({
           `editing…` status. A visible legend would cut the border line and
           leave a gap across the top, so the accessible name is sr-only. */}
       <legend className={styles.srOnly}>{`Route ${useCase}`}</legend>
-
-      {refusal !== '' && (
-        <p className={styles.fieldError} role="alert">
-          {refusal}
-        </p>
-      )}
 
       {/*
        * Treatment 1: band, then one master-detail strip. The exposure editor
@@ -678,6 +725,9 @@ export function RouteEditor({
         floor={USE_CASE_FLOORS.get(useCase) ?? []}
         required={floor}
         shortfalls={shortfalls}
+        routes={base.routes}
+        owners={floorOwners}
+        preview={previewFor}
         models={models}
         provider={provider}
         providers={providers}
@@ -686,86 +736,44 @@ export function RouteEditor({
         exposure={
           defined === null && manual === null ? undefined : (
             <>
-              {/* Direct children of the exposure half, in block flow — see the
-                  `.detailExposure > * + *` rule for why no flex wrapper. */}
-              <fieldset className={styles.capabilities}>
-                <legend className={styles.fieldLabel}>{capsLegend}</legend>
-                {/* The boxes sit in their own grid UNDER the legend: a fieldset's
-                      legend never joins a grid or flex container in WebKit, so the
-                      wrapper carries the spacing itself. */}
-                <div className={styles.capabilityGrid}>
-                  {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
-                    const required = floor.includes(cap);
-                    // A required cap locks only once it is checked: the tick is
-                    // the user's assertion, never the checklist's (§4.4).
-                    const locked = required && exposed.includes(cap);
-                    return (
-                      <label
-                        key={cap}
-                        className={`${styles.checkbox} ${locked ? styles.checkboxLocked : ''}`}
-                        // The staged-value mark: this box differs from the baseline.
-                        data-changed={
-                          exposed.includes(cap) !== baseline.exposed.includes(cap) || undefined
-                        }
-                      >
-                        <input
-                          className={styles.checkboxInput}
-                          type="checkbox"
-                          disabled={locked}
-                          checked={exposed.includes(cap)}
-                          onChange={(event) => {
-                            setExposed((currentCaps) =>
-                              canonicalCaps(
-                                event.target.checked
-                                  ? [...currentCaps, cap]
-                                  : currentCaps.filter((other) => other !== cap)
-                              )
-                            );
-                            // A hand-declared model cannot expose what it does not
-                            // declare: this tick is the declare form's assertion too.
-                            // Adding only — unticking never withdraws a declaration.
-                            // The key advances with it: this tick IS the exposure
-                            // edit, so the changed declaration must not re-seed the
-                            // checklist, Think or the acknowledgements over it.
-                            if (
-                              event.target.checked &&
-                              manual !== null &&
-                              !manual.caps.includes(cap)
-                            ) {
-                              const caps = canonicalCaps([...manual.caps, cap]);
-                              setManual({ ...manual, caps });
-                              setSeenKey(declarationKey(caps));
-                            }
-                            clearRefusal();
-                          }}
-                        />
-                        <span className={styles.checkboxBox} aria-hidden="true" />
-                        {/* The name and its reason read as one phrase — `chat
-                            (required)` — so a wrapped grid never lets the reason
-                            read as the next item's name (Keith's wave-6 live gate). */}
-                        <span className={styles.checkboxText}>
-                          {cap}
-                          {/* v9 names the reason beside the control rather than
-                          leaving a locked box to explain itself. */}
-                          {required && (
-                            <>
-                              {' '}
-                              <span className={styles.requiredTag}>(required)</span>
-                            </>
-                          )}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <span className={styles.fieldHint}>
-                  {`What this route may use.${
-                    floorOwners.length > 0
-                      ? ` Required by ${listUseCases(floorOwners)}: ${floor.join(', ')}.`
-                      : ''
-                  }`}
+              {/* Direct children of the strip body, in block flow — see the
+                  `.detailBody > * + *` rule for why no flex wrapper. */}
+              <AbilityChips
+                id={`${id}-caps`}
+                legend={capsLegend}
+                legendVisible={manual !== null}
+                required={floor}
+                owners={floorOwners}
+                declared={capabilityFacts?.caps ?? []}
+                model={facts?.model ?? ''}
+                selected={exposed}
+                baseline={baseline.exposed}
+                mode={manual !== null ? 'declaration' : 'assertion'}
+                onToggle={(cap, on) => {
+                  setExposed((currentCaps) =>
+                    canonicalCaps(
+                      on ? [...currentCaps, cap] : currentCaps.filter((other) => other !== cap)
+                    )
+                  );
+                  // A hand-declared model cannot expose what it does not
+                  // declare: this tick is the declare form's assertion too.
+                  // Adding only — unticking never withdraws a declaration.
+                  if (on && manual !== null && !manual.caps.includes(cap)) {
+                    const caps = canonicalCaps([...manual.caps, cap]);
+                    setManual({ ...manual, caps });
+                    setSeenKey(declarationKey(caps));
+                  }
+                  clearRefusal();
+                }}
+              />
+
+              {/* The staged declaration in plain words: a reopened route reads
+                  its STAGED card here, not the list card's. */}
+              {manual === null && facts !== null && (
+                <span className={styles.detailCard} data-testid="card-readout">
+                  {`${facts.model}'s card lists: ${abilitiesLine(capabilityFacts?.caps ?? [])}`}
                 </span>
-              </fieldset>
+              )}
 
               {/* Think sits under the capabilities inside the strip's exposure half. */}
               {exposed.includes('thinking') && (
@@ -836,55 +844,47 @@ export function RouteEditor({
         }}
       />
 
-      {/* A fact about what the backend will do; nothing is asked of the user.
-          Names the mechanism — the model CHOICE belongs to this route alone —
-          so it cannot read as contradicting the capability notice below, whose
-          settings belong to the model and reach every route on it. */}
-      {current !== null && sharedRole.length > 0 && (
-        <div className={styles.disclosure} data-tone="info">
-          <p className={styles.disclosureText}>
-            {boldList([useCase, ...sharedRole])} share this model.
-          </p>
-          <p className={styles.disclosureText}>
-            Picking a different model here changes <strong>{useCase} only</strong>;{' '}
-            <strong>
-              {listUseCases(sharedRole)} {agrees(sharedRole, 'keeps', 'keep')}
-            </strong>{' '}
-            {current.modelName}.
-          </p>
-        </div>
-      )}
-
-      {/* This edit reaches past the row being edited. [W4-8] Only an override
-          writes Think selector-wide; a join carries its Think on its own role —
-          but the reducer coalesces every staged route on the selector onto this
-          one's Think [W5-4], and an override already staged there carries it to
-          the applied siblings too [W5-2]. */}
-      {alsoGoverns.length > 0 && (
+      {/* One notice for one fact: this model is shared. Two sentences with two
+          subjects — the fork is about the model the row HOLDS (siblings keep
+          it); the reach is about the model chosen ABOVE (its abilities and
+          Think belong to it and reach every route on it: [W4-8]/[W5-2]/[W5-4],
+          Think reaching the applied siblings only through an override). */}
+      {(current !== null && assignedSiblings.length > 0) || alsoGoverns.length > 0 ? (
         <div className={styles.disclosure} data-tone="caution">
-          <p className={styles.disclosureText}>
-            {thinkReach.length === alsoGoverns.length ? (
-              <>
-                Capabilities and Think are properties of <strong>the model</strong>, not the route.
-                Changing them here also changes them for {boldList(alsoGoverns)}.
-              </>
-            ) : (
-              <>
-                Capabilities are a property of <strong>the model</strong>, not the route. Changing
-                them here also changes them for {boldList(alsoGoverns)}; Think applies to this route
-                {thinkReach.length === 0 ? (
-                  ' only'
-                ) : thinkReach.length === 1 ? (
-                  <> and {boldList(thinkReach)}</>
-                ) : (
-                  <>, {boldList(thinkReach)}</>
-                )}
-                .
-              </>
-            )}
-          </p>
+          {current !== null && assignedSiblings.length > 0 && (
+            <p className={styles.disclosureText}>
+              {boldList([useCase, ...assignedSiblings])} run on {current.modelName}. Picking a
+              different model here changes <strong>{useCase} only</strong>;{' '}
+              {listUseCases(assignedSiblings)} {agrees(assignedSiblings, 'keeps', 'keep')}{' '}
+              {current.modelName}.
+            </p>
+          )}
+          {alsoGoverns.length > 0 && (
+            <p className={styles.disclosureText}>
+              {thinkReach.length === alsoGoverns.length ? (
+                <>
+                  The abilities and Think mode above belong to{' '}
+                  <strong>the model chosen above</strong> and change for {boldList(alsoGoverns)}{' '}
+                  too.
+                </>
+              ) : (
+                <>
+                  The abilities above belong to <strong>the model chosen above</strong> and change
+                  for {boldList(alsoGoverns)} too; Think applies to this route
+                  {thinkReach.length === 0 ? (
+                    ' only'
+                  ) : thinkReach.length === 1 ? (
+                    <> and {boldList(thinkReach)}</>
+                  ) : (
+                    <>, {boldList(thinkReach)}</>
+                  )}
+                  .
+                </>
+              )}
+            </p>
+          )}
         </div>
-      )}
+      ) : null}
 
       {/* Staging is refused while any of these stand. */}
       {thinkConflicts.map(({ mode, names }) => (
@@ -983,9 +983,17 @@ export function RouteEditor({
         </p>
       )}
 
+      {/* Done is what refuses, so its answer sits directly above it, not at
+          the top of the editor. */}
+      {refusal !== '' && (
+        <p className={styles.fieldError} role="alert">
+          {refusal}
+        </p>
+      )}
+
       <div className={styles.editorFooter}>
         {/* Always enabled once something differs: this button IS the
-            validator's entry point, and the refusals above are how the editor
+            validator's entry point, and the refusal above is how the editor
             answers. The global Apply gate is held by `onUnstagedChange`, not
             by a disabled control. Focusing it reads the summary. */}
         {unstaged && (

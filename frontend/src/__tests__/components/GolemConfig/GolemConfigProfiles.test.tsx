@@ -543,7 +543,7 @@ describe('Save as profile', () => {
     await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     const card = within(screen.getByRole('listbox', { name: /Models/ })).getByRole('option');
-    card.focus();
+    act(() => card.focus()); // focusing a card opens its popup, which is a state update
 
     await user.keyboard('{Escape}');
 

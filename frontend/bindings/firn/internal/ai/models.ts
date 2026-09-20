@@ -735,12 +735,20 @@ export class ModelFacts {
  * HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
  * these authored, model-specific members, so the editor has to disclose the
  * loss before staging. The values themselves never cross the boundary.
+ * 
+ * Description is the entry's authored note (config `description`): prose,
+ * not an identifier. ASCII line breaks, tabs, NEL (U+0085), and the Unicode
+ * LINE/PARAGRAPH SEPARATORS (U+2028/U+2029) collapse to single spaces, every
+ * other Cc/Cf rune bar the zero width joiner (U+200D) is scrubbed to U+FFFD,
+ * the result is trimmed to maxModelDescriptionLen bytes without splitting a
+ * rune, and a note that is blank after that is absent.
  */
 export class ModelProjection {
     "role": string;
     "modelName": string;
     "provider": string;
     "type": string;
+    "description"?: string;
     "parameters"?: string;
     "contextWindow"?: number;
     "dimensions"?: number;
@@ -799,22 +807,22 @@ export class ModelProjection {
      * Creates a new ModelProjection instance from a string or object.
      */
     static createFrom($$source: any = {}): ModelProjection {
-        const $$createField7_0 = $$createType3;
-        const $$createField8_0 = $$createType6;
-        const $$createField9_0 = $$createType3;
-        const $$createField11_0 = $$createType3;
+        const $$createField8_0 = $$createType3;
+        const $$createField9_0 = $$createType6;
+        const $$createField10_0 = $$createType3;
+        const $$createField12_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("effectiveCapabilities" in $$parsedSource) {
-            $$parsedSource["effectiveCapabilities"] = $$createField7_0($$parsedSource["effectiveCapabilities"]);
+            $$parsedSource["effectiveCapabilities"] = $$createField8_0($$parsedSource["effectiveCapabilities"]);
         }
         if ("capabilityFacts" in $$parsedSource) {
-            $$parsedSource["capabilityFacts"] = $$createField8_0($$parsedSource["capabilityFacts"]);
+            $$parsedSource["capabilityFacts"] = $$createField9_0($$parsedSource["capabilityFacts"]);
         }
         if ("exposedCapabilities" in $$parsedSource) {
-            $$parsedSource["exposedCapabilities"] = $$createField9_0($$parsedSource["exposedCapabilities"]);
+            $$parsedSource["exposedCapabilities"] = $$createField10_0($$parsedSource["exposedCapabilities"]);
         }
         if ("routedUseCases" in $$parsedSource) {
-            $$parsedSource["routedUseCases"] = $$createField11_0($$parsedSource["routedUseCases"]);
+            $$parsedSource["routedUseCases"] = $$createField12_0($$parsedSource["routedUseCases"]);
         }
         return new ModelProjection($$parsedSource as Partial<ModelProjection>);
     }

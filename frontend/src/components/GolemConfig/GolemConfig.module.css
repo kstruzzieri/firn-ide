@@ -1017,25 +1017,197 @@ select.input {
   outline-offset: 2px;
 }
 
-/* A capability the use-case floor requires: checked, disabled, and labelled. */
-.checkboxLocked {
-  color: var(--text-muted);
-}
-
-/* The name and its reason as one wrapping phrase: `chat (required)`. */
+/* The acknowledgement labels — the band's capability checklist became chips, so
+   the two disclosure ticks are all that is left — wrap as one phrase. */
 .checkboxText {
   min-width: 0;
   line-height: 1.25;
 }
 
-/*
- * The reason, at the name's own size — a parenthetical, not a tag. Its muted
- * ink (the §4.7 floor for instructional copy) is a hair off the name's
- * --text-secondary at rest, unlocked; under the amber staged-value mark the
- * name recolours and the reason keeps its muted ink.
+/* ── ability chips (#263, mockup rev 7) ──────────────────────────────────────
+ *
+ * The fieldset is a plain block — a legend never joins a grid or flex
+ * container in WebKit (bug 220793) — and the two groups are a WRAPPING ROW,
+ * never an `auto | 1fr` grid (rev 1 starved the optional track into
+ * overflow): side by side while both fit, the optional group below the
+ * required one otherwise, chips wrapping inside each. No breakpoint. A chip
+ * wider than the strip truncates with an ellipsis rather than overflowing.
+ * Distinct from ApplyBar's `.chip` on purpose.
  */
-.requiredTag {
+.abilityColumns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+}
+
+.capabilities > legend:not(.srOnly) + .abilityColumns {
+  margin-top: 8px;
+}
+
+.abilityGroup {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.abilityGroup > legend {
+  min-width: 0;
+  padding: 0;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
   color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* Use-case names keep their case inside the uppercase eyebrow. */
+.abilityOwners {
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
+.abilityChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.abilityChip {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* The real input covers the chip, transparent: keyboard, AT state and label
+   clicks are untouched (the drawn-checkbox pattern, on a pill). */
+.abilityChipInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.abilityChipInput:disabled {
+  cursor: default;
+}
+
+.abilityChipFace {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 10px 3px 9px;
+  border: 1px solid var(--text-muted);
+  border-radius: 999px;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* The name is the one shrinkable part: an oversized chip loses letters to an
+   ellipsis, never the tick or the footnote mark (flex items after it). */
+.abilityChipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.abilityChip:hover .abilityChipFace {
+  border-color: var(--text-secondary);
+}
+
+.abilityChipInput:disabled:not(:checked) + .abilityChipFace {
+  border-color: var(--text-muted);
+}
+
+.abilityChipTick {
+  display: none;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* ON: filled, ticked. */
+.abilityChipInput:checked + .abilityChipFace {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+
+.abilityChipInput:checked + .abilityChipFace .abilityChipTick {
+  display: inline;
+}
+
+/* LOCKED ON by the floor: one step back from the live accent, as the locked
+   box was; its own ink token (tokens.test.ts guards every accent). */
+.abilityChipInput:checked:disabled + .abilityChipFace {
+  border-color: var(--accent-dark);
+  background-color: var(--accent-dark);
+  color: var(--text-on-accent-dark);
+}
+
+/* A preview is inert, not locked: every chip is disabled, so a checked one
+   keeps the live accent and the whole row sits back. */
+.abilityChips[data-readonly] .abilityChipInput:checked + .abilityChipFace {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.abilityChips[data-readonly] .abilityChip {
+  opacity: 0.72;
+}
+
+.abilityChipInput:focus-visible + .abilityChipFace {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* On, but the card does not list it: the footnote mark. */
+.abilityChip[data-asserted] .abilityChipFace::after {
+  content: '*';
+  margin-left: 1px;
+  font-weight: 700;
+}
+
+/* Differs from what the row holds: the staged-value grammar. */
+.abilityChip[data-changed] .abilityChipFace {
+  border-color: var(--status-warning);
+  font-style: italic;
+}
+
+.abilityChip[data-changed] .abilityChipInput:not(:checked) + .abilityChipFace {
+  color: var(--status-warning);
+}
+
+/* The footnote names a model id: it wraps, never scrolls. */
+.capabilities > .fieldHint {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+/* The strip's plain-sentence readout of the card (what DECLARES used to show as chips). */
+.detailCard {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .editorFooter {
@@ -1228,39 +1400,42 @@ select.input {
 }
 
 /*
- * Four card rows plus a peek of the fifth: the partial row is the affordance
+ * Three card rows plus a peek of the fourth: the partial row is the affordance
  * that says "this scrolls". Derived from the card height rather than a magic
  * number, so tuning the card tunes the bound with it. The 20px peek spans the
- * fourth inter-row gap plus a sliver of the fifth row's cards.
+ * third inter-row gap plus a sliver of the fourth row's cards.
  *
- * The card height is the card's own two fixed lines — 18px padding + ~16px
- * name line + 6px gap + ~17px metadata line + 2px border ≈ 59px, rounded up so
- * the bound never clips the fourth row. The metadata row renders even when its
- * facts are sparse, so every card resolves to the same height — NOMINALLY: a
- * long name wrapping to a second line or a blocked card's reason-chip row can
- * exceed the token, so "four rows plus a peek" is the ordinary geometry, not
- * a guarantee. The bound and its scroll behave the same either way.
+ * Cards grew to up to three lines (80px minimum: 18px padding + ~16px name +
+ * 5px gap + ~17px metadata + 5px gap + ~16px note + 2px border), and three rows
+ * keep the editor at the height four rows of the old card gave it. The lines
+ * that render vary — numbers, abilities, a note — so every card resolves to the
+ * same height NOMINALLY: a blocked card's reason-chip row can exceed the token,
+ * so "three rows plus a peek" is the ordinary geometry, not a guarantee. The
+ * bound and its scroll behave the same either way.
  *
  * This is the one deliberate scroll region in the editor. The strip below sits
  * in normal flow — an earlier sticky strip overlaid the last card row and its
  * implicit scroll fought the workspace's own.
  */
 .modelGrid {
-  --golem-card-height: 60px;
+  --golem-card-height: 80px;
   --golem-grid-gap: 8px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: var(--golem-grid-gap);
-  max-height: calc(4 * var(--golem-card-height) + 3 * var(--golem-grid-gap) + 20px);
+  max-height: calc(3 * var(--golem-card-height) + 2 * var(--golem-grid-gap) + 20px);
   overflow-y: auto;
   /* Scrollbar treatment is the app-wide one in styles/reset.css. */
 }
 
+/* Top-aligned, not centred: a two-line card and a three-line one share a grid
+   row, and their name lines have to start together. Blocked cards keep their
+   wrapping content but share this geometry — they are not exempt. */
 .modelCard {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 5px;
   min-height: var(--golem-card-height, 52px);
   padding: 9px 11px;
   border: 1px solid var(--surface-border-subtle);
@@ -1351,6 +1526,50 @@ select.input {
   overflow-wrap: anywhere;
 }
 
+/* rev 7 cards: up to three lines, each one line, the rest in the popup and the strip. */
+.modelCardAbilities {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.modelCardNote {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* Eligible model cards only. A blocked card keeps its wrapping name and reason,
+   and the declare card its wrapping prompt, because neither has a popup to carry
+   what an ellipsis would swallow. */
+.modelCard:not(.modelCardBlocked):not(.modelCardDeclare) .modelName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.modelCard:not(.modelCardBlocked):not(.modelCardDeclare) .modelCardFacts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelCard:not(.modelCardBlocked) .modelCardMeta {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
 .modelCardDeclare {
   border-style: dashed;
   border-color: var(--surface-border);
@@ -1387,12 +1606,6 @@ select.input {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
-}
-
-/* This capability is one the floor asked for. */
-.capChipFloor {
-  border-color: color-mix(in srgb, var(--palette-cyan) 45%, transparent);
-  color: var(--palette-cyan);
 }
 
 /* Exactly why a hidden model is hidden. */
@@ -1460,22 +1673,42 @@ select.input {
   font-size: 10px;
 }
 
+/* One column, whatever it holds: the exposure editor, or a walked card's inert
+   chips, readout and note. rev 7 retired the facts half — the numbers moved up
+   into the head — so there is no second half to divide any more. */
 .detailBody {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0 20px;
-  align-items: start;
+  display: block;
 }
 
-/* Two halves only when there is a second half to show. */
-.detailBody[data-split] {
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+/* The numbers beside the name, and a preview's "used by". */
+.detailFacts {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
-/* The hairline that separates read-only facts from the editable exposure. */
-.detailExposure {
-  padding-left: 20px;
-  border-left: 1px solid var(--surface-border-subtle);
+/* The note in full, keyboard-reachable through the strip. A <p>'s own margin has
+   to go; the sibling-spacing rule right after puts the 12px back — in that
+   order, because the two have equal specificity and the later one wins. */
+.detailNote {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.detailNoteRole {
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.detailBody > * + * {
+  margin-top: 12px;
 }
 
 /* The declaration's exposure editor, under its facts form rather than beside
@@ -1486,55 +1719,22 @@ select.input {
   border-top: 1px solid var(--surface-border-subtle);
 }
 
-.detailStats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 22px;
-}
-
-/* The facts half's overline-to-content distance: these 4px are the rhythm the
-   DECLARES block shares. The checklist across the hairline deliberately left it
-   (wave 6 live gate): its rows breathe at 8px. */
-.detailStat {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.detailStatKey {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.detailStatValue {
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.detailDeclares {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 10px;
+/* The one-way note under the declaration's exposure chips. */
+.detailDeclaredExposure > .fieldHint {
+  display: block;
+  margin-top: 8px;
 }
 
 /*
- * Mockup density inside the strip: the capability checklist sheds the boxed
+ * Mockup density inside the strip: the capability fieldset sheds the boxed
  * chrome — the strip already draws the surface, and one tall column was most
- * of the strip's height. Keith's wave-6 live gate found the wrapping flex row
- * jumbled (uneven columns, a 4px row gap, `required` tags reading as the next
- * item's name), so the boxes now sit in their own grid wrapper: every item the
- * same width on the mockup's minmax(118px, 1fr) columns, room between rows.
+ * of the strip's height.
  *
  * The fieldset itself is a plain block: WebKit never lets a fieldset's legend
  * join a grid or flex container (bug 220793 — the legend stays in the border
  * area and a float on it is ignored), so no gap or grid on the fieldset can
- * space the legend from the first row. The wrapper and the hint carry their own
- * top margins instead, which every engine honours.
+ * space the legend from the first row. The chip columns and the hint carry their
+ * own top margins instead, which every engine honours.
  */
 .detail .capabilities {
   display: block;
@@ -1542,33 +1742,15 @@ select.input {
   border: 0;
 }
 
-.capabilityGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  gap: 8px 16px;
-  margin-top: 8px;
-}
-
-.detail .capabilities > .fieldHint {
-  display: block;
-  margin-top: 8px;
-}
-
-/* The box sits on the name's first line when the phrase wraps. */
-.detail .capabilities .checkbox {
-  align-items: flex-start;
-  min-width: 0;
-}
-
-/* The exposure half (and the declare form's) is plain block flow, its blocks
-   spaced by this rule rather than by a flex column around each. Observed live
-   in WKWebView (Keith's wave-6 live gate): with the checklist fieldset as a
-   flex item, the Think control below landed on the fieldset's hint — possibly
-   the engine's separate legend sizing (a legend is laid out as an excluded child
-   whose space joins the border), and the two blocks had no gap between them
-   anyway. Block flow reads the fieldset's border box as laid out, and the
-   margin is explicit, whatever the exact flex-sizing path. */
-.detailExposure > * + *,
+/* The declaration's exposure editor is plain block flow, its blocks spaced by
+   this rule rather than by a flex column around each. Observed live in WKWebView
+   (Keith's wave-6 live gate): with the checklist fieldset as a flex item, the
+   Think control below landed on the fieldset's hint — possibly the engine's
+   separate legend sizing (a legend is laid out as an excluded child whose space
+   joins the border), and the two blocks had no gap between them anyway. Block
+   flow reads the fieldset's border box as laid out, and the margin is explicit,
+   whatever the exact flex-sizing path. The strip body's own rule says the same
+   for the assigned state. */
 .detailDeclaredExposure > * + * {
   margin-top: 12px;
 }
@@ -1592,18 +1774,114 @@ select.input {
   width: 100%;
 }
 
-/* The think control inline, per the mockup: label beside a narrow select. */
-.detailExposure .field,
+/* The think control inline, per the mockup: label beside a narrow select. It is
+   a direct child of the strip body when a model is assigned, and of the
+   declaration's exposure block when one is being declared. */
+.detailBody > .field,
 .detailDeclaredExposure .field {
   flex-flow: row wrap;
   align-items: center;
   gap: 10px;
 }
 
-.detailExposure .field select.input,
+.detailBody > .field select.input,
 .detailDeclaredExposure .field select.input {
   flex: none;
   width: 130px;
+}
+
+/* ── the card popup (#263, mockup rev 7) ───────────────────────────────────
+ *
+ * Everything a three-line card cut short, beside the card. Fixed-position and
+ * placed from the card's rect; it is portaled to document.body because `.root`
+ * is a query container that becomes the fixed containing block and clips it
+ * otherwise. Firn's macOS 12 floor ships Safari 17.6, which PREDATES the
+ * WebKit fix for bug 284945 (fixed in Safari Technology Preview 209; stable
+ * Safari 18.2 is still affected) — that is why the portal is kept. It is
+ * HOVERABLE (WCAG 1.4.13): pointer events stay on, and the owner keeps it
+ * open while the pointer is inside it. A long note scrolls inside the cap
+ * rather than off the viewport; the strip's own note line is the
+ * keyboard-reachable copy.
+ */
+.cardPop {
+  position: fixed;
+  /* Portaled to document.body, so it competes in the ROOT stacking context:
+   * 400 sits above the in-app chrome (Header 100, the picker/save popovers
+   * 30) and below the Toast layer (500) so an asynchronous alert (e.g. an
+   * LSP error) always stays visible and reachable over an open popup; native
+   * dialogs live in the top layer regardless. tokens.css has no z-index
+   * token. */
+  z-index: 400;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-frame);
+  box-shadow: var(--shadow-panel);
+}
+
+.cardPopHead {
+  margin-bottom: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.cardPopName {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.cardPopRow {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 3px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.cardPopRow + .cardPopRow {
+  margin-top: 5px;
+}
+
+.cardPopKey {
+  padding-top: 3px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.cardPopVal {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.cardPopProse {
+  font-family: var(--font-ui);
+}
+
+.cardPopVal p {
+  margin: 0;
+}
+
+.cardPopVal p + p {
+  margin-top: 3px;
+}
+
+.cardPopRole {
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .hiddenLine {
@@ -1998,9 +2276,14 @@ select.input {
   color: var(--text-disabled);
 }
 
+/* The last routing row drops its bottom border, so without a rule of its own the
+   heading reads as part of that row. The same divider the table draws after an
+   editing group (.editGroup + .row) and above a row diagnostic (.rowDiagnostic).
+   Guarded in GolemConfigWorkspace.test.tsx. */
 .subgroup {
   margin: 10px 0 0;
-  padding: 0 14px;
+  padding: 10px 14px 0;
+  border-top: 1px solid var(--surface-border-subtle);
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -2149,23 +2432,6 @@ select.input {
   margin-right: 6px;
   font-weight: 600;
   color: var(--text-secondary);
-}
-
-/* ── narrow container: the route editor's master-detail strip stacks ─────── */
-
-@container golem-config (max-width: 720px) {
-  /* The strip stacks: facts over exposure, the hairline becoming a rule. */
-  .detailBody[data-split] {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px 0;
-  }
-
-  .detailExposure {
-    padding-top: 10px;
-    padding-left: 0;
-    border-top: 1px solid var(--surface-border-subtle);
-    border-left: none;
-  }
 }
 
 /* ── TWO-ROW form: >= 600 container px (upgrade from the stacked base) ────── */
@@ -2402,9 +2668,22 @@ select.input {
   vertical-align: middle;
 }
 
+/* The pills render only on an edited or same-model row (showCaps), so they
+   always sit on the amber reach tint — over --surface-panel in the table,
+   --surface-elevated while the row is open inside its editing group. There
+   --surface-border-subtle measured 1.12:1 / 1.20:1 (panel, edited /
+   same-model) and 1.01:1 / 1.08:1 (elevated) — no outline at all, against the
+   3:1 WCAG 1.4.11 asks. --palette-cyan, the band's chosen-card colour, was
+   Keith's live-gate pick: --text-muted read white against the amber, and
+   --palette-sky is this card's Affected mark (the editor's off-state ability
+   chips keep --text-muted, on --surface-base). It holds 6.4:1 / 6.9:1 on the
+   panel tints and 5.8:1 / 6.2:1 on the elevated ones (a hovered row paints
+   the 92% hover mix beneath them, 5.3:1). The declaration is guarded in
+   GolemConfigWorkspace.test.tsx, the 3:1 floor on all four tints in
+   tokens.test.ts. */
 .capPill {
   padding: 0 5px;
-  border: 1px solid var(--surface-border-subtle);
+  border: 1px solid var(--palette-cyan);
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 10px;
