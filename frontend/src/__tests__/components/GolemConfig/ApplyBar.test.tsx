@@ -358,4 +358,24 @@ describe('Apply bar staged emphasis (#345)', () => {
     expect(stagedTokens('gpt-5-mini')).toEqual([]);
     expect(deltaText('gpt-5-mini')).toBe('re-asserts capabilities chat, stream · Think auto');
   });
+
+  it('prints a new selector without a Think as two parts and emphasises nothing', () => {
+    renderBar({ ...toGpt6('chat'), thinkMode: '' });
+    expect(stagedTokens('gpt-6')).toEqual([]);
+    expect(deltaText('gpt-6')).toBe('routes chat · capabilities chat, stream');
+  });
+
+  it('emphasises nothing in a declares-only delta', () => {
+    renderBar(
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', parameters: '7b' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+      })
+    );
+    expect(stagedTokens('gpt-5-mini')).toEqual([]);
+    expect(deltaText('gpt-5-mini')).toBe('declares parameters 7b');
+  });
 });
