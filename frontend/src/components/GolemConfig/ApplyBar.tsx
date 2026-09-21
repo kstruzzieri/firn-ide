@@ -17,7 +17,7 @@
  * the bar is asking rather than decorating it.
  */
 
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import type { ApplySource, Change, ReachGroup } from '../../types/golemConfig';
 import { changeStableID } from '../../types/golemConfig';
 import { listUseCases } from '../../utils/listUseCases';
@@ -84,21 +84,18 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
-/** Interleaves `separator` between parts that may carry markup; the parts delimit themselves. */
+/**
+ * Interleaves `separator` between parts that may carry markup; the parts
+ * delimit themselves. Keyed by position: a part is a stateless leaf (text, a
+ * pill), so nothing is lost when one appears or disappears between renders.
+ */
 const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
-  parts.reduce<ReactNode>(
-    (line, part) =>
-      line === null ? (
-        part
-      ) : (
-        <>
-          {line}
-          {separator}
-          {part}
-        </>
-      ),
-    null
-  );
+  parts.map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 && separator}
+      {part}
+    </Fragment>
+  ));
 
 /**
  * What changes on the group's model, for its header. A selector nothing sat on
@@ -110,26 +107,23 @@ const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
  *
  * [#345] The changed capabilities are the rows' pills — one `.capPill` per
  * capability, its `+` or `−` in the staged glyph, a removal struck — and a
- * Think value wears the glyph too; the labels (`capabilities`, `Think`) stay
- * plain, as they do on a row, and a re-assertion changes nothing so it
- * emphasises nothing.
+ * changed Think wears the glyph too; the labels (`capabilities`, `Think`) stay
+ * plain, as they do on a row. The glyph marks a delta against the applied
+ * selector, so a selector nothing sat on prints its configuration plain (it
+ * is a set, with nothing to differ from), and a re-assertion changes nothing
+ * so it emphasises nothing.
  */
 function reachDeltaLine(group: ReachGroup): ReactNode {
-  const capsLine = `capabilities ${group.staged.exposedCaps.join(', ')}`;
+  const capsLine = () => `capabilities ${group.staged.exposedCaps.join(', ')}`;
+  const thinkLine = () =>
+    group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`;
+  if (!group.selectorHadRoles)
+    return `routes ${listUseCases(group.joins)} · ${capsLine()}${thinkLine()}`;
   const thinkPart = (mode: string) => (
     <>
       Think <Staged value={mode} />
     </>
   );
-  if (!group.selectorHadRoles)
-    return joinNodes(
-      [
-        `routes ${listUseCases(group.joins)}`,
-        capsLine,
-        group.staged.thinkMode === '' ? null : thinkPart(group.staged.thinkMode),
-      ].filter((part) => part !== null),
-      ' · '
-    );
   const pill = (sign: '+' | '−', cap: string) => (
     <span className={styles.capPill}>
       <Staged value={`${sign} ${cap}`} removed={sign === '−'} />
@@ -152,7 +146,7 @@ function reachDeltaLine(group: ReachGroup): ReactNode {
     group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : null,
   ].filter((part) => part !== null);
   if (parts.length > 0) return joinNodes(parts, ' · ');
-  return `re-asserts ${capsLine}${group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`}`;
+  return `re-asserts ${capsLine()}${thinkLine()}`;
 }
 
 /** K: every route some group reaches, counted once. */

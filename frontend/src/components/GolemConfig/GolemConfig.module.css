@@ -2661,6 +2661,11 @@ select.input {
   color: var(--text-muted);
 }
 
+/* Stays a flex container: the Apply bar joins its pills with single-space
+   text nodes so the header's textContent (its accessible name) reads
+   `+ generate − thinking`, and flex layout drops whitespace-only children,
+   so the 4px gap is the only spacing. An inline display would render those
+   spaces instead of the gap (gap does not apply to inline layout). */
 .capPills {
   display: inline-flex;
   flex-wrap: wrap;

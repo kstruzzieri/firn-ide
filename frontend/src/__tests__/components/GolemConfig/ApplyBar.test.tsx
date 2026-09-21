@@ -360,10 +360,11 @@ describe('Apply bar staged emphasis (#345)', () => {
     expect(deltaText('gpt-5')).toBe('capabilities − thinking · Think cleared');
   });
 
-  it('emphasises only the Think a new selector sets; its configuration is not a delta', () => {
+  it('prints a new selector plain: its configuration is a set, not a delta', () => {
     renderBar(toGpt6('chat'));
-    expect(stagedTokens('gpt-6')).toEqual(['auto']);
-    // Its capabilities are the set the route declares, not a delta: no pills.
+    // Nothing on a selector nothing sat on differs from an applied value —
+    // not the capabilities (so no pills) and not the Think.
+    expect(stagedTokens('gpt-6')).toEqual([]);
     expect(capPills('gpt-6')).toEqual([]);
     expect(deltaText('gpt-6')).toBe('routes chat · capabilities chat, stream · Think auto');
   });
