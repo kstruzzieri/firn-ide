@@ -21,7 +21,7 @@ import type { ReactNode } from 'react';
 import type { ApplySource, Change, ReachGroup } from '../../types/golemConfig';
 import { changeStableID } from '../../types/golemConfig';
 import { listUseCases } from '../../utils/listUseCases';
-import { Was } from './Cell';
+import { Staged, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 
 /**
@@ -84,9 +84,6 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
-/** The legend's glyph for a staged value (amber italic), shared with the routing rows. */
-const staged = (value: string) => <em className={styles.stagedValue}>{value}</em>;
-
 /** Interleaves `separator` between parts that may carry markup; the parts delimit themselves. */
 const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
   parts.reduce<ReactNode>(
@@ -111,13 +108,19 @@ const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
  * this surface does not show) says what it re-asserts — derived from the
  * change, never a placeholder.
  *
- * [#345] The capability signs and a Think value wear the rows' staged
- * emphasis; the labels (`capabilities`, `Think`) stay plain, as they do on a
- * row, and a re-assertion changes nothing so it emphasises nothing.
+ * [#345] The changed capabilities are the rows' pills — one `.capPill` per
+ * capability, its `+` or `−` in the staged glyph, a removal struck — and a
+ * Think value wears the glyph too; the labels (`capabilities`, `Think`) stay
+ * plain, as they do on a row, and a re-assertion changes nothing so it
+ * emphasises nothing.
  */
 function reachDeltaLine(group: ReachGroup): ReactNode {
   const capsLine = `capabilities ${group.staged.exposedCaps.join(', ')}`;
-  const thinkPart = (mode: string) => <>Think {staged(mode)}</>;
+  const thinkPart = (mode: string) => (
+    <>
+      Think <Staged value={mode} />
+    </>
+  );
   if (!group.selectorHadRoles)
     return joinNodes(
       [
@@ -127,19 +130,20 @@ function reachDeltaLine(group: ReachGroup): ReactNode {
       ].filter((part) => part !== null),
       ' · '
     );
-  const signs = [
-    group.addedCaps.length > 0 ? `+ ${group.addedCaps.join(', ')}` : '',
-    group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
-  ].filter((sign) => sign !== '');
+  const pill = (sign: '+' | '−', cap: string) => (
+    <span className={styles.capPill}>
+      <Staged value={`${sign} ${cap}`} removed={sign === '−'} />
+    </span>
+  );
+  const pills = [
+    ...group.addedCaps.map((cap) => pill('+', cap)),
+    ...group.removedCaps.map((cap) => pill('−', cap)),
+  ];
   const parts = [
-    // The signs delimit themselves (`+ a, b − c`); `·` means "next part" only.
-    signs.length > 0 ? (
+    // One pill per changed capability, as the row prints them; `·` means "next part" only.
+    pills.length > 0 ? (
       <>
-        capabilities{' '}
-        {joinNodes(
-          signs.map((sign) => staged(sign)),
-          ' '
-        )}
+        capabilities <span className={styles.capPills}>{joinNodes(pills, ' ')}</span>
       </>
     ) : null,
     group.think === null ? null : thinkPart(group.think === '' ? 'cleared' : group.think),

@@ -45,3 +45,17 @@ export function Was({ value }: { value: string }) {
     </small>
   );
 }
+
+/**
+ * The legend's glyph for a staged value — amber italic, "staged, not applied"
+ * — on the routing rows and the Apply bar alike (#345). A removal keeps
+ * `<del>` as its element (the strike is the removal glyph; RoutingCard.test
+ * pins the tag); every other staged value is an `<em>`.
+ */
+export function Staged({ value, removed = false }: { value: string; removed?: boolean }) {
+  return removed ? (
+    <del className={styles.stagedValue}>{value}</del>
+  ) : (
+    <em className={styles.stagedValue}>{value}</em>
+  );
+}

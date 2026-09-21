@@ -2668,19 +2668,22 @@ select.input {
   vertical-align: middle;
 }
 
-/* The pills render only on an edited or same-model row (showCaps), so they
-   always sit on the amber reach tint — over --surface-panel in the table,
-   --surface-elevated while the row is open inside its editing group. There
-   --surface-border-subtle measured 1.12:1 / 1.20:1 (panel, edited /
-   same-model) and 1.01:1 / 1.08:1 (elevated) — no outline at all, against the
-   3:1 WCAG 1.4.11 asks. --palette-cyan, the band's chosen-card colour, was
-   Keith's live-gate pick: --text-muted read white against the amber, and
-   --palette-sky is this card's Affected mark (the editor's off-state ability
-   chips keep --text-muted, on --surface-base). It holds 6.4:1 / 6.9:1 on the
-   panel tints and 5.8:1 / 6.2:1 on the elevated ones (a hovered row paints
-   the 92% hover mix beneath them, 5.3:1). The declaration is guarded in
-   GolemConfigWorkspace.test.tsx, the 3:1 floor on all four tints in
-   tokens.test.ts. */
+/* On the routing rows the pills render only on an edited or same-model row
+   (showCaps), so there they always sit on the amber reach tint — over
+   --surface-panel in the table, --surface-elevated while the row is open
+   inside its editing group. There --surface-border-subtle measured 1.12:1 /
+   1.20:1 (panel, edited / same-model) and 1.01:1 / 1.08:1 (elevated) — no
+   outline at all, against the 3:1 WCAG 1.4.11 asks. --palette-cyan, the
+   band's chosen-card colour, was Keith's live-gate pick: --text-muted read
+   white against the amber, and --palette-sky is this card's Affected mark
+   (the editor's off-state ability chips keep --text-muted, on
+   --surface-base). It holds 6.4:1 / 6.9:1 on the panel tints and 5.8:1 /
+   6.2:1 on the elevated ones (a hovered row paints the 92% hover mix beneath
+   them, 5.3:1). Since #345 the Apply bar prints the same pills for a staged
+   change's capabilities, on its plain --surface-panel — the darker backdrop:
+   cyan about 7.4:1, the amber glyph about 8.3:1 (two reviewers' independent
+   computations). The declaration is guarded in GolemConfigWorkspace.test.tsx,
+   the 3:1 floor on the four row tints in tokens.test.ts. */
 .capPill {
   padding: 0 5px;
   border: 1px solid var(--palette-cyan);
@@ -2689,10 +2692,6 @@ select.input {
   font-size: 10px;
   line-height: 1.6;
   color: var(--text-secondary);
-}
-
-.capPill del {
-  color: var(--text-muted);
 }
 
 /* One sentence, font-ui, ≤ 46ch: how the change reaches this row. */

@@ -123,8 +123,10 @@ describe('GolemConfig stylesheet', () => {
 
   // [W6] jsdom computes no cascade, so the reach tint's specificity and the
   // removed-pill rule are pinned as text: the tint must win over the (0,3,0)
-  // zebra/hover rules under EVERY row parent, and a removed pill is a <del>.
-  it('paints the reach tint at (0,3,0) without naming a parent, and mutes <del> pills', () => {
+  // zebra/hover rules under EVERY row parent, and a removed pill is a <del>
+  // that wears the staged glyph (#345) — no `.capPill del` rule may mute it
+  // again from above `.stagedValue`'s (0,1,0).
+  it('paints the reach tint at (0,3,0) without naming a parent, and leaves <del> pills to the staged glyph', () => {
     const text = css();
     expect(text).toMatch(/\.row\.row\[data-mark='edited'\]/);
     expect(text).toMatch(/\.row\.row\[data-mark='same-model'\]/);
@@ -142,18 +144,20 @@ describe('GolemConfig stylesheet', () => {
     // base rule, AHEAD of the tints, so a tinted notice-group row keeps its tint.
     expect(text).toMatch(/\.noticeGroup > \.row:hover/);
     expect(tintAt).toBeGreaterThan(text.indexOf('.noticeGroup > .row:hover'));
-    expect(text).toMatch(/\.capPill del \{/);
+    // Any `del` rule that mutes would do it, whatever the selector spells.
+    expect(text).not.toMatch(/\bdel\b[^{]*\{[^}]*--text-muted/);
     expect(text).not.toMatch(/\.capPill s \{/);
   });
 
-  // Keith's live pass: the pills render only on rows with a staged diff, so they
-  // always sit on the amber reach tint, where --surface-border-subtle measured
-  // 1.12:1 — no outline at all. --palette-cyan, the band's chosen-card colour,
-  // was Keith's pick over --text-muted (which read white against the amber)
-  // and --palette-sky (the card's Affected mark): 6.4:1 on the edited tint over
-  // --surface-panel. And the "Defined models" heading needs the module's
-  // divider, or it reads as part of the last routing row, whose bottom border
-  // the table drops.
+  // Keith's live pass: on the routing rows the pills render only with a staged
+  // diff, so there they always sit on the amber reach tint, where
+  // --surface-border-subtle measured 1.12:1 — no outline at all. --palette-cyan,
+  // the band's chosen-card colour, was Keith's pick over --text-muted (which
+  // read white against the amber) and --palette-sky (the card's Affected mark):
+  // 6.4:1 on the edited tint over --surface-panel. Since #345 the Apply bar
+  // prints the same pills on its plain, darker panel (cyan about 7.4:1 there).
+  // And the "Defined models" heading needs the module's divider, or it reads as
+  // part of the last routing row, whose bottom border the table drops.
   it('outlines capability pills in --palette-cyan and rules off the Defined models subgroup', () => {
     const text = css();
     expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--palette-cyan\)/);

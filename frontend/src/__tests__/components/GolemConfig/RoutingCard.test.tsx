@@ -469,6 +469,8 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         .map((pill) => pill.textContent)
     ).toEqual(['chat', '− stream', 'thinking']);
     expect(within(pills).getByText('− stream').tagName).toBe('DEL');
+    // A removal is staged too: it wears the legend's amber italic, as `+` does (#345).
+    expect(within(pills).getByText('− stream')).toHaveClass('stagedValue');
     // The eyebrow is a visual echo; the list is named for AT by its own label.
     expect(within(sibling).getByText('Capabilities')).toHaveAttribute('aria-hidden', 'true');
     // An override writes Think selector-wide too: both deltas, one sentence.
