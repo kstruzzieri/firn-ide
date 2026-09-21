@@ -17,6 +17,7 @@
  * the bar is asking rather than decorating it.
  */
 
+import type { ReactNode } from 'react';
 import type { ApplySource, Change, ReachGroup } from '../../types/golemConfig';
 import { changeStableID } from '../../types/golemConfig';
 import { listUseCases } from '../../utils/listUseCases';
@@ -83,11 +84,24 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
-/** `capabilities …` for the staged configuration, with its Think when set. */
-const stagedConfiguration = (group: ReachGroup): string[] => [
-  `capabilities ${group.staged.exposedCaps.join(', ')}`,
-  group.staged.thinkMode === '' ? '' : `Think ${group.staged.thinkMode}`,
-];
+/** The legend's glyph for a staged value (amber italic), shared with the routing rows. */
+const staged = (value: string) => <em className={styles.stagedValue}>{value}</em>;
+
+/** Interleaves `separator` between parts that may carry markup; the parts delimit themselves. */
+const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
+  parts.reduce<ReactNode>(
+    (line, part) =>
+      line === null ? (
+        part
+      ) : (
+        <>
+          {line}
+          {separator}
+          {part}
+        </>
+      ),
+    null
+  );
 
 /**
  * What changes on the group's model, for its header. A selector nothing sat on
@@ -96,27 +110,45 @@ const stagedConfiguration = (group: ReachGroup): string[] => [
  * nothing in the projection (Done on an untouched editor; a change to facts
  * this surface does not show) says what it re-asserts — derived from the
  * change, never a placeholder.
+ *
+ * [#345] The capability signs and a Think value wear the rows' staged
+ * emphasis; the labels (`capabilities`, `Think`) stay plain, as they do on a
+ * row, and a re-assertion changes nothing so it emphasises nothing.
  */
-function reachDeltaLine(group: ReachGroup): string {
+function reachDeltaLine(group: ReachGroup): ReactNode {
+  const caps = `capabilities ${group.staged.exposedCaps.join(', ')}`;
+  const thinkPart = (mode: string) => <>Think {staged(mode)}</>;
   if (!group.selectorHadRoles)
-    return [`routes ${listUseCases(group.joins)}`, ...stagedConfiguration(group)]
-      .filter((part) => part !== '')
-      .join(' · ');
+    return joinNodes(
+      [
+        `routes ${listUseCases(group.joins)}`,
+        caps,
+        group.staged.thinkMode === '' ? null : thinkPart(group.staged.thinkMode),
+      ].filter((part) => part !== null),
+      ' · '
+    );
   const signs = [
     group.addedCaps.length > 0 ? `+ ${group.addedCaps.join(', ')}` : '',
     group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
   ].filter((sign) => sign !== '');
   const parts = [
     // The signs delimit themselves (`+ a, b − c`); `·` means "next part" only.
-    signs.length > 0 ? `capabilities ${signs.join(' ')}` : '',
-    group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
-    group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
+    signs.length > 0 ? (
+      <>
+        capabilities{' '}
+        {joinNodes(
+          signs.map((sign) => staged(sign)),
+          ' '
+        )}
+      </>
+    ) : null,
+    group.think === null ? null : thinkPart(group.think === '' ? 'cleared' : group.think),
+    group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : null,
     // A same-name change that is not an override differs in its facts: name them.
-    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : '',
-  ].filter((part) => part !== '');
-  if (parts.length > 0) return parts.join(' · ');
-  const [caps, think] = stagedConfiguration(group);
-  return `re-asserts ${caps}${think === '' ? '' : ` · ${think}`}`;
+    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : null,
+  ].filter((part) => part !== null);
+  if (parts.length > 0) return joinNodes(parts, ' · ');
+  return `re-asserts ${caps}${group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`}`;
 }
 
 /** K: every route some group reaches, counted once. */

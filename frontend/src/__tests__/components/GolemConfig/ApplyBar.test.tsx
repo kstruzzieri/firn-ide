@@ -300,3 +300,56 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(within(bar).getByRole('button', { name: 'hosted · API key' })).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #345: the bar's deltas wear the legend's glyph — amber italic, staged not
+// applied — exactly where the routing rows wear it: on the values, not the labels.
+// ---------------------------------------------------------------------------
+
+const stagedTokens = (model: string) =>
+  Array.from(within(group(model)).getAllByRole('button')[0].querySelectorAll('em.stagedValue')).map(
+    (em) => em.textContent
+  );
+
+describe('Apply bar staged emphasis (#345)', () => {
+  it('emphasises each capability sign and the Think value, leaving the labels plain', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call', 'generate'] }));
+    expect(stagedTokens('gpt-5')).toEqual(['+ generate', '− thinking', 'auto']);
+    const header = within(group('gpt-5')).getAllByRole('button')[0];
+    expect(header).toHaveTextContent('capabilities + generate − thinking');
+    expect(header).toHaveTextContent('Think auto');
+  });
+
+  it('emphasises a cleared Think as the word that replaces its value', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call'], thinkMode: '' }));
+    expect(stagedTokens('gpt-5')).toEqual(['− thinking', 'cleared']);
+  });
+
+  it('emphasises only the Think a new selector sets; its configuration is not a delta', () => {
+    renderBar(toGpt6('chat'));
+    expect(stagedTokens('gpt-6')).toEqual(['auto']);
+    expect(within(group('gpt-6')).getAllByRole('button')[0]).toHaveTextContent(
+      'routes chat · capabilities chat, stream · Think auto'
+    );
+  });
+
+  it('emphasises nothing a no-op override re-asserts', () => {
+    renderBarOn(
+      {
+        ...base,
+        models: base.models.map((m) => (m.role === 'chat-role' ? { ...m, thinkMode: 'auto' } : m)),
+      },
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: 'auto',
+      })
+    );
+    expect(stagedTokens('gpt-5-mini')).toEqual([]);
+    expect(within(group('gpt-5-mini')).getAllByRole('button')[0]).toHaveTextContent(
+      're-asserts capabilities chat, stream · Think auto'
+    );
+  });
+});
