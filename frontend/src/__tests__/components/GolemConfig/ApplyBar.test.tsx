@@ -300,3 +300,110 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(within(bar).getByRole('button', { name: 'hosted · API key' })).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #345: the bar's deltas wear the legend's glyph — amber italic, staged not
+// applied — exactly where the routing rows wear it: on the values, not the labels.
+// ---------------------------------------------------------------------------
+
+const headerButton = (model: string) => within(group(model)).getAllByRole('button')[0];
+// Every carrier of the glyph inside the header, so a label or an ancestor wearing
+// the class shows up as an extra token; only an `<em>` (a value) or a `<del>` (a
+// removal, as on the rows' pills) may carry it, and never the button itself
+// (`querySelectorAll` does not see its root).
+const stagedTokens = (model: string) => {
+  const button = headerButton(model);
+  expect(button).not.toHaveClass('stagedValue');
+  return Array.from(button.querySelectorAll('.stagedValue')).map((el) => {
+    expect(el.tagName).toBe(el.textContent?.startsWith('−') ? 'DEL' : 'EM');
+    return el.textContent;
+  });
+};
+// The changed capabilities, one pill each, as the rows print them — inside the
+// rows' `.capPills` group, which is what spaces and wraps them; a bare pill
+// outside it is not a pill.
+const capPills = (model: string) =>
+  Array.from(headerButton(model).querySelectorAll('.capPills > .capPill')).map(
+    (pill) => pill.textContent
+  );
+// The delta line's exact text: `toHaveTextContent` normalises whitespace, and the
+// separators (` · `, the one space between two pills) are the contract here.
+const deltaText = (model: string) => headerButton(model).querySelector('.reachDelta')?.textContent;
+
+describe('Apply bar staged emphasis (#345)', () => {
+  it('emphasises each capability sign and the Think value, leaving the labels plain', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call', 'generate'] }));
+    expect(stagedTokens('gpt-5')).toEqual(['+ generate', '− thinking', 'auto']);
+    expect(capPills('gpt-5')).toEqual(['+ generate', '− thinking']);
+    expect(deltaText('gpt-5')).toBe('capabilities + generate − thinking · Think auto');
+  });
+
+  it('prints one pill per removed capability, each with its own sign', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream'], thinkMode: 'auto' }));
+    expect(capPills('gpt-5')).toEqual(['− tool_call', '− thinking']);
+    expect(stagedTokens('gpt-5')).toEqual(['− tool_call', '− thinking', 'auto']);
+    expect(deltaText('gpt-5')).toBe('capabilities − tool_call − thinking · Think auto');
+  });
+
+  it('prints one pill per added capability too, additions before removals', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream', 'generate', 'embed'] }));
+    expect(capPills('gpt-5')).toEqual(['+ generate', '+ embed', '− tool_call', '− thinking']);
+    expect(deltaText('gpt-5')).toBe(
+      'capabilities + generate + embed − tool_call − thinking · Think auto'
+    );
+  });
+
+  it('emphasises a cleared Think as the word that replaces its value', () => {
+    renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call'], thinkMode: '' }));
+    expect(stagedTokens('gpt-5')).toEqual(['− thinking', 'cleared']);
+    expect(capPills('gpt-5')).toEqual(['− thinking']);
+    expect(deltaText('gpt-5')).toBe('capabilities − thinking · Think cleared');
+  });
+
+  it('prints a new selector plain: its configuration is a set, not a delta', () => {
+    renderBar(toGpt6('chat'));
+    // Nothing on a selector nothing sat on differs from an applied value —
+    // not the capabilities (so no pills) and not the Think.
+    expect(stagedTokens('gpt-6')).toEqual([]);
+    expect(capPills('gpt-6')).toEqual([]);
+    expect(deltaText('gpt-6')).toBe('routes chat · capabilities chat, stream · Think auto');
+  });
+
+  it('emphasises nothing a no-op override re-asserts', () => {
+    renderBarOn(
+      {
+        ...base,
+        models: base.models.map((m) => (m.role === 'chat-role' ? { ...m, thinkMode: 'auto' } : m)),
+      },
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: 'auto',
+      })
+    );
+    expect(stagedTokens('gpt-5-mini')).toEqual([]);
+    expect(deltaText('gpt-5-mini')).toBe('re-asserts capabilities chat, stream · Think auto');
+  });
+
+  it('prints a new selector without a Think as two parts and emphasises nothing', () => {
+    renderBar({ ...toGpt6('chat'), thinkMode: '' });
+    expect(stagedTokens('gpt-6')).toEqual([]);
+    expect(deltaText('gpt-6')).toBe('routes chat · capabilities chat, stream');
+  });
+
+  it('emphasises nothing in a declares-only delta', () => {
+    renderBar(
+      route({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', parameters: '7b' },
+        capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: ['chat', 'stream'],
+        thinkMode: '',
+      })
+    );
+    expect(stagedTokens('gpt-5-mini')).toEqual([]);
+    expect(deltaText('gpt-5-mini')).toBe('declares parameters 7b');
+  });
+});

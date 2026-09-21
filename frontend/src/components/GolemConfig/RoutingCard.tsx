@@ -52,7 +52,7 @@ import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
 import { AssignList, type AssignOption } from './AssignList';
-import { Cell, Was } from './Cell';
+import { Cell, Staged, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
 import { StatusText, type StatusTone } from './StatusText';
@@ -613,9 +613,6 @@ export function RoutingCard({
             const showCaps = caps !== null && (caps.added.length > 0 || caps.removed.length > 0);
             const ownThink =
               wasThink !== null && incomingThink !== undefined ? incomingThink : null;
-            /** A value with a WAS line is staged, not applied: amber italic (legend). */
-            const stagedValue = (value: string) => <em className={styles.stagedValue}>{value}</em>;
-
             const row = (
               <div
                 key={`row:${useCase}`}
@@ -635,7 +632,7 @@ export function RoutingCard({
                 <Cell className={styles.providerCell}>
                   {view ? (
                     wasProvider !== null ? (
-                      stagedValue(view.provider)
+                      <Staged value={view.provider} />
                     ) : (
                       view.provider
                     )
@@ -650,7 +647,7 @@ export function RoutingCard({
                       meaningful copy rather than an inert placeholder. */}
                   {view ? (
                     <>
-                      {wasModel !== null ? stagedValue(view.model) : view.model}
+                      {wasModel !== null ? <Staged value={view.model} /> : view.model}
                       {/* The coupling, surfaced BEFORE the editor opens: a neutral
                           fact, the sibling names visible [W6]. Hidden while the row
                           is expanded — the editor's notice names the routes assigned
@@ -679,9 +676,9 @@ export function RoutingCard({
                         {caps.all.map((cap) => (
                           <span role="listitem" key={cap} className={styles.capPill}>
                             {caps.added.includes(cap) ? (
-                              stagedValue(`+ ${cap}`)
+                              <Staged value={`+ ${cap}`} />
                             ) : caps.removed.includes(cap) ? (
-                              <del>{`− ${cap}`}</del>
+                              <Staged value={`− ${cap}`} removed />
                             ) : (
                               cap
                             )}
@@ -705,7 +702,7 @@ export function RoutingCard({
                 <Cell label="Think" className={styles.metaCell}>
                   {view && view.think !== '' ? (
                     wasThink !== null ? (
-                      stagedValue(view.think)
+                      <Staged value={view.think} />
                     ) : (
                       view.think
                     )

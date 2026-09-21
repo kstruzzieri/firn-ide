@@ -17,10 +17,11 @@
  * the bar is asking rather than decorating it.
  */
 
+import { Fragment, type ReactNode } from 'react';
 import type { ApplySource, Change, ReachGroup } from '../../types/golemConfig';
 import { changeStableID } from '../../types/golemConfig';
 import { listUseCases } from '../../utils/listUseCases';
-import { Was } from './Cell';
+import { Staged, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 
 /**
@@ -83,11 +84,18 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
-/** `capabilities …` for the staged configuration, with its Think when set. */
-const stagedConfiguration = (group: ReachGroup): string[] => [
-  `capabilities ${group.staged.exposedCaps.join(', ')}`,
-  group.staged.thinkMode === '' ? '' : `Think ${group.staged.thinkMode}`,
-];
+/**
+ * Interleaves `separator` between parts that may carry markup; the parts
+ * delimit themselves. Keyed by position: a part is a stateless leaf (text, a
+ * pill), so nothing is lost when one appears or disappears between renders.
+ */
+const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
+  parts.map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 && separator}
+      {part}
+    </Fragment>
+  ));
 
 /**
  * What changes on the group's model, for its header. A selector nothing sat on
@@ -96,27 +104,49 @@ const stagedConfiguration = (group: ReachGroup): string[] => [
  * nothing in the projection (Done on an untouched editor; a change to facts
  * this surface does not show) says what it re-asserts — derived from the
  * change, never a placeholder.
+ *
+ * [#345] The changed capabilities are the rows' pills — one `.capPill` per
+ * capability, its `+` or `−` in the staged glyph, a removal struck — and a
+ * changed Think wears the glyph too; the labels (`capabilities`, `Think`) stay
+ * plain, as they do on a row. The glyph marks a delta against the applied
+ * selector, so a selector nothing sat on prints its configuration plain (it
+ * is a set, with nothing to differ from), and a re-assertion changes nothing
+ * so it emphasises nothing.
  */
-function reachDeltaLine(group: ReachGroup): string {
+function reachDeltaLine(group: ReachGroup): ReactNode {
+  const capsLine = () => `capabilities ${group.staged.exposedCaps.join(', ')}`;
+  const thinkLine = () =>
+    group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`;
   if (!group.selectorHadRoles)
-    return [`routes ${listUseCases(group.joins)}`, ...stagedConfiguration(group)]
-      .filter((part) => part !== '')
-      .join(' · ');
-  const signs = [
-    group.addedCaps.length > 0 ? `+ ${group.addedCaps.join(', ')}` : '',
-    group.removedCaps.length > 0 ? `− ${group.removedCaps.join(', ')}` : '',
-  ].filter((sign) => sign !== '');
+    return `routes ${listUseCases(group.joins)} · ${capsLine()}${thinkLine()}`;
+  const thinkPart = (mode: string) => (
+    <>
+      Think <Staged value={mode} />
+    </>
+  );
+  const pill = (sign: '+' | '−', cap: string) => (
+    <span className={styles.capPill}>
+      <Staged value={`${sign} ${cap}`} removed={sign === '−'} />
+    </span>
+  );
+  const pills = [
+    ...group.addedCaps.map((cap) => pill('+', cap)),
+    ...group.removedCaps.map((cap) => pill('−', cap)),
+  ];
   const parts = [
-    // The signs delimit themselves (`+ a, b − c`); `·` means "next part" only.
-    signs.length > 0 ? `capabilities ${signs.join(' ')}` : '',
-    group.think === null ? '' : group.think === '' ? 'Think cleared' : `Think ${group.think}`,
-    group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : '',
+    // One pill per changed capability, as the row prints them; `·` means "next part" only.
+    pills.length > 0 ? (
+      <>
+        capabilities <span className={styles.capPills}>{joinNodes(pills, ' ')}</span>
+      </>
+    ) : null,
+    group.think === null ? null : thinkPart(group.think === '' ? 'cleared' : group.think),
+    group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : null,
     // A same-name change that is not an override differs in its facts: name them.
-    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : '',
-  ].filter((part) => part !== '');
-  if (parts.length > 0) return parts.join(' · ');
-  const [caps, think] = stagedConfiguration(group);
-  return `re-asserts ${caps}${think === '' ? '' : ` · ${think}`}`;
+    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : null,
+  ].filter((part) => part !== null);
+  if (parts.length > 0) return joinNodes(parts, ' · ');
+  return `re-asserts ${capsLine()}${thinkLine()}`;
 }
 
 /** K: every route some group reaches, counted once. */
