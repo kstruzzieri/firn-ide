@@ -306,31 +306,39 @@ describe('Apply bar reach groups (wave 6)', () => {
 // applied — exactly where the routing rows wear it: on the values, not the labels.
 // ---------------------------------------------------------------------------
 
-const stagedTokens = (model: string) =>
-  Array.from(within(group(model)).getAllByRole('button')[0].querySelectorAll('em.stagedValue')).map(
-    (em) => em.textContent
-  );
+const headerButton = (model: string) => within(group(model)).getAllByRole('button')[0];
+// Every carrier of the glyph inside the header, so a label or an ancestor wearing
+// the class shows up as an extra token; only an `<em>` may carry it, and never the
+// button itself (`querySelectorAll` does not see its root).
+const stagedTokens = (model: string) => {
+  const button = headerButton(model);
+  expect(button).not.toHaveClass('stagedValue');
+  return Array.from(button.querySelectorAll('.stagedValue')).map((el) => {
+    expect(el.tagName).toBe('EM');
+    return el.textContent;
+  });
+};
+// The delta line's exact text: `toHaveTextContent` normalises whitespace, and the
+// separators (` · `, the one space between two signs) are the contract here.
+const deltaText = (model: string) => headerButton(model).querySelector('.reachDelta')?.textContent;
 
 describe('Apply bar staged emphasis (#345)', () => {
   it('emphasises each capability sign and the Think value, leaving the labels plain', () => {
     renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call', 'generate'] }));
     expect(stagedTokens('gpt-5')).toEqual(['+ generate', '− thinking', 'auto']);
-    const header = within(group('gpt-5')).getAllByRole('button')[0];
-    expect(header).toHaveTextContent('capabilities + generate − thinking');
-    expect(header).toHaveTextContent('Think auto');
+    expect(deltaText('gpt-5')).toBe('capabilities + generate − thinking · Think auto');
   });
 
   it('emphasises a cleared Think as the word that replaces its value', () => {
     renderBar(route({ exposedCaps: ['chat', 'stream', 'tool_call'], thinkMode: '' }));
     expect(stagedTokens('gpt-5')).toEqual(['− thinking', 'cleared']);
+    expect(deltaText('gpt-5')).toBe('capabilities − thinking · Think cleared');
   });
 
   it('emphasises only the Think a new selector sets; its configuration is not a delta', () => {
     renderBar(toGpt6('chat'));
     expect(stagedTokens('gpt-6')).toEqual(['auto']);
-    expect(within(group('gpt-6')).getAllByRole('button')[0]).toHaveTextContent(
-      'routes chat · capabilities chat, stream · Think auto'
-    );
+    expect(deltaText('gpt-6')).toBe('routes chat · capabilities chat, stream · Think auto');
   });
 
   it('emphasises nothing a no-op override re-asserts', () => {
@@ -348,8 +356,6 @@ describe('Apply bar staged emphasis (#345)', () => {
       })
     );
     expect(stagedTokens('gpt-5-mini')).toEqual([]);
-    expect(within(group('gpt-5-mini')).getAllByRole('button')[0]).toHaveTextContent(
-      're-asserts capabilities chat, stream · Think auto'
-    );
+    expect(deltaText('gpt-5-mini')).toBe('re-asserts capabilities chat, stream · Think auto');
   });
 });

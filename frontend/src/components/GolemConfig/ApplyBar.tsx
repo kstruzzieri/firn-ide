@@ -116,13 +116,13 @@ const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
  * row, and a re-assertion changes nothing so it emphasises nothing.
  */
 function reachDeltaLine(group: ReachGroup): ReactNode {
-  const caps = `capabilities ${group.staged.exposedCaps.join(', ')}`;
+  const capsLine = `capabilities ${group.staged.exposedCaps.join(', ')}`;
   const thinkPart = (mode: string) => <>Think {staged(mode)}</>;
   if (!group.selectorHadRoles)
     return joinNodes(
       [
         `routes ${listUseCases(group.joins)}`,
-        caps,
+        capsLine,
         group.staged.thinkMode === '' ? null : thinkPart(group.staged.thinkMode),
       ].filter((part) => part !== null),
       ' · '
@@ -148,7 +148,7 @@ function reachDeltaLine(group: ReachGroup): ReactNode {
     group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : null,
   ].filter((part) => part !== null);
   if (parts.length > 0) return joinNodes(parts, ' · ');
-  return `re-asserts ${caps}${group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`}`;
+  return `re-asserts ${capsLine}${group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`}`;
 }
 
 /** K: every route some group reaches, counted once. */
