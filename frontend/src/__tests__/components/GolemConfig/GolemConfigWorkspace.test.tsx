@@ -156,15 +156,53 @@ describe('GolemConfig stylesheet', () => {
   // read white against the amber) and --palette-sky (the card's Affected mark):
   // 6.4:1 on the edited tint over --surface-panel. Since #345 the Apply bar
   // prints the same pills on its plain, darker panel (cyan about 7.4:1 there).
-  // And the "Defined models" heading needs the module's divider, or it reads as
-  // part of the last routing row, whose bottom border the table drops.
-  it('outlines capability pills in --palette-cyan and rules off the Defined models subgroup', () => {
+  it('outlines capability pills in --palette-cyan', () => {
     const text = css();
     expect(text).toMatch(/\.capPill \{[^}]*border: 1px solid var\(--palette-cyan\)/);
     // The editor's off-state ability chip keeps its own border: a global edit of
     // the pill rule once recoloured it by accident (live gate, f2ae5674).
     expect(text).toMatch(/\.abilityChipFace \{[^}]*border: 1px solid var\(--text-muted\)/);
-    expect(text).toMatch(/\.subgroup \{[^}]*border-top: 1px solid var\(--surface-border-subtle\)/);
+  });
+
+  // #348: the "Defined models" heading was 11px 700 --text-muted over a subtle
+  // hairline, beside the ROLE / PROVIDER / MODEL header's 10px 600
+  // --text-secondary right beneath it: nearly the same grey, so it read as one
+  // more header row and routed and unrouted rows ran together. Keith's pick
+  // (H3): the heading and its description sit in one band in the title band's
+  // tone (--surface-elevated), bounded by the module's full border above and
+  // below, heading in --text-primary with the card title's uppercase tracking.
+  it('sets the Defined models heading and its description in one elevated band', () => {
+    const text = css();
+    const heading = text.match(/^\.subgroup \{[^}]*\}/m)?.[0] ?? '';
+    expect(heading).toMatch(/border-top: 1px solid var\(--surface-border\);/);
+    expect(heading).toMatch(/background-color: var\(--surface-elevated\)/);
+    expect(heading).toMatch(/color: var\(--text-primary\)/);
+    expect(heading).toMatch(/text-transform: uppercase/);
+    const description = text.match(/^\.subgroup \+ \.empty \{[^}]*\}/m)?.[0] ?? '';
+    expect(description).toMatch(/background-color: var\(--surface-elevated\)/);
+    expect(description).toMatch(/border-bottom: 1px solid var\(--surface-border\)/);
+  });
+
+  // #348: in the strip's note lines the role name was muted mono beside muted
+  // prose; the font change alone did not separate them. It now reads as the
+  // use-case column prints a name.
+  it('prints a note line role name in --text-primary at 600', () => {
+    const rule = css().match(/^\.detailNoteRole \{[^}]*\}/m)?.[0] ?? '';
+    expect(rule).toMatch(/color: var\(--text-primary\)/);
+    expect(rule).toMatch(/font-weight: 600/);
+  });
+
+  // #344: the role line under a routing row's use case. `.recordLabel` is hidden
+  // once the table upgrade applies, so the line has its own class, and nothing
+  // in that upgrade may hide it.
+  it('keeps the routing row role line visible in both the record and table forms', () => {
+    const text = css();
+    expect(text.match(/^\.roleLine \{[^}]*\}/m)?.[0] ?? '').toMatch(/display: block/);
+    const supports =
+      text.match(/@supports \(grid-template-columns: subgrid\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    // Found, or the absence below would hold vacuously.
+    expect(supports).toMatch(/@container golem-config \(min-width: 600px\)/);
+    expect(supports).not.toMatch(/roleLine/);
   });
 
   it('upgrades records to subgrid tables only where subgrid exists, squeezing only the long columns', () => {

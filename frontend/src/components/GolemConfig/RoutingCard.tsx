@@ -38,6 +38,7 @@ import {
   meetsUseCaseFloor,
   overridesSelector,
   probeRouteChange,
+  sameModelFacts,
   shortfallLine,
   stagedRoutes,
   type Change,
@@ -613,6 +614,22 @@ export function RoutingCard({
             const showCaps = caps !== null && (caps.added.length > 0 || caps.removed.length > 0);
             const ownThink =
               wasThink !== null && incomingThink !== undefined ? incomingThink : null;
+            /**
+             * #344: the role this row runs through, beneath its use case, so a
+             * role that shares a use case's name no longer reads as a
+             * contradiction with Defined models. Only while Apply keeps it: a
+             * staged route change that is not an override (the backend's full
+             * `sameModelFacts` tuple, not just provider and model) is a retarget
+             * that keeps the name or a fork that mints `<useCase>-m`, and the
+             * projection carries no fallback references to tell the two apart. A
+             * row with no model already names its role in the model cell.
+             * ponytail: the applied name only — #353 makes the role a staged
+             * value of its own.
+             */
+            const keepsRole =
+              staged?.kind !== 'route' ||
+              (applied !== null && sameModelFacts(applied, staged.modelFacts));
+            const shownRole = view !== null && keepsRole ? role : null;
             const row = (
               <div
                 key={`row:${useCase}`}
@@ -628,6 +645,11 @@ export function RoutingCard({
                 <Cell className={styles.useCase}>
                   {useCase}
                   {expanded && <span className={styles.editingTag}>editing</span>}
+                  {shownRole !== null && (
+                    <small className={styles.roleLine}>
+                      <b>role</b> {shownRole}
+                    </small>
+                  )}
                 </Cell>
                 <Cell className={styles.providerCell}>
                   {view ? (
