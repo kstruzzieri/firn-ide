@@ -828,6 +828,30 @@
   vertical-align: 1px;
 }
 
+/* #344: the role a routing row runs through, beneath its use case, in the
+   `.was` sub-line's grammar. Its own class rather than `.recordLabel`, which
+   the table upgrade hides; it sets its own colour and weight so the use-case
+   cell's (and an open row's accent) never reach it. The label and the name are
+   separated by a space in the markup, not a margin, so assistive technology
+   reads "role fast", not "rolefast". */
+.roleLine {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.roleLine b {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .editorCell {
   min-width: 0;
 }
@@ -1700,11 +1724,14 @@ select.input {
   overflow-wrap: anywhere;
 }
 
+/* #348: the role name leads its note in --text-primary at 600, as the use-case
+   column prints a name; muted mono beside muted prose did not separate them. */
 .detailNoteRole {
   margin-right: 6px;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 10px;
+  font-weight: 600;
 }
 
 .detailBody > * + * {
@@ -2276,17 +2303,24 @@ select.input {
   color: var(--text-disabled);
 }
 
-/* The last routing row drops its bottom border, so without a rule of its own the
-   heading reads as part of that row. The same divider the table draws after an
-   editing group (.editGroup + .row) and above a row diagnostic (.rowDiagnostic).
-   Guarded in GolemConfigWorkspace.test.tsx. */
+/* #348 (H3): the Defined models heading and its description are one band in the
+   card title band's tone, bounded by the module's full border above and below,
+   so the boundary between routed and unrouted rows cannot be read as one more
+   header row. Before, it was 11px 700 --text-muted over a subtle hairline, which
+   read as one more column header beside the table header's 10px 600
+   --text-secondary: the two greys are nearly the same. --text-muted on
+   --surface-elevated is guarded in tokens.test.ts; the band is guarded in
+   GolemConfigWorkspace.test.tsx. */
 .subgroup {
   margin: 10px 0 0;
-  padding: 10px 14px 0;
-  border-top: 1px solid var(--surface-border-subtle);
+  padding: 9px 14px 0;
+  border-top: 1px solid var(--surface-border);
+  background-color: var(--surface-elevated);
   font-size: 11px;
   font-weight: 700;
-  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-primary);
 }
 
 .empty {
@@ -2295,6 +2329,14 @@ select.input {
   font-size: 12px;
   line-height: 1.55;
   color: var(--text-muted);
+}
+
+/* The heading's description closes the band (RoutingCard renders it as the
+   heading's next sibling). */
+.subgroup + .empty {
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--surface-border);
+  background-color: var(--surface-elevated);
 }
 
 /* ── notices ────────────────────────────────────────────────────────────── */

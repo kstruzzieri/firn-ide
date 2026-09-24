@@ -364,54 +364,56 @@ describe('route editor Done (firn-ide#284)', () => {
 // rows, and each reached row says HOW (edited / same model / fallback).
 // ---------------------------------------------------------------------------
 
+// Shared by the sibling-reach and #344 role-line suites below.
+const thinking = (over: Partial<ModelProjection> = {}): ModelProjection => ({
+  ...model,
+  effectiveCapabilities: ['chat', 'stream', 'thinking'],
+  capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+  exposedCapabilities: ['chat', 'stream', 'thinking'],
+  thinkMode: 'auto',
+  ...over,
+});
+const change = (over: Partial<RouteChange> = {}): RouteChange => ({
+  kind: 'route',
+  useCase: 'chat',
+  modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+  capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+  exposedCaps: ['chat', 'stream', 'thinking'],
+  thinkMode: 'always',
+  confirmUnknown: false,
+  ...over,
+});
+/** Exactly what the workspace hands over: the projection of the staged changes. */
+const renderProjected = (
+  routes: { useCase: string; role: string }[],
+  models: ModelProjection[],
+  ...staged: Change[]
+) => {
+  const draft = staged.reduce(
+    (current, next) => stageChange(current, next, new KeyVault(new Map())),
+    cleanDraft('0'.repeat(64))
+  );
+  const projected = projectDraft({ routes, models }, draft);
+  render(
+    <RoutingCard
+      routes={routes}
+      models={models}
+      providers={[provider]}
+      draft={draft}
+      changes={projected.changes}
+      rows={projected.routeRows}
+      roleRows={projected.roleRows}
+      selectorUseCases={projected.selectorUseCases}
+      routeReach={projected.routeReach}
+      diagnostics={[]}
+      editable
+      onStage={() => {}}
+      onUnstagedChange={() => {}}
+    />
+  );
+};
+
 describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
-  const thinking = (over: Partial<ModelProjection> = {}): ModelProjection => ({
-    ...model,
-    effectiveCapabilities: ['chat', 'stream', 'thinking'],
-    capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
-    exposedCapabilities: ['chat', 'stream', 'thinking'],
-    thinkMode: 'auto',
-    ...over,
-  });
-  const change = (over: Partial<RouteChange> = {}): RouteChange => ({
-    kind: 'route',
-    useCase: 'chat',
-    modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
-    capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
-    exposedCaps: ['chat', 'stream', 'thinking'],
-    thinkMode: 'always',
-    confirmUnknown: false,
-    ...over,
-  });
-  /** Exactly what the workspace hands over: the projection of the staged changes. */
-  const renderProjected = (
-    routes: { useCase: string; role: string }[],
-    models: ModelProjection[],
-    ...staged: Change[]
-  ) => {
-    const draft = staged.reduce(
-      (current, next) => stageChange(current, next, new KeyVault(new Map())),
-      cleanDraft('0'.repeat(64))
-    );
-    const projected = projectDraft({ routes, models }, draft);
-    render(
-      <RoutingCard
-        routes={routes}
-        models={models}
-        providers={[provider]}
-        draft={draft}
-        changes={projected.changes}
-        rows={projected.routeRows}
-        roleRows={projected.roleRows}
-        selectorUseCases={projected.selectorUseCases}
-        routeReach={projected.routeReach}
-        diagnostics={[]}
-        editable
-        onStage={() => {}}
-        onUnstagedChange={() => {}}
-      />
-    );
-  };
   // Two roles on ONE provider+model: one selector, so an override reaches both.
   const twoRoles = [
     { useCase: 'chat', role: 'chat-role' },
@@ -985,6 +987,17 @@ describe('Defined models — Assign (wave 4d)', () => {
     }
   );
 
+  // #348: the band's description joins it through `.subgroup + .empty`, an
+  // adjacency the stylesheet cannot see. Anything rendered between the two
+  // would leave the description outside the band, silently.
+  it('renders the Defined models description as the heading’s next sibling', () => {
+    render(<RoutingCard {...props()} />);
+    const heading = screen.getByRole('heading', { name: 'Defined models' });
+    expect(heading).toHaveClass('subgroup');
+    expect(heading.nextElementSibling).toHaveClass('empty');
+    expect(heading.nextElementSibling?.textContent).toMatch(/^Defined in the file but not routed/);
+  });
+
   it('labels the role cell in the record form, so a role and a use case never read alike', () => {
     render(<RoutingCard {...props()} />);
     const row = screen.getByTestId('defined-model-row-spare');
@@ -1179,5 +1192,185 @@ describe('Defined models — Assign (wave 4d)', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(p.onStage).not.toHaveBeenCalled();
     expect(within(screen.getByTestId('route-row-chat')).getByText('gpt-5')).toBeInTheDocument();
+  });
+});
+
+// #344: a routing row names the role it runs through, so a profile whose role
+// shares a use case's name (the live-gate sandbox: use case `agent` runs through
+// role `fast`, while a role NAMED `agent` sits unrouted in Defined models) no
+// longer reads as a contradiction between the two tables.
+describe('the role a routing row runs through (#344)', () => {
+  const fast: ModelProjection = {
+    ...model,
+    role: 'fast',
+    modelName: 'qwen3.6:35b-a3b',
+    routedUseCases: ['agent'],
+  };
+  const unroutedAgent: ModelProjection = {
+    ...model,
+    role: 'agent',
+    modelName: 'gemma4:31b',
+    routedUseCases: [],
+    removable: true,
+  };
+  /** The row's role line, found by its label: `<small><b>role</b> {name}</small>`. */
+  const roleLine = (row: HTMLElement) => within(row).queryByText('role')?.parentElement ?? null;
+
+  it('names the role beneath the use case, apart from a role that shares the use case name', () => {
+    renderProjected([{ useCase: 'agent', role: 'fast' }], [fast, unroutedAgent]);
+    const row = screen.getByTestId('route-row-agent');
+    const line = roleLine(row);
+    expect(line?.tagName).toBe('SMALL');
+    // Un-normalised: the label, ONE space and the name are the line's only text.
+    // The space is a text node, not margin: a screen reader reads text, and a
+    // margin alone would run the two together ("rolefast").
+    expect(line?.textContent).toBe('role fast');
+    // It sits in the use-case cell, under the use case it qualifies.
+    expect(line?.closest('[role="cell"]')?.firstChild?.textContent).toBe('agent');
+    // The role named like the use case is still the Defined models row it was.
+    expect(
+      within(screen.getByTestId('defined-model-row-agent')).getByText('agent')
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the role line on an open row', async () => {
+    renderProjected([{ useCase: 'agent', role: 'fast' }], [fast]);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+    expect(roleLine(screen.getByTestId('route-row-agent'))?.textContent).toBe('role fast');
+  });
+
+  it('prints no role line where the row shows no model', () => {
+    // A route naming a role with no model entry: the model cell already names
+    // the role ("role ghost has no model"), so a second line would repeat it.
+    // An unrouted use case has no role at all.
+    renderProjected([{ useCase: 'chat', role: 'ghost' }], [fast]);
+    expect(roleLine(screen.getByTestId('route-row-chat'))).toBeNull();
+    expect(
+      within(screen.getByTestId('route-row-chat')).getByText(/role ghost has no model/)
+    ).toBeInTheDocument();
+    expect(roleLine(screen.getByTestId('route-row-embedding'))).toBeNull();
+  });
+
+  it('keeps the role for an override on the same model', () => {
+    renderProjected([{ useCase: 'chat', role: 'chat-role' }], [thinking()], change());
+    expect(roleLine(screen.getByTestId('route-row-chat'))?.textContent).toBe('role chat-role');
+  });
+
+  it('keeps the role on a sibling a same-model override paints', () => {
+    // chat and summarize run through two roles on ONE provider+model. An
+    // override staged on chat is selector-wide (SetRoleOverrides), so it paints
+    // summarize too, through governingChange, while summarize's own staged
+    // change is undefined. Neither role is renamed or rebound.
+    renderProjected(
+      [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      [
+        thinking({ routedUseCases: ['chat'] }),
+        thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
+      ],
+      change()
+    );
+    const sibling = screen.getByTestId('route-row-summarize');
+    // The override does reach it: the sibling paints the incoming Think.
+    expect(within(sibling).getByText('always')).toBeInTheDocument();
+    expect(roleLine(sibling)?.textContent).toBe('role summarize-role');
+  });
+
+  it('keeps the role on a row reached only through its fallback chain', () => {
+    // completion runs through coder-role, whose chain reaches chat-role; chat's
+    // override changes what completion falls back to, never its own role.
+    renderProjected(
+      [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'completion', role: 'coder-role' },
+      ],
+      [
+        thinking({ routedUseCases: ['chat', 'completion'] }),
+        thinking({ role: 'coder-role', modelName: 'gpt-coder', routedUseCases: ['completion'] }),
+      ],
+      change({ exposedCaps: ['chat', 'stream', 'thinking', 'tool_call'], thinkMode: 'auto' })
+    );
+    const reached = screen.getByTestId('route-row-completion');
+    expect(reached).toHaveAttribute('data-mark', 'fallback');
+    expect(roleLine(reached)?.textContent).toBe('role coder-role');
+  });
+
+  it('names the roles of a replaced source, the ones Apply will write', () => {
+    // A blank (or loaded) source replaces the applied document: the card is
+    // handed THAT source's routes, so its roles are the ones that apply.
+    render(
+      <RoutingCard
+        routes={[{ useCase: 'agent', role: 'fast' }]}
+        models={[fast]}
+        providers={[provider]}
+        draft={{ ...cleanDraft('0'.repeat(64)), source: { kind: 'blank' } }}
+        changes={[]}
+        rows={new Map()}
+        roleRows={new Map()}
+        selectorUseCases={new Map()}
+        routeReach={new Map()}
+        diagnostics={[]}
+        editable
+        onStage={() => {}}
+        onUnstagedChange={() => {}}
+      />
+    );
+    expect(roleLine(screen.getByTestId('route-row-agent'))?.textContent).toBe('role fast');
+  });
+
+  it('prints no role line on an assignment staged into an empty row', () => {
+    // Nothing is bound yet: Apply creates the role (`<useCase>-m`), so there
+    // is no applied name to show.
+    renderProjected(
+      [{ useCase: 'chat', role: 'chat-role' }],
+      [model],
+      change({ useCase: 'embedding' })
+    );
+    const row = screen.getByTestId('route-row-embedding');
+    expect(within(row).getByText('gpt-5-mini')).toBeInTheDocument();
+    expect(roleLine(row)).toBeNull();
+  });
+
+  it('drops the role line when the staged model shares the name but not the facts', () => {
+    // Same provider and model name, different parameters: the backend's
+    // sameModelFacts compares the whole tuple, so this is no override.
+    // chat-role is shared with summarize, so Apply forks it into a new role;
+    // the applied name would be wrong on this row.
+    renderProjected(
+      [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      [thinking({ routedUseCases: ['chat', 'summarize'] })],
+      change({
+        modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', parameters: '7b' },
+      })
+    );
+    expect(roleLine(screen.getByTestId('route-row-chat'))).toBeNull();
+    // The sibling keeps its applied model and the role it runs through.
+    expect(roleLine(screen.getByTestId('route-row-summarize'))?.textContent).toBe('role chat-role');
+  });
+
+  it('drops the role line while a staged change paints another model', () => {
+    // Apply decides the role: a retarget keeps the name, a fork mints
+    // `<useCase>-m`, and the projection cannot tell which (it carries no
+    // fallback references). Printing the applied name beside the staged model
+    // would claim that role changes model.
+    renderProjected(
+      [{ useCase: 'chat', role: 'chat-role' }],
+      [thinking()],
+      change({ modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' } })
+    );
+    expect(roleLine(screen.getByTestId('route-row-chat'))).toBeNull();
+  });
+
+  it('drops the role line while an unassignment is staged', () => {
+    renderProjected([{ useCase: 'chat', role: 'chat-role' }], [model], {
+      kind: 'route-unassign',
+      useCase: 'chat',
+    });
+    expect(roleLine(screen.getByTestId('route-row-chat'))).toBeNull();
   });
 });
