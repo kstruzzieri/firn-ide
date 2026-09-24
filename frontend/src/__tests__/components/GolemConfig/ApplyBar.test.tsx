@@ -133,9 +133,9 @@ describe('Apply bar reach groups (wave 6)', () => {
     // …so the header names it. (Per-role baselines; the override writes Think selector-wide.)
     expect(header).toHaveTextContent('Think auto');
     expect(badgeNames('gpt-5')).toEqual([
-      'agentedited',
-      'analysissame model',
-      'completionfallback',
+      'agent edited',
+      'analysis same model',
+      'completion fallback',
     ]);
     expect(within(gpt5).getByRole('button', { name: /^completion/ })).toHaveAttribute(
       'data-kind',
@@ -149,8 +149,13 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(within(gpt6).getAllByRole('button')[0]).toHaveTextContent(
       'routes chat · capabilities chat, stream · Think auto'
     );
+    // #356: un-normalised, the header's name separates model, provider and
+    // delta with text; the flex gap alone would read "gpt-6hostedroutes chat".
+    expect(within(gpt6).getAllByRole('button')[0].textContent).toBe(
+      'gpt-6 hosted routes chat · capabilities chat, stream · Think auto'
+    );
     expect(within(gpt6).getByRole('button', { name: /^chat/ })).toHaveTextContent(
-      'chatwasgpt-5-miniedited'
+      'chat was gpt-5-mini edited'
     );
     expect(within(gpt6).queryByTestId('reach-divider')).not.toBeInTheDocument();
   });
@@ -175,11 +180,11 @@ describe('Apply bar reach groups (wave 6)', () => {
     expect(within(bar).getByText('3 staged changes')).toBeInTheDocument();
     expect(within(bar).getByText('2 models · 3 routes affected')).toBeInTheDocument();
     expect(badgeNames('gpt-5')).toEqual([
-      'agentedited',
-      'analysissame model',
-      'completionfallback',
+      'agent edited',
+      'analysis same model',
+      'completion fallback',
     ]);
-    expect(badgeNames('gpt-6')).toEqual(['completionwasgpt-coderedited']);
+    expect(badgeNames('gpt-6')).toEqual(['completion was gpt-coder edited']);
     // Non-route chips keep their grammar and follow the groups.
     const chip = within(bar).getByRole('button', { name: 'summarize · unassigned' });
     expect(
@@ -251,7 +256,7 @@ describe('Apply bar reach groups (wave 6)', () => {
         thinkMode: '',
       })
     );
-    expect(badgeNames('gpt-5-mini', 'local')).toEqual(['chatwashosted · gpt-5-miniedited']);
+    expect(badgeNames('gpt-5-mini', 'local')).toEqual(['chat was hosted · gpt-5-mini edited']);
   });
 
   it('says what a no-op override re-asserts, with its Think when set, instead of a placeholder', () => {

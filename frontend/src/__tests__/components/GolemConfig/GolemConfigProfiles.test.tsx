@@ -805,6 +805,18 @@ describe('Save as profile', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('names each curated profile in the Missing body with a space before its note (#356)', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: emptyProjection('missing', 'none'),
+    });
+    (ListGolemProfiles as jest.Mock).mockResolvedValue(listResult());
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    const note = await screen.findByText('Vetted local lineup');
+    // Un-normalised: a margin alone would read "Curated localVetted local lineup".
+    expect(note.textContent).toBe('Curated local Vetted local lineup');
+  });
+
   it('while Missing the select shows only the applied-absent state and Start actions bootstrap it', async () => {
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: false,
