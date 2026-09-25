@@ -417,7 +417,13 @@ export function useWorkspacePersistence(
       // switch-flush (identityOverride) saved the outgoing session captured
       // above, before the restore began, so it is exempt. The pending options
       // stay cleared: they described the session the restore just replaced.
-      if (!identityOverride && useIDEStore.getState().isRestoringWorkspace) return;
+      if (!identityOverride && useIDEStore.getState().isRestoringWorkspace) {
+        // A switch-flush queued behind the same in-flight save may have just
+        // issued the outgoing workspace's write; a close must not confirm
+        // before it lands. The chain never rejects (it ends in .catch).
+        await savePromiseRef.current;
+        return;
+      }
 
       const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;

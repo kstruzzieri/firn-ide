@@ -1408,6 +1408,44 @@ describe('useWorkspacePersistence', () => {
       ]);
     });
 
+    it('holds the close for a switch-flush queued behind the same in-flight save', async () => {
+      useIDEStore.setState({
+        workspace: { name: 'A', path: '/workspace/A' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      const blurSave = deferred<void>();
+      const switchSave = deferred<void>();
+      mockSaveWorkspaceState
+        .mockReturnValueOnce(blurSave.promise)
+        .mockReturnValueOnce(switchSave.promise);
+      blur();
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+
+      const loadB = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(loadB.promise);
+      act(() => {
+        useIDEStore.setState({ workspace: { name: 'B', path: '/workspace/B' } });
+      });
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/B'));
+
+      act(() => beforeCloseHandler?.());
+      await act(async () => blurSave.resolve());
+      await waitFor(() => expect(savedPaths()).toEqual(['/workspace/A', '/workspace/A']));
+      // Real timer: a few microtask ticks are not enough for an early confirm to surface.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+      await act(async () => switchSave.resolve());
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+      expect(savedPaths()).not.toContain('/workspace/B');
+    });
+
     it('saves normally on a blur once the restore has completed', async () => {
       mockLoadWorkspaceState.mockResolvedValueOnce(null);
       await mount();
