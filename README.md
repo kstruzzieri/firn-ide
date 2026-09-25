@@ -33,17 +33,17 @@ Each workspace has independent layout state, scoped language servers (only the a
 **Quick install** (macOS and Linux) — downloads the latest release and installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.13.0/install.sh | sh
 ```
 
 Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
 
 ```bash
 # preview the resolved download URL and target dir without installing
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | FIRN_DRY_RUN=1 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.13.0/install.sh | FIRN_DRY_RUN=1 sh
 
 # pin a specific release instead of the latest
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | FIRN_VERSION=v0.12.0 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.13.0/install.sh | FIRN_VERSION=v0.13.0 sh
 ```
 
 Windows users: use the manual zip below.
@@ -398,7 +398,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 Phase 1 and slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
+`v0.13.0` is live. The narrow-pane redesign of the Golem configuration workspace with named configuration profiles (#263, #308, #312), a visible outcome for every Golem chat run (#303), a context budget sized from the model's declared window (#304), protection against overwriting an unreadable workspace state file (#290), and fixes to the merge confirmation dialogs and to stylesheet design-token references have all shipped since v0.12.0.
 
 Active tracks:
 
