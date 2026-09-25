@@ -410,6 +410,15 @@ export function useWorkspacePersistence(
       // Wait for any in-flight save to complete before collecting a fresh snapshot.
       await savePromiseRef.current;
 
+      // #360: mid-restore the live session is reset or half-restored, and the
+      // file on disk is still the last good snapshot — never overwrite it from
+      // a blur, hide, debounce or close. Checked after the await so a restore
+      // that began while an earlier save was in flight is caught too. The
+      // switch-flush (identityOverride) saved the outgoing session captured
+      // above, before the restore began, so it is exempt. The pending options
+      // stay cleared: they described the session the restore just replaced.
+      if (!identityOverride && useIDEStore.getState().isRestoringWorkspace) return;
+
       const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;
 

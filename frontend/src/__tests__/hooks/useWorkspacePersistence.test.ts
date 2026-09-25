@@ -1227,4 +1227,194 @@ describe('useWorkspacePersistence', () => {
       jest.useRealTimers();
     }
   });
+
+  // ---------------------------------------------------------------------
+  // #360 no close-time flush while a restore is in progress
+  // ---------------------------------------------------------------------
+  describe('flushes during a restore (#360)', () => {
+    const deferred = <T>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    };
+
+    const settle = () =>
+      act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+
+    const savedPaths = () =>
+      mockSaveWorkspaceState.mock.calls.map(
+        (c) => (c[0] as { workspacePath: string }).workspacePath
+      );
+
+    const blur = () => act(() => void window.dispatchEvent(new Event('blur')));
+
+    const mount = async (path = '/workspace/w') => {
+      useIDEStore.setState({
+        workspace: { name: path.slice(path.lastIndexOf('/') + 1), path },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith(path));
+    };
+
+    const mountRestoring = async () => {
+      await mount();
+      expect(useIDEStore.getState().isRestoringWorkspace).toBe(true);
+    };
+
+    it('does not save the reset session on a window blur while the load is pending', async () => {
+      const load = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+      await mountRestoring();
+
+      blur();
+      await settle();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+
+      await act(async () => load.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+    });
+
+    it('does not save the reset session when the page hides while the load is pending', async () => {
+      const load = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+      await mountRestoring();
+
+      const visibility = jest.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      try {
+        act(() => void document.dispatchEvent(new Event('visibilitychange')));
+        await settle();
+        expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+      } finally {
+        visibility.mockRestore();
+      }
+
+      await act(async () => load.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+    });
+
+    it('lets the app close during a restore without saving over the good file', async () => {
+      const load = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+      await mountRestoring();
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => beforeCloseHandler?.());
+
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+      expect(mockCancelBeforeClose).not.toHaveBeenCalled();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+    });
+
+    it('skips a queued flush when a restore begins while an earlier save is in flight', async () => {
+      useIDEStore.setState({
+        workspace: { name: 'A', path: '/workspace/A' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      // First blur starts a save that hangs; the second queues behind it.
+      const firstSave = deferred<void>();
+      mockSaveWorkspaceState.mockReturnValueOnce(firstSave.promise);
+      blur();
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+      blur();
+      await settle();
+
+      // A switch begins B's restore while that save is still in flight.
+      const loadB = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(loadB.promise);
+      act(() => {
+        useIDEStore.setState({ workspace: { name: 'B', path: '/workspace/B' } });
+      });
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/B'));
+      expect(useIDEStore.getState().isRestoringWorkspace).toBe(true);
+
+      await act(async () => firstSave.resolve());
+      await settle();
+
+      // The outgoing switch-flush still saves A; B's reset session is never written.
+      await waitFor(() => expect(savedPaths().filter((p) => p === '/workspace/A')).toHaveLength(2));
+      expect(savedPaths()).not.toContain('/workspace/B');
+
+      await act(async () => loadB.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(savedPaths()).not.toContain('/workspace/B');
+    });
+
+    it('does not save the half-restored session during path hydration or tab reads', async () => {
+      const hydrate = deferred<void>();
+      const readA = deferred<unknown>();
+      mockEnsurePathLoaded.mockReturnValueOnce(hydrate.promise);
+      mockReadFile.mockReturnValueOnce(readA.promise).mockResolvedValue({
+        content: 'b',
+        encoding: 'utf-8',
+        lineEndings: 'LF',
+        size: 1,
+        isBinary: false,
+      });
+      mockLoadWorkspaceState.mockResolvedValueOnce({
+        workspacePath: '/workspace/w',
+        workspaceName: 'w',
+        layout: null,
+        editor: {
+          activeFilePath: '/workspace/w/b.ts',
+          openFiles: [
+            { path: '/workspace/w/a.ts', scrollTop: 0, cursorLine: 0, cursorColumn: 0 },
+            { path: '/workspace/w/b.ts', scrollTop: 0, cursorLine: 0, cursorColumn: 0 },
+          ],
+        },
+        explorer: { expandedPaths: ['/workspace/w/src'], rootExpanded: true },
+        activeSidebar: 'explorer',
+        hiddenProfileIds: [],
+      });
+      await mountRestoring();
+
+      await waitFor(() => expect(mockEnsurePathLoaded).toHaveBeenCalledWith('/workspace/w/src'));
+      blur();
+      await settle();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+
+      await act(async () => hydrate.resolve());
+      await waitFor(() => expect(mockReadFile).toHaveBeenCalledWith('/workspace/w/a.ts'));
+      blur();
+      await settle();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+
+      await act(async () =>
+        readA.resolve({
+          content: 'a',
+          encoding: 'utf-8',
+          lineEndings: 'LF',
+          size: 1,
+          isBinary: false,
+        })
+      );
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+      expect(useIDEStore.getState().openFiles.map((f) => f.path)).toEqual([
+        '/workspace/w/a.ts',
+        '/workspace/w/b.ts',
+      ]);
+    });
+
+    it('saves normally on a blur once the restore has completed', async () => {
+      mockLoadWorkspaceState.mockResolvedValueOnce(null);
+      await mount();
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      blur();
+      await waitFor(() => expect(savedPaths()).toEqual(['/workspace/w']));
+    });
+  });
 });
