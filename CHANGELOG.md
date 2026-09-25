@@ -149,8 +149,8 @@ merge confirmation dialogs and to stylesheet design-token references.
   and Golem settings use `Array.prototype.at` and `Object.hasOwn`. The frontend
   build targets Safari 16 (#316).
 - The destination approval row names one model, but an approval covers every
-  model on that endpoint, and the row does not show when the endpoint is
-  reached only through fallbacks (#355).
+  model on that endpoint, and it reads `Reached by agent` without saying when
+  the endpoint is reached only through the agent's fallbacks (#355).
 
 ## [0.12.0] - 2026-09-06
 
