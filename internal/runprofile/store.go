@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"firn/internal/filesystem"
@@ -76,16 +77,18 @@ func (s *Store) Load() ([]RunProfile, error) {
 
 	path := filepath.Join(s.workspaceRoot, profilesFileName)
 	data, err := s.fs.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			// No profiles file, but a recency sidecar may still exist on its own
-			// (a run was recorded for a detected profile that was never saved).
-			s.profiles = []RunProfile{}
-			s.state = map[string]ProfileUIState{}
-			s.loadRecencyLocked()
-			return s.profiles, nil
-		}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, s.latchLoadErr(fmt.Errorf("reading profiles file %s: %w", path, err))
+	}
+	// A missing file, or one with zero bytes (a crash after the non-fsynced
+	// rename, a touch), holds no profiles to preserve: treat both as absent, as
+	// the workspace store does (#332). A recency sidecar may still exist on its
+	// own (a run was recorded for a detected profile that was never saved).
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		s.profiles = []RunProfile{}
+		s.state = map[string]ProfileUIState{}
+		s.loadRecencyLocked()
+		return s.profiles, nil
 	}
 
 	// Read the version before the full document: a newer Firn's schema must be
@@ -142,6 +145,11 @@ func (s *Store) Load() ([]RunProfile, error) {
 // this store could not read. Caller holds s.mu.
 func (s *Store) latchLoadErr(err error) error {
 	s.loadErr = err
+	// The sidecar stays readable and writable while latched. Load it so
+	// RecordRun merges into it instead of replacing it with one entry. With an
+	// empty state the legacy-migration branch cannot write anything.
+	s.state = map[string]ProfileUIState{}
+	s.loadRecencyLocked()
 	return err
 }
 
@@ -156,7 +164,7 @@ func loadRefusal(err error) error {
 	case errors.Is(err, errNewerProfilesVersion):
 		remedy = "open the workspace with the newer Firn that wrote it, or remove the file"
 	case errors.Is(err, fs.ErrPermission):
-		remedy = "restore read access to it"
+		remedy = "restore read access to the file and its .firn directory"
 	}
 	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s, then restart Firn, or open another folder and reopen this one, to reload run profiles): %w", remedy, err)
 }
@@ -338,6 +346,11 @@ func (s *Store) RecordRun(id string, ts int64) error {
 func (s *Store) PruneState(validIDs map[string]bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		// The saved IDs and adoption flags are unknown while latched, so
+		// validIDs would wrongly drop every saved profile's recency.
+		return nil
+	}
 	next := copyProfileState(s.state)
 	changed := false
 	for id, st := range next {

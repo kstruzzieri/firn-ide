@@ -6,6 +6,7 @@ import (
 	"firn/internal/filesystem"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -180,14 +181,17 @@ func TestIssue359StoreReloadClearsLatchAndRecencyStaysWritable(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{ not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	latchSeedRecency(t, root, map[string]int64{"keep-a": 1, "keep-b": 2})
 	s := NewStore(filesystem.NewOS(), root)
 	if _, err := s.Load(); err == nil {
 		t.Fatal("expected a load error")
 	}
-	// Run recency lives in the sidecar and never touches the profiles file.
+	// Run recency lives in the sidecar and never touches the profiles file,
+	// and a run recorded while latched merges into the sidecar, not over it.
 	if err := s.RecordRun("anything", 42); err != nil {
 		t.Fatalf("RecordRun while latched: %v", err)
 	}
+	latchAssertRecency(t, root, map[string]int64{"keep-a": 1, "keep-b": 2, "anything": 42})
 	if err := s.Save(latchUserProfile()); err == nil {
 		t.Fatal("save must refuse while latched")
 	}
@@ -235,5 +239,159 @@ func TestIssue359V1MigrationStillWrites(t *testing.T) {
 	}
 	if _, err := m.SaveProfile(latchUserProfile()); err != nil {
 		t.Fatalf("save after migration: %v", err)
+	}
+}
+
+func latchRecencyPath(root string) string { return filepath.Join(root, recencyFileName) }
+
+func latchSeedRecency(t *testing.T, root string, recency map[string]int64) {
+	t.Helper()
+	data, err := json.Marshal(RecencyFile{Version: recencyFileVersion, Recency: recency})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(latchRecencyPath(root), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func latchAssertRecency(t *testing.T, root string, want map[string]int64) {
+	t.Helper()
+	data, err := os.ReadFile(latchRecencyPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rf RecencyFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		t.Fatal(err)
+	}
+	for id, ts := range want {
+		if rf.Recency[id] != ts {
+			t.Errorf("sidecar recency[%q] = %d, want %d (sidecar: %s)", id, rf.Recency[id], ts, data)
+		}
+	}
+}
+
+// A latched store still reads and writes the recency sidecar, so a run
+// recorded while the profiles file is unreadable must merge into the existing
+// recency rather than replace it, and the Load-time prune (which cannot know
+// the saved IDs) must not drop the saved profiles' entries.
+func TestIssue359LatchedRecordRunKeepsSidecarRecency(t *testing.T) {
+	root := latchRepo(t)
+	path := latchProfilesPath(root)
+	valid := strings.Replace(latchSavedProfiles, "%d", "3", 1)
+	if err := os.WriteFile(path, []byte(valid+">>>>>>> feature/branch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewProjectManager(filesystem.NewOS(), root)
+	if err := m.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	detected := latchDetectedID(t, m)
+	var other string
+	for _, p := range m.GetAllProfiles() {
+		if p.Source == ProfileSourceDetected && p.ID != detected {
+			other = p.ID
+		}
+	}
+	if other == "" {
+		t.Fatal("fixture needs two detected profiles")
+	}
+
+	// Seed after discovering the detected IDs, then reload so the latched
+	// Load and its prune run against the seeded sidecar.
+	latchSeedRecency(t, root, map[string]int64{"keep-a": 1, "keep-b": 2, detected: 3})
+	if err := m.Load(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if err := m.RecordRun(other, 99); err != nil {
+		t.Fatalf("RecordRun while latched: %v", err)
+	}
+	want := map[string]int64{"keep-a": 1, "keep-b": 2, detected: 3, other: 99}
+	latchAssertRecency(t, root, want)
+
+	if err := os.WriteFile(path, []byte(valid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Load(); err != nil {
+		t.Fatalf("reload after fix: %v", err)
+	}
+	latchAssertRecency(t, root, want)
+	state := m.Snapshot().ProfileState
+	for id, ts := range want {
+		if state[id].LastRunAt != ts {
+			t.Errorf("snapshot LastRunAt[%q] = %d, want %d", id, state[id].LastRunAt, ts)
+		}
+	}
+}
+
+// An empty (or whitespace-only) profiles file holds nothing to preserve, so it
+// is treated as absent, as the workspace store does (#332): no warning, and
+// every write goes through.
+func TestIssue359EmptyFileStillWrites(t *testing.T) {
+	for _, content := range []string{"", "  \n"} {
+		for _, a := range latchActions {
+			t.Run(strconv.Quote(content)+"/"+a.name, func(t *testing.T) {
+				root := latchRepo(t)
+				path := latchProfilesPath(root)
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				m := latchLoad(t, root)
+				if w := m.Warnings(); len(w) != 0 {
+					t.Fatalf("empty file produced warnings: %v", w)
+				}
+				if err := a.run(t, m); err != nil {
+					t.Fatalf("%s with an empty profiles file: %v", a.name, err)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var pf ProfilesFile
+				if err := json.Unmarshal(data, &pf); err != nil {
+					t.Fatalf("%s left an unparsable file: %v\n%s", a.name, err, data)
+				}
+				if pf.Version != profilesFileVersion {
+					t.Fatalf("%s wrote version %d, want %d", a.name, pf.Version, profilesFileVersion)
+				}
+			})
+		}
+	}
+}
+
+// ReadFile also fails with EACCES when the .firn directory is not searchable;
+// the remedy must name the directory too, since fixing the file's mode alone
+// would not help.
+func TestIssue359UnsearchableDirRemedyNamesDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := latchRepo(t)
+	path := latchProfilesPath(root)
+	data := []byte(strings.Replace(latchSavedProfiles, "%d", "3", 1))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	m := latchLoad(t, root)
+	_, err := m.SaveProfile(latchUserProfile())
+	if cerr := os.Chmod(dir, 0o755); cerr != nil {
+		t.Fatal(cerr)
+	}
+	if err == nil {
+		t.Fatal("save must refuse while the .firn directory is unreadable")
+	}
+	if !strings.Contains(err.Error(), ".firn directory") {
+		t.Errorf("refusal %q does not name the .firn directory", err)
+	}
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, data) {
+		t.Fatalf("save rewrote the file:\n%s", got)
 	}
 }
