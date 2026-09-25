@@ -6,12 +6,13 @@ import type { RunProfile } from '../../types/runProfile';
 const mockSetActiveVariant = jest.fn<Promise<void>, [string, string]>();
 const mockAdoptRunProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockUnadoptRunProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockPinRunProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 
 jest.mock('../../wails/bindings', () => ({
   StartRunProfile: jest.fn(() => Promise.resolve()),
   StopRunProfile: jest.fn(() => Promise.resolve()),
   RestartRunProfile: jest.fn(() => Promise.resolve()),
-  PinRunProfile: jest.fn(() => Promise.resolve()),
+  PinRunProfile: (...args: [string]) => mockPinRunProfile(...args),
   UnpinRunProfile: jest.fn(() => Promise.resolve()),
   SetActiveVariant: (...args: [string, string]) => mockSetActiveVariant(...args),
   AdoptRunProfile: (...args: [string]) => mockAdoptRunProfile(...args),
@@ -53,6 +54,7 @@ beforeEach(() => {
   mockSetActiveVariant.mockResolvedValue(undefined);
   mockAdoptRunProfile.mockResolvedValue(undefined);
   mockUnadoptRunProfile.mockResolvedValue(undefined);
+  mockPinRunProfile.mockResolvedValue(undefined);
   useIDEStore.setState({
     runProfiles: [],
     toast: null,
@@ -120,6 +122,7 @@ describe('RunProfileCard adopt control', () => {
     });
     expect(mockAdoptRunProfile).toHaveBeenCalledWith('lint');
     expect(useIDEStore.getState().toast?.type).toBe('error');
+    expect(useIDEStore.getState().toast?.message).toContain('boom');
   });
 
   it('does not show adopt button when section is undefined', () => {
@@ -160,5 +163,23 @@ describe('RunProfileCard adopt control', () => {
     render(<RunProfileCard profile={detectedProfile} {...baseProps} isFreshestRun={false} />);
 
     expect(screen.queryByText('just ran')).not.toBeInTheDocument();
+  });
+});
+
+// #359: a refused write (unreadable run-profiles.json) must reach the user with
+// the backend's remedy, not only the log.
+describe('RunProfileCard pin failure', () => {
+  it('shows the backend refusal in an error toast when PinRunProfile rejects', async () => {
+    const refusal = 'run profile changes are not saved (fix or remove it, then restart Firn)';
+    mockPinRunProfile.mockRejectedValueOnce(new Error(refusal));
+
+    render(<RunProfileCard profile={detectedProfile} {...baseProps} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Pin Lint' }));
+
+    await waitFor(() => {
+      expect(useIDEStore.getState().toast?.type).toBe('error');
+    });
+    expect(mockPinRunProfile).toHaveBeenCalledWith('lint');
+    expect(useIDEStore.getState().toast?.message).toContain(refusal);
   });
 });
