@@ -35,13 +35,14 @@ export function Cell({
  *
  * The value is a DIRECT text child of the `<small>`, so the cell above still
  * matches `getByText(<current value>)`: Testing Library reads only an
- * element's own text nodes.
+ * element's own text nodes. A space TEXT node, not a margin, separates the
+ * label from the value, so assistive technology reads "was gpt-5-mini", not
+ * "wasgpt-5-mini" (#356).
  */
 export function Was({ value }: { value: string }) {
   return (
     <small className={styles.was}>
-      <b>was</b>
-      {value}
+      <b>was</b> {value}
     </small>
   );
 }

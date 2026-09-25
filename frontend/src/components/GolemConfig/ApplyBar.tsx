@@ -218,8 +218,16 @@ export function ApplyBar({
       onClick={() => onOpenChange(`route:${useCase}`)}
     >
       {useCase}
-      {was !== undefined && <Was value={was} />}
-      <span className={styles.srOnly}>{kind === 'same-model' ? 'same model' : kind}</span>
+      {/* #356: spaces in the text, not margins, so the chip's name reads "chat
+          was gpt-5-mini edited" rather than one word. The space before the WAS
+          line replaces its `.badge .was` margin; the kind is screen-reader only. */}
+      {was !== undefined && (
+        <>
+          {' '}
+          <Was value={was} />
+        </>
+      )}
+      <span className={styles.srOnly}>{` ${kind === 'same-model' ? 'same model' : kind}`}</span>
     </button>
   );
 
@@ -249,8 +257,9 @@ export function ApplyBar({
               disabled={locked}
               onClick={() => onOpenChange(group.changeId)}
             >
-              <b>{group.model}</b>
-              <small>{group.provider}</small>
+              {/* #356: text spaces for the button's name; the header is a flex
+                  container, so its gap alone spaces the parts on screen. */}
+              <b>{group.model}</b> <small>{group.provider}</small>{' '}
               <span className={styles.reachDelta}>{reachDeltaLine(group)}</span>
             </button>
             <span className={styles.badges}>

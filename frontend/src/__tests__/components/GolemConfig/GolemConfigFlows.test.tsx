@@ -2182,11 +2182,11 @@ describe('selector-wide siblings (firn-ide#315)', () => {
         .slice(1)
         .map((badge) => badge.textContent)
     ).toEqual([
-      'reasoningedited',
-      'analysissame model',
-      'agentfallback',
-      'chatfallback',
-      'completionfallback',
+      'reasoning edited',
+      'analysis same model',
+      'agent fallback',
+      'chat fallback',
+      'completion fallback',
     ]);
 
     await clickApply();
@@ -2227,7 +2227,7 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     const sibling = screen.getByTestId('route-row-summarize');
     expect(sibling).toHaveAttribute('data-changed', 'true');
     expect(within(sibling).getByText('always')).toBeInTheDocument();
-    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('was auto');
     expect(
       within(screen.getByTestId('route-row-chat')).getByTestId('reach-sentence')
     ).toHaveTextContent('You edited this route. The model also serves summarize.');

@@ -192,6 +192,42 @@ describe('GolemConfig stylesheet', () => {
     expect(rule).toMatch(/font-weight: 600/);
   });
 
+  // #356: the `was` and `role` sub-lines, the WAS line inside an Apply-bar
+  // chip and the curated-profile note separate label from value with a space
+  // text node that assistive technology reads. A horizontal margin on either
+  // side would double the gap on screen; a vertical one is fine.
+  it('spaces sub-line labels with text, never a horizontal margin', () => {
+    const text = css();
+    /** The rule's horizontal margins, physical, logical or from the shorthand. */
+    const horizontalMargins = (rule: string): string[] => {
+      const found: string[] = [];
+      for (const [, property, value] of rule.matchAll(/(margin[\w-]*)\s*:\s*([^;]+);/g)) {
+        const parts = value.trim().split(/\s+/);
+        if (property === 'margin') {
+          // 1 value: all sides; 2: block inline; 3: top inline bottom; 4: top right bottom left.
+          found.push(
+            ...(parts.length === 4 ? [parts[1], parts[3]] : [parts[parts.length === 1 ? 0 : 1]])
+          );
+        } else if (property === 'margin-inline') {
+          found.push(...parts);
+        } else if (/^margin-(left|right|inline-start|inline-end)$/.test(property)) {
+          found.push(parts[0]);
+        }
+      }
+      return found.filter((part) => !/^0(px|em|rem)?$/.test(part));
+    };
+    // The parser itself, on the forms it must tell apart.
+    expect(horizontalMargins('x { margin: 2px 0; margin-top: 4px; }')).toEqual([]);
+    expect(horizontalMargins('x { margin-inline-start: 6px; }')).toEqual(['6px']);
+    expect(horizontalMargins('x { margin: 0 6px 0 0; }')).toEqual(['6px']);
+    for (const selector of ['.was b', '.roleLine b', '.badge .was', '.emptyNote b']) {
+      const escaped = selector.replace(/\./g, '\\.');
+      const rule = text.match(new RegExp(`^${escaped} \\{[^}]*\\}`, 'm'))?.[0] ?? '';
+      expect({ selector, found: rule !== '' }).toEqual({ selector, found: true });
+      expect({ selector, margins: horizontalMargins(rule) }).toEqual({ selector, margins: [] });
+    }
+  });
+
   // #344: the role line under a routing row's use case. `.recordLabel` is hidden
   // once the table upgrade applies, so the line has its own class, and nothing
   // in that upgrade may hide it.

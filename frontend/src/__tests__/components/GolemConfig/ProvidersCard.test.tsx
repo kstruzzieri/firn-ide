@@ -67,7 +67,7 @@ describe('usage and change trace (ruling 7)', () => {
     expect(row).toHaveAttribute('data-changed', 'true');
     expect(within(row).getByText('https://new.example/v1')).toBeInTheDocument();
     expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent(
-      `was${provider.endpoint}`
+      `was ${provider.endpoint}`
     );
   });
 

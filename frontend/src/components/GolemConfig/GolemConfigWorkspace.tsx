@@ -1776,8 +1776,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 ) : null}
                 {curatedDescriptions.map(([slug, description]) => (
                   <p key={slug} className={styles.emptyNote}>
-                    <b>{`Curated ${slug}`}</b>
-                    {description}
+                    <b>{`Curated ${slug}`}</b> {description}
                   </p>
                 ))}
               </section>

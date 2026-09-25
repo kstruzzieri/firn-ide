@@ -238,7 +238,7 @@ describe('route editor Done (firn-ide#284)', () => {
     expect(row).toHaveAttribute('data-changed', 'true');
     expect(within(row).getByText('gpt-5')).toBeInTheDocument();
     expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent(
-      `was${model.modelName}`
+      `was ${model.modelName}`
     );
     // The provider did not change, so there is exactly ONE was line.
     expect(within(row).getAllByText(/^was$/i)).toHaveLength(1);
@@ -273,7 +273,7 @@ describe('route editor Done (firn-ide#284)', () => {
     expect(row).toHaveAttribute('data-changed', 'true');
     expect(within(row).getAllByText(/^was$/i)).toHaveLength(1);
     expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent(
-      `was${model.thinkMode === '' ? '—' : model.thinkMode}`
+      `was ${model.thinkMode === '' ? '—' : model.thinkMode}`
     );
   });
 
@@ -434,7 +434,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     expect(sibling).toHaveAttribute('data-mark', 'same-model');
     // The incoming value is staged, not applied: amber italic.
     expect(within(sibling).getByText('always').tagName).toBe('EM');
-    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('was auto');
     expect(statusOf(sibling, 'Modified')).toHaveAttribute('data-tone', 'warn');
     expect(statusOf(sibling, 'Modified')).toHaveTextContent('model changes');
     // The model did not change — it is the same selector — so there is exactly one was line…
@@ -450,7 +450,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     );
     expect(within(edited).queryByText(/also affects/)).not.toBeInTheDocument();
     expect(statusOf(edited, 'Modified')).toHaveTextContent('edited here');
-    expect(within(edited).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+    expect(within(edited).getByText(/^was$/i).parentElement).toHaveTextContent('was auto');
   });
 
   it('reads the sibling as Incompatible and strikes the capability it loses', () => {
@@ -519,7 +519,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
       within(edited)
         .getAllByText(/^was$/i)
         .map((was) => was.parentElement?.textContent)
-    ).toEqual(['wasgpt-5-mini', 'wasauto']);
+    ).toEqual(['was gpt-5-mini', 'was auto']);
   });
 
   it('does not treat a same-name, different-facts change as an override', () => {
@@ -624,7 +624,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
     expect(row).toHaveAttribute('data-changed', 'true');
     expect(row).not.toHaveAttribute('data-mark');
     expect(sentence(row)).toBeNull();
-    expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent('wasgpt-5-mini');
+    expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent('was gpt-5-mini');
     // §3.3: No model outranks Modified; the stripe and the WAS line carry the staging.
     expect(within(row).getByText('No model')).toBeInTheDocument();
   });
