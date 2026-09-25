@@ -142,7 +142,8 @@ merge confirmation dialogs and to stylesheet design-token references.
   cleared turns. A long session in one workspace can fail repeatedly at the
   2 MiB session limit, and only a restart clears it (#361).
 - Screen readers may not announce the configuration workspace's grant notice,
-  its Refresh busy notice or the route editor's model match count (#314).
+  its Refresh busy notice, the result of an Apply, or the route editor's model
+  match count (#314).
 - The declared macOS 12.0 floor is too low: the frontend needs Safari 15.4
   (macOS 12.3), because the command palette, the merge confirmations and the
   configuration workspace's confirmation dialogs use `<dialog>`, and run output
