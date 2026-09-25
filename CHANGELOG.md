@@ -39,11 +39,12 @@ merge confirmation dialogs and to stylesheet design-token references.
 
 - The configuration workspace can save the applied configuration as a named
   profile. Provider API keys are scrubbed from the saved copy, and a
-  configuration whose endpoint URL embeds a credential is refused. A grouped
-  Source picker (Applied, Curated, Yours, Start from) switches between the
-  applied configuration, the curated lineups and saved profiles, and holds the
-  Start blank and Start from curated choices; `Save as profile…` is the one
-  action that writes (#263, #312).
+  configuration whose endpoint URL embeds a credential is refused. A Source
+  picker that lists the applied configuration first, then the Curated, Yours
+  and Start from groups, switches between the applied configuration, the
+  curated lineups and saved profiles, and holds the Start blank and Start from
+  curated choices. Choosing a source writes nothing until Apply, and
+  `Save as profile…` is the one action that writes a profile (#263, #312).
 - The workspace lays out by the width of its own pane rather than the window.
   In a narrow pane the Providers and Model Routing tables become stacked
   records, long identifiers wrap instead of squeezing the endpoint and model
@@ -62,11 +63,17 @@ merge confirmation dialogs and to stylesheet design-token references.
   and in the editor strip (#263).
 - The route editor's capability checklist is a row of chips grouped Required
   and Optional. A required capability locks on once the model's card lists it
-  and it is selected, and a capability the card does not list carries an
-  asterisk and a footnote, since Golem does not verify it (#263).
-- Each routing row names the role it runs through, so a use case and a role
-  that share a name no longer read as one another, and a Defined models row's
-  model can be routed to a use case from an inline `Assign…` list (#263, #344).
+  and it is selected, and a selected capability the card does not list carries
+  an asterisk and a footnote, since Golem does not verify it (#263).
+- A routing row names the role it runs through, so a use case and a role
+  that share a name no longer read as one another; the role is not shown
+  while a staged change moves the row to another model or unassigns it. A
+  Defined models row's model can be routed to a use case from an inline
+  `Assign…` list (#263, #344).
+- The Defined models heading and its description sit in a bordered band of
+  their own, so the defined but unrouted rows no longer read as more of the
+  routing table, and in the editor strip each role's name leads its note line
+  in primary text instead of the note's grey (#348).
 - `Approve missing destinations` is now `Check destinations…`. Its prompt
   explains when to use it and lists each destination by provider, model,
   endpoint and whether it is remote before anything is approved (#310).
@@ -115,12 +122,12 @@ merge confirmation dialogs and to stylesheet design-token references.
   reload button and the panel collapse control on hover (#328, #331).
 - Text and outlines that fell below readable contrast were raised: the
   workspace menu's labels and directory hints, the run profiles empty-state
-  hint (previously about 1.4:1), the capability pills on edited routing rows,
-  and the Defined models heading and role names (#328, #330, #343, #348).
+  hint (previously about 1.4:1) and the capability pills on edited routing
+  rows (#328, #330, #343).
 - Screen readers no longer run a label into its value in the configuration
   workspace: `was` values, staged-change badges, the staged-changes bar's
-  group headers, the routing row's role line and the curated profile note now
-  put a real space between the two (#356).
+  group headers and the curated profile note now put a real space between the
+  two (#356).
 
 ### Build and CI
 
@@ -136,9 +143,11 @@ merge confirmation dialogs and to stylesheet design-token references.
   2 MiB session limit, and only a restart clears it (#361).
 - Screen readers may not announce the configuration workspace's grant notice,
   its Refresh busy notice or the route editor's model match count (#314).
-- The declared macOS 12.0 floor is too low: the configuration workspace's
-  confirmation dialogs need Safari 15.4 (macOS 12.3), and the frontend build
-  targets Safari 16 (#316).
+- The declared macOS 12.0 floor is too low: the frontend needs Safari 15.4
+  (macOS 12.3), because the command palette, the merge confirmations and the
+  configuration workspace's confirmation dialogs use `<dialog>`, and run output
+  and Golem settings use `Array.prototype.at` and `Object.hasOwn`. The frontend
+  build targets Safari 16 (#316).
 - The destination approval row names one model, but an approval covers every
   model on that endpoint, and the row does not show when the endpoint is
   reached only through fallbacks (#355).
