@@ -1227,4 +1227,314 @@ describe('useWorkspacePersistence', () => {
       jest.useRealTimers();
     }
   });
+
+  // ---------------------------------------------------------------------
+  // #360 no close-time flush while a restore is in progress
+  // ---------------------------------------------------------------------
+  describe('flushes during a restore (#360)', () => {
+    const deferred = <T>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    };
+
+    const settle = () =>
+      act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+
+    const savedPaths = () =>
+      mockSaveWorkspaceState.mock.calls.map(
+        (c) => (c[0] as { workspacePath: string }).workspacePath
+      );
+
+    const blur = () => act(() => void window.dispatchEvent(new Event('blur')));
+
+    const mount = async (path = '/workspace/w') => {
+      useIDEStore.setState({
+        workspace: { name: path.slice(path.lastIndexOf('/') + 1), path },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith(path));
+    };
+
+    const mountRestoring = async () => {
+      await mount();
+      expect(useIDEStore.getState().isRestoringWorkspace).toBe(true);
+    };
+
+    it('does not save the reset session on a window blur while the load is pending', async () => {
+      const load = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+      await mountRestoring();
+
+      blur();
+      await settle();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+
+      await act(async () => load.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+    });
+
+    it('does not save the reset session when the page hides while the load is pending', async () => {
+      const load = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+      await mountRestoring();
+
+      const visibility = jest.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      try {
+        act(() => void document.dispatchEvent(new Event('visibilitychange')));
+        await settle();
+        expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+      } finally {
+        visibility.mockRestore();
+      }
+
+      await act(async () => load.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+    });
+
+    it('lets the app close during a restore without saving over the good file', async () => {
+      const load = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+      await mountRestoring();
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      act(() => beforeCloseHandler?.());
+
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+      expect(mockCancelBeforeClose).not.toHaveBeenCalled();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+    });
+
+    it('skips a queued flush when a restore begins while an earlier save is in flight', async () => {
+      useIDEStore.setState({
+        workspace: { name: 'A', path: '/workspace/A' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      // First blur starts a save that hangs; the second queues behind it.
+      const firstSave = deferred<void>();
+      mockSaveWorkspaceState.mockReturnValueOnce(firstSave.promise);
+      blur();
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+      blur();
+      await settle();
+
+      // A switch begins B's restore while that save is still in flight.
+      const loadB = deferred<unknown>();
+      mockLoadWorkspaceState.mockReturnValueOnce(loadB.promise);
+      act(() => {
+        useIDEStore.setState({ workspace: { name: 'B', path: '/workspace/B' } });
+      });
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/B'));
+      expect(useIDEStore.getState().isRestoringWorkspace).toBe(true);
+
+      await act(async () => firstSave.resolve());
+      await settle();
+
+      // The outgoing switch-flush still saves A; B's reset session is never written.
+      await waitFor(() => expect(savedPaths().filter((p) => p === '/workspace/A')).toHaveLength(2));
+      expect(savedPaths()).not.toContain('/workspace/B');
+
+      await act(async () => loadB.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(savedPaths()).not.toContain('/workspace/B');
+    });
+
+    it('does not save the half-restored session during path hydration or tab reads', async () => {
+      const hydrate = deferred<void>();
+      const readA = deferred<unknown>();
+      mockEnsurePathLoaded.mockReturnValueOnce(hydrate.promise);
+      mockReadFile.mockReturnValueOnce(readA.promise).mockResolvedValue({
+        content: 'b',
+        encoding: 'utf-8',
+        lineEndings: 'LF',
+        size: 1,
+        isBinary: false,
+      });
+      mockLoadWorkspaceState.mockResolvedValueOnce({
+        workspacePath: '/workspace/w',
+        workspaceName: 'w',
+        layout: null,
+        editor: {
+          activeFilePath: '/workspace/w/b.ts',
+          openFiles: [
+            { path: '/workspace/w/a.ts', scrollTop: 0, cursorLine: 0, cursorColumn: 0 },
+            { path: '/workspace/w/b.ts', scrollTop: 0, cursorLine: 0, cursorColumn: 0 },
+          ],
+        },
+        explorer: { expandedPaths: ['/workspace/w/src'], rootExpanded: true },
+        activeSidebar: 'explorer',
+        hiddenProfileIds: [],
+      });
+      await mountRestoring();
+
+      await waitFor(() => expect(mockEnsurePathLoaded).toHaveBeenCalledWith('/workspace/w/src'));
+      blur();
+      await settle();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+
+      await act(async () => hydrate.resolve());
+      await waitFor(() => expect(mockReadFile).toHaveBeenCalledWith('/workspace/w/a.ts'));
+      blur();
+      await settle();
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+
+      await act(async () =>
+        readA.resolve({
+          content: 'a',
+          encoding: 'utf-8',
+          lineEndings: 'LF',
+          size: 1,
+          isBinary: false,
+        })
+      );
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      expect(mockSaveWorkspaceState).not.toHaveBeenCalled();
+      expect(useIDEStore.getState().openFiles.map((f) => f.path)).toEqual([
+        '/workspace/w/a.ts',
+        '/workspace/w/b.ts',
+      ]);
+    });
+
+    // Both orders queue the close and the switch-flush behind the same
+    // in-flight save; whichever resumes first, the close must not confirm
+    // until the outgoing workspace's write has landed.
+    it.each([
+      ['the switch before the close', false],
+      ['the close before the switch', true],
+    ])(
+      'holds the close for a switch-flush queued behind the same in-flight save (%s)',
+      async (_order, closeFirst) => {
+        useIDEStore.setState({
+          workspace: { name: 'A', path: '/workspace/A' },
+          directoryTree: [],
+          isLoadingTree: false,
+        });
+        renderHook(() => useWorkspacePersistence());
+        await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+        await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+        await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+        const blurSave = deferred<void>();
+        const switchSave = deferred<void>();
+        mockSaveWorkspaceState
+          .mockReturnValueOnce(blurSave.promise)
+          .mockReturnValueOnce(switchSave.promise);
+        blur();
+        await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+
+        if (closeFirst) act(() => beforeCloseHandler?.());
+        const loadB = deferred<unknown>();
+        mockLoadWorkspaceState.mockReturnValueOnce(loadB.promise);
+        act(() => {
+          useIDEStore.setState({ workspace: { name: 'B', path: '/workspace/B' } });
+        });
+        await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/B'));
+
+        if (!closeFirst) act(() => beforeCloseHandler?.());
+        await act(async () => blurSave.resolve());
+        await waitFor(() => expect(savedPaths()).toEqual(['/workspace/A', '/workspace/A']));
+        // Real timer: a few microtask ticks are not enough for an early confirm to surface.
+        await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+        expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+        await act(async () => switchSave.resolve());
+        await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+        expect(savedPaths()).not.toContain('/workspace/B');
+      }
+    );
+
+    // Two flushes that resume from the same in-flight save issue their writes
+    // together, and the ref keeps only the later one. The close must still
+    // wait for the earlier write when the later one lands first.
+    it('holds the close until an earlier concurrent write lands after a later one', async () => {
+      useIDEStore.setState({
+        workspace: { name: 'A', path: '/workspace/A' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      const blurSaveA = deferred<void>();
+      const switchSaveA = deferred<void>();
+      const switchSaveB = deferred<void>();
+      const blurSaveC = deferred<void>();
+      mockSaveWorkspaceState
+        .mockReturnValueOnce(blurSaveA.promise)
+        .mockReturnValueOnce(switchSaveA.promise)
+        .mockReturnValueOnce(switchSaveB.promise)
+        .mockReturnValueOnce(blurSaveC.promise);
+      blur();
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+      act(() => beforeCloseHandler?.());
+
+      const switchTo = async (name: string) => {
+        const load = deferred<unknown>();
+        mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+        act(() => {
+          useIDEStore.setState({ workspace: { name, path: `/workspace/${name}` } });
+        });
+        await waitFor(() =>
+          expect(mockLoadWorkspaceState).toHaveBeenCalledWith(`/workspace/${name}`)
+        );
+        return load;
+      };
+
+      const loadB = await switchTo('B');
+      await act(async () => blurSaveA.resolve());
+      await waitFor(() => expect(savedPaths()).toEqual(['/workspace/A', '/workspace/A']));
+
+      // With A's switch-flush still in flight, B finishes restoring, the user
+      // moves on to C, C finishes restoring, and the window blurs: B's
+      // switch-flush and C's blur flush both queue behind A's write.
+      await act(async () => loadB.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      const loadC = await switchTo('C');
+      await act(async () => loadC.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      blur();
+
+      await act(async () => switchSaveA.resolve());
+      await waitFor(() =>
+        expect(savedPaths()).toEqual([
+          '/workspace/A',
+          '/workspace/A',
+          '/workspace/B',
+          '/workspace/C',
+        ])
+      );
+
+      await act(async () => blurSaveC.resolve());
+      // Real timer: a few microtask ticks are not enough for an early confirm to surface.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+      await act(async () => switchSaveB.resolve());
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    });
+
+    it('saves normally on a blur once the restore has completed', async () => {
+      mockLoadWorkspaceState.mockResolvedValueOnce(null);
+      await mount();
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      blur();
+      await waitFor(() => expect(savedPaths()).toEqual(['/workspace/w']));
+    });
+  });
 });
