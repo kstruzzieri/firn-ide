@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Feature release covering the narrow-pane redesign of the Golem configuration
 workspace with named configuration profiles, a visible outcome for every Golem
-chat run, a context budget sized from the model's declared window, protection
-against overwriting an unreadable workspace state file, and repairs to the
-merge confirmation dialogs and to stylesheet design-token references.
+chat run, a context budget sized from the model's declared window, fixes for
+three ways saved data could be lost (an unreadable workspace state file or
+run-profiles file being overwritten, and a workspace session being overwritten
+while it restores), and repairs to the merge confirmation dialogs and to
+stylesheet design-token references.
 
 ### Golem
 
