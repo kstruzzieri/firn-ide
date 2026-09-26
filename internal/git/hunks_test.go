@@ -329,7 +329,7 @@ func TestService_FileHunks_ConflictedFileHasNoHunks(t *testing.T) {
 	gitCmd(t, dir, "commit", "-am", "main")
 	// Merge conflicts; git merge exits non-zero, which gitCmd would fail on.
 	cmd := exec.Command("git", "-C", dir, "merge", "side")
-	cmd.Env = scrubGitEnv(os.Environ())
+	cmd.Env = ScrubGitEnv(os.Environ())
 	_ = cmd.Run()
 
 	fh, err := svc.FileHunks(ctx(), dir, "c.txt", false)

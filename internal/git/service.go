@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -13,7 +14,7 @@ import (
 // their existing credential helpers, SSH agents, and hooks keep working.
 type Service struct{}
 
-// scrubGitEnv drops the repository-local GIT_* variables Git exports to hooks
+// ScrubGitEnv drops the repository-local GIT_* variables Git exports to hooks
 // (and that hooks re-export to their children). Left in place, an inherited
 // GIT_DIR/GIT_INDEX_FILE/GIT_OBJECT_DIRECTORY/etc. overrides cmd.Dir and
 // redirects the operation into whatever repository the parent was pointed at.
@@ -21,11 +22,23 @@ type Service struct{}
 // --local-env-vars`): these are exactly the variables Git treats as
 // repository-scoped and refuses to leak into submodules, so scrubbing the same
 // set is the root-cause fix rather than patching the one variable that happened
-// to bite us. Returns a fresh slice; the input is never mutated.
-func scrubGitEnv(env []string) []string {
+// to bite us. Returns a fresh slice; the input is never mutated. Exported so
+// package main's git tests share this one list instead of a drifting copy.
+func ScrubGitEnv(env []string) []string {
+	return scrubGitEnv(env, runtime.GOOS == "windows")
+}
+
+// scrubGitEnv is ScrubGitEnv with the platform's name matching made explicit.
+// foldCase matches names case-insensitively, as Windows resolves them (git_dir
+// is GIT_DIR there). On Unix a lowercase git_dir is a distinct variable a
+// user's hook or credential helper may read, so it must pass through.
+func scrubGitEnv(env []string, foldCase bool) []string {
 	clean := make([]string, 0, len(env))
 	for _, variable := range env {
 		name, _, _ := strings.Cut(variable, "=")
+		if foldCase {
+			name = strings.ToUpper(name)
+		}
 		switch name {
 		case "GIT_DIR",
 			"GIT_WORK_TREE",
@@ -63,7 +76,7 @@ func NewService() *Service {
 func (s *Service) run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(scrubGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(ScrubGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

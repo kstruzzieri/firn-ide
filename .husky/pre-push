@@ -7,7 +7,7 @@
 # Git exports repository-local GIT_* vars to hooks; a linked-worktree GIT_DIR
 # left set here redirects the go-test git subprocesses into the parent repo
 # (issue #194). Strip Git's whole repository-local set (`git rev-parse
-# --local-env-vars`, mirrors internal/git scrubGitEnv) before running anything.
+# --local-env-vars`, mirrors internal/git ScrubGitEnv) before running anything.
 unset GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
 	GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_GRAFT_FILE \
 	GIT_SHALLOW_FILE GIT_NAMESPACE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE \
