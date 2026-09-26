@@ -310,6 +310,21 @@ it('restores the original profile if the save fails after delete during reassign
   expect(useIDEStore.getState().runProfileForm).not.toBeNull();
 });
 
+// #359: a refused write (unreadable run-profiles.json) must reach the user with
+// the backend's remedy, not only the log.
+it('shows a rejected save inline and keeps the form open', async () => {
+  const refusal = 'run profile changes are not saved (fix or remove it, then restart Firn)';
+  (SaveRunProfile as jest.Mock).mockRejectedValue(new Error(refusal));
+  useIDEStore.getState().openRunProfileForm({ mode: 'create' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'My Dev' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'npm run dev' } });
+  fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(await screen.findByText(refusal)).toBeInTheDocument();
+  expect(useIDEStore.getState().runProfileForm).not.toBeNull();
+});
+
 it('clears copied tags when customizing detected and command changes before save', () => {
   render(<RunProfileForm state={{ mode: 'edit', profile: detected }} />);
   expect(screen.getByText('dev')).toBeInTheDocument();

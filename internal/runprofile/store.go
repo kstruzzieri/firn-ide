@@ -1,6 +1,7 @@
 package runprofile
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"firn/internal/filesystem"
@@ -39,7 +40,16 @@ type Store struct {
 	// could not be written back to a read-only directory). The migrated data is
 	// still usable in memory; callers surface these rather than failing the load.
 	Warnings []string
+	// loadErr latches the last Load failure other than a missing file (#359).
+	// A failed Load leaves the in-memory list empty, so writing it back would
+	// erase every profile the unreadable file still holds; writeProfilesLocked
+	// refuses while this is set. The next successful Load clears it.
+	loadErr error
 }
+
+// errNewerProfilesVersion marks a profiles file written by a newer Firn, whose
+// remedy differs from a corrupt file's: it is live data, not damage.
+var errNewerProfilesVersion = errors.New("unsupported profiles file version")
 
 // SetScope assigns the owning-workspace identity used when migrating a legacy
 // v1 file loaded by this store. Call before Load.
@@ -63,24 +73,39 @@ func (s *Store) Load() ([]RunProfile, error) {
 	defer s.mu.Unlock()
 
 	s.Warnings = nil
+	s.loadErr = nil
 
 	path := filepath.Join(s.workspaceRoot, profilesFileName)
 	data, err := s.fs.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			// No profiles file, but a recency sidecar may still exist on its own
-			// (a run was recorded for a detected profile that was never saved).
-			s.profiles = []RunProfile{}
-			s.state = map[string]ProfileUIState{}
-			s.loadRecencyLocked()
-			return s.profiles, nil
-		}
-		return nil, fmt.Errorf("reading profiles file: %w", err)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, s.latchLoadErr(fmt.Errorf("reading profiles file %s: %w", path, err))
+	}
+	// A missing file, or one with zero bytes (a crash after the non-fsynced
+	// rename, a touch), holds no profiles to preserve: treat both as absent, as
+	// the workspace store does (#332). A recency sidecar may still exist on its
+	// own (a run was recorded for a detected profile that was never saved).
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		s.profiles = []RunProfile{}
+		s.state = map[string]ProfileUIState{}
+		s.loadRecencyLocked()
+		return s.profiles, nil
+	}
+
+	// Read the version before the full document: a newer Firn's schema must be
+	// reported as newer, not as corrupt, or the remedy would say to remove it.
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, s.latchLoadErr(fmt.Errorf("parsing profiles file %s: %w", path, err))
+	}
+	if envelope.Version > profilesFileVersion {
+		return nil, s.latchLoadErr(fmt.Errorf("%w in %s: %d (expected 1-%d; written by a newer Firn)", errNewerProfilesVersion, path, envelope.Version, profilesFileVersion))
 	}
 
 	var pf ProfilesFile
 	if err := json.Unmarshal(data, &pf); err != nil {
-		return nil, fmt.Errorf("parsing profiles file: %w", err)
+		return nil, s.latchLoadErr(fmt.Errorf("parsing profiles file %s: %w", path, err))
 	}
 
 	s.state = map[string]ProfileUIState{}
@@ -106,7 +131,7 @@ func (s *Store) Load() ([]RunProfile, error) {
 			s.state = pf.ProfileState
 		}
 	default:
-		return nil, fmt.Errorf("unsupported profiles file version: %d (expected 1-%d)", pf.Version, profilesFileVersion)
+		return nil, s.latchLoadErr(fmt.Errorf("unsupported profiles file version in %s: %d (expected 1-%d)", path, pf.Version, profilesFileVersion))
 	}
 
 	// Merge run recency from the sidecar (authoritative over any legacy recency
@@ -114,6 +139,34 @@ func (s *Store) Load() ([]RunProfile, error) {
 	s.loadRecencyLocked()
 
 	return s.copyProfiles(), nil
+}
+
+// latchLoadErr records a Load failure so no durable write can replace the file
+// this store could not read. Caller holds s.mu.
+func (s *Store) latchLoadErr(err error) error {
+	s.loadErr = err
+	// The sidecar stays readable and writable while latched. Load it so
+	// RecordRun merges into it instead of replacing it with one entry. With an
+	// empty state the legacy-migration branch cannot write anything.
+	s.state = map[string]ProfileUIState{}
+	s.loadRecencyLocked()
+	return err
+}
+
+// loadRefusal explains why writeProfilesLocked will not write: the file, the
+// reason (the wrapped load error names both) and the remedy. Run profiles are
+// reloaded only by LoadRunProfiles, which the frontend calls when a folder is
+// opened (and from Retry after a hard load failure), so that is the recovery
+// step the message names.
+func loadRefusal(err error) error {
+	remedy := "fix or remove it"
+	switch {
+	case errors.Is(err, errNewerProfilesVersion):
+		remedy = "open the workspace with the newer Firn that wrote it, or remove the file"
+	case errors.Is(err, fs.ErrPermission):
+		remedy = "restore read access to the file and its .firn directory"
+	}
+	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s, then restart Firn, or open another folder and reopen this one, to reload run profiles): %w", remedy, err)
 }
 
 // loadRecencyLocked merges run recency from the sidecar into s.state. If the
@@ -293,6 +346,11 @@ func (s *Store) RecordRun(id string, ts int64) error {
 func (s *Store) PruneState(validIDs map[string]bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		// The saved IDs and adoption flags are unknown while latched, so
+		// validIDs would wrongly drop every saved profile's recency.
+		return nil
+	}
 	next := copyProfileState(s.state)
 	changed := false
 	for id, st := range next {
@@ -352,6 +410,9 @@ func (s *Store) persistRecency(state map[string]ProfileUIState) error {
 // sidecar — so this file changes only on user actions, not on every run. Caller
 // holds s.mu.
 func (s *Store) writeProfilesLocked(state map[string]ProfileUIState) error {
+	if s.loadErr != nil {
+		return loadRefusal(s.loadErr)
+	}
 	profiles := s.profiles
 	if profiles == nil {
 		profiles = []RunProfile{}
