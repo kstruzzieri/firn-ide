@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [0.13.0] - Pending
 
+Feature release covering the narrow-pane redesign of the Golem configuration
+workspace with named configuration profiles, a visible outcome for every Golem
+chat run, a context budget sized from the model's declared window, protection
+against overwriting an unreadable workspace state file, and repairs to the
+merge confirmation dialogs and to stylesheet design-token references.
+
+### Golem
+
+- A Golem chat run always ends with a visible outcome. A run stopped by its
+  step, token-budget, tool-error or repeat limit names the limit and how far it
+  got, and a run that finished without reply text says so. When no answer
+  arrived, Retry is offered with the prompt intact and the status bar reports
+  the failure instead of returning to Idle (#303).
 - Golem now sizes its per-turn context budget from the configured model's
   declared context window instead of leaving go-llm's conservative 8192-token
   default in place. Under the old default a single repo question could evict its
@@ -17,10 +30,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   most 32768 tokens, and a quarter of that is then reserved for the reply, so a
   model declaring a 256k window gets a 24576-token input budget and still has
   room to answer on a server started with `-c 32768`. A model that declares no
-  window, or one too small to reserve reply room from, keeps go-llm's default.
+  window, or one too small to reserve reply room from, keeps go-llm's default
+  (#304).
 - Ollama requests now allocate the same context window used for Golem's
-  input budget. The optional budget probe applies Firn's protected-file policy
-  and resolves reasoning settings from the selected model when overriding it.
+  input budget (#304).
+
+### Golem Configuration
+
+- The configuration workspace can save the applied configuration as a named
+  profile. Provider API keys are scrubbed from the saved copy, and a
+  configuration whose endpoint URL embeds a credential is refused. A Source
+  picker that lists the applied configuration first, then the Curated, Yours
+  and Start from groups, switches between the applied configuration, the
+  curated lineups and saved profiles, and holds the Start blank and Start from
+  curated choices. Choosing a source writes nothing until Apply, and
+  `Save as profile…` is the one action that writes a profile (#263, #312).
+- The workspace lays out by the width of its own pane rather than the window.
+  In a narrow pane the Providers and Model Routing tables become stacked
+  records, long identifiers wrap instead of squeezing the endpoint and model
+  columns, and an open row and its editor read as one outlined group. The table
+  form needs Safari 16, WebKitGTK 2.38 or WebView2 117; older runtimes keep the
+  stacked form at every width (#308).
+- Staged edits can be traced before Apply. A staged value prints in amber
+  italic beside its `was` value, each routing row says whether it was edited,
+  shares the edited model or only falls back to it, and the route editor names
+  every pending change above Done and Cancel. The staged-changes bar groups
+  changes by the model they land on, prints capability and Think deltas the way
+  the rows do, and each of its badges jumps to its row (#263, #345).
+- Model cards in the route editor show two or three lines, and hovering or
+  focusing a card opens a popup with every fact in full. A model's
+  `description` in `models.json` now reaches the panel and renders on its card
+  and in the editor strip (#263).
+- The route editor's capability checklist is a row of chips grouped Required
+  and Optional. A required capability locks on once the model's card lists it
+  and it is selected, and a selected capability the card does not list carries
+  an asterisk and a footnote, since Golem does not verify it (#263).
+- A routing row names the role it runs through, so a use case and a role
+  that share a name no longer read as one another; the role is not shown
+  while a staged change moves the row to another model or unassigns it. A
+  Defined models row's model can be routed to a use case from an inline
+  `Assign…` list (#263, #344).
+- The Defined models heading and its description sit in a bordered band of
+  their own, so the defined but unrouted rows no longer read as more of the
+  routing table, and in the editor strip each role's name leads its note line
+  in primary text instead of the note's grey (#348).
+- `Approve missing destinations` is now `Check destinations…`. Its prompt
+  explains when to use it and lists each destination by provider, model,
+  endpoint and whether it is remote before anything is approved (#310).
+- An exposure with every capability unticked is refused instead of clearing
+  the model's capability override, which had silently exposed its type
+  defaults. The model picker checks each card against the capability
+  requirements of every use case the model would serve and names what is
+  missing (for example `agent needs tool_call`); Apply still makes the final
+  check. Rows that share a model show its incoming values while a change is
+  staged, rows whose own values do not change are no longer marked Modified,
+  and the route editor closes after a successful Done (#284, #315).
+- The Golem Configuration tab scrolls into view whenever it is activated, so
+  it no longer sits out of reach past the edge of a narrow tab strip (#309).
+
+### Git
+
+- The merge-resolution discard and overwrite confirmations open centred below
+  the header instead of at the window's top-left under the macOS window
+  controls. Escape inside either one now cancels it, and closing it returns
+  focus to the control that opened it (#313, #327).
+- Borders in the diff viewer, the Git panel and the branch switcher, and the
+  background of the diff viewer's hunk stage button, now render. They
+  referenced design tokens that were never declared, so the browser dropped
+  them (#326).
+
+### Workspace
+
 - A workspace state file that fails to decode (a hand-edited type mismatch, a
   truncated file, or one written by a newer Firn) is no longer overwritten by
   a default session on the next save. Saving for that workspace is paused for
@@ -28,7 +108,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   toast that stays until dismissed and names the workspace, the file, the
   reason and the remedy: fix or remove the file, then restart Firn, or open
   the workspace with the newer Firn that wrote it. An empty state file reads
-  as absent. (#290)
+  as absent (#290).
+
+### Accessibility
+
+- On macOS, Tab in the main window now moves through buttons, links and every
+  other control, not only text fields, without Full Keyboard Access turned on
+  (#333).
+- Controls filled with the workspace accent draw their text and icons in a
+  per-accent `--text-on-accent` token that meets WCAG AA on every accent: the
+  Git panel's sync count and commit button, the run profile form's save
+  button, the configuration workspace's primary button, the error screen's
+  reload button and the panel collapse control on hover (#328, #331).
+- Text and outlines that fell below readable contrast were raised: the
+  workspace menu's labels and directory hints, the run profiles empty-state
+  hint (previously about 1.4:1) and the capability pills on edited routing
+  rows (#328, #330, #343).
+- Screen readers no longer run a label into its value in the configuration
+  workspace: `was` values, staged-change badges, the staged-changes bar's
+  group headers and the curated profile note now put a real space between the
+  two (#356).
+
+### Build and CI
+
+- A test now fails on any stylesheet `var()` reference to a design token that
+  is not declared, including one kept alive only by its fallback value; the
+  header selectors, run output and structure view now reference declared
+  tokens instead of those fallbacks (#326, #328).
+
+### Known limitations
+
+- New chat clears only the Golem chat view, so the model still receives the
+  cleared turns. A long session in one workspace can fail repeatedly at the
+  2 MiB session limit, and only a restart clears it (#361).
+- Screen readers may not announce the configuration workspace's grant notice,
+  its Refresh busy notice, the result of an Apply, or the route editor's model
+  match count (#314).
+- The declared macOS 12.0 floor is too low: the frontend needs Safari 15.4
+  (macOS 12.3), because the command palette, the merge confirmations and the
+  configuration workspace's confirmation dialogs use `<dialog>`, and run output
+  and Golem settings use `Array.prototype.at` and `Object.hasOwn`. The frontend
+  build targets Safari 16 (#316).
+- The destination approval row names one model, but an approval covers every
+  model on that endpoint, and it reads `Reached by agent` without saying when
+  the endpoint is reached only through the agent's fallbacks (#355).
 
 ## [0.12.0] - 2026-09-06
 
@@ -319,7 +442,8 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.9.0...v0.10.0
