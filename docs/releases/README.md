@@ -19,8 +19,8 @@ so every issue shows the release it targets. Contracts are edited only on
   next train.
 - The date holds. An In item that has not merged by the freeze moves to the
   next train through an amendment that names the reason.
-- A patch release (`vX.Y.Z+1`) is cut only for a regression against the
-  previous release or for data loss.
+- A patch release (for example `v0.13.1` after `v0.13.0`) is cut only for a
+  regression against the previous release or for data loss.
 
 ## What a contract fixes
 
