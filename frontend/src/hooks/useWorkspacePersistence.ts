@@ -434,6 +434,11 @@ export function useWorkspacePersistence(
       const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;
 
+      // Flushes that resume from the same in-flight save issue their writes
+      // together, and the ref keeps only the last one. Chain each tracked
+      // save to the one it replaces, so awaiting the ref waits for every
+      // outstanding write: a close must not confirm before all of them land.
+      const previousSave = savePromiseRef.current;
       const promise = SaveWorkspaceState(state)
         .then(() => {
           // Saving works again: retire the report and its toast, shown or held.
@@ -461,6 +466,7 @@ export function useWorkspacePersistence(
           reportedSaveFailuresRef.current.set(state.workspacePath, { message, rearmed: false });
           ide.showToast(message, 'error', true);
         })
+        .then(() => previousSave)
         .finally(() => {
           if (savePromiseRef.current === promise) {
             savePromiseRef.current = Promise.resolve();

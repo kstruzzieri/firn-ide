@@ -1456,6 +1456,78 @@ describe('useWorkspacePersistence', () => {
       }
     );
 
+    // Two flushes that resume from the same in-flight save issue their writes
+    // together, and the ref keeps only the later one. The close must still
+    // wait for the earlier write when the later one lands first.
+    it('holds the close until an earlier concurrent write lands after a later one', async () => {
+      useIDEStore.setState({
+        workspace: { name: 'A', path: '/workspace/A' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
+
+      const blurSaveA = deferred<void>();
+      const switchSaveA = deferred<void>();
+      const switchSaveB = deferred<void>();
+      const blurSaveC = deferred<void>();
+      mockSaveWorkspaceState
+        .mockReturnValueOnce(blurSaveA.promise)
+        .mockReturnValueOnce(switchSaveA.promise)
+        .mockReturnValueOnce(switchSaveB.promise)
+        .mockReturnValueOnce(blurSaveC.promise);
+      blur();
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+      act(() => beforeCloseHandler?.());
+
+      const switchTo = async (name: string) => {
+        const load = deferred<unknown>();
+        mockLoadWorkspaceState.mockReturnValueOnce(load.promise);
+        act(() => {
+          useIDEStore.setState({ workspace: { name, path: `/workspace/${name}` } });
+        });
+        await waitFor(() =>
+          expect(mockLoadWorkspaceState).toHaveBeenCalledWith(`/workspace/${name}`)
+        );
+        return load;
+      };
+
+      const loadB = await switchTo('B');
+      await act(async () => blurSaveA.resolve());
+      await waitFor(() => expect(savedPaths()).toEqual(['/workspace/A', '/workspace/A']));
+
+      // With A's switch-flush still in flight, B finishes restoring, the user
+      // moves on to C, C finishes restoring, and the window blurs: B's
+      // switch-flush and C's blur flush both queue behind A's write.
+      await act(async () => loadB.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      const loadC = await switchTo('C');
+      await act(async () => loadC.resolve(null));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      blur();
+
+      await act(async () => switchSaveA.resolve());
+      await waitFor(() =>
+        expect(savedPaths()).toEqual([
+          '/workspace/A',
+          '/workspace/A',
+          '/workspace/B',
+          '/workspace/C',
+        ])
+      );
+
+      await act(async () => blurSaveC.resolve());
+      // Real timer: a few microtask ticks are not enough for an early confirm to surface.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+      expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
+
+      await act(async () => switchSaveB.resolve());
+      await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
+    });
+
     it('saves normally on a blur once the restore has completed', async () => {
       mockLoadWorkspaceState.mockResolvedValueOnce(null);
       await mount();
