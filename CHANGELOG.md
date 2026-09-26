@@ -112,8 +112,9 @@ merge confirmation dialogs and to stylesheet design-token references.
 - A workspace session is no longer overwritten while the workspace restores. A
   window blur, a hide or a quit during the restore saved the reset or
   half-restored session over the good state file, and switching workspace
-  before the restore finished made the loss permanent. A close now also waits
-  for every outstanding workspace write before the app quits (#360).
+  before the restore finished made the loss permanent. A close during a
+  restore now also waits for outstanding workspace writes before allowing the
+  app to quit normally (#360).
 
 ### Accessibility
 
