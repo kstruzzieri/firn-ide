@@ -398,7 +398,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.13.0` is live. The narrow-pane redesign of the Golem configuration workspace with named configuration profiles (#263, #308, #312), a visible outcome for every Golem chat run (#303), a context budget sized from the model's declared window (#304), protection against overwriting an unreadable workspace state file (#290), and fixes to the merge confirmation dialogs and to stylesheet design-token references have all shipped since v0.12.0.
+`v0.13.0` is live. The narrow-pane redesign of the Golem configuration workspace with named configuration profiles (#263, #308, #312), a visible outcome for every Golem chat run (#303), a context budget sized from the model's declared window (#304), fixes for three ways saved data could be lost (an unreadable workspace state file or run-profiles file being overwritten, and a workspace session being overwritten while it restores; #290, #359, #360), and repairs to the merge confirmation dialogs and to stylesheet design-token references have all shipped since v0.12.0.
 
 Active tracks:
 
