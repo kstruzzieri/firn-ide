@@ -27,7 +27,7 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(scrubGitEnv(os.Environ()),
+	cmd.Env = append(ScrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
@@ -134,6 +134,20 @@ func TestGitCmd_ScrubsRepositoryEnvironment(t *testing.T) {
 	}
 	if got := string(read(filepath.Join(intended, ".git", "HEAD"))); got != "ref: refs/heads/checked\n" {
 		t.Errorf("intended HEAD = %q, want checked branch", got)
+	}
+}
+
+// Windows environment names are case-insensitive, so an inherited git_dir is
+// GIT_DIR to Git for Windows and must be scrubbed there. On Unix it is a
+// distinct variable a user's hook may read, so it must survive.
+func TestScrubGitEnv_FoldsCaseOnlyWhenNamesAreCaseInsensitive(t *testing.T) {
+	env := []string{"git_dir=/x", "Git_Config=/y", "GIT_INDEX_FILE=/z", "PATH=/bin", "GIT_EDITOR=vi"}
+
+	if got, want := scrubGitEnv(env, false), []string{"git_dir=/x", "Git_Config=/y", "PATH=/bin", "GIT_EDITOR=vi"}; !slices.Equal(got, want) {
+		t.Errorf("scrubGitEnv(foldCase=false) = %q, want %q", got, want)
+	}
+	if got, want := scrubGitEnv(env, true), []string{"PATH=/bin", "GIT_EDITOR=vi"}; !slices.Equal(got, want) {
+		t.Errorf("scrubGitEnv(foldCase=true) = %q, want %q", got, want)
 	}
 }
 
