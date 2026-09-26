@@ -1,33 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	"firn/internal/git"
 	"firn/internal/git/gittest"
 )
 
 // isolatedGitEnv strips the repository-local GIT_* variables (so an inherited
-// GIT_DIR from a linked worktree cannot redirect these test git commands into
-// the real repo) and pins config to /dev/null. Package main cannot reach the
-// git package's unexported scrubGitEnv, so this mirrors it locally.
+// GIT_DIR or GIT_CONFIG cannot redirect these test git commands into the real
+// repo) and pins config to /dev/null.
 func isolatedGitEnv() []string {
-	env := make([]string, 0, len(os.Environ())+6)
-	for _, v := range os.Environ() {
-		switch {
-		case strings.HasPrefix(v, "GIT_DIR="),
-			strings.HasPrefix(v, "GIT_WORK_TREE="),
-			strings.HasPrefix(v, "GIT_INDEX_FILE="),
-			strings.HasPrefix(v, "GIT_COMMON_DIR="),
-			strings.HasPrefix(v, "GIT_OBJECT_DIRECTORY="):
-			continue
-		}
-		env = append(env, v)
-	}
-	return append(env,
+	return append(git.ScrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
@@ -56,6 +44,52 @@ func initGitRepoForApp(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// TestGitTestHelpers_KeepConfigWritesInTempRepo guards the helpers against the
+// leak that left user.name=Test in the real repo's .git/config: a test git
+// command that inherits a redirecting variable (a hook's GIT_DIR, a GIT_CONFIG
+// file) writes wherever it points instead of into the temp repo.
+func TestGitTestHelpers_KeepConfigWritesInTempRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	sentinel := t.TempDir()
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = sentinel
+	cmd.Env = isolatedGitEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	read := func(path string) []byte {
+		t.Helper()
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return contents
+	}
+	gitDir := filepath.Join(sentinel, ".git")
+	configPath := filepath.Join(gitDir, "config")
+	before := read(configPath)
+	// Checked in cleanup so a helper that fails fast on a redirected repo
+	// still reports whether it wrote the sentinel first.
+	t.Cleanup(func() {
+		if after := read(configPath); !bytes.Equal(after, before) {
+			t.Errorf("sentinel .git/config changed:\n%s", after)
+		}
+	})
+
+	t.Setenv("GIT_DIR", gitDir)
+	t.Setenv("GIT_WORK_TREE", sentinel)
+	t.Setenv("GIT_COMMON_DIR", gitDir)
+	t.Setenv("GIT_CONFIG", configPath)
+	dir := initGitRepoForApp(t)
+	makeAppConflict(t)
+
+	if own := read(filepath.Join(dir, ".git", "config")); !bytes.Contains(own, []byte("email = test@example.com")) {
+		t.Errorf("temp repo config lacks the test identity:\n%s", own)
+	}
 }
 
 func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {

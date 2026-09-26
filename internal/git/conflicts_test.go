@@ -190,7 +190,7 @@ func makeConflict(t *testing.T, base, ours, theirs string, diff3 bool) string {
 func mergeConflict(t *testing.T, dir, ref string) {
 	t.Helper()
 	cmd := exec.Command("git", "-C", dir, "merge", ref)
-	cmd.Env = append(scrubGitEnv(os.Environ()),
+	cmd.Env = append(ScrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
@@ -374,7 +374,7 @@ func TestService_ConflictSnapshot_OverLimitIsError(t *testing.T) {
 func gitAllow(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(scrubGitEnv(os.Environ()),
+	cmd.Env = append(ScrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
@@ -1347,7 +1347,7 @@ func gitStdin(t *testing.T, dir, stdin string, args ...string) string {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
-	cmd.Env = append(scrubGitEnv(os.Environ()),
+	cmd.Env = append(ScrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
