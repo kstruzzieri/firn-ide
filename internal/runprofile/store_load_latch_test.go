@@ -6,6 +6,7 @@ import (
 	"firn/internal/filesystem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -101,6 +102,9 @@ func TestIssue359UnreadableProfilesFileSurvivesWrites(t *testing.T) {
 	for _, c := range latchCorruptions() {
 		for _, a := range latchActions {
 			t.Run(c.name+"/"+a.name, func(t *testing.T) {
+				if c.chmod && runtime.GOOS == "windows" {
+					t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
+				}
 				if c.chmod && os.Geteuid() == 0 {
 					t.Skip("root ignores file permissions")
 				}
@@ -364,6 +368,9 @@ func TestIssue359EmptyFileStillWrites(t *testing.T) {
 // the remedy must name the directory too, since fixing the file's mode alone
 // would not help.
 func TestIssue359UnsearchableDirRemedyNamesDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
