@@ -418,10 +418,16 @@ export function useWorkspacePersistence(
       // above, before the restore began, so it is exempt. The pending options
       // stay cleared: they described the session the restore just replaced.
       if (!identityOverride && useIDEStore.getState().isRestoringWorkspace) {
-        // A switch-flush queued behind the same in-flight save may have just
-        // issued the outgoing workspace's write; a close must not confirm
-        // before it lands. The chain never rejects (it ends in .catch).
-        await savePromiseRef.current;
+        // A switch-flush queued behind the same in-flight save issues the
+        // outgoing workspace's write when it resumes, which can be after this
+        // one does; a close must not confirm before that write lands. Wait
+        // until no newer save has been installed. The chain never rejects (it
+        // ends in .catch).
+        let pending: Promise<void>;
+        do {
+          pending = savePromiseRef.current;
+          await pending;
+        } while (pending !== savePromiseRef.current);
         return;
       }
 
