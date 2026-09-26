@@ -99,6 +99,15 @@ merge confirmation dialogs and to stylesheet design-token references.
   referenced design tokens that were never declared, so the browser dropped
   them (#326).
 
+### Run Profiles
+
+- A `.firn/run-profiles.json` that cannot be loaded (a parse error such as
+  leftover git conflict markers, a version written by a newer Firn, or a read
+  error) is no longer rewritten without its saved profiles by the next Save,
+  Pin or Adopt. Changes to saved run profiles are refused while the file cannot
+  be read, and the refusal names the file, the reason and the remedy; run
+  recency keeps working. An empty file reads as absent (#359).
+
 ### Workspace
 
 - A workspace state file that fails to decode (a hand-edited type mismatch, a
@@ -138,6 +147,9 @@ merge confirmation dialogs and to stylesheet design-token references.
 
 ### Known limitations
 
+- When `.firn/run-profiles.json` cannot be loaded, the Run Profiles panel gives
+  no notice until a change is refused, and picking up the fixed file needs a
+  restart of Firn or reopening the folder after opening another (#366, #367).
 - New chat clears only the Golem chat view, so the model still receives the
   cleared turns. A long session in one workspace can fail repeatedly at the
   2 MiB session limit, and only a restart clears it (#361).
