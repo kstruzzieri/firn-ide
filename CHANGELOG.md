@@ -109,6 +109,11 @@ merge confirmation dialogs and to stylesheet design-token references.
   reason and the remedy: fix or remove the file, then restart Firn, or open
   the workspace with the newer Firn that wrote it. An empty state file reads
   as absent (#290).
+- A workspace session is no longer overwritten while the workspace restores. A
+  window blur, a hide or a quit during the restore saved the reset or
+  half-restored session over the good state file, and switching workspace
+  before the restore finished made the loss permanent. A close now also waits
+  for every outstanding workspace write before the app quits (#360).
 
 ### Accessibility
 
