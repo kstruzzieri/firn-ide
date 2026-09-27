@@ -44,12 +44,17 @@ type MemorySessionStore struct {
 	mu    sync.Mutex
 	snaps map[string][]byte // conversation ID -> JSON snapshot, never mutated in place
 	revs  map[string]int64  // conversation ID -> currently stored revision, mirrors snaps
+	gens  map[string]uint64 // conversation ID -> Delete count; never shrinks (see Generation)
 	total int               // sum of len over snaps
 }
 
 // NewMemorySessionStore returns an empty bounded store.
 func NewMemorySessionStore() *MemorySessionStore {
-	return &MemorySessionStore{snaps: make(map[string][]byte), revs: make(map[string]int64)}
+	return &MemorySessionStore{
+		snaps: make(map[string][]byte),
+		revs:  make(map[string]int64),
+		gens:  make(map[string]uint64),
+	}
 }
 
 // Load implements golem.SessionStore. A missing ID returns
@@ -114,15 +119,28 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	return nil
 }
 
-// Delete drops id's snapshot and revision together and returns its bytes to
-// the store budget; an absent id is a no-op. A later revision-0 Save recreates
-// the conversation, so revisions are no deletion barrier: callers must
-// serialise Delete against their own writers (Service.ResetConversation
-// refuses unless the conversation is idle).
+// Delete drops id's snapshot and revision together, returns its bytes to the
+// store budget, and advances id's Generation, even when nothing was stored:
+// New chat starts a new opencode session whether or not a turn ever saved. A
+// later revision-0 Save recreates the conversation, so revisions are no
+// deletion barrier: callers must serialise Delete against their own writers
+// (Service.ResetConversation refuses unless the conversation is idle).
 func (s *MemorySessionStore) Delete(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.total -= len(s.snaps[id])
 	delete(s.snaps, id)
 	delete(s.revs, id)
+	s.gens[id]++
+}
+
+// Generation reports how many times Delete has dropped id, 0 for a
+// conversation never reset. The runner mixes it into the x-opencode-session
+// value (sessionHeaderID) when each request is made, so New chat starts a new
+// opencode session on the runner the conversation already has. It never goes
+// back: forgetting a count would repeat an earlier session value.
+func (s *MemorySessionStore) Generation(id string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gens[id]
 }

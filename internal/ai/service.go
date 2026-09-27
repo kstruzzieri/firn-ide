@@ -55,7 +55,7 @@ type runnerFactory func(
 	string,
 	providerTarget,
 	agenttools.ScopeGuard,
-	golem.SessionStore,
+	sessionStore,
 ) (Runner, error)
 
 // convState is the explicit conversation admission state.
@@ -199,7 +199,7 @@ func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath strin
 	}
 	baseCtx, baseCancel := context.WithCancel(ctx)
 	newRunner := func(ctx context.Context, root string, target providerTarget,
-		guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+		guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
 		return NewGolemRunner(ctx, root, target, guard, sessions, userAgent)
 	}
 	s := &Service{
@@ -1109,6 +1109,8 @@ func (s *Service) resetConversation(id ConversationIdentity) error {
 	if conv.state != stateIdle {
 		return fmt.Errorf("%w: conversation is %s", ErrRequestRejected, conv.state)
 	}
+	// Delete also advances the conversation's generation, so the next opencode
+	// request carries a new x-opencode-session value (sessionHeaderID).
 	s.sessions.Delete(id.ConversationID)
 	return nil
 }

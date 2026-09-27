@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -23,6 +24,14 @@ type Runner interface {
 	Run(context.Context, golem.Turn, golem.EventSink) (agent.Result, error)
 	Cancel(string) bool
 	Close() error
+}
+
+// sessionStore is the golem.SessionStore a runner persists through, plus the
+// per-conversation reset generation its opencode session header mixes in
+// (sessionHeaderID). MemorySessionStore is the production store.
+type sessionStore interface {
+	golem.SessionStore
+	Generation(threadID string) uint64
 }
 
 // golemRunner owns one golem.Runtime and the HTTP transport its single
@@ -49,7 +58,7 @@ func NewGolemRunner(
 	root string,
 	target providerTarget,
 	guard agenttools.ScopeGuard,
-	sessions golem.SessionStore,
+	sessions sessionStore,
 	userAgent string,
 ) (Runner, error) {
 	backend, transport, err := buildProvider(target, userAgent)
@@ -124,13 +133,13 @@ func newGolemRunner(
 	root string,
 	target providerTarget,
 	guard agenttools.ScopeGuard,
-	sessions golem.SessionStore,
+	sessions sessionStore,
 	backend provider.Provider,
 	transport *http.Transport,
 	tuning golemTuning,
 ) (Runner, error) {
 	orchestrator := agent.New(
-		&fixedModelCaller{backend: backend, target: target},
+		&fixedModelCaller{backend: backend, target: target, generation: sessions.Generation},
 		agent.ContextManager{},
 	)
 	// Without a budget the assembler works against go-llm's 8192-token default,
@@ -230,8 +239,9 @@ func buildProvider(target providerTarget, userAgent string) (provider.Provider, 
 // destination. There is no router and no fallback chain, so the route outcome
 // always names the fixed target.
 type fixedModelCaller struct {
-	backend provider.Provider
-	target  providerTarget
+	backend    provider.Provider
+	target     providerTarget
+	generation func(threadID string) uint64 // read per request; see sessionHeaderID
 }
 
 func (c *fixedModelCaller) Chat(
@@ -271,8 +281,9 @@ func (c *fixedModelCaller) Chat(
 }
 
 // sessionHeaderKey blinds thread ids before one leaves the process. It is
-// minted once per process, as the in-memory session store is, so a restart
-// begins a new opencode session exactly when it begins a new conversation.
+// minted once per process, as the in-memory session store is, so the value a
+// conversation sends changes when Firn restarts; the reset generation mixed in
+// by sessionHeaderID changes it on New chat.
 var sessionHeaderKey = func() []byte {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key) // crypto/rand.Read never returns an error; it crashes the program instead
@@ -283,11 +294,14 @@ var sessionHeaderKey = func() []byte {
 // golem's thread id; go-llm's openai-compat client sends any non-empty one as
 // the x-opencode-session header. Only opencode itself -- the openai-compat
 // format over https to exactly opencode.ai on the default port -- gets one,
-// and only blinded, HMAC-SHA256 under sessionHeaderKey, since the thread id
-// is derived from the repository path. Everything else gets "" and so no
-// header: a trailing-dot host, a subdomain, another port, or a provider merely
-// named "opencode". Environment proxies are ignored and redirects refused
-// (buildProvider), so the canonical endpoint is the real peer.
+// and only blinded, since the thread id is derived from the repository path:
+// HMAC-SHA256 under sessionHeaderKey over the thread id, a 0x00 byte, and the
+// conversation's reset generation as 8 big-endian bytes. The generation is
+// read here, per request, because the cached runner outlives New chat.
+// Everything else gets "" and so no header: a trailing-dot host, a subdomain,
+// another port, or a provider merely named "opencode". Environment proxies are
+// ignored and redirects refused (buildProvider), so the canonical endpoint is
+// the real peer.
 func (c *fixedModelCaller) sessionHeaderID(threadID string) string {
 	if threadID == "" || c.target.apiFormat != "openai-compat" {
 		return ""
@@ -298,6 +312,8 @@ func (c *fixedModelCaller) sessionHeaderID(threadID string) string {
 	}
 	mac := hmac.New(sha256.New, sessionHeaderKey)
 	mac.Write([]byte(threadID))
+	mac.Write([]byte{0})
+	mac.Write(binary.BigEndian.AppendUint64(nil, c.generation(threadID)))
 	return "firn-" + hex.EncodeToString(mac.Sum(nil))
 }
 

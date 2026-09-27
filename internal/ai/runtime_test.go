@@ -1,7 +1,12 @@
 package ai
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -349,6 +354,60 @@ func TestFixedModelCallerSendsXOpencodeSessionOnlyToOpencode(t *testing.T) {
 				t.Fatalf("SessionID = %q, want none sent to %s", ids[0], tc.endpoint)
 			}
 		})
+	}
+}
+
+// TestSessionHeaderIDFormula pins the exact x-opencode-session value (#306):
+// "firn-" + hex(HMAC-SHA256(sessionHeaderKey, threadID || 0x00 || generation
+// as 8 big-endian bytes)), under a 32-byte key that is not all zero. An unkeyed
+// hash, a zero key, or a value that ignores the generation fails here. The
+// generation is read when the request is made, so one runner sends a new value
+// after the store drops the thread.
+func TestSessionHeaderIDFormula(t *testing.T) {
+	if len(sessionHeaderKey) != 32 || bytes.Equal(sessionHeaderKey, make([]byte, 32)) {
+		t.Fatalf("sessionHeaderKey = %d bytes %x, want 32 random bytes", len(sessionHeaderKey), sessionHeaderKey)
+	}
+	endpoint, _, err := NormalizeEndpoint("https://opencode.ai/zen/v1")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	tgt := testTarget("zen", "big-coder")
+	tgt.apiFormat = "openai-compat"
+	tgt.destination.Endpoint = endpoint
+	store := NewMemorySessionStore()
+	backend := &scriptedProvider{name: "zen", steps: []provider.ChatResponse{{Content: "one"}, {Content: "two"}}}
+	runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), tgt, nil, store, backend, nil, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+
+	thread := ConversationID("repo-key-a", "project")
+	var events []golem.Event
+	for i := range 2 {
+		if i == 1 {
+			store.Delete(thread)
+		}
+		turn := golem.Turn{ThreadID: thread, RunID: fmt.Sprintf("run-%d", i), Message: "hi"}
+		if _, err := runner.Run(context.Background(), turn, collectSink(&events)); err != nil {
+			t.Fatalf("Run %d: %v", i, err)
+		}
+	}
+	want := func(generation uint64) string {
+		mac := hmac.New(sha256.New, sessionHeaderKey)
+		mac.Write([]byte(thread))
+		mac.Write([]byte{0})
+		mac.Write(binary.BigEndian.AppendUint64(nil, generation))
+		return "firn-" + hex.EncodeToString(mac.Sum(nil))
+	}
+	reqs := backend.recorded()
+	if len(reqs) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(reqs))
+	}
+	for gen, req := range reqs {
+		if w := want(uint64(gen)); req.SessionID != w {
+			t.Fatalf("generation %d SessionID = %q, want %q", gen, req.SessionID, w)
+		}
 	}
 }
 
