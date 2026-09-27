@@ -467,7 +467,8 @@ func TestExecutorPhase2B_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
 	}()
 	select {
 	case <-terminalEntered:
-	case <-time.After(3 * time.Second):
+	// The selected run's stop may use the whole grace period before SIGKILL.
+	case <-time.After(stopGracePeriod + 5*time.Second):
 		t.Fatal("restart did not reach selected-run cleanup")
 	}
 
@@ -526,7 +527,8 @@ func TestExecutorPhase2B_DrainInvalidatesAndWaitsForExactRestartReservation(t *t
 	}()
 	select {
 	case <-terminalEntered:
-	case <-time.After(3 * time.Second):
+	// The selected run's stop may use the whole grace period before SIGKILL.
+	case <-time.After(stopGracePeriod + 5*time.Second):
 		t.Fatal("restart did not reach selected-run cleanup")
 	}
 
