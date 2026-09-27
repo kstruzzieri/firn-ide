@@ -396,12 +396,51 @@ func TestMemorySessionStoreCASCreateAndUpdateRevisions(t *testing.T) {
 	}
 }
 
+// TestMemorySessionStoreDelete pins the store's one reclamation path (#361):
+// Delete drops the snapshot and its revision together and returns its bytes to
+// the store budget, an absent ID is a no-op, and a deleted ID is recreated by a
+// revision-0 save exactly as if it had never been stored.
+func TestMemorySessionStoreDelete(t *testing.T) {
+	s := NewMemorySessionStore()
+	ctx := context.Background()
+	mustSave(t, s, convOfSize("a", 1000))
+	mustSave(t, s, convOfSize("b", 500))
+	kept := len(s.snaps["b"])
+
+	s.Delete("a")
+	if _, err := s.Load(ctx, "a"); !errors.Is(err, conversation.ErrNotFound) {
+		t.Fatalf("Load(deleted) = %v, want conversation.ErrNotFound", err)
+	}
+	if _, ok := s.revs["a"]; ok {
+		t.Fatal("Delete left the deleted ID in the revision ledger")
+	}
+	if s.total != kept {
+		t.Fatalf("total after Delete = %d, want %d (only b's bytes)", s.total, kept)
+	}
+
+	// Absent IDs, including the one just deleted, are no-ops.
+	s.Delete("a")
+	s.Delete("never-stored")
+	if s.total != kept || len(s.snaps) != 1 || len(s.revs) != 1 {
+		t.Fatalf("absent Delete changed the store: total = %d, snaps = %d, revs = %d", s.total, len(s.snaps), len(s.revs))
+	}
+
+	mustSave(t, s, convOfSize("a", 10))
+	loaded, err := s.Load(ctx, "a")
+	if err != nil || loaded.Revision != 1 {
+		t.Fatalf("recreated Load = %+v, %v; want revision 1", loaded, err)
+	}
+	if s.total != kept+len(s.snaps["a"]) {
+		t.Fatalf("total after recreate = %d, want %d", s.total, kept+len(s.snaps["a"]))
+	}
+}
+
 // TestMemorySessionStoreCASConflictsPreserveState mirrors go-llm's
-// store_cas_test.go:125: a duplicate create, a stale positive revision, and
-// an update against an absent ID all fail as a typed *conversation.ConflictError
-// carrying the submitted revision, and none of them touch stored bytes or the
-// byte total (there is no Delete yet in Firn's store, so the reference's
-// "deleted loaded snapshot" case does not apply here).
+// store_cas_test.go:125: a duplicate create, a stale positive revision, an
+// update against an absent ID, and an update of a loaded snapshot that was
+// deleted since all fail as a typed *conversation.ConflictError carrying the
+// submitted revision, and none of them touch stored bytes, the byte total, or
+// the revision ledger.
 func TestMemorySessionStoreCASConflictsPreserveState(t *testing.T) {
 	const id = "cas"
 	for _, tc := range []struct {
@@ -417,6 +456,10 @@ func TestMemorySessionStoreCASConflictsPreserveState(t *testing.T) {
 			mustSave(t, s, conversation.Conversation{ID: id, Revision: 1, Title: "winner again"})
 		}},
 		{"absent update", 1, func(t *testing.T, s *MemorySessionStore) {}},
+		{"deleted loaded snapshot", 1, func(t *testing.T, s *MemorySessionStore) {
+			mustSave(t, s, conversation.Conversation{ID: id, Title: "cleared"})
+			s.Delete(id)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewMemorySessionStore()

@@ -2690,6 +2690,366 @@ func TestServiceCancelPendingConsent(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// #361 — New chat resets the backend conversation
+// ---------------------------------------------------------------------------
+
+func conversationOf(id RunIdentity) ConversationIdentity {
+	return ConversationIdentity{RepoEpoch: id.RepoEpoch, WorkspaceID: id.WorkspaceID, ConversationID: id.ConversationID}
+}
+
+// waitRelayedTerminal returns the type of runID's relayed golem terminal.
+// runTurn restores idle before it relays the terminal, so the conversation is
+// idle once this returns; drainRuns alone races that relay.
+func waitRelayedTerminal(t *testing.T, rec *emitRecorder, runID string) string {
+	t.Helper()
+	var typ string
+	waitUntil(t, "relayed terminal for run "+runID, func() bool {
+		for _, r := range rec.relayed() {
+			if r.RunID == runID && (r.Type == "run.finished" || r.Type == "run.failed" || r.Type == "run.canceled") {
+				typ = r.Type
+				return true
+			}
+		}
+		return false
+	})
+	return typ
+}
+
+// assertSnapshotStored fails unless the conversation's snapshot survived.
+func assertSnapshotStored(t *testing.T, svc *Service, conversationID, what string) {
+	t.Helper()
+	if _, err := svc.sessions.Load(context.Background(), conversationID); err != nil {
+		t.Fatalf("%s: stored conversation lost: %v", what, err)
+	}
+}
+
+func assertSnapshotDeleted(t *testing.T, svc *Service, conversationID, what string) {
+	t.Helper()
+	if _, err := svc.sessions.Load(context.Background(), conversationID); !errors.Is(err, conversation.ErrNotFound) {
+		t.Fatalf("%s: Load = %v, want conversation.ErrNotFound", what, err)
+	}
+}
+
+// finishOnRelease is a fake run that signals entry, holds until release (a
+// cancel does not end it, so `canceling` stays observable), then relays a real
+// golem terminal.
+func finishOnRelease(entered, release chan struct{}) func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error) {
+	return func(_ context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		close(entered)
+		<-release
+		return agent.Result{}, sink(stampEvent(turn, "run.finished", 1, `{}`))
+	}
+}
+
+func TestServiceResetConversation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("idle_reset_deletes_only_that_conversation", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		other := runIdentityFor(repoID, "frontend")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: other.ConversationID})
+
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("ResetConversation(idle) = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "idle reset")
+		assertSnapshotStored(t, h.svc, other.ConversationID, "another workspace's conversation")
+		// Resetting an already empty conversation is not an error.
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("second ResetConversation = %v", err)
+		}
+	})
+
+	t.Run("running_and_canceling_refuse", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := onceClose(release)
+		t.Cleanup(releaseOnce)
+		h.factory.setRun(finishOnRelease(entered, release))
+
+		if _, err := h.svc.StartTurn(ctx, turnFor(id)); err != nil {
+			t.Fatalf("StartTurn: %v", err)
+		}
+		<-entered
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "request_rejected" {
+			t.Fatalf("reset while running: code = %q, want request_rejected", code)
+		}
+		if ok, err := h.svc.Cancel(id); !ok || err != nil {
+			t.Fatalf("Cancel = %v, %v", ok, err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "request_rejected" {
+			t.Fatalf("reset while canceling: code = %q, want request_rejected", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "refused resets")
+
+		releaseOnce()
+		waitRelayedTerminal(t, h.rec, id.RunID)
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("reset after the run ended = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "reset after the run")
+	})
+
+	// `starting` never escapes the conversation mutex, so the only way to meet
+	// it is to queue behind an admission: the reset must wait for the mutex,
+	// then see the run the admission launched and refuse.
+	t.Run("reset_queued_behind_admission_refuses", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		enter := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := onceClose(release)
+		t.Cleanup(releaseOnce)
+		h.factory.mu.Lock()
+		h.factory.enter = enter
+		h.factory.release = release
+		h.factory.mu.Unlock()
+		entered := make(chan struct{})
+		runRelease := make(chan struct{})
+		runReleaseOnce := onceClose(runRelease)
+		t.Cleanup(runReleaseOnce)
+		h.factory.setRun(finishOnRelease(entered, runRelease))
+
+		admDone := make(chan error, 1)
+		go func() {
+			_, err := h.svc.StartTurn(ctx, turnFor(id))
+			admDone <- err
+		}()
+		<-enter // admission holds bindingGate read and the conversation mutex, `starting`
+		resetDone := make(chan error, 1)
+		go func() { resetDone <- h.svc.ResetConversation(conversationOf(id)) }()
+		select {
+		case err := <-resetDone:
+			t.Fatalf("reset returned %v while an admission held the conversation mutex", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		releaseOnce()
+		if err := <-admDone; err != nil {
+			t.Fatalf("admission: %v", err)
+		}
+		if code := publicCode(t, <-resetDone); code != "request_rejected" {
+			t.Fatalf("queued reset: code = %q, want request_rejected", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "queued reset")
+		<-entered
+		runReleaseOnce()
+		waitRelayedTerminal(t, h.rec, id.RunID)
+	})
+
+	t.Run("pending_consent_refuses_until_declined_or_expired", func(t *testing.T) {
+		endpoint, _ := startCountingServer(t)
+		h := newServiceHarness(t, endpoint)
+		clock := &fakeClock{t: time.Now()}
+		h.svc.now = clock.Now
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+
+		if adm, err := h.svc.StartTurn(ctx, turnFor(id)); err != nil || adm.State != "needs_consent" {
+			t.Fatalf("challenge turn = %+v, %v", adm, err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "request_rejected" {
+			t.Fatalf("reset while consent pending: code = %q, want request_rejected", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "refused reset")
+		if ok, err := h.svc.Cancel(id); !ok || err != nil {
+			t.Fatalf("decline = %v, %v", ok, err)
+		}
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("reset after declining = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "reset after declining")
+
+		// An expired challenge no longer holds the conversation.
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		if adm, err := h.svc.StartTurn(ctx, turnFor(runIdentityFor(repoID, "project"))); err != nil || adm.State != "needs_consent" {
+			t.Fatalf("second challenge turn = %+v, %v", adm, err)
+		}
+		clock.advance(consentChallengeTTL + time.Second)
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("reset after the challenge expired = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "reset after expiry")
+	})
+
+	t.Run("stale_or_mismatched_identity_refuses", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, repo := h.bind(t)
+		old := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: old.ConversationID})
+
+		h.svc.UnbindRepository()
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(old))); code != "workspace_unavailable" {
+			t.Fatalf("reset with nothing bound: code = %q, want workspace_unavailable", code)
+		}
+		repoID2, _, err := h.svc.BindRepository(repo)
+		if err != nil {
+			t.Fatalf("rebind: %v", err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(old))); code != "request_rejected" {
+			t.Fatalf("stale-epoch reset: code = %q, want request_rejected", code)
+		}
+		mismatched := conversationOf(runIdentityFor(repoID2, "project"))
+		mismatched.ConversationID = ConversationID(repoID2.RepoKey, "frontend")
+		if code := publicCode(t, h.svc.ResetConversation(mismatched)); code != "request_rejected" {
+			t.Fatalf("mismatched-conversation reset: code = %q, want request_rejected", code)
+		}
+		assertSnapshotStored(t, h.svc, old.ConversationID, "refused resets")
+
+		// The rebind kept the conversation; the current identity resets it.
+		if err := h.svc.ResetConversation(conversationOf(runIdentityFor(repoID2, "project"))); err != nil {
+			t.Fatalf("current-epoch reset = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, old.ConversationID, "current-epoch reset")
+	})
+
+	t.Run("closed_service_is_unavailable", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		if err := h.svc.Close(ctx); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "golem_unavailable" {
+			t.Fatalf("reset after Close: code = %q, want golem_unavailable", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "reset after Close")
+	})
+}
+
+// TestServiceResetConversationClearsProviderHistory reproduces #361 through the
+// real path: Service.StartTurn, the real runner and golem runtime, the shared
+// MemorySessionStore, and a scripted provider. Without a reset the second
+// request carries the first exchange; after one it carries none of it.
+func TestServiceResetConversationClearsProviderHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset bool
+	}{
+		{name: "without_reset_history_is_sent"},
+		{name: "reset_clears_history", reset: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t, "http://127.0.0.1:1")
+			backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+				{Content: "ANSWER-ONE"}, {Content: "ANSWER-TWO"},
+			}}
+			h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+				guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+				return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+			}
+			repoID, _ := h.bind(t)
+
+			first := runIdentityFor(repoID, "project")
+			if _, err := h.svc.StartTurn(context.Background(), TurnRequest{Identity: first, Message: "SECRET-FIRST-TURN"}); err != nil {
+				t.Fatalf("first StartTurn: %v", err)
+			}
+			if typ := waitRelayedTerminal(t, h.rec, first.RunID); typ != "run.finished" {
+				t.Fatalf("first terminal = %q, want run.finished", typ)
+			}
+			if tc.reset {
+				if err := h.svc.ResetConversation(conversationOf(first)); err != nil {
+					t.Fatalf("ResetConversation: %v", err)
+				}
+			}
+			second := runIdentityFor(repoID, "project")
+			if _, err := h.svc.StartTurn(context.Background(), TurnRequest{Identity: second, Message: "fresh question"}); err != nil {
+				t.Fatalf("second StartTurn: %v", err)
+			}
+			if typ := waitRelayedTerminal(t, h.rec, second.RunID); typ != "run.finished" {
+				t.Fatalf("second terminal = %q, want run.finished", typ)
+			}
+
+			reqs := backend.recorded()
+			if len(reqs) != 2 {
+				t.Fatalf("provider requests = %d, want 2", len(reqs))
+			}
+			var roles, contents []string
+			for _, msg := range reqs[1].Messages {
+				roles = append(roles, msg.Role)
+				contents = append(contents, msg.Content)
+			}
+			sent := strings.Join(contents, "\n")
+			if !tc.reset {
+				if !strings.Contains(sent, "SECRET-FIRST-TURN") || !strings.Contains(sent, "ANSWER-ONE") {
+					t.Fatalf("control run lost the history, so the reset case would pass vacuously: roles %q", roles)
+				}
+				return
+			}
+			if !slices.Equal(roles, []string{"system", "user"}) || contents[1] != "fresh question" {
+				t.Fatalf("second request after reset = roles %q contents %q, want only the system message and the new question", roles, contents)
+			}
+			if strings.Contains(sent, "SECRET-FIRST-TURN") || strings.Contains(sent, "ANSWER-ONE") {
+				t.Fatalf("second request after reset still carries the cleared exchange: %q", contents)
+			}
+		})
+	}
+}
+
+// TestServiceResetConversationRecoversSnapshotLockout covers #361's second
+// symptom: a snapshot just under SessionSnapshotLimit makes every turn that
+// grows it fail to save (run.failed, prior snapshot kept), and New chat is the
+// way out short of a restart.
+func TestServiceResetConversationRecoversSnapshotLockout(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+		{Content: "refused save"}, {Content: "fits again"},
+	}}
+	h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+		guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+		return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+	}
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+
+	const headroom = 64
+	stored, err := json.Marshal(conversation.Conversation{ID: id.ConversationID, Revision: 1, Messages: []conversation.Message{{Role: "user"}}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	mustSave(t, h.svc.sessions, convOfSize(id.ConversationID, SessionSnapshotLimit-len(stored)-headroom))
+	if got := len(h.svc.sessions.snaps[id.ConversationID]); got != SessionSnapshotLimit-headroom {
+		t.Fatalf("preloaded snapshot = %d bytes, want %d", got, SessionSnapshotLimit-headroom)
+	}
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	if typ := waitRelayedTerminal(t, h.rec, id.RunID); typ != "run.failed" {
+		t.Fatalf("turn over the snapshot cap ended %q, want run.failed", typ)
+	}
+	if got := len(h.svc.sessions.snaps[id.ConversationID]); got != SessionSnapshotLimit-headroom {
+		t.Fatalf("refused save changed the snapshot to %d bytes; every later turn would not be locked out", got)
+	}
+
+	if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+		t.Fatalf("ResetConversation: %v", err)
+	}
+	next := runIdentityFor(repoID, "project")
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(next)); err != nil {
+		t.Fatalf("StartTurn after reset: %v", err)
+	}
+	if typ := waitRelayedTerminal(t, h.rec, next.RunID); typ != "run.finished" {
+		t.Fatalf("turn after reset ended %q, want run.finished", typ)
+	}
+	saved, err := h.svc.sessions.Load(context.Background(), id.ConversationID)
+	if err != nil || saved.Revision != 1 {
+		t.Fatalf("snapshot after reset = %+v, %v; want a fresh revision-1 thread", saved, err)
+	}
+}
+
 func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 	t.Run("same_repo_rebind_restores_session", func(t *testing.T) {
 		h := newServiceHarness(t, "http://127.0.0.1:1")

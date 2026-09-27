@@ -1071,6 +1071,48 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 	return false, s.publicErr("cancel", fmt.Errorf("%w: no matching run or pending challenge", ErrRequestRejected))
 }
 
+// ResetConversation deletes the stored conversation behind id so its next turn
+// starts a fresh thread: New chat (#361). Unbind and rebind never delete, so
+// this explicit reset is the only way a conversation's history is dropped.
+//
+// It serialises against admission exactly as StartTurn does (bindingGate read,
+// the same identity resolution, then the conversation mutex) and refuses unless
+// the conversation is idle: pending consent, starting, running and canceling
+// all refuse with StartTurn's busy request_rejected. That refusal is what keeps
+// cleared history from coming back: runTurn restores idle only after
+// Runner.Run returns, so a finishing run's Save has already landed, and golem
+// reloads the store at the start of every run, so the next turn sees the
+// deletion. The store's revision compare-and-swap refuses stale positive
+// revisions but is no deletion barrier: a revision-0 Save recreates the thread.
+func (s *Service) ResetConversation(id ConversationIdentity) error {
+	if err := s.resetConversation(id); err != nil {
+		return s.publicErr("reset", err)
+	}
+	return nil
+}
+
+func (s *Service) resetConversation(id ConversationIdentity) error {
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
+	if s.isClosing() {
+		return fmt.Errorf("%w: reset rejected", errServiceClosing)
+	}
+	if _, err := s.resolveTurnIdentity(RunIdentity{
+		RepoEpoch: id.RepoEpoch, WorkspaceID: id.WorkspaceID, ConversationID: id.ConversationID,
+	}); err != nil {
+		return err
+	}
+	conv := s.conversationFor(id.ConversationID)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	s.dropExpiredChallengeLocked(conv)
+	if conv.state != stateIdle {
+		return fmt.Errorf("%w: conversation is %s", ErrRequestRejected, conv.state)
+	}
+	s.sessions.Delete(id.ConversationID)
+	return nil
+}
+
 // ReloadPolicy re-reads the manifest rules when absChangedPath is one of the
 // current binding's watched manifests.
 func (s *Service) ReloadPolicy(absChangedPath string) bool {

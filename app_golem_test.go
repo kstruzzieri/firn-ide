@@ -261,10 +261,10 @@ func TestGolemStatusNeverReturnsARepositoryRoot(t *testing.T) {
 	}
 }
 
-// The six Golem methods — GetWorkspaceInfo plus the three that carry ai
-// structs verbatim, and the two zero-input settings methods — must never let
-// a caller redirect the repository root or the provider endpoint through the
-// Wails surface.
+// The seven Golem methods — GetWorkspaceInfo plus the three that carry ai
+// structs verbatim, the error-only conversation reset, and the two zero-input
+// settings methods — must never let a caller redirect the repository root or
+// the provider endpoint through the Wails surface.
 func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 	appType := reflect.TypeOf(&App{})
 	errorType := reflect.TypeOf((*error)(nil)).Elem()
@@ -294,6 +294,16 @@ func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 		}
 	}
 
+	// The reset names a conversation and either clears it or refuses: its
+	// only result is the error.
+	if method, ok := appType.MethodByName("ResetGolemConversation"); !ok {
+		t.Error("App has no method ResetGolemConversation")
+	} else if signature := method.Type; signature.NumIn() != 2 ||
+		signature.In(1) != reflect.TypeOf(ai.ConversationIdentity{}) ||
+		signature.NumOut() != 1 || signature.Out(0) != errorType {
+		t.Errorf("ResetGolemConversation is %v, want (ai.ConversationIdentity) error", signature)
+	}
+
 	// Request types carry identity only. ai.Status/ai.TurnAdmission may expose
 	// the resolved ProviderDestination, but nothing a caller supplies may.
 	forbidden := []string{"path", "root", "dir", "endpoint", "url", "host", "key", "token"}
@@ -301,6 +311,7 @@ func TestGolemMethodSignaturesCarryStructsUnchanged(t *testing.T) {
 		reflect.TypeOf(ai.StatusRequest{}),
 		reflect.TypeOf(ai.TurnRequest{}),
 		reflect.TypeOf(ai.RunIdentity{}),
+		reflect.TypeOf(ai.ConversationIdentity{}),
 	} {
 		for i := range requestType.NumField() {
 			name := strings.ToLower(requestType.Field(i).Name)
@@ -375,7 +386,7 @@ func TestGolemSettingsMethodsUninitializedService(t *testing.T) {
 	}
 }
 
-// Every error each of these four struct-carrying Wails methods returns is a
+// Every error each of these five struct-carrying Wails methods returns is a
 // fixed public projection: no absolute root, no config or consent path, no
 // credential text. The two zero-input settings methods carry the same
 // guarantee, checked separately above and by the golemError-routing tests
@@ -461,6 +472,22 @@ func TestGolemWailsMethodsReturnOnlyFixedPublicErrors(t *testing.T) {
 			call: func() error {
 				_, err := markerApp.CancelGolemRun(staleIdentity)
 				return err
+			},
+			want: "The Golem request is invalid or stale.",
+		},
+		{
+			name: "ResetGolemConversation before startup",
+			call: func() error { return notStarted.ResetGolemConversation(ai.ConversationIdentity{}) },
+			want: "Golem is unavailable.",
+		},
+		{
+			name: "ResetGolemConversation against a stale epoch of a marker-bearing root",
+			call: func() error {
+				return markerApp.ResetGolemConversation(ai.ConversationIdentity{
+					RepoEpoch:      staleIdentity.RepoEpoch,
+					WorkspaceID:    staleIdentity.WorkspaceID,
+					ConversationID: staleIdentity.ConversationID,
+				})
 			},
 			want: "The Golem request is invalid or stale.",
 		},
@@ -580,13 +607,14 @@ func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 	fset, files := golemPackageFiles(t)
 
 	methods := golemWailsMethods(files)
-	// Thirteen bound Golem methods today: the four struct-carrying chat methods,
-	// the two zero-input settings reads, the five §5.2 write-side bindings, and
-	// the two grant-only approval calls.
+	// Sixteen bound Golem methods today: the four struct-carrying chat methods,
+	// the error-only conversation reset, the two zero-input settings reads, the
+	// five §5.2 write-side bindings, the two profile-library calls, and the two
+	// grant-only approval calls.
 	// The floor stays below that on purpose — fewer than six means the
 	// derivation itself broke, and everything below it would pass vacuously.
 	if len(methods) < 6 {
-		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 6 (thirteen expected today)",
+		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 6 (sixteen expected today)",
 			len(methods), golemSortedNames(methods))
 	}
 
@@ -659,6 +687,16 @@ func TestGolemWailsMethodsHostLogRawCausesWithoutReturningThem(t *testing.T) {
 		{
 			name: "CancelGolemRun",
 			call: func() error { _, err := app.CancelGolemRun(unknownRun); return err },
+		},
+		{
+			name: "ResetGolemConversation",
+			call: func() error {
+				return app.ResetGolemConversation(ai.ConversationIdentity{
+					RepoEpoch:      unknownRun.RepoEpoch,
+					WorkspaceID:    unknownRun.WorkspaceID,
+					ConversationID: unknownRun.ConversationID,
+				})
+			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

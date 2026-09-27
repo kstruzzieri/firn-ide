@@ -31,15 +31,15 @@ var ErrSessionLimit = errors.New("golem session memory limit exceeded")
 // serialization boundary: no caller mutation can alias store state, and no
 // on-disk sessions.db is ever opened.
 //
-// There is deliberately no reclamation — no Delete and no eviction: the plan
-// requires process-lifetime conversation restoration across unbind/rebind, so
-// snapshots of retired conversations intentionally persist until the process
-// exits. Known ceilings: SessionStoreLimit (16 MiB) across all conversations
-// and SessionSnapshotLimit (2 MiB) per snapshot. A conversation that outgrows
-// the per-snapshot bound simply stops persisting: the run surfaces the raw
+// There is no eviction, and the only reclamation is Delete on an explicit New
+// chat (Service.ResetConversation): conversations must survive unbind/rebind
+// for the life of the process, so nothing else ever drops a snapshot. Known
+// ceilings: SessionStoreLimit (16 MiB) across all conversations and
+// SessionSnapshotLimit (2 MiB) per snapshot. A conversation that outgrows the
+// per-snapshot bound stops persisting — the run surfaces the raw
 // ErrSessionLimit-wrapped cause to the host while the public run.failed event
-// stays generic. B5 inherits these ceilings as stated instead of
-// rediscovering them.
+// stays generic — until New chat deletes it. B5 inherits these ceilings as
+// stated instead of rediscovering them.
 type MemorySessionStore struct {
 	mu    sync.Mutex
 	snaps map[string][]byte // conversation ID -> JSON snapshot, never mutated in place
@@ -112,4 +112,17 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	s.revs[conv.ID] = conv.Revision
 	s.total = next
 	return nil
+}
+
+// Delete drops id's snapshot and revision together and returns its bytes to
+// the store budget; an absent id is a no-op. A later revision-0 Save recreates
+// the conversation, so revisions are no deletion barrier: callers must
+// serialise Delete against their own writers (Service.ResetConversation
+// refuses unless the conversation is idle).
+func (s *MemorySessionStore) Delete(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.total -= len(s.snaps[id])
+	delete(s.snaps, id)
+	delete(s.revs, id)
 }
