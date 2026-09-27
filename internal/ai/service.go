@@ -186,17 +186,22 @@ type Service struct {
 }
 
 // NewService constructs the Service with its production collaborators.
-// Package-local tests replace only the four function fields.
+// Package-local tests replace only the four function fields. userAgent is the
+// HTTP identity every chat runner's provider sends; empty keeps go-llm's.
 //
 // ctx must outlive the Service: its cancellation is NOT observed as shutdown.
 // Only Close sets `closing` and cancels the derived baseCtx, so a caller ctx
 // cancelled without Close leaves every subsequent run context born cancelled
 // while Status still reports Available.
-func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, any)) *Service {
+func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, any), userAgent string) *Service {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
 	baseCtx, baseCancel := context.WithCancel(ctx)
+	newRunner := func(ctx context.Context, root string, target providerTarget,
+		guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+		return NewGolemRunner(ctx, root, target, guard, sessions, userAgent)
+	}
 	s := &Service{
 		fs:             fs,
 		emit:           emit,
@@ -210,7 +215,7 @@ func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath strin
 		runClaims:      make(map[string]RunIdentity),
 		pendingApplies: make(map[string]*settingsChallengeRecord),
 		loadConfig:     loadDefaultAgentConfig,
-		newRunner:      NewGolemRunner,
+		newRunner:      newRunner,
 		now:            time.Now,
 		newID:          uuid.NewString,
 	}

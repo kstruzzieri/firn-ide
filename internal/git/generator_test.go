@@ -147,6 +147,33 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 	}
 }
 
+// The commit-message path never submits a thread id, so go-llm has no
+// session id to send and no destination -- opencode included -- receives an
+// x-opencode-session header from it (#306). It does not pass through the chat
+// runner's destination policy, so this pins the absence where it is decided.
+func TestMessageGenerator_Generate_SendsNoOpencodeSessionHeader(t *testing.T) {
+	headers := make(chan http.Header, 4)
+	gittest.Start(t, "", func(w http.ResponseWriter, r *http.Request) {
+		headers <- r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"chore: no session\"},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	if _, err := NewMessageGenerator().Generate(context.Background(), t.TempDir(), "+change\n"); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(headers) == 0 {
+		t.Fatal("no chat request reached the provider")
+	}
+	for len(headers) > 0 {
+		if got, ok := (<-headers)["X-Opencode-Session"]; ok {
+			t.Fatalf("x-opencode-session = %q, want the header absent", got)
+		}
+	}
+}
+
 func TestMessageGenerator_Generate_DoesNotSendToolReadResultsToProvider(t *testing.T) {
 	const secret = "firn-provider-boundary-secret"
 	root := t.TempDir()

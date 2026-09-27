@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -245,6 +246,108 @@ func TestFixedModelCallerReturnsRawProviderError(t *testing.T) {
 	}, nil)
 	if !errors.Is(err, raw) {
 		t.Fatalf("Chat error = %v, want the provider's raw error kept intact for host logging", err)
+	}
+}
+
+// TestFixedModelCallerSendsXOpencodeSessionOnlyToOpencode pins which
+// destinations receive the x-opencode-session header (#306 D1). golem fills
+// every model call's SessionID with the thread id, and go-llm's openai-compat
+// client sends any non-empty SessionID as that header to whatever endpoint it
+// dials. Only opencode itself -- https, host exactly opencode.ai, default
+// port -- may receive one, and only as a per-process blinded value, never the
+// thread id. Endpoints go through NormalizeEndpoint first, so the policy is
+// pinned against the canonical form the runner actually holds.
+func TestFixedModelCallerSendsXOpencodeSessionOnlyToOpencode(t *testing.T) {
+	threadA := ConversationID("repo-key-a", "project")
+	threadB := ConversationID("repo-key-b", "project")
+	blinded := regexp.MustCompile(`^firn-[0-9a-f]{64}$`)
+
+	target := func(t *testing.T, key, format, raw string) providerTarget {
+		t.Helper()
+		endpoint, _, err := NormalizeEndpoint(raw)
+		if err != nil {
+			t.Fatalf("NormalizeEndpoint: %v", err)
+		}
+		tgt := testTarget(key, "big-coder")
+		tgt.apiFormat = format
+		tgt.destination.Endpoint = endpoint
+		return tgt
+	}
+	// sessionIDs runs one turn per thread on a single runner and returns the
+	// SessionID each model call handed the concrete provider.
+	sessionIDs := func(t *testing.T, tgt providerTarget, threads ...string) []string {
+		t.Helper()
+		steps := make([]provider.ChatResponse, len(threads))
+		for i := range steps {
+			steps[i] = provider.ChatResponse{Content: "done"}
+		}
+		backend := &scriptedProvider{name: tgt.destination.Provider, steps: steps}
+		runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), tgt, nil,
+			NewMemorySessionStore(), backend, nil, golemTuning{})
+		if err != nil {
+			t.Fatalf("newGolemRunner: %v", err)
+		}
+		t.Cleanup(func() { _ = runner.Close() })
+		var events []golem.Event
+		for i, thread := range threads {
+			turn := golem.Turn{ThreadID: thread, RunID: fmt.Sprintf("run-%d", i), Message: "hi"}
+			if _, err := runner.Run(context.Background(), turn, collectSink(&events)); err != nil {
+				t.Fatalf("Run(thread %q): %v", thread, err)
+			}
+		}
+		var ids []string
+		for _, req := range backend.recorded() {
+			ids = append(ids, req.SessionID)
+		}
+		if len(ids) != len(threads) {
+			t.Fatalf("model calls = %d, want one per turn (%d)", len(ids), len(threads))
+		}
+		return ids
+	}
+
+	var first string
+	for _, raw := range []string{"https://opencode.ai/zen/v1", "HTTPS://OpenCode.AI:443/zen/v1/"} {
+		t.Run("opencode "+raw, func(t *testing.T) {
+			ids := sessionIDs(t, target(t, "zen", "openai-compat", raw), threadA, threadA, threadB, "")
+			a, again, b, stateless := ids[0], ids[1], ids[2], ids[3]
+			if !blinded.MatchString(a) || !blinded.MatchString(b) {
+				t.Fatalf("session ids = %q, %q, want firn- plus 64 hex digits", a, b)
+			}
+			if strings.Contains(a, strings.TrimPrefix(threadA, "golem-")) || strings.Contains(b, strings.TrimPrefix(threadB, "golem-")) {
+				t.Fatalf("session ids %q, %q carry the raw thread id", a, b)
+			}
+			if again != a {
+				t.Fatalf("second turn of one thread sent %q, first sent %q: want one stable id per thread", again, a)
+			}
+			if b == a {
+				t.Fatalf("two threads share session id %q", a)
+			}
+			if stateless != "" {
+				t.Fatalf("turn without a thread id sent %q, want no session id", stateless)
+			}
+			if first == "" {
+				first = a
+			} else if a != first {
+				t.Fatalf("spelling %q sent %q, canonical spelling sent %q", raw, a, first)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, key, format, endpoint string }{
+		{"plain http to opencode", "zen", "openai-compat", "http://opencode.ai/zen/v1"},
+		{"loopback llama.cpp", "llama", "openai-compat", "http://127.0.0.1:8080"},
+		{"third-party https", "openrouter", "openai-compat", "https://openrouter.ai/api/v1"},
+		{"ollama format at opencode", "zen", "ollama", "https://opencode.ai/zen"},
+		{"non-default port", "zen", "openai-compat", "https://opencode.ai:8443/zen/v1"},
+		{"trailing-dot host", "zen", "openai-compat", "https://opencode.ai./zen/v1"},
+		{"subdomain", "zen", "openai-compat", "https://api.opencode.ai/zen/v1"},
+		{"provider named opencode on another host", "opencode", "openai-compat", "https://llm.example.com/v1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if ids := sessionIDs(t, target(t, tc.key, tc.format, tc.endpoint), threadA); ids[0] != "" {
+				t.Fatalf("SessionID = %q, want none sent to %s", ids[0], tc.endpoint)
+			}
+		})
 	}
 }
 
@@ -610,7 +713,7 @@ func TestGolemRuntimeTransportIgnoresEnvProxy(t *testing.T) {
 	// fail on the reserved .invalid name) instead.
 	target := testTarget("hosted", "big-coder")
 	target.destination.Endpoint = "http://firn-proxy-canary.invalid:9"
-	backend, transport, err := buildProvider(target)
+	backend, transport, err := buildProvider(target, "")
 	if err != nil {
 		t.Fatalf("buildProvider: %v", err)
 	}
@@ -646,7 +749,7 @@ func TestGolemRuntimeTransportRefusesRedirects(t *testing.T) {
 		target := testTarget("hosted", "big-coder")
 		target.destination.Endpoint = local.URL
 		target.apiFormat = "openai-compat"
-		backend, transport, err := buildProvider(target)
+		backend, transport, err := buildProvider(target, "")
 		if err != nil {
 			t.Fatalf("buildProvider: %v", err)
 		}
@@ -669,7 +772,7 @@ func TestGolemRuntimeBuildProviderUsesConfiguredInstanceName(t *testing.T) {
 	for _, format := range []string{"ollama", "openai-compat"} {
 		target := testTarget("hosted", "big-coder")
 		target.apiFormat = format
-		backend, transport, err := buildProvider(target)
+		backend, transport, err := buildProvider(target, "")
 		if err != nil {
 			t.Fatalf("buildProvider(%s): %v", format, err)
 		}
@@ -680,7 +783,7 @@ func TestGolemRuntimeBuildProviderUsesConfiguredInstanceName(t *testing.T) {
 	}
 	target := testTarget("hosted", "big-coder")
 	target.apiFormat = "grpc-exotic"
-	if _, _, err := buildProvider(target); err == nil {
+	if _, _, err := buildProvider(target, ""); err == nil {
 		t.Fatal("buildProvider accepted an unsupported api format")
 	}
 }
@@ -704,7 +807,7 @@ func TestGolemRuntimeCloseClosesIdleConnections(t *testing.T) {
 	root := canonicalTempDir(t)
 	target := testTarget("hosted", "big-coder")
 	target.destination.Endpoint = backendSrv.URL
-	runner, err := NewGolemRunner(context.Background(), root, target, nil, NewMemorySessionStore())
+	runner, err := NewGolemRunner(context.Background(), root, target, nil, NewMemorySessionStore(), "")
 	if err != nil {
 		t.Fatalf("NewGolemRunner: %v", err)
 	}

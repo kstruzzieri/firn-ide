@@ -7,10 +7,33 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed build/config.yml
+var buildConfig []byte
+
+// firnUserAgent is the User-Agent Golem chat sends its provider: Firn at the
+// packaged product version, info.version in build/config.yml, the version's
+// single source of truth. debug.ReadBuildInfo cannot supply it: every build
+// task passes -buildvcs=false, so the main module's version reads "(devel)".
+// An unreadable version returns "", which keeps go-llm's own default agent;
+// TestFirnUserAgentCarriesTheProductVersion keeps that from shipping.
+func firnUserAgent() string {
+	var cfg struct {
+		Info struct {
+			Version string `yaml:"version"`
+		} `yaml:"info"`
+	}
+	if err := yaml.Unmarshal(buildConfig, &cfg); err != nil || cfg.Info.Version == "" {
+		log.Printf(golemLogPrefix+"no product version in build/config.yml, keeping go-llm's user agent: %v", err)
+		return ""
+	}
+	return "Firn/" + cfg.Info.Version
+}
 
 // firnWindowBackground is the ground every Firn window paints before the
 // frontend does. One source, so the Golem window can never drift from main.

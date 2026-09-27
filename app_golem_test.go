@@ -20,13 +20,16 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -1711,5 +1714,58 @@ func TestApproveMissingDestinationsUnblocksCommitMessageGeneration(t *testing.T)
 	message, err := generator.Generate(context.Background(), t.TempDir(), golemApproveDiff)
 	if err != nil || strings.TrimSpace(message) == "" {
 		t.Fatalf("Generate after approval = %q, %v, want a message", message, err)
+	}
+}
+
+// The product version the user agent carries is info.version from
+// build/config.yml. An empty or unparsed version must fail here rather than
+// ship as a bare "Firn/" or a wrong field (the top-level `version: '3'` is the
+// Taskfile schema, not the product).
+func TestFirnUserAgentCarriesTheProductVersion(t *testing.T) {
+	if ua := firnUserAgent(); !regexp.MustCompile(`^Firn/[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$`).MatchString(ua) {
+		t.Fatalf("firnUserAgent() = %q, want Firn/<info.version from build/config.yml>", ua)
+	}
+}
+
+// Golem chat identifies as Firn and sends no x-opencode-session to a
+// destination that is not opencode (#306 D1, D2). The whole path runs: the
+// user agent startup hands the service, the runner it builds, and the real
+// conversation's thread id on the wire.
+func TestGolemChatIdentifiesAsFirnAndSendsNoSessionHeader(t *testing.T) {
+	headers := make(chan http.Header, 4)
+	stub := golemChatStubHandler("hello")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			headers <- r.Header.Clone()
+		}
+		stub.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	app, _ := newGolemAppWithTarget(t, golemPrimaryOnlyConfigJSON(server.URL))
+	info := bindGolemRepo(t, app)
+	admission, err := app.RunGolemTurn(ai.TurnRequest{
+		Identity: ai.RunIdentity{
+			RepoEpoch:      info.RepoEpoch,
+			WorkspaceID:    "project",
+			ConversationID: ai.ConversationID(info.RepoKey, "project"),
+			RunID:          golemRunID,
+		},
+		Message: "hi",
+	})
+	if err != nil || admission.State != "accepted" {
+		t.Fatalf("RunGolemTurn = %+v, %v, want an accepted local turn", admission, err)
+	}
+
+	select {
+	case h := <-headers:
+		if got, want := h.Get("User-Agent"), firnUserAgent(); got != want {
+			t.Errorf("User-Agent = %q, want %q", got, want)
+		}
+		if got, ok := h["X-Opencode-Session"]; ok {
+			t.Errorf("x-opencode-session = %q, want the header absent for a non-opencode destination", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the turn never reached the provider")
 	}
 }

@@ -400,7 +400,7 @@ func newServiceHarness(t *testing.T, endpoint string) *svcHarness {
 	t.Helper()
 	rec := &emitRecorder{}
 	cpath := filepath.Join(t.TempDir(), "consent", "grants.json")
-	svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 	f := &fakeFactory{}
 	svc.newRunner = f.factory()
@@ -1105,7 +1105,7 @@ func TestServiceReloadPolicyHoldsBindingGateThroughRead(t *testing.T) {
 		entered:    make(chan struct{}),
 		release:    make(chan struct{}),
 	}
-	svc := NewService(context.Background(), fsys, "", nil)
+	svc := NewService(context.Background(), fsys, "", nil, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -1155,7 +1155,7 @@ func TestServiceReloadPolicySerializesSnapshots(t *testing.T) {
 		entered:    make(chan struct{}),
 		release:    make(chan struct{}),
 	}
-	svc := NewService(context.Background(), fsys, "", nil)
+	svc := NewService(context.Background(), fsys, "", nil, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -1753,7 +1753,7 @@ func TestServiceZeroEgressWithProductionRunnerFactory(t *testing.T) {
 	endpoint, requests := startCountingServer(t)
 	rec := &emitRecorder{}
 	svc := NewService(context.Background(), filesystem.NewOS(),
-		filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+		filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 	var constructed int32
 	production := svc.newRunner // NewService installed NewGolemRunner
@@ -3613,7 +3613,7 @@ func TestServiceProcessResetSemantics(t *testing.T) {
 	build := func(t *testing.T) (*Service, *fakeFactory) {
 		t.Helper()
 		rec := &emitRecorder{}
-		svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit)
+		svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit, "")
 		svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 		f := &fakeFactory{}
 		svc.newRunner = f.factory()
@@ -3694,7 +3694,7 @@ func TestServiceRepoLocalConfigSourceProtected(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	// Production loadConfig stays installed: discovery must resolve the
 	// repo-local $GO_LLM_CONFIG source.
 	f := &fakeFactory{}
@@ -3774,7 +3774,7 @@ func TestServiceConfigSourceDeletionKeepsWorkspaceAvailable(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", cfgPath)
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	f := &fakeFactory{}
 	svc.newRunner = f.factory()
 	t.Cleanup(func() {
@@ -3832,7 +3832,7 @@ func TestServiceRepoLocalConfigSourceProtectedOnFirstStartTurn(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	f := &fakeFactory{} // production loadConfig stays installed
 	svc.newRunner = f.factory()
 	t.Cleanup(func() {
@@ -3955,7 +3955,7 @@ func TestSettingsSnapshotProtectedPerBinding(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	// Production loadConfig stays installed: discovery resolves the repo-local
 	// $GO_LLM_CONFIG source.
 	f := &fakeFactory{}
@@ -4255,7 +4255,7 @@ func TestSettingsReadBlocksDuringReload(t *testing.T) {
 // mid-flight (waitgroup + gate), and both finish cleanly.
 func TestReloadSettingsVersusClose(t *testing.T) {
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON("http://localhost:8080"))
 	svc.newRunner = (&fakeFactory{}).factory()
 	h := &svcHarness{svc: svc, rec: rec}

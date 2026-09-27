@@ -208,7 +208,7 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
 	}
-	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit)
+	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit, firnUserAgent())
 	a.gitMsgGen.SetDestinationPolicySource(a.aiService.DestinationPolicy)
 }
 
