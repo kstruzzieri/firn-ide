@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { CancelGolemRun, RunGolemTurn } from '../wails/bindings';
+import { CancelGolemRun, ResetGolemConversation, RunGolemTurn } from '../wails/bindings';
 import {
   boundedGolemMessage as boundedMessage,
   GOLEM_UNAVAILABLE,
@@ -8,6 +8,7 @@ import {
   parseRunStatus,
   parseTurnAdmission,
   toCancelRequest,
+  toConversationIdentity,
   toTurnRequest,
 } from '../types/golem';
 import type {
@@ -477,6 +478,14 @@ function dispatchQueued(
   const index = conversation.queuedTurns.findIndex((turn) => turn.state === 'queued');
   if (index < 0) return null;
 
+  // A conversation mid-reset holds its queue: the turn would reach a backend
+  // conversation New chat is deleting. The hold is recorded, so a refused
+  // reset releases this dispatch and not a turn that was idle before it.
+  if (conversation.resetting) {
+    conversation.resetting = 'held';
+    return null;
+  }
+
   const current = context.hydratedIdentity;
   const epochCurrent =
     context.bridgePhase === 'ready' &&
@@ -795,6 +804,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     const state = get();
     const conversation = state.conversations[conversationId];
     if (!conversation) return NO_CONVERSATION_ERROR;
+    if (conversation.resetting) return BUSY_ERROR;
     if (state.bridgePhase !== 'ready') return NOT_CONNECTED_ERROR;
     if (!sameConversationIdentity(state.hydratedIdentity, conversation.identity)) {
       return STALE_CONVERSATION_ERROR;
@@ -1232,36 +1242,80 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       return OK;
     },
 
-    clearConversation(conversationId: string): GolemActionResult {
+    async clearConversation(conversationId: string): Promise<GolemActionResult> {
       // Decided here rather than inferred from a before/after comparison: an
       // already-empty conversation resets to exactly itself, and the host's own
       // draft — which this store no longer holds — is reason enough to clear.
-      const existing = get().conversations[conversationId];
+      const { conversations, hydratedIdentity } = get();
+      const existing = conversations[conversationId];
       if (!existing) return refuse(NO_CONVERSATION_ERROR);
-      if (existing.activeRunId !== null || existing.pendingConsentTurn !== null) {
+      if (
+        existing.activeRunId !== null ||
+        existing.pendingConsentTurn !== null ||
+        existing.resetting
+      ) {
         return refuse(BUSY_ERROR);
+      }
+      // The backend resets only within the current binding's epoch. A
+      // conversation from a retired one keeps its backend history for the
+      // reopen (the conversation ID excludes the epoch), so clearing this view
+      // alone would bring that history back into the "new" chat. Reopening the
+      // workspace rehydrates it under the current epoch, and then it resets.
+      if (hydratedIdentity?.repoEpoch !== existing.identity.repoEpoch) {
+        return refuse(STALE_CONVERSATION_ERROR);
       }
 
       set((state) => {
-        const conversation = state.conversations[conversationId];
-        if (!conversation) return state;
+        const mutation = beginMutation(state);
+        const draft = draftConversation(mutation, conversationId);
+        if (!draft) return state;
+        draft.resetting = 'pending';
+        return toState(mutation);
+      });
+
+      try {
+        // Backend first (#361): a view cleared over a surviving backend
+        // conversation sends its whole history with the next "fresh" turn.
+        await ResetGolemConversation(toConversationIdentity(existing.identity));
+      } catch (err) {
+        // Refused, so the view stays — queue included. Only a dispatch the
+        // reset itself held back (a turn a rebind re-armed meanwhile) goes out
+        // now, as it would have then; a turn already idle stays idle.
+        let dispatch: PendingDispatch | null = null;
+        set((state) => {
+          const mutation = beginMutation(state);
+          const draft = draftConversation(mutation, conversationId);
+          if (!draft) return state;
+          const held = draft.resetting === 'held';
+          delete draft.resetting;
+          if (held) dispatch = dispatchQueued(mutation, conversationId, state);
+          return toState(mutation);
+        });
+        runDispatch(dispatch);
+        return refuse(boundedMessage(err));
+      }
+
+      let cleared = false;
+      set((state) => {
+        const mutation = beginMutation(state);
+        // Draft through the copy-on-write path so every subscriber sees a new
+        // reference; writing the published object in place leaves the data
+        // correct but the panel frozen.
+        const draft = draftConversation(mutation, conversationId);
+        if (!draft) return state;
+        delete draft.resetting;
         // Idle guard (the load-bearing safety rule): clearing while a run is
         // live would drop a conversation whose backend run is still emitting
         // events, and a GetGolemStatus snapshot could still list that live run
         // and re-hydrate it. When idle there is no live run — finished runs
         // never appear in backend ActiveRuns, and the backend emits exactly one
         // terminal per run — so a full reset cannot be repopulated by a stray
-        // event. The button is disabled in this state too; the guard is defense
-        // in depth.
-        if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) {
-          return state;
+        // event. The button is disabled in this state and `resetting` admits
+        // no turn across the await; the guard is defense in depth.
+        if (draft.activeRunId !== null || draft.pendingConsentTurn !== null) {
+          return toState(mutation);
         }
-
-        const mutation = beginMutation(state);
-        // Draft through the copy-on-write path so every subscriber sees a new
-        // reference; writing the published object in place leaves the data
-        // correct but the panel frozen.
-        const draft = draftConversation(mutation, conversationId)!;
+        cleared = true;
 
         // Reset content to the fresh shape; the backend-derived status fields
         // (identity, workspaceLabel, available, needsConsent, warnings,
@@ -1295,7 +1349,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           composerFocusRevision: state.composerFocusRevision + 1,
         };
       });
-      return OK;
+      return cleared ? OK : refuse(BUSY_ERROR);
     },
 
     requestComposerFocus() {

@@ -91,6 +91,7 @@ const REDOCK_FAILED = 'Golem could not move this conversation back to the main w
 const UNEXPECTED_MESSAGE = 'Golem received an unexpected window message.';
 const PENDING_OVERFLOW = 'Golem received more window messages than it could place.';
 const OUT_OF_ORDER = 'Golem could not place a window message in the window lifecycle.';
+const RESET_IN_FLIGHT = 'Golem is still starting a new chat. Try again in a moment.';
 
 // ── owner state ──────────────────────────────────────────────────────────────
 
@@ -161,10 +162,11 @@ export function reportGolemWindowError(error: unknown): void {
  * methods the docked host calls. Deliberately NOT `GolemPanel`'s adapter: that
  * one clears the composer draft on acceptance, and main's draft map is the
  * inactive copy of a window whose user is typing somewhere else. Every branch
- * answers with the store's own synchronous `GolemActionResult`, which the core
- * stamps onto the acknowledgement.
+ * answers with the store's own `GolemActionResult` — for `clear`, a promise
+ * that settles once the backend reset has — which the core awaits, in order,
+ * and stamps onto the acknowledgement.
  */
-function execute(action: GolemViewAction): GolemActionResult {
+function execute(action: GolemViewAction): GolemActionResult | Promise<GolemActionResult> {
   const s = useGolemStore.getState();
   switch (action.type) {
     case 'send':
@@ -737,8 +739,13 @@ function startUndock(own: Owner, restore: boolean): Promise<void> {
   if (own.state.phase === 'ready') return focusGolemWindow();
   // Synchronous, before any snapshot is taken: local admission and draft
   // clearing are synchronous, so the barrier and the map the transfer will
-  // read cannot disagree about what the user typed.
+  // read cannot disagree about what the user typed. New chat is the one
+  // exception — it drops its draft only once the backend reset lands, which
+  // can be after the transfer read the map — so no window opens meanwhile.
   const golem = useGolemStore.getState();
+  if (Object.values(golem.conversations).some((c) => c.resetting)) {
+    return Promise.reject(new Error(RESET_IN_FLIGHT));
+  }
   golem.setHostFrozen(true);
   golem.setWindowError(null);
   own.failure = null;
