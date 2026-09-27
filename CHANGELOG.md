@@ -15,7 +15,9 @@ chat run, a context budget sized from the model's declared window, fixes for
 three ways saved data could be lost (an unreadable workspace state file or
 run-profiles file being overwritten, and a workspace session being overwritten
 while it restores), and repairs to the merge confirmation dialogs and to
-stylesheet design-token references.
+stylesheet design-token references. Release binaries are now built with Go
+1.25.14, which fixes the standard-library vulnerabilities `govulncheck` finds
+in the Go 1.25.0 builds.
 
 ### Golem
 
@@ -145,6 +147,14 @@ stylesheet design-token references.
   workspace: `was` values, staged-change badges, the staged-changes bar's
   group headers and the curated profile note now put a real space between the
   two (#356).
+
+### Security
+
+- Release binaries are now built with Go 1.25.14. v0.12.0 was built with Go
+  1.25.0, under which `govulncheck` reports 26 standard-library vulnerabilities
+  reachable from the app on macOS and Windows, in TLS, certificate
+  verification, HTTP and URL handling among others. Under Go 1.25.14 it reports
+  none. The module's `go 1.25.0` language version is unchanged (#372).
 
 ### Build and CI
 
