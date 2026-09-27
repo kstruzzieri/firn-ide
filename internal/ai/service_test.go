@@ -2104,6 +2104,103 @@ func TestServiceRejectsAssistantOutputOverLimit(t *testing.T) {
 	}
 }
 
+// TestServiceSinkRefusalThroughGolemRuntime drives the real golem runtime,
+// which joins a latched sink refusal with the orchestrator's error and emits
+// no terminal. An Ollama-shaped provider reports the context golem canceled
+// on the refusal ahead of the callback error, so the joined error also
+// matches context.Canceled; the refusal must still end the run as the
+// host-logged output-limit failure. The openai-compat shape (callback error
+// first) and a user cancel with no refusal pin the other classifications.
+func TestServiceSinkRefusalThroughGolemRuntime(t *testing.T) {
+	overLimit := strings.Repeat("x", maxAssistantOutputBytes+1)
+	cases := []struct {
+		name        string
+		ctxErrFirst bool
+		content     string
+		cancel      bool
+	}{
+		{name: "ollama shape refusal fails", ctxErrFirst: true, content: overLimit},
+		{name: "openai-compat shape refusal fails", content: overLimit},
+		{name: "user cancel without a refusal is canceled", ctxErrFirst: true, content: "partial reply", cancel: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t, "http://127.0.0.1:1")
+			backend := &scriptedProvider{name: "hosted", ctxErrFirst: tc.ctxErrFirst,
+				steps: []provider.ChatResponse{{Content: tc.content}}}
+			h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+				guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+				return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+			}
+			repoID, _ := h.bind(t)
+			id := runIdentityFor(repoID, "project")
+
+			var logs bytes.Buffer
+			previousLog := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(previousLog) })
+
+			if tc.cancel {
+				var once sync.Once
+				h.rec.setHook(func(name string, args []any) {
+					if name != eventGolemEvent || len(args) != 1 {
+						return
+					}
+					if rel, ok := args[0].(RelayedEvent); ok && rel.Type == "message.delta" {
+						once.Do(func() {
+							if ok, err := h.svc.Cancel(id); !ok || err != nil {
+								t.Errorf("Cancel = %v, %v", ok, err)
+							}
+						})
+					}
+				})
+				t.Cleanup(func() { h.rec.setHook(nil) })
+			}
+
+			if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+				t.Fatalf("StartTurn: %v", err)
+			}
+			failedLog := fmt.Sprintf("ai: golem run %s failed: ", id.RunID)
+
+			if tc.cancel {
+				waitUntil(t, "run.canceled relay", func() bool {
+					for _, r := range h.rec.relayed() {
+						if r.RunID == id.RunID && r.Type == "run.canceled" {
+							return true
+						}
+					}
+					return false
+				})
+				drainRuns(t, h.svc)
+				if statuses := h.rec.runStatuses(); len(statuses) != 0 {
+					t.Fatalf("run statuses = %+v, want only the golem run.canceled terminal", statuses)
+				}
+				if strings.Contains(logs.String(), failedLog) {
+					t.Fatalf("user cancel was host-logged as a failure: %q", logs.String())
+				}
+				return
+			}
+
+			var fallback RunStatusEvent
+			waitUntil(t, "fallback run status", func() bool {
+				for _, status := range h.rec.runStatuses() {
+					if status.Identity == id {
+						fallback = status
+						return true
+					}
+				}
+				return false
+			})
+			if fallback.State != "failed" || fallback.Message != "The Golem reply exceeded the output limit." {
+				t.Fatalf("fallback = %+v, want the fixed public output-limit failure", fallback)
+			}
+			if got := logs.String(); !strings.Contains(got, failedLog) || !strings.Contains(got, ErrAssistantOutputLimit.Error()) {
+				t.Fatalf("host log = %q, want the output-limit failure line", got)
+			}
+		})
+	}
+}
+
 // TestServiceRejectsMalformedAssistantDelta covers the defensive branch: a
 // message.delta whose payload does not decode cancels the run and never relays
 // the event, surfacing only the fixed public failure.

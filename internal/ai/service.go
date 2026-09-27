@@ -921,9 +921,9 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 			}
 			if len(delta.Text) > maxAssistantOutputBytes-assistantOutputBytes {
 				cancel()
-				// Golem returns a latched sink error ahead of the run context
-				// error, so this cause — not context.Canceled — is what the
-				// terminal-less fallback sanitizes into its public message.
+				// Recorded as sinkRefused below, so this cause — not the
+				// context.Canceled it provokes — is what the terminal-less
+				// fallback sanitizes into its public message.
 				return fmt.Errorf("%w: %d bytes", ErrAssistantOutputLimit, maxAssistantOutputBytes)
 			}
 			assistantOutputBytes += len(delta.Text)
@@ -950,7 +950,21 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 		return nil
 	}
 
-	_, err := rec.runner.Run(ctx, turn, sink)
+	var sinkRefused error
+	_, err := rec.runner.Run(ctx, turn, func(e golem.Event) error {
+		refusal := sink(e)
+		if refusal != nil && sinkRefused == nil {
+			sinkRefused = refusal // first wins, as golem latches it
+		}
+		return refusal
+	})
+	if sinkRefused != nil {
+		// Golem cancels the run on a sink refusal and joins the refusal with
+		// the orchestrator's error, which a provider may report as that
+		// cancellation (Ollama does). The refusal is the cause: without this a
+		// refused run would classify as a user cancel, unlogged.
+		err = sinkRefused
+	}
 	if err != nil && !isCancellationErr(err) {
 		// Host-only diagnostics. A Save refused by the session caps is logged
 		// distinctly; its public presentation stays the fixed failure message.

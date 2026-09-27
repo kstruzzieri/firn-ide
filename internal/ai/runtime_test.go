@@ -32,6 +32,11 @@ import (
 type scriptedProvider struct {
 	name string
 	err  error // non-nil: every ChatStream fails with this raw error
+	// ctxErrFirst takes the shape of go-llm's Ollama provider: once the stream's
+	// context is canceled, ChatStream reports the wrapped context error ahead of
+	// any callback error. Unset, a callback error is returned first, the
+	// openai-compat shape.
+	ctxErrFirst bool
 
 	mu         sync.Mutex
 	requests   []provider.ChatRequest
@@ -67,7 +72,7 @@ func (p *scriptedProvider) Embed(context.Context, provider.EmbedRequest) (*provi
 	return nil, p.unexpectedCall("Embed")
 }
 
-func (p *scriptedProvider) ChatStream(_ context.Context, req provider.ChatRequest, fn func(provider.ChatResponse) error) error {
+func (p *scriptedProvider) ChatStream(ctx context.Context, req provider.ChatRequest, fn func(provider.ChatResponse) error) error {
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
 	if p.err != nil {
@@ -85,7 +90,11 @@ func (p *scriptedProvider) ChatStream(_ context.Context, req provider.ChatReques
 	if step.Content != "" {
 		half := len(step.Content) / 2
 		for _, chunk := range []string{step.Content[:half], step.Content[half:]} {
-			if err := fn(provider.ChatResponse{Model: req.Model, Provider: p.name, Content: chunk}); err != nil {
+			err := fn(provider.ChatResponse{Model: req.Model, Provider: p.name, Content: chunk})
+			if p.ctxErrFirst && ctx.Err() != nil {
+				return fmt.Errorf("provider: ollama: chat stream: %w", ctx.Err())
+			}
+			if err != nil {
 				return err
 			}
 		}
