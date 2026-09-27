@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/kstruzzieri/go-llm/conversation"
@@ -42,12 +43,13 @@ var ErrSessionLimit = errors.New("golem session memory limit exceeded")
 type MemorySessionStore struct {
 	mu    sync.Mutex
 	snaps map[string][]byte // conversation ID -> JSON snapshot, never mutated in place
+	revs  map[string]int64  // conversation ID -> currently stored revision, mirrors snaps
 	total int               // sum of len over snaps
 }
 
 // NewMemorySessionStore returns an empty bounded store.
 func NewMemorySessionStore() *MemorySessionStore {
-	return &MemorySessionStore{snaps: make(map[string][]byte)}
+	return &MemorySessionStore{snaps: make(map[string][]byte), revs: make(map[string]int64)}
 }
 
 // Load implements golem.SessionStore. A missing ID returns
@@ -69,9 +71,14 @@ func (s *MemorySessionStore) Load(ctx context.Context, id string) (*conversation
 	return conv, nil
 }
 
-// Save implements golem.SessionStore: replace or upsert the complete
-// snapshot, refusing (without eviction) anything over the per-snapshot or
-// whole-store limit.
+// Save implements golem.SessionStore's compare-and-swap contract: revision 0
+// creates only when the ID is absent; a positive revision replaces only that
+// exact stored revision. Either commits revision+1. A failed CAS returns a
+// *conversation.ConflictError carrying the submitted revision; negative and
+// math.MaxInt64 revisions are refused as a plain (non-conflict) error. conv is
+// taken by value, so incrementing its local revision here never mutates the
+// caller's copy. Every refusal — invalid revision, conflict, or either size
+// cap — leaves the prior snapshot, revision, and byte total untouched.
 func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Conversation) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -79,6 +86,11 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	if conv.ID == "" {
 		return errors.New("session snapshot has no conversation ID")
 	}
+	if conv.Revision < 0 || conv.Revision == math.MaxInt64 {
+		return fmt.Errorf("session snapshot %q: invalid revision %d", conv.ID, conv.Revision)
+	}
+	expected := conv.Revision
+	conv.Revision = expected + 1
 	raw, err := json.Marshal(conv)
 	if err != nil {
 		return fmt.Errorf("encode session snapshot: %w", err)
@@ -88,11 +100,16 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	stored, exists := s.revs[conv.ID]
+	if (expected == 0 && exists) || (expected > 0 && (!exists || stored != expected)) {
+		return &conversation.ConflictError{ID: conv.ID, ExpectedRevision: expected}
+	}
 	next := s.total - len(s.snaps[conv.ID]) + len(raw)
 	if next > SessionStoreLimit {
 		return fmt.Errorf("%w: store would exceed %d bytes", ErrSessionLimit, SessionStoreLimit)
 	}
 	s.snaps[conv.ID] = raw
+	s.revs[conv.ID] = conv.Revision
 	s.total = next
 	return nil
 }

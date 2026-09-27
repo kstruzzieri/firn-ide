@@ -21,6 +21,7 @@ import (
 
 	"firn/internal/filesystem"
 	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/conversation"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -386,6 +387,7 @@ func TestGolemRuntimePublicRunFailureMessage(t *testing.T) {
 		{"invalid_request", "The Golem request is invalid."},
 		{"provider_unavailable", "The model provider is unavailable."},
 		{"observer_failed", "The Golem run failed."},
+		{"session_conflict", "The Golem run failed."},
 		{"internal", "The Golem run failed."},
 		{"some_future_code", "The Golem run failed."},
 	}
@@ -836,5 +838,111 @@ func TestGolemRuntimeCloseClosesIdleConnections(t *testing.T) {
 	// (golem.Runtime.Close is idempotent; pin the wrapper too).
 	if err := runner.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #325 — session store revision CAS, end to end through the real runtime
+// ---------------------------------------------------------------------------
+
+// conflictOnLoadStore wraps a MemorySessionStore and, immediately after a
+// real Load succeeds, lets a competing writer win by saving over the same ID
+// before the caller's own turn reaches its own Save. This reproduces, end to
+// end, how a stale in-flight revision is refused under go-llm v0.3.0's CAS
+// contract even though this runtime never sees the winner's content.
+type conflictOnLoadStore struct {
+	*MemorySessionStore
+	win func(ctx context.Context) error
+}
+
+func (s *conflictOnLoadStore) Load(ctx context.Context, id string) (*conversation.Conversation, error) {
+	conv, err := s.MemorySessionStore.Load(ctx, id)
+	if err != nil {
+		return conv, err
+	}
+	if err := s.win(ctx); err != nil {
+		return nil, err
+	}
+	return conv, nil
+}
+
+// TestGolemRuntimeSessionConflictEndsRunFailed proves the runtime reacts to a
+// go-llm v0.3.0 CAS conflict on save exactly per contract: the run ends
+// run.failed with code session_conflict, the error Run returns satisfies
+// errors.Is(err, conversation.ErrConflict), and the store keeps the
+// competing winner's snapshot rather than this run's completed-but-unsaved
+// answer.
+func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
+	ctx := context.Background()
+	const threadID = "thread-conflict"
+	store := NewMemorySessionStore()
+	if err := store.Save(ctx, conversation.Conversation{
+		ID:       threadID,
+		Messages: []conversation.Message{{Role: "user", Content: "seed"}},
+	}); err != nil {
+		t.Fatalf("preload Save: %v", err)
+	}
+
+	wrapped := &conflictOnLoadStore{
+		MemorySessionStore: store,
+		win: func(ctx context.Context) error {
+			return store.Save(ctx, conversation.Conversation{
+				ID:       threadID,
+				Revision: 1,
+				Messages: []conversation.Message{
+					{Role: "user", Content: "seed"},
+					{Role: "assistant", Content: "winning answer"},
+				},
+			})
+		},
+	}
+
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{{Content: "losing answer"}}}
+	runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), testTarget("hosted", "big-coder"), nil,
+		wrapped, backend, nil, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	defer func() { _ = runner.Close() }()
+
+	var events []golem.Event
+	result, err := runner.Run(ctx, golem.Turn{
+		ThreadID: threadID,
+		RunID:    "loser",
+		Message:  "losing question",
+		Approver: approveAll{},
+	}, collectSink(&events))
+
+	var conflict *conversation.ConflictError
+	if !errors.Is(err, golem.ErrSessionPersistence) || !errors.Is(err, conversation.ErrConflict) || !errors.As(err, &conflict) {
+		t.Fatalf("Run error = %v, want wrapped session-persistence revision conflict", err)
+	}
+	if conflict.ID != threadID || conflict.ExpectedRevision != 1 {
+		t.Fatalf("ConflictError = %+v, want ID %q and ExpectedRevision 1", conflict, threadID)
+	}
+	if result.Answer != "losing answer" {
+		t.Fatalf("Answer = %q, want the completed (unsaved) losing answer", result.Answer)
+	}
+
+	if len(events) == 0 || events[len(events)-1].Type != "run.failed" {
+		t.Fatalf("events = %s, want a terminal run.failed", marshalEvents(t, events))
+	}
+	var payload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(events[len(events)-1].Payload, &payload); err != nil {
+		t.Fatalf("decode run.failed payload: %v", err)
+	}
+	if payload.Code != "session_conflict" {
+		t.Fatalf("run.failed code = %q, want session_conflict", payload.Code)
+	}
+
+	winner, err := store.Load(ctx, threadID)
+	if err != nil {
+		t.Fatalf("Load after conflict: %v", err)
+	}
+	if winner.Revision != 2 || len(winner.Messages) != 2 || winner.Messages[1].Content != "winning answer" {
+		t.Fatalf("stored snapshot = %+v, want only the competing winner's turn at revision 2", winner)
 	}
 }
