@@ -529,6 +529,31 @@ describe('acknowledged actions', () => {
     stop();
   });
 
+  // #361: New chat disables itself while main awaits the backend reset, which
+  // drops the focus it held. An accepted clear re-arms the composer from main;
+  // a refusal has to re-arm it here, or a keyboard user is left on <body>.
+  it('re-arms composer focus when a deferred New chat is refused', async () => {
+    const stop = await startReady();
+    useDraftStore.getState().setDraft('conv-a', 'keep me');
+    actions.clear('conv-a');
+    await flush();
+    expect(useViewStore.getState().pendingComposers.has('conv-a')).toBe(true);
+    expect(useViewStore.getState().view?.composerFocusRevision).toBe(0);
+
+    const reason = 'The Golem request is invalid or stale.';
+    emitMessage(ackMessage(posted('action')[0].id, false, reason));
+    await flush();
+
+    expect(useViewStore.getState()).toMatchObject({ error: reason });
+    expect(useViewStore.getState().pendingComposers.has('conv-a')).toBe(false);
+    expect(useDraftStore.getState().drafts['conv-a']).toBe('keep me');
+    expect(useViewStore.getState().view?.composerFocusRevision).toBe(1);
+    // Main's next view must not walk the request back and re-arm it again.
+    emitMessage(viewMessage(5));
+    expect(useViewStore.getState().view?.composerFocusRevision).toBe(1);
+    stop();
+  });
+
   it('keeps the lock and offers a retry when the acknowledgement never comes', async () => {
     const stop = await startReady();
     useDraftStore.getState().setDraft('conv-a', 'hello');

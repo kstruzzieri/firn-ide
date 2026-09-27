@@ -11,7 +11,7 @@ import {
 } from '../../golem/projection';
 import { useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
-import type { GolemActionResult } from '../../types/golem';
+import { boundedGolemMessage, type GolemActionResult } from '../../types/golem';
 import { focusConfigTab } from '../../utils/editorSurface';
 import golemIcon from '../../assets/branding/golem-icon.svg';
 import { PlusIcon, SettingsIcon } from '../icons';
@@ -134,20 +134,23 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
         else reportRefusal(result);
       },
       clear(id) {
+        const refused = (result: GolemActionResult) => {
+          reportRefusal(result);
+          // New chat disabled itself for the reset, dropping the focus it
+          // held. A clear re-arms the composer; a refusal must too, or a
+          // keyboard user is left on <body>.
+          useGolemStore.getState().requestComposerFocus();
+        };
         void useGolemStore
           .getState()
           .clearConversation(id)
           .then((result) => {
-            if (result.ok) {
-              useDraftStore.getState().clear(id);
-              return;
-            }
-            reportRefusal(result);
-            // New chat disabled itself for the reset, dropping the focus it
-            // held. A clear re-arms the composer; a refusal must too, or a
-            // keyboard user is left on <body>.
-            useGolemStore.getState().requestComposerFocus();
-          });
+            if (result.ok) useDraftStore.getState().clear(id);
+            else refused(result);
+          })
+          // A throw inside a store update rejects instead of refusing; it is
+          // still a refusal to the user, never an unhandled rejection.
+          .catch((error: unknown) => refused({ ok: false, reason: boundedGolemMessage(error) }));
       },
       allowAndSend: (id, runId, challengeId) =>
         reportRefusal(useGolemStore.getState().allowAndSend(id, runId, challengeId)),

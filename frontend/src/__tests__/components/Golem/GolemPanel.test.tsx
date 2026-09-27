@@ -905,6 +905,28 @@ describe('GolemPanel admission', () => {
     expect(document.activeElement).toBe(composer());
   });
 
+  it('reports a reset that fails outright and returns keyboard focus to the composer', async () => {
+    // Not a refusal the store answers: the promise itself rejects, the way a
+    // throw inside a store update would make it.
+    const clearConversation = store().clearConversation;
+    useGolemStore.setState({
+      clearConversation: () => Promise.reject(new Error('store update failed')),
+    });
+    try {
+      render(<GolemPanel visible />);
+      type('keep me');
+      newChatButton().focus();
+      fireEvent.click(newChatButton());
+      await flush();
+
+      expect(toast()).toMatchObject({ type: 'error', message: 'store update failed' });
+      expect(composer()).toHaveValue('keep me');
+      expect(document.activeElement).toBe(composer());
+    } finally {
+      useGolemStore.setState({ clearConversation });
+    }
+  });
+
   it('locks the composer while the reset is in flight, so nothing typed then is erased by it', async () => {
     const reset = deferred<undefined>();
     mockResetGolemConversation.mockReturnValue(reset.promise);

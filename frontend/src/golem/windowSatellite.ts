@@ -110,6 +110,8 @@ interface Owner {
   /** One promise per handoff, so a repeated `closing` snapshot cannot restart it. */
   handoffs: Map<number, Promise<void>>;
   queueEdits: Map<string, QueueEdit>;
+  /** Composer focus requests raised here, painted on top of main's revision. */
+  focusRequests: number;
 }
 
 let active: Owner | null = null;
@@ -194,7 +196,15 @@ function dropSettledEdits(own: Owner, view: GolemView): void {
 
 function paintView(own: Owner): void {
   if (own.cancelled || own !== active || own.rawView === null) return;
-  useViewStore.setState({ view: withQueueEdits(own.rawView, own.queueEdits) }, false, 'golem/view');
+  const view = withQueueEdits(own.rawView, own.queueEdits);
+  // Main's revision only counts up and so do this window's requests, so the
+  // sum changes exactly when either side asks and a later view never walks it
+  // back (GolemSurface focuses on a *changed* revision).
+  const painted =
+    own.focusRequests === 0
+      ? view
+      : { ...view, composerFocusRevision: view.composerFocusRevision + own.focusRequests };
+  useViewStore.setState({ view: painted }, false, 'golem/view');
 }
 
 // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -299,6 +309,13 @@ function onAdmission(own: Owner, action: GolemViewAction, ack: GolemAck): void {
   }
   if (!ack.ok) {
     useViewStore.setState({ error: ack.reason ?? UNEXPLAINED_REFUSAL }, false, 'golem/refused');
+    // New chat disabled itself for the reset, dropping the focus it held. An
+    // accepted clear re-arms the composer from main; a refusal must too, as the
+    // docked adapter's does, and this window has no store of its own to ask.
+    if (action.type === 'clear') {
+      own.focusRequests += 1;
+      paintView(own);
+    }
     return;
   }
   // An accepted action is proof the relay works; a stale banner would only lie.
@@ -523,6 +540,7 @@ export function startGolemSatellite(): () => void {
     rawView: null,
     handoffs: new Map(),
     queueEdits: new Map(),
+    focusRequests: 0,
   };
   active = own;
   useViewStore.setState(
