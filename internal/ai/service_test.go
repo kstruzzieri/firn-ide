@@ -1756,7 +1756,7 @@ func TestServiceZeroEgressWithProductionRunnerFactory(t *testing.T) {
 		filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 	var constructed int32
-	production := svc.newRunner // NewService installed NewGolemRunner
+	production := svc.newRunner // NewService's closure over NewGolemRunner
 	svc.newRunner = func(ctx context.Context, root string, target providerTarget,
 		guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
 		atomic.AddInt32(&constructed, 1)

@@ -187,7 +187,9 @@ type Service struct {
 
 // NewService constructs the Service with its production collaborators.
 // Package-local tests replace only the four function fields. userAgent is the
-// HTTP identity every chat runner's provider sends; empty keeps go-llm's.
+// HTTP identity an openai-compat chat runner's provider sends; empty keeps
+// go-llm's. An ollama runner sends none of its own: go-llm's Ollama client has
+// no User-Agent option.
 //
 // ctx must outlive the Service: its cancellation is NOT observed as shutdown.
 // Only Close sets `closing` and cancels the derived baseCtx, so a caller ctx
@@ -1075,15 +1077,16 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 // starts a fresh thread: New chat (#361). Unbind and rebind never delete, so
 // this explicit reset is the only way a conversation's history is dropped.
 //
-// It serialises against admission exactly as StartTurn does (bindingGate read,
-// the same identity resolution, then the conversation mutex) and refuses unless
-// the conversation is idle: pending consent, starting, running and canceling
-// all refuse with StartTurn's busy request_rejected. That refusal is what keeps
-// cleared history from coming back: runTurn restores idle only after
-// Runner.Run returns, so a finishing run's Save has already landed, and golem
-// reloads the store at the start of every run, so the next turn sees the
-// deletion. The store's revision compare-and-swap refuses stale positive
-// revisions but is no deletion barrier: a revision-0 Save recreates the thread.
+// It takes StartTurn's admission locks in StartTurn's order (the bindingGate
+// read lock, then, after the same identity resolution, the conversation mutex)
+// and acts only on an idle conversation: pending consent, starting, running
+// and canceling all refuse with StartTurn's busy request_rejected. That
+// refusal is what keeps cleared history from coming back: runTurn restores
+// idle only after Runner.Run returns, so a finishing run's Save has already
+// landed, and golem reloads the store at the start of every run, so the next
+// turn sees the deletion. The store's revision compare-and-swap refuses stale
+// positive revisions but is no deletion barrier: a revision-0 Save recreates
+// the thread.
 func (s *Service) ResetConversation(id ConversationIdentity) error {
 	if err := s.resetConversation(id); err != nil {
 		return s.publicErr("reset", err)

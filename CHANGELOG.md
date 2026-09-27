@@ -9,16 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Golem runs on go-llm v0.3.0. Tool results now reach the model inside a
-  fenced block marked as untrusted data, and every run appends a short tool
-  trust contract to the system prompt, so a file or command output that
-  contains instructions is read as data. (#306)
-- Golem chat requests identify themselves as `Firn/<version>` instead of the
-  library's name. opencode (`https://opencode.ai`) now receives the
+- Golem runs on go-llm v0.3.0. Tool results now reach the model inside a fenced
+  block marked as untrusted data, and every run appends a short tool trust
+  contract to the system prompt, so text a tool returns from a file is marked as
+  data rather than instructions. (#306)
+- Golem's requests to OpenAI-compatible endpoints identify themselves as
+  `Firn/<version>`. opencode (`https://opencode.ai`) now receives the
   `x-opencode-session` header it uses for routing and prompt caching, carrying
-  an opaque per-conversation value that changes when Firn restarts and cannot
-  be traced back to the repository path. Every other OpenAI-compatible
-  endpoint, local or remote, receives no session header. (#306)
+  an opaque value per conversation that changes on New chat and when Firn
+  restarts and cannot be traced back to the repository path. Every other
+  OpenAI-compatible endpoint, local or remote, receives no session header.
+  (#306)
 
 ### Fixed
 
@@ -43,14 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the workspace with the newer Firn that wrote it. An empty state file reads
   as absent. (#290)
 - New chat in the Golem panel now also clears the conversation Firn keeps for
-  the model, docked or undocked. Before, it cleared only the view: the next
-  turn still sent the cleared prompts and answers to the model, and a long
-  session eventually passed the conversation size limit, after which most
-  turns failed until Firn restarted. New chat now recovers from that state.
-  It waits while a reply is still running, and if the reset is refused the
-  conversation and the draft stay as they were. New chat on a conversation from
-  a workspace that is no longer open asks you to reopen the workspace first.
-  (#361)
+  the model, docked or undocked. Before, it cleared only the view: the next turn
+  still sent the cleared prompts and answers to the model, and a long session
+  eventually passed the conversation size limit, after which most turns failed
+  until Firn restarted. New chat now recovers from that state. It is unavailable
+  while a reply is running, and if the reset is refused the conversation and the
+  draft stay as they were. New chat on a conversation from a workspace that is
+  no longer open is refused until the workspace is open again. (#361)
 
 ## [0.12.0] - 2026-09-06
 
