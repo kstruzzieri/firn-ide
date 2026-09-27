@@ -1,6 +1,9 @@
 package ai
 
 import (
+	"bytes"
+	"log"
+	"strings"
 	"testing"
 
 	"github.com/kstruzzieri/go-llm/config"
@@ -69,6 +72,46 @@ func TestReachableDestinationsEmptyOnUnresolvableChainOrNil(t *testing.T) {
 	}
 	if got := reachableDestinations(nil); len(got) != 0 {
 		t.Fatalf("nil config: %+v", got)
+	}
+}
+
+// #286 item 1: a hop dropped for an uncanonicalizable endpoint must not
+// vanish silently -- it logs the provider key (never the base URL, which may
+// carry userinfo credentials or a query like this fixture's).
+func TestReachableHopDroppedIsLogged(t *testing.T) {
+	cfg := reachableFixtureConfig()
+	cfg.Providers["backup"] = config.ProviderConfig{
+		BaseURL:   "https://alt.example.net/v1?tenant=secret",
+		APIFormat: "openai-compat",
+	}
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
+	got := reachableDestinations(cfg)
+
+	byProvider := map[string]bool{}
+	for _, d := range got {
+		byProvider[d.Destination.Provider] = true
+	}
+	if byProvider["backup"] {
+		t.Fatalf("backup hop must be dropped (uncanonicalizable endpoint): %+v", got)
+	}
+	if !byProvider["hosted"] {
+		t.Fatalf("hosted hop must still be reachable: %+v", got)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "reachable hop dropped") {
+		t.Fatalf("log missing drop message: %q", out)
+	}
+	if !strings.Contains(out, `"backup"`) {
+		t.Fatalf("log must name the provider: %q", out)
+	}
+	if strings.Contains(out, "tenant=secret") {
+		t.Fatalf("log must never leak the endpoint query: %q", out)
 	}
 }
 

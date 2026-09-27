@@ -369,12 +369,17 @@ func TestDestinationDeniedMessageIsScrubbedAndBounded(t *testing.T) {
 		t.Fatalf("scrub failed: %q %v", msg, ok)
 	}
 
-	long := strings.Repeat("中", 400)
+	// baseline measures the fixed-prose length with a purpose that scrubs to
+	// empty (a lone Cf rune, not the "" input -- that takes the "unknown
+	// purpose" fallback instead), so the cap's contribution below is derived
+	// rather than a hand-computed magic number.
+	baseline, _ := destinationDeniedMessage(&provider.DestinationDeniedError{Provider: "p", Purpose: "\u200b"})
+	want := utf8.RuneCountInString(baseline) + deniedFieldCap
+
+	long := strings.Repeat("中", 2*deniedFieldCap)
 	msg, _ = destinationDeniedMessage(&provider.DestinationDeniedError{Provider: "p", Purpose: long})
-	// Fixed prefix: "destination " (12) + "provider p" (10) + " is not consented for " (22) = 44 runes.
-	// With 256-rune cap on each field, total = 44 + 256 = 300 runes.
-	if utf8.RuneCountInString(msg) != 300 || !utf8.ValidString(msg) {
-		t.Fatalf("truncation not rune-safe/bounded: got %d runes (want 300), valid=%v", utf8.RuneCountInString(msg), utf8.ValidString(msg))
+	if utf8.RuneCountInString(msg) != want || !utf8.ValidString(msg) {
+		t.Fatalf("truncation not rune-safe/bounded: got %d runes (want %d), valid=%v", utf8.RuneCountInString(msg), want, utf8.ValidString(msg))
 	}
 
 	wrapped := fmt.Errorf("commit message generation blocked: %s: %w", msg, provider.ErrDestinationDenied)

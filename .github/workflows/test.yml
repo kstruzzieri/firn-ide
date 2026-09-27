@@ -56,6 +56,13 @@ jobs:
     # Pinned to 22.04: the image IS the WebKit2GTK 4.1 compatibility floor
     # that the -tags gtk3 Linux build below targets.
     runs-on: ubuntu-22.04
+    # #286 item 4: turns testutil.ListenNonLoopback's skip into a hard
+    # failure, so a runner that silently lacks a non-loopback IPv4 interface
+    # cannot let the F15 admission-parity corpus and its siblings quietly
+    # stop covering the REMOTE classification path. Job-level so it covers
+    # both the -v run and the coverage run below without adding a step.
+    env:
+      FIRN_REQUIRE_NONLOOPBACK: '1'
 
     steps:
       - uses: actions/checkout@v4

@@ -1108,7 +1108,7 @@ func assertNoGolemLeak(t *testing.T, text string, forbidden ...string) {
 }
 
 // ---------------------------------------------------------------------------
-// Settings writes (spec §5.2/§5.5/§5.6): the five write-side bindings.
+// Settings writes (spec §5.2/§5.5/§5.6): the seven write-side bindings.
 // ---------------------------------------------------------------------------
 
 // golemTargetConfigJSON is a valid, floor-satisfying local target: the agent
@@ -1157,7 +1157,7 @@ func newGolemAppWithTarget(t *testing.T, body string) (*App, string) {
 	return app, path
 }
 
-// The five write-side bindings carry the ai contract types unchanged: nothing
+// The seven write-side bindings carry the ai contract types unchanged: nothing
 // in app.go may widen, narrow, or re-shape what the frontend sends or sees.
 func TestGolemSettingsWriteMethodSignatures(t *testing.T) {
 	appType := reflect.TypeOf(&App{})
