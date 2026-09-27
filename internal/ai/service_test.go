@@ -550,7 +550,7 @@ func assertBuiltinToolsProtectConfig(t *testing.T, what, root string, guard agen
 	var observations []string
 	for _, msg := range last.Messages {
 		if msg.Role == "tool" {
-			observations = append(observations, msg.Content)
+			observations = append(observations, unfenceToolResult(t, msg.Content))
 		}
 	}
 	if len(observations) != 5 {

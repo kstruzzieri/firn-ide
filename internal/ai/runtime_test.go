@@ -424,7 +424,7 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 	var observations []string
 	for _, msg := range last.Messages {
 		if msg.Role == "tool" {
-			observations = append(observations, msg.Content)
+			observations = append(observations, unfenceToolResult(t, msg.Content))
 		}
 	}
 	if len(observations) != 10 {
