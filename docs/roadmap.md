@@ -176,6 +176,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | Closed | #273 Wails v3 migration | Shipped via PRs #274/#280 in v0.12.0; host access confined to the `frontend/src/wails/` adapter, macOS floor 12, Linux on WebKit2GTK 4.1 behind the `gtk3` tag. |
 | P1 | #281 Linux GTK4 + WebKitGTK 6.0 | Required before Wails v3.1, which removes the gtk3 path v0.12.0 targets. Do not adopt v3.1 first. |
 | P1 | #373 Go toolchain past 1.25 | Go 1.25 left security support when Go 1.27 shipped; #372 moves v0.13.0 to go1.25.14. Go 1.27 requires macOS 13, so the target (go1.27.x or go1.26.x) follows the macOS floor #316 declares. v0.14.0 stretch, after #306 and #316. |
+| P1 | #376 `govulncheck` in CI | Nothing in CI runs `govulncheck`, which is how v0.12.0 shipped, and the first v0.13.0 candidates were built, with go1.25.0 unnoticed (#372). Starts after the v0.13.0 back-merge brings `develop` the go1.25.14 toolchain line. v0.14.0 stretch. |
 | P2 | #282 Wails v3 hygiene | The open items from the #273 review triage. |
 | Closed | #285 Phase routing and destination admission | Shipped via PR #287 in v0.12.0; consent-derived `DestinationPolicy`, capability floors, reachable-set admission, batch consent with provenance. Consumer follow-ups tracked in #286. |
 | Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |
