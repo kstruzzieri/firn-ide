@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -73,9 +74,11 @@ const (
 // terminal cleanup, admission rollback, and Close share a single ownership
 // path.
 type runnerRecord struct {
-	runner    Runner
-	closeOnce sync.Once
-	closeErr  error
+	runner       Runner
+	toolRoot     string
+	rootIdentity fs.FileInfo
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func (r *runnerRecord) close() error {
@@ -639,6 +642,27 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 	return adm, nil
 }
 
+// runnerRootInfo keeps reconstruction at the authorized canonical path. In
+// particular, replacing a project root with a symlink must not let golem.New
+// canonicalize it to a different directory under the old scope guard.
+func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolving workspace root: %w", ErrRequestRejected, err)
+	}
+	if canonical != root {
+		return nil, fmt.Errorf("%w: workspace root is no longer canonical", ErrRequestRejected)
+	}
+	info, err := filesystem.Lstat(s.fs, root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: stat workspace root: %w", ErrRequestRejected, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%w: workspace root is not a directory", ErrRequestRejected)
+	}
+	return info, nil
+}
+
 func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, after *[]func()) (TurnAdmission, error) {
 	// Steps 2-4: unlocked preparation; recommitted under the locks below.
 	// Step 3's conversation-state check is deliberately deferred to step 6:
@@ -774,16 +798,18 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	}()
 
 	// Step 7.
+	rootInfo, err := s.runnerRootInfo(resolved.ToolRoot)
+	if err != nil {
+		return TurnAdmission{}, err
+	}
 	rec := conv.runner
-	if rec != nil && (conv.runnerEpoch != resolved.RepoEpoch || conv.runnerConfigEpoch != cfgEpoch || conv.runnerStale) {
-		// Defensive: a retired incarnation's record still cached must fully
-		// quiesce before any re-create for this conversation ID. Unreachable
-		// by construction -- retireBinding nils idle runners and only
-		// stale-marks runners whose conversation is running/canceling, and
-		// step 6 already rejected those states -- so log rather than leave a
-		// silent dead branch: this line firing means that argument broke.
-		log.Printf("ai: golem invariant violated: cached runner repo epoch %d != %d or config epoch %d != %d (stale=%v)",
-			conv.runnerEpoch, resolved.RepoEpoch, conv.runnerConfigEpoch, cfgEpoch, conv.runnerStale)
+	rootChanged := rec != nil && (rec.toolRoot != resolved.ToolRoot || !os.SameFile(rec.rootIdentity, rootInfo))
+	if rec != nil && (rootChanged || conv.runnerEpoch != resolved.RepoEpoch || conv.runnerConfigEpoch != cfgEpoch || conv.runnerStale) {
+		if !rootChanged {
+			// Retirement normally drops idle runners before admission.
+			log.Printf("ai: golem invariant violated: cached runner repo epoch %d != %d or config epoch %d != %d (stale=%v)",
+				conv.runnerEpoch, resolved.RepoEpoch, conv.runnerConfigEpoch, cfgEpoch, conv.runnerStale)
+		}
 		if err := rec.close(); err != nil {
 			log.Printf("ai: golem stale-cached runner close: %v", err)
 		}
@@ -792,12 +818,25 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		rec = nil
 	}
 	if rec == nil {
+		// Directory replacement may also replace the manifests without a
+		// watcher notification, including during a failed construction. Every
+		// new runner must enforce the current rules, even on that retry.
+		binding.policy.Reload()
 		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
 			binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel), s.sessions)
 		if err != nil {
 			return TurnAdmission{}, fmt.Errorf("%w: runner construction: %w", ErrRunFailed, err)
 		}
-		newRec = &runnerRecord{runner: r}
+		// Capture before construction: sampling only afterward can label tools
+		// that pinned the old directory with the replacement's identity.
+		newRec = &runnerRecord{runner: r, toolRoot: resolved.ToolRoot, rootIdentity: rootInfo}
+		currentInfo, err := s.runnerRootInfo(resolved.ToolRoot)
+		if err != nil {
+			return TurnAdmission{}, err
+		}
+		if !os.SameFile(rootInfo, currentInfo) {
+			return TurnAdmission{}, fmt.Errorf("%w: workspace root changed during runner construction", ErrRequestRejected)
+		}
 		rec = newRec
 	}
 

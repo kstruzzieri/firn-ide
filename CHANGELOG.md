@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so newly entered text cannot be erased by its completion. New chat on a
   conversation from a workspace that is no longer open is refused until the
   workspace is open again. (#361)
+- Golem rebuilds its file tools when a workspace directory is replaced at the
+  same path, preserving conversation history and reloading the current access
+  rules. Reads no longer stay broken until the workspace is closed and reopened.
 
 ## [0.12.0] - 2026-09-06
 
