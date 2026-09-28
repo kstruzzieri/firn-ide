@@ -1538,6 +1538,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     updateQueuedTurn(conversationId: string, queueId: string, message: string): GolemActionResult {
       const conversation = get().conversations[conversationId];
       if (!conversation) return refuse(NO_CONVERSATION_ERROR);
+      if (conversation.resetting) return refuse(BUSY_ERROR);
       if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
         return refuse(NO_QUEUED_TURN_ERROR);
       }
@@ -1560,6 +1561,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     removeQueuedTurn(conversationId: string, queueId: string): GolemActionResult {
       const conversation = get().conversations[conversationId];
       if (!conversation) return refuse(NO_CONVERSATION_ERROR);
+      if (conversation.resetting) return refuse(BUSY_ERROR);
       if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
         return refuse(NO_QUEUED_TURN_ERROR);
       }

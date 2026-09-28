@@ -957,6 +957,33 @@ describe('GolemPanel admission', () => {
     expect(composer()).toHaveValue('a fresh start');
   });
 
+  it('locks queued messages while New chat is resetting', async () => {
+    mockRunGolemTurn.mockRejectedValueOnce(new Error('Admission failed'));
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    render(<GolemPanel visible />);
+    type('first');
+    pressEnter();
+    type('second');
+    pressEnter();
+    await flush();
+
+    fireEvent.click(newChatButton());
+    const queued = screen.getByRole('textbox', { name: 'Queued message 1' });
+    const remove = screen.getByRole('button', { name: 'Remove queued message 1' });
+    expect(queued).toBeDisabled();
+    expect(remove).toBeDisabled();
+    fireEvent.change(queued, { target: { value: 'typed during reset' } });
+    fireEvent.click(remove);
+    expect(store().conversations[CONV].queuedTurns.map((turn) => turn.message)).toEqual(['second']);
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(screen.queryByRole('textbox', { name: 'Queued message 1' })).not.toBeInTheDocument();
+  });
+
   it('freezes every action the moment a handoff starts', () => {
     const { rerender } = render(<GolemPanel visible />);
     type('mid-thought');

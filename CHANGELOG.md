@@ -49,8 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eventually passed the conversation size limit, after which most turns failed
   until Firn restarted. New chat now recovers from that state. It is unavailable
   while a reply is running, and if the reset is refused the conversation and the
-  draft stay as they were. New chat on a conversation from a workspace that is
-  no longer open is refused until the workspace is open again. (#361)
+  draft stay as they were. Queue editing is disabled while the reset is pending,
+  so newly entered text cannot be erased by its completion. New chat on a
+  conversation from a workspace that is no longer open is refused until the
+  workspace is open again. (#361)
 
 ## [0.12.0] - 2026-09-06
 

@@ -7,7 +7,10 @@
  * The transport and the lifecycle are mocked; `relayCore` is the real thing.
  */
 
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { createElement } from 'react';
 import type { GolemSurfaceActions } from '../../components/Golem/GolemSurface';
+import { GolemWindowRoot } from '../../components/GolemWindow/GolemWindowRoot';
 import { GOLEM_WINDOW_MAX_PAYLOAD_BYTES } from '../../types/golemWindow';
 import type {
   GolemView,
@@ -180,7 +183,7 @@ beforeEach(() => {
     view: null,
     state: null,
     frozen: true,
-    pendingComposers: new Set<string>(),
+    pendingComposers: new Map(),
     error: null,
   });
   actions = satelliteActions();
@@ -497,6 +500,50 @@ describe('StrictMode double start', () => {
 });
 
 describe('acknowledged actions', () => {
+  it.each(['Send', 'New chat'])(
+    'locks queued messages only for pending New chat (%s)',
+    async (label) => {
+      const view = viewOf();
+      view.conversations['conv-a'].queuedTurns = [
+        { queueId: 'q1', state: 'queued', message: 'waiting', contextRefs: [] },
+      ];
+      bootstrapMock.mockResolvedValue(bootstrapOf({ view, revision: 4 }));
+      render(createElement(GolemWindowRoot));
+      await act(flush);
+      await act(async () => {
+        emitMessage(draftsMessage(9, 1, { 'conv-a': 'draft' }));
+        emitMode(stateOf({ phase: 'ready', stateRevision: 3 }));
+        await flush();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: label }));
+      const queued = screen.getByRole('textbox', { name: 'Queued message 1' });
+      const remove = screen.getByRole('button', { name: 'Remove queued message 1' });
+      if (label === 'New chat') {
+        expect(queued).toBeDisabled();
+        expect(remove).toBeDisabled();
+        fireEvent.change(queued, { target: { value: 'typed during reset' } });
+        fireEvent.click(remove);
+        expect(queued).toHaveValue('waiting');
+      } else {
+        expect(queued).toBeEnabled();
+        expect(remove).toBeEnabled();
+        fireEvent.change(queued, { target: { value: 'edited' } });
+        expect(queued).toHaveValue('edited');
+      }
+
+      await act(async () => {
+        emitMessage(ackMessage(posted('action')[0].id, false, 'Action refused'));
+        await flush();
+      });
+      expect(queued).toBeEnabled();
+      expect(remove).toBeEnabled();
+      expect(posted('action').map((message) => (message.payload as { type: string }).type)).toEqual(
+        label === 'New chat' ? ['clear'] : ['send', 'updateQueued']
+      );
+    }
+  );
+
   it('clears only the accepted conversation draft', async () => {
     const stop = await startReady();
     useDraftStore.getState().setDraft('conv-a', 'hello');

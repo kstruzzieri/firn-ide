@@ -295,6 +295,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
         // Docked admission settles inside the handler; only New chat holds the
         // composer open across a render, while its backend reset is in flight.
         composerPending={resetting}
+        resetting={resetting}
         focusRevision={view.composerFocusRevision}
         visible={visible}
       />

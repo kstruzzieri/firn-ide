@@ -133,12 +133,12 @@ function report(own: Owner | null, value: unknown): void {
   useViewStore.setState({ error: boundedGolemMessage(value) }, false, 'golem/error');
 }
 
-function setPending(own: Owner, conversationId: string, pending: boolean): void {
+function setPending(own: Owner, conversationId: string, pending: 'send' | 'clear' | null): void {
   if (own.cancelled || own !== active) return;
   const current = useViewStore.getState().pendingComposers;
-  if (current.has(conversationId) === pending) return;
-  const next = new Set(current);
-  if (pending) next.add(conversationId);
+  if (current.get(conversationId) === (pending ?? undefined)) return;
+  const next = new Map(current);
+  if (pending) next.set(conversationId, pending);
   else next.delete(conversationId);
   useViewStore.setState(
     { pendingComposers: next.size === 0 ? NO_PENDING_COMPOSERS : next },
@@ -297,7 +297,7 @@ function onAdmission(own: Owner, action: GolemViewAction, ack: GolemAck): void {
     // Only on acceptance, and only this conversation: a refusal keeps what the
     // user typed, and a conversation selected since then is untouched.
     if (ack.ok) useDraftStore.getState().clear(action.conversationId);
-    setPending(own, action.conversationId, false);
+    setPending(own, action.conversationId, null);
   }
   if (action.type === 'updateQueued') {
     const edit = own.queueEdits.get(action.queueId);
@@ -597,11 +597,11 @@ function dispatch(action: GolemViewAction, lockId?: string): Promise<GolemAck> {
   if (lockId === undefined) return own.core.send(action);
   // The lock goes on before the action is enqueued, so a second Send cannot
   // slip in behind an unacknowledged one.
-  setPending(own, lockId, true);
+  setPending(own, lockId, action.type === 'clear' ? 'clear' : 'send');
   return own.core.send(action).catch((error: unknown) => {
     // A definitive refusal never reached the queue, so the lock comes off with
     // it. An *uncertain* outcome never rejects, and keeps both id and lock.
-    setPending(own, lockId, false);
+    setPending(own, lockId, null);
     throw error;
   });
 }

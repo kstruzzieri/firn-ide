@@ -2764,6 +2764,31 @@ describe('clearConversation', () => {
     );
   };
 
+  it.each(['edit', 'remove'] as const)(
+    'refuses a queue %s until a reset settles',
+    async (action) => {
+      await idleWithStagedTurn();
+      const reset = deferred<undefined>();
+      mockResetGolemConversation.mockReturnValue(reset.promise);
+      const queued = conv().queuedTurns[0];
+      const changeQueue = () =>
+        action === 'edit'
+          ? store().updateQueuedTurn(CONV, queued.queueId, 'edited')
+          : store().removeQueuedTurn(CONV, queued.queueId);
+
+      const cleared = store().clearConversation(CONV);
+      expect(changeQueue()).toMatchObject({ ok: false });
+      expect(conv().queuedTurns).toEqual([queued]);
+
+      reset.reject(new Error('Reset refused'));
+      await cleared;
+      expect(changeQueue()).toEqual({ ok: true });
+      expect(conv().queuedTurns.map((turn) => turn.message)).toEqual(
+        action === 'edit' ? ['edited'] : []
+      );
+    }
+  );
+
   it('never dispatches a queued turn that a rebind re-arms while the reset is in flight', async () => {
     await idleWithStagedTurn();
     const reset = deferred<undefined>();
