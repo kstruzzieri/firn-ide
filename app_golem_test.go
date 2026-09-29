@@ -1206,7 +1206,7 @@ func golemBoundaryFields(root reflect.Type) []string {
 	var fields []string
 	var walk func(reflect.Type)
 	walk = func(typ reflect.Type) {
-		for typ.Kind() == reflect.Ptr || typ.Kind() == reflect.Slice ||
+		for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice ||
 			typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
 			typ = typ.Elem()
 		}
