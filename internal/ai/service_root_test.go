@@ -112,12 +112,52 @@ func TestServiceRejectsUnavailableCachedRunnerRoot(t *testing.T) {
 					t.Skipf("symlinks unavailable: %v", err)
 				}
 			}
+			// The user moved or replaced the folder: say the workspace is gone,
+			// not that the request was stale, which a retry would never fix.
 			_, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(id, "project")))
-			if code := publicCode(t, err); code != "request_rejected" {
-				t.Fatalf("StartTurn(%s root) code = %q, want request_rejected", kind, code)
+			if code := publicCode(t, err); code != "workspace_unavailable" {
+				t.Fatalf("StartTurn(%s root) code = %q, want workspace_unavailable", kind, code)
 			}
 		})
 	}
+}
+
+// The root check runs before a pending consent challenge is consumed.
+// Otherwise the grant is written and the challenge consumed for a turn that
+// cannot run, and every later Allow fails until the challenge expires.
+func TestServiceUnavailableRootKeepsConsentChallenge(t *testing.T) {
+	endpoint, _ := startCountingServer(t)
+	h := newServiceHarness(t, endpoint)
+	repoID, repo := h.bind(t)
+	ctx := context.Background()
+	id := runIdentityFor(repoID, "project")
+	adm, err := h.svc.StartTurn(ctx, turnFor(id))
+	if err != nil || adm.State != "needs_consent" {
+		t.Fatalf("first turn = %+v, %v; want needs_consent", adm, err)
+	}
+	moved := filepath.Join(t.TempDir(), "moved")
+	if err := os.Rename(repo, moved); err != nil {
+		t.Fatal(err)
+	}
+
+	allow := turnFor(id)
+	allow.ConsentChallengeID = adm.ConsentChallenge.ID
+	_, err = h.svc.StartTurn(ctx, allow)
+	if code := publicCode(t, err); code != "workspace_unavailable" {
+		t.Fatalf("Allow with the root gone: code = %q, want workspace_unavailable", code)
+	}
+	if h.svc.consent.Has(adm.Destination.Digest) {
+		t.Fatal("Allow with the root gone wrote a durable grant")
+	}
+
+	if err := os.Rename(moved, repo); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := h.svc.StartTurn(ctx, allow)
+	if err != nil || retried.State != "accepted" {
+		t.Fatalf("Allow after the root returned = %+v, %v; want accepted", retried, err)
+	}
+	drainRuns(t, h.svc)
 }
 
 // A post-construction-only sample can label an already stale runtime with the

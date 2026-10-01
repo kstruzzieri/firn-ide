@@ -646,20 +646,25 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 // particular, replacing a project root with a symlink must not let golem.New
 // canonicalize it to a different directory under the old scope guard.
 func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
+	// A root that is gone, moved, or no longer a directory is the user's
+	// workspace being unavailable; retrying the same request cannot fix it.
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return nil, fmt.Errorf("%w: resolving workspace root: %w", ErrRequestRejected, err)
+		return nil, fmt.Errorf("%w: resolving workspace root: %w", ErrWorkspaceUnavailable, err)
 	}
 	if canonical != root {
-		return nil, fmt.Errorf("%w: workspace root is no longer canonical", ErrRequestRejected)
+		return nil, fmt.Errorf("%w: workspace root is no longer canonical", ErrWorkspaceUnavailable)
 	}
 	info, err := filesystem.Lstat(s.fs, root)
 	if err != nil {
-		return nil, fmt.Errorf("%w: stat workspace root: %w", ErrRequestRejected, err)
+		return nil, fmt.Errorf("%w: stat workspace root: %w", ErrWorkspaceUnavailable, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: workspace root is not a directory", ErrRequestRejected)
+		return nil, fmt.Errorf("%w: workspace root is not a directory", ErrWorkspaceUnavailable)
 	}
+	// Windows loads a file ID lazily, by path, on the first SameFile; load it
+	// now so this identity names the directory sampled here.
+	_ = os.SameFile(info, info)
 	return info, nil
 }
 
@@ -709,6 +714,12 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		return TurnAdmission{}, err
 	}
 	dest := target.destination
+	// Sampled before step 6, so an unavailable root neither consumes a
+	// pending consent challenge nor writes a grant for a turn that cannot run.
+	rootInfo, err := s.runnerRootInfo(resolved.ToolRoot)
+	if err != nil {
+		return TurnAdmission{}, err
+	}
 
 	// Step 6.
 	switch conv.state {
@@ -798,10 +809,6 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	}()
 
 	// Step 7.
-	rootInfo, err := s.runnerRootInfo(resolved.ToolRoot)
-	if err != nil {
-		return TurnAdmission{}, err
-	}
 	rec := conv.runner
 	rootChanged := rec != nil && (rec.toolRoot != resolved.ToolRoot || !os.SameFile(rec.rootIdentity, rootInfo))
 	if rec != nil && (rootChanged || conv.runnerEpoch != resolved.RepoEpoch || conv.runnerConfigEpoch != cfgEpoch || conv.runnerStale) {
