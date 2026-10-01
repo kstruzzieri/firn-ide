@@ -642,9 +642,11 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 	return adm, nil
 }
 
-// runnerRootInfo keeps reconstruction at the authorized canonical path. In
-// particular, replacing a project root with a symlink must not let golem.New
-// canonicalize it to a different directory under the old scope guard.
+// runnerRootInfo keeps reconstruction at the authorized canonical path. A
+// parent directory swapped for a symlink leaves a real directory at root, so
+// only the canonical check stops golem.New from resolving it to a directory
+// outside the bound repository; a root that is itself a symlink also fails
+// the directory check.
 func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
 	// A root that is gone, moved, or no longer a directory is the user's
 	// workspace being unavailable; retrying the same request cannot fix it.

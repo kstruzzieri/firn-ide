@@ -244,8 +244,9 @@ func TestReachableSetMatchesGolemAdmission(t *testing.T) {
 			}
 
 			// --- Admission half ------------------------------------------------
-			// One non-loopback listener per derived remote (skips the whole
-			// subtest when the host has none — testutil.ListenNonLoopback).
+			// One non-loopback listener per derived remote. A host without one
+			// skips the subtest locally and fails it in CI, where
+			// FIRN_REQUIRE_NONLOOPBACK=1 (testutil.ListenNonLoopback).
 			listeners := map[string]string{}
 			for _, d := range derived {
 				ln, baseURL := testutil.ListenNonLoopback(t)

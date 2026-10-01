@@ -39,10 +39,11 @@ import (
 type scriptedProvider struct {
 	name string
 	err  error // non-nil: every ChatStream fails with this raw error
-	// ctxErrFirst takes the shape of go-llm's Ollama provider: once the stream's
-	// context is canceled, ChatStream reports the wrapped context error ahead of
-	// any callback error. Unset, a callback error is returned first, the
-	// openai-compat shape.
+	// ctxErrFirst takes the shape of go-llm's Ollama provider when a canceled
+	// context cuts a stream off mid-reply (chunks received, no final done
+	// chunk): ChatStream reports the wrapped context error ahead of the
+	// callback error that canceled it. Unset, the callback error is returned
+	// first, the openai-compat shape.
 	ctxErrFirst bool
 
 	mu         sync.Mutex

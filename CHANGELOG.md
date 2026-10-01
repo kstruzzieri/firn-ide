@@ -13,13 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block marked as untrusted data, and every run appends a short tool trust
   contract to the system prompt, so text a tool returns from a file is marked as
   data rather than instructions. (#306)
-- Golem's requests to OpenAI-compatible endpoints identify themselves as
-  `Firn/<version>`. opencode (`https://opencode.ai`) now receives the
-  `x-opencode-session` header it uses for routing and prompt caching, carrying
-  an opaque value per conversation that changes on New chat and when Firn
-  restarts and cannot be traced back to the repository path. Every other
-  OpenAI-compatible endpoint, local or remote, receives no session header.
-  (#306)
+- Golem chat's requests to OpenAI-compatible endpoints identify themselves as
+  `Firn/<version>`; commit-message generation keeps go-llm's default. opencode
+  (`https://opencode.ai`) now receives the `x-opencode-session` header it uses
+  for routing and prompt caching, carrying an opaque value per conversation
+  that changes on New chat and when Firn restarts and cannot be traced back to
+  the repository path. Every other OpenAI-compatible endpoint, local or remote,
+  receives no session header. (#306)
 
 ### Fixed
 
@@ -53,9 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so newly entered text cannot be erased by its completion. New chat on a
   conversation from a workspace that is no longer open is refused until the
   workspace is open again. (#361)
-- Golem rebuilds its file tools when a workspace directory is replaced at the
-  same path, preserving conversation history and reloading the current access
-  rules. Reads no longer stay broken until the workspace is closed and reopened.
 
 ## [0.12.0] - 2026-09-06
 

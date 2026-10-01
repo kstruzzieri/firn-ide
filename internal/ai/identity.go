@@ -14,7 +14,8 @@ import (
 )
 
 // ErrWorkspaceUnavailable wraps repository-root and workspace-detection
-// failures: the repository cannot be bound at all. The raw cause is retained
+// failures: the repository cannot be bound at all, or a bound root is gone,
+// moved or no longer a directory when a turn starts. The raw cause is retained
 // in the chain for host logging (and may carry absolute paths); callers must
 // match the sentinel, never the text.
 var ErrWorkspaceUnavailable = errors.New("golem workspace unavailable")

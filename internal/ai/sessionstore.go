@@ -35,11 +35,13 @@ var ErrSessionLimit = errors.New("golem session memory limit exceeded")
 // chat (Service.ResetConversation): conversations must survive unbind/rebind
 // for the life of the process, so nothing else ever drops a snapshot. Known
 // ceilings: SessionStoreLimit (16 MiB) across all conversations and
-// SessionSnapshotLimit (2 MiB) per snapshot. A conversation that outgrows the
-// per-snapshot bound stops persisting — the run surfaces the raw
+// SessionSnapshotLimit (2 MiB) per snapshot. A Save whose snapshot exceeds the
+// per-snapshot bound is refused and the stored snapshot stays as it was, so
+// that turn fails and is not kept — the run surfaces the raw
 // ErrSessionLimit-wrapped cause to the host while the public run.failed event
-// stays generic — until New chat deletes it. B5 inherits these ceilings as
-// stated instead of rediscovering them.
+// stays generic. A later turn whose snapshot fits still saves, but near the
+// cap most do not, until New chat deletes the conversation. B5 inherits these
+// ceilings as stated instead of rediscovering them.
 type MemorySessionStore struct {
 	mu    sync.Mutex
 	snaps map[string][]byte // conversation ID -> JSON snapshot, never mutated in place
