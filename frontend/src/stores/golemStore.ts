@@ -1264,91 +1264,103 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return refuse(STALE_CONVERSATION_ERROR);
       }
 
-      set((state) => {
-        const mutation = beginMutation(state);
-        const draft = draftConversation(mutation, conversationId);
-        if (!draft) return state;
-        draft.resetting = 'pending';
-        return toState(mutation);
-      });
-
-      try {
-        // Backend first (#361): a view cleared over a surviving backend
-        // conversation sends its whole history with the next "fresh" turn.
-        await ResetGolemConversation(toConversationIdentity(existing.identity));
-      } catch (err) {
-        // Refused, so the view stays — queue included. Only a dispatch the
-        // reset itself held back (a turn a rebind re-armed meanwhile) goes out
-        // now, as it would have then; a turn already idle stays idle.
+      // Ends the reset without clearing the view. Only a dispatch the reset
+      // itself held back (a turn a rebind re-armed meanwhile) goes out now, as
+      // it would have then; a turn already idle stays idle.
+      const endResetKeepingView = () => {
         let dispatch: PendingDispatch | null = null;
         set((state) => {
           const mutation = beginMutation(state);
           const draft = draftConversation(mutation, conversationId);
-          if (!draft) return state;
+          if (!draft?.resetting) return state;
           const held = draft.resetting === 'held';
           delete draft.resetting;
           if (held) dispatch = dispatchQueued(mutation, conversationId, state);
           return toState(mutation);
         });
         runDispatch(dispatch);
-        return refuse(boundedMessage(err));
-      }
+      };
 
-      let cleared = false;
-      set((state) => {
-        const mutation = beginMutation(state);
-        // Draft through the copy-on-write path so every subscriber sees a new
-        // reference; writing the published object in place leaves the data
-        // correct but the panel frozen.
-        const draft = draftConversation(mutation, conversationId);
-        if (!draft) return state;
-        delete draft.resetting;
-        // Idle guard (the load-bearing safety rule): clearing while a run is
-        // live would drop a conversation whose backend run is still emitting
-        // events, and a GetGolemStatus snapshot could still list that live run
-        // and re-hydrate it. When idle there is no live run — finished runs
-        // never appear in backend ActiveRuns, and the backend emits exactly one
-        // terminal per run — so a full reset cannot be repopulated by a stray
-        // event. The button is disabled in this state and `resetting` admits
-        // no turn across the await; the guard is defense in depth.
-        if (draft.activeRunId !== null || draft.pendingConsentTurn !== null) {
+      try {
+        set((state) => {
+          const mutation = beginMutation(state);
+          const draft = draftConversation(mutation, conversationId);
+          if (!draft) return state;
+          draft.resetting = 'pending';
           return toState(mutation);
+        });
+
+        try {
+          // Backend first (#361): a view cleared over a surviving backend
+          // conversation sends its whole history with the next "fresh" turn.
+          await ResetGolemConversation(toConversationIdentity(existing.identity));
+        } catch (err) {
+          // Refused, so the view stays — queue included.
+          endResetKeepingView();
+          return refuse(boundedMessage(err));
         }
-        cleared = true;
 
-        // Reset content to the fresh shape; the backend-derived status fields
-        // (identity, workspaceLabel, available, needsConsent, warnings,
-        // initError, destination) reflect the workspace, not chat content, and
-        // stay as they are.
-        draft.rawEvents = [];
-        draft.transcript = [];
-        draft.runs = {};
-        draft.activeRunId = null;
-        draft.queuedTurns = [];
-        draft.pendingConsentTurn = null;
-        draft.lastFailedTurn = null;
-
-        // Purge this conversation's run routing. No live run exists, so this is
-        // safe, and it keeps the map from growing unbounded across clears.
-        // Iterate a key snapshot; delete from the mutation's own copy.
-        for (const runId of Object.keys(mutation.runToConversation)) {
-          if (mutation.runToConversation[runId] === conversationId) {
-            delete mutation.runToConversation[runId];
+        let cleared = false;
+        set((state) => {
+          const mutation = beginMutation(state);
+          // Draft through the copy-on-write path so every subscriber sees a new
+          // reference; writing the published object in place leaves the data
+          // correct but the panel frozen.
+          const draft = draftConversation(mutation, conversationId);
+          if (!draft) return state;
+          delete draft.resetting;
+          // Idle guard (the load-bearing safety rule): clearing while a run is
+          // live would drop a conversation whose backend run is still emitting
+          // events, and a GetGolemStatus snapshot could still list that live run
+          // and re-hydrate it. When idle there is no live run — finished runs
+          // never appear in backend ActiveRuns, and the backend emits exactly one
+          // terminal per run — so a full reset cannot be repopulated by a stray
+          // event. The button is disabled in this state and `resetting` admits
+          // no turn across the await; the guard is defense in depth.
+          if (draft.activeRunId !== null || draft.pendingConsentTurn !== null) {
+            return toState(mutation);
           }
-        }
+          cleared = true;
 
-        // The failure that drove a StatusBar "Attention" is gone. Leave the
-        // monotonic counters and lastActiveConversationId alone.
-        if (mutation.lastFailureConversationId === conversationId) {
-          mutation.lastFailureConversationId = null;
-        }
+          // Reset content to the fresh shape; the backend-derived status fields
+          // (identity, workspaceLabel, available, needsConsent, warnings,
+          // initError, destination) reflect the workspace, not chat content, and
+          // stay as they are.
+          draft.rawEvents = [];
+          draft.transcript = [];
+          draft.runs = {};
+          draft.activeRunId = null;
+          draft.queuedTurns = [];
+          draft.pendingConsentTurn = null;
+          draft.lastFailedTurn = null;
 
-        return {
-          ...toState(mutation),
-          composerFocusRevision: state.composerFocusRevision + 1,
-        };
-      });
-      return cleared ? OK : refuse(BUSY_ERROR);
+          // Purge this conversation's run routing. No live run exists, so this is
+          // safe, and it keeps the map from growing unbounded across clears.
+          // Iterate a key snapshot; delete from the mutation's own copy.
+          for (const runId of Object.keys(mutation.runToConversation)) {
+            if (mutation.runToConversation[runId] === conversationId) {
+              delete mutation.runToConversation[runId];
+            }
+          }
+
+          // The failure that drove a StatusBar "Attention" is gone. Leave the
+          // monotonic counters and lastActiveConversationId alone.
+          if (mutation.lastFailureConversationId === conversationId) {
+            mutation.lastFailureConversationId = null;
+          }
+
+          return {
+            ...toState(mutation),
+            composerFocusRevision: state.composerFocusRevision + 1,
+          };
+        });
+        return cleared ? OK : refuse(BUSY_ERROR);
+      } finally {
+        // Every path above ends the reset itself. A throw that skipped that (a
+        // store subscriber failing inside set) must not leave the conversation
+        // refusing Send, Retry, New chat and undock until restart.
+        if (get().conversations[conversationId]?.resetting) endResetKeepingView();
+      }
     },
 
     requestComposerFocus() {

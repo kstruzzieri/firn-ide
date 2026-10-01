@@ -2717,6 +2717,25 @@ describe('clearConversation', () => {
     expect(store().runToConversation).toEqual(runs);
   });
 
+  it('never leaves a conversation locked when a store update throws mid-reset', async () => {
+    await idleWithHistory();
+    let thrown = false;
+    const unsubscribe = useGolemStore.subscribe((state) => {
+      if (!thrown && state.conversations[CONV]?.resetting === 'pending') {
+        thrown = true;
+        throw new Error('subscriber failed');
+      }
+    });
+    try {
+      await expect(store().clearConversation(CONV)).rejects.toThrow('subscriber failed');
+    } finally {
+      unsubscribe();
+    }
+    // Otherwise Send, Retry, New chat and undock refuse until restart.
+    expect(conv().resetting).toBeUndefined();
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
+  });
+
   it('starts no turn in the conversation while its reset is in flight', async () => {
     await idleWithHistory();
     const reset = deferred<undefined>();
