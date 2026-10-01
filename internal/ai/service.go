@@ -674,21 +674,23 @@ func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
 }
 
 // pinnedRootGuard admits a path only while root is still the directory pinned
-// names. go-llm v0.3.0 pins a runner to its root directory, so after a
-// replacement a run in flight can keep reading the old directory through its
-// descriptor while the policy's rules describe the new one. The rules are
-// evaluated first and the root checked last, so a replacement still in place
-// when the decision completes denies it, and the next admission rebuilds the
-// runner. A replacement undone within that window (an A-B-A swap) is not
+// names and the policy's rules still describe the repository at its path.
+// go-llm v0.3.0 pins a runner to its root directory, so after a replacement a
+// run in flight can keep reading the old directory through its descriptor
+// while the rules describe another. The rules are evaluated first and both
+// identities checked after, the runner's root and then the repository's, so a
+// one-way replacement of either that lands before the decision completes
+// denies it, and the next admission rebuilds the runner or rereads the rules.
+// A replacement undone within that window (an A-B-A swap, #386) is not
 // detected; that needs rules tied to the directory they were read from.
-// ponytail: one Lstat per guard check; cache per walk if a profile ever shows it.
-func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard) agenttools.ScopeGuard {
+// ponytail: three Lstats per guard check (policy, runner root, repository); cache per walk if a profile ever shows it.
+func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard, rulesCurrent func() bool) agenttools.ScopeGuard {
 	return func(rel string, write bool) error {
 		if err := guard(rel, write); err != nil {
 			return err
 		}
 		current, err := filesystem.Lstat(fsys, root)
-		if err != nil || !os.SameFile(current, pinned) {
+		if err != nil || !os.SameFile(current, pinned) || !rulesCurrent() {
 			return errPolicyDenied
 		}
 		return nil
@@ -866,7 +868,8 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 	if rec == nil {
 		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
 			pinnedRootGuard(s.fs, resolved.ToolRoot, rootInfo,
-				binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel)), s.sessions)
+				binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel),
+				binding.policy.RulesCurrent), s.sessions)
 		if err != nil {
 			return TurnAdmission{}, fmt.Errorf("%w: runner construction: %w", ErrRunFailed, err)
 		}

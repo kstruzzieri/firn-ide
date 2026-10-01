@@ -205,7 +205,7 @@ func TestPinnedRootGuardChecksTheRootAfterTheRules(t *testing.T) {
 		}
 		return nil
 	}
-	guard := pinnedRootGuard(filesystem.NewOS(), root, pinned, replacedWhileEvaluating)
+	guard := pinnedRootGuard(filesystem.NewOS(), root, pinned, replacedWhileEvaluating, func() bool { return true })
 	if err := guard("private.txt", false); err == nil {
 		t.Fatal("a read decided while the root was replaced was allowed")
 	}
@@ -240,9 +240,9 @@ func TestServiceAdmissionReloadsAPolicyReloadSkippedWhileAway(t *testing.T) {
 	if err := os.Rename(away, repo); err != nil {
 		t.Fatal(err)
 	}
-	built := len(guards)
+	built := h.factory.callCount()
 	idleTurn(t, h, id, "project")
-	if len(guards) != built {
+	if h.factory.callCount() != built {
 		t.Fatal("the returning directory's runner was rebuilt; this test needs it reused")
 	}
 	mustAllow(t, guard, "private.txt")
@@ -282,13 +282,60 @@ func TestServiceStaleRulesAfterARepositoryReplacementDenyUntilReread(t *testing.
 	mustDeny(t, guard, "private.txt")
 	mustDeny(t, guard, "src/app.tsx")
 
-	built := len(guards)
+	built := h.factory.callCount()
 	idleTurn(t, h, id, "frontend")
-	if len(guards) != built {
+	if h.factory.callCount() != built {
 		t.Fatal("the moved workspace's runner was rebuilt; this test needs it reused")
 	}
 	mustDeny(t, guard, "private.txt")
 	mustAllow(t, guard, "src/app.tsx")
+}
+
+// The repository is checked last as well. A workspace directory moved into a
+// prepared repository that then replaces the bound one for good, between the
+// rules evaluation and the final checks, leaves the workspace check passing
+// (the directory is back at its path) while the rules describe the old
+// repository.
+func TestPinnedRootGuardChecksTheRepositoryAfterTheRules(t *testing.T) {
+	base := canonical(t, t.TempDir())
+	bound := filepath.Join(base, "bound")
+	workspace := filepath.Join(bound, "frontend")
+	writeFile(t, filepath.Join(workspace, "private.txt"), "secret")
+	loaded, err := os.Lstat(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := os.Lstat(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := filepath.Join(base, "prepared")
+	if err := os.Mkdir(prepared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rulesCurrent := func() bool {
+		now, err := os.Lstat(bound)
+		return err == nil && os.SameFile(now, loaded)
+	}
+	// The old repository's rules allow the read; while they are evaluated the
+	// workspace moves into the prepared repository, which replaces the bound
+	// one for good.
+	swappedWhileEvaluating := func(string, bool) error {
+		for _, step := range [][2]string{
+			{workspace, filepath.Join(prepared, "frontend")},
+			{bound, filepath.Join(base, "old")},
+			{prepared, bound},
+		} {
+			if err := os.Rename(step[0], step[1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	guard := pinnedRootGuard(filesystem.NewOS(), workspace, pinned, swappedWhileEvaluating, rulesCurrent)
+	if err := guard("private.txt", false); err == nil {
+		t.Fatal("a read decided under the replaced repository's rules was allowed")
+	}
 }
 
 // The guard follows the runner's own directory, not the repository's: a

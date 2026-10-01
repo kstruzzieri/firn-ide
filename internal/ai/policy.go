@@ -209,9 +209,15 @@ func (p *ScopePolicy) currentLocked() bool {
 // deny until a reload succeeds; directory changes raise no manifest event, so
 // the next admission reloads.
 func (p *ScopePolicy) ReloadPending() bool {
+	return !p.RulesCurrent()
+}
+
+// RulesCurrent reports whether the published rules describe the directory
+// now at the repository's path.
+func (p *ScopePolicy) RulesCurrent() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return !p.currentLocked()
+	return p.currentLocked()
 }
 
 // Detach makes every issued guard fail closed for all file paths until Attach.
