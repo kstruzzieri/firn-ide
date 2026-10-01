@@ -1161,7 +1161,7 @@ func (s *Service) resetConversation(id ConversationIdentity) error {
 	defer conv.mu.Unlock()
 	s.dropExpiredChallengeLocked(conv)
 	if conv.state != stateIdle {
-		return fmt.Errorf("%w: conversation is %s", ErrRequestRejected, conv.state)
+		return fmt.Errorf("%w: conversation is %s", ErrConversationBusy, conv.state)
 	}
 	// Delete also advances the conversation's generation, so the next opencode
 	// request carries a new x-opencode-session value (sessionHeaderID).

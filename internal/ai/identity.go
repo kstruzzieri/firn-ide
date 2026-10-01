@@ -25,6 +25,11 @@ var ErrWorkspaceUnavailable = errors.New("golem workspace unavailable")
 // never the text.
 var ErrRequestRejected = errors.New("golem request rejected")
 
+// ErrConversationBusy reports a request a conversation refuses only because
+// it is not idle (a run, a cancellation, a pending consent or an admission is
+// in flight). It clears on its own, unlike a stale or invalid request.
+var ErrConversationBusy = errors.New("golem conversation busy")
+
 // binding is one incarnation of a bound repository.
 type binding struct {
 	identity RepositoryIdentity

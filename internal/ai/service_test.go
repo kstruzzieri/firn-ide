@@ -2788,14 +2788,14 @@ func TestServiceResetConversation(t *testing.T) {
 			t.Fatalf("StartTurn: %v", err)
 		}
 		<-entered
-		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "request_rejected" {
-			t.Fatalf("reset while running: code = %q, want request_rejected", code)
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "conversation_busy" {
+			t.Fatalf("reset while running: code = %q, want conversation_busy", code)
 		}
 		if ok, err := h.svc.Cancel(id); !ok || err != nil {
 			t.Fatalf("Cancel = %v, %v", ok, err)
 		}
-		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "request_rejected" {
-			t.Fatalf("reset while canceling: code = %q, want request_rejected", code)
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "conversation_busy" {
+			t.Fatalf("reset while canceling: code = %q, want conversation_busy", code)
 		}
 		assertSnapshotStored(t, h.svc, id.ConversationID, "refused resets")
 		assertGeneration(t, h.svc, id.ConversationID, 0, "refused resets")
@@ -2849,8 +2849,8 @@ func TestServiceResetConversation(t *testing.T) {
 		if err := <-admDone; err != nil {
 			t.Fatalf("admission: %v", err)
 		}
-		if code := publicCode(t, <-resetDone); code != "request_rejected" {
-			t.Fatalf("queued reset: code = %q, want request_rejected", code)
+		if code := publicCode(t, <-resetDone); code != "conversation_busy" {
+			t.Fatalf("queued reset: code = %q, want conversation_busy", code)
 		}
 		assertSnapshotStored(t, h.svc, id.ConversationID, "queued reset")
 		assertGeneration(t, h.svc, id.ConversationID, 0, "queued reset")
@@ -2871,8 +2871,8 @@ func TestServiceResetConversation(t *testing.T) {
 		if adm, err := h.svc.StartTurn(ctx, turnFor(id)); err != nil || adm.State != "needs_consent" {
 			t.Fatalf("challenge turn = %+v, %v", adm, err)
 		}
-		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "request_rejected" {
-			t.Fatalf("reset while consent pending: code = %q, want request_rejected", code)
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "conversation_busy" {
+			t.Fatalf("reset while consent pending: code = %q, want conversation_busy", code)
 		}
 		assertSnapshotStored(t, h.svc, id.ConversationID, "refused reset")
 		assertGeneration(t, h.svc, id.ConversationID, 0, "refused reset")
