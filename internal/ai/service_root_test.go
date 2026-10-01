@@ -211,6 +211,43 @@ func TestPinnedRootGuardChecksTheRootAfterTheRules(t *testing.T) {
 	}
 }
 
+// A reload skipped because the repository directory was away is not lost:
+// the manifest may have changed meanwhile, and nothing else notices when the
+// same directory returns (its runner is reused unchanged), so the next
+// admission reloads.
+func TestServiceAdmissionReloadsAPolicyReloadSkippedWhileAway(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	id, repo := h.bind(t)
+	repo = canonical(t, repo)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths:\n  - private.txt\n")
+	if !h.svc.ReloadPolicy(manifest) {
+		t.Fatal("ReloadPolicy did not take the manifest")
+	}
+	guards := captureRunnerGuards(h)
+	idleTurn(t, h, id, "project")
+	guard := guards[repo]
+	mustDeny(t, guard, "private.txt")
+
+	away := filepath.Join(t.TempDir(), "away")
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(away, "ai-kit.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.ReloadPolicy(manifest) // the watcher's notification lands while it is away
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	built := len(guards)
+	idleTurn(t, h, id, "project")
+	if len(guards) != built {
+		t.Fatal("the returning directory's runner was rebuilt; this test needs it reused")
+	}
+	mustAllow(t, guard, "private.txt")
+}
+
 // The guard follows the runner's own directory, not the repository's: a
 // workspace directory moved unchanged into a replaced repository is still
 // the directory its runner was built on, so a reload from the replacement

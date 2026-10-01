@@ -677,9 +677,10 @@ func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
 // names. go-llm v0.3.0 pins a runner to its root directory, so after a
 // replacement a run in flight can keep reading the old directory through its
 // descriptor while the policy's rules describe the new one. The rules are
-// evaluated first and the root checked last, so any replacement that lands
-// before a decision is complete denies it; the next admission rebuilds the
-// runner.
+// evaluated first and the root checked last, so a replacement still in place
+// when the decision completes denies it, and the next admission rebuilds the
+// runner. A replacement undone within that window (an A-B-A swap) is not
+// detected; that needs rules tied to the directory they were read from.
 // ponytail: one Lstat per guard check; cache per walk if a profile ever shows it.
 func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard) agenttools.ScopeGuard {
 	return func(rel string, write bool) error {
@@ -850,16 +851,19 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		conv.runnerStale = false
 		rec = nil
 	}
-	if rec == nil {
+	if rec == nil || binding.policy.ReloadPending() {
 		// Directory replacement may also replace the manifests without a
 		// watcher notification, including during a failed construction. Every
-		// new runner must enforce the current rules, even on that retry.
-		// The panel learns of new warnings only from a status change.
+		// new runner must enforce the current rules, even on that retry, and
+		// a reload skipped while the directory was away runs now that it is
+		// back. The panel learns of new warnings only from a status change.
 		warnings := binding.policy.Warnings()
 		binding.policy.Reload()
 		if !slices.Equal(warnings, binding.policy.Warnings()) {
 			*after = append(*after, func() { s.emit(EventGolemStatusChanged, nil) })
 		}
+	}
+	if rec == nil {
 		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
 			pinnedRootGuard(s.fs, resolved.ToolRoot, rootInfo,
 				binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel)), s.sessions)

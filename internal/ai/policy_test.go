@@ -386,6 +386,20 @@ func TestScopePolicyReloadKeepsRulesWhileTheRootIsAbsent(t *testing.T) {
 	}
 	mustDeny(t, g, "private.txt")
 
+	// Nor does a file standing at the repository's path while it is away.
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "placeholder")
+	p.Reload()
+	if err := os.Remove(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	mustDeny(t, g, "private.txt")
+
 	// A manifest actually removed from a present directory still clears them.
 	if err := os.Remove(filepath.Join(repo, "ai-kit.yaml")); err != nil {
 		t.Fatal(err)

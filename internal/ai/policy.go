@@ -125,6 +125,7 @@ type ScopePolicy struct {
 
 	mu         sync.Mutex
 	detached   bool
+	pending    bool // a reload found the repository directory away and kept the old rules
 	additive   [][]string
 	warnings   []PolicyWarning
 	protected  map[string]struct{} // lowercased slash repo-relative exact denies; never reloaded
@@ -148,28 +149,42 @@ func (p *ScopePolicy) Reload() {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
 	rules, warnings, ok := p.loadPresent()
-	if !ok {
-		return
-	}
 	p.mu.Lock()
-	p.additive = rules
-	p.warnings = warnings
+	p.pending = !ok
+	if ok {
+		p.additive = rules
+		p.warnings = warnings
+	}
 	p.mu.Unlock()
 }
 
-// loadPresent reads the manifests, reporting !ok when the repository directory
-// is absent before or after the read. Its manifests are then unreadable, not
-// removed, and the same directory can return with them, so the caller keeps the
-// rules it has. The caller holds reloadMu.
+// loadPresent reads the manifests, reporting !ok when no directory stands at
+// the repository's path before or after the read. Its manifests are then
+// unreadable, not removed, and the same directory can return with them, so the
+// caller keeps the rules it has and marks a reload pending. The caller holds
+// reloadMu.
 func (p *ScopePolicy) loadPresent() ([][]string, []PolicyWarning, bool) {
-	if _, err := filesystem.Lstat(p.fsys, p.repoRoot); err != nil {
+	present := func() bool {
+		info, err := filesystem.Lstat(p.fsys, p.repoRoot)
+		return err == nil && info.IsDir()
+	}
+	if !present() {
 		return nil, nil, false
 	}
 	rules, warnings := loadManifests(p.fsys, p.repoRoot)
-	if _, err := filesystem.Lstat(p.fsys, p.repoRoot); err != nil {
+	if !present() {
 		return nil, nil, false
 	}
 	return rules, warnings, true
+}
+
+// ReloadPending reports whether a reload kept the old rules because the
+// repository directory was away. Nothing else notices when it returns, so the
+// next admission reloads.
+func (p *ScopePolicy) ReloadPending() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pending
 }
 
 // Detach makes every issued guard fail closed for all file paths until Attach.
@@ -186,6 +201,7 @@ func (p *ScopePolicy) Attach() {
 	defer p.reloadMu.Unlock()
 	rules, warnings, ok := p.loadPresent()
 	p.mu.Lock()
+	p.pending = !ok
 	if ok {
 		p.additive = rules
 		p.warnings = warnings
