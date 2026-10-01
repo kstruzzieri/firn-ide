@@ -673,17 +673,22 @@ func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-// pinnedRootGuard admits a path only while root is still the directory pinned
-// names and the policy's rules still describe the repository at its path.
-// go-llm v0.3.0 pins a runner to its root directory, so after a replacement a
-// run in flight can keep reading the old directory through its descriptor
-// while the rules describe another. The rules are evaluated first and both
-// identities checked after, the runner's root and then the repository's, so a
-// one-way replacement of either that lands before the decision completes
-// denies it, and the next admission rebuilds the runner or rereads the rules.
-// A replacement undone within that window (an A-B-A swap, #386) is not
-// detected; that needs rules tied to the directory they were read from.
-// ponytail: three Lstats per guard check (policy, runner root, repository); cache per walk if a profile ever shows it.
+// pinnedRootGuard admits a path the policy's rules allow only if, checked
+// afterwards, root is still the directory pinned names and the rules still
+// describe the repository at its path. go-llm v0.3.0 pins a runner to its root
+// directory, so after a replacement a run in flight can keep reading the old
+// directory through its descriptor while the rules describe another; a
+// replacement in place when these checks run denies the read, and the next
+// admission rebuilds the runner or rereads the rules.
+//
+// The checks see the filesystem only at the instant each runs. A rename or
+// replacement that lands after one of them, including after the guard returns
+// and before go-llm opens the file through its descriptor, is not seen, and
+// neither is one undone within the window (A-B-A). Closing that needs go-llm
+// to check the file it actually opened (kstruzzieri/go-llm#613) and rules tied
+// to the directory they were read from (#386).
+// ponytail: three Lstats per guard check (policy, runner root, repository);
+// cache per walk if a profile ever shows it.
 func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard, rulesCurrent func() bool) agenttools.ScopeGuard {
 	return func(rel string, write bool) error {
 		if err := guard(rel, write); err != nil {
