@@ -314,6 +314,130 @@ func TestScopePolicyReloadUpdatesIssuedGuard(t *testing.T) {
 	}
 }
 
+// Admission reloads under the binding gate's read lock (#379), so two
+// conversations can reload one policy at once. A reload must read and publish
+// as one step, or the reload that read first can publish last and restore the
+// rules the newer reload replaced.
+func TestScopePolicyReloadSerializesReadAndPublish(t *testing.T) {
+	repo := newPolicyRepo(t)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths: []\n")
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	p := LoadScopePolicy(fsys, repo)
+	fsys.blockPath = manifest
+
+	olderDone := make(chan struct{})
+	go func() { p.Reload(); close(olderDone) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the older reload to read the manifest")
+	}
+
+	writeFile(t, manifest, "sensitive_paths:\n  - vault/**\n")
+	newerDone := make(chan struct{})
+	go func() { p.Reload(); close(newerDone) }()
+
+	released := false
+	defer func() {
+		if !released {
+			close(fsys.release)
+		}
+	}()
+	select {
+	case <-newerDone:
+		t.Fatal("a newer reload published while an older manifest read was still in flight")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(fsys.release)
+	released = true
+	for name, done := range map[string]<-chan struct{}{"older": olderDone, "newer": newerDone} {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out waiting for the %s reload", name)
+		}
+	}
+	mustDeny(t, p.Guard(""), "vault/data.txt")
+}
+
+// go-llm v0.3.0 pins a runner to its root directory (#379), so a run can keep
+// reading a replaced repository through the old descriptor. Rules read from
+// the replacement must not govern those reads: a guard issued for one root
+// directory fails closed once the policy reloads from another.
+func TestScopePolicyGuardFailsClosedAfterRootReplacement(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - private.txt\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	pinned := p.Guard("")
+	mustDeny(t, pinned, "private.txt")
+	mustAllow(t, pinned, "main.go")
+
+	if err := os.Rename(repo, repo+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+
+	// The replacement has no manifest, so its rules allow private.txt. The
+	// guard issued for the old directory must allow nothing.
+	mustDeny(t, pinned, "private.txt")
+	mustDeny(t, pinned, "main.go")
+
+	current := p.Guard("")
+	mustAllow(t, current, "private.txt")
+	mustAllow(t, current, "main.go")
+	for _, probe := range floorProbes {
+		mustDeny(t, current, probe)
+	}
+}
+
+// A replacement that lands while the manifests are being read must not leave
+// the old directory's rules labelled as the new directory's.
+func TestScopePolicyReloadRereadsWhenRootChangesMidRead(t *testing.T) {
+	repo := newPolicyRepo(t)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths:\n  - private.txt\n")
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	p := LoadScopePolicy(fsys, repo)
+	fsys.blockPath = manifest
+
+	done := make(chan struct{})
+	go func() { p.Reload(); close(done) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		close(fsys.release)
+		t.Fatal("timed out waiting for the reload to read the manifest")
+	}
+	if err := os.Rename(repo, repo+"-old"); err != nil {
+		close(fsys.release)
+		t.Fatal(err)
+	}
+	writeFile(t, manifest, "sensitive_paths:\n  - other.txt\n")
+	close(fsys.release)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the reload")
+	}
+
+	current := p.Guard("")
+	mustDeny(t, current, "other.txt")
+	mustAllow(t, current, "private.txt")
+}
+
 func TestScopePolicyProtectConfigSource(t *testing.T) {
 	t.Run("invalidInput", func(t *testing.T) {
 		repo := newPolicyRepo(t)

@@ -118,13 +118,23 @@ type ScopePolicy struct {
 	fsys     filesystem.FileSystem
 	repoRoot string
 
+	// reloadMu makes each manifest read and its publication one step, so the
+	// reload that reads last also publishes last. Admission reloads under the
+	// binding gate's read lock, so reloads of one policy can overlap.
+	reloadMu sync.Mutex
+
 	mu         sync.Mutex
 	detached   bool
 	additive   [][]string
 	warnings   []PolicyWarning
+	root       fs.FileInfo         // the repository directory the additive rules were read from; nil if unknown
 	protected  map[string]struct{} // lowercased slash repo-relative exact denies; never reloaded
 	identities []fs.FileInfo       // protected config sources; hard-link aliases share identity
 }
+
+// maxRootRereads bounds how often a reload restarts because the repository
+// directory was replaced while its manifests were being read.
+const maxRootRereads = 3
 
 // LoadScopePolicy builds the policy for repoRoot and performs the initial
 // bounded manifest load. Load failure of any kind retains the floor.
@@ -140,11 +150,44 @@ func LoadScopePolicy(fsys filesystem.FileSystem, repoRoot string) *ScopePolicy {
 // Reload re-reads the manifests and replaces the additive rules and warnings.
 // The floor and protected config sources are untouched.
 func (p *ScopePolicy) Reload() {
-	rules, warnings := loadManifests(p.fsys, p.repoRoot)
+	p.reloadMu.Lock()
+	defer p.reloadMu.Unlock()
+	rules, warnings, root := p.loadCurrent()
 	p.mu.Lock()
 	p.additive = rules
 	p.warnings = warnings
+	p.root = root
 	p.mu.Unlock()
+}
+
+// loadCurrent reads the manifests together with the identity of the
+// directory they came from. A replacement that lands mid-read restarts the
+// read; one that keeps landing leaves the identity unknown, which fails every
+// guard closed until the next reload. The caller holds reloadMu.
+func (p *ScopePolicy) loadCurrent() ([][]string, []PolicyWarning, fs.FileInfo) {
+	for attempt := 1; ; attempt++ {
+		before := p.rootIdentity()
+		rules, warnings := loadManifests(p.fsys, p.repoRoot)
+		after := p.rootIdentity()
+		if os.SameFile(before, after) {
+			return rules, warnings, after
+		}
+		if attempt == maxRootRereads {
+			return rules, warnings, nil
+		}
+	}
+}
+
+// rootIdentity is the directory now at repoRoot, nil when it cannot be read.
+func (p *ScopePolicy) rootIdentity() fs.FileInfo {
+	info, err := filesystem.Lstat(p.fsys, p.repoRoot)
+	if err != nil {
+		return nil
+	}
+	// Windows loads a file ID lazily, by path, on the first SameFile; load it
+	// now so the identity names this directory, not whatever replaces it.
+	_ = os.SameFile(info, info)
+	return info
 }
 
 // Detach makes every issued guard fail closed for all file paths until Attach.
@@ -157,10 +200,13 @@ func (p *ScopePolicy) Detach() {
 // Attach performs a bounded manifest reload, then restores ordinary
 // floor-plus-additive evaluation.
 func (p *ScopePolicy) Attach() {
-	rules, warnings := loadManifests(p.fsys, p.repoRoot)
+	p.reloadMu.Lock()
+	defer p.reloadMu.Unlock()
+	rules, warnings, root := p.loadCurrent()
 	p.mu.Lock()
 	p.additive = rules
 	p.warnings = warnings
+	p.root = root
 	p.detached = false
 	p.mu.Unlock()
 }
@@ -268,18 +314,27 @@ func (p *ScopePolicy) Guard(workspaceRel string, alternateRels ...string) agentt
 		seen[key] = struct{}{}
 		prefixes = append(prefixes, prefix)
 	}
+	// The guard serves a runner pinned to the directory at repoRoot now. Once
+	// the policy reloads from a replacement, that runner may still be reading
+	// the old directory, which the new rules do not describe.
+	p.mu.Lock()
+	issued := p.root
+	p.mu.Unlock()
 	return func(rel string, _ bool) error {
-		return p.check(prefixes, workspaceRel, rel)
+		return p.check(prefixes, workspaceRel, rel, issued)
 	}
 }
 
 // check evaluates one candidate. Runs under the policy mutex: matching is
 // cheap and the lock keeps Reload/Detach/ProtectConfigSource race-free.
-func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string) error {
+func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string, issued fs.FileInfo) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.detached {
 		return errPolicyDetached
+	}
+	if !os.SameFile(p.root, issued) {
+		return errPolicyDenied // rules from another directory, or none known: fail closed
 	}
 	candidates := make([][]string, 0, len(prefixes))
 	for _, prefix := range prefixes {
