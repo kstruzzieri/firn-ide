@@ -2854,6 +2854,36 @@ describe('clearConversation', () => {
     expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).message).toBe('first');
   });
 
+  it('still sends the held turn when a store update throws while the refusal releases it', async () => {
+    await idleWithStagedTurn();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    uuidQueue = [RUN_B];
+    const cleared = store().clearConversation(CONV);
+    rebindAvailable();
+    await flush();
+    expect(conv().resetting).toBe('held');
+
+    // The release commits the dispatch (an admitting run) before subscribers
+    // run; one failing must not leave that run waiting on a request never sent.
+    let thrown = false;
+    const unsubscribe = useGolemStore.subscribe((state) => {
+      if (!thrown && state.conversations[CONV]?.resetting === undefined) {
+        thrown = true;
+        throw new Error('subscriber failed');
+      }
+    });
+    try {
+      reset.reject(new Error('The Golem request is invalid or stale.'));
+      await expect(cleared).rejects.toThrow('subscriber failed');
+    } finally {
+      unsubscribe();
+    }
+    await flush();
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).message).toBe('first');
+  });
+
   it('leaves a queued turn it never held where it was when the reset is refused', async () => {
     hydrateReady();
     uuidQueue = [RUN_A, RUN_B];

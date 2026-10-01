@@ -1269,16 +1269,21 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       // it would have then; a turn already idle stays idle.
       const endResetKeepingView = () => {
         let dispatch: PendingDispatch | null = null;
-        set((state) => {
-          const mutation = beginMutation(state);
-          const draft = draftConversation(mutation, conversationId);
-          if (!draft?.resetting) return state;
-          const held = draft.resetting === 'held';
-          delete draft.resetting;
-          if (held) dispatch = dispatchQueued(mutation, conversationId, state);
-          return toState(mutation);
-        });
-        runDispatch(dispatch);
+        try {
+          set((state) => {
+            const mutation = beginMutation(state);
+            const draft = draftConversation(mutation, conversationId);
+            if (!draft?.resetting) return state;
+            const held = draft.resetting === 'held';
+            delete draft.resetting;
+            if (held) dispatch = dispatchQueued(mutation, conversationId, state);
+            return toState(mutation);
+          });
+        } finally {
+          // set commits before it notifies subscribers, so a subscriber that
+          // throws must not strand the admitting run the dispatch installed.
+          runDispatch(dispatch);
+        }
       };
 
       try {
