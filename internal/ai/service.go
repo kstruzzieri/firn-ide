@@ -1016,20 +1016,26 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 		}
 		return refusal
 	})
+	logged := err
 	if sinkRefused != nil {
 		// Golem cancels the run on a sink refusal and joins the refusal with
 		// the orchestrator's error, which a provider may report as that
 		// cancellation (Ollama does). The refusal is the cause: without this a
-		// refused run would classify as a user cancel, unlogged.
+		// refused run would classify as a user cancel, unlogged. The joined
+		// error is still what gets logged, so a real provider failure behind
+		// the refusal stays visible.
 		err = sinkRefused
+		if logged == nil {
+			logged = sinkRefused
+		}
 	}
 	if err != nil && !isCancellationErr(err) {
 		// Host-only diagnostics. A Save refused by the session caps is logged
 		// distinctly; its public presentation stays the fixed failure message.
 		if errors.Is(err, ErrSessionLimit) {
-			log.Printf("ai: golem run %s failed: session memory limit: %v", turn.RunID, err)
+			log.Printf("ai: golem run %s failed: session memory limit: %v", turn.RunID, logged)
 		} else {
-			log.Printf("ai: golem run %s failed: %v", turn.RunID, err)
+			log.Printf("ai: golem run %s failed: %v", turn.RunID, logged)
 		}
 	}
 

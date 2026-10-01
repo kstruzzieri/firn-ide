@@ -2201,6 +2201,38 @@ func TestServiceSinkRefusalThroughGolemRuntime(t *testing.T) {
 	}
 }
 
+// The refusal decides how a run is classified, but golem joins it with the
+// run's own error, and that error can be a real failure of its own. The host
+// log keeps it, so the refusal never hides why the provider stream broke.
+func TestServiceSinkRefusalKeepsTheRunErrorInTheHostLog(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+	upstream := errors.New("upstream stream reset by peer")
+	h.factory.setRun(func(_ context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		payload, _ := json.Marshal(map[string]string{"text": strings.Repeat("x", maxAssistantOutputBytes+1)})
+		refusal := sink(golem.Event{ThreadID: turn.ThreadID, RunID: turn.RunID, Seq: 1, Type: "message.delta", Payload: payload})
+		if refusal == nil {
+			t.Error("the over-limit delta was not refused")
+		}
+		return agent.Result{}, errors.Join(upstream, refusal)
+	})
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatal(err)
+	}
+	drainRuns(t, h.svc)
+	got := logs.String()
+	if !strings.Contains(got, ErrAssistantOutputLimit.Error()) || !strings.Contains(got, upstream.Error()) {
+		t.Fatalf("host log = %q, want both the refusal and the run's own error", got)
+	}
+}
+
 // TestServiceRejectsMalformedAssistantDelta covers the defensive branch: a
 // message.delta whose payload does not decode cancels the run and never relays
 // the event, surfacing only the fixed public failure.
