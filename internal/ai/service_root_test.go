@@ -248,6 +248,49 @@ func TestServiceAdmissionReloadsAPolicyReloadSkippedWhileAway(t *testing.T) {
 	mustAllow(t, guard, "private.txt")
 }
 
+// A repository replaced for good keeps the runner of a workspace directory
+// moved into it unchanged, but the rules it holds were read from the old
+// repository. Its guard denies until they are reread, and the next admission
+// rereads them, after which the same runner decides under the new rules.
+func TestServiceStaleRulesAfterARepositoryReplacementDenyUntilReread(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	id, repo := h.bind(t)
+	repo = canonical(t, repo)
+	guards := captureRunnerGuards(h)
+	idleTurn(t, h, id, "frontend")
+	frontend := filepath.Join(repo, "frontend")
+	guard := guards[frontend]
+	if guard == nil {
+		t.Fatalf("no frontend runner built (built: %v)", guards)
+	}
+	mustAllow(t, guard, "private.txt")
+
+	replacement := filepath.Join(t.TempDir(), "replacement")
+	writeFile(t, filepath.Join(replacement, "go.mod"), "module x\n")
+	writeFile(t, filepath.Join(replacement, "ai-kit.yaml"), "sensitive_paths:\n  - frontend/private.txt\n")
+	old := filepath.Join(t.TempDir(), "old-repo")
+	if err := os.Rename(repo, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(old, "frontend"), frontend); err != nil {
+		t.Fatal(err)
+	}
+	// The rules still describe the old repository.
+	mustDeny(t, guard, "private.txt")
+	mustDeny(t, guard, "src/app.tsx")
+
+	built := len(guards)
+	idleTurn(t, h, id, "frontend")
+	if len(guards) != built {
+		t.Fatal("the moved workspace's runner was rebuilt; this test needs it reused")
+	}
+	mustDeny(t, guard, "private.txt")
+	mustAllow(t, guard, "src/app.tsx")
+}
+
 // The guard follows the runner's own directory, not the repository's: a
 // workspace directory moved unchanged into a replaced repository is still
 // the directory its runner was built on, so a reload from the replacement
