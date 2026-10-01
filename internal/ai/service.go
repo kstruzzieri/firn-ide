@@ -665,9 +665,28 @@ func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
 		return nil, fmt.Errorf("%w: workspace root is not a directory", ErrWorkspaceUnavailable)
 	}
 	// Windows loads a file ID lazily, by path, on the first SameFile; load it
-	// now so this identity names the directory sampled here.
-	_ = os.SameFile(info, info)
+	// now so this identity names the directory sampled here. A load that fails
+	// would leave it to name whatever is at the path later, so refuse it.
+	if !os.SameFile(info, info) {
+		return nil, fmt.Errorf("%w: workspace root identity is unavailable", ErrWorkspaceUnavailable)
+	}
 	return info, nil
+}
+
+// pinnedRootGuard admits a path only while root is still the directory pinned
+// names. go-llm v0.3.0 pins a runner to its root directory, so after a
+// replacement a run in flight can keep reading the old directory through its
+// descriptor while the policy's rules describe the new one; from then on the
+// runner may read nothing, and the next admission rebuilds it.
+// ponytail: one Lstat per guard check; cache per walk if a profile ever shows it.
+func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard) agenttools.ScopeGuard {
+	return func(rel string, write bool) error {
+		current, err := filesystem.Lstat(fsys, root)
+		if err != nil || !os.SameFile(current, pinned) {
+			return errPolicyDenied
+		}
+		return guard(rel, write)
+	}
 }
 
 func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, after *[]func()) (TurnAdmission, error) {
@@ -837,7 +856,8 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 			*after = append(*after, func() { s.emit(EventGolemStatusChanged, nil) })
 		}
 		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
-			binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel), s.sessions)
+			pinnedRootGuard(s.fs, resolved.ToolRoot, rootInfo,
+				binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel)), s.sessions)
 		if err != nil {
 			return TurnAdmission{}, fmt.Errorf("%w: runner construction: %w", ErrRunFailed, err)
 		}
@@ -1139,7 +1159,7 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 // It takes StartTurn's admission locks in StartTurn's order (the bindingGate
 // read lock, then, after the same identity resolution, the conversation mutex)
 // and acts only on an idle conversation: pending consent, starting, running
-// and canceling all refuse with StartTurn's busy request_rejected. That
+// and canceling all refuse with ErrConversationBusy (conversation_busy). That
 // refusal is what keeps cleared history from coming back: runTurn restores
 // idle only after Runner.Run returns, so a finishing run's Save has already
 // landed, and golem reloads the store at the start of every run, so the next

@@ -81,8 +81,8 @@ func TestServiceRebuildsRunnerAfterWorkspaceRootReplacement(t *testing.T) {
 			if len(runners) != 2 {
 				t.Fatalf("replaced workspace constructed %d runners, want 2", len(runners))
 			}
-			// The runner pinned to the old directory holds a runtime, a
-			// transport and that directory's descriptor: it must be released.
+			// The runner built for the old directory owns a golem runtime: it
+			// must be closed, not left cached beside its replacement.
 			if _, err := runners[0].Run(context.Background(), golem.Turn{RunID: "closed", Message: "hello"}, func(golem.Event) error { return nil }); !errors.Is(err, golem.ErrClosed) {
 				t.Fatalf("replaced runner Run = %v, want golem.ErrClosed", err)
 			}
@@ -129,6 +129,86 @@ func TestServiceRejectsUnavailableCachedRunnerRoot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// captureRunnerGuards records the guard each constructed runner receives,
+// keyed by the runner's root, while the harness's own factory builds it.
+func captureRunnerGuards(h *svcHarness) map[string]agenttools.ScopeGuard {
+	guards := map[string]agenttools.ScopeGuard{}
+	build := h.svc.newRunner
+	h.svc.newRunner = func(ctx context.Context, root string, target providerTarget, guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
+		guards[root] = guard
+		return build(ctx, root, target, guard, sessions)
+	}
+	return guards
+}
+
+func idleTurn(t *testing.T, h *svcHarness, id RepositoryIdentity, workspaceID string) {
+	t.Helper()
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(id, workspaceID))); err != nil {
+		t.Fatalf("StartTurn(%s): %v", workspaceID, err)
+	}
+	drainRuns(t, h.svc)
+}
+
+// go-llm v0.3.0 pins a runner to its root directory, so a run in flight can
+// keep reading a replaced workspace through the old descriptor while the
+// rules describe the replacement. A runner's guard therefore admits nothing
+// once the directory at its root is not the one the runner was built on,
+// whether the repository or only the focused workspace was replaced.
+func TestServiceRunnerGuardFailsClosedOnceItsRootIsReplaced(t *testing.T) {
+	for _, workspaceID := range []string{"project", "frontend"} {
+		t.Run(workspaceID, func(t *testing.T) {
+			h := newServiceHarness(t, "http://127.0.0.1:1")
+			id, repo := h.bind(t)
+			guards := captureRunnerGuards(h)
+			idleTurn(t, h, id, workspaceID)
+			root := canonical(t, repo)
+			if workspaceID == "frontend" {
+				root = filepath.Join(root, "frontend")
+			}
+			guard := guards[root]
+			if guard == nil {
+				t.Fatalf("no runner built at %s (built: %v)", root, guards)
+			}
+			mustAllow(t, guard, "main.go")
+
+			if err := os.Rename(root, filepath.Join(t.TempDir(), "old-root")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(root, "main.go"), "package main\n")
+			mustDeny(t, guard, "main.go")
+		})
+	}
+}
+
+// The guard follows the runner's own directory, not the repository's: a
+// workspace directory moved unchanged into a replaced repository is still
+// the directory its runner was built on, so a reload from the replacement
+// must not leave that runner denying every read.
+func TestServiceRunnerSurvivesItsRepositoryBeingReplacedAroundIt(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	id, repo := h.bind(t)
+	guards := captureRunnerGuards(h)
+	idleTurn(t, h, id, "frontend")
+	frontend := filepath.Join(canonical(t, repo), "frontend")
+	guard := guards[frontend]
+	if guard == nil {
+		t.Fatalf("no frontend runner built (built: %v)", guards)
+	}
+
+	old := filepath.Join(t.TempDir(), "old-repo")
+	if err := os.Rename(repo, old); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "go.mod"), "module x\n")
+	if err := os.Rename(filepath.Join(old, "frontend"), frontend); err != nil {
+		t.Fatal(err)
+	}
+	// The project workspace's first runner reloads the policy from the new
+	// repository directory.
+	idleTurn(t, h, id, "project")
+	mustAllow(t, guard, "src/app.tsx")
 }
 
 // Swapping a parent of the repository for a symlink leaves an ordinary
