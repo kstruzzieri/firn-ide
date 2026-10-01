@@ -125,7 +125,7 @@ type ScopePolicy struct {
 
 	mu         sync.Mutex
 	detached   bool
-	pending    bool // a reload found the repository directory away and kept the old rules
+	pending    bool // the last reload could not read one repository directory start to finish; guards deny
 	additive   [][]string
 	warnings   []PolicyWarning
 	protected  map[string]struct{} // lowercased slash repo-relative exact denies; never reloaded
@@ -158,29 +158,36 @@ func (p *ScopePolicy) Reload() {
 	p.mu.Unlock()
 }
 
-// loadPresent reads the manifests, reporting !ok when no directory stands at
-// the repository's path before or after the read. Its manifests are then
-// unreadable, not removed, and the same directory can return with them, so the
-// caller keeps the rules it has and marks a reload pending. The caller holds
-// reloadMu.
+// loadPresent reads the manifests, reporting !ok unless one directory stands
+// at the repository's path from before the read to after it. Otherwise the
+// rules read may not describe the directory there now (it was away, is not a
+// directory, or was replaced mid-read), so the caller publishes nothing and
+// marks a reload pending. A replacement undone within the read (A-B-A) is not
+// detected. The caller holds reloadMu.
 func (p *ScopePolicy) loadPresent() ([][]string, []PolicyWarning, bool) {
-	present := func() bool {
+	directory := func() fs.FileInfo {
 		info, err := filesystem.Lstat(p.fsys, p.repoRoot)
-		return err == nil && info.IsDir()
+		// Windows loads a file ID lazily, by path; SameFile on itself loads it
+		// now, and fails if it cannot.
+		if err != nil || !info.IsDir() || !os.SameFile(info, info) {
+			return nil
+		}
+		return info
 	}
-	if !present() {
+	before := directory()
+	if before == nil {
 		return nil, nil, false
 	}
 	rules, warnings := loadManifests(p.fsys, p.repoRoot)
-	if !present() {
+	if after := directory(); after == nil || !os.SameFile(before, after) {
 		return nil, nil, false
 	}
 	return rules, warnings, true
 }
 
-// ReloadPending reports whether a reload kept the old rules because the
-// repository directory was away. Nothing else notices when it returns, so the
-// next admission reloads.
+// ReloadPending reports whether the last reload could not read one repository
+// directory start to finish. Guards deny until a reload can; nothing else
+// notices when the directory settles, so the next admission reloads.
 func (p *ScopePolicy) ReloadPending() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -325,6 +332,9 @@ func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string) error
 	defer p.mu.Unlock()
 	if p.detached {
 		return errPolicyDetached
+	}
+	if p.pending {
+		return errPolicyDenied // the rules may not describe the directory now at the root
 	}
 	candidates := make([][]string, 0, len(prefixes))
 	for _, prefix := range prefixes {
