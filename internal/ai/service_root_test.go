@@ -35,10 +35,13 @@ func TestServiceRebuildsRunnerAfterWorkspaceRootReplacement(t *testing.T) {
 				scriptedToolCall("protected", "read_file", `{"path":"private.txt"}`),
 				{Content: "third answer"},
 			}}
-			constructed := 0
+			var runners []Runner
 			h.svc.newRunner = func(ctx context.Context, root string, target providerTarget, guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
-				constructed++
-				return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+				r, err := newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+				if err == nil {
+					runners = append(runners, r)
+				}
+				return r, err
 			}
 			run := func(message string) {
 				t.Helper()
@@ -55,8 +58,8 @@ func TestServiceRebuildsRunnerAfterWorkspaceRootReplacement(t *testing.T) {
 			assertLastToolObservation(t, backend, "initial", "original contents")
 			run("same directory")
 			assertLastToolObservation(t, backend, "unchanged", "original contents")
-			if constructed != 1 {
-				t.Fatalf("unchanged workspace constructed %d runners, want 1", constructed)
+			if len(runners) != 1 {
+				t.Fatalf("unchanged workspace constructed %d runners, want 1", len(runners))
 			}
 
 			if err := os.Rename(root, filepath.Join(t.TempDir(), "old-root")); err != nil {
@@ -75,8 +78,13 @@ func TestServiceRebuildsRunnerAfterWorkspaceRootReplacement(t *testing.T) {
 			run("replacement question")
 			assertLastToolObservation(t, backend, "replacement", "replacement contents")
 			assertLastToolObservation(t, backend, "protected", "path denied by workspace policy")
-			if constructed != 2 {
-				t.Fatalf("replaced workspace constructed %d runners, want 2", constructed)
+			if len(runners) != 2 {
+				t.Fatalf("replaced workspace constructed %d runners, want 2", len(runners))
+			}
+			// The runner pinned to the old directory holds a runtime, a
+			// transport and that directory's descriptor: it must be released.
+			if _, err := runners[0].Run(context.Background(), golem.Turn{RunID: "closed", Message: "hello"}, func(golem.Event) error { return nil }); !errors.Is(err, golem.ErrClosed) {
+				t.Fatalf("replaced runner Run = %v, want golem.ErrClosed", err)
 			}
 			reqs := backend.recorded()
 			foundHistory := false
@@ -120,6 +128,44 @@ func TestServiceRejectsUnavailableCachedRunnerRoot(t *testing.T) {
 				t.Fatalf("StartTurn(%s root) code = %q, want workspace_unavailable", kind, code)
 			}
 		})
+	}
+}
+
+// Swapping a parent of the repository for a symlink leaves an ordinary
+// directory at the bound path, so only the canonical-path check sees it.
+// Without that check the rebuilt runner would root itself, through the
+// symlink, in a directory outside the repository the user bound.
+func TestServiceRejectsRootBehindAReplacedParentSymlink(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	ctx := context.Background()
+	base := canonical(t, t.TempDir())
+	parent := filepath.Join(base, "parent")
+	repo := filepath.Join(parent, "repo")
+	writeFile(t, filepath.Join(repo, "go.mod"), "module x\n")
+	id, _, err := h.svc.BindRepository(repo)
+	if err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	if _, err := h.svc.StartTurn(ctx, turnFor(runIdentityFor(id, "project"))); err != nil {
+		t.Fatalf("first StartTurn: %v", err)
+	}
+	drainRuns(t, h.svc)
+
+	elsewhere := filepath.Join(base, "elsewhere")
+	writeFile(t, filepath.Join(elsewhere, "repo", "go.mod"), "module y\n")
+	if err := os.Rename(parent, filepath.Join(base, "parent-old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, parent); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	constructed := h.factory.callCount()
+	_, err = h.svc.StartTurn(ctx, turnFor(runIdentityFor(id, "project")))
+	if code := publicCode(t, err); code != "workspace_unavailable" {
+		t.Fatalf("StartTurn behind a symlinked parent: code = %q, want workspace_unavailable", code)
+	}
+	if got := h.factory.callCount(); got != constructed {
+		t.Fatalf("constructed %d runner(s) outside the bound repository", got-constructed)
 	}
 }
 

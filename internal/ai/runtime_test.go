@@ -411,6 +411,73 @@ func TestSessionHeaderIDFormula(t *testing.T) {
 	}
 }
 
+// TestSessionHeaderIDFormula checks the SessionID the runner hands the
+// provider. This checks the wire: go-llm's openai-compat client must put that
+// blinded value in the x-opencode-session header of the real request to
+// opencode, never the raw thread id. The transport dials an in-process TLS
+// server while the request URL stays https://opencode.ai.
+func TestOpencodeSessionHeaderReachesTheWireBlinded(t *testing.T) {
+	headers := make(chan http.Header, 4)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			headers <- r.Header.Clone()
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"model":"big-coder","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"model":"big-coder","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	endpoint, _, err := NormalizeEndpoint("https://opencode.ai/zen/v1")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	tgt := testTarget("zen", "big-coder")
+	tgt.apiFormat = "openai-compat"
+	tgt.destination.Endpoint = endpoint
+	tgt.destination.Classification = "remote"
+	backend, transport, err := buildProvider(tgt, "Firn/test")
+	if err != nil {
+		t.Fatalf("buildProvider: %v", err)
+	}
+	// Every dial reaches the test server; its certificate is verified under
+	// the name it was issued for, since the request host stays opencode.ai.
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	transport.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	transport.TLSClientConfig.ServerName = "example.com"
+	runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), tgt, nil, NewMemorySessionStore(), backend, transport, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+
+	thread := ConversationID("repo-key-a", "project")
+	var events []golem.Event
+	if _, err := runner.Run(context.Background(), golem.Turn{ThreadID: thread, RunID: "run-0", Message: "hi"}, collectSink(&events)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	mac := hmac.New(sha256.New, sessionHeaderKey)
+	mac.Write([]byte(thread))
+	mac.Write([]byte{0})
+	mac.Write(binary.BigEndian.AppendUint64(nil, 0))
+	want := "firn-" + hex.EncodeToString(mac.Sum(nil))
+	select {
+	case h := <-headers:
+		if got := h.Get("X-Opencode-Session"); got != want {
+			t.Fatalf("x-opencode-session on the wire = %q, want the blinded %q", got, want)
+		}
+		if got := h.Get("User-Agent"); got != "Firn/test" {
+			t.Fatalf("User-Agent on the wire = %q, want Firn/test", got)
+		}
+	default:
+		t.Fatal("no chat request reached the opencode endpoint")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // B4.3 — runtime contracts
 // ---------------------------------------------------------------------------

@@ -398,8 +398,9 @@ func TestMemorySessionStoreCASCreateAndUpdateRevisions(t *testing.T) {
 
 // TestMemorySessionStoreDelete pins the store's one reclamation path (#361):
 // Delete drops the snapshot and its revision together and returns its bytes to
-// the store budget, an absent ID is a no-op, and a deleted ID is recreated by a
-// revision-0 save exactly as if it had never been stored.
+// the store budget, an absent ID changes no stored state but still advances its
+// generation, and a deleted ID is recreated by a revision-0 save exactly as if
+// it had never been stored.
 func TestMemorySessionStoreDelete(t *testing.T) {
 	s := NewMemorySessionStore()
 	ctx := context.Background()
@@ -418,11 +419,19 @@ func TestMemorySessionStoreDelete(t *testing.T) {
 		t.Fatalf("total after Delete = %d, want %d (only b's bytes)", s.total, kept)
 	}
 
-	// Absent IDs, including the one just deleted, are no-ops.
+	// Absent IDs, including the one just deleted, change no stored state. They
+	// still advance the generation: a New chat after an opencode turn that
+	// failed before saving must still start a new opencode session.
 	s.Delete("a")
 	s.Delete("never-stored")
 	if s.total != kept || len(s.snaps) != 1 || len(s.revs) != 1 {
 		t.Fatalf("absent Delete changed the store: total = %d, snaps = %d, revs = %d", s.total, len(s.snaps), len(s.revs))
+	}
+	if got := s.Generation("never-stored"); got != 1 {
+		t.Fatalf("Generation(never-stored) after Delete = %d, want 1", got)
+	}
+	if got := s.Generation("a"); got != 2 {
+		t.Fatalf("Generation(a) after two Deletes = %d, want 2", got)
 	}
 
 	mustSave(t, s, convOfSize("a", 10))
