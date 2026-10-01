@@ -115,6 +115,31 @@ func TestReachableHopDroppedIsLogged(t *testing.T) {
 	}
 }
 
+// A hop whose model names a provider the config does not define is dropped
+// like an uncanonicalizable one, and logged the same way, so the gap the
+// consent screens cannot show stays visible in the host log.
+func TestReachableUnknownProviderHopIsLogged(t *testing.T) {
+	cfg := reachableFixtureConfig()
+	fb := cfg.Models["agent-fb"]
+	fb.Provider = "ghost"
+	cfg.Models["agent-fb"] = fb
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
+	got := reachableDestinations(cfg)
+	for _, d := range got {
+		if d.Destination.Provider == "ghost" {
+			t.Fatalf("unknown provider hop must be dropped: %+v", got)
+		}
+	}
+	if out := logs.String(); !strings.Contains(out, "reachable hop dropped") || !strings.Contains(out, `"ghost"`) {
+		t.Fatalf("log = %q, want the drop message naming the provider", out)
+	}
+}
+
 func TestRenderHop(t *testing.T) {
 	if got := renderHop(ReachableHop{UseCase: "agent", Source: "agent"}); got != "agent" {
 		t.Fatalf("direct: %q", got)

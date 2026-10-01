@@ -64,6 +64,7 @@ func reachableDestinations(cfg *config.Config) []ReachableDestination {
 	add := func(providerName, modelName string, hop ReachableHop) {
 		prov := cfg.Provider(providerName)
 		if prov == nil {
+			log.Printf("ai: reachable hop dropped: provider %q is not configured", providerName)
 			return
 		}
 		endpoint, local, err := NormalizeEndpoint(prov.BaseURL)
