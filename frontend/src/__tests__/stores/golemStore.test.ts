@@ -2724,7 +2724,11 @@ describe('clearConversation', () => {
     uuidQueue = [RUN_B];
 
     const cleared = store().clearConversation(CONV);
-    const busy = { ok: false, reason: 'Golem is still working on the current run.' };
+    // No run exists: the refusal names the reset, not a run.
+    const busy = {
+      ok: false,
+      reason: 'Golem is still starting a new chat. Try again in a moment.',
+    };
     // A turn admitted now would reach a backend conversation about to be
     // deleted, and its prompt would then be wiped from the view.
     expect(store().submitTurn(CONV, 'too soon')).toEqual(busy);
@@ -2777,7 +2781,10 @@ describe('clearConversation', () => {
           : store().removeQueuedTurn(CONV, queued.queueId);
 
       const cleared = store().clearConversation(CONV);
-      expect(changeQueue()).toMatchObject({ ok: false });
+      expect(changeQueue()).toEqual({
+        ok: false,
+        reason: 'Golem is still starting a new chat. Try again in a moment.',
+      });
       expect(conv().queuedTurns).toEqual([queued]);
 
       reset.reject(new Error('Reset refused'));

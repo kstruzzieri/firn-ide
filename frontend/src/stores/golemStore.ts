@@ -89,6 +89,8 @@ const NOT_CONNECTED_ERROR = 'Golem is not connected yet.';
 const STALE_CONVERSATION_ERROR = 'This workspace is no longer open.';
 const EMPTY_MESSAGE_ERROR = 'There is nothing to send.';
 const BUSY_ERROR = 'Golem is still working on the current run.';
+/** A New chat is waiting on its backend reset; no run exists to wait for. */
+export const RESET_IN_FLIGHT_ERROR = 'Golem is still starting a new chat. Try again in a moment.';
 const NO_PENDING_CONSENT_ERROR = 'There is no approval waiting in this conversation.';
 const CONSENT_MISMATCH_ERROR = 'That approval was for a different request.';
 const NOTHING_TO_RETRY_ERROR = 'There is no failed message to retry.';
@@ -804,7 +806,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     const state = get();
     const conversation = state.conversations[conversationId];
     if (!conversation) return NO_CONVERSATION_ERROR;
-    if (conversation.resetting) return BUSY_ERROR;
+    if (conversation.resetting) return RESET_IN_FLIGHT_ERROR;
     if (state.bridgePhase !== 'ready') return NOT_CONNECTED_ERROR;
     if (!sameConversationIdentity(state.hydratedIdentity, conversation.identity)) {
       return STALE_CONVERSATION_ERROR;
@@ -1249,11 +1251,8 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       const { conversations, hydratedIdentity } = get();
       const existing = conversations[conversationId];
       if (!existing) return refuse(NO_CONVERSATION_ERROR);
-      if (
-        existing.activeRunId !== null ||
-        existing.pendingConsentTurn !== null ||
-        existing.resetting
-      ) {
+      if (existing.resetting) return refuse(RESET_IN_FLIGHT_ERROR);
+      if (existing.activeRunId !== null || existing.pendingConsentTurn !== null) {
         return refuse(BUSY_ERROR);
       }
       // The backend resets only within the current binding's epoch. A
@@ -1538,7 +1537,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     updateQueuedTurn(conversationId: string, queueId: string, message: string): GolemActionResult {
       const conversation = get().conversations[conversationId];
       if (!conversation) return refuse(NO_CONVERSATION_ERROR);
-      if (conversation.resetting) return refuse(BUSY_ERROR);
+      if (conversation.resetting) return refuse(RESET_IN_FLIGHT_ERROR);
       if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
         return refuse(NO_QUEUED_TURN_ERROR);
       }
@@ -1561,7 +1560,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     removeQueuedTurn(conversationId: string, queueId: string): GolemActionResult {
       const conversation = get().conversations[conversationId];
       if (!conversation) return refuse(NO_CONVERSATION_ERROR);
-      if (conversation.resetting) return refuse(BUSY_ERROR);
+      if (conversation.resetting) return refuse(RESET_IN_FLIGHT_ERROR);
       if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
         return refuse(NO_QUEUED_TURN_ERROR);
       }

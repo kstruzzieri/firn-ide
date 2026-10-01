@@ -1598,6 +1598,34 @@ describe('GolemPanel cancel and retry', () => {
     expect(mockCancelGolemRun.mock.calls[0][0]).toMatchObject(runIdentity(RUN_A));
   });
 
+  it('disables Retry while New chat is resetting', async () => {
+    hydrate();
+    selectFocused();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    render(<GolemPanel visible />);
+    type('retry me');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().ingestEvent(
+        eventPayload({ seq: 2, type: 'run.failed', payload: { message: 'boom' } })
+      );
+    });
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    // No run exists to wait for; a Retry now would reach a conversation the
+    // reset is deleting.
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
   it('offers Retry as a real button for a failed turn it still holds the request for', async () => {
     hydrate();
     selectFocused();

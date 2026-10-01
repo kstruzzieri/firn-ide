@@ -1,4 +1,8 @@
-import { DEFAULT_GOLEM_WINDOW_STATE, useGolemStore } from '../stores/golemStore';
+import {
+  DEFAULT_GOLEM_WINDOW_STATE,
+  RESET_IN_FLIGHT_ERROR,
+  useGolemStore,
+} from '../stores/golemStore';
 import { useIDEStore } from '../stores/ideStore';
 import { boundedGolemMessage, isRecord, type GolemActionResult } from '../types/golem';
 import {
@@ -91,7 +95,6 @@ const REDOCK_FAILED = 'Golem could not move this conversation back to the main w
 const UNEXPECTED_MESSAGE = 'Golem received an unexpected window message.';
 const PENDING_OVERFLOW = 'Golem received more window messages than it could place.';
 const OUT_OF_ORDER = 'Golem could not place a window message in the window lifecycle.';
-const RESET_IN_FLIGHT = 'Golem is still starting a new chat. Try again in a moment.';
 
 // ── owner state ──────────────────────────────────────────────────────────────
 
@@ -744,7 +747,7 @@ function startUndock(own: Owner, restore: boolean): Promise<void> {
   // can be after the transfer read the map — so no window opens meanwhile.
   const golem = useGolemStore.getState();
   if (Object.values(golem.conversations).some((c) => c.resetting)) {
-    return Promise.reject(new Error(RESET_IN_FLIGHT));
+    return Promise.reject(new Error(RESET_IN_FLIGHT_ERROR));
   }
   golem.setHostFrozen(true);
   golem.setWindowError(null);

@@ -925,9 +925,9 @@ export function GolemSurface({
             <button
               type="button"
               className={styles.secondaryButton}
-              disabled={frozen}
+              disabled={frozen || resetting}
               onClick={() => {
-                if (frozen || conversationId === null) return;
+                if (frozen || resetting || conversationId === null) return;
                 actions.retry(conversationId);
               }}
             >
