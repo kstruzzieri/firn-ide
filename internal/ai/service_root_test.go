@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"firn/internal/filesystem"
+
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -179,6 +181,33 @@ func TestServiceRunnerGuardFailsClosedOnceItsRootIsReplaced(t *testing.T) {
 			writeFile(t, filepath.Join(root, "main.go"), "package main\n")
 			mustDeny(t, guard, "main.go")
 		})
+	}
+}
+
+// The root is checked after the rules are evaluated. Checked first, a
+// replacement plus a reload landing between the two steps would let the
+// replacement's rules decide a read go-llm then performs through the pinned
+// descriptor of the old directory.
+func TestPinnedRootGuardChecksTheRootAfterTheRules(t *testing.T) {
+	root := canonical(t, t.TempDir())
+	pinned, err := os.Lstat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The rules allow the read, but evaluating them races a replacement of the
+	// root, as a reload from the replacement would.
+	replacedWhileEvaluating := func(string, bool) error {
+		if err := os.Rename(root, filepath.Join(t.TempDir(), "old-root")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}
+	guard := pinnedRootGuard(filesystem.NewOS(), root, pinned, replacedWhileEvaluating)
+	if err := guard("private.txt", false); err == nil {
+		t.Fatal("a read decided while the root was replaced was allowed")
 	}
 }
 

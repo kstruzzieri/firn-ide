@@ -147,11 +147,29 @@ func LoadScopePolicy(fsys filesystem.FileSystem, repoRoot string) *ScopePolicy {
 func (p *ScopePolicy) Reload() {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
-	rules, warnings := loadManifests(p.fsys, p.repoRoot)
+	rules, warnings, ok := p.loadPresent()
+	if !ok {
+		return
+	}
 	p.mu.Lock()
 	p.additive = rules
 	p.warnings = warnings
 	p.mu.Unlock()
+}
+
+// loadPresent reads the manifests, reporting !ok when the repository directory
+// is absent before or after the read. Its manifests are then unreadable, not
+// removed, and the same directory can return with them, so the caller keeps the
+// rules it has. The caller holds reloadMu.
+func (p *ScopePolicy) loadPresent() ([][]string, []PolicyWarning, bool) {
+	if _, err := filesystem.Lstat(p.fsys, p.repoRoot); err != nil {
+		return nil, nil, false
+	}
+	rules, warnings := loadManifests(p.fsys, p.repoRoot)
+	if _, err := filesystem.Lstat(p.fsys, p.repoRoot); err != nil {
+		return nil, nil, false
+	}
+	return rules, warnings, true
 }
 
 // Detach makes every issued guard fail closed for all file paths until Attach.
@@ -166,10 +184,12 @@ func (p *ScopePolicy) Detach() {
 func (p *ScopePolicy) Attach() {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
-	rules, warnings := loadManifests(p.fsys, p.repoRoot)
+	rules, warnings, ok := p.loadPresent()
 	p.mu.Lock()
-	p.additive = rules
-	p.warnings = warnings
+	if ok {
+		p.additive = rules
+		p.warnings = warnings
+	}
 	p.detached = false
 	p.mu.Unlock()
 }

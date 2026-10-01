@@ -366,6 +366,34 @@ func TestScopePolicyReloadSerializesReadAndPublish(t *testing.T) {
 	mustDeny(t, p.Guard(""), "vault/data.txt")
 }
 
+// A reload while the repository directory is absent finds no manifests, but
+// that is not the user removing them: the same directory can come back, and
+// its runners still accept it. The last rules stay until a reload can read.
+func TestScopePolicyReloadKeepsRulesWhileTheRootIsAbsent(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - private.txt\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	g := p.Guard("")
+	mustDeny(t, g, "private.txt")
+
+	away := filepath.Join(t.TempDir(), "away")
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	mustDeny(t, g, "private.txt")
+
+	// A manifest actually removed from a present directory still clears them.
+	if err := os.Remove(filepath.Join(repo, "ai-kit.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+	mustAllow(t, g, "private.txt")
+}
+
 func TestScopePolicyProtectConfigSource(t *testing.T) {
 	t.Run("invalidInput", func(t *testing.T) {
 		repo := newPolicyRepo(t)

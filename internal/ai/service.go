@@ -676,16 +676,21 @@ func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
 // pinnedRootGuard admits a path only while root is still the directory pinned
 // names. go-llm v0.3.0 pins a runner to its root directory, so after a
 // replacement a run in flight can keep reading the old directory through its
-// descriptor while the policy's rules describe the new one; from then on the
-// runner may read nothing, and the next admission rebuilds it.
+// descriptor while the policy's rules describe the new one. The rules are
+// evaluated first and the root checked last, so any replacement that lands
+// before a decision is complete denies it; the next admission rebuilds the
+// runner.
 // ponytail: one Lstat per guard check; cache per walk if a profile ever shows it.
 func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard) agenttools.ScopeGuard {
 	return func(rel string, write bool) error {
+		if err := guard(rel, write); err != nil {
+			return err
+		}
 		current, err := filesystem.Lstat(fsys, root)
 		if err != nil || !os.SameFile(current, pinned) {
 			return errPolicyDenied
 		}
-		return guard(rel, write)
+		return nil
 	}
 }
 
