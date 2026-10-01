@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
@@ -119,6 +120,49 @@ func TestServiceRejectsUnavailableCachedRunnerRoot(t *testing.T) {
 				t.Fatalf("StartTurn(%s root) code = %q, want workspace_unavailable", kind, code)
 			}
 		})
+	}
+}
+
+// A replaced directory brings its own manifests and no watcher event, so the
+// admission-time reload is the only thing that sees new policy warnings. The
+// panel shows warnings from Status, which it fetches on a status change, so
+// admission must announce a change and stay quiet when nothing changed.
+func TestServiceAdmissionReloadAnnouncesChangedPolicyWarnings(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	id, repo := h.bind(t)
+	turn := func() {
+		t.Helper()
+		if _, err := h.svc.StartTurn(context.Background(), turnFor(runIdentityFor(id, "project"))); err != nil {
+			t.Fatalf("StartTurn: %v", err)
+		}
+		drainRuns(t, h.svc)
+	}
+	turn()
+	before := h.rec.count(EventGolemStatusChanged)
+
+	if err := os.Rename(repo, filepath.Join(t.TempDir(), "old-root")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), "sensitive_paths: [\n")
+	turn()
+	if got := h.rec.count(EventGolemStatusChanged); got != before+1 {
+		t.Fatalf("status-changed events after the reload = %d, want %d", got, before+1)
+	}
+	st, err := h.svc.Status(StatusRequest{RepoEpoch: id.RepoEpoch, WorkspaceID: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range st.Warnings {
+		found = found || strings.Contains(w, warnManifestMalformed)
+	}
+	if !found {
+		t.Fatalf("Status warnings = %v, want the malformed-manifest warning", st.Warnings)
+	}
+
+	turn()
+	if got := h.rec.count(EventGolemStatusChanged); got != before+1 {
+		t.Fatalf("an unchanged turn emitted status-changed (%d events, want %d)", got, before+1)
 	}
 }
 

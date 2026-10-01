@@ -828,7 +828,12 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		// Directory replacement may also replace the manifests without a
 		// watcher notification, including during a failed construction. Every
 		// new runner must enforce the current rules, even on that retry.
+		// The panel learns of new warnings only from a status change.
+		warnings := binding.policy.Warnings()
 		binding.policy.Reload()
+		if !slices.Equal(warnings, binding.policy.Warnings()) {
+			*after = append(*after, func() { s.emit(EventGolemStatusChanged, nil) })
+		}
 		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
 			binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel), s.sessions)
 		if err != nil {
