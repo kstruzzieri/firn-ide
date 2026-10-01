@@ -984,6 +984,47 @@ describe('GolemPanel admission', () => {
     expect(screen.queryByRole('textbox', { name: 'Queued message 1' })).not.toBeInTheDocument();
   });
 
+  it('stays locked when a rebind holds a queued turn during the reset', async () => {
+    hydrate({ destination: remoteDestination, needsConsent: true });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
+    render(<GolemPanel visible />);
+    type('first');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().invalidateBinding();
+      store().hydrateStatus(
+        parseGolemStatus(
+          statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 }, available: false })
+        )
+      );
+    });
+    expect(store().conversations[CONV].queuedTurns.map((turn) => turn.message)).toEqual(['first']);
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    fireEvent.click(newChatButton());
+
+    // A rebind re-arms the queued turn; the reset holds it ('held' rather than
+    // 'pending'). The lock must cover both, or text typed now is erased when
+    // the reset lands.
+    act(() => {
+      store().invalidateBinding();
+      store().hydrateStatus(
+        parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 2 } }))
+      );
+    });
+    expect(store().conversations[CONV].resetting).toBe('held');
+    expect(composer()).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Queued message 1' })).toBeDisabled();
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(composer()).toBeEnabled();
+  });
+
   it('freezes every action the moment a handoff starts', () => {
     const { rerender } = render(<GolemPanel visible />);
     type('mid-thought');

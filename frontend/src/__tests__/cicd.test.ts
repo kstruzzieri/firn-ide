@@ -405,6 +405,10 @@ describe('CI Workflow', () => {
     };
 
     expect(workflow.jobs?.['backend-tests']?.env?.FIRN_REQUIRE_NONLOOPBACK).toBe('1');
+    // The workflow pins the name; the helper must read that same name, or a
+    // rename on either side silently brings the skip back.
+    const helper = readFileSync(resolve(rootDir, 'internal/testutil/nonloopback.go'), 'utf-8');
+    expect(helper).toContain('os.Getenv("FIRN_REQUIRE_NONLOOPBACK") == "1"');
   });
 });
 
