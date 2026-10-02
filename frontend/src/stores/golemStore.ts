@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { CancelGolemRun, RunGolemTurn } from '../wails/bindings';
+import { CancelGolemRun, ResetGolemConversation, RunGolemTurn } from '../wails/bindings';
 import {
   boundedGolemMessage as boundedMessage,
   GOLEM_UNAVAILABLE,
@@ -8,6 +8,7 @@ import {
   parseRunStatus,
   parseTurnAdmission,
   toCancelRequest,
+  toConversationIdentity,
   toTurnRequest,
 } from '../types/golem';
 import type {
@@ -88,6 +89,8 @@ const NOT_CONNECTED_ERROR = 'Golem is not connected yet.';
 const STALE_CONVERSATION_ERROR = 'This workspace is no longer open.';
 const EMPTY_MESSAGE_ERROR = 'There is nothing to send.';
 const BUSY_ERROR = 'Golem is still working on the current run.';
+/** A New chat is waiting on its backend reset; no run exists to wait for. */
+export const RESET_IN_FLIGHT_ERROR = 'Golem is still starting a new chat. Try again in a moment.';
 const NO_PENDING_CONSENT_ERROR = 'There is no approval waiting in this conversation.';
 const CONSENT_MISMATCH_ERROR = 'That approval was for a different request.';
 const NOTHING_TO_RETRY_ERROR = 'There is no failed message to retry.';
@@ -477,6 +480,14 @@ function dispatchQueued(
   const index = conversation.queuedTurns.findIndex((turn) => turn.state === 'queued');
   if (index < 0) return null;
 
+  // A conversation mid-reset holds its queue: the turn would reach a backend
+  // conversation New chat is deleting. The hold is recorded, so a refused
+  // reset releases this dispatch and not a turn that was idle before it.
+  if (conversation.resetting) {
+    conversation.resetting = 'held';
+    return null;
+  }
+
   const current = context.hydratedIdentity;
   const epochCurrent =
     context.bridgePhase === 'ready' &&
@@ -795,6 +806,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     const state = get();
     const conversation = state.conversations[conversationId];
     if (!conversation) return NO_CONVERSATION_ERROR;
+    if (conversation.resetting) return RESET_IN_FLIGHT_ERROR;
     if (state.bridgePhase !== 'ready') return NOT_CONNECTED_ERROR;
     if (!sameConversationIdentity(state.hydratedIdentity, conversation.identity)) {
       return STALE_CONVERSATION_ERROR;
@@ -1232,70 +1244,128 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       return OK;
     },
 
-    clearConversation(conversationId: string): GolemActionResult {
+    async clearConversation(conversationId: string): Promise<GolemActionResult> {
       // Decided here rather than inferred from a before/after comparison: an
       // already-empty conversation resets to exactly itself, and the host's own
       // draft — which this store no longer holds — is reason enough to clear.
-      const existing = get().conversations[conversationId];
+      const { conversations, hydratedIdentity } = get();
+      const existing = conversations[conversationId];
       if (!existing) return refuse(NO_CONVERSATION_ERROR);
+      if (existing.resetting) return refuse(RESET_IN_FLIGHT_ERROR);
       if (existing.activeRunId !== null || existing.pendingConsentTurn !== null) {
         return refuse(BUSY_ERROR);
       }
+      // The backend resets only within the current binding's epoch. A
+      // conversation from a retired one keeps its backend history for the
+      // reopen (the conversation ID excludes the epoch), so clearing this view
+      // alone would bring that history back into the "new" chat. Reopening the
+      // workspace rehydrates it under the current epoch, and then it resets.
+      if (hydratedIdentity?.repoEpoch !== existing.identity.repoEpoch) {
+        return refuse(STALE_CONVERSATION_ERROR);
+      }
 
-      set((state) => {
-        const conversation = state.conversations[conversationId];
-        if (!conversation) return state;
-        // Idle guard (the load-bearing safety rule): clearing while a run is
-        // live would drop a conversation whose backend run is still emitting
-        // events, and a GetGolemStatus snapshot could still list that live run
-        // and re-hydrate it. When idle there is no live run — finished runs
-        // never appear in backend ActiveRuns, and the backend emits exactly one
-        // terminal per run — so a full reset cannot be repopulated by a stray
-        // event. The button is disabled in this state too; the guard is defense
-        // in depth.
-        if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) {
-          return state;
+      // Ends the reset without clearing the view. Only a dispatch the reset
+      // itself held back (a turn a rebind re-armed meanwhile) goes out now, as
+      // it would have then; a turn already idle stays idle.
+      const endResetKeepingView = () => {
+        let dispatch: PendingDispatch | null = null;
+        try {
+          set((state) => {
+            const mutation = beginMutation(state);
+            const draft = draftConversation(mutation, conversationId);
+            if (!draft?.resetting) return state;
+            const held = draft.resetting === 'held';
+            delete draft.resetting;
+            if (held) dispatch = dispatchQueued(mutation, conversationId, state);
+            return toState(mutation);
+          });
+        } finally {
+          // set commits before it notifies subscribers, so a subscriber that
+          // throws must not strand the admitting run the dispatch installed.
+          runDispatch(dispatch);
+        }
+      };
+
+      try {
+        set((state) => {
+          const mutation = beginMutation(state);
+          const draft = draftConversation(mutation, conversationId);
+          if (!draft) return state;
+          draft.resetting = 'pending';
+          return toState(mutation);
+        });
+
+        try {
+          // Backend first (#361): a view cleared over a surviving backend
+          // conversation sends its whole history with the next "fresh" turn.
+          await ResetGolemConversation(toConversationIdentity(existing.identity));
+        } catch (err) {
+          // Refused, so the view stays — queue included.
+          endResetKeepingView();
+          return refuse(boundedMessage(err));
         }
 
-        const mutation = beginMutation(state);
-        // Draft through the copy-on-write path so every subscriber sees a new
-        // reference; writing the published object in place leaves the data
-        // correct but the panel frozen.
-        const draft = draftConversation(mutation, conversationId)!;
-
-        // Reset content to the fresh shape; the backend-derived status fields
-        // (identity, workspaceLabel, available, needsConsent, warnings,
-        // initError, destination) reflect the workspace, not chat content, and
-        // stay as they are.
-        draft.rawEvents = [];
-        draft.transcript = [];
-        draft.runs = {};
-        draft.activeRunId = null;
-        draft.queuedTurns = [];
-        draft.pendingConsentTurn = null;
-        draft.lastFailedTurn = null;
-
-        // Purge this conversation's run routing. No live run exists, so this is
-        // safe, and it keeps the map from growing unbounded across clears.
-        // Iterate a key snapshot; delete from the mutation's own copy.
-        for (const runId of Object.keys(mutation.runToConversation)) {
-          if (mutation.runToConversation[runId] === conversationId) {
-            delete mutation.runToConversation[runId];
+        let cleared = false;
+        set((state) => {
+          const mutation = beginMutation(state);
+          // Draft through the copy-on-write path so every subscriber sees a new
+          // reference; writing the published object in place leaves the data
+          // correct but the panel frozen.
+          const draft = draftConversation(mutation, conversationId);
+          if (!draft) return state;
+          delete draft.resetting;
+          // Idle guard (the load-bearing safety rule): clearing while a run is
+          // live would drop a conversation whose backend run is still emitting
+          // events, and a GetGolemStatus snapshot could still list that live run
+          // and re-hydrate it. When idle there is no live run — finished runs
+          // never appear in backend ActiveRuns, and the backend emits exactly one
+          // terminal per run — so a full reset cannot be repopulated by a stray
+          // event. The button is disabled in this state and `resetting` admits
+          // no turn across the await; the guard is defense in depth.
+          if (draft.activeRunId !== null || draft.pendingConsentTurn !== null) {
+            return toState(mutation);
           }
-        }
+          cleared = true;
 
-        // The failure that drove a StatusBar "Attention" is gone. Leave the
-        // monotonic counters and lastActiveConversationId alone.
-        if (mutation.lastFailureConversationId === conversationId) {
-          mutation.lastFailureConversationId = null;
-        }
+          // Reset content to the fresh shape; the backend-derived status fields
+          // (identity, workspaceLabel, available, needsConsent, warnings,
+          // initError, destination) reflect the workspace, not chat content, and
+          // stay as they are.
+          draft.rawEvents = [];
+          draft.transcript = [];
+          draft.runs = {};
+          draft.activeRunId = null;
+          draft.queuedTurns = [];
+          draft.pendingConsentTurn = null;
+          draft.lastFailedTurn = null;
 
-        return {
-          ...toState(mutation),
-          composerFocusRevision: state.composerFocusRevision + 1,
-        };
-      });
-      return OK;
+          // Purge this conversation's run routing. No live run exists, so this is
+          // safe, and it keeps the map from growing unbounded across clears.
+          // Iterate a key snapshot; delete from the mutation's own copy.
+          for (const runId of Object.keys(mutation.runToConversation)) {
+            if (mutation.runToConversation[runId] === conversationId) {
+              delete mutation.runToConversation[runId];
+            }
+          }
+
+          // The failure that drove a StatusBar "Attention" is gone. Leave the
+          // monotonic counters and lastActiveConversationId alone.
+          if (mutation.lastFailureConversationId === conversationId) {
+            mutation.lastFailureConversationId = null;
+          }
+
+          return {
+            ...toState(mutation),
+            composerFocusRevision: state.composerFocusRevision + 1,
+          };
+        });
+        return cleared ? OK : refuse(BUSY_ERROR);
+      } finally {
+        // Every path above ends the reset itself. A throw that skipped that (a
+        // store subscriber failing inside set) must not leave the conversation
+        // refusing Send, Retry, New chat and undock until restart.
+        if (get().conversations[conversationId]?.resetting) endResetKeepingView();
+      }
     },
 
     requestComposerFocus() {
@@ -1484,6 +1554,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     updateQueuedTurn(conversationId: string, queueId: string, message: string): GolemActionResult {
       const conversation = get().conversations[conversationId];
       if (!conversation) return refuse(NO_CONVERSATION_ERROR);
+      if (conversation.resetting) return refuse(RESET_IN_FLIGHT_ERROR);
       if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
         return refuse(NO_QUEUED_TURN_ERROR);
       }
@@ -1506,6 +1577,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     removeQueuedTurn(conversationId: string, queueId: string): GolemActionResult {
       const conversation = get().conversations[conversationId];
       if (!conversation) return refuse(NO_CONVERSATION_ERROR);
+      if (conversation.resetting) return refuse(RESET_IN_FLIGHT_ERROR);
       if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
         return refuse(NO_QUEUED_TURN_ERROR);
       }

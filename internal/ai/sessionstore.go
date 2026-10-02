@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/kstruzzieri/go-llm/conversation"
@@ -30,24 +31,32 @@ var ErrSessionLimit = errors.New("golem session memory limit exceeded")
 // serialization boundary: no caller mutation can alias store state, and no
 // on-disk sessions.db is ever opened.
 //
-// There is deliberately no reclamation — no Delete and no eviction: the plan
-// requires process-lifetime conversation restoration across unbind/rebind, so
-// snapshots of retired conversations intentionally persist until the process
-// exits. Known ceilings: SessionStoreLimit (16 MiB) across all conversations
-// and SessionSnapshotLimit (2 MiB) per snapshot. A conversation that outgrows
-// the per-snapshot bound simply stops persisting: the run surfaces the raw
+// There is no eviction, and the only reclamation is Delete on an explicit New
+// chat (Service.ResetConversation): conversations must survive unbind/rebind
+// for the life of the process, so nothing else ever drops a snapshot. Known
+// ceilings: SessionStoreLimit (16 MiB) across all conversations and
+// SessionSnapshotLimit (2 MiB) per snapshot. A Save whose snapshot exceeds the
+// per-snapshot bound is refused and the stored snapshot stays as it was, so
+// that turn fails and is not kept — the run surfaces the raw
 // ErrSessionLimit-wrapped cause to the host while the public run.failed event
-// stays generic. B5 inherits these ceilings as stated instead of
-// rediscovering them.
+// stays generic. A later turn whose snapshot fits still saves, but near the
+// cap most do not, until New chat deletes the conversation. B5 inherits these
+// ceilings as stated instead of rediscovering them.
 type MemorySessionStore struct {
 	mu    sync.Mutex
 	snaps map[string][]byte // conversation ID -> JSON snapshot, never mutated in place
+	revs  map[string]int64  // conversation ID -> currently stored revision, mirrors snaps
+	gens  map[string]uint64 // conversation ID -> Delete count; never shrinks (see Generation)
 	total int               // sum of len over snaps
 }
 
 // NewMemorySessionStore returns an empty bounded store.
 func NewMemorySessionStore() *MemorySessionStore {
-	return &MemorySessionStore{snaps: make(map[string][]byte)}
+	return &MemorySessionStore{
+		snaps: make(map[string][]byte),
+		revs:  make(map[string]int64),
+		gens:  make(map[string]uint64),
+	}
 }
 
 // Load implements golem.SessionStore. A missing ID returns
@@ -69,9 +78,14 @@ func (s *MemorySessionStore) Load(ctx context.Context, id string) (*conversation
 	return conv, nil
 }
 
-// Save implements golem.SessionStore: replace or upsert the complete
-// snapshot, refusing (without eviction) anything over the per-snapshot or
-// whole-store limit.
+// Save implements golem.SessionStore's compare-and-swap contract: revision 0
+// creates only when the ID is absent; a positive revision replaces only that
+// exact stored revision. Either commits revision+1. A failed CAS returns a
+// *conversation.ConflictError carrying the submitted revision; negative and
+// math.MaxInt64 revisions are refused as a plain (non-conflict) error. conv is
+// taken by value, so incrementing its local revision here never mutates the
+// caller's copy. Every refusal — invalid revision, conflict, or either size
+// cap — leaves the prior snapshot, revision, and byte total untouched.
 func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Conversation) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -79,6 +93,11 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	if conv.ID == "" {
 		return errors.New("session snapshot has no conversation ID")
 	}
+	if conv.Revision < 0 || conv.Revision == math.MaxInt64 {
+		return fmt.Errorf("session snapshot %q: invalid revision %d", conv.ID, conv.Revision)
+	}
+	expected := conv.Revision
+	conv.Revision = expected + 1
 	raw, err := json.Marshal(conv)
 	if err != nil {
 		return fmt.Errorf("encode session snapshot: %w", err)
@@ -88,11 +107,42 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	stored, exists := s.revs[conv.ID]
+	if (expected == 0 && exists) || (expected > 0 && (!exists || stored != expected)) {
+		return &conversation.ConflictError{ID: conv.ID, ExpectedRevision: expected}
+	}
 	next := s.total - len(s.snaps[conv.ID]) + len(raw)
 	if next > SessionStoreLimit {
 		return fmt.Errorf("%w: store would exceed %d bytes", ErrSessionLimit, SessionStoreLimit)
 	}
 	s.snaps[conv.ID] = raw
+	s.revs[conv.ID] = conv.Revision
 	s.total = next
 	return nil
+}
+
+// Delete drops id's snapshot and revision together, returns its bytes to the
+// store budget, and advances id's Generation, even when nothing was stored:
+// New chat starts a new opencode session whether or not a turn ever saved. A
+// later revision-0 Save recreates the conversation, so revisions are no
+// deletion barrier: callers must serialise Delete against their own writers
+// (Service.ResetConversation refuses unless the conversation is idle).
+func (s *MemorySessionStore) Delete(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.total -= len(s.snaps[id])
+	delete(s.snaps, id)
+	delete(s.revs, id)
+	s.gens[id]++
+}
+
+// Generation reports how many times Delete has dropped id, 0 for a
+// conversation never reset. The runner mixes it into the x-opencode-session
+// value (sessionHeaderID) when each request is made, so New chat starts a new
+// opencode session on the runner the conversation already has. It never goes
+// back: forgetting a count would repeat an earlier session value.
+func (s *MemorySessionStore) Generation(id string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gens[id]
 }

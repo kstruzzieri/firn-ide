@@ -434,10 +434,12 @@ export interface GolemSurfaceProps {
   frozen: boolean;
   /**
    * One selected-conversation Send or Clear is awaiting acknowledgement. It
-   * locks that composer and its Send only; every other control — switching
-   * conversation, editing the queue, canceling a run — stays usable.
+   * locks that composer and its Send. Queue edits stay usable during Send;
+   * a pending Clear also sets `resetting` to protect text it would erase.
    */
   composerPending: boolean;
+  /** New chat will discard the queue once its backend reset is acknowledged. */
+  resetting?: boolean;
   /** The armed composer-focus request; only a *changed* value focuses. */
   focusRevision: number;
   /**
@@ -455,6 +457,7 @@ export function GolemSurface({
   actions,
   frozen,
   composerPending,
+  resetting = false,
   focusRevision,
   visible,
 }: GolemSurfaceProps) {
@@ -864,9 +867,9 @@ export function GolemSurface({
             className={styles.queuedInput}
             aria-label={`Queued message ${index + 1}`}
             value={turn.message}
-            disabled={frozen}
+            disabled={frozen || resetting}
             onChange={(event) => {
-              if (frozen || conversationId === null) return;
+              if (frozen || resetting || conversationId === null) return;
               actions.updateQueued(conversationId, turn.queueId, event.target.value);
             }}
           />
@@ -877,9 +880,9 @@ export function GolemSurface({
             type="button"
             className={styles.secondaryButton}
             aria-label={`Remove queued message ${index + 1}`}
-            disabled={frozen}
+            disabled={frozen || resetting}
             onClick={() => {
-              if (frozen || conversationId === null) return;
+              if (frozen || resetting || conversationId === null) return;
               actions.removeQueued(conversationId, turn.queueId);
             }}
           >
@@ -922,9 +925,9 @@ export function GolemSurface({
             <button
               type="button"
               className={styles.secondaryButton}
-              disabled={frozen}
+              disabled={frozen || resetting}
               onClick={() => {
-                if (frozen || conversationId === null) return;
+                if (frozen || resetting || conversationId === null) return;
                 actions.retry(conversationId);
               }}
             >

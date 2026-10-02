@@ -390,6 +390,26 @@ describe('CI Workflow', () => {
 
     expect(driftCheck).toBeDefined();
   });
+
+  // #286 item 4: testutil.ListenNonLoopback skips its callers (the F15
+  // admission-parity corpus and its siblings) when the host has no
+  // non-loopback IPv4 interface. A CI runner that silently lacks one would
+  // let those REMOTE-classification paths quietly stop being covered, so the
+  // job turns that skip into a hard failure via job-level env -- covering
+  // both the -v run and the coverage run without adding a step, so the
+  // Go-step census above stays unchanged.
+  it('should require CI to fail rather than silently skip non-loopback admission tests', () => {
+    const content = readFileSync(resolve(workflowsDir, 'test.yml'), 'utf-8');
+    const workflow = parse(content) as {
+      jobs?: Record<string, { env?: Record<string, string> }>;
+    };
+
+    expect(workflow.jobs?.['backend-tests']?.env?.FIRN_REQUIRE_NONLOOPBACK).toBe('1');
+    // The workflow pins the name; the helper must read that same name, or a
+    // rename on either side silently brings the skip back.
+    const helper = readFileSync(resolve(rootDir, 'internal/testutil/nonloopback.go'), 'utf-8');
+    expect(helper).toContain('os.Getenv("FIRN_REQUIRE_NONLOOPBACK") == "1"');
+  });
 });
 
 describe('Release Workflow', () => {

@@ -227,7 +227,7 @@ type fakeFactory struct {
 }
 
 func (f *fakeFactory) factory() runnerFactory {
-	return func(_ context.Context, root string, target providerTarget, guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+	return func(_ context.Context, root string, target providerTarget, guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
 		f.mu.Lock()
 		enter, release := f.enter, f.release
 		f.mu.Unlock()
@@ -400,7 +400,7 @@ func newServiceHarness(t *testing.T, endpoint string) *svcHarness {
 	t.Helper()
 	rec := &emitRecorder{}
 	cpath := filepath.Join(t.TempDir(), "consent", "grants.json")
-	svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 	f := &fakeFactory{}
 	svc.newRunner = f.factory()
@@ -550,7 +550,7 @@ func assertBuiltinToolsProtectConfig(t *testing.T, what, root string, guard agen
 	var observations []string
 	for _, msg := range last.Messages {
 		if msg.Role == "tool" {
-			observations = append(observations, msg.Content)
+			observations = append(observations, unfenceToolResult(t, msg.Content))
 		}
 	}
 	if len(observations) != 5 {
@@ -1105,7 +1105,7 @@ func TestServiceReloadPolicyHoldsBindingGateThroughRead(t *testing.T) {
 		entered:    make(chan struct{}),
 		release:    make(chan struct{}),
 	}
-	svc := NewService(context.Background(), fsys, "", nil)
+	svc := NewService(context.Background(), fsys, "", nil, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -1155,7 +1155,7 @@ func TestServiceReloadPolicySerializesSnapshots(t *testing.T) {
 		entered:    make(chan struct{}),
 		release:    make(chan struct{}),
 	}
-	svc := NewService(context.Background(), fsys, "", nil)
+	svc := NewService(context.Background(), fsys, "", nil, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -1753,12 +1753,12 @@ func TestServiceZeroEgressWithProductionRunnerFactory(t *testing.T) {
 	endpoint, requests := startCountingServer(t)
 	rec := &emitRecorder{}
 	svc := NewService(context.Background(), filesystem.NewOS(),
-		filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+		filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 	var constructed int32
-	production := svc.newRunner // NewService installed NewGolemRunner
+	production := svc.newRunner // NewService's closure over NewGolemRunner
 	svc.newRunner = func(ctx context.Context, root string, target providerTarget,
-		guard agenttools.ScopeGuard, sessions golem.SessionStore) (Runner, error) {
+		guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
 		atomic.AddInt32(&constructed, 1)
 		return production(ctx, root, target, guard, sessions)
 	}
@@ -2101,6 +2101,135 @@ func TestServiceRejectsAssistantOutputOverLimit(t *testing.T) {
 	assertEmitsClean(t, h.rec, overflowMarker)
 	if strings.Contains(logs.String(), overflowMarker) {
 		t.Fatal("overflowing provider output leaked into host logs")
+	}
+}
+
+// TestServiceSinkRefusalThroughGolemRuntime drives the real golem runtime,
+// which joins a latched sink refusal with the orchestrator's error and emits
+// no terminal. An Ollama-shaped provider reports the context golem canceled
+// on the refusal ahead of the callback error, so the joined error also
+// matches context.Canceled; the refusal must still end the run as the
+// host-logged output-limit failure. The openai-compat shape (callback error
+// first) and a user cancel with no refusal pin the other classifications.
+func TestServiceSinkRefusalThroughGolemRuntime(t *testing.T) {
+	overLimit := strings.Repeat("x", maxAssistantOutputBytes+1)
+	cases := []struct {
+		name        string
+		ctxErrFirst bool
+		content     string
+		cancel      bool
+	}{
+		{name: "ollama shape refusal fails", ctxErrFirst: true, content: overLimit},
+		{name: "openai-compat shape refusal fails", content: overLimit},
+		{name: "user cancel without a refusal is canceled", ctxErrFirst: true, content: "partial reply", cancel: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t, "http://127.0.0.1:1")
+			backend := &scriptedProvider{name: "hosted", ctxErrFirst: tc.ctxErrFirst,
+				steps: []provider.ChatResponse{{Content: tc.content}}}
+			h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+				guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
+				return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+			}
+			repoID, _ := h.bind(t)
+			id := runIdentityFor(repoID, "project")
+
+			var logs bytes.Buffer
+			previousLog := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(previousLog) })
+
+			if tc.cancel {
+				var once sync.Once
+				h.rec.setHook(func(name string, args []any) {
+					if name != eventGolemEvent || len(args) != 1 {
+						return
+					}
+					if rel, ok := args[0].(RelayedEvent); ok && rel.Type == "message.delta" {
+						once.Do(func() {
+							if ok, err := h.svc.Cancel(id); !ok || err != nil {
+								t.Errorf("Cancel = %v, %v", ok, err)
+							}
+						})
+					}
+				})
+				t.Cleanup(func() { h.rec.setHook(nil) })
+			}
+
+			if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+				t.Fatalf("StartTurn: %v", err)
+			}
+			failedLog := fmt.Sprintf("ai: golem run %s failed: ", id.RunID)
+
+			if tc.cancel {
+				waitUntil(t, "run.canceled relay", func() bool {
+					for _, r := range h.rec.relayed() {
+						if r.RunID == id.RunID && r.Type == "run.canceled" {
+							return true
+						}
+					}
+					return false
+				})
+				drainRuns(t, h.svc)
+				if statuses := h.rec.runStatuses(); len(statuses) != 0 {
+					t.Fatalf("run statuses = %+v, want only the golem run.canceled terminal", statuses)
+				}
+				if strings.Contains(logs.String(), failedLog) {
+					t.Fatalf("user cancel was host-logged as a failure: %q", logs.String())
+				}
+				return
+			}
+
+			var fallback RunStatusEvent
+			waitUntil(t, "fallback run status", func() bool {
+				for _, status := range h.rec.runStatuses() {
+					if status.Identity == id {
+						fallback = status
+						return true
+					}
+				}
+				return false
+			})
+			if fallback.State != "failed" || fallback.Message != "The Golem reply exceeded the output limit." {
+				t.Fatalf("fallback = %+v, want the fixed public output-limit failure", fallback)
+			}
+			if got := logs.String(); !strings.Contains(got, failedLog) || !strings.Contains(got, ErrAssistantOutputLimit.Error()) {
+				t.Fatalf("host log = %q, want the output-limit failure line", got)
+			}
+		})
+	}
+}
+
+// The refusal decides how a run is classified, but golem joins it with the
+// run's own error, and that error can be a real failure of its own. The host
+// log keeps it, so the refusal never hides why the provider stream broke.
+func TestServiceSinkRefusalKeepsTheRunErrorInTheHostLog(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+	upstream := errors.New("upstream stream reset by peer")
+	h.factory.setRun(func(_ context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		payload, _ := json.Marshal(map[string]string{"text": strings.Repeat("x", maxAssistantOutputBytes+1)})
+		refusal := sink(golem.Event{ThreadID: turn.ThreadID, RunID: turn.RunID, Seq: 1, Type: "message.delta", Payload: payload})
+		if refusal == nil {
+			t.Error("the over-limit delta was not refused")
+		}
+		return agent.Result{}, errors.Join(upstream, refusal)
+	})
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatal(err)
+	}
+	drainRuns(t, h.svc)
+	got := logs.String()
+	if !strings.Contains(got, ErrAssistantOutputLimit.Error()) || !strings.Contains(got, upstream.Error()) {
+		t.Fatalf("host log = %q, want both the refusal and the run's own error", got)
 	}
 }
 
@@ -2590,6 +2719,439 @@ func TestServiceCancelPendingConsent(t *testing.T) {
 	stale.RunID = uuid.NewString()
 	if ok, err := h.svc.Cancel(stale); ok || err == nil {
 		t.Fatalf("mismatched pending Cancel = %v, %v", ok, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #361 — New chat resets the backend conversation
+// ---------------------------------------------------------------------------
+
+func conversationOf(id RunIdentity) ConversationIdentity {
+	return ConversationIdentity{RepoEpoch: id.RepoEpoch, WorkspaceID: id.WorkspaceID, ConversationID: id.ConversationID}
+}
+
+// waitRelayedTerminal returns the type of runID's relayed golem terminal.
+// runTurn restores idle before it relays the terminal, so the conversation is
+// idle once this returns; drainRuns alone races that relay.
+func waitRelayedTerminal(t *testing.T, rec *emitRecorder, runID string) string {
+	t.Helper()
+	var typ string
+	waitUntil(t, "relayed terminal for run "+runID, func() bool {
+		for _, r := range rec.relayed() {
+			if r.RunID == runID && (r.Type == "run.finished" || r.Type == "run.failed" || r.Type == "run.canceled") {
+				typ = r.Type
+				return true
+			}
+		}
+		return false
+	})
+	return typ
+}
+
+// assertSnapshotStored fails unless the conversation's snapshot survived.
+func assertSnapshotStored(t *testing.T, svc *Service, conversationID, what string) {
+	t.Helper()
+	if _, err := svc.sessions.Load(context.Background(), conversationID); err != nil {
+		t.Fatalf("%s: stored conversation lost: %v", what, err)
+	}
+}
+
+func assertSnapshotDeleted(t *testing.T, svc *Service, conversationID, what string) {
+	t.Helper()
+	if _, err := svc.sessions.Load(context.Background(), conversationID); !errors.Is(err, conversation.ErrNotFound) {
+		t.Fatalf("%s: Load = %v, want conversation.ErrNotFound", what, err)
+	}
+}
+
+// assertGeneration pins how many resets advanced the conversation's opencode
+// session generation; a refused reset must leave it where it was.
+func assertGeneration(t *testing.T, svc *Service, conversationID string, want uint64, what string) {
+	t.Helper()
+	if got := svc.sessions.Generation(conversationID); got != want {
+		t.Fatalf("%s: generation = %d, want %d", what, got, want)
+	}
+}
+
+// finishOnRelease is a fake run that signals entry, holds until release (a
+// cancel does not end it, so `canceling` stays observable), then relays a real
+// golem terminal.
+func finishOnRelease(entered, release chan struct{}) func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error) {
+	return func(_ context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {
+		close(entered)
+		<-release
+		return agent.Result{}, sink(stampEvent(turn, "run.finished", 1, `{}`))
+	}
+}
+
+func TestServiceResetConversation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("idle_reset_deletes_only_that_conversation", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		other := runIdentityFor(repoID, "frontend")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: other.ConversationID})
+
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("ResetConversation(idle) = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "idle reset")
+		assertSnapshotStored(t, h.svc, other.ConversationID, "another workspace's conversation")
+		// Resetting an already empty conversation is not an error.
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("second ResetConversation = %v", err)
+		}
+	})
+
+	t.Run("running_and_canceling_refuse", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := onceClose(release)
+		t.Cleanup(releaseOnce)
+		h.factory.setRun(finishOnRelease(entered, release))
+
+		if _, err := h.svc.StartTurn(ctx, turnFor(id)); err != nil {
+			t.Fatalf("StartTurn: %v", err)
+		}
+		<-entered
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "conversation_busy" {
+			t.Fatalf("reset while running: code = %q, want conversation_busy", code)
+		}
+		if ok, err := h.svc.Cancel(id); !ok || err != nil {
+			t.Fatalf("Cancel = %v, %v", ok, err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "conversation_busy" {
+			t.Fatalf("reset while canceling: code = %q, want conversation_busy", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "refused resets")
+		assertGeneration(t, h.svc, id.ConversationID, 0, "refused resets")
+
+		releaseOnce()
+		waitRelayedTerminal(t, h.rec, id.RunID)
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("reset after the run ended = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "reset after the run")
+		assertGeneration(t, h.svc, id.ConversationID, 1, "reset after the run")
+	})
+
+	// `starting` never escapes the conversation mutex, so the only way to meet
+	// it is to queue behind an admission: the reset must wait for the mutex,
+	// then see the run the admission launched and refuse.
+	t.Run("reset_queued_behind_admission_refuses", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		enter := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := onceClose(release)
+		t.Cleanup(releaseOnce)
+		h.factory.mu.Lock()
+		h.factory.enter = enter
+		h.factory.release = release
+		h.factory.mu.Unlock()
+		entered := make(chan struct{})
+		runRelease := make(chan struct{})
+		runReleaseOnce := onceClose(runRelease)
+		t.Cleanup(runReleaseOnce)
+		h.factory.setRun(finishOnRelease(entered, runRelease))
+
+		admDone := make(chan error, 1)
+		go func() {
+			_, err := h.svc.StartTurn(ctx, turnFor(id))
+			admDone <- err
+		}()
+		<-enter // admission holds bindingGate read and the conversation mutex, `starting`
+		resetDone := make(chan error, 1)
+		go func() { resetDone <- h.svc.ResetConversation(conversationOf(id)) }()
+		select {
+		case err := <-resetDone:
+			t.Fatalf("reset returned %v while an admission held the conversation mutex", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		releaseOnce()
+		if err := <-admDone; err != nil {
+			t.Fatalf("admission: %v", err)
+		}
+		if code := publicCode(t, <-resetDone); code != "conversation_busy" {
+			t.Fatalf("queued reset: code = %q, want conversation_busy", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "queued reset")
+		assertGeneration(t, h.svc, id.ConversationID, 0, "queued reset")
+		<-entered
+		runReleaseOnce()
+		waitRelayedTerminal(t, h.rec, id.RunID)
+	})
+
+	t.Run("pending_consent_refuses_until_declined_or_expired", func(t *testing.T) {
+		endpoint, _ := startCountingServer(t)
+		h := newServiceHarness(t, endpoint)
+		clock := &fakeClock{t: time.Now()}
+		h.svc.now = clock.Now
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+
+		if adm, err := h.svc.StartTurn(ctx, turnFor(id)); err != nil || adm.State != "needs_consent" {
+			t.Fatalf("challenge turn = %+v, %v", adm, err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "conversation_busy" {
+			t.Fatalf("reset while consent pending: code = %q, want conversation_busy", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "refused reset")
+		assertGeneration(t, h.svc, id.ConversationID, 0, "refused reset")
+		if ok, err := h.svc.Cancel(id); !ok || err != nil {
+			t.Fatalf("decline = %v, %v", ok, err)
+		}
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("reset after declining = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "reset after declining")
+
+		// An expired challenge no longer holds the conversation.
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		if adm, err := h.svc.StartTurn(ctx, turnFor(runIdentityFor(repoID, "project"))); err != nil || adm.State != "needs_consent" {
+			t.Fatalf("second challenge turn = %+v, %v", adm, err)
+		}
+		clock.advance(consentChallengeTTL + time.Second)
+		if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+			t.Fatalf("reset after the challenge expired = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, id.ConversationID, "reset after expiry")
+	})
+
+	t.Run("stale_or_mismatched_identity_refuses", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, repo := h.bind(t)
+		old := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: old.ConversationID})
+
+		h.svc.UnbindRepository()
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(old))); code != "workspace_unavailable" {
+			t.Fatalf("reset with nothing bound: code = %q, want workspace_unavailable", code)
+		}
+		repoID2, _, err := h.svc.BindRepository(repo)
+		if err != nil {
+			t.Fatalf("rebind: %v", err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(old))); code != "request_rejected" {
+			t.Fatalf("stale-epoch reset: code = %q, want request_rejected", code)
+		}
+		mismatched := conversationOf(runIdentityFor(repoID2, "project"))
+		mismatched.ConversationID = ConversationID(repoID2.RepoKey, "frontend")
+		if code := publicCode(t, h.svc.ResetConversation(mismatched)); code != "request_rejected" {
+			t.Fatalf("mismatched-conversation reset: code = %q, want request_rejected", code)
+		}
+		assertSnapshotStored(t, h.svc, old.ConversationID, "refused resets")
+
+		// The rebind kept the conversation; the current identity resets it.
+		if err := h.svc.ResetConversation(conversationOf(runIdentityFor(repoID2, "project"))); err != nil {
+			t.Fatalf("current-epoch reset = %v", err)
+		}
+		assertSnapshotDeleted(t, h.svc, old.ConversationID, "current-epoch reset")
+	})
+
+	t.Run("closed_service_is_unavailable", func(t *testing.T) {
+		h := newServiceHarness(t, "http://127.0.0.1:1")
+		repoID, _ := h.bind(t)
+		id := runIdentityFor(repoID, "project")
+		mustSave(t, h.svc.sessions, conversation.Conversation{ID: id.ConversationID})
+		if err := h.svc.Close(ctx); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if code := publicCode(t, h.svc.ResetConversation(conversationOf(id))); code != "golem_unavailable" {
+			t.Fatalf("reset after Close: code = %q, want golem_unavailable", code)
+		}
+		assertSnapshotStored(t, h.svc, id.ConversationID, "reset after Close")
+	})
+}
+
+// TestServiceResetConversationClearsProviderHistory reproduces #361 through the
+// real path: Service.StartTurn, the real runner and golem runtime, the shared
+// MemorySessionStore, and a scripted provider. Without a reset the second
+// request carries the first exchange; after one it carries none of it.
+func TestServiceResetConversationClearsProviderHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset bool
+	}{
+		{name: "without_reset_history_is_sent"},
+		{name: "reset_clears_history", reset: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t, "http://127.0.0.1:1")
+			backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+				{Content: "ANSWER-ONE"}, {Content: "ANSWER-TWO"},
+			}}
+			h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+				guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
+				return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+			}
+			repoID, _ := h.bind(t)
+
+			first := runIdentityFor(repoID, "project")
+			if _, err := h.svc.StartTurn(context.Background(), TurnRequest{Identity: first, Message: "SECRET-FIRST-TURN"}); err != nil {
+				t.Fatalf("first StartTurn: %v", err)
+			}
+			if typ := waitRelayedTerminal(t, h.rec, first.RunID); typ != "run.finished" {
+				t.Fatalf("first terminal = %q, want run.finished", typ)
+			}
+			if tc.reset {
+				if err := h.svc.ResetConversation(conversationOf(first)); err != nil {
+					t.Fatalf("ResetConversation: %v", err)
+				}
+			}
+			second := runIdentityFor(repoID, "project")
+			if _, err := h.svc.StartTurn(context.Background(), TurnRequest{Identity: second, Message: "fresh question"}); err != nil {
+				t.Fatalf("second StartTurn: %v", err)
+			}
+			if typ := waitRelayedTerminal(t, h.rec, second.RunID); typ != "run.finished" {
+				t.Fatalf("second terminal = %q, want run.finished", typ)
+			}
+
+			reqs := backend.recorded()
+			if len(reqs) != 2 {
+				t.Fatalf("provider requests = %d, want 2", len(reqs))
+			}
+			var roles, contents []string
+			for _, msg := range reqs[1].Messages {
+				roles = append(roles, msg.Role)
+				contents = append(contents, msg.Content)
+			}
+			sent := strings.Join(contents, "\n")
+			if !tc.reset {
+				if !strings.Contains(sent, "SECRET-FIRST-TURN") || !strings.Contains(sent, "ANSWER-ONE") {
+					t.Fatalf("control run lost the history, so the reset case would pass vacuously: roles %q", roles)
+				}
+				return
+			}
+			if !slices.Equal(roles, []string{"system", "user"}) || contents[1] != "fresh question" {
+				t.Fatalf("second request after reset = roles %q contents %q, want only the system message and the new question", roles, contents)
+			}
+			if strings.Contains(sent, "SECRET-FIRST-TURN") || strings.Contains(sent, "ANSWER-ONE") {
+				t.Fatalf("second request after reset still carries the cleared exchange: %q", contents)
+			}
+		})
+	}
+}
+
+// TestServiceResetConversationRecoversSnapshotLockout covers #361's second
+// symptom: a snapshot just under SessionSnapshotLimit makes every turn that
+// grows it fail to save (run.failed, prior snapshot kept), and New chat is the
+// way out short of a restart.
+func TestServiceResetConversationRecoversSnapshotLockout(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+		{Content: "refused save"}, {Content: "fits again"},
+	}}
+	h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+		guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
+		return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+	}
+	repoID, _ := h.bind(t)
+	id := runIdentityFor(repoID, "project")
+
+	const headroom = 64
+	stored, err := json.Marshal(conversation.Conversation{ID: id.ConversationID, Revision: 1, Messages: []conversation.Message{{Role: "user"}}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	mustSave(t, h.svc.sessions, convOfSize(id.ConversationID, SessionSnapshotLimit-len(stored)-headroom))
+	if got := len(h.svc.sessions.snaps[id.ConversationID]); got != SessionSnapshotLimit-headroom {
+		t.Fatalf("preloaded snapshot = %d bytes, want %d", got, SessionSnapshotLimit-headroom)
+	}
+
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	if typ := waitRelayedTerminal(t, h.rec, id.RunID); typ != "run.failed" {
+		t.Fatalf("turn over the snapshot cap ended %q, want run.failed", typ)
+	}
+	if got := len(h.svc.sessions.snaps[id.ConversationID]); got != SessionSnapshotLimit-headroom {
+		t.Fatalf("refused save changed the snapshot to %d bytes; every later turn would not be locked out", got)
+	}
+
+	if err := h.svc.ResetConversation(conversationOf(id)); err != nil {
+		t.Fatalf("ResetConversation: %v", err)
+	}
+	next := runIdentityFor(repoID, "project")
+	if _, err := h.svc.StartTurn(context.Background(), turnFor(next)); err != nil {
+		t.Fatalf("StartTurn after reset: %v", err)
+	}
+	if typ := waitRelayedTerminal(t, h.rec, next.RunID); typ != "run.finished" {
+		t.Fatalf("turn after reset ended %q, want run.finished", typ)
+	}
+	saved, err := h.svc.sessions.Load(context.Background(), id.ConversationID)
+	if err != nil || saved.Revision != 1 {
+		t.Fatalf("snapshot after reset = %+v, %v; want a fresh revision-1 thread", saved, err)
+	}
+}
+
+// TestServiceResetConversationRotatesOpencodeSession covers the owner's #306
+// decision through the real path: New chat starts a new opencode session. The
+// cached runner survives the reset, so the x-opencode-session value must be
+// derived when each request is made: stable across turns of one conversation,
+// different on the first request after ResetConversation.
+func TestServiceResetConversationRotatesOpencodeSession(t *testing.T) {
+	h := newServiceHarness(t, "http://127.0.0.1:1")
+	opencode, _, err := NormalizeEndpoint("https://opencode.ai/zen/v1")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+		{Content: "one"}, {Content: "two"}, {Content: "three"},
+	}}
+	built := 0
+	h.svc.newRunner = func(ctx context.Context, root string, target providerTarget,
+		guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
+		built++
+		target.apiFormat = "openai-compat"
+		target.destination.Endpoint = opencode
+		return newGolemRunner(ctx, root, target, guard, sessions, backend, nil, golemTuning{})
+	}
+	repoID, _ := h.bind(t)
+	turn := func(what string) {
+		t.Helper()
+		id := runIdentityFor(repoID, "project")
+		if _, err := h.svc.StartTurn(context.Background(), turnFor(id)); err != nil {
+			t.Fatalf("%s StartTurn: %v", what, err)
+		}
+		if typ := waitRelayedTerminal(t, h.rec, id.RunID); typ != "run.finished" {
+			t.Fatalf("%s terminal = %q, want run.finished", what, typ)
+		}
+	}
+
+	turn("first")
+	turn("second")
+	if err := h.svc.ResetConversation(conversationOf(runIdentityFor(repoID, "project"))); err != nil {
+		t.Fatalf("ResetConversation: %v", err)
+	}
+	turn("after reset")
+
+	reqs := backend.recorded()
+	if len(reqs) != 3 {
+		t.Fatalf("provider requests = %d, want 3", len(reqs))
+	}
+	if built != 1 {
+		t.Fatalf("runners built = %d, want the one cached runner to serve every turn", built)
+	}
+	first, second, afterReset := reqs[0].SessionID, reqs[1].SessionID, reqs[2].SessionID
+	if !strings.HasPrefix(first, "firn-") || !strings.HasPrefix(afterReset, "firn-") {
+		t.Fatalf("session ids = %q, %q, want blinded opencode session ids", first, afterReset)
+	}
+	if second != first {
+		t.Fatalf("second turn sent %q, first sent %q: want one session per conversation", second, first)
+	}
+	if afterReset == first {
+		t.Fatalf("first request after New chat reused session %q, want a new opencode session", first)
 	}
 }
 
@@ -3516,7 +4078,7 @@ func TestServiceProcessResetSemantics(t *testing.T) {
 	build := func(t *testing.T) (*Service, *fakeFactory) {
 		t.Helper()
 		rec := &emitRecorder{}
-		svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit)
+		svc := NewService(context.Background(), filesystem.NewOS(), cpath, rec.emit, "")
 		svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON(endpoint))
 		f := &fakeFactory{}
 		svc.newRunner = f.factory()
@@ -3597,7 +4159,7 @@ func TestServiceRepoLocalConfigSourceProtected(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	// Production loadConfig stays installed: discovery must resolve the
 	// repo-local $GO_LLM_CONFIG source.
 	f := &fakeFactory{}
@@ -3677,7 +4239,7 @@ func TestServiceConfigSourceDeletionKeepsWorkspaceAvailable(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", cfgPath)
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	f := &fakeFactory{}
 	svc.newRunner = f.factory()
 	t.Cleanup(func() {
@@ -3735,7 +4297,7 @@ func TestServiceRepoLocalConfigSourceProtectedOnFirstStartTurn(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	f := &fakeFactory{} // production loadConfig stays installed
 	svc.newRunner = f.factory()
 	t.Cleanup(func() {
@@ -3858,7 +4420,7 @@ func TestSettingsSnapshotProtectedPerBinding(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(repo, cfgName))
 
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	// Production loadConfig stays installed: discovery resolves the repo-local
 	// $GO_LLM_CONFIG source.
 	f := &fakeFactory{}
@@ -4158,7 +4720,7 @@ func TestSettingsReadBlocksDuringReload(t *testing.T) {
 // mid-flight (waitgroup + gate), and both finish cleanly.
 func TestReloadSettingsVersusClose(t *testing.T) {
 	rec := &emitRecorder{}
-	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit)
+	svc := NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), rec.emit, "")
 	svc.loadConfig = fixtureConfigLoader(t, agentConfigJSON("http://localhost:8080"))
 	svc.newRunner = (&fakeFactory{}).factory()
 	h := &svcHarness{svc: svc, rec: rec}

@@ -897,6 +897,16 @@ export function ReloadGolemSettings(): $CancellablePromise<ai$0.SettingsReloadRe
 }
 
 /**
+ * ResetGolemConversation deletes the backend conversation behind identity so
+ * its next turn starts fresh (New chat). It refuses while that conversation
+ * has a run starting, running, canceling, or waiting on consent.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function ResetGolemConversation(identity: ai$0.ConversationIdentity): $CancellablePromise<void> {
+    return $Call.ByID(3558703987, identity);
+}
+
+/**
  * ResizeTerminal passes the new dimensions of the terminal window
  * This is exposed to the frontend via Wails bindings.
  */

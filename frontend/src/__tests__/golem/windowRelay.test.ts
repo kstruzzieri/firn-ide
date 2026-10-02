@@ -17,6 +17,7 @@ const closeMock = jest.fn();
 const postMock = jest.fn();
 const runTurnMock = jest.fn();
 const cancelRunMock = jest.fn();
+const resetMock = jest.fn();
 
 jest.mock('../../wails/bindings', () => {
   const actual = jest.requireActual('../../wails/bindings');
@@ -29,6 +30,7 @@ jest.mock('../../wails/bindings', () => {
     PostGolemWindowMessage: (...args: unknown[]) => postMock(...args),
     RunGolemTurn: (...args: unknown[]) => runTurnMock(...args),
     CancelGolemRun: (...args: unknown[]) => cancelRunMock(...args),
+    ResetGolemConversation: (...args: unknown[]) => resetMock(...args),
   };
 });
 
@@ -205,6 +207,7 @@ beforeEach(() => {
   postMock.mockResolvedValue(undefined);
   runTurnMock.mockResolvedValue({ state: 'accepted' });
   cancelRunMock.mockResolvedValue(undefined);
+  resetMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -408,6 +411,43 @@ describe('undock', () => {
     expect(openMock).not.toHaveBeenCalled();
   });
 
+  it('refuses to undock while a docked New chat is still resetting the backend', async () => {
+    const reset = deferred<undefined>();
+    resetMock.mockReturnValue(reset.promise);
+    await start();
+    hydrate();
+    useDraftStore.getState().installAll({ [CONV]: 'old draft' });
+    // What the docked New chat does: its draft goes only once the reset lands,
+    // which is after a transfer started now would already have read the map.
+    const cleared = useGolemStore
+      .getState()
+      .clearConversation(CONV)
+      .then((result) => {
+        if (result.ok) useDraftStore.getState().clear(CONV);
+      });
+
+    const refused = undockGolem().then(
+      () => null,
+      (error: Error) => error.message
+    );
+    expect(openMock).not.toHaveBeenCalled();
+    expect(useGolemStore.getState().hostFrozen).toBe(false);
+    expect(await refused).toBe('Golem is still starting a new chat. Try again in a moment.');
+
+    reset.resolve(undefined);
+    await cleared;
+    expect(useGolemStore.getState().conversations[CONV].transcript).toEqual([]);
+    expect(useDraftStore.getState().drafts).toEqual({ [CONV]: '' });
+
+    // Once it has landed, the window is handed nothing of the chat just reset.
+    const attempt = undockGolem();
+    emit(MODE_EVENT, phase('bootstrapped', 2));
+    await flush();
+    expect(posted('drafts').map((entry) => entry.payload)).toEqual([{ [CONV]: '' }]);
+    emit(MODE_EVENT, phase('ready', 3));
+    await expect(attempt).resolves.toBeUndefined();
+  });
+
   it('holds the docked text frozen until an unconfirmed transfer is retired', async () => {
     jest.useFakeTimers();
     try {
@@ -512,6 +552,63 @@ describe('satellite actions', () => {
 
     // Neither outcome touches it: only the visible host clears a draft.
     expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'stale main copy' });
+  });
+
+  // #361: the satellite's New chat resets the backend through main's binding,
+  // and is acknowledged only once that reset has answered.
+  const withTranscript = () => {
+    useGolemStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        [CONV]: {
+          ...state.conversations[CONV],
+          transcript: [{ id: 'user-1', runId: '', kind: 'user' as const, text: 'old question' }],
+        },
+      },
+    }));
+  };
+  const clearAction = fromSatellite({
+    kind: 'action',
+    id: 1,
+    payload: { type: 'clear', conversationId: CONV },
+  });
+
+  it('resets the backend for a satellite New chat and acknowledges once it lands', async () => {
+    await ready();
+    withTranscript();
+    const reset = deferred<undefined>();
+    resetMock.mockReturnValue(reset.promise);
+
+    emit(MESSAGE_EVENT, clearAction);
+    await flush();
+    expect(resetMock).toHaveBeenCalledTimes(1);
+    expect({ ...resetMock.mock.calls[0][0] }).toEqual({
+      repoEpoch: 3,
+      workspaceId: 'frontend',
+      conversationId: CONV,
+    });
+    // Unanswered while the backend has not: the satellite keeps its draft.
+    expect(acks()).toEqual([]);
+    expect(useGolemStore.getState().conversations[CONV].transcript).toHaveLength(1);
+
+    reset.resolve(undefined);
+    await flush();
+    expect(acks()).toEqual([{ id: 1, ok: true }]);
+    expect(useGolemStore.getState().conversations[CONV].transcript).toEqual([]);
+  });
+
+  it('refuses a satellite New chat the backend would not reset and keeps the view', async () => {
+    await ready();
+    withTranscript();
+    resetMock.mockRejectedValue(new Error('The Golem request is invalid or stale.'));
+
+    emit(MESSAGE_EVENT, clearAction);
+    await flush();
+
+    expect(acks()).toEqual([
+      { id: 1, ok: false, reason: 'The Golem request is invalid or stale.' },
+    ]);
+    expect(useGolemStore.getState().conversations[CONV].transcript).toHaveLength(1);
   });
 
   it('routes openConfig to the one app-global configuration tab', async () => {

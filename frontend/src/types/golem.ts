@@ -165,6 +165,14 @@ export interface ConversationView {
   queuedTurns: QueuedTurn[];
   pendingConsentTurn: PendingConsentTurn | null;
   lastFailedTurn: RetryTurn | null;
+  /**
+   * Set while New chat waits for the backend to drop this conversation (#361).
+   * No turn may start in it meanwhile, so nothing reaches a backend
+   * conversation that is about to be deleted or a view about to be cleared.
+   * `held` records that the queue dispatcher was stopped by the reset, so a
+   * refused reset releases exactly that dispatch and nothing it never held.
+   */
+  resetting?: 'pending' | 'held';
 }
 
 export interface GolemStoreState {
@@ -230,9 +238,13 @@ export interface GolemStoreState {
    * keep landing through the transcript, `lastFailedTurn` and the run phases,
    * exactly as before — a rejected provider promise is not a refusal, because
    * admission already took ownership of that prompt.
+   *
+   * `clearConversation` is the one asynchronous answer: New chat must delete
+   * the backend conversation first (#361), and it keeps the view when that
+   * reset is refused.
    */
   selectConversation(conversationId: string): GolemActionResult;
-  clearConversation(conversationId: string): GolemActionResult;
+  clearConversation(conversationId: string): Promise<GolemActionResult>;
   submitTurn(conversationId: string, text: string): GolemActionResult;
   allowAndSend(conversationId: string, runId: string, challengeId: string): GolemActionResult;
   retryLastFailed(conversationId: string): GolemActionResult;
@@ -293,6 +305,13 @@ export const toCancelRequest = (identity: RunIdentity) =>
     workspaceId: identity.workspaceId,
     conversationId: identity.conversationId,
     runId: identity.runId,
+  });
+
+export const toConversationIdentity = (identity: ConversationIdentity) =>
+  new ai.ConversationIdentity({
+    repoEpoch: identity.repoEpoch,
+    workspaceId: identity.workspaceId,
+    conversationId: identity.conversationId,
   });
 
 // ── Boundary validators ───────────────────────────────────────────────────────

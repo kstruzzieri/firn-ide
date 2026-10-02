@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Golem runs on go-llm v0.3.0. Tool results now reach the model inside a fenced
+  block marked as untrusted data, and every run appends a short tool trust
+  contract to the system prompt, so text a tool returns from a file is marked as
+  data rather than instructions. (#306)
+- Golem chat's requests to OpenAI-compatible endpoints identify themselves as
+  `Firn/<version>`; commit-message generation keeps go-llm's default. opencode
+  (`https://opencode.ai`) now receives the `x-opencode-session` header it uses
+  for routing and prompt caching, carrying an opaque value per conversation
+  that changes on New chat and when Firn restarts and cannot be traced back to
+  the repository path. Every other OpenAI-compatible endpoint, local or remote,
+  receives no session header. (#306)
+
 ### Fixed
 
 - Golem now sizes its per-turn context budget from the configured model's
@@ -29,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reason and the remedy: fix or remove the file, then restart Firn, or open
   the workspace with the newer Firn that wrote it. An empty state file reads
   as absent. (#290)
+- New chat in the Golem panel now also clears the conversation Firn keeps for
+  the model, docked or undocked. Before, it cleared only the view: the next turn
+  still sent the cleared prompts and answers to the model, and a long session
+  eventually passed the conversation size limit, after which most turns failed
+  until Firn restarted. New chat now recovers from that state. It is unavailable
+  while a reply is running, and if the reset is refused the conversation and the
+  draft stay as they were. Queue editing is disabled while the reset is pending,
+  so newly entered text cannot be erased by its completion. New chat on a
+  conversation from a workspace that is no longer open is refused until the
+  workspace is open again. (#361)
 
 ## [0.12.0] - 2026-09-06
 

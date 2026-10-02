@@ -5,6 +5,7 @@ package testutil
 
 import (
 	"net"
+	"os"
 	"testing"
 )
 
@@ -12,12 +13,19 @@ import (
 // address so a stub server is classified REMOTE by go-llm's destination
 // admission (classification is lexical: only literal loopback/localhost is
 // local) yet is actually reachable from this process. Skips the test when
-// the host has no non-loopback IPv4 interface.
+// the host has no non-loopback IPv4 interface -- unless FIRN_REQUIRE_NONLOOPBACK
+// is set to "1" (CI sets it on the backend-tests job), in which case that
+// absence fails the test instead: a runner silently missing the interface
+// must not let the REMOTE-classification coverage quietly disappear.
 func ListenNonLoopback(t testing.TB) (net.Listener, string) {
 	t.Helper()
+	stop := t.Skip
+	if os.Getenv("FIRN_REQUIRE_NONLOOPBACK") == "1" {
+		stop = t.Fatal
+	}
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		t.Skip("interfaces unavailable: " + err.Error())
+		stop("interfaces unavailable: " + err.Error())
 	}
 	for _, a := range addrs {
 		ipn, ok := a.(*net.IPNet)
@@ -31,6 +39,6 @@ func ListenNonLoopback(t testing.TB) (net.Listener, string) {
 		t.Cleanup(func() { _ = ln.Close() })
 		return ln, "http://" + ln.Addr().String()
 	}
-	t.Skip("no non-loopback IPv4 interface")
+	stop("no non-loopback IPv4 interface")
 	return nil, ""
 }

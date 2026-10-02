@@ -314,6 +314,152 @@ func TestScopePolicyReloadUpdatesIssuedGuard(t *testing.T) {
 	}
 }
 
+// Admission reloads under the binding gate's read lock (#379), so two
+// conversations can reload one policy at once. A reload must read and publish
+// as one step, or the reload that read first can publish last and restore the
+// rules the newer reload replaced.
+func TestScopePolicyReloadSerializesReadAndPublish(t *testing.T) {
+	repo := newPolicyRepo(t)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths: []\n")
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	p := LoadScopePolicy(fsys, repo)
+	fsys.blockPath = manifest
+
+	olderDone := make(chan struct{})
+	go func() { p.Reload(); close(olderDone) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the older reload to read the manifest")
+	}
+
+	writeFile(t, manifest, "sensitive_paths:\n  - vault/**\n")
+	newerDone := make(chan struct{})
+	go func() { p.Reload(); close(newerDone) }()
+
+	released := false
+	defer func() {
+		if !released {
+			close(fsys.release)
+		}
+	}()
+	select {
+	case <-newerDone:
+		t.Fatal("a newer reload published while an older manifest read was still in flight")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(fsys.release)
+	released = true
+	for name, done := range map[string]<-chan struct{}{"older": olderDone, "newer": newerDone} {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out waiting for the %s reload", name)
+		}
+	}
+	mustDeny(t, p.Guard(""), "vault/data.txt")
+}
+
+// A reload while the repository directory is absent finds no manifests, but
+// that is not the user removing them: the same directory can come back, and
+// its runners still accept it. Nothing is published, and guards deny until a
+// reload can read the directory again.
+func TestScopePolicyReloadKeepsRulesWhileTheRootIsAbsent(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - private.txt\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	g := p.Guard("")
+	mustDeny(t, g, "private.txt")
+
+	away := filepath.Join(t.TempDir(), "away")
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	mustDeny(t, g, "private.txt")
+
+	// Nor does a file standing at the repository's path while it is away.
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "placeholder")
+	p.Reload()
+	if err := os.Remove(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	mustDeny(t, g, "private.txt")
+
+	// A manifest actually removed from a present directory still clears them.
+	if err := os.Remove(filepath.Join(repo, "ai-kit.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+	mustAllow(t, g, "private.txt")
+}
+
+// A repository replaced while its manifests are being read must not have the
+// old directory's rules published for the new one. The reload stays pending
+// and every guard denies until a reload reads one directory start to finish.
+func TestScopePolicyReplacementDuringAReloadFailsClosedUntilReread(t *testing.T) {
+	repo := newPolicyRepo(t)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths: []\n")
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	p := LoadScopePolicy(fsys, repo)
+	g := p.Guard("")
+	mustAllow(t, g, "frontend/private.txt")
+	fsys.blockPath = manifest
+
+	done := make(chan struct{})
+	go func() { p.Reload(); close(done) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		close(fsys.release)
+		t.Fatal("timed out waiting for the reload to read the manifest")
+	}
+	if err := os.Rename(repo, repo+"-old"); err != nil {
+		close(fsys.release)
+		t.Fatal(err)
+	}
+	writeFile(t, manifest, "sensitive_paths:\n  - frontend/private.txt\n")
+	close(fsys.release)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the reload")
+	}
+
+	if !p.ReloadPending() {
+		t.Fatal("a reload that straddled a replacement was not left pending")
+	}
+	mustDeny(t, g, "frontend/private.txt")
+	mustDeny(t, g, "main.go")
+
+	p.Reload()
+	if p.ReloadPending() {
+		t.Fatal("a clean reload left the policy pending")
+	}
+	mustDeny(t, g, "frontend/private.txt")
+	mustAllow(t, g, "main.go")
+}
+
 func TestScopePolicyProtectConfigSource(t *testing.T) {
 	t.Run("invalidInput", func(t *testing.T) {
 		repo := newPolicyRepo(t)

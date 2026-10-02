@@ -25,6 +25,7 @@ import { createCommands } from '../../../utils/commands';
 const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
 const mockReloadGolemSettings = jest.fn();
+const mockResetGolemConversation = jest.fn();
 
 jest.mock('../../../wails/bindings', () => {
   const actual = jest.requireActual('../../../wails/bindings');
@@ -33,6 +34,7 @@ jest.mock('../../../wails/bindings', () => {
     RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
     CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
     ReloadGolemSettings: (...args: unknown[]) => mockReloadGolemSettings(...args),
+    ResetGolemConversation: (...args: unknown[]) => mockResetGolemConversation(...args),
   };
 });
 
@@ -195,6 +197,14 @@ const flush = async () => {
   });
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 const applyGolemStyles = () => {
   const element = document.createElement('style');
   element.textContent = [
@@ -243,6 +253,7 @@ beforeEach(() => {
   uuidQueue = [RUN_A, RUN_B];
   mockRunGolemTurn.mockResolvedValue(acceptedAdmission(RUN_A));
   mockCancelGolemRun.mockResolvedValue(undefined);
+  mockResetGolemConversation.mockResolvedValue(undefined);
   mockReloadGolemSettings.mockResolvedValue({
     busy: false,
     projection: {
@@ -819,7 +830,7 @@ describe('GolemPanel admission', () => {
     expect(composer()).toHaveValue('leftover');
   });
 
-  it('accepts New chat when the only thing to clear is the draft', () => {
+  it('accepts New chat when the only thing to clear is the draft', async () => {
     render(<GolemPanel visible />);
 
     // An empty transcript and no queue: only this host knows there is anything
@@ -827,9 +838,191 @@ describe('GolemPanel admission', () => {
     type('just a draft');
     expect(newChatButton()).toBeEnabled();
     fireEvent.click(newChatButton());
+    await flush();
 
     expect(composer()).toHaveValue('');
     expect(toast()).toBeNull();
+  });
+
+  // #361: the backend conversation is reset before anything local is dropped.
+  it('drops the draft only once the backend reset has landed', async () => {
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    render(<GolemPanel visible />);
+    type('old draft');
+
+    fireEvent.click(newChatButton());
+    expect(mockResetGolemConversation).toHaveBeenCalledTimes(1);
+    expect(composer()).toHaveValue('old draft');
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(composer()).toHaveValue('');
+    expect(toast()).toBeNull();
+  });
+
+  it('keeps the transcript and the draft and says why when the reset is refused', async () => {
+    mockResetGolemConversation.mockRejectedValue(
+      new Error('The Golem request is invalid or stale.')
+    );
+    render(<GolemPanel visible />);
+    type('hello there');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
+    });
+    type('keep me');
+
+    fireEvent.click(newChatButton());
+    await flush();
+
+    expect(screen.getByText('hello there')).toBeInTheDocument();
+    expect(composer()).toHaveValue('keep me');
+    expect(toast()).toMatchObject({
+      type: 'error',
+      message: 'The Golem request is invalid or stale.',
+    });
+  });
+
+  it('returns keyboard focus to the composer when the reset is refused', async () => {
+    mockResetGolemConversation.mockRejectedValue(
+      new Error('The Golem request is invalid or stale.')
+    );
+    render(<GolemPanel visible />);
+    type('keep me');
+
+    // New chat disables itself while the reset is in flight, which drops the
+    // focus it held; a refusal must put it somewhere deliberate, as success does.
+    newChatButton().focus();
+    fireEvent.click(newChatButton());
+    await flush();
+
+    expect(toast()).toMatchObject({ message: 'The Golem request is invalid or stale.' });
+    expect(composer()).toHaveValue('keep me');
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it('reports a reset that fails outright and returns keyboard focus to the composer', async () => {
+    // Not a refusal the store answers: the promise itself rejects, the way a
+    // throw inside a store update would make it.
+    const clearConversation = store().clearConversation;
+    useGolemStore.setState({
+      clearConversation: () => Promise.reject(new Error('store update failed')),
+    });
+    try {
+      render(<GolemPanel visible />);
+      type('keep me');
+      newChatButton().focus();
+      fireEvent.click(newChatButton());
+      await flush();
+
+      expect(toast()).toMatchObject({ type: 'error', message: 'store update failed' });
+      expect(composer()).toHaveValue('keep me');
+      expect(document.activeElement).toBe(composer());
+    } finally {
+      useGolemStore.setState({ clearConversation });
+    }
+  });
+
+  it('locks the composer while the reset is in flight, so nothing typed then is erased by it', async () => {
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    render(<GolemPanel visible />);
+    type('old draft');
+
+    fireEvent.click(newChatButton());
+
+    // The draft is cleared when the reset lands; anything typed in between
+    // would be erased with it, so there is nothing to type into until then.
+    expect(composer()).toBeDisabled();
+    expect(sendButton()).toBeDisabled();
+    expect(newChatButton()).toBeDisabled();
+    type('typed while waiting');
+    pressEnter();
+    fireEvent.click(newChatButton());
+    expect(useDraftStore.getState().drafts[CONV]).toBe('old draft');
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(mockResetGolemConversation).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(composer()).toBeEnabled();
+    expect(composer()).toHaveValue('');
+    type('a fresh start');
+    expect(composer()).toHaveValue('a fresh start');
+  });
+
+  it('locks queued messages while New chat is resetting', async () => {
+    mockRunGolemTurn.mockRejectedValueOnce(new Error('Admission failed'));
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    render(<GolemPanel visible />);
+    type('first');
+    pressEnter();
+    type('second');
+    pressEnter();
+    await flush();
+
+    fireEvent.click(newChatButton());
+    const queued = screen.getByRole('textbox', { name: 'Queued message 1' });
+    const remove = screen.getByRole('button', { name: 'Remove queued message 1' });
+    expect(queued).toBeDisabled();
+    expect(remove).toBeDisabled();
+    fireEvent.change(queued, { target: { value: 'typed during reset' } });
+    fireEvent.click(remove);
+    expect(store().conversations[CONV].queuedTurns.map((turn) => turn.message)).toEqual(['second']);
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(screen.queryByRole('textbox', { name: 'Queued message 1' })).not.toBeInTheDocument();
+  });
+
+  it('stays locked when a rebind holds a queued turn during the reset', async () => {
+    hydrate({ destination: remoteDestination, needsConsent: true });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
+    render(<GolemPanel visible />);
+    type('first');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().invalidateBinding();
+      store().hydrateStatus(
+        parseGolemStatus(
+          statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 }, available: false })
+        )
+      );
+    });
+    expect(store().conversations[CONV].queuedTurns.map((turn) => turn.message)).toEqual(['first']);
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    fireEvent.click(newChatButton());
+
+    // A rebind re-arms the queued turn; the reset holds it ('held' rather than
+    // 'pending'). The lock must cover both, or text typed now is erased when
+    // the reset lands.
+    act(() => {
+      store().invalidateBinding();
+      store().hydrateStatus(
+        parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 2 } }))
+      );
+    });
+    expect(store().conversations[CONV].resetting).toBe('held');
+    expect(composer()).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Queued message 1' })).toBeDisabled();
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(composer()).toBeEnabled();
   });
 
   it('freezes every action the moment a handoff starts', () => {
@@ -1446,6 +1639,34 @@ describe('GolemPanel cancel and retry', () => {
     expect(mockCancelGolemRun.mock.calls[0][0]).toMatchObject(runIdentity(RUN_A));
   });
 
+  it('disables Retry while New chat is resetting', async () => {
+    hydrate();
+    selectFocused();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    render(<GolemPanel visible />);
+    type('retry me');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().ingestEvent(
+        eventPayload({ seq: 2, type: 'run.failed', payload: { message: 'boom' } })
+      );
+    });
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    // No run exists to wait for; a Retry now would reach a conversation the
+    // reset is deleting.
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+
+    await act(async () => {
+      reset.resolve(undefined);
+      await reset.promise;
+    });
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
   it('offers Retry as a real button for a failed turn it still holds the request for', async () => {
     hydrate();
     selectFocused();
@@ -1741,6 +1962,7 @@ describe('GolemPanel new chat', () => {
     expect(newChatButton()).toBeEnabled();
 
     fireEvent.click(newChatButton());
+    await flush();
 
     expect(screen.queryByText('hello there')).not.toBeInTheDocument();
     expect(store().conversations[CONV].transcript).toHaveLength(0);

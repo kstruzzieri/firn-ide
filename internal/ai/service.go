@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -55,7 +56,7 @@ type runnerFactory func(
 	string,
 	providerTarget,
 	agenttools.ScopeGuard,
-	golem.SessionStore,
+	sessionStore,
 ) (Runner, error)
 
 // convState is the explicit conversation admission state.
@@ -73,9 +74,11 @@ const (
 // terminal cleanup, admission rollback, and Close share a single ownership
 // path.
 type runnerRecord struct {
-	runner    Runner
-	closeOnce sync.Once
-	closeErr  error
+	runner       Runner
+	toolRoot     string
+	rootIdentity fs.FileInfo
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func (r *runnerRecord) close() error {
@@ -186,17 +189,24 @@ type Service struct {
 }
 
 // NewService constructs the Service with its production collaborators.
-// Package-local tests replace only the four function fields.
+// Package-local tests replace only the four function fields. userAgent is the
+// HTTP identity an openai-compat chat runner's provider sends; empty keeps
+// go-llm's. An ollama runner sends none of its own: go-llm's Ollama client has
+// no User-Agent option.
 //
 // ctx must outlive the Service: its cancellation is NOT observed as shutdown.
 // Only Close sets `closing` and cancels the derived baseCtx, so a caller ctx
 // cancelled without Close leaves every subsequent run context born cancelled
 // while Status still reports Available.
-func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, any)) *Service {
+func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath string, emit func(string, any), userAgent string) *Service {
 	if emit == nil {
 		emit = func(string, any) {}
 	}
 	baseCtx, baseCancel := context.WithCancel(ctx)
+	newRunner := func(ctx context.Context, root string, target providerTarget,
+		guard agenttools.ScopeGuard, sessions sessionStore) (Runner, error) {
+		return NewGolemRunner(ctx, root, target, guard, sessions, userAgent)
+	}
 	s := &Service{
 		fs:             fs,
 		emit:           emit,
@@ -210,7 +220,7 @@ func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath strin
 		runClaims:      make(map[string]RunIdentity),
 		pendingApplies: make(map[string]*settingsChallengeRecord),
 		loadConfig:     loadDefaultAgentConfig,
-		newRunner:      NewGolemRunner,
+		newRunner:      newRunner,
 		now:            time.Now,
 		newID:          uuid.NewString,
 	}
@@ -632,6 +642,66 @@ func (s *Service) StartTurn(ctx context.Context, req TurnRequest) (TurnAdmission
 	return adm, nil
 }
 
+// runnerRootInfo keeps reconstruction at the authorized canonical path. A
+// parent directory swapped for a symlink leaves a real directory at root, so
+// only the canonical check stops golem.New from resolving it to a directory
+// outside the bound repository; a root that is itself a symlink also fails
+// the directory check.
+func (s *Service) runnerRootInfo(root string) (fs.FileInfo, error) {
+	// A root that is gone, moved, or no longer a directory is the user's
+	// workspace being unavailable; retrying the same request cannot fix it.
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolving workspace root: %w", ErrWorkspaceUnavailable, err)
+	}
+	if canonical != root {
+		return nil, fmt.Errorf("%w: workspace root is no longer canonical", ErrWorkspaceUnavailable)
+	}
+	info, err := filesystem.Lstat(s.fs, root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: stat workspace root: %w", ErrWorkspaceUnavailable, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%w: workspace root is not a directory", ErrWorkspaceUnavailable)
+	}
+	// Windows loads a file ID lazily, by path, on the first SameFile; load it
+	// now so this identity names the directory sampled here. A load that fails
+	// would leave it to name whatever is at the path later, so refuse it.
+	if !os.SameFile(info, info) {
+		return nil, fmt.Errorf("%w: workspace root identity is unavailable", ErrWorkspaceUnavailable)
+	}
+	return info, nil
+}
+
+// pinnedRootGuard admits a path the policy's rules allow only if, checked
+// afterwards, root is still the directory pinned names and the rules still
+// describe the repository at its path. go-llm v0.3.0 pins a runner to its root
+// directory, so after a replacement a run in flight can keep reading the old
+// directory through its descriptor while the rules describe another; a
+// replacement in place when these checks run denies the read, and the next
+// admission rebuilds the runner or rereads the rules.
+//
+// The checks see the filesystem only at the instant each runs. A rename or
+// replacement that lands after one of them, including after the guard returns
+// and before go-llm opens the file through its descriptor, is not seen, and
+// neither is one undone within the window (A-B-A). Closing that needs go-llm
+// to check the file it actually opened (kstruzzieri/go-llm#613) and rules tied
+// to the directory they were read from (#386).
+// ponytail: three Lstats per guard check (policy, runner root, repository);
+// cache per walk if a profile ever shows it.
+func pinnedRootGuard(fsys filesystem.FileSystem, root string, pinned fs.FileInfo, guard agenttools.ScopeGuard, rulesCurrent func() bool) agenttools.ScopeGuard {
+	return func(rel string, write bool) error {
+		if err := guard(rel, write); err != nil {
+			return err
+		}
+		current, err := filesystem.Lstat(fsys, root)
+		if err != nil || !os.SameFile(current, pinned) || !rulesCurrent() {
+			return errPolicyDenied
+		}
+		return nil
+	}
+}
+
 func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, after *[]func()) (TurnAdmission, error) {
 	// Steps 2-4: unlocked preparation; recommitted under the locks below.
 	// Step 3's conversation-state check is deliberately deferred to step 6:
@@ -678,6 +748,12 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		return TurnAdmission{}, err
 	}
 	dest := target.destination
+	// Sampled before step 6, so an unavailable root neither consumes a
+	// pending consent challenge nor writes a grant for a turn that cannot run.
+	rootInfo, err := s.runnerRootInfo(resolved.ToolRoot)
+	if err != nil {
+		return TurnAdmission{}, err
+	}
 
 	// Step 6.
 	switch conv.state {
@@ -768,15 +844,13 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 
 	// Step 7.
 	rec := conv.runner
-	if rec != nil && (conv.runnerEpoch != resolved.RepoEpoch || conv.runnerConfigEpoch != cfgEpoch || conv.runnerStale) {
-		// Defensive: a retired incarnation's record still cached must fully
-		// quiesce before any re-create for this conversation ID. Unreachable
-		// by construction -- retireBinding nils idle runners and only
-		// stale-marks runners whose conversation is running/canceling, and
-		// step 6 already rejected those states -- so log rather than leave a
-		// silent dead branch: this line firing means that argument broke.
-		log.Printf("ai: golem invariant violated: cached runner repo epoch %d != %d or config epoch %d != %d (stale=%v)",
-			conv.runnerEpoch, resolved.RepoEpoch, conv.runnerConfigEpoch, cfgEpoch, conv.runnerStale)
+	rootChanged := rec != nil && (rec.toolRoot != resolved.ToolRoot || !os.SameFile(rec.rootIdentity, rootInfo))
+	if rec != nil && (rootChanged || conv.runnerEpoch != resolved.RepoEpoch || conv.runnerConfigEpoch != cfgEpoch || conv.runnerStale) {
+		if !rootChanged {
+			// Retirement normally drops idle runners before admission.
+			log.Printf("ai: golem invariant violated: cached runner repo epoch %d != %d or config epoch %d != %d (stale=%v)",
+				conv.runnerEpoch, resolved.RepoEpoch, conv.runnerConfigEpoch, cfgEpoch, conv.runnerStale)
+		}
 		if err := rec.close(); err != nil {
 			log.Printf("ai: golem stale-cached runner close: %v", err)
 		}
@@ -784,13 +858,36 @@ func (s *Service) admit(ctx context.Context, req TurnRequest, launched *bool, af
 		conv.runnerStale = false
 		rec = nil
 	}
+	if rec == nil || binding.policy.ReloadPending() {
+		// Directory replacement may also replace the manifests without a
+		// watcher notification, including during a failed construction. Every
+		// new runner must enforce the current rules, even on that retry, and
+		// a reload skipped while the directory was away runs now that it is
+		// back. The panel learns of new warnings only from a status change.
+		warnings := binding.policy.Warnings()
+		binding.policy.Reload()
+		if !slices.Equal(warnings, binding.policy.Warnings()) {
+			*after = append(*after, func() { s.emit(EventGolemStatusChanged, nil) })
+		}
+	}
 	if rec == nil {
 		r, err := s.newRunner(s.baseCtx, resolved.ToolRoot, *target,
-			binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel), s.sessions)
+			pinnedRootGuard(s.fs, resolved.ToolRoot, rootInfo,
+				binding.policy.Guard(resolved.WorkspaceRel, resolved.workspaceLexicalRel),
+				binding.policy.RulesCurrent), s.sessions)
 		if err != nil {
 			return TurnAdmission{}, fmt.Errorf("%w: runner construction: %w", ErrRunFailed, err)
 		}
-		newRec = &runnerRecord{runner: r}
+		// Capture before construction: sampling only afterward can label tools
+		// that pinned the old directory with the replacement's identity.
+		newRec = &runnerRecord{runner: r, toolRoot: resolved.ToolRoot, rootIdentity: rootInfo}
+		currentInfo, err := s.runnerRootInfo(resolved.ToolRoot)
+		if err != nil {
+			return TurnAdmission{}, err
+		}
+		if !os.SameFile(rootInfo, currentInfo) {
+			return TurnAdmission{}, fmt.Errorf("%w: workspace root changed during runner construction", ErrRequestRejected)
+		}
 		rec = newRec
 	}
 
@@ -921,9 +1018,9 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 			}
 			if len(delta.Text) > maxAssistantOutputBytes-assistantOutputBytes {
 				cancel()
-				// Golem returns a latched sink error ahead of the run context
-				// error, so this cause — not context.Canceled — is what the
-				// terminal-less fallback sanitizes into its public message.
+				// Recorded as sinkRefused below, so this cause — not the
+				// context.Canceled it provokes — is what the terminal-less
+				// fallback sanitizes into its public message.
 				return fmt.Errorf("%w: %d bytes", ErrAssistantOutputLimit, maxAssistantOutputBytes)
 			}
 			assistantOutputBytes += len(delta.Text)
@@ -950,14 +1047,34 @@ func (s *Service) runTurn(ctx context.Context, cancel context.CancelFunc, conv *
 		return nil
 	}
 
-	_, err := rec.runner.Run(ctx, turn, sink)
+	var sinkRefused error
+	_, err := rec.runner.Run(ctx, turn, func(e golem.Event) error {
+		refusal := sink(e)
+		if refusal != nil && sinkRefused == nil {
+			sinkRefused = refusal // first wins, as golem latches it
+		}
+		return refusal
+	})
+	logged := err
+	if sinkRefused != nil {
+		// Golem cancels the run on a sink refusal and joins the refusal with
+		// the orchestrator's error, which a provider may report as that
+		// cancellation (Ollama does). The refusal is the cause: without this a
+		// refused run would classify as a user cancel, unlogged. The joined
+		// error is still what gets logged, so a real provider failure behind
+		// the refusal stays visible.
+		err = sinkRefused
+		if logged == nil {
+			logged = sinkRefused
+		}
+	}
 	if err != nil && !isCancellationErr(err) {
 		// Host-only diagnostics. A Save refused by the session caps is logged
 		// distinctly; its public presentation stays the fixed failure message.
 		if errors.Is(err, ErrSessionLimit) {
-			log.Printf("ai: golem run %s failed: session memory limit: %v", turn.RunID, err)
+			log.Printf("ai: golem run %s failed: session memory limit: %v", turn.RunID, logged)
 		} else {
-			log.Printf("ai: golem run %s failed: %v", turn.RunID, err)
+			log.Printf("ai: golem run %s failed: %v", turn.RunID, logged)
 		}
 	}
 
@@ -1050,6 +1167,51 @@ func (s *Service) Cancel(id RunIdentity) (bool, error) {
 		conv.mu.Unlock()
 	}
 	return false, s.publicErr("cancel", fmt.Errorf("%w: no matching run or pending challenge", ErrRequestRejected))
+}
+
+// ResetConversation deletes the stored conversation behind id so its next turn
+// starts a fresh thread: New chat (#361). Unbind and rebind never delete, so
+// this explicit reset is the only way a conversation's history is dropped.
+//
+// It takes StartTurn's admission locks in StartTurn's order (the bindingGate
+// read lock, then, after the same identity resolution, the conversation mutex)
+// and acts only on an idle conversation: pending consent, starting, running
+// and canceling all refuse with ErrConversationBusy (conversation_busy). That
+// refusal is what keeps cleared history from coming back: runTurn restores
+// idle only after Runner.Run returns, so a finishing run's Save has already
+// landed, and golem reloads the store at the start of every run, so the next
+// turn sees the deletion. The store's revision compare-and-swap refuses stale
+// positive revisions but is no deletion barrier: a revision-0 Save recreates
+// the thread.
+func (s *Service) ResetConversation(id ConversationIdentity) error {
+	if err := s.resetConversation(id); err != nil {
+		return s.publicErr("reset", err)
+	}
+	return nil
+}
+
+func (s *Service) resetConversation(id ConversationIdentity) error {
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
+	if s.isClosing() {
+		return fmt.Errorf("%w: reset rejected", errServiceClosing)
+	}
+	if _, err := s.resolveTurnIdentity(RunIdentity{
+		RepoEpoch: id.RepoEpoch, WorkspaceID: id.WorkspaceID, ConversationID: id.ConversationID,
+	}); err != nil {
+		return err
+	}
+	conv := s.conversationFor(id.ConversationID)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	s.dropExpiredChallengeLocked(conv)
+	if conv.state != stateIdle {
+		return fmt.Errorf("%w: conversation is %s", ErrConversationBusy, conv.state)
+	}
+	// Delete also advances the conversation's generation, so the next opencode
+	// request carries a new x-opencode-session value (sessionHeaderID).
+	s.sessions.Delete(id.ConversationID)
+	return nil
 }
 
 // ReloadPolicy re-reads the manifest rules when absChangedPath is one of the

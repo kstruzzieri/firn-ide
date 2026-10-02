@@ -14,7 +14,8 @@ import (
 )
 
 // ErrWorkspaceUnavailable wraps repository-root and workspace-detection
-// failures: the repository cannot be bound at all. The raw cause is retained
+// failures: the repository cannot be bound at all, or a bound root is gone,
+// moved or no longer a directory when a turn starts. The raw cause is retained
 // in the chain for host logging (and may carry absolute paths); callers must
 // match the sentinel, never the text.
 var ErrWorkspaceUnavailable = errors.New("golem workspace unavailable")
@@ -24,6 +25,11 @@ var ErrWorkspaceUnavailable = errors.New("golem workspace unavailable")
 // retained in the chain for host logging; callers must match the sentinel,
 // never the text.
 var ErrRequestRejected = errors.New("golem request rejected")
+
+// ErrConversationBusy reports a request a conversation refuses only because
+// it is not idle (a run, a cancellation, a pending consent or an admission is
+// in flight). It clears on its own, unlike a stale or invalid request.
+var ErrConversationBusy = errors.New("golem conversation busy")
 
 // binding is one incarnation of a bound repository.
 type binding struct {

@@ -208,7 +208,7 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
 	}
-	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit)
+	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit, firnUserAgent())
 	a.gitMsgGen.SetDestinationPolicySource(a.aiService.DestinationPolicy)
 }
 
@@ -631,6 +631,17 @@ func (a *App) CancelGolemRun(identity ai.RunIdentity) (bool, error) {
 		return false, a.golemError(err)
 	}
 	return canceled, nil
+}
+
+// ResetGolemConversation deletes the backend conversation behind identity so
+// its next turn starts fresh (New chat). It refuses while that conversation
+// has a run starting, running, canceling, or waiting on consent.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ResetGolemConversation(identity ai.ConversationIdentity) error {
+	if a.aiService == nil {
+		return a.golemError(errGolemUnavailable)
+	}
+	return a.golemError(a.aiService.ResetConversation(identity))
 }
 
 // GetGolemSettings returns the read-only settings projection of the current

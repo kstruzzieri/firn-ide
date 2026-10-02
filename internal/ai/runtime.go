@@ -2,8 +2,14 @@ package ai
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/kstruzzieri/go-llm/agent"
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
@@ -20,6 +26,14 @@ type Runner interface {
 	Close() error
 }
 
+// sessionStore is the golem.SessionStore a runner persists through, plus the
+// per-conversation reset generation its opencode session header mixes in
+// (sessionHeaderID). MemorySessionStore is the production store.
+type sessionStore interface {
+	golem.SessionStore
+	Generation(threadID string) uint64
+}
+
 // golemRunner owns one golem.Runtime and the HTTP transport its single
 // concrete provider dials through.
 type golemRunner struct {
@@ -28,6 +42,8 @@ type golemRunner struct {
 }
 
 // NewGolemRunner builds the direct one-provider Golem runtime rooted at root.
+// userAgent is the HTTP identity an openai-compat provider sends; empty keeps
+// go-llm's default.
 //
 // root and guard must describe the same workspace: the caller passes the
 // identity layer's canonical ToolRoot (already EvalSymlinks'd, so golem's own
@@ -42,9 +58,10 @@ func NewGolemRunner(
 	root string,
 	target providerTarget,
 	guard agenttools.ScopeGuard,
-	sessions golem.SessionStore,
+	sessions sessionStore,
+	userAgent string,
 ) (Runner, error) {
-	backend, transport, err := buildProvider(target)
+	backend, transport, err := buildProvider(target, userAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -116,13 +133,13 @@ func newGolemRunner(
 	root string,
 	target providerTarget,
 	guard agenttools.ScopeGuard,
-	sessions golem.SessionStore,
+	sessions sessionStore,
 	backend provider.Provider,
 	transport *http.Transport,
 	tuning golemTuning,
 ) (Runner, error) {
 	orchestrator := agent.New(
-		&fixedModelCaller{backend: backend, target: target},
+		&fixedModelCaller{backend: backend, target: target, generation: sessions.Generation},
 		agent.ContextManager{},
 	)
 	// Without a budget the assembler works against go-llm's 8192-token default,
@@ -181,7 +198,7 @@ func (r *golemRunner) Close() error {
 // probe, no Models call, no network I/O. The returned transport is host-owned
 // and hardened so nothing can silently change the consented destination:
 // environment proxies are ignored and provider redirects are never followed.
-func buildProvider(target providerTarget) (provider.Provider, *http.Transport, error) {
+func buildProvider(target providerTarget, userAgent string) (provider.Provider, *http.Transport, error) {
 	transport, ok := http.DefaultTransport.(*http.Transport)
 	if ok {
 		transport = transport.Clone()
@@ -210,6 +227,7 @@ func buildProvider(target providerTarget) (provider.Provider, *http.Transport, e
 			target.destination.Endpoint,
 			openaicompat.WithHTTPClient(client),
 			openaicompat.WithAPIKey(target.apiKey),
+			openaicompat.WithUserAgent(userAgent),
 		)
 		return openaicompat.NewProvider(backend, openaicompat.WithProviderName(target.destination.Provider)), transport, nil
 	default:
@@ -221,8 +239,9 @@ func buildProvider(target providerTarget) (provider.Provider, *http.Transport, e
 // destination. There is no router and no fallback chain, so the route outcome
 // always names the fixed target.
 type fixedModelCaller struct {
-	backend provider.Provider
-	target  providerTarget
+	backend    provider.Provider
+	target     providerTarget
+	generation func(threadID string) uint64 // read per request; see sessionHeaderID
 }
 
 func (c *fixedModelCaller) Chat(
@@ -232,6 +251,7 @@ func (c *fixedModelCaller) Chat(
 ) (agent.ModelResult, error) {
 	req.Model = c.target.model.Name
 	req.Provider = "" // router selection metadata; the backend already is the selected instance
+	req.SessionID = c.sessionHeaderID(req.SessionID)
 	if o := c.target.model.Options; o != nil {
 		if req.Options.Temperature == nil {
 			req.Options.Temperature = o.Temperature
@@ -258,6 +278,43 @@ func (c *fixedModelCaller) Chat(
 	// The concrete provider's error stays intact for host logging;
 	// publicRunFailureMessage is the presentation boundary.
 	return agent.ModelResult{Response: final, RouteOutcome: outcome}, err
+}
+
+// sessionHeaderKey blinds thread ids before one leaves the process. It is
+// minted once per process, as the in-memory session store is, so the value a
+// conversation sends changes when Firn restarts; the reset generation mixed in
+// by sessionHeaderID changes it on New chat.
+var sessionHeaderKey = func() []byte {
+	key := make([]byte, 32)
+	_, _ = rand.Read(key) // crypto/rand.Read never returns an error; it crashes the program instead
+	return key
+}()
+
+// sessionHeaderID is the SessionID this call hands the provider in place of
+// golem's thread id; go-llm's openai-compat client sends any non-empty one as
+// the x-opencode-session header. Only opencode itself -- the openai-compat
+// format over https to exactly opencode.ai on the default port -- gets one,
+// and only blinded, since the thread id is derived from the repository path:
+// HMAC-SHA256 under sessionHeaderKey over the thread id, a 0x00 byte, and the
+// conversation's reset generation as 8 big-endian bytes. The generation is
+// read here, per request, because the cached runner outlives New chat.
+// Everything else gets "" and so no header: a trailing-dot host, a subdomain,
+// another port, or a provider merely named "opencode". Environment proxies are
+// ignored and redirects refused (buildProvider), so the canonical endpoint is
+// the real peer.
+func (c *fixedModelCaller) sessionHeaderID(threadID string) string {
+	if threadID == "" || c.target.apiFormat != "openai-compat" {
+		return ""
+	}
+	u, err := url.Parse(c.target.destination.Endpoint)
+	if err != nil || u.Scheme != "https" || u.Hostname() != "opencode.ai" || (u.Port() != "" && u.Port() != "443") {
+		return ""
+	}
+	mac := hmac.New(sha256.New, sessionHeaderKey)
+	mac.Write([]byte(threadID))
+	mac.Write([]byte{0})
+	mac.Write(binary.BigEndian.AppendUint64(nil, c.generation(threadID)))
+	return "firn-" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // publicRunFailureMessage is the presentation boundary for run.failed events.

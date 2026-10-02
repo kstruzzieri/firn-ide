@@ -119,7 +119,7 @@ const set = (partial: {
   view?: GolemView | null;
   state?: GolemWindowState | null;
   frozen?: boolean;
-  pendingComposers?: ReadonlySet<string>;
+  pendingComposers?: ReadonlyMap<string, 'send' | 'clear'>;
   error?: string | null;
   projectionError?: string | null;
 }) => useViewStore.setState(partial);
@@ -308,7 +308,7 @@ describe('window chrome', () => {
 
 describe('interaction state', () => {
   it('locks only the composer of a conversation awaiting an acknowledgement', () => {
-    install(viewOf(), { pendingComposers: new Set(['conv-a']) });
+    install(viewOf(), { pendingComposers: new Map([['conv-a', 'send']]) });
     render(<GolemWindowRoot />);
     expect(screen.getByRole('textbox', { name: /message golem/i })).toBeDisabled();
     // The window itself is still usable: the re-dock must never be trapped.
