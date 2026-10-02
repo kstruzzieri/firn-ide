@@ -66,6 +66,7 @@ import {
   providerUsage,
   readActiveProfile,
   recordApplyProvenance,
+  replaceStagedChanges,
   retainsKeys,
   setTargetRevision,
   settleDraft,
@@ -578,10 +579,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // -------------------------------------------------------------------------
 
   const stage = useCallback(
-    (changes: Change[], drop: string[]) => {
+    (changes: Change[], drop: string[], keep: Change[] = []) => {
       setDraft((current) => {
         const cleared = drop.reduce((next, id) => unstageChange(next, id, vault), current);
-        return changes.reduce((next, change) => stageChange(next, change, vault), cleared);
+        const staged = changes.reduce((next, change) => stageChange(next, change, vault), cleared);
+        // A kept change must not move: staging order decides a selector
+        // group's authority.
+        return keep.length === 0 ? staged : replaceStagedChanges(staged, keep);
       });
     },
     [vault]
@@ -1143,17 +1147,19 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   /**
    * §5.2: the frontend discloses the dropped fields and re-stages that change
    * with the backend's exact set. The user still presses Apply — nothing is
-   * resent on their behalf.
+   * resent on their behalf. The change is answered where it stands: moving it
+   * to the end would make it its selector group's authority.
    */
   const restageDrops = () => {
     const sets = outcome.drops ?? [];
     setDraft((current) =>
-      sets.reduce((next, set) => {
-        const change = next.changes.find((staged) => changeStableID(staged) === set.changeId);
-        return change?.kind === 'route'
-          ? stageChange(next, { ...change, confirmDrops: set.fields }, vault)
-          : next;
-      }, current)
+      replaceStagedChanges(
+        current,
+        sets.flatMap((set) => {
+          const change = current.changes.find((staged) => changeStableID(staged) === set.changeId);
+          return change?.kind === 'route' ? [{ ...change, confirmDrops: set.fields }] : [];
+        })
+      )
     );
     setOutcome(NO_OUTCOME);
   };
@@ -1413,7 +1419,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 </StatusText>
                 {/* §4.2: a dirty draft overlays `Modified` beside the document state. */}
                 {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
-                {projection.state !== 'missing' && (
+                {/* `none` only repeats the Missing state. Any other origin names
+                    where Create will write, including an env target not there yet. */}
+                {projection.sourceOrigin !== 'none' && (
                   <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
                 )}
                 {projection.revision !== undefined && (
@@ -1724,8 +1732,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             {sourceOpen && draft.source.kind !== 'applied' && (
               <div className={styles.panel} data-tone="info">
                 <p className={styles.panelText}>
+                  {/* A blank draft is offered over a Ready configuration too, where
+                      Apply runs in `apply` mode and the result replaces the file. */}
                   {draft.source.kind === 'blank'
-                    ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'
+                    ? mode === 'create'
+                      ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'
+                      : 'This draft builds a new configuration from nothing. Applying it replaces the active configuration: its providers, routes and API keys are not kept. The rows below are all pending.'
                     : `This draft comes from profile ${draft.source.profileId} at revision ${draft.source.sourceRevision.slice(0, REVISION_HEAD)}. Applying it replaces the active configuration, and every provider key it carries is cleared unless you stage a replacement.`}
                 </p>
               </div>

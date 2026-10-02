@@ -486,6 +486,168 @@ describe('terminal apply results', () => {
     });
   });
 
+  it('keeps a retained route exactly as staged when its review Done changes nothing', async () => {
+    const sized = { ...other, parameters: '7B', contextWindow: 32768 };
+    reload({ ...readyProjection, models: [model(), sized] });
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+    const retained = lastApply().changes.find(
+      (change: { kind: string; useCase?: string }) =>
+        change.kind === 'route' && change.useCase === 'chat'
+    );
+    expect(retained.modelFacts).toMatchObject({ parameters: '7B', contextWindow: 32768 });
+
+    // The document moved and the model's declared window changed with it, so
+    // the retained facts no longer match any card the editor could seed from.
+    reload({
+      ...readyProjection,
+      revision: movedRevision,
+      models: [model(), { ...sized, contextWindow: 65536 }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    await openRoute('chat');
+    await stage();
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    expect(lastApply().changes).toContainEqual(retained);
+  });
+
+  it('drops a stale drop confirmation when a kept route no longer drops anything', async () => {
+    // The retarget confirmed dropping think_tags. After the conflict the
+    // applied chat model no longer has them (another writer, or this write
+    // landing with its response lost), so Apply would refuse the confirmation.
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+    const retained = lastApply().changes.find(
+      (change: { kind: string; useCase?: string }) =>
+        change.kind === 'route' && change.useCase === 'chat'
+    );
+    expect(retained.confirmDrops).toEqual(['think_tags']);
+
+    reload({
+      ...readyProjection,
+      revision: movedRevision,
+      models: [model({ hasThinkTags: false }), other],
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+
+    await openRoute('chat');
+    await stage();
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    const answered = { ...retained };
+    delete answered.confirmDrops;
+    expect(lastApply().changes).toContainEqual(answered);
+  });
+
+  it('confirms a drop set where the change stands in the staging order', async () => {
+    // Staging order decides a selector group's authority, so Confirm and
+    // restage must answer the backend's drop set without moving the change.
+    applyReturns({
+      status: 'drop_confirmation_required',
+      drops: [{ changeId: 'route:chat', fields: ['think_tags'] }],
+    });
+    await mountWorkspace();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await stageEndpoint();
+    await clickApply();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm and restage' }));
+
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    expect(lastApply().changes.map((change: { kind: string }) => change.kind)).toEqual([
+      'route',
+      'provider-update',
+    ]);
+  });
+
+  it('keeps retained routes in their staging order, so a selector keeps its authority', async () => {
+    // chat and summarize share one selector. summarize's Think is staged last,
+    // so it is the group's authority. Keeping summarize first and chat second
+    // must leave that order alone: appending a kept change would hand the
+    // group chat's older Think.
+    const siblings = {
+      ...readyProjection,
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+          hasThinkTags: false,
+          routedUseCases: ['chat', 'summarize'],
+        }),
+        other,
+      ],
+    };
+    reload(siblings);
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    const setThink = async (useCase: string, mode: string) => {
+      await openRoute(useCase);
+      await userEvent.selectOptions(screen.getByLabelText('Think mode'), mode);
+      const ack = screen.queryByLabelText('Apply anyway');
+      if (ack !== null) await userEvent.click(ack);
+      await stage();
+    };
+    await setThink('chat', 'always');
+    await setThink('summarize', 'none');
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+
+    reload({ ...siblings, revision: movedRevision });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+    await openRoute('summarize');
+    await stage();
+    await openRoute('chat');
+    await stage();
+
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    const routes = lastApply().changes.filter(
+      (change: { kind: string }) => change.kind === 'route'
+    );
+    expect(routes.map((change: { useCase: string }) => change.useCase)).toEqual([
+      'chat',
+      'summarize',
+    ]);
+    expect(routes.map((change: { thinkMode: string }) => change.thinkMode)).toEqual([
+      'none',
+      'none',
+    ]);
+  });
+
   // The conflict panel is the only way back from a conflict, so a reload that
   // did not land must not take it away — that would strand the draft with
   // `Needs review` rows and no action at all.
@@ -1541,6 +1703,66 @@ describe('unsaved-work transitions', () => {
 
     expect(hasUnsavedConfigWork()).toBe(false);
     await expect(confirmConfigClose('quit')).resolves.toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The blank draft's source panel says what Apply will do to the file
+// ---------------------------------------------------------------------------
+
+describe('blank draft source panel', () => {
+  const openBlankSourcePanel = async () => {
+    await startBlankViaMenu();
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'source → blank configuration' })
+    );
+  };
+
+  it('says Apply replaces the active configuration when one exists', async () => {
+    await mountWorkspace();
+    await openBlankSourcePanel();
+
+    expect(screen.getByText(/Applying it replaces the active configuration/)).toBeInTheDocument();
+    expect(screen.getByText(/providers, routes and API keys are not kept/)).toBeInTheDocument();
+    expect(screen.queryByText(/Applying it creates the file/)).not.toBeInTheDocument();
+  });
+
+  it('says Apply creates the file when no configuration exists', async () => {
+    reload(missingProjection);
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByText(/nothing is written until you Apply/);
+    await openBlankSourcePanel();
+
+    expect(screen.getByText(/Applying it creates the file/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Applying it replaces the active configuration/)
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The masthead names where a missing configuration will be created
+// ---------------------------------------------------------------------------
+
+describe('masthead source origin while Missing', () => {
+  it('names an environment target that does not exist yet', async () => {
+    // $GO_LLM_CONFIG names a file that is not there: the backend still reports
+    // the env origin, because Create will write to that target.
+    reload({ ...missingProjection, sourceOrigin: 'env' });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const masthead = await screen.findByTestId('golem-config-masthead');
+    await screen.findByText(/nothing is written until you Apply/);
+
+    expect(within(masthead).getByText('Environment override')).toBeInTheDocument();
+  });
+
+  it('adds no origin when discovery found nothing', async () => {
+    reload(missingProjection);
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const masthead = await screen.findByTestId('golem-config-masthead');
+    await screen.findByText(/nothing is written until you Apply/);
+
+    expect(within(masthead).queryByText('No configuration found')).not.toBeInTheDocument();
   });
 });
 
