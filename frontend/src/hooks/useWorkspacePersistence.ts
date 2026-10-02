@@ -434,12 +434,17 @@ export function useWorkspacePersistence(
       const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;
 
-      // Flushes that resume from the same in-flight save issue their writes
-      // together, and the ref keeps only the last one. Chain each tracked
-      // save to the one it replaces, so awaiting the ref waits for every
-      // outstanding write: a close must not confirm before all of them land.
+      // Flushes that resume from the same in-flight save would otherwise write
+      // together, and the backend takes concurrent saves in any order, so an
+      // older snapshot could land after a newer one for the same file (#401).
+      // Each write starts only after the write it replaces has landed, so
+      // writes land in the order they were issued, and awaiting the ref (the
+      // end of the chain) waits for every outstanding write: a close must not
+      // confirm before all of them land. The chain never rejects (it ends in
+      // .catch), so a refused write never blocks the next one.
       const previousSave = savePromiseRef.current;
-      const promise = SaveWorkspaceState(state)
+      const promise = previousSave
+        .then(() => SaveWorkspaceState(state))
         .then(() => {
           // Saving works again: retire the report and its toast, shown or held.
           const shown = reportedSaveFailuresRef.current.get(state.workspacePath);
@@ -466,7 +471,6 @@ export function useWorkspacePersistence(
           reportedSaveFailuresRef.current.set(state.workspacePath, { message, rearmed: false });
           ide.showToast(message, 'error', true);
         })
-        .then(() => previousSave)
         .finally(() => {
           if (savePromiseRef.current === promise) {
             savePromiseRef.current = Promise.resolve();

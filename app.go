@@ -1699,15 +1699,9 @@ func (a *App) LSPRetryProvision(family, projectRoot string) error {
 // persistLSPInterpreter writes the interpreter override into the workspace's
 // persisted state (~/.firn/workspaces). interpreterPath=="" clears it.
 func (a *App) persistLSPInterpreter(workspacePath, interpreterPath string) error {
-	st, err := a.workspaceStore.Load(workspacePath)
-	if err != nil {
-		return err
-	}
-	if st == nil {
-		st = &workspace.State{WorkspacePath: workspacePath}
-	}
-	st.LSP.InterpreterOverride = interpreterPath
-	return a.workspaceStore.Save(*st)
+	// One locked read-modify-write in the store: a Load followed by a Save here
+	// would overwrite a session save that landed between them (#401).
+	return a.workspaceStore.SetLSPInterpreter(workspacePath, interpreterPath)
 }
 
 // --- Search bindings ---
