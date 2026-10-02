@@ -578,15 +578,20 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // -------------------------------------------------------------------------
 
   const stage = useCallback(
-    (changes: Change[], drop: string[], keep: string[] = []) => {
+    (changes: Change[], drop: string[], keep: Change[] = []) => {
       setDraft((current) => {
         const cleared = drop.reduce((next, id) => unstageChange(next, id, vault), current);
         const staged = changes.reduce((next, change) => stageChange(next, change, vault), cleared);
-        // `keep` accepts a retained change exactly as staged: only its Needs
-        // review marker goes, so neither its values nor its staging order move.
-        return keep.length === 0
-          ? staged
-          : { ...staged, needsReview: staged.needsReview.filter((id) => !keep.includes(id)) };
+        if (keep.length === 0) return staged;
+        // `keep` accepts retained changes IN PLACE, unlike `stageChange`, which
+        // moves a change to the end: staging order decides which change in a
+        // selector group is its authority, so a kept change must not move.
+        const kept = new Map(keep.map((change) => [changeStableID(change), change]));
+        return {
+          ...staged,
+          changes: staged.changes.map((change) => kept.get(changeStableID(change)) ?? change),
+          needsReview: staged.needsReview.filter((id) => !kept.has(id)),
+        };
       });
     },
     [vault]

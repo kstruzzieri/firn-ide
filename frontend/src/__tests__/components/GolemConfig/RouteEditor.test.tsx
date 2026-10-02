@@ -474,9 +474,37 @@ describe('RouteEditor', () => {
     await stage();
 
     expect(onStage).toHaveBeenCalledTimes(1);
-    expect(onStage).toHaveBeenCalledWith([], [], ['route:chat']);
+    expect(onStage).toHaveBeenCalledWith([], [], [retained]);
     // Kept, so the editor closes like any other Done.
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+  });
+
+  it('drops a retained drop confirmation the refreshed rows no longer ask for', async () => {
+    // Apply refuses a confirmation when nothing is dropped any more, which is
+    // where a retained retarget lands once the applied model lost those fields
+    // (or the write landed and only its response was lost). The editor asks no
+    // question, so keeping the change must not keep the stale answer.
+    const answered: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const retained: RouteChange = { ...answered, confirmDrops: ['think_tags'] };
+    const draft = { ...draftWith(retained), needsReview: ['route:chat'] };
+    const { onStage } = renderRouting({ draft });
+    await openRoute('chat');
+    expect(screen.queryByLabelText('Remove them and continue')).not.toBeInTheDocument();
+
+    await stage();
+
+    expect(onStage).toHaveBeenCalledWith([], [], [answered]);
   });
 
   it('offers only Close on a reopened staged route that needs no review', async () => {

@@ -522,6 +522,42 @@ describe('terminal apply results', () => {
     expect(lastApply().changes).toContainEqual(retained);
   });
 
+  it('drops a stale drop confirmation when a kept route no longer drops anything', async () => {
+    // The retarget confirmed dropping think_tags. After the conflict the
+    // applied chat model no longer has them (another writer, or this write
+    // landing with its response lost), so Apply would refuse the confirmation.
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+    const retained = lastApply().changes.find(
+      (change: { kind: string; useCase?: string }) =>
+        change.kind === 'route' && change.useCase === 'chat'
+    );
+    expect(retained.confirmDrops).toEqual(['think_tags']);
+
+    reload({
+      ...readyProjection,
+      revision: movedRevision,
+      models: [model({ hasThinkTags: false }), other],
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+
+    await openRoute('chat');
+    await stage();
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    const answered = { ...retained };
+    delete answered.confirmDrops;
+    expect(lastApply().changes).toContainEqual(answered);
+  });
+
   // The conflict panel is the only way back from a conflict, so a reload that
   // did not land must not take it away — that would strand the draft with
   // `Needs review` rows and no action at all.

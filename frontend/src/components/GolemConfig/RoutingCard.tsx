@@ -230,8 +230,8 @@ export interface RoutingCardProps {
   editable: boolean;
   /** The Apply bar asking for one of this card's editors (§3.3 chips). */
   focusRequest?: EditorFocusRequest | null;
-  /** `keep` clears Needs review on staged changes without restaging them. */
-  onStage: (changes: Change[], drop: string[], keep?: string[]) => void;
+  /** `keep` accepts retained changes in place, clearing their Needs review. */
+  onStage: (changes: Change[], drop: string[], keep?: Change[]) => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
 }
 

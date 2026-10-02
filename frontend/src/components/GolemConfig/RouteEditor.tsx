@@ -151,8 +151,8 @@ export interface RouteEditorProps {
    */
   preselect?: ModelProjection;
   rowKey: string;
-  /** `keep` clears Needs review on staged changes without restaging them. */
-  onStage: (changes: Change[], drop: string[], keep?: string[]) => void;
+  /** `keep` accepts retained changes in place, clearing their Needs review. */
+  onStage: (changes: Change[], drop: string[], keep?: Change[]) => void;
   onClose: () => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
   /**
@@ -706,8 +706,15 @@ export function RouteEditor({
   // not rebuild the change from this editor: a model the refreshed catalog no
   // longer matches seeds without its parameters and context window, and an
   // editor opened before a sibling's Done holds stale selector-wide values.
+  // The one value it does answer again is the drop confirmation: Apply refuses
+  // a confirmation when nothing is dropped any more, and with no drops this
+  // editor asks no question that could correct it.
   const keep = () => {
-    onStage([], [], [`route:${useCase}`]);
+    const retained = draft.changes.find((change) => changeStableID(change) === `route:${useCase}`);
+    if (retained?.kind === 'route') {
+      const { confirmDrops, ...answered } = retained;
+      onStage([], [], [confirmDrops !== undefined && drops.length === 0 ? answered : retained]);
+    }
     onClose();
   };
 
