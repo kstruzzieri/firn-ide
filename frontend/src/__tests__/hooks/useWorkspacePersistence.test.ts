@@ -1456,10 +1456,48 @@ describe('useWorkspacePersistence', () => {
       }
     );
 
-    // Two flushes that resume from the same in-flight save issue their writes
-    // together, and the ref keeps only the later one. The close must still
-    // wait for the earlier write when the later one lands first.
-    it('holds the close until an earlier concurrent write lands after a later one', async () => {
+    // #401: flushes that resume from the same in-flight save must not write at
+    // once. The backend takes concurrent saves in any order, so an older
+    // snapshot could land after a newer one for the same file. Each write
+    // starts only after the write it replaces has landed.
+    it('starts each queued write only after the write before it has landed', async () => {
+      useIDEStore.setState({
+        workspace: { name: 'A', path: '/workspace/A' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/A'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      const first = deferred<void>();
+      const second = deferred<void>();
+      const third = deferred<void>();
+      mockSaveWorkspaceState
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise)
+        .mockReturnValueOnce(third.promise);
+      blur();
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(1));
+      // Two more flushes queue behind the in-flight write.
+      blur();
+      blur();
+      await settle();
+
+      await act(async () => first.resolve());
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(2));
+      await settle();
+      expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(2);
+
+      await act(async () => second.resolve());
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalledTimes(3));
+      await act(async () => third.resolve());
+    });
+
+    // Queued flushes now write one at a time, and the ref tracks the last of
+    // them. The close must still wait for every queued write, the last
+    // included.
+    it('holds the close until every queued write has landed, in order', async () => {
       useIDEStore.setState({
         workspace: { name: 'A', path: '/workspace/A' },
         directoryTree: [],
@@ -1509,7 +1547,15 @@ describe('useWorkspacePersistence', () => {
       await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
       blur();
 
+      // B's write starts once A's lands; C's waits for B's.
       await act(async () => switchSaveA.resolve());
+      await waitFor(() =>
+        expect(savedPaths()).toEqual(['/workspace/A', '/workspace/A', '/workspace/B'])
+      );
+      await settle();
+      expect(savedPaths()).toEqual(['/workspace/A', '/workspace/A', '/workspace/B']);
+
+      await act(async () => switchSaveB.resolve());
       await waitFor(() =>
         expect(savedPaths()).toEqual([
           '/workspace/A',
@@ -1518,13 +1564,11 @@ describe('useWorkspacePersistence', () => {
           '/workspace/C',
         ])
       );
-
-      await act(async () => blurSaveC.resolve());
       // Real timer: a few microtask ticks are not enough for an early confirm to surface.
       await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
       expect(mockConfirmBeforeCloseReady).not.toHaveBeenCalled();
 
-      await act(async () => switchSaveB.resolve());
+      await act(async () => blurSaveC.resolve());
       await waitFor(() => expect(mockConfirmBeforeCloseReady).toHaveBeenCalledTimes(1));
     });
 

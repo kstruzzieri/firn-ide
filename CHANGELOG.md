@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so newly entered text cannot be erased by its completion. New chat on a
   conversation from a workspace that is no longer open is refused until the
   workspace is open again. (#361)
+- Workspace session saves that queued behind one still in progress were sent
+  together and could land in any order, so an older snapshot of the session
+  (open tabs, cursors, layout) could overwrite a newer one, most likely after
+  switching quickly between workspaces. Saves now go out one at a time, in the
+  order they were made. (#401)
 
 ## [0.13.0] - 2026-10-02
 
