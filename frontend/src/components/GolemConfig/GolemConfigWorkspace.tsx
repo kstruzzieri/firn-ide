@@ -66,6 +66,7 @@ import {
   providerUsage,
   readActiveProfile,
   recordApplyProvenance,
+  replaceStagedChanges,
   retainsKeys,
   setTargetRevision,
   settleDraft,
@@ -582,16 +583,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       setDraft((current) => {
         const cleared = drop.reduce((next, id) => unstageChange(next, id, vault), current);
         const staged = changes.reduce((next, change) => stageChange(next, change, vault), cleared);
-        if (keep.length === 0) return staged;
-        // `keep` accepts retained changes IN PLACE, unlike `stageChange`, which
-        // moves a change to the end: staging order decides which change in a
-        // selector group is its authority, so a kept change must not move.
-        const kept = new Map(keep.map((change) => [changeStableID(change), change]));
-        return {
-          ...staged,
-          changes: staged.changes.map((change) => kept.get(changeStableID(change)) ?? change),
-          needsReview: staged.needsReview.filter((id) => !kept.has(id)),
-        };
+        // A kept change must not move: staging order decides a selector
+        // group's authority.
+        return keep.length === 0 ? staged : replaceStagedChanges(staged, keep);
       });
     },
     [vault]
@@ -1153,17 +1147,19 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   /**
    * §5.2: the frontend discloses the dropped fields and re-stages that change
    * with the backend's exact set. The user still presses Apply — nothing is
-   * resent on their behalf.
+   * resent on their behalf. The change is answered where it stands: moving it
+   * to the end would make it its selector group's authority.
    */
   const restageDrops = () => {
     const sets = outcome.drops ?? [];
     setDraft((current) =>
-      sets.reduce((next, set) => {
-        const change = next.changes.find((staged) => changeStableID(staged) === set.changeId);
-        return change?.kind === 'route'
-          ? stageChange(next, { ...change, confirmDrops: set.fields }, vault)
-          : next;
-      }, current)
+      replaceStagedChanges(
+        current,
+        sets.flatMap((set) => {
+          const change = current.changes.find((staged) => changeStableID(staged) === set.changeId);
+          return change?.kind === 'route' ? [{ ...change, confirmDrops: set.fields }] : [];
+        })
+      )
     );
     setOutcome(NO_OUTCOME);
   };

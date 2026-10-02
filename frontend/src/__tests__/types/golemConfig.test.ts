@@ -35,6 +35,7 @@ import {
   readActiveProfile,
   recordApplyProvenance,
   replaceSource,
+  replaceStagedChanges,
   retainsKeys,
   retargetOf,
   setTargetRevision,
@@ -603,6 +604,29 @@ describe('projected draft normalization', () => {
     expect(selectorFields(first)).toEqual(selectorFields(second));
     expect(selectorFields(first).exposedCaps).toEqual(['chat', 'stream']);
     expect(selectorFields(first).thinkMode).toBe('always');
+  });
+
+  it('replaces a staged change where it stands, so its selector group keeps its authority', () => {
+    // summarize is staged last, so it is the group's authority (Think auto).
+    // Restaging chat through stageChange would move it last and hand the group
+    // chat's Think; replacing it in place must not.
+    const draft = {
+      ...stage([
+        routeChange({ useCase: 'chat', thinkMode: 'always' }),
+        routeChange({ useCase: 'summarize', thinkMode: 'auto' }),
+      ]),
+      needsReview: ['route:chat', 'route:summarize'],
+    };
+    const chat = draft.changes[0] as RouteChange;
+
+    const next = replaceStagedChanges(draft, [{ ...chat, confirmDrops: ['think_tags'] }]);
+
+    expect(next.changes.map(changeStableID)).toEqual(['route:chat', 'route:summarize']);
+    expect((next.changes[0] as RouteChange).confirmDrops).toEqual(['think_tags']);
+    expect(next.needsReview).toEqual(['route:summarize']);
+    const [first, second] = projectDraft(emptyBase, next).changes;
+    expect(selectorFields(first).thinkMode).toBe('auto');
+    expect(selectorFields(second).thinkMode).toBe('auto');
   });
 
   it('leaves distinct selectors independent', () => {

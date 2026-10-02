@@ -558,6 +558,96 @@ describe('terminal apply results', () => {
     expect(lastApply().changes).toContainEqual(answered);
   });
 
+  it('confirms a drop set where the change stands in the staging order', async () => {
+    // Staging order decides a selector group's authority, so Confirm and
+    // restage must answer the backend's drop set without moving the change.
+    applyReturns({
+      status: 'drop_confirmation_required',
+      drops: [{ changeId: 'route:chat', fields: ['think_tags'] }],
+    });
+    await mountWorkspace();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await stageEndpoint();
+    await clickApply();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm and restage' }));
+
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    expect(lastApply().changes.map((change: { kind: string }) => change.kind)).toEqual([
+      'route',
+      'provider-update',
+    ]);
+  });
+
+  it('keeps retained routes in their staging order, so a selector keeps its authority', async () => {
+    // chat and summarize share one selector. summarize's Think is staged last,
+    // so it is the group's authority. Keeping summarize first and chat second
+    // must leave that order alone: appending a kept change would hand the
+    // group chat's older Think.
+    const siblings = {
+      ...readyProjection,
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+          hasThinkTags: false,
+          routedUseCases: ['chat', 'summarize'],
+        }),
+        other,
+      ],
+    };
+    reload(siblings);
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    const setThink = async (useCase: string, mode: string) => {
+      await openRoute(useCase);
+      await userEvent.selectOptions(screen.getByLabelText('Think mode'), mode);
+      const ack = screen.queryByLabelText('Apply anyway');
+      if (ack !== null) await userEvent.click(ack);
+      await stage();
+    };
+    await setThink('chat', 'always');
+    await setThink('summarize', 'none');
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+
+    reload({ ...siblings, revision: movedRevision });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+    await openRoute('summarize');
+    await stage();
+    await openRoute('chat');
+    await stage();
+
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    const routes = lastApply().changes.filter(
+      (change: { kind: string }) => change.kind === 'route'
+    );
+    expect(routes.map((change: { useCase: string }) => change.useCase)).toEqual([
+      'chat',
+      'summarize',
+    ]);
+    expect(routes.map((change: { thinkMode: string }) => change.thinkMode)).toEqual([
+      'none',
+      'none',
+    ]);
+  });
+
   // The conflict panel is the only way back from a conflict, so a reload that
   // did not land must not take it away — that would strand the draft with
   // `Needs review` rows and no action at all.
