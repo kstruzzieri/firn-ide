@@ -327,6 +327,59 @@ describe('release version consistency', () => {
     // spelling.
     const normalise = (value: string) => `${value}.0.0`.split('.').slice(0, 3).join('.');
 
+    function refreshBuildAssets(dir: string, generatedPlist: string) {
+      const bin = join(dir, 'bin');
+      mkdirSync(bin);
+      mkdirSync(join(dir, 'darwin'));
+      writeFileSync(join(dir, 'config.yml'), readFileSync(resolve(rootDir, 'build/config.yml')));
+      writeFileSync(join(dir, 'generated.plist'), generatedPlist);
+      // Only Wails is stubbed: run the real task commands, including any
+      // post-processing, against the upstream generator's macOS 12 output.
+      writeExecutable(
+        join(bin, 'wails3'),
+        '#!/bin/sh\nset -e\ncp generated.plist darwin/Info.plist\ncp generated.plist darwin/Info.dev.plist\n'
+      );
+      const tasks = parse(readFileSync(resolve(rootDir, 'build/Taskfile.yml'), 'utf8'));
+      const { vars } = parse(readFileSync(resolve(rootDir, 'Taskfile.yml'), 'utf8'));
+      const command = (tasks.tasks['update:build-assets'].cmds as string[])
+        .join('\n')
+        .replaceAll('{{.APP_NAME}}', vars.APP_NAME);
+      return spawnSync('sh', ['-ec', command], {
+        cwd: dir,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+    }
+
+    it('reapplies the floor to both plists after build-asset regeneration', () => {
+      withTempDir((dir) => {
+        const generated = readFileSync(resolve(rootDir, 'build/darwin/Info.plist'), 'utf8').replace(
+          /(<key>LSMinimumSystemVersion<\/key>\s*<string>)[^<]*/,
+          '$112.0.0'
+        );
+        const result = refreshBuildAssets(dir, generated);
+
+        expect(result.stderr).toBe('');
+        expect(result.status).toBe(0);
+        for (const file of ['Info.plist', 'Info.dev.plist']) {
+          const plist = readFileSync(join(dir, 'darwin', file), 'utf8');
+          expect(plistValue(plist, 'LSMinimumSystemVersion')).toBe(normalise(FLOOR));
+          expect(plist).toBe(
+            generated.replace('<string>12.0.0</string>', `<string>${normalise(FLOOR)}</string>`)
+          );
+        }
+      });
+    });
+
+    it('fails regeneration if a plist no longer has a minimum system version', () => {
+      withTempDir((dir) => {
+        const result = refreshBuildAssets(dir, '<plist><dict></dict></plist>');
+
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain('LSMinimumSystemVersion');
+      });
+    });
+
     it.each(['Info.plist', 'Info.dev.plist'])(
       'declares the floor as the %s minimum system version',
       (file) => {
