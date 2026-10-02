@@ -486,6 +486,42 @@ describe('terminal apply results', () => {
     });
   });
 
+  it('keeps a retained route exactly as staged when its review Done changes nothing', async () => {
+    const sized = { ...other, parameters: '7B', contextWindow: 32768 };
+    reload({ ...readyProjection, models: [model(), sized] });
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+    const retained = lastApply().changes.find(
+      (change: { kind: string; useCase?: string }) =>
+        change.kind === 'route' && change.useCase === 'chat'
+    );
+    expect(retained.modelFacts).toMatchObject({ parameters: '7B', contextWindow: 32768 });
+
+    // The document moved and the model's declared window changed with it, so
+    // the retained facts no longer match any card the editor could seed from.
+    reload({
+      ...readyProjection,
+      revision: movedRevision,
+      models: [model(), { ...sized, contextWindow: 65536 }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    await openRoute('chat');
+    await stage();
+    applyReturns({ status: 'busy' });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
+    expect(lastApply().changes).toContainEqual(retained);
+  });
+
   // The conflict panel is the only way back from a conflict, so a reload that
   // did not land must not take it away — that would strand the draft with
   // `Needs review` rows and no action at all.

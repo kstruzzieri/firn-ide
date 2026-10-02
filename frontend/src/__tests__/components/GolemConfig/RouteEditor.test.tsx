@@ -436,15 +436,26 @@ describe('RouteEditor', () => {
     );
   });
 
-  it('offers Done to re-stage a retained route marked Needs review', async () => {
+  it('offers Done to keep a retained route marked Needs review, staging nothing', async () => {
     // A conflict or transport rejection keeps the draft but marks every change
-    // Needs review, and Apply stays refused until each is re-staged. Reopened,
-    // the editor seeds from the staged change, so nothing differs from the row:
-    // Done must still be offered, and it re-stages exactly what is staged.
+    // Needs review, and Apply stays refused until each is kept or discarded.
+    // Reopened, the editor seeds from the staged change, so nothing differs
+    // from the row: Done must still be offered, and it only clears the review
+    // marker. Rebuilding the change from the editor would lose facts the
+    // refreshed catalog no longer carries (no card matches this 7B, 32k
+    // retained model, so the editor seeds a manual model without them), and an
+    // editor opened before a sibling's Done would write its stale
+    // selector-wide values back over the group.
     const retained: RouteChange = {
       kind: 'route',
       useCase: 'chat',
-      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      modelFacts: {
+        provider: 'hosted',
+        model: 'gpt-5',
+        type: 'dense',
+        parameters: '7B',
+        contextWindow: 32768,
+      },
       capabilityFacts: {
         caps: ['chat', 'stream', 'tool_call', 'thinking'],
         knownCaps: [...CAPABILITY_NAMES],
@@ -462,7 +473,10 @@ describe('RouteEditor', () => {
     expect(done).not.toHaveAttribute('aria-describedby');
     await stage();
 
-    expect(onStage).toHaveBeenCalledWith([retained], []);
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage).toHaveBeenCalledWith([], [], ['route:chat']);
+    // Kept, so the editor closes like any other Done.
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
   });
 
   it('offers only Close on a reopened staged route that needs no review', async () => {
