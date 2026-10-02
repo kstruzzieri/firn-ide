@@ -316,9 +316,9 @@ describe('release version consistency', () => {
 
   // #316: the declared floor is macOS 14 (Sonoma). Its system WebKit is
   // Safari 17, above everything the frontend uses (`<dialog>` needs 15.4,
-  // container queries and subgrid 16, color-mix() 16.2) and above Vite's
-  // default build target (Safari 16), so the build cannot emit syntax the
-  // floor lacks. Raise this constant and every declaration below together.
+  // container queries and subgrid 16, color-mix() 16.2, regex lookbehind
+  // 16.4) and above Vite's default build target (Safari 16), so the build
+  // cannot emit syntax the floor lacks. Raise this constant and every declaration below together.
   describe('macOS floor', () => {
     const FLOOR = '14.0';
     // The Taskfile carries the compiler's two-part form (14.0), the plists
