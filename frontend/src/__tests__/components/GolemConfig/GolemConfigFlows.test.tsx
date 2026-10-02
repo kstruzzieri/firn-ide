@@ -1545,6 +1545,66 @@ describe('unsaved-work transitions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The blank draft's source panel says what Apply will do to the file
+// ---------------------------------------------------------------------------
+
+describe('blank draft source panel', () => {
+  const openBlankSourcePanel = async () => {
+    await startBlankViaMenu();
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'source → blank configuration' })
+    );
+  };
+
+  it('says Apply replaces the active configuration when one exists', async () => {
+    await mountWorkspace();
+    await openBlankSourcePanel();
+
+    expect(screen.getByText(/Applying it replaces the active configuration/)).toBeInTheDocument();
+    expect(screen.getByText(/providers, routes and API keys are not kept/)).toBeInTheDocument();
+    expect(screen.queryByText(/Applying it creates the file/)).not.toBeInTheDocument();
+  });
+
+  it('says Apply creates the file when no configuration exists', async () => {
+    reload(missingProjection);
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByText(/nothing is written until you Apply/);
+    await openBlankSourcePanel();
+
+    expect(screen.getByText(/Applying it creates the file/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Applying it replaces the active configuration/)
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The masthead names where a missing configuration will be created
+// ---------------------------------------------------------------------------
+
+describe('masthead source origin while Missing', () => {
+  it('names an environment target that does not exist yet', async () => {
+    // $GO_LLM_CONFIG names a file that is not there: the backend still reports
+    // the env origin, because Create will write to that target.
+    reload({ ...missingProjection, sourceOrigin: 'env' });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const masthead = await screen.findByTestId('golem-config-masthead');
+    await screen.findByText(/nothing is written until you Apply/);
+
+    expect(within(masthead).getByText('Environment override')).toBeInTheDocument();
+  });
+
+  it('adds no origin when discovery found nothing', async () => {
+    reload(missingProjection);
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const masthead = await screen.findByTestId('golem-config-masthead');
+    await screen.findByText(/nothing is written until you Apply/);
+
+    expect(within(masthead).queryByText('No configuration found')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Bootstrap (state = missing)
 // ---------------------------------------------------------------------------
 

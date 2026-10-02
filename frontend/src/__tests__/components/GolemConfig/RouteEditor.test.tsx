@@ -436,6 +436,55 @@ describe('RouteEditor', () => {
     );
   });
 
+  it('offers Done to re-stage a retained route marked Needs review', async () => {
+    // A conflict or transport rejection keeps the draft but marks every change
+    // Needs review, and Apply stays refused until each is re-staged. Reopened,
+    // the editor seeds from the staged change, so nothing differs from the row:
+    // Done must still be offered, and it re-stages exactly what is staged.
+    const retained: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const draft = { ...draftWith(retained), needsReview: ['route:chat'] };
+    const { onStage } = renderRouting({ draft });
+    await openRoute('chat');
+
+    const done = screen.getByRole('button', { name: 'Done' });
+    // No Pending line renders when nothing differs, so Done must not point at it.
+    expect(done).not.toHaveAttribute('aria-describedby');
+    await stage();
+
+    expect(onStage).toHaveBeenCalledWith([retained], []);
+  });
+
+  it('offers only Close on a reopened staged route that needs no review', async () => {
+    const staged: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(staged) });
+    await openRoute('chat');
+
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
   it('paints the row and seeds the editor from the coalesced change, not the raw staging', async () => {
     const routes = [
       { useCase: 'chat', role: 'chat-role' },

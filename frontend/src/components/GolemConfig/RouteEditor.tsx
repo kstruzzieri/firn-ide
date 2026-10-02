@@ -613,6 +613,10 @@ export function RouteEditor({
    */
   const pending = pendingOf(now, was);
   const unstaged = pending.length > 0;
+  // A conflict or transport rejection marks every retained change Needs review,
+  // and Apply stays refused until each is re-staged. A reopened editor seeds
+  // from that very change, so nothing differs: Done must still re-stage it.
+  const awaitingReview = staged?.kind === 'route' && draft.needsReview.includes(`route:${useCase}`);
 
   useEffect(() => {
     onUnstagedChange(rowKey, unstaged);
@@ -992,17 +996,18 @@ export function RouteEditor({
       )}
 
       <div className={styles.editorFooter}>
-        {/* Always enabled once something differs: this button IS the
-            validator's entry point, and the refusal above is how the editor
-            answers. The global Apply gate is held by `onUnstagedChange`, not
-            by a disabled control. Focusing it reads the summary. */}
-        {unstaged && (
+        {/* Always enabled once something differs, or while the staged change
+            awaits review: this button IS the validator's entry point, and the
+            refusal above is how the editor answers. The global Apply gate is
+            held by `onUnstagedChange`, not by a disabled control. Focusing it
+            reads the summary, which renders only while something differs. */}
+        {(unstaged || awaitingReview) && (
           <button
             type="button"
             className={`${styles.button} ${styles.primary}`}
             onClick={submit}
-            data-unstaged="true"
-            aria-describedby={`${id}-changes`}
+            data-unstaged={unstaged || undefined}
+            aria-describedby={unstaged ? `${id}-changes` : undefined}
           >
             Done
           </button>

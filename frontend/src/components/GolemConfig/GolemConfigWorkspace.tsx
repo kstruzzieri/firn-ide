@@ -1413,7 +1413,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 </StatusText>
                 {/* §4.2: a dirty draft overlays `Modified` beside the document state. */}
                 {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
-                {projection.state !== 'missing' && (
+                {/* `none` only repeats the Missing state. Any other origin names
+                    where Create will write, including an env target not there yet. */}
+                {projection.sourceOrigin !== 'none' && (
                   <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
                 )}
                 {projection.revision !== undefined && (
@@ -1724,8 +1726,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             {sourceOpen && draft.source.kind !== 'applied' && (
               <div className={styles.panel} data-tone="info">
                 <p className={styles.panelText}>
+                  {/* A blank draft is offered over a Ready configuration too, where
+                      Apply runs in `apply` mode and the result replaces the file. */}
                   {draft.source.kind === 'blank'
-                    ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'
+                    ? mode === 'create'
+                      ? 'This draft builds a new configuration from nothing. Applying it creates the file; the rows below are all pending.'
+                      : 'This draft builds a new configuration from nothing. Applying it replaces the active configuration: its providers, routes and API keys are not kept. The rows below are all pending.'
                     : `This draft comes from profile ${draft.source.profileId} at revision ${draft.source.sourceRevision.slice(0, REVISION_HEAD)}. Applying it replaces the active configuration, and every provider key it carries is cleared unless you stage a replacement.`}
                 </p>
               </div>
