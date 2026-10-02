@@ -46,11 +46,11 @@ tasks:
       GOOS: darwin
       CGO_ENABLED: 1
       GOARCH: '{{.ARCH | default ARCH}}'
-      # macOS 12.0 floor: matches the generated Info.plist LSMinimumSystemVersion
+      # macOS 14.0 floor: matches the generated Info.plist LSMinimumSystemVersion
       # and silences the linker's "built for newer macOS version" warnings.
-      CGO_CFLAGS: "-mmacosx-version-min=12.0"
-      CGO_LDFLAGS: "-mmacosx-version-min=12.0"
-      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      CGO_CFLAGS: "-mmacosx-version-min=14.0"
+      CGO_LDFLAGS: "-mmacosx-version-min=14.0"
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
 
   package:
     summary: Packages the application into a `.app` bundle

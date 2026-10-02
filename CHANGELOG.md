@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Firn declares macOS 14 (Sonoma) as its floor. Both Info.plists, the darwin
+  deployment target and C compiler minimum, and the README's install section
+  now say 14, and a test keeps them in lockstep. The 12.0 that v0.13.0 declared
+  was below what the frontend needs: `<dialog>` arrived in Safari 15.4,
+  container queries and subgrid in 16 and `color-mix()` in 16.2, while
+  Sonoma's system WebKit is Safari 17. The frontend build keeps Vite's default
+  Safari 16 target, which stays below the floor. Ventura left Apple's
+  security-update window in September 2025. (#316)
 - Golem runs on go-llm v0.3.0. Tool results now reach the model inside a fenced
   block marked as untrusted data, and every run appends a short tool trust
   contract to the system prompt, so text a tool returns from a file is marked as
