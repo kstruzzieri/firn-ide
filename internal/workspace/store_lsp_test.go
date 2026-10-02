@@ -24,6 +24,11 @@ func sessionWithActive(n int) State {
 // steps, so a session save landing between them was overwritten with the
 // older tabs and layout. Each session save here must read back as itself,
 // whatever interpreter changes run alongside it.
+//
+// This is a stress test: the old window sat between two store calls, outside
+// the store, where no filesystem hook can hold it open, so catching the old
+// code depends on scheduling (it did in 3 of 3 runs). The fixed code holds
+// the lock across the read and the write, so the test cannot fail on it.
 func TestSetLSPInterpreterNeverWritesBackAnOlderSession(t *testing.T) {
 	store := NewStore(filesystem.NewOS(), t.TempDir())
 	if err := store.Save(sessionWithActive(0)); err != nil {
@@ -48,6 +53,12 @@ func TestSetLSPInterpreterNeverWritesBackAnOlderSession(t *testing.T) {
 			}
 		}
 	}()
+	// Stop and join the writer on every exit, t.Fatalf included, so it can
+	// neither outlive the test nor race t.TempDir's cleanup.
+	defer func() {
+		close(done)
+		wg.Wait()
+	}()
 
 	for n := 1; n <= rounds; n++ {
 		if err := store.Save(sessionWithActive(n)); err != nil {
@@ -58,13 +69,9 @@ func TestSetLSPInterpreterNeverWritesBackAnOlderSession(t *testing.T) {
 			t.Fatalf("Load after Save %d: %v", n, err)
 		}
 		if want := sessionWithActive(n).Editor.ActiveFilePath; got.Editor.ActiveFilePath != want {
-			close(done)
-			wg.Wait()
 			t.Fatalf("an interpreter change wrote back an older session: active file %q after saving %q", got.Editor.ActiveFilePath, want)
 		}
 	}
-	close(done)
-	wg.Wait()
 }
 
 func TestSetLSPInterpreterKeepsTheSavedSession(t *testing.T) {
