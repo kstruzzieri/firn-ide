@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { WORKSPACE_ACCENTS } from '../../utils/accent';
+import { cssRule } from '../helpers/cssRule';
 
 const css = readFileSync(resolve(__dirname, '../../styles/tokens.css'), 'utf8');
 const terminalCss = readFileSync(
@@ -35,6 +36,26 @@ const statusBarCss = readFileSync(
   resolve(__dirname, '../../components/StatusBar/StatusBar.module.css'),
   'utf8'
 );
+const gitPanelCss = readFileSync(
+  resolve(__dirname, '../../components/GitPanel/GitPanel.module.css'),
+  'utf8'
+);
+const runProfileFormCss = readFileSync(
+  resolve(__dirname, '../../components/RunProfiles/RunProfileForm.module.css'),
+  'utf8'
+);
+const golemConfigCss = readFileSync(
+  resolve(__dirname, '../../components/GolemConfig/GolemConfig.module.css'),
+  'utf8'
+);
+const errorBoundaryCss = readFileSync(
+  resolve(__dirname, '../../components/ErrorBoundary.module.css'),
+  'utf8'
+);
+const resizeHandleCss = readFileSync(
+  resolve(__dirname, '../../components/layout/ResizeHandle.module.css'),
+  'utf8'
+);
 
 type RGB = [number, number, number];
 
@@ -66,7 +87,7 @@ it.each(WORKSPACE_ACCENTS)(
     // --accent-dark/dim/glow only track the active workspace through these
     // blocks. A token without one still colours dots but leaves the derived
     // values stuck on whatever the previous workspace set.
-    const body = rule(css, `[data-accent='${accent}']`);
+    const body = cssRule(css, `[data-accent='${accent}']`);
     // Asserting the mapped token, not merely that some --accent is declared:
     // a block pointing at the wrong accent would paint the whole IDE in
     // another workspace's colour and still satisfy a presence-only check.
@@ -74,6 +95,12 @@ it.each(WORKSPACE_ACCENTS)(
     expect(body).toMatch(/--accent-dark:\s*#[0-9a-f]{6}/);
     expect(body).toMatch(/--accent-dim:\s*rgba\(/);
     expect(body).toMatch(/--accent-glow:\s*rgba\(/);
+    // --text-on-accent too: Terminal, GolemPanel and GolemWindow pin
+    // data-accent="project" inside the live-accent .ide root, and a custom
+    // property inherits through that boundary. A project block without its
+    // own declaration would keep the white a docker or general workspace set
+    // and paint it on the project accent at 2.14:1.
+    expect(body).toMatch(/--text-on-accent:\s*(?:#[0-9a-f]{6}|var\(--[\w-]+\))/);
   }
 );
 
@@ -115,7 +142,7 @@ it('keeps every renderable ownership rail distinct in its actual painted form', 
   // panel understates how close they get.
   const railAlpha = opacity(treeRowCss, '.row.ownershipRail::before');
   const washMix = Number(
-    rule(treeRowCss, '.row.tinted.ownershipRail').match(
+    cssRule(treeRowCss, '.row.tinted.ownershipRail').match(
       /var\(--region-accent\)\s*([\d.]+)%,\s*transparent/
     )?.[1]
   );
@@ -224,19 +251,26 @@ it('pins the golem rail and bar to the project accent instead of the live worksp
     new RegExp(
       `${name}:\\s*color-mix\\(in srgb, var\\(--accent-project\\) ${alpha}%, transparent\\)`
     );
-  for (const [source, label, pinned] of [
-    [panelRailCss, 'PanelRail.module.css', [mix('--rail-key-glow', 25)]],
+  for (const [source, label, selector, pinned] of [
+    [
+      panelRailCss,
+      'PanelRail.module.css',
+      ".rail[data-panel='golem']",
+      [mix('--rail-key-glow', 25)],
+    ],
     [
       panelCommandBarCss,
       'PanelCommandBar.module.css',
+      ".bar[data-panel='golem']",
       [mix('--bar-key-dim', 12), mix('--bar-key-glow', 25)],
     ],
   ] as const) {
-    const body = rule(source, "[data-panel='golem']");
-    // Assert the pinned literals are actually present FIRST: `rule()` extracts
-    // up to the first `}`, so a comment containing a stray `}` would truncate
-    // the body before these declarations and let the negative check below
-    // pass for the wrong reason (regression: #271 review round 2).
+    const body = cssRule(source, selector);
+    // Assert the pinned literals are actually present FIRST. `cssRule()`
+    // strips comments, so a stray `}` in one no longer truncates the body (the
+    // #271 review-round-2 regression), but the body still ends at the first
+    // `}` — one inside a string or url() would cut it off before these
+    // declarations and let the negative check below pass for the wrong reason.
     for (const pattern of pinned) {
       expect({ file: label, body }).toEqual({
         file: label,
@@ -360,19 +394,50 @@ function deltaE2000(a: RGB, b: RGB): number {
   );
 }
 
-function rule(source: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const body = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 's'))?.[1];
-  if (!body) throw new Error(`Missing CSS rule ${selector}`);
-  return body;
+function opacity(source: string, selector: string): number {
+  return Number(cssRule(source, selector).match(/opacity:\s*([\d.]+)/)?.[1] ?? 1);
 }
 
-function opacity(source: string, selector: string): number {
-  return Number(rule(source, selector).match(/opacity:\s*([\d.]+)/)?.[1] ?? 1);
+/**
+ * A per-accent ink variable's colour: the [data-accent] override if declared,
+ * else the :root value, following one level of var(). Reads through cssRule so
+ * a commented-out declaration is absent rather than matched, and refuses any
+ * value it cannot measure (a keyword such as `white`) instead of silently
+ * falling back to the default and passing on the wrong colour.
+ */
+function textOnAccent(
+  accent: (typeof WORKSPACE_ACCENTS)[number],
+  variable = '--text-on-accent'
+): string {
+  const pattern = new RegExp(`${variable}:\\s*([^;]+);`);
+  const declared = (selector: string) => cssRule(css, selector).match(pattern)?.[1].trim();
+  const value = declared(`[data-accent='${accent}']`) ?? declared(':root');
+  if (!value) throw new Error(`Missing ${variable} in :root`);
+  const hex = value.match(/^#[0-9a-f]{6}$/i)?.[0];
+  if (hex) return hex;
+  const alias = value.match(/^var\(--([\w-]+)\)$/)?.[1];
+  if (alias) return token(alias);
+  throw new Error(`Unmeasurable ${variable} for ${accent}: ${value}`);
+}
+
+/**
+ * --accent-dark for one accent, read the same way as --text-on-accent above:
+ * the [data-accent] override if declared, else :root.
+ */
+function accentDarkFor(accent: (typeof WORKSPACE_ACCENTS)[number]): string {
+  const declared = (selector: string) =>
+    cssRule(css, selector)
+      .match(/--accent-dark:\s*([^;]+);/)?.[1]
+      .trim();
+  const value = declared(`[data-accent='${accent}']`) ?? declared(':root');
+  if (!value) throw new Error('Missing --accent-dark in :root');
+  const hex = value.match(/^#[0-9a-f]{6}$/i)?.[0];
+  if (!hex) throw new Error(`Unmeasurable --accent-dark for ${accent}: ${value}`);
+  return hex;
 }
 
 function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]): string {
-  const focusVariable = rule(editorCss, selector).match(
+  const focusVariable = cssRule(editorCss, selector).match(
     /outline(?:-color)?:[^;]*var\(--([\w-]+)\)/
   )?.[1];
   if (!focusVariable) throw new Error(`Missing focus color for ${selector}`);
@@ -382,8 +447,8 @@ function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]
 }
 
 it('uses one full-strength outer rail and one adjacent 50% ownership rail without shadows', () => {
-  const outerRail = rule(fileExplorerCss, '.workspaceTree');
-  const ownershipRail = rule(treeRowCss, '.row.ownershipRail::before');
+  const outerRail = cssRule(fileExplorerCss, '.workspaceTree');
+  const ownershipRail = cssRule(treeRowCss, '.row.ownershipRail::before');
 
   expect(outerRail).toMatch(/border-left:\s*3px solid var\(--tree-accent\)/);
   expect(ownershipRail).toMatch(/background:\s*var\(--ownership-accent\)/);
@@ -393,15 +458,15 @@ it('uses one full-strength outer rail and one adjacent 50% ownership rail withou
 });
 
 it('raises the Workspace row wash without changing the Project row wash', () => {
-  expect(rule(treeRowCss, '.row.tinted')).toMatch(/var\(--region-accent\) 6%/);
-  expect(rule(treeRowCss, '.row.tinted:hover')).toMatch(/var\(--region-accent\) 12%/);
-  expect(rule(treeRowCss, ".row.tinted[aria-selected='true']")).toMatch(
+  expect(cssRule(treeRowCss, '.row.tinted')).toMatch(/var\(--region-accent\) 6%/);
+  expect(cssRule(treeRowCss, '.row.tinted:hover')).toMatch(/var\(--region-accent\) 12%/);
+  expect(cssRule(treeRowCss, ".row.tinted[aria-selected='true']")).toMatch(
     /var\(--region-accent\) 20%/
   );
-  expect(rule(treeRowCss, '.row.tinted.ownershipRail')).toMatch(/var\(--region-accent\) 16%/);
-  expect(rule(treeRowCss, ".row.tinted.ownershipRail:not([aria-selected='true']):hover")).toMatch(
-    /var\(--region-accent\) 20%/
-  );
+  expect(cssRule(treeRowCss, '.row.tinted.ownershipRail')).toMatch(/var\(--region-accent\) 16%/);
+  expect(
+    cssRule(treeRowCss, ".row.tinted.ownershipRail:not([aria-selected='true']):hover")
+  ).toMatch(/var\(--region-accent\) 20%/);
 });
 
 it.each([
@@ -415,6 +480,53 @@ it.each([
   expect(contrast(parseHex(token('text-muted')), parseHex(token(surface)))).toBeGreaterThanOrEqual(
     4.5
   );
+});
+
+// [W6] The routing card's hovered reach rows use
+// `color-mix(in srgb, var(--surface-hover) 92%, var(--status-warning))`
+// (GolemConfig.module.css). With two opaque colours that is the same linear
+// blend `composite` performs, so the token guard above — which only pairs
+// muted text with the raw surface — is extended to the mix it cannot see:
+// 85% fell to 4.21:1, 92% holds 4.81:1.
+it.each(['text-muted', 'text-secondary'])(
+  'keeps --%s at 4.5:1 or better on the hovered reach-row mix',
+  (text) => {
+    const mix = composite(
+      parseHex(token('status-warning')),
+      parseHex(token('surface-hover')),
+      0.08
+    );
+    expect(contrast(parseHex(token(text)), mix)).toBeGreaterThanOrEqual(4.5);
+  }
+);
+
+// The routing card's capability pills (`.capPill`, GolemConfig.module.css)
+// render only on an edited (9%) or same-model (5%) reach row, over the card's
+// panel or, while the row is open in its editing group, --surface-elevated.
+// Their border is --palette-cyan: a component boundary, so the floor is WCAG
+// 1.4.11's 3:1, not the 4.5:1 text floor above. --surface-border-subtle,
+// the border they had, sat at 1.01:1 to 1.20:1 on these four backdrops.
+it.each([
+  ['surface-panel', 0.09],
+  ['surface-panel', 0.05],
+  ['surface-elevated', 0.09],
+  ['surface-elevated', 0.05],
+])(
+  'keeps the capability-pill border at 3:1 or better on the reach tint over --%s at %d',
+  (surface, tint) => {
+    const backdrop = composite(parseHex(token('status-warning')), parseHex(token(surface)), tint);
+    expect(contrast(parseHex(token('palette-cyan')), backdrop)).toBeGreaterThanOrEqual(3);
+  }
+);
+
+// [W6] The Affected mark is --palette-sky: a FIXED literal that duplicates
+// --accent-project's on purpose (like --files-key duplicates --accent-go), so
+// the mark never moves when a workspace accent is repointed — and never reads
+// purple like --palette-blue did. Only the literal is pinned: an equality with
+// --accent-project would fail in exactly the repointing case the token exists
+// to survive, and a ΔE seat is impossible at distance 0 from the accent.
+it('pins --palette-sky to the Glacier sky literal', () => {
+  expect(token('palette-sky')).toBe('#38bdf8');
 });
 
 it.each([
@@ -434,7 +546,7 @@ it.each([
 it.each(WORKSPACE_ACCENTS)(
   'keeps a hidden folder name at 4.5:1 or better on the selected %s tint',
   (accent) => {
-    const selectedRule = rule(treeRowCss, ".row.tinted[aria-selected='true']");
+    const selectedRule = cssRule(treeRowCss, ".row.tinted[aria-selected='true']");
     const tint = Number(
       selectedRule.match(/var\(--region-accent\)\s*([\d.]+)%,\s*transparent/)?.[1]
     );
@@ -454,7 +566,7 @@ it.each(WORKSPACE_ACCENTS)(
 it.each(['surface-panel', 'surface-hover', 'surface-active'])(
   'keeps the unreadable marker at 3:1 or better on --%s',
   (surface) => {
-    expect(rule(treeRowCss, '.unreadable')).toMatch(/color:\s*var\(--status-warning\)/);
+    expect(cssRule(treeRowCss, '.unreadable')).toMatch(/color:\s*var\(--status-warning\)/);
     expect(
       contrast(parseHex(token('status-warning')), parseHex(token(surface)))
     ).toBeGreaterThanOrEqual(3);
@@ -464,7 +576,7 @@ it.each(['surface-panel', 'surface-hover', 'surface-active'])(
 it.each(WORKSPACE_ACCENTS)(
   'keeps the unreadable marker at 3:1 or better on the selected %s tint',
   (accent) => {
-    const selectedRule = rule(treeRowCss, ".row.tinted[aria-selected='true']");
+    const selectedRule = cssRule(treeRowCss, ".row.tinted[aria-selected='true']");
     const tint = Number(
       selectedRule.match(/var\(--region-accent\)\s*([\d.]+)%,\s*transparent/)?.[1]
     );
@@ -506,9 +618,69 @@ it.each(WORKSPACE_ACCENTS)(
 it.each(['.tabTarget:focus-visible', '.tabClose:focus-visible'])(
   'uses the shared focus-ring token for %s',
   (selector) => {
-    expect(rule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
+    expect(cssRule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
   }
 );
+
+it.each([
+  ['GitPanel', '.syncCount', gitPanelCss],
+  ['GitPanel', '.commitBtn', gitPanelCss],
+  ['RunProfileForm', '.save', runProfileFormCss],
+  ['GolemConfig', '.primary', golemConfigCss],
+  ['ErrorBoundary', '.reload', errorBoundaryCss],
+  ['ResizeHandle', '.collapseBtn:hover', resizeHandleCss],
+])('paints %s %s text on the accent through --text-on-accent', (_, selector, source) => {
+  // Every filled-accent control. Pinning the token rather than a colour is
+  // the point: the guard below proves the token clears AA on every accent,
+  // and it can only do that for text that actually uses it. A fixed
+  // --surface-base here reads 4.27 / 4.17 on docker / general; `white` reads
+  // 2.14 on project.
+  expect(cssRule(source, selector)).toMatch(/color:\s*var\(--text-on-accent\)/);
+});
+
+it.each(WORKSPACE_ACCENTS)(
+  'keeps --text-on-accent at 4.5:1 or better on the %s accent',
+  (accent) => {
+    // 11px to 14px text on a filled --accent control (the pinned selectors
+    // above), so the 4.5:1 text floor applies. No single foreground
+    // clears it on all nine accents: --surface-base does on seven, and pure
+    // white only on docker (4.73) and general (4.83), where dark text sits at
+    // 4.27 and 4.17. The token is therefore per-accent, like --accent-dark.
+    expect(
+      contrast(parseHex(textOnAccent(accent)), parseHex(token(`accent-${accent}`)))
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  "paints a locked ability chip's text at 4.5:1 on every accent-dark",
+  (accent) => {
+    // A locked chip (.abilityChipInput:checked:disabled) fills with
+    // --accent-dark, one step back from the live --accent, so --text-on-accent
+    // (tuned against the live accent) is not guaranteed to clear the floor
+    // here — --text-on-accent-dark is its own per-accent token.
+    expect(
+      contrast(
+        parseHex(textOnAccent(accent, '--text-on-accent-dark')),
+        parseHex(accentDarkFor(accent))
+      )
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  'declares --text-on-accent-dark everywhere it declares --accent-dark (%s)',
+  (accent) => {
+    const body = cssRule(css, `[data-accent='${accent}']`);
+    expect(body).toMatch(/--text-on-accent-dark:\s*(?:#[0-9a-f]{6}|var\(--[\w-]+\))/);
+  }
+);
+
+it('declares --text-on-accent-dark in :root alongside --accent-dark', () => {
+  const body = cssRule(css, ':root');
+  expect(body).toMatch(/--accent-dark:\s*#[0-9a-f]{6}/);
+  expect(body).toMatch(/--text-on-accent-dark:\s*(?:#[0-9a-f]{6}|var\(--[\w-]+\))/);
+});
 
 it.each(WORKSPACE_ACCENTS)(
   'keeps the active Golem status segment at 4.5:1 or better under the %s accent',
@@ -518,7 +690,7 @@ it.each(WORKSPACE_ACCENTS)(
     // the point: colouring this label with the accent puts `general` (3.89:1)
     // and `docker` (3.98:1) below the floor, and `general` is the accent every
     // workspace without a recognized ecosystem gets.
-    const declared = rule(statusBarCss, ".segmentBtn[data-golem-state='active']").match(
+    const declared = cssRule(statusBarCss, ".segmentBtn[data-golem-state='active']").match(
       /color:\s*var\(--([\w-]+)\)/
     )?.[1];
     if (!declared) throw new Error('Missing colour for the active Golem status segment');

@@ -7,7 +7,22 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 )
+
+// atomicWriteError keeps retry messages stable while retaining the original
+// error (including its temporary path) for errors.Is/As and diagnostics.
+type atomicWriteError struct {
+	cause    error
+	tempPath string
+	path     string
+}
+
+func (e atomicWriteError) Error() string {
+	return strings.ReplaceAll(e.cause.Error(), e.tempPath, e.path)
+}
+
+func (e atomicWriteError) Unwrap() error { return e.cause }
 
 // ErrDurabilityUnavailable reports that the filesystem cannot force a
 // directory's entries to stable storage. Callers whose correctness depends on
@@ -57,10 +72,10 @@ func WriteFileAtomic(fsys FileSystem, path string, data []byte, perm fs.FileMode
 		write = durable.WriteFileSync
 	}
 	if err := write(tempPath, data, perm); err != nil {
-		return fmt.Errorf("writing atomic temp file: %w", err)
+		return fmt.Errorf("writing atomic temp file: %w", atomicWriteError{cause: err, tempPath: tempPath, path: path})
 	}
 	if err := fsys.Rename(tempPath, path); err != nil {
-		return fmt.Errorf("renaming atomic temp file: %w", err)
+		return fmt.Errorf("renaming atomic temp file: %w", atomicWriteError{cause: err, tempPath: tempPath, path: path})
 	}
 	if durable != nil {
 		// The bytes are already durable; this only publishes the rename. A

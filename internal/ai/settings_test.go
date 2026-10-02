@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -772,6 +773,120 @@ func TestBuildSettingsProjectionSanitizesIdentifiers(t *testing.T) {
 	}
 }
 
+func TestSettingsProjectionCarriesModelDescription(t *testing.T) {
+	cases := []struct {
+		name string
+		desc string
+		want string
+	}{
+		{
+			name: "ascii breaks tab and bidi override",
+			desc: "Agent / tool-use\nwith native \u202efunction\tcalling.",
+			want: "Agent / tool-use with native \ufffdfunction calling.",
+		},
+		{
+			// U+2028 (LINE SEPARATOR) and U+0085 (NEL) sit mid-string between
+			// words: noteBreaks must collapse both to a single space rather
+			// than leaving U+2028 untouched (it is neither Cc nor Cf) or
+			// letting sanitizeProse turn U+0085 (Cc) into U+FFFD.
+			name: "line separator and NEL collapse to spaces",
+			desc: "Agent\u2028tool-use\u0085ready.",
+			want: "Agent tool-use ready.",
+		},
+		{
+			// CRLF must yield ONE space (not two, from LF+CR each matching), and
+			// the paragraph separator (U+2029) collapses alongside CR/CRLF in the
+			// same description rather than only ever appearing alone.
+			name: "CRLF, CR and paragraph separator collapse to one space each",
+			desc: "a\r\nb\rc\u2029d",
+			want: "a b c d",
+		},
+		{
+			// ZERO WIDTH JOINER (U+200D) is Cf, but in prose it only joins an
+			// emoji sequence (WOMAN + ZWJ + LAPTOP here); scrubbing it broke
+			// every such glyph into pieces around U+FFFD. It stays. The bidi
+			// override beside it is still scrubbed: the carve-out is one rune.
+			name: "zero width joiner stays, bidi override beside it does not",
+			desc: "Pair \U0001F469\u200D\U0001F4BB ready\u202e.",
+			want: "Pair \U0001F469\u200D\U0001F4BB ready\ufffd.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := projectionConfig()
+			m := cfg.Models["agent-m"]
+			m.Description = tc.desc
+			cfg.Models["agent-m"] = m
+			p := buildSettingsProjection(projectionLoaded(cfg), nil)
+			if got := projectedModel(t, p, "agent-m").Description; got != tc.want {
+				t.Fatalf("description = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSettingsProjectionTrimsModelDescriptionWithoutSplittingARune(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	// 342 three-byte runes = 1026 bytes: the 1024-byte cut lands inside a rune.
+	m.Description = strings.Repeat("€", 342)
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if p.State != "ready" {
+		t.Fatalf("state = %q; a long note never withholds the projection", p.State)
+	}
+	got := projectedModel(t, p, "agent-m").Description
+	if len(got) != 1023 || !utf8.ValidString(got) {
+		t.Fatalf("description = %d bytes, valid=%v", len(got), utf8.ValidString(got))
+	}
+}
+
+func TestSettingsProjectionTrimsLeadingBlanksBeforeTheBound(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Description = strings.Repeat(" ", 1024) + "kept"
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if got := projectedModel(t, p, "agent-m").Description; got != "kept" {
+		t.Fatalf("description = %q; leading blanks spent the budget", got)
+	}
+}
+
+// TestSettingsProjectionTrimsABlankExposedByTheCut pins sanitizeNote's OUTER
+// TrimSpace (the one after trimToBytes): the 1024-byte cut lands exactly on
+// the space before "tail", so the trimmed description ends in a blank unless
+// that second trim runs. Without it this test fails: it would see 1024 bytes
+// ending in a trailing space instead of the 1023 bare 'x' bytes wanted.
+func TestSettingsProjectionTrimsABlankExposedByTheCut(t *testing.T) {
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Description = strings.Repeat("x", 1023) + " " + "tail"
+	cfg.Models["agent-m"] = m
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	want := strings.Repeat("x", 1023)
+	if got := projectedModel(t, p, "agent-m").Description; got != want {
+		t.Fatalf("description = %q (%d bytes), want %q (%d bytes); the post-cut trim did not run",
+			got, len(got), want, len(want))
+	}
+}
+
+func TestSettingsProjectionOmitsAnAbsentOrBlankModelDescription(t *testing.T) {
+	for _, desc := range []string{"", "  ", "\n\t"} {
+		cfg := projectionConfig()
+		m := cfg.Models["agent-m"]
+		m.Description = desc
+		cfg.Models["agent-m"] = m
+		p := buildSettingsProjection(projectionLoaded(cfg), nil)
+		raw, err := json.Marshal(projectedModel(t, p, "agent-m"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte(`"description"`)) {
+			t.Fatalf("description %q serialized: %s", desc, raw)
+		}
+	}
+}
+
 // TestSettingsProjectionSerializationLeaksNothing is the boundary proof.
 func TestSettingsProjectionSerializationLeaksNothing(t *testing.T) {
 	projections := []SettingsProjection{
@@ -923,6 +1038,10 @@ func validateSettingsProjection(p SettingsProjection) error {
 		}
 		if model.Parameters != "" && !contractIdentifier(model.Parameters) {
 			return fmt.Errorf("model[%d].parameters", i)
+		}
+		if model.Description != "" && (len(model.Description) > maxModelDescriptionLen ||
+			strings.ContainsFunc(model.Description, forbiddenProseRune)) {
+			return fmt.Errorf("model[%d].description", i)
 		}
 		if model.ContextWindow < 0 || model.ContextWindow > 2147483647 ||
 			model.Dimensions < 0 || model.Dimensions > 2147483647 {
@@ -1077,6 +1196,24 @@ func contractOptionalIdentifierField(object map[string]json.RawMessage, key, whe
 	return nil
 }
 
+// contractOptionalNoteField accepts an optional prose string: non-empty, at
+// most limit bytes, free of forbiddenProseRune (the identifier rule with its
+// own bound, no ASCII restriction, and the zero width joiner kept). Used for
+// the model note.
+func contractOptionalNoteField(object map[string]json.RawMessage, key, where string, limit int) error {
+	if _, ok := object[key]; !ok {
+		return nil
+	}
+	value, err := contractStringField(object, key, where)
+	if err != nil {
+		return err
+	}
+	if value == "" || len(value) > limit || strings.ContainsFunc(value, forbiddenProseRune) {
+		return fmt.Errorf("%s.%s is not a bounded note", where, key)
+	}
+	return nil
+}
+
 func contractOptionalPositiveIntField(object map[string]json.RawMessage, key, where string) error {
 	raw, ok := object[key]
 	if !ok {
@@ -1191,6 +1328,9 @@ func projectionEntitiesStructuralCheck(root map[string]json.RawMessage, where st
 			}
 		}
 		if err := contractOptionalIdentifierField(fields, "parameters", where); err != nil {
+			return err
+		}
+		if err := contractOptionalNoteField(fields, "description", where, maxModelDescriptionLen); err != nil {
 			return err
 		}
 		for _, key := range []string{"contextWindow", "dimensions"} {

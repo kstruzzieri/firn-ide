@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { cssRule } from '../../helpers/cssRule';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
@@ -98,30 +101,59 @@ jest.mock('../../../wails/bindings', () => ({
   GitFileAtRev: jest.fn(),
 }));
 
-import {
-  MergeResolutionView,
-  describeMergeAnnouncement,
-} from '../../../components/Editor/MergeResolutionView';
+import { MergeResolutionView } from '../../../components/Editor/MergeResolutionView';
 import { GitConflictStages, GitFileAtRev } from '../../../wails/bindings';
 import { CancellablePromise } from '../../../wails/runtime';
 
 const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
 const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 
+/** jsdom has no top layer and no inertness. Model the one consequence the
+ * focus assertions depend on: while a modal dialog is open and connected,
+ * focus() on anything outside it is a no-op. One modal at a time; a browser
+ * would exempt the topmost of a stack, which these tests never build. */
+const modalDialogs = new Set<HTMLDialogElement>();
+const nativeFocus = HTMLElement.prototype.focus;
+
 beforeAll(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.setAttribute('open', '');
+      modalDialogs.add(this);
     },
   });
   Object.defineProperty(HTMLDialogElement.prototype, 'close', {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.removeAttribute('open');
+      modalDialogs.delete(this);
     },
   });
+  HTMLElement.prototype.focus = function focus(this: HTMLElement, options?: FocusOptions) {
+    for (const dialog of modalDialogs) {
+      if (dialog.isConnected && dialog.hasAttribute('open') && !dialog.contains(this)) return;
+    }
+    nativeFocus.call(this, options);
+  };
 });
+
+afterAll(() => {
+  HTMLElement.prototype.focus = nativeFocus;
+});
+
+/** jsdom has no close-request algorithm. Mirror the browser's: an Escape
+ * keydown bubbles out of the open dialog, and only if nothing called
+ * preventDefault on it does it become the dialog's `cancel` event. */
+function pressEscapeInside(target: HTMLElement): KeyboardEvent {
+  const keydown = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  fireEvent(target, keydown);
+  const dialog = target.closest('dialog');
+  if (dialog && !keydown.defaultPrevented) {
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+  }
+  return keydown;
+}
 
 const textSession = {
   kind: 'text',
@@ -176,6 +208,7 @@ const sidesSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  modalDialogs.clear();
   mockedStages.mockReset();
   mockedFileAtRev.mockReset();
   syntaxThemeId = 'glacier';
@@ -804,35 +837,6 @@ describe('MergeResolutionView base strip', () => {
   });
 });
 
-describe('describeMergeAnnouncement', () => {
-  it('describes a single resolution with its decision and the remaining count', () => {
-    expect(describeMergeAnnouncement({}, { 0: 'C' }, 2)).toBe(
-      'Conflict 1 resolved: took current. 1 unresolved.'
-    );
-  });
-
-  it('describes a single reopen', () => {
-    expect(describeMergeAnnouncement({ 0: 'C' }, {}, 2)).toBe('Conflict 1 reopened. 2 unresolved.');
-  });
-
-  it('describes several regions changed in one transaction deterministically', () => {
-    expect(describeMergeAnnouncement({ 0: 'C', 1: 'C' }, { 0: 'M', 1: 'M' }, 2)).toBe(
-      'Conflicts 1, 2 resolved. 0 unresolved.'
-    );
-  });
-
-  it('describes a mixed resolve-and-reopen transaction (the motivating multi-region case)', () => {
-    // Region 1 newly resolved to Manual, region 2 reopened, in one transaction.
-    expect(describeMergeAnnouncement({ 0: 'C', 2: 'C' }, { 0: 'C', 1: 'M' }, 4)).toBe(
-      'Conflict 2 resolved: took manual. Conflict 3 reopened. 2 unresolved.'
-    );
-  });
-
-  it('returns null when nothing changed', () => {
-    expect(describeMergeAnnouncement({ 0: 'C' }, { 0: 'C' }, 2)).toBeNull();
-  });
-});
-
 describe('MergeResolutionView external-change notice', () => {
   const withExternal = (
     base: MergeSession,
@@ -1090,17 +1094,16 @@ describe('MergeResolutionView discard confirmation', () => {
   });
 
   it('cancels through the store and restores focus to the invoker', () => {
-    render(<MergeResolutionView session={textSession} visible />);
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
     const invoker = screen.getByRole('button', { name: /next unresolved/i });
     invoker.focus();
-    const { rerender } = { rerender: (node: React.ReactElement) => node };
-    void rerender;
 
     // The dialog appears while the invoker holds focus.
-    render(<MergeResolutionView session={closeRequested()} visible />);
-    fireEvent.click(screen.getAllByRole('button', { name: /keep working/i })[0]);
+    rerender(<MergeResolutionView session={closeRequested()} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /keep working/i }));
 
     expect(cancelMergeClose).toHaveBeenCalledTimes(1);
+    expect(invoker).toHaveFocus();
   });
 
   it('discards through the store', () => {
@@ -1118,6 +1121,26 @@ describe('MergeResolutionView discard confirmation', () => {
 
     expect(cancelMergeClose).toHaveBeenCalledTimes(1);
     expect(confirmMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('a simulated Escape keydown inside the dialog reaches the native cancel, not the surface handler', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    const invoker = screen.getByRole('button', { name: /next unresolved/i });
+    invoker.focus();
+    // The dialog appears while the invoker holds focus and takes it.
+    rerender(<MergeResolutionView session={closeRequested()} visible />);
+    const keep = screen.getByRole('button', { name: /keep working/i });
+    expect(keep).toHaveFocus();
+
+    const keydown = pressEscapeInside(keep);
+
+    // Preventing the keydown would suppress the browser's close request, and
+    // the surface must not re-issue a close that is already pending.
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(requestMergeClose).not.toHaveBeenCalled();
+    expect(cancelMergeClose).toHaveBeenCalledTimes(1);
+    expect(confirmMergeClose).not.toHaveBeenCalled();
+    expect(invoker).toHaveFocus();
   });
 
   it('renders one confirmation for a sides session too', () => {
@@ -1305,6 +1328,23 @@ describe('MergeResolutionView overwrite consent', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
+  it('a simulated Escape keydown inside the overwrite dialog cancels it without asking to discard', () => {
+    render(<MergeResolutionView session={worktreeChanged()} visible />);
+    resolveAll();
+    const write = screen.getByRole('button', { name: 'Write & stage' });
+    write.focus();
+    fireEvent.click(write);
+    const cancel = screen.getByRole('button', { name: /^cancel$/i });
+
+    const keydown = pressEscapeInside(cancel);
+
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(requestMergeClose).not.toHaveBeenCalled();
+    expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(write).toHaveFocus();
+  });
+
   it('never offers an overwrite for a conflict-scoped change', () => {
     render(<MergeResolutionView session={conflictChanged()} visible />);
     resolveAll();
@@ -1343,5 +1383,51 @@ describe('MergeResolutionView overwrite consent', () => {
     });
 
     expect(controller.view.focus).toHaveBeenCalled();
+  });
+});
+
+describe('MergeResolutionView stylesheet', () => {
+  const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8');
+  const dialog = () =>
+    cssRule(read('../../../components/Editor/MergeResolutionView.module.css'), '.dialog');
+
+  // The universal `* { margin: 0 }` in reset.css cancels the UA stylesheet's
+  // `dialog { margin: auto }`; before this rule restated it the modal drew at
+  // the window's top-left, under the transparent macOS titlebar and across the
+  // traffic lights. reset.css now restores the UA margin too, and this rule
+  // restates it so the module stands alone, then pins the box below the
+  // header. jsdom resolves no CSS from a module, so the stylesheet itself is
+  // the honest guard.
+  it('centres the confirmation dialogs below the app header', () => {
+    const body = dialog();
+    expect(body).toMatch(/^\s*margin: auto;$/m);
+    // The header offset comes from the shared token; the clearance after it
+    // is a design constant the guard does not pin.
+    expect(body).toMatch(/^\s*inset: var\(--header-height\) 0 0;$/m);
+    expect(body).toMatch(/^\s*max-height: calc\(100% - var\(--header-height\) - \d+px\);$/m);
+  });
+
+  // Owned here rather than left to the UA modal rule: the max-height then
+  // pairs with its own scroll behaviour and the geometry holds for a
+  // non-modal show().
+  it('owns the positioning scheme and the overflow its max-height needs', () => {
+    const body = dialog();
+    expect(body).toMatch(/^\s*position: fixed;$/m);
+    expect(body).toMatch(/^\s*overflow: auto;$/m);
+  });
+
+  // If `--header-height` is undefined the declaration is invalid at
+  // computed-value time, so `inset` falls to auto and `max-height` to none and
+  // the dialog sits at the top-left again with nothing else failing. The check
+  // covers every token the rule references, against the :root block only, so
+  // a declaration in a comment or under a [data-accent] selector cannot
+  // satisfy it. Kept alongside the repo-wide customProperties guard: that one
+  // also accepts any name a script sets somewhere (`--diff-left`, say), which
+  // is never in scope for this dialog, so the :root-only contract is stricter.
+  it('references only tokens that tokens.css declares on :root', () => {
+    const root = cssRule(read('../../../styles/tokens.css'), ':root');
+    const used = [...dialog().matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
+    expect(used).toContain('--header-height');
+    for (const token of used) expect(root).toMatch(new RegExp(`^\\s*${token}:`, 'm'));
   });
 });

@@ -126,6 +126,7 @@ export interface RunView {
   identity: RunIdentity;
   phase: RunPhase;
   lastSeq: number;
+  unanswered?: boolean; // finished without assistant text, independent of Retry eligibility
   request?: TurnDraft; // absent when reconstructed only from backend Status
   userEntryId?: string;
   error?: string;
@@ -598,6 +599,7 @@ export interface ModelProjection {
   modelName: string;
   provider: string;
   type: ModelType;
+  description?: string;
   parameters?: string;
   contextWindow?: number;
   dimensions?: number;
@@ -654,6 +656,10 @@ export const MAX_PROJECTION_ENTRIES = 256;
 // UTF-16 code units disagree with Go on non-ASCII input.
 const MAX_IDENTIFIER_BYTES = 256;
 export const MAX_ENDPOINT_BYTES = 1024;
+/** §5.6 profile description bound — its own constant, never the endpoint's. */
+export const MAX_PROFILE_DESCRIPTION_BYTES = 1024;
+/** The model note's bound (internal/ai maxModelDescriptionLen), UTF-8 bytes. */
+export const MAX_MODEL_DESCRIPTION_BYTES = 1024;
 // Worst case the backend can emit: one endpoint diagnostic per provider plus
 // one agent diagnostic (see internal/ai/settings.go maxProjectionDiagnostics).
 export const MAX_DIAGNOSTICS = MAX_PROJECTION_ENTRIES + 1;
@@ -770,7 +776,15 @@ const MAX_MODEL_NUMBER = 2147483647;
 // or a corpus fixture with an exotic Cf rune could split verdicts between the
 // two oracles. The Go builder scrubs the same categories to U+FFFD, which is
 // safe: producer stricter than contract.
-const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
+export const FORBIDDEN_IDENTIFIER_RUNES = /[\p{Cc}\p{Cf}]/u;
+/**
+ * The identifier scrub for prose, with one rune kept: ZERO WIDTH JOINER
+ * (U+200D) controls emoji composition and script shaping and is not a bidi
+ * control, and a note is display prose, never an identifier. Deliberately
+ * that one rune (ZWNJ and the emoji TAG characters stay scrubbed). Mirrors
+ * the backend's forbiddenProseRune.
+ */
+export const FORBIDDEN_PROSE_RUNES = /(?!\u200D)[\p{Cc}\p{Cf}]/u;
 
 // A canonical endpoint is always plain ASCII: NormalizeEndpoint rejects a
 // non-ASCII host outright (Cyrillic/fullwidth/ideographic-dot homoglyphs
@@ -876,6 +890,7 @@ function readModel(value: unknown): ModelProjection | null {
       'modelName',
       'provider',
       'type',
+      'description',
       'parameters',
       'contextWindow',
       'dimensions',
@@ -911,6 +926,20 @@ function readModel(value: unknown): ModelProjection | null {
   if (hasParameters && !isIdentifier(value.parameters)) return null;
   if (hasContextWindow && !isOptionalModelNumber(value.contextWindow)) return null;
   if (hasDimensions && !isOptionalModelNumber(value.dimensions)) return null;
+
+  const hasDescription = hasPresentKey(value, 'description');
+  // Prose, not an identifier: any bytes, but the producer scrubs Cc/Cf (bar
+  // the zero width joiner) to U+FFFD and trims to the byte bound, and this
+  // boundary is independent (§5.6), so either fault is a break here too.
+  if (
+    hasDescription &&
+    !(
+      isBoundedString(value.description, MAX_MODEL_DESCRIPTION_BYTES) &&
+      value.description !== '' &&
+      !FORBIDDEN_PROSE_RUNES.test(value.description)
+    )
+  )
+    return null;
 
   const effectiveCapabilities = readCappedArray(
     value.effectiveCapabilities,
@@ -948,6 +977,7 @@ function readModel(value: unknown): ModelProjection | null {
     modelName,
     provider,
     type,
+    ...(hasDescription ? { description: value.description as string } : {}),
     ...(hasParameters ? { parameters: value.parameters as string } : {}),
     ...(hasContextWindow ? { contextWindow: value.contextWindow as number } : {}),
     ...(hasDimensions ? { dimensions: value.dimensions as number } : {}),

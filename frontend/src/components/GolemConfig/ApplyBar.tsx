@@ -1,19 +1,27 @@
 /**
- * The Apply bar (#263 spec §4.1 item 4, §3.3, mockup v10).
+ * The Apply bar (#263 spec §4.1 item 4, §3.3, mockup v10; wave 6 groups).
  *
- * Dirty only, and honest about what "dirty" means: `N changes waiting for
- * Apply`, one chip per change reading `target → effect`, then Discard and
- * Apply. A chip is not decoration — it is the only handle some changes have
- * (a staged provider-add has no applied row to sit on), so every chip opens and
- * focuses the editor that produced it.
+ * Dirty only, and honest about what "dirty" means: `N staged changes`, then
+ * what those changes reach. Route changes render as GROUPS, one per model
+ * they land on: a header naming the model and what changes on it, then one
+ * badge per route it reaches — edited (with `was old-model` for a retarget),
+ * same model, a divider, fallback. `M models · K routes affected` counts each
+ * route once across groups; a staged unassign, provider and role chips are
+ * outside K. Every other change keeps its `target · field` chip (ruling 7).
+ * A chip or badge is not decoration — it is the only handle some changes
+ * have (a staged provider-add has no applied row to sit on), so every one
+ * opens and focuses the row or editor behind it.
  *
  * The bar renders no result state. Consent, drops, conflict, busy, and recovery
  * are their own panels above it, because each one replaces the whole question
  * the bar is asking rather than decorating it.
  */
 
-import type { ApplySource, Change } from '../../types/golemConfig';
+import { Fragment, type ReactNode } from 'react';
+import type { ApplySource, Change, ReachGroup } from '../../types/golemConfig';
 import { changeStableID } from '../../types/golemConfig';
+import { listUseCases } from '../../utils/listUseCases';
+import { Staged, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 
 /**
@@ -26,25 +34,42 @@ export interface EditorFocusRequest {
   nonce: number;
 }
 
-/** `target → effect`, the one chip grammar. */
+/**
+ * `target · field`, the one chip grammar (ruling 7); the row's WAS lines carry
+ * the values.
+ *
+ * [C23] A route change bundles model, think and exposure and the bar has no
+ * applied document to diff against, so it names the row honestly; a provider
+ * update names every field it carries.
+ */
 export function changeChipLabel(change: Change): string {
   switch (change.kind) {
     case 'route':
-      return `${change.useCase} → ${change.modelFacts.model}`;
+      return `${change.useCase} · route`;
     case 'route-unassign':
-      return `${change.useCase} → unassigned`;
+      return `${change.useCase} · unassigned`;
     case 'provider-add':
-      return `${change.name} → new provider`;
-    case 'provider-update':
-      return `${change.name} → updated`;
+      return `${change.name} · new provider`;
+    case 'provider-update': {
+      const fields = [
+        change.endpoint !== undefined ? 'endpoint' : '',
+        change.apiFormat !== undefined ? 'type' : '',
+      ].filter((field) => field !== '');
+      return `${change.name} · ${fields.join(', ')}`;
+    }
     case 'provider-remove':
-      return `${change.name} → removed`;
+      return `${change.name} · removed`;
+    // [F7] Setting a key and clearing one are opposite intents; one label for both
+    // left the chip unable to say which of them Apply would send.
     case 'provider-key-set':
-      return `${change.name} → new API key`;
+      return `${change.name} · API key`;
     case 'provider-key-clear':
-      return `${change.name} → key cleared`;
+      return `${change.name} · API key cleared`;
+    // [C6] `removed` alone read as a provider removal: a provider and a model role
+    // may carry the same name, and the two chips sat side by side saying the same
+    // thing about different things.
     case 'role-remove':
-      return `${change.role} → model removed`;
+      return `${change.role} · model removed`;
   }
 }
 
@@ -59,11 +84,90 @@ const sourceChipLabel = (source: ApplySource): string | null => {
   }
 };
 
+/**
+ * Interleaves `separator` between parts that may carry markup; the parts
+ * delimit themselves. Keyed by position: a part is a stateless leaf (text, a
+ * pill), so nothing is lost when one appears or disappears between renders.
+ */
+const joinNodes = (parts: readonly ReactNode[], separator: string): ReactNode =>
+  parts.map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 && separator}
+      {part}
+    </Fragment>
+  ));
+
+/**
+ * What changes on the group's model, for its header. A selector nothing sat on
+ * shows the configuration the new route sets (`routes X · capabilities … ·
+ * Think …`) rather than a delta against nothing. An override that changes
+ * nothing in the projection (Done on an untouched editor; a change to facts
+ * this surface does not show) says what it re-asserts — derived from the
+ * change, never a placeholder.
+ *
+ * [#345] The changed capabilities are the rows' pills — one `.capPill` per
+ * capability, its `+` or `−` in the staged glyph, a removal struck — and a
+ * changed Think wears the glyph too; the labels (`capabilities`, `Think`) stay
+ * plain, as they do on a row. The glyph marks a delta against the applied
+ * selector, so a selector nothing sat on prints its configuration plain (it
+ * is a set, with nothing to differ from), and a re-assertion changes nothing
+ * so it emphasises nothing.
+ */
+function reachDeltaLine(group: ReachGroup): ReactNode {
+  const capsLine = () => `capabilities ${group.staged.exposedCaps.join(', ')}`;
+  const thinkLine = () =>
+    group.staged.thinkMode === '' ? '' : ` · Think ${group.staged.thinkMode}`;
+  if (!group.selectorHadRoles)
+    return `routes ${listUseCases(group.joins)} · ${capsLine()}${thinkLine()}`;
+  const thinkPart = (mode: string) => (
+    <>
+      Think <Staged value={mode} />
+    </>
+  );
+  const pill = (sign: '+' | '−', cap: string) => (
+    <span className={styles.capPill}>
+      <Staged value={`${sign} ${cap}`} removed={sign === '−'} />
+    </span>
+  );
+  const pills = [
+    ...group.addedCaps.map((cap) => pill('+', cap)),
+    ...group.removedCaps.map((cap) => pill('−', cap)),
+  ];
+  const parts = [
+    // One pill per changed capability, as the row prints them; `·` means "next part" only.
+    pills.length > 0 ? (
+      <>
+        capabilities <span className={styles.capPills}>{joinNodes(pills, ' ')}</span>
+      </>
+    ) : null,
+    group.think === null ? null : thinkPart(group.think === '' ? 'cleared' : group.think),
+    group.joins.length > 0 ? `now also routes ${listUseCases(group.joins)}` : null,
+    // A same-name change that is not an override differs in its facts: name them.
+    group.factsChanged.length > 0 ? `declares ${group.factsChanged.join(', ')}` : null,
+  ].filter((part) => part !== null);
+  if (parts.length > 0) return joinNodes(parts, ' · ');
+  return `re-asserts ${capsLine()}${thinkLine()}`;
+}
+
+/** K: every route some group reaches, counted once. */
+const routesAffected = (reach: readonly ReachGroup[]): number =>
+  new Set(
+    reach.flatMap((group) => [
+      ...group.edited.map((edit) => edit.useCase),
+      ...group.sameModel,
+      ...group.fallback,
+    ])
+  ).size;
+
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
 export interface ApplyBarProps {
   /** The draft source, so a replacement gets the chip it is counted as. */
   source: ApplySource;
   /** The COALESCED changes — what Apply actually sends (§3.3). */
   changes: readonly Change[];
+  /** [W6] One group per staged selector, first-staged order (`projectDraft`). */
+  reach: readonly ReachGroup[];
   /** `changes.length` plus one when the source itself is a replacement. */
   count: number;
   /** Why Apply is unavailable, or null when it is available. */
@@ -91,6 +195,7 @@ export interface ApplyBarProps {
 export function ApplyBar({
   source,
   changes,
+  reach,
   count,
   blocked,
   locked,
@@ -101,19 +206,89 @@ export function ApplyBar({
   onOpenSource,
 }: ApplyBarProps) {
   const sourceChip = sourceChipLabel(source);
+  // Keyed by kind and use case: a use case is edited in at most one group
+  // (`stageChange` replaces by stable id) and the three memberships are disjoint.
+  const badge = (useCase: string, kind: 'edited' | 'same-model' | 'fallback', was?: string) => (
+    <button
+      key={`${kind}:${useCase}`}
+      type="button"
+      className={`${styles.chip} ${styles.badge}`}
+      data-kind={kind}
+      disabled={locked}
+      onClick={() => onOpenChange(`route:${useCase}`)}
+    >
+      {useCase}
+      {/* #356: spaces in the text, not margins, so the chip's name reads "chat
+          was gpt-5-mini edited" rather than one word. The space before the WAS
+          line replaces its `.badge .was` margin; the kind is screen-reader only. */}
+      {was !== undefined && (
+        <>
+          {' '}
+          <Was value={was} />
+        </>
+      )}
+      <span className={styles.srOnly}>{` ${kind === 'same-model' ? 'same model' : kind}`}</span>
+    </button>
+  );
 
   return (
     <div className={styles.draftBar} data-testid="golem-config-draft">
-      <span className={styles.draftCount}>
-        {`${count} change${count === 1 ? '' : 's'} waiting for Apply`}
-      </span>
+      <span className={styles.draftCount}>{plural(count, 'staged change')}</span>
+      {reach.length > 0 && (
+        <span className={styles.reachCount}>
+          {`${plural(reach.length, 'model')} · ${plural(routesAffected(reach), 'route')} affected`}
+        </span>
+      )}
       <span className={styles.chips}>
         {sourceChip !== null && (
           <button type="button" className={styles.chip} disabled={locked} onClick={onOpenSource}>
             {sourceChip}
           </button>
         )}
+        {reach.map((group) => (
+          <span
+            key={group.key}
+            className={styles.reachGroup}
+            data-testid={`reach-group-${group.provider}/${group.model}`}
+          >
+            <button
+              type="button"
+              className={styles.reachHeader}
+              disabled={locked}
+              onClick={() => onOpenChange(group.changeId)}
+            >
+              {/* #356: text spaces for the button's name; the header is a flex
+                  container, so its gap alone spaces the parts on screen. */}
+              <b>{group.model}</b> <small>{group.provider}</small>{' '}
+              <span className={styles.reachDelta}>{reachDeltaLine(group)}</span>
+            </button>
+            <span className={styles.badges}>
+              {group.edited.map((edit) =>
+                badge(
+                  edit.useCase,
+                  'edited',
+                  // A provider-only move would otherwise print a WAS equal to the header.
+                  edit.was === null
+                    ? undefined
+                    : edit.was.provider === group.provider
+                      ? edit.was.model
+                      : `${edit.was.provider} · ${edit.was.model}`
+                )
+              )}
+              {group.sameModel.map((useCase) => badge(useCase, 'same-model'))}
+              {group.fallback.length > 0 && (
+                <span
+                  className={styles.reachDivider}
+                  data-testid="reach-divider"
+                  aria-hidden="true"
+                />
+              )}
+              {group.fallback.map((useCase) => badge(useCase, 'fallback'))}
+            </span>
+          </span>
+        ))}
         {changes.map((change) => {
+          if (change.kind === 'route') return null; // rendered in its group above
           const id = changeStableID(change);
           return (
             <button
