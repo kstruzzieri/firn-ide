@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.13.0] - 2026-10-01
+## [0.13.0] - 2026-10-02
 
 Feature release covering the narrow-pane redesign of the Golem configuration
 workspace with named configuration profiles, a visible outcome for every Golem
