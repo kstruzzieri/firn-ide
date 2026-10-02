@@ -196,6 +196,28 @@ describe('CI Workflow', () => {
     }
   });
 
+  // #372: setup-go@v5 reads only the `go` directive, so without a `toolchain`
+  // line every build used that directive's bare release (go1.25.0, v0.12.0
+  // included). The `toolchain` line is what makes Go switch to a patched
+  // release, so it must name a later release than the `go` directive.
+  it('should build with a toolchain later than the go directive', () => {
+    const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
+    const goVersion = goMod.match(/^go\s+(\d+\.\d+(?:\.\d+)?)\s*$/m)?.[1];
+    const toolchain = goMod.match(/^toolchain\s+go(\d+\.\d+\.\d+)\s*$/m)?.[1];
+    const parts = (version: string) => [...version.split('.').map(Number), 0].slice(0, 3);
+
+    expect(goVersion).toBeDefined();
+    expect(toolchain).toBeDefined();
+
+    const [a, b] = [parts(toolchain!), parts(goVersion!)];
+    const later = a.findIndex((n, i) => n !== b[i]);
+    expect({ toolchain, goVersion, later: later >= 0 && a[later] > b[later] }).toEqual({
+      toolchain,
+      goVersion,
+      later: true,
+    });
+  });
+
   it('should pin workflow wails3 installs to the module version', () => {
     const goMod = readFileSync(resolve(rootDir, 'go.mod'), 'utf-8');
     const wailsVersion = goMod.match(/^\s*github\.com\/wailsapp\/wails\/v3\s+(v\S+)/m)?.[1];

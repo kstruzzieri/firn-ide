@@ -1176,6 +1176,22 @@ export function stageChange(draft: Draft, change: Change, vault: KeyVault): Draf
   };
 }
 
+/**
+ * Accepts staged changes IN PLACE: each replaces the staged change with its
+ * stable id where it stands, and its Needs review marker clears. Unlike
+ * `stageChange`, which moves a change to the end, this keeps the staging order
+ * that decides which change in a selector group is its authority. A
+ * replacement with no staged counterpart is ignored.
+ */
+export function replaceStagedChanges(draft: Draft, replacements: readonly Change[]): Draft {
+  const byId = new Map(replacements.map((change) => [changeStableID(change), change]));
+  return {
+    ...draft,
+    changes: draft.changes.map((change) => byId.get(changeStableID(change)) ?? change),
+    needsReview: draft.needsReview.filter((id) => !byId.has(id)),
+  };
+}
+
 export function unstageChange(draft: Draft, changeId: string, vault: KeyVault): Draft {
   if (changeId.startsWith(KEY_IDENTITY_PREFIX)) {
     vault.delete(changeId.slice(KEY_IDENTITY_PREFIX.length));

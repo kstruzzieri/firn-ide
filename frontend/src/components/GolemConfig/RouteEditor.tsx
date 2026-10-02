@@ -151,7 +151,8 @@ export interface RouteEditorProps {
    */
   preselect?: ModelProjection;
   rowKey: string;
-  onStage: (changes: Change[], drop: string[]) => void;
+  /** `keep` accepts retained changes in place, clearing their Needs review. */
+  onStage: (changes: Change[], drop: string[], keep?: Change[]) => void;
   onClose: () => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
   /**
@@ -613,6 +614,11 @@ export function RouteEditor({
    */
   const pending = pendingOf(now, was);
   const unstaged = pending.length > 0;
+  // A conflict or transport rejection marks every retained change Needs review,
+  // and Apply stays refused until each is kept, re-staged or discarded. A
+  // reopened editor seeds from that very change, so nothing differs: Done must
+  // still be offered, to keep it (see `keep`).
+  const awaitingReview = staged?.kind === 'route' && draft.needsReview.includes(`route:${useCase}`);
 
   useEffect(() => {
     onUnstagedChange(rowKey, unstaged);
@@ -693,6 +699,22 @@ export function RouteEditor({
 
   const unassign = () => {
     onStage([{ kind: 'route-unassign', useCase }], []);
+    onClose();
+  };
+
+  // Done on a retained route that matches its row keeps it as staged. It must
+  // not rebuild the change from this editor: a model the refreshed catalog no
+  // longer matches seeds without its parameters and context window, and an
+  // editor opened before a sibling's Done holds stale selector-wide values.
+  // The one value it does answer again is the drop confirmation: Apply refuses
+  // a confirmation when nothing is dropped any more, and with no drops this
+  // editor asks no question that could correct it.
+  const keep = () => {
+    const retained = draft.changes.find((change) => changeStableID(change) === `route:${useCase}`);
+    if (retained?.kind === 'route') {
+      const { confirmDrops, ...answered } = retained;
+      onStage([], [], [confirmDrops !== undefined && drops.length === 0 ? answered : retained]);
+    }
     onClose();
   };
 
@@ -995,14 +1017,16 @@ export function RouteEditor({
         {/* Always enabled once something differs: this button IS the
             validator's entry point, and the refusal above is how the editor
             answers. The global Apply gate is held by `onUnstagedChange`, not
-            by a disabled control. Focusing it reads the summary. */}
-        {unstaged && (
+            by a disabled control. Focusing it reads the summary, which renders
+            only while something differs. With nothing different on a retained
+            route awaiting review, Done keeps that change as staged. */}
+        {(unstaged || awaitingReview) && (
           <button
             type="button"
             className={`${styles.button} ${styles.primary}`}
-            onClick={submit}
-            data-unstaged="true"
-            aria-describedby={`${id}-changes`}
+            onClick={unstaged ? submit : keep}
+            data-unstaged={unstaged || undefined}
+            aria-describedby={unstaged ? `${id}-changes` : undefined}
           >
             Done
           </button>

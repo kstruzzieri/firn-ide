@@ -410,9 +410,35 @@ export function useWorkspacePersistence(
       // Wait for any in-flight save to complete before collecting a fresh snapshot.
       await savePromiseRef.current;
 
+      // #360: mid-restore the live session is reset or half-restored, and the
+      // file on disk is still the last good snapshot — never overwrite it from
+      // a blur, hide, debounce or close. Checked after the await so a restore
+      // that began while an earlier save was in flight is caught too. The
+      // switch-flush (identityOverride) saved the outgoing session captured
+      // above, before the restore began, so it is exempt. The pending options
+      // stay cleared: they described the session the restore just replaced.
+      if (!identityOverride && useIDEStore.getState().isRestoringWorkspace) {
+        // A switch-flush queued behind the same in-flight save issues the
+        // outgoing workspace's write when it resumes, which can be after this
+        // one does; a close must not confirm before that write lands. Wait
+        // until no newer save has been installed. The chain never rejects (it
+        // ends in .catch).
+        let pending: Promise<void>;
+        do {
+          pending = savePromiseRef.current;
+          await pending;
+        } while (pending !== savePromiseRef.current);
+        return;
+      }
+
       const state = previousWorkspaceState ?? collectWorkspaceState(identityOverride, saveOptions);
       if (!state) return;
 
+      // Flushes that resume from the same in-flight save issue their writes
+      // together, and the ref keeps only the last one. Chain each tracked
+      // save to the one it replaces, so awaiting the ref waits for every
+      // outstanding write: a close must not confirm before all of them land.
+      const previousSave = savePromiseRef.current;
       const promise = SaveWorkspaceState(state)
         .then(() => {
           // Saving works again: retire the report and its toast, shown or held.
@@ -440,6 +466,7 @@ export function useWorkspacePersistence(
           reportedSaveFailuresRef.current.set(state.workspacePath, { message, rearmed: false });
           ide.showToast(message, 'error', true);
         })
+        .then(() => previousSave)
         .finally(() => {
           if (savePromiseRef.current === promise) {
             savePromiseRef.current = Promise.resolve();
