@@ -317,10 +317,13 @@ export function RunProfiles() {
         // The button unmounts once the clean snapshot lands, which may happen
         // before this result arrives, and a remount mid-reload replaces the
         // region; so look the region up now and take over focus unless the user
-        // has moved elsewhere.
+        // has moved outside the notice (which also contains the Reload button).
         const region = document.querySelector<HTMLElement>('[data-run-profiles-status]');
         const active = document.activeElement;
-        if (region && (!active || active === document.body || region.contains(active))) {
+        if (
+          region &&
+          (!active || active === document.body || region.parentElement?.contains(active))
+        ) {
           region.focus();
         }
         showToast('Run profiles reloaded', 'info');
@@ -338,6 +341,7 @@ export function RunProfiles() {
   // visible list — that left Workspace View blank. Gate on the rendered set.
   const isViewEmpty =
     viewMode === 'project' ? grouped.workspaceGroups.length === 0 : grouped.sections.length === 0;
+  const showLoadNotice = !isLoading && loadWarnings.length > 0;
 
   return (
     <Panel
@@ -360,22 +364,21 @@ export function RunProfiles() {
       }
     >
       <div className={styles.panelBody}>
-        {/* Always mounted, in the form view too, so a screen reader announces the
-            content when it appears; the store keeps the previous load's warnings
-            until the next snapshot, so nothing renders while loading. The region is
-            unstyled: display: none on an empty one would drop it from the
-            accessibility tree. */}
-        <div
-          data-run-profiles-status=""
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          tabIndex={-1}
-        >
-          {!isLoading && loadWarnings.length > 0 && (
-            <div className={styles.loadNotice}>
-              {/* Focusable so the keyboard can scroll it: WebKit does not make an
-                  overflow container keyboard-scrollable otherwise. */}
+        <div className={showLoadNotice ? styles.loadNotice : undefined}>
+          {/* Always mounted and unstyled, in the form view too, so warnings are
+              announced when they appear. Hide stale warnings while loading, but
+              keep the empty region in the accessibility tree. Reload is a sibling
+              so its changing label never re-announces unchanged warnings. */}
+          <div
+            data-run-profiles-status=""
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            tabIndex={-1}
+          >
+            {/* Focusable so the keyboard can scroll it: WebKit does not make an
+                overflow container keyboard-scrollable otherwise. */}
+            {showLoadNotice && (
               <div
                 className={styles.loadNoticeMessages}
                 tabIndex={0}
@@ -388,15 +391,17 @@ export function RunProfiles() {
                   </p>
                 ))}
               </div>
-              <button
-                type="button"
-                className={`${styles.createButton} ${styles.textButton}`}
-                onClick={handleReload}
-                aria-disabled={reloading}
-              >
-                {reloading ? 'Reloading…' : 'Reload'}
-              </button>
-            </div>
+            )}
+          </div>
+          {showLoadNotice && (
+            <button
+              type="button"
+              className={`${styles.createButton} ${styles.textButton}`}
+              onClick={handleReload}
+              aria-disabled={reloading}
+            >
+              {reloading ? 'Reloading…' : 'Reload'}
+            </button>
           )}
         </div>
         {runProfileForm ? (

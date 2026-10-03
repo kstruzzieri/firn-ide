@@ -34,7 +34,7 @@
   color: var(--status-error);
 }
 
-/* Non-fatal load warnings, rendered inside the always-mounted status region. */
+/* Wraps the warning status region and its sibling Reload button. */
 .loadNotice {
   display: flex;
   flex-direction: column;

@@ -520,6 +520,38 @@ describe('RunProfiles panel — load warnings notice', () => {
     expect(useIDEStore.getState().runEventsPaused).toBe(false);
   });
 
+  it('does not change the warning live region while Reload starts and finishes', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+    const region = screen.getByRole('status');
+    expect(region).toHaveTextContent('Saved profiles could not be loaded');
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+
+    try {
+      await user.click(screen.getByRole('button', { name: 'Reload' }));
+      expect(screen.getByRole('button', { name: 'Reloading…' })).toBeInTheDocument();
+
+      await act(async () => {
+        // Reload emits a fresh snapshot even when the warning is unchanged.
+        useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+        pending.resolve(reloadSnapshot(['Saved profiles could not be loaded']));
+      });
+
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBe(region);
+      expect(region).toHaveTextContent('Saved profiles could not be loaded');
+      expect(mutations.length).toBe(0);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it('ignores a second Reload click while the first is still in flight', async () => {
     const user = userEvent.setup();
     const pending = deferred<unknown>();
@@ -689,8 +721,8 @@ describe('RunProfiles panel — load warnings notice', () => {
   it('leaves the live region itself unstyled so it stays in the accessibility tree while empty', () => {
     // display: none on an empty region removes it from the accessibility tree,
     // so a screen reader sees the region and its content appear in one step and
-    // may not announce it. The styled notice is a child rendered only with
-    // warnings; jsdom resolves no module CSS, so the stylesheet is read too.
+    // may not announce it. The notice wrapper is styled only with warnings;
+    // jsdom resolves no module CSS, so the stylesheet is read too.
     useIDEStore.setState({ profilesLoadWarnings: [] });
     const { unmount } = render(<RunProfiles />);
     expect(screen.getByRole('status')).not.toHaveAttribute('class');
@@ -698,7 +730,7 @@ describe('RunProfiles panel — load warnings notice', () => {
 
     useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
     render(<RunProfiles />);
-    expect(screen.getByRole('status').firstElementChild).toHaveClass('loadNotice');
+    expect(screen.getByRole('status').parentElement).toHaveClass('loadNotice');
 
     const css = readFileSync(
       resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
@@ -793,7 +825,7 @@ describe('RunProfiles panel — load warnings notice', () => {
     // the stylesheet. A bare `.textButton` has the same specificity as
     // `.createButton` and loses to its width and font size whenever it is
     // declared first, so the override is scoped under `.panelBody`, the one
-    // ancestor both buttons share (Reload sits in the status region above the
+    // ancestor both buttons share (Reload sits beside the status region above the
     // list, Retry inside it).
     useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
     const { unmount } = render(<RunProfiles />);
