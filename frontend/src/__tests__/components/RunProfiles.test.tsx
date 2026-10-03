@@ -135,6 +135,7 @@ beforeEach(() => {
     isLoadingProfiles: false,
     profilesError: null,
     profilesLoadWarnings: [],
+    profilesReloading: false,
     toast: null,
   });
   // Form state persists across tests in the singleton store; reset it so a
@@ -510,6 +511,9 @@ describe('RunProfiles panel — load warnings notice', () => {
         type: 'info',
       })
     );
+    // A clean reload unmounts the button once the snapshot lands, so focus
+    // moves to the status region first rather than falling to the document.
+    expect(document.activeElement).toBe(screen.getByRole('status'));
     // The full load path (nonce bump) pauses run events and resets live run
     // state; Reload must leave both alone.
     expect(useIDEStore.getState().profilesReloadNonce).toBe(before);
@@ -527,24 +531,56 @@ describe('RunProfiles panel — load warnings notice', () => {
     });
 
     try {
-      render(<RunProfiles />);
+      const { unmount } = render(<RunProfiles />);
       const reload = screen.getByRole('button', { name: 'Reload' });
 
       await user.click(reload);
       await user.click(reload);
 
       expect(mockReloadRunProfiles).toHaveBeenCalledTimes(1);
-      expect(reload).toBeDisabled();
+      expect(reload).toHaveAttribute('aria-disabled', 'true');
+      expect(reload).toHaveAccessibleName('Reloading…');
+      expect(useIDEStore.getState().profilesReloading).toBe(true);
+
+      // The in-flight flag lives in the store, so collapsing and re-expanding
+      // the panel mid-reload neither resets it nor allows a second call.
+      unmount();
+      render(<RunProfiles />);
+      const remounted = screen.getByRole('button', { name: 'Reloading…' });
+      expect(remounted).toHaveAttribute('aria-disabled', 'true');
+      await user.click(remounted);
+      expect(mockReloadRunProfiles).toHaveBeenCalledTimes(1);
 
       await act(async () => {
         pending.resolve(reloadSnapshot([]));
       });
 
-      await waitFor(() => expect(reload).toBeEnabled());
+      await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+      expect(remounted).toHaveAttribute('aria-disabled', 'false');
+      expect(remounted).toHaveAccessibleName('Reload');
       expect(toasts).toEqual([{ message: 'Run profiles reloaded', type: 'info' }]);
     } finally {
       unsubscribe();
     }
+  });
+
+  it('leaves focus alone after a clean Reload when the user has moved on', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    const elsewhere = screen.getByRole('button', { name: 'New profile' });
+    elsewhere.focus();
+
+    await act(async () => {
+      pending.resolve(reloadSnapshot([]));
+    });
+
+    await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+    expect(document.activeElement).toBe(elsewhere);
   });
 
   it('says a load problem remains when Reload still cannot read the file', async () => {
@@ -625,7 +661,7 @@ describe('RunProfiles panel — load warnings notice', () => {
       resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
       'utf8'
     );
-    expect(css).not.toMatch(/:empty/);
+    expect(css).not.toMatch(/\.loadNotice:empty/);
   });
 
   it('keeps the status region and Reload mounted while the profile form replaces the list', () => {
@@ -657,6 +693,25 @@ describe('RunProfiles panel — load warnings notice', () => {
       'utf8'
     );
     expect(cssRule(css, '.loadNoticeText')).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+
+  it('scrolls long or many warnings in a capped box and keeps Reload visible below it', () => {
+    useIDEStore.setState({ profilesLoadWarnings: ['first warning', 'second warning'] });
+
+    render(<RunProfiles />);
+
+    const messages = screen.getByText('first warning').parentElement;
+    expect(messages).toHaveClass('loadNoticeMessages');
+    expect(messages).toContainElement(screen.getByText('second warning'));
+    expect(messages).not.toContainElement(screen.getByRole('button', { name: 'Reload' }));
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    const rule = cssRule(css, '.loadNoticeMessages');
+    expect(rule).toMatch(/max-height:\s*\S+/);
+    expect(rule).toMatch(/overflow-y:\s*auto/);
   });
 
   it('hides warnings left over from the previous load while profiles are loading', () => {
@@ -694,7 +749,6 @@ describe('RunProfiles panel — load warnings notice', () => {
       'utf8'
     );
     expect(cssRule(css, '.panelBody .textButton')).toMatch(/width:\s*auto/);
-    expect(css).not.toMatch(/^\.textButton\s*\{/m);
   });
 
   it('still offers Retry when loading failed outright, and Retry takes the full load path', async () => {

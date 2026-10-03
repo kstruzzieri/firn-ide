@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
@@ -40,6 +40,9 @@ export function RunProfiles() {
   const error = useProfilesError();
   const loadWarnings = useProfilesLoadWarnings();
   const reloadRunProfiles = useIDEStore((s) => s.reloadRunProfiles);
+  const reloading = useIDEStore((s) => s.profilesReloading);
+  const setProfilesReloading = useIDEStore((s) => s.setProfilesReloading);
+  const statusRef = useRef<HTMLDivElement>(null);
   const showToast = useIDEStore((s) => s.showToast);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
@@ -302,23 +305,26 @@ export function RunProfiles() {
   // open: running profiles and language servers must survive it, so it skips the
   // full load path. The runprofiles:changed event applies the snapshot to the
   // store; the returned copy is only read to tell whether a load problem remains.
-  // A click while a reload is in flight is ignored, so a double click shows one toast.
-  const [reloading, setReloading] = useState(false);
+  // A click while a reload is in flight is ignored, so a double click shows one
+  // toast. The flag lives in the store, so a remount mid-reload keeps it.
   const handleReload = async () => {
-    if (reloading) return;
-    setReloading(true);
+    if (useIDEStore.getState().profilesReloading) return;
+    setProfilesReloading(true);
     try {
       const { loadWarnings: remaining } = normalizeSnapshot(await ReloadRunProfiles());
       if (remaining.length > 0) {
         showToast('Run profiles reloaded, but a profiles file still cannot be loaded', 'error');
       } else {
+        // The button unmounts once the clean snapshot lands; keep its focus in
+        // the panel instead of letting it fall to the document.
+        if (statusRef.current?.contains(document.activeElement)) statusRef.current.focus();
         showToast('Run profiles reloaded', 'info');
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       showToast(`Could not reload run profiles: ${message}`, 'error');
     } finally {
-      setReloading(false);
+      setProfilesReloading(false);
     }
   };
 
@@ -354,21 +360,23 @@ export function RunProfiles() {
             until the next snapshot, so nothing renders while loading. The region is
             unstyled: display: none on an empty one would drop it from the
             accessibility tree. */}
-        <div role="status" aria-live="polite" aria-atomic="true">
+        <div ref={statusRef} role="status" aria-live="polite" aria-atomic="true" tabIndex={-1}>
           {!isLoading && loadWarnings.length > 0 && (
             <div className={styles.loadNotice}>
-              {loadWarnings.map((warning, i) => (
-                <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
-                  {warning}
-                </p>
-              ))}
+              <div className={styles.loadNoticeMessages}>
+                {loadWarnings.map((warning, i) => (
+                  <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
+                    {warning}
+                  </p>
+                ))}
+              </div>
               <button
                 type="button"
                 className={`${styles.createButton} ${styles.textButton}`}
                 onClick={handleReload}
-                disabled={reloading}
+                aria-disabled={reloading}
               >
-                Reload
+                {reloading ? 'Reloading…' : 'Reload'}
               </button>
             </div>
           )}

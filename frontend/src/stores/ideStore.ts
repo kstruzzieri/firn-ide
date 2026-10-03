@@ -229,6 +229,8 @@ interface IDEState {
   profilesLoadWarnings: string[];
   /** Bumped to re-run the run-profile loader after a failed load. */
   profilesReloadNonce: number;
+  /** True while the panel's in-place Reload is in flight; kept here so it survives a remount. */
+  profilesReloading: boolean;
   // Header selector: session-only single Cmd+R target. Not persisted; the
   // effective target re-resolves from recency on launch (see resolveEffectiveRunTarget).
   selectedProfileId: string | null;
@@ -354,9 +356,9 @@ interface IDEActions {
   setRunProfilesSnapshot: (
     profiles: RunProfile[],
     profileState: Record<string, RunProfileUIState>,
-    workspaceEpoch?: number,
-    historySnapshot?: runhistory.Snapshot,
-    loadWarnings?: string[]
+    workspaceEpoch: number | undefined,
+    historySnapshot: runhistory.Snapshot | undefined,
+    loadWarnings: string[]
   ) => void;
   setSelectedProfile: (id: string | null) => void;
   adoptProfileLocal: (id: string) => void;
@@ -364,6 +366,7 @@ interface IDEActions {
   setProfilesLoading: (loading: boolean) => void;
   setProfilesError: (error: string | null) => void;
   reloadRunProfiles: () => void;
+  setProfilesReloading: (reloading: boolean) => void;
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
   openRunProfileForm: (state: Exclude<FormState, null>) => void;
@@ -1000,6 +1003,7 @@ export const useIDEStore = create<IDEStore>()(
       profilesError: null,
       profilesLoadWarnings: [],
       profilesReloadNonce: 0,
+      profilesReloading: false,
       selectedProfileId: null,
       runOutputs: {},
       runInstanceIdsByProfile: {},
@@ -1457,7 +1461,7 @@ export const useIDEStore = create<IDEStore>()(
         runProfileState,
         workspaceEpoch,
         historySnapshot,
-        loadWarnings = []
+        loadWarnings
       ) =>
         set(
           (state) => {
@@ -1546,6 +1550,9 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'reloadRunProfiles'
         ),
+
+      setProfilesReloading: (profilesReloading) =>
+        set({ profilesReloading }, false, 'setProfilesReloading'),
 
       openRunProfileForm: (state) => set({ runProfileForm: state }, false, 'openRunProfileForm'),
       closeRunProfileForm: () => set({ runProfileForm: null }, false, 'closeRunProfileForm'),

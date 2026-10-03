@@ -51,10 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   earlier. (#401)
 - The Run Profiles panel now shows a notice when `.firn/run-profiles.json`
   could not be loaded, naming the file, the reason and the remedy, with a Reload
-  action. Reload re-reads the saved profiles in place, leaving running profiles
-  and language servers untouched, and once the file loads it lifts the refusal
-  of run profile changes from #359 without a restart or reopening the folder.
-  The refusal's remedy now names that Reload instead of a restart. (#366, #367)
+  action. The same notice reports a migrated profiles file that could not be
+  written back and a run-recency sidecar (`.firn/run-recency.json`) that could
+  not be read or migrated. Reload re-reads the saved profiles in place, leaving
+  running profiles and language servers untouched, and once the file loads it
+  lifts the refusal of run profile changes from #359 without a restart or
+  reopening the folder. The refusal's remedy now names that Reload instead of a
+  restart. (#366, #367)
 
 ## [0.13.0] - 2026-10-02
 

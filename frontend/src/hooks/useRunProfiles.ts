@@ -9,6 +9,7 @@ import type {
   ProfileTag,
   ProfileType,
   RunProfile,
+  RunProfilesSnapshot,
   RunProfileUIState,
 } from '../types/runProfile';
 
@@ -97,12 +98,7 @@ export function normalizeProfileState(raw: unknown): Record<string, RunProfileUI
   return out;
 }
 
-export function normalizeSnapshot(raw: unknown): {
-  profiles: RunProfile[];
-  profileState: Record<string, RunProfileUIState>;
-  workspaceEpoch?: number;
-  loadWarnings: string[];
-} {
+export function normalizeSnapshot(raw: unknown): RunProfilesSnapshot {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
     profiles: normalizeRunProfiles(obj.profiles),

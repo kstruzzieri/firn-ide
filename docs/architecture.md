@@ -240,10 +240,10 @@ Run recency is stored separately:
 
 ### Snapshot Hydration Contract
 
-`RunProfilesSnapshot{ profiles, profileState, loadWarnings }` (defined in `internal/runprofile/project_manager.go`) is the single contract the frontend hydrates from; `loadWarnings` carries the non-fatal load issues (for example a `.firn/run-profiles.json` that could not be read), which the panel shows with a Reload action. It is:
+`RunProfilesSnapshot{ profiles, profileState, loadWarnings }` (defined in `internal/runprofile/project_manager.go`) is the single contract the frontend hydrates from; `loadWarnings` carries only the store-related issues from the last load (a `.firn/run-profiles.json` that could not be read, a migration that could not be written back, a run-recency sidecar problem, a failed prune), which the panel shows with a Reload action; detector warnings are logged, not shown. It is:
 
 - Returned by `App.GetRunProfilesSnapshot()` for the initial load.
-- Emitted on the `runprofiles:changed` Wails event after every state change — initial load, pin/unpin, variant change, adopt/unadopt, the panel's Reload (`App.ReloadRunProfiles`, an in-place re-read that leaves running profiles and language servers alone), and a successful run.
+- Emitted on the `runprofiles:changed` Wails event after every state change — initial load, pin/unpin, variant change, adopt/unadopt, the panel's Reload (`App.ReloadRunProfiles`, an in-place re-read that leaves running profiles and language servers alone), file-watcher re-detection of a changed config file (`handleWatchEvent` → `HandleFileChange`), and a successful run.
 
 The frontend re-validates the payload with `normalizeSnapshot` (`hooks/useRunProfiles.ts`) before storing it via `setRunProfilesSnapshot`, so `runProfiles`, `runProfileState` and `profilesLoadWarnings` in `ideStore` always come from a validated snapshot rather than ad-hoc updates. Adopt/unadopt apply an optimistic local change first (`adoptProfileLocal`/`unadoptProfileLocal`) and revert it if the backend call rejects; the next snapshot reconciles the authoritative state.
 
