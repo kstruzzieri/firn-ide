@@ -360,8 +360,11 @@ export function Editor() {
           role="tablist"
           aria-label="Open editors"
           onFocus={(event) => {
-            // Focus lands on a tab's target (arrow keys) or its close button
-            // (Tab); either way, reveal the tab holding it.
+            // Keyboard focus lands on a tab's target (arrow keys) or its close
+            // button (Tab); either way, reveal the tab holding it. Not a mouse
+            // press, which focuses too: scrolling before mouseup would move the
+            // click off its target, and the click's own activation reveals.
+            if (!event.target.matches(':focus-visible')) return;
             const tab = event.target.parentElement;
             if (tab) revealTab(event.currentTarget, tab);
           }}

@@ -894,6 +894,28 @@ describe('Editor tab strip overflow (#406)', () => {
       expect(stripScrolledTo()).toBe(-150 - CONTROL);
     });
 
+    it('leaves the strip still while a mouse press focuses a close button', () => {
+      renderWithFiles(3);
+      layOutTabs();
+      // file1's start is hidden but its close button is in view.
+      place(tabBox('file1.ts'), -100, 50);
+      const close = closeButton('file1.ts');
+      // A pointer focus is not :focus-visible (jsdom alone cannot tell).
+      jest.spyOn(close, 'matches').mockImplementation((selector) => selector !== ':focus-visible');
+      scrollTo.mockClear();
+
+      // Scrolling here would move the button out from under the pointer before
+      // mouseup, and the click would miss it.
+      fireEvent.mouseDown(close);
+      act(() => {
+        close.focus();
+      });
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      fireEvent.click(close);
+      expect(useIDEStore.getState().openFiles.map((f) => f.id)).toEqual(['f0', 'f2']);
+    });
+
     it('shows the start of a tab wider than the room between the controls', () => {
       renderWithFiles(2);
       layOutTabs();
