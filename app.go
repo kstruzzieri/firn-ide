@@ -1084,6 +1084,30 @@ func (a *App) GetRunProfilesSnapshot() runprofile.RunProfilesSnapshot {
 	return a.runProfilesSnapshot(a.profileManager)
 }
 
+// ReloadRunProfiles re-reads saved and detected run profiles for the open
+// workspace in place (#367): the panel's Reload action after an unreadable
+// .firn/run-profiles.json was fixed. It is not a workspace open: running
+// processes, the executor epoch and language servers are untouched. A
+// successful Load clears the store's write latch (#359); the emitted snapshot
+// carries the remaining load warnings, empty when the load was clean.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ReloadRunProfiles() error {
+	a.profileMu.Lock() // write lock: no pin/adopt may land between Load's file read and its swap
+	m := a.profileManager
+	if m == nil {
+		a.profileMu.Unlock()
+		return fmt.Errorf("no workspace loaded")
+	}
+	err := m.Load()
+	snap := a.runProfilesSnapshot(m)
+	a.profileMu.Unlock()
+	if err != nil {
+		return err
+	}
+	a.emit("runprofiles:changed", snap)
+	return nil
+}
+
 // AdoptRunProfile adds a profile to its workspace working set and emits an update.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) AdoptRunProfile(id string) error {

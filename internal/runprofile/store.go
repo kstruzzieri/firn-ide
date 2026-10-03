@@ -169,9 +169,9 @@ func loadRemedy(err error) string {
 
 // loadRefusal explains why writeProfilesLocked will not write: the file, the
 // reason (the wrapped load error names both) and the remedy. Run profiles are
-// reloaded by LoadRunProfiles, which the frontend calls when a folder is opened
-// and from the Run Profiles panel's Reload action (shown while the last load
-// carried warnings), so that is the recovery step the message names.
+// reloaded in place by App.ReloadRunProfiles, which the Run Profiles panel's
+// Reload action calls while the last load carried warnings, and on folder open
+// by LoadRunProfiles, so that is the recovery step the message names.
 func loadRefusal(err error) error {
 	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s): %w", loadRemedy(err), err)
 }
