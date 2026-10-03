@@ -77,8 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate processes, so both reinstalled at once, each deleting
   `node_modules` under the other, and the run could fail with a corrupted
   install. The step now skips while its last successful `npm ci` is newer than
-  both `package.json` and `package-lock.json`, so `wails3 dev` installs once
-  and local builds stop reinstalling on every run. (#414)
+  both `package.json` and `package-lock.json` and ran on the same OS and CPU
+  architecture, so `wails3 dev` installs once and local builds stop
+  reinstalling on every run. (#414)
 
 ## [0.13.0] - 2026-10-02
 

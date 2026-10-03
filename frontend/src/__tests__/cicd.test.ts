@@ -590,11 +590,20 @@ describe('Frontend dependency install', () => {
     // node_modules first, so a failed install leaves none), newer than both
     // manifests. npm's own node_modules/.package-lock.json is no proof: a
     // lockfile-only update rewrites it without installing anything.
+    // The stamp also holds the platform Node reported at install time, since
+    // npm ci picks native optional packages (@esbuild/*, @rollup/rollup-*) by
+    // process.platform and process.arch: the same checkout reused under
+    // another OS or architecture must reinstall.
+    const platform = "process.platform + '-' + process.arch";
     expect(install.status).toEqual([
       'test -f node_modules/.npm-ci-stamp && test node_modules/.npm-ci-stamp -nt package.json && test node_modules/.npm-ci-stamp -nt package-lock.json',
+      `node -e "process.exit(Number(require('fs').readFileSync('node_modules/.npm-ci-stamp', 'utf8') !== ${platform}))"`,
     ]);
     expect(install.dir).toBe('frontend');
-    expect(install.cmds).toEqual(['npm ci', ': > node_modules/.npm-ci-stamp']);
+    expect(install.cmds).toEqual([
+      'npm ci',
+      `node -e "require('fs').writeFileSync('node_modules/.npm-ci-stamp', ${platform})"`,
+    ]);
   });
 
   it('should install before the dev server and the build start', () => {
