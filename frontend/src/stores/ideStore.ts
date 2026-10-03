@@ -283,6 +283,9 @@ interface IDEState {
 
   // Editor navigation
   pendingEditorNavigation: EditorNavigationRequest | null;
+  /** Bumped by every activation intent so the editor scrolls the selected tab
+   * into view even when the selection itself did not change (#406). */
+  editorTabRevealNonce: number;
 
   // Navigation history (back/forward)
   navigationHistory: NavigationLocation[];
@@ -332,6 +335,7 @@ interface IDEActions {
   openFile: (file: EditorFile) => void;
   closeFile: (fileId: string) => void;
   setActiveFile: (fileId: string | null) => void;
+  requestEditorTabReveal: () => void;
   setCursorPosition: (position: CursorPosition) => void;
   setFileModified: (fileId: string, isModified: boolean) => void;
   updateFileContent: (fileId: string, content: string) => void;
@@ -1033,6 +1037,7 @@ export const useIDEStore = create<IDEStore>()(
       recentWorkspacesVersion: 0,
       editorSyntaxTheme: loadInitialSyntaxTheme(),
       pendingEditorNavigation: null,
+      editorTabRevealNonce: 0,
 
       // Workspace actions
       setWorkspace: (workspace) =>
@@ -1321,6 +1326,13 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       setActiveFile: (activeFileId) => set({ activeFileId }, false, 'setActiveFile'),
+
+      requestEditorTabReveal: () =>
+        set(
+          (state) => ({ editorTabRevealNonce: state.editorTabRevealNonce + 1 }),
+          false,
+          'requestEditorTabReveal'
+        ),
 
       setCursorPosition: (cursorPosition) => set({ cursorPosition }, false, 'setCursorPosition'),
 

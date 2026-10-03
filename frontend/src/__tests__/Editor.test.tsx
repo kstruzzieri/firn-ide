@@ -3,7 +3,7 @@ import { useIDEStore } from '../stores/ideStore';
 import { useGitStore, type DiffSession, type MergeSession } from '../stores/gitStore';
 import { __resetGolemStore, useGolemStore } from '../stores/golemStore';
 import { showGolemConfiguration } from '../utils/commands';
-import { focusConfigTab } from '../utils/editorSurface';
+import { focusConfigTab, focusEditorSurface } from '../utils/editorSurface';
 import { registerConfigCloseHandler } from '../components/GolemConfig/configCloseGuard';
 
 jest.mock('../wails/bindings', () => ({
@@ -623,5 +623,208 @@ describe('Golem configuration tab (#263 Slice B)', () => {
     } finally {
       Element.prototype.scrollIntoView = originalScrollIntoView;
     }
+  });
+});
+
+// #406: the strip scrolls with its scrollbar hidden (#118), so overflow needs a
+// visible, mouse-operable control, and every activation must bring its tab into
+// view. jsdom has no layout, so each test states the geometry it needs.
+describe('Editor tab strip overflow (#406)', () => {
+  const strip = () => screen.getByRole('tablist', { name: 'Open editors' });
+  const leftControl = () => screen.queryByRole('button', { name: 'Scroll tabs left' });
+  const rightControl = () => screen.queryByRole('button', { name: 'Scroll tabs right' });
+  const tabBox = (name: RegExp | string) => screen.getByRole('tab', { name }).parentElement!;
+
+  function setStripMetrics(scrollWidth: number, clientWidth: number, scrollLeft = 0) {
+    const el = strip();
+    Object.defineProperty(el, 'scrollWidth', { configurable: true, value: scrollWidth });
+    Object.defineProperty(el, 'clientWidth', { configurable: true, value: clientWidth });
+    el.scrollLeft = scrollLeft;
+  }
+
+  function scrollStripTo(scrollLeft: number) {
+    strip().scrollLeft = scrollLeft;
+    fireEvent.scroll(strip());
+  }
+
+  type ObserverMock = { observe: jest.Mock };
+  const observerMock = () => global.ResizeObserver as unknown as jest.Mock;
+  /** Elements the editor's resize observers watch. */
+  const observedElements = () =>
+    observerMock().mock.results.flatMap((result) =>
+      (result.value as ObserverMock).observe.mock.calls.map(([target]) => target as Element)
+    );
+  /** Deliver a resize to every observer, as the browser would after a layout change. */
+  function fireResize() {
+    act(() => {
+      for (const [callback] of observerMock().mock.calls) callback([], {});
+    });
+  }
+
+  function renderWithFiles(count: number) {
+    const files = Array.from({ length: count }, (_, i) => openFile(`f${i}`, `file${i}.ts`));
+    useIDEStore.setState({ openFiles: files, activeFileId: 'f0' });
+    return render(<Editor />);
+  }
+
+  let scrollIntoView: jest.SpyInstance;
+  beforeEach(() => {
+    scrollIntoView = jest.spyOn(Element.prototype, 'scrollIntoView');
+  });
+  afterEach(() => {
+    scrollIntoView.mockRestore();
+  });
+  const revealedElements = () => scrollIntoView.mock.contexts as Element[];
+
+  it('shows no scroll control while every tab fits', () => {
+    renderWithFiles(3);
+    setStripMetrics(300, 300);
+    fireResize();
+
+    expect(leftControl()).toBeNull();
+    expect(rightControl()).toBeNull();
+  });
+
+  it('shows a control on each side that hides tabs, and drops it once that side is fully scrolled', () => {
+    renderWithFiles(8);
+    setStripMetrics(900, 300);
+    fireResize();
+    expect(leftControl()).toBeNull();
+    expect(rightControl()).toBeInTheDocument();
+
+    scrollStripTo(300);
+    expect(leftControl()).toBeInTheDocument();
+    expect(rightControl()).toBeInTheDocument();
+
+    scrollStripTo(600);
+    expect(leftControl()).toBeInTheDocument();
+    expect(rightControl()).toBeNull();
+  });
+
+  it('re-measures when the panel narrows and when tabs are added or removed', () => {
+    renderWithFiles(2);
+    setStripMetrics(200, 300);
+    fireResize();
+    expect(rightControl()).toBeNull();
+
+    // A narrower panel resizes the strip itself.
+    setStripMetrics(200, 150);
+    fireResize();
+    expect(rightControl()).toBeInTheDocument();
+
+    // A tab added or removed resizes the row that holds the tabs, not the
+    // strip, so that row has to be observed too.
+    const firstTab = screen.getAllByRole('tab')[0];
+    expect(observedElements()).toContain(strip());
+    expect(observedElements().some((el) => el !== strip() && el.contains(firstTab))).toBe(true);
+
+    act(() => {
+      useIDEStore.getState().closeFile('f1');
+    });
+    setStripMetrics(100, 150);
+    fireResize();
+    expect(rightControl()).toBeNull();
+  });
+
+  it('scrolls the strip by mouse click, without taking focus or joining the tablist', () => {
+    renderWithFiles(8);
+    setStripMetrics(900, 300);
+    fireResize();
+    const scrollBy = jest.fn();
+    strip().scrollBy = scrollBy as never;
+
+    const right = rightControl()!;
+    // A mouse press would otherwise move focus out of the editor and onto a
+    // control that may vanish under it.
+    expect(fireEvent.mouseDown(right)).toBe(false);
+    fireEvent.click(right);
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    expect(scrollBy.mock.calls[0][0].left).toBeGreaterThan(0);
+
+    scrollStripTo(300);
+    fireEvent.click(leftControl()!);
+    expect(scrollBy.mock.calls[1][0].left).toBeLessThan(0);
+
+    // Keyboard reach stays the tablist's arrow keys: the controls are neither
+    // tabs nor tab stops.
+    expect(strip()).not.toContainElement(right);
+    expect(right).toHaveAttribute('tabindex', '-1');
+    expect(leftControl()).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('marks a tab cut off by the strip edge so its close button cannot show as a partial glyph', () => {
+    renderWithFiles(2);
+    const rect = (left: number, right: number) => ({ left, right }) as DOMRect;
+    jest.spyOn(strip(), 'getBoundingClientRect').mockReturnValue(rect(0, 300));
+    jest.spyOn(tabBox('file0.ts'), 'getBoundingClientRect').mockReturnValue(rect(8, 150));
+    const cut = jest.spyOn(tabBox('file1.ts'), 'getBoundingClientRect');
+    cut.mockReturnValue(rect(150, 320));
+    setStripMetrics(330, 300);
+
+    fireEvent.scroll(strip());
+    expect(tabBox('file0.ts')).not.toHaveAttribute('data-clipped');
+    expect(tabBox('file1.ts')).toHaveAttribute('data-clipped');
+
+    cut.mockReturnValue(rect(120, 290));
+    scrollStripTo(30);
+    expect(tabBox('file1.ts')).not.toHaveAttribute('data-clipped');
+  });
+
+  it('reveals a file tab activated from outside the strip, close button included', () => {
+    renderWithFiles(3);
+    scrollIntoView.mockClear();
+
+    // The explorer, search results and the command palette all open through
+    // ensureEditorFileOpen, which is exactly this pair of calls.
+    act(() => {
+      useIDEStore.getState().setActiveFile('f2');
+      focusEditorSurface('file');
+    });
+
+    const revealed = revealedElements();
+    expect(revealed).toContain(tabBox('file2.ts'));
+    expect(tabBox('file2.ts')).toContainElement(
+      screen.getByRole('button', { name: 'Close file2.ts' })
+    );
+    expect(scrollIntoView).toHaveBeenCalledWith({ inline: 'nearest', block: 'nearest' });
+  });
+
+  it('reveals the already-active tab again when it is re-activated', () => {
+    renderWithFiles(3);
+    scrollIntoView.mockClear();
+
+    act(() => {
+      useIDEStore.getState().setActiveFile('f0');
+      focusEditorSurface('file');
+    });
+
+    expect(revealedElements()).toContain(tabBox('file0.ts'));
+  });
+
+  it('reveals a clicked file tab, and a diff tab opened from the Git panel', () => {
+    renderWithFiles(3);
+    scrollIntoView.mockClear();
+
+    fireEvent.click(screen.getByRole('tab', { name: /file1\.ts/ }));
+    expect(revealedElements()).toContain(tabBox('file1.ts'));
+
+    act(() => {
+      useGitStore.setState({ diffSession, diffFocused: true });
+    });
+    expect(revealedElements()).toContain(tabBox(/\(diff\)/));
+  });
+
+  it('reveals the tab that becomes active when the active one closes', () => {
+    renderWithFiles(3);
+    act(() => {
+      useIDEStore.getState().setActiveFile('f1');
+    });
+    scrollIntoView.mockClear();
+
+    act(() => {
+      useIDEStore.getState().closeFile('f1');
+    });
+
+    expect(revealedElements()).toContain(tabBox('file2.ts'));
   });
 });

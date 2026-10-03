@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifts the refusal of run profile changes from #359 without a restart or
   reopening the folder. The refusal's remedy now names that Reload instead of a
   restart. (#366, #367)
+- When the editor's tabs no longer fit the panel, a scroll button now appears
+  at each edge that hides tabs and disappears once that side is fully
+  scrolled, so every open tab can be reached with a mouse alone. Before, the
+  strip scrolled only by a sideways trackpad swipe or Shift+wheel, with nothing
+  on screen to say tabs were hidden. Activating any tab, from a click, the
+  explorer, a search result, the command palette, the keyboard or the Git panel,
+  now scrolls it fully into view, not just the Golem Configuration tab. A tab
+  cut off at the edge no longer shows half of its close button, which read as
+  a `>` scroll arrow but closed the tab. (#406)
 
 ## [0.13.0] - 2026-10-02
 

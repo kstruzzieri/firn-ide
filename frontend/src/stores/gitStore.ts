@@ -442,6 +442,9 @@ function toErrorMessage(err: unknown): string {
 function revealFilesColumn(): void {
   const ide = useIDEStore.getState();
   if (!ide.isRestoringWorkspace) ide.revealCenterPanel('files');
+  // Reopening into a diff or merge tab that is already selected changes no tab
+  // id, so the editor needs the intent itself to scroll that tab into view (#406).
+  ide.requestEditorTabReveal();
 }
 
 export const useGitStore = create<GitStore>()(

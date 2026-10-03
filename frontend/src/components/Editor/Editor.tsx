@@ -8,11 +8,13 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import styles from './Editor.module.css';
 import {
@@ -24,7 +26,7 @@ import {
   useWorkspaces,
 } from '../../stores/ideStore';
 import { FileIcon } from '../FileExplorer/FileIcon';
-import { FolderOutlineIcon, GitBranchIcon, SettingsIcon } from '../icons';
+import { ChevronRightIcon, FolderOutlineIcon, GitBranchIcon, SettingsIcon } from '../icons';
 import { GolemConfigWorkspace } from '../GolemConfig/GolemConfigWorkspace';
 import { confirmConfigClose, hasUnsavedConfigWork } from '../GolemConfig/configCloseGuard';
 import { useGolemStore } from '../../stores/golemStore';
@@ -76,7 +78,12 @@ export function Editor() {
   const setScrollPosition = useIDEStore((state) => state.setScrollPosition);
   const scrollPositions = useIDEStore((state) => state.scrollPositions);
   const cursorPositions = useIDEStore((state) => state.cursorPositions);
+  const tabRevealNonce = useIDEStore((state) => state.editorTabRevealNonce);
   const editorRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: the strip mounts and unmounts with the welcome screen,
+  // and its overflow tracking has to follow the element that is actually there.
+  const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null);
+  const tabOverflow = useTabStripOverflow(tabBar);
   const restoreFocusAfterCloseRef = useRef(false);
   const [mergeFinalizing, setMergeFinalizing] = useState(false);
 
@@ -183,6 +190,15 @@ export function Editor() {
   // diff tab) — otherwise the panel would render blank.
   const showDiff = !showConfig && !!diffSession && (diffFocused || (!activeFile && !mergeSession));
   const showMerge = !showConfig && !!mergeSession && !showDiff && (mergeFocused || !activeFile);
+  const selectedTabId = showConfig
+    ? 'tab-golem-config'
+    : showMerge
+      ? 'tab-merge-resolution'
+      : showDiff
+        ? 'tab-git-diff'
+        : activeFile
+          ? editorTabId(activeFile.id)
+          : undefined;
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
   const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
@@ -241,16 +257,26 @@ export function Editor() {
     prevShowDiffRef.current = showDiff;
   }, [showDiff]);
 
-  // #309: a narrow tab strip scrolls (`.tabBar { overflow-x: auto }`), so the
-  // active configuration tab must never stay scrolled out of view — on
-  // activation AND on re-activation (clicking the tab again while active).
-  const revealConfigTab = () =>
-    document
-      .getElementById('tab-golem-config')
-      ?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+  // #309, generalized by #406: the strip scrolls, so the selected tab of any
+  // kind is brought into view whenever the selection changes (a close, a diff
+  // opened from the Git panel) and on every activation intent, which bumps the
+  // nonce even when it re-selects the tab already selected.
   useEffect(() => {
-    if (showConfig) revealConfigTab();
-  }, [showConfig]);
+    if (!selectedTabId) return;
+    // The tab's whole box, not just its role="tab" target, so its close button
+    // comes into view too.
+    document
+      .getElementById(selectedTabId)
+      ?.parentElement?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [selectedTabId, tabRevealNonce]);
+
+  // A page is the strip less the two controls overlaying its edges, so what sat
+  // under the control clicked ends up just inside the control opposite.
+  const scrollTabs = (event: ReactMouseEvent<HTMLButtonElement>, direction: -1 | 1) => {
+    if (!tabBar) return;
+    const control = event.currentTarget.offsetWidth;
+    tabBar.scrollBy({ left: direction * Math.max(tabBar.clientWidth - 2 * control, control) });
+  };
 
   // The one choke point for closing the configuration surface, so the §4.6a
   // prompt cannot be routed around. A dirty surface is revealed first: the
@@ -326,161 +352,189 @@ export function Editor() {
       >
         {queueAnnouncement}
       </div>
-      <div className={styles.tabBar} role="tablist" aria-label="Open editors">
-        {openFiles.map((file) => {
-          // A focused diff tab owns the active state, so the file tab it was
-          // opened from doesn't also read as active.
-          const isActive = file.id === activeFile?.id && !showDiff && !showMerge && !showConfig;
-          const languageName = getLanguageName(file.name);
-          const owner = resolveWorkspace(file.path);
+      <div className={styles.tabStrip}>
+        <div ref={setTabBar} className={styles.tabBar} role="tablist" aria-label="Open editors">
+          <div className={styles.tabRow}>
+            {openFiles.map((file) => {
+              // A focused diff tab owns the active state, so the file tab it was
+              // opened from doesn't also read as active.
+              const isActive = file.id === activeFile?.id && !showDiff && !showMerge && !showConfig;
+              const languageName = getLanguageName(file.name);
+              const owner = resolveWorkspace(file.path);
 
-          const activateFileTab = () => {
-            focusEditorSurface('file');
-            setActiveFile(file.id);
-          };
+              const activateFileTab = () => {
+                focusEditorSurface('file');
+                setActiveFile(file.id);
+              };
 
-          return (
-            <div
-              key={file.id}
-              className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
-              style={tabAccentStyle(owner)}
-              title={`${file.path}\n${languageName}`}
-              onClick={activateFileTab}
-            >
+              return (
+                <div
+                  key={file.id}
+                  className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
+                  style={tabAccentStyle(owner)}
+                  title={`${file.path}\n${languageName}`}
+                  onClick={activateFileTab}
+                >
+                  <div
+                    id={editorTabId(file.id)}
+                    className={styles.tabTarget}
+                    role="tab"
+                    tabIndex={isActive ? 0 : -1}
+                    aria-selected={isActive}
+                    aria-controls="editor-tabpanel"
+                    onKeyDown={(event) => handleTabKeyDown(event, activateFileTab)}
+                  >
+                    <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
+                    <span className={styles.tabName}>{file.name}</span>
+                    {file.isModified && (
+                      <span className={styles.tabDot} role="img" aria-label="Modified" />
+                    )}
+                  </div>
+                  <button
+                    className={styles.tabClose}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      restoreFocusAfterCloseRef.current = true;
+                      closeFile(file.id);
+                    }}
+                    aria-label={`Close ${file.name}`}
+                    type="button"
+                  >
+                    <CloseIcon />
+                  </button>
+                </div>
+              );
+            })}
+            {diffSession && (
               <div
-                id={editorTabId(file.id)}
-                className={styles.tabTarget}
-                role="tab"
-                tabIndex={isActive ? 0 : -1}
-                aria-selected={isActive}
-                aria-controls="editor-tabpanel"
-                onKeyDown={(event) => handleTabKeyDown(event, activateFileTab)}
+                className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
+                style={tabAccentStyle(diffOwner)}
+                title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
+                onClick={() => focusEditorSurface('diff')}
               >
-                <FileIcon name={file.name} isDir={false} className={styles.tabIcon} />
-                <span className={styles.tabName}>{file.name}</span>
-                {file.isModified && (
-                  <span className={styles.tabDot} role="img" aria-label="Modified" />
-                )}
+                <div
+                  id="tab-git-diff"
+                  className={styles.tabTarget}
+                  role="tab"
+                  tabIndex={showDiff ? 0 : -1}
+                  aria-selected={showDiff}
+                  aria-controls="editor-tabpanel"
+                  onKeyDown={(event) => handleTabKeyDown(event, () => focusEditorSurface('diff'))}
+                >
+                  <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
+                  <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
+                </div>
+                <button
+                  className={styles.tabClose}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    restoreFocusAfterCloseRef.current = true;
+                    useGitStore.getState().closeDiff();
+                  }}
+                  aria-label="Close diff"
+                  type="button"
+                >
+                  <CloseIcon />
+                </button>
               </div>
-              <button
-                className={styles.tabClose}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  restoreFocusAfterCloseRef.current = true;
-                  closeFile(file.id);
-                }}
-                aria-label={`Close ${file.name}`}
-                type="button"
+            )}
+            {mergeSession && (
+              <div
+                className={`${styles.tab} ${mergeOwner ? styles.workspaceTab : ''} ${showMerge ? styles.active : ''}`}
+                style={tabAccentStyle(mergeOwner)}
+                title={mergeSession.path}
+                onClick={() => focusEditorSurface('merge')}
               >
-                <CloseIcon />
-              </button>
-            </div>
-          );
-        })}
-        {diffSession && (
-          <div
-            className={`${styles.tab} ${diffOwner ? styles.workspaceTab : ''} ${showDiff ? styles.active : ''}`}
-            style={tabAccentStyle(diffOwner)}
-            title={`${diffSession.path}\n${diffSession.left.label} ↔ ${diffSession.right.label}`}
-            onClick={() => focusEditorSurface('diff')}
-          >
-            <div
-              id="tab-git-diff"
-              className={styles.tabTarget}
-              role="tab"
-              tabIndex={showDiff ? 0 : -1}
-              aria-selected={showDiff}
-              aria-controls="editor-tabpanel"
-              onKeyDown={(event) => handleTabKeyDown(event, () => focusEditorSurface('diff'))}
-            >
-              <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
-              <span className={styles.tabName}>{diffTabName(diffSession.path)} (diff)</span>
-            </div>
-            <button
-              className={styles.tabClose}
-              onClick={(e) => {
-                e.stopPropagation();
-                restoreFocusAfterCloseRef.current = true;
-                useGitStore.getState().closeDiff();
-              }}
-              aria-label="Close diff"
-              type="button"
-            >
-              <CloseIcon />
-            </button>
+                <div
+                  id="tab-merge-resolution"
+                  className={styles.tabTarget}
+                  role="tab"
+                  tabIndex={showMerge ? 0 : -1}
+                  aria-selected={showMerge}
+                  aria-controls="editor-tabpanel"
+                  onKeyDown={(event) => handleTabKeyDown(event, () => focusEditorSurface('merge'))}
+                >
+                  <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
+                  <span className={styles.tabName}>{diffTabName(mergeSession.path)} (merge)</span>
+                </div>
+                <button
+                  className={styles.tabClose}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (mergeFinalizing) return;
+                    // Same guard as Escape and the resolved-outside notice: a
+                    // touched session gets the discard confirmation, and focus
+                    // restoration is handled by the close effect below rather than
+                    // by this handler, which view-originated closes never reach.
+                    useGitStore.getState().requestMergeClose();
+                  }}
+                  aria-label="Close merge resolution"
+                  type="button"
+                  disabled={mergeFinalizing}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            )}
+            {configTabOpen && (
+              <div
+                className={`${styles.tab} ${showConfig ? styles.active : ''}`}
+                title={'Golem Configuration\nApplies to every workspace'}
+                onClick={focusConfigTab}
+              >
+                <div
+                  id="tab-golem-config"
+                  className={styles.tabTarget}
+                  role="tab"
+                  tabIndex={showConfig ? 0 : -1}
+                  aria-selected={showConfig}
+                  aria-controls="editor-tabpanel"
+                  onKeyDown={(event) => handleTabKeyDown(event, focusConfigTab)}
+                >
+                  <SettingsIcon className={styles.tabIcon} aria-hidden="true" />
+                  <span className={styles.tabName}>Golem Configuration</span>
+                </div>
+                <button
+                  className={styles.tabClose}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeConfigTab();
+                  }}
+                  aria-label="Close Golem Configuration"
+                  type="button"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            )}
           </div>
+        </div>
+        {/* Mouse-only edge controls (#406): keyboard reach stays the tablist's
+          arrow keys, so they are no tab stops, and a press keeps focus where it
+          was rather than on a control that vanishes once its side is scrolled. */}
+        {tabOverflow.left && (
+          <button
+            type="button"
+            tabIndex={-1}
+            className={`${styles.tabScroll} ${styles.tabScrollLeft}`}
+            aria-label="Scroll tabs left"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => scrollTabs(event, -1)}
+          >
+            <ChevronRightIcon aria-hidden="true" />
+          </button>
         )}
-        {mergeSession && (
-          <div
-            className={`${styles.tab} ${mergeOwner ? styles.workspaceTab : ''} ${showMerge ? styles.active : ''}`}
-            style={tabAccentStyle(mergeOwner)}
-            title={mergeSession.path}
-            onClick={() => focusEditorSurface('merge')}
+        {tabOverflow.right && (
+          <button
+            type="button"
+            tabIndex={-1}
+            className={`${styles.tabScroll} ${styles.tabScrollRight}`}
+            aria-label="Scroll tabs right"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => scrollTabs(event, 1)}
           >
-            <div
-              id="tab-merge-resolution"
-              className={styles.tabTarget}
-              role="tab"
-              tabIndex={showMerge ? 0 : -1}
-              aria-selected={showMerge}
-              aria-controls="editor-tabpanel"
-              onKeyDown={(event) => handleTabKeyDown(event, () => focusEditorSurface('merge'))}
-            >
-              <GitBranchIcon className={styles.tabIcon} aria-hidden="true" />
-              <span className={styles.tabName}>{diffTabName(mergeSession.path)} (merge)</span>
-            </div>
-            <button
-              className={styles.tabClose}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (mergeFinalizing) return;
-                // Same guard as Escape and the resolved-outside notice: a
-                // touched session gets the discard confirmation, and focus
-                // restoration is handled by the close effect below rather than
-                // by this handler, which view-originated closes never reach.
-                useGitStore.getState().requestMergeClose();
-              }}
-              aria-label="Close merge resolution"
-              type="button"
-              disabled={mergeFinalizing}
-            >
-              <CloseIcon />
-            </button>
-          </div>
-        )}
-        {configTabOpen && (
-          <div
-            className={`${styles.tab} ${showConfig ? styles.active : ''}`}
-            title={'Golem Configuration\nApplies to every workspace'}
-            onClick={() => {
-              focusConfigTab();
-              revealConfigTab();
-            }}
-          >
-            <div
-              id="tab-golem-config"
-              className={styles.tabTarget}
-              role="tab"
-              tabIndex={showConfig ? 0 : -1}
-              aria-selected={showConfig}
-              aria-controls="editor-tabpanel"
-              onKeyDown={(event) => handleTabKeyDown(event, focusConfigTab)}
-            >
-              <SettingsIcon className={styles.tabIcon} aria-hidden="true" />
-              <span className={styles.tabName}>Golem Configuration</span>
-            </div>
-            <button
-              className={styles.tabClose}
-              onClick={(event) => {
-                event.stopPropagation();
-                closeConfigTab();
-              }}
-              aria-label="Close Golem Configuration"
-              type="button"
-            >
-              <CloseIcon />
-            </button>
-          </div>
+            <ChevronRightIcon aria-hidden="true" />
+          </button>
         )}
       </div>
 
@@ -490,17 +544,7 @@ export function Editor() {
         className={styles.content}
         role="tabpanel"
         tabIndex={0}
-        aria-labelledby={
-          showConfig
-            ? 'tab-golem-config'
-            : showMerge
-              ? 'tab-merge-resolution'
-              : showDiff
-                ? 'tab-git-diff'
-                : activeFile
-                  ? editorTabId(activeFile.id)
-                  : undefined
-        }
+        aria-labelledby={selectedTabId}
       >
         {/* Both surfaces stay mounted and are toggled with CSS so switching
             between a file and its diff preserves scroll position (no rebuild):
@@ -551,6 +595,62 @@ export function Editor() {
       </div>
     </div>
   );
+}
+
+/**
+ * #406: which sides of the tab strip hide tabs, for its edge controls. Also
+ * marks every tab not fully in view with `data-clipped`: its close button is an
+ * `×`, and an edge cutting through one leaves a `>` that reads as a scroll
+ * arrow, so the stylesheet hides a clipped tab's close button outright.
+ *
+ * Event-driven only (no polling): a scroll, a resize of the strip, and a resize
+ * of the row holding the tabs, which is how a tab being added, removed or
+ * relabelled shows up.
+ */
+function useTabStripOverflow(strip: HTMLDivElement | null) {
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+
+  // A layout effect, so a strip remounted after the welcome screen is measured
+  // before it paints rather than showing the last strip's controls for a frame.
+  useLayoutEffect(() => {
+    const row = strip?.firstElementChild;
+    if (!strip || !row) return undefined;
+    // The controls overlay the strip's edges, so a tab under one is clipped too.
+    // The stylesheet owns their width.
+    const controlWidth =
+      parseFloat(getComputedStyle(strip).getPropertyValue('--tab-scroll-control-width')) || 0;
+
+    const update = () => {
+      // 1px of slack: scroll offsets are fractional on scaled displays.
+      const left = strip.scrollLeft > 1;
+      const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+      setOverflow((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+
+      const view = strip.getBoundingClientRect();
+      const start = view.left + (left ? controlWidth : 0);
+      const end = view.right - (right ? controlWidth : 0);
+      const tabs = Array.from(row.children);
+      // Measure every tab before marking any, so the marks cannot force a
+      // layout per tab.
+      const clipped = tabs.map((tab) => {
+        const box = tab.getBoundingClientRect();
+        return box.left < start - 1 || box.right > end + 1;
+      });
+      tabs.forEach((tab, index) => tab.toggleAttribute('data-clipped', clipped[index]));
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(strip);
+    observer.observe(row);
+    strip.addEventListener('scroll', update, { passive: true });
+    return () => {
+      observer.disconnect();
+      strip.removeEventListener('scroll', update);
+    };
+  }, [strip]);
+
+  return overflow;
 }
 
 function editorTabId(fileId: string): string {
