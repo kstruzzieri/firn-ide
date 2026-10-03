@@ -194,8 +194,10 @@ export class RunProfilesSnapshot {
     "workspaceEpoch": number;
 
     /**
-     * LoadWarnings are the non-fatal issues from the last Load (for example a
-     * profiles file that could not be read), shown in the panel with Reload.
+     * LoadWarnings are the current non-fatal issues: store issues from the last
+     * Load (for example a profiles file that could not be read) plus detector
+     * warnings from the latest detection, which re-detection refreshes without a
+     * Load. Shown in the panel with Reload.
      */
     "loadWarnings": string[];
 

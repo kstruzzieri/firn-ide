@@ -313,6 +313,66 @@ func TestProjectManagerHandleFileChangeRoutesToDeepestWorkspace(t *testing.T) {
 	}
 }
 
+// hasWarningContaining reports whether any warning mentions substr.
+func hasWarningContaining(warnings []string, substr string) bool {
+	for _, w := range warnings {
+		if strings.Contains(w, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// Detector warnings follow re-detection: fixing a broken package.json and
+// letting the watcher re-detect must drop its warning without a Reload.
+func TestProjectManagerSnapshotDropsDetectorWarningAfterRedetect(t *testing.T) {
+	files := monorepoFixture()
+	valid := files["/repo/frontend/package.json"]
+	files["/repo/frontend/package.json"] = []byte("{ not valid json")
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !hasWarningContaining(pm.Snapshot().LoadWarnings, "package.json") {
+		t.Fatalf("expected a package.json warning after Load, got %q", pm.Snapshot().LoadWarnings)
+	}
+
+	files["/repo/frontend/package.json"] = valid
+	if !pm.HandleFileChange("/repo/frontend/package.json") {
+		t.Fatal("expected HandleFileChange to report a config change")
+	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot still carries the stale package.json warning: %q", got)
+	}
+	if got := pm.Warnings(); hasWarningContaining(got, "package.json") {
+		t.Errorf("Warnings() still carries the stale package.json warning: %q", got)
+	}
+}
+
+// The reverse: a file that breaks after Load surfaces its warning on the next
+// re-detection, again without a Reload.
+func TestProjectManagerSnapshotPicksUpNewDetectorWarningAfterRedetect(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got := pm.Snapshot().LoadWarnings; len(got) != 0 {
+		t.Fatalf("expected no warnings after a clean Load, got %q", got)
+	}
+
+	files["/repo/frontend/package.json"] = []byte("{ not valid json")
+	if !pm.HandleFileChange("/repo/frontend/package.json") {
+		t.Fatal("expected HandleFileChange to report a config change")
+	}
+	if got := pm.Snapshot().LoadWarnings; !hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot is missing the new package.json warning: %q", got)
+	}
+	if got := pm.Warnings(); !hasWarningContaining(got, "package.json") {
+		t.Errorf("Warnings() is missing the new package.json warning: %q", got)
+	}
+}
+
 func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
 	files := monorepoFixture()
 	// Corrupt the frontend workspace's saved-profile store with invalid JSON.

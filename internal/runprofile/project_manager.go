@@ -34,7 +34,7 @@ type ProjectRunProfileManager struct {
 	order       []string                          // relDirs in display order
 	ownerRelDir map[string]string                 // workspaceId -> relDir
 	ownerDefs   map[string]workspace.WorkspaceDef // workspaceId -> def
-	warnings    []string                          // non-fatal issues from the last Load
+	warnings    []string                          // non-fatal store issues from the last Load; detector warnings are read live (warningsLocked)
 }
 
 // NewProjectManager creates a coordinator rooted at the opened repo.
@@ -118,7 +118,6 @@ func (m *ProjectRunProfileManager) Load() error {
 		det := NewDetector(m.fs, root)
 		det.SetScope(scope)
 		detected := det.DetectAll()
-		warnings = append(warnings, det.Warnings...)
 
 		// Drop profileState entries whose profile no longer exists (saved or
 		// detected), so recency for deleted profiles does not accumulate.
@@ -166,14 +165,28 @@ func (m *ProjectRunProfileManager) Load() error {
 	return nil
 }
 
-// Warnings returns a copy of the non-fatal issues recorded by the last Load
-// (e.g. an unreadable workspace store, or a migration that could not be written
-// back). The combined list is otherwise complete and usable.
+// Warnings returns the non-fatal issues currently known: store issues recorded
+// by the last Load (e.g. an unreadable workspace store, or a migration that
+// could not be written back) followed by each workspace detector's warnings from
+// its latest detection. The combined list is otherwise complete and usable.
 func (m *ProjectRunProfileManager) Warnings() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.warningsLocked()
+}
+
+// warningsLocked returns a fresh slice: the last Load's store warnings, then each
+// unit's current detector warnings in display order. Detector warnings are read
+// live because HandleFileChange and ReDetect re-run detection (which resets them)
+// without a Load. The caller holds m.mu (read or write).
+func (m *ProjectRunProfileManager) warningsLocked() []string {
 	out := make([]string, len(m.warnings))
 	copy(out, m.warnings)
+	for _, relDir := range m.order {
+		if u := m.units[relDir]; u != nil {
+			out = append(out, u.detector.Warnings...)
+		}
+	}
 	return out
 }
 
@@ -494,16 +507,17 @@ type RunProfilesSnapshot struct {
 	Profiles       []RunProfile              `json:"profiles"`
 	ProfileState   map[string]ProfileUIState `json:"profileState"`
 	WorkspaceEpoch uint64                    `json:"workspaceEpoch"`
-	// LoadWarnings are the non-fatal issues from the last Load (for example a
-	// profiles file that could not be read), shown in the panel with Reload.
+	// LoadWarnings are the current non-fatal issues: store issues from the last
+	// Load (for example a profiles file that could not be read) plus detector
+	// warnings from the latest detection, which re-detection refreshes without a
+	// Load. Shown in the panel with Reload.
 	LoadWarnings []string `json:"loadWarnings"`
 }
 
 // Snapshot returns the merged profile list and the union of every unit's
 // per-profile UI state. IDs are workspace-scoped and globally unique (Phase 1),
-// so a flat merged map is unambiguous. It also carries LoadWarnings, a copy of
-// the non-fatal issues recorded by the last Load (never nil, so it marshals as
-// an empty array).
+// so a flat merged map is unambiguous. It also carries LoadWarnings, the current
+// non-fatal issues (never nil, so it marshals as an empty array).
 func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -522,7 +536,7 @@ func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	if merged == nil {
 		merged = []RunProfile{}
 	}
-	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: append([]string{}, m.warnings...)}
+	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: m.warningsLocked()}
 }
 
 // AdoptProfile marks a profile (by ID) as adopted into the owning workspace's working set.
