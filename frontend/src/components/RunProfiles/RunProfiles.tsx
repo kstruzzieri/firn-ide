@@ -4,6 +4,7 @@ import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
 import { RunProfileForm } from './RunProfileForm';
 import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';
+import { ReloadRunProfiles } from '../../wails/bindings';
 import {
   useRunProfiles,
   useIsLoadingProfiles,
@@ -38,6 +39,7 @@ export function RunProfiles() {
   const error = useProfilesError();
   const loadWarnings = useProfilesLoadWarnings();
   const reloadRunProfiles = useIDEStore((s) => s.reloadRunProfiles);
+  const showToast = useIDEStore((s) => s.showToast);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
@@ -295,6 +297,19 @@ export function RunProfiles() {
     </>
   );
 
+  // Re-reads the saved profiles in place. Unlike Retry, this is not a workspace
+  // open: running profiles and language servers must survive it, so it skips the
+  // full load path. The backend emits the snapshot, which updates the warnings.
+  const handleReload = async () => {
+    try {
+      await ReloadRunProfiles();
+      showToast('Run profiles reloaded', 'info');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Could not reload run profiles: ${message}`, 'error');
+    }
+  };
+
   // View-aware "nothing to show" gate. The active workspace may have zero
   // profiles while other workspaces have some, so we can't gate on the global
   // visible list — that left Workspace View blank. Gate on the rendered set.
@@ -327,10 +342,11 @@ export function RunProfiles() {
         <div className={styles.list}>
           {/* Always mounted so a screen reader announces the content when it appears;
               the store keeps the previous load's warnings until the next snapshot, so
-              nothing renders while loading. :empty hides the region. */}
-          <div className={styles.loadNotice} role="status" aria-live="polite" aria-atomic="true">
+              nothing renders while loading. The region is unstyled: display: none on
+              an empty one would drop it from the accessibility tree. */}
+          <div role="status" aria-live="polite" aria-atomic="true">
             {!isLoading && loadWarnings.length > 0 && (
-              <>
+              <div className={styles.loadNotice}>
                 {loadWarnings.map((warning, i) => (
                   <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
                     {warning}
@@ -339,11 +355,11 @@ export function RunProfiles() {
                 <button
                   type="button"
                   className={`${styles.createButton} ${styles.textButton}`}
-                  onClick={reloadRunProfiles}
+                  onClick={handleReload}
                 >
                   Reload
                 </button>
-              </>
+              </div>
             )}
           </div>
           {isLoading ? (

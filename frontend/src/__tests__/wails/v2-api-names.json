@@ -82,6 +82,7 @@
   "ReadDirectoryShallow",
   "ReadFile",
   "ReloadGolemSettings",
+  "ReloadRunProfiles",
   "ResetGolemConversation",
   "ResizeTerminal",
   "RestartRunInstance",

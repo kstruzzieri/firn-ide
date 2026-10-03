@@ -26,7 +26,7 @@
   color: var(--status-error);
 }
 
-/* Non-fatal load warnings; the region stays mounted for the live-region announcement. */
+/* Non-fatal load warnings, rendered inside the always-mounted status region. */
 .loadNotice {
   display: flex;
   flex-direction: column;
@@ -37,15 +37,13 @@
   border-left: 2px solid var(--status-warning);
 }
 
-.loadNotice:empty {
-  display: none;
-}
-
 .loadNoticeText {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-secondary);
+  /* Warnings carry absolute paths; break unbroken tokens instead of overflowing. */
+  overflow-wrap: anywhere;
 }
 
 /* Empty state */

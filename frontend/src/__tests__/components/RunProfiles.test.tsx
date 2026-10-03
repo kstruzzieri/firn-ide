@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
@@ -11,6 +11,7 @@ import { cssRule } from '../helpers/cssRule';
 const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockReloadRunProfiles = jest.fn<Promise<void>, []>(() => Promise.resolve());
 
 jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (id: string) => mockStartProfile(id),
@@ -21,6 +22,7 @@ jest.mock('../../wails/bindings', () => ({
   SetActiveVariant: jest.fn(() => Promise.resolve()),
   AdoptRunProfile: jest.fn(() => Promise.resolve()),
   UnadoptRunProfile: jest.fn(() => Promise.resolve()),
+  ReloadRunProfiles: () => mockReloadRunProfiles(),
 }));
 
 const WS = 'frontend';
@@ -470,16 +472,48 @@ describe('RunProfiles panel — empty state', () => {
 });
 
 describe('RunProfiles panel — load warnings notice', () => {
-  it('shows the load warnings in the status region and Reload bumps the reload nonce', async () => {
+  it('shows the load warnings in the status region and Reload re-reads in place without reopening the workspace', async () => {
     const user = userEvent.setup();
-    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    useIDEStore.setState({
+      profilesLoadWarnings: ['Saved profiles could not be loaded'],
+      runEventsPaused: false,
+    });
     const before = useIDEStore.getState().profilesReloadNonce;
 
     render(<RunProfiles />);
 
     expect(screen.getByRole('status')).toHaveTextContent('Saved profiles could not be loaded');
     await user.click(screen.getByRole('button', { name: 'Reload' }));
-    expect(useIDEStore.getState().profilesReloadNonce).toBe(before + 1);
+
+    expect(mockReloadRunProfiles).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Run profiles reloaded',
+        type: 'info',
+      })
+    );
+    // The full load path (nonce bump) pauses run events and resets live run
+    // state; Reload must leave both alone.
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before);
+    expect(useIDEStore.getState().runEventsPaused).toBe(false);
+  });
+
+  it('reports a failed Reload in an error toast and still leaves the reload nonce alone', async () => {
+    const user = userEvent.setup();
+    mockReloadRunProfiles.mockRejectedValueOnce(new Error('disk gone'));
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    const before = useIDEStore.getState().profilesReloadNonce;
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Could not reload run profiles: disk gone',
+        type: 'error',
+      })
+    );
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before);
   });
 
   it('keeps an empty status region and no Reload button when there are no warnings', () => {
@@ -489,6 +523,50 @@ describe('RunProfiles panel — load warnings notice', () => {
 
     expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('keeps the status region in the tree while loading and after a hard load error', () => {
+    useIDEStore.setState({ isLoadingProfiles: true });
+    const { unmount } = render(<RunProfiles />);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    unmount();
+
+    useIDEStore.setState({
+      isLoadingProfiles: false,
+      profilesError: 'boom',
+      profilesLoadWarnings: [],
+    });
+    render(<RunProfiles />);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('leaves the live region itself unstyled so it stays in the accessibility tree while empty', () => {
+    // display: none on an empty region removes it from the accessibility tree,
+    // so a screen reader sees the region and its content appear in one step and
+    // may not announce it. The styled notice is a child rendered only with
+    // warnings; jsdom resolves no module CSS, so the stylesheet is read too.
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+    const { unmount } = render(<RunProfiles />);
+    expect(screen.getByRole('status')).not.toHaveAttribute('class');
+    unmount();
+
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    render(<RunProfiles />);
+    expect(screen.getByRole('status').firstElementChild).toHaveClass('loadNotice');
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(css).not.toMatch(/:empty/);
+  });
+
+  it('wraps long paths in a warning instead of overflowing the sidebar', () => {
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(cssRule(css, '.loadNoticeText')).toMatch(/overflow-wrap:\s*anywhere/);
   });
 
   it('hides warnings left over from the previous load while profiles are loading', () => {
@@ -526,12 +604,16 @@ describe('RunProfiles panel — load warnings notice', () => {
     expect(css).not.toMatch(/^\.textButton\s*\{/m);
   });
 
-  it('still offers Retry when loading failed outright', () => {
+  it('still offers Retry when loading failed outright, and Retry takes the full load path', async () => {
+    const user = userEvent.setup();
     useIDEStore.setState({ profilesError: 'boom', profilesLoadWarnings: ['stale'] });
+    const before = useIDEStore.getState().profilesReloadNonce;
 
     render(<RunProfiles />);
 
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before + 1);
+    expect(mockReloadRunProfiles).not.toHaveBeenCalled();
   });
 });
 

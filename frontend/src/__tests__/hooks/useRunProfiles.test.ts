@@ -435,4 +435,59 @@ describe('useRunProfilesLoader', () => {
     });
     expect(useIDEStore.getState().profilesLoadWarnings).toEqual([]);
   });
+
+  it('applies a reload snapshot in place: warnings clear and live runs are left alone', async () => {
+    let eventCallback: (snap: unknown) => void = () => {};
+    mockEventsOn.mockImplementationOnce((_event: string, cb: (snap: unknown) => void) => {
+      eventCallback = cb;
+      return jest.fn();
+    });
+    mockGetRunProfilesSnapshot.mockResolvedValueOnce({
+      profiles: sampleProfiles,
+      profileState: {},
+      workspaceEpoch: 1,
+      loadWarnings: ['w'],
+    });
+
+    renderHook(() => useRunProfilesLoader('/workspace'));
+    await waitFor(() => expect(useIDEStore.getState().runEventsPaused).toBe(false));
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['w']);
+
+    // A run started after the workspace opened, the way a Reload would find it.
+    setPhase2BState({
+      runOutputs: {
+        liveRun: {
+          runInstanceId: 'liveRun',
+          profileId: sampleProfiles[0].id,
+          state: 'running',
+          exitCode: 0,
+          entries: [],
+          launchSeq: 1,
+          workspaceEpoch: 1,
+        },
+      },
+      runInstanceIdsByProfile: { [sampleProfiles[0].id]: ['liveRun'] },
+      latestRunInstanceIdByProfile: { [sampleProfiles[0].id]: 'liveRun' },
+      runLaunchSeqByInstance: { liveRun: 1 },
+    });
+    const before = useIDEStore.getState();
+
+    act(() => {
+      eventCallback({
+        profiles: sampleProfiles,
+        profileState: {},
+        workspaceEpoch: 1,
+        loadWarnings: [],
+      });
+    });
+
+    const after = useIDEStore.getState();
+    expect(after.profilesLoadWarnings).toEqual([]);
+    expect(after.runEventsPaused).toBe(false);
+    expect(after.runOutputs).toBe(before.runOutputs);
+    expect(after.runOutputs.liveRun?.state).toBe('running');
+    expect(after.runInstanceIdsByProfile).toBe(before.runInstanceIdsByProfile);
+    expect(after.latestRunInstanceIdByProfile).toEqual({ [sampleProfiles[0].id]: 'liveRun' });
+    expect(mockLoadRunProfiles).toHaveBeenCalledTimes(1);
+  });
 });
