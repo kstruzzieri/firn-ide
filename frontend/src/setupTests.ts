@@ -44,3 +44,10 @@ global.ResizeObserver = jest.fn().mockImplementation(() => ({
 if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
+// Same for element scrolling, which the editor tab strip uses directly (#406).
+if (typeof Element !== 'undefined' && !Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = function scrollTo() {};
+}
+if (typeof Element !== 'undefined' && !Element.prototype.scrollBy) {
+  Element.prototype.scrollBy = function scrollBy() {};
+}

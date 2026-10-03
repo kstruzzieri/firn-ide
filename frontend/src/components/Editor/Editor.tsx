@@ -627,8 +627,10 @@ function revealTab(strip: HTMLElement, tab: Element) {
   const before = box.left - (view.left + control);
   const after = box.right - (view.right - control);
   const delta = before < 0 ? before : after > 0 ? Math.min(after, before) : 0;
-  // Absolute, not scrollBy: a reveal arriving mid-scroll still lands on the tab.
-  if (delta !== 0) strip.scrollTo({ left: strip.scrollLeft + delta });
+  // Absolute, not scrollBy, so a reveal arriving mid-scroll still lands on the
+  // tab; and issued even with nothing to move, because a new scroll is what
+  // cancels a smooth one still carrying the strip somewhere else.
+  strip.scrollTo({ left: strip.scrollLeft + delta });
 }
 
 /**

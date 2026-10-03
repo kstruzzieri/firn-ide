@@ -646,16 +646,12 @@ describe('Editor tab strip overflow (#406)', () => {
       const [left, right] = boxes.get(this) ?? [0, 0];
       return { left, right, width: right - left } as DOMRect;
     });
-    // jsdom implements no element scrolling.
-    scrollTo = jest.fn();
-    scrollBy = jest.fn();
-    Element.prototype.scrollTo = scrollTo as never;
-    Element.prototype.scrollBy = scrollBy as never;
+    // setupTests stubs element scrolling, which jsdom does not implement.
+    scrollTo = jest.spyOn(Element.prototype, 'scrollTo') as unknown as jest.Mock;
+    scrollBy = jest.spyOn(Element.prototype, 'scrollBy') as unknown as jest.Mock;
   });
   afterEach(() => {
     jest.restoreAllMocks();
-    delete (Element.prototype as Partial<Element>).scrollTo;
-    delete (Element.prototype as Partial<Element>).scrollBy;
   });
   /** Where the strip was last asked to scroll, if it was. */
   const stripScrolledTo = () =>
@@ -906,6 +902,49 @@ describe('Editor tab strip overflow (#406)', () => {
       fireEvent.click(screen.getByRole('tab', { name: /file1\.ts/ }));
 
       expect(stripScrolledTo()).toBe(100 - CONTROL);
+    });
+
+    it('reveals the selected tab when the strip first mounts', () => {
+      render(<Editor />);
+      // Geometry the strip has from its first layout, before any activation.
+      (Element.prototype.getBoundingClientRect as jest.Mock).mockImplementation(function (
+        this: Element
+      ) {
+        if (this.getAttribute('role') === 'tablist') return { left: 0, right: 300 } as DOMRect;
+        if (this.firstElementChild?.id === 'tab-file-f2')
+          return { left: 308, right: 458 } as DOMRect;
+        return { left: 0, right: 0 } as DOMRect;
+      });
+
+      // Leaving the welcome screen mounts the strip with an offscreen tab selected.
+      act(() => {
+        useIDEStore.setState({
+          openFiles: [0, 1, 2].map((i) => openFile(`f${i}`, `file${i}.ts`)),
+          activeFileId: 'f2',
+        });
+      });
+
+      expect(stripScrolledTo()).toBe(458 - 300);
+    });
+
+    it('stops an earlier smooth scroll when the tab activated next is already in view', () => {
+      renderWithFiles(3);
+      layOutTabs();
+      act(() => {
+        useIDEStore.getState().setActiveFile('f2');
+        focusEditorSurface('file');
+      });
+      expect(stripScrolledTo()).toBe(458 - (300 - CONTROL));
+
+      // Mid-animation, file1 sits inside the clear area: no movement is needed,
+      // but a new scroll request is what cancels the one in flight.
+      place(tabBox('file1.ts'), 100, 250);
+      scrollTo.mockClear();
+      act(() => {
+        useIDEStore.getState().setActiveFile('f1');
+        focusEditorSurface('file');
+      });
+      expect(stripScrolledTo()).toBe(0);
     });
 
     it('holds still while a merge queue hands off to its next file', () => {
