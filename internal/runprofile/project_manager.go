@@ -34,7 +34,7 @@ type ProjectRunProfileManager struct {
 	order       []string                          // relDirs in display order
 	ownerRelDir map[string]string                 // workspaceId -> relDir
 	ownerDefs   map[string]workspace.WorkspaceDef // workspaceId -> def
-	warnings    []string                          // non-fatal issues from the last Load
+	warnings    []string                          // non-fatal store issues from the last Load; detector warnings are read live (warningsLocked)
 }
 
 // NewProjectManager creates a coordinator rooted at the opened repo.
@@ -111,14 +111,13 @@ func (m *ProjectRunProfileManager) Load() error {
 		if err != nil {
 			// Degrade, don't fail the whole repo: keep the unit so its detected
 			// profiles still surface, and record why its saved profiles are gone.
-			warnings = append(warnings, fmt.Sprintf("workspace %q: could not load saved profiles: %v", owner.ID, err))
+			warnings = append(warnings, fmt.Sprintf("workspace %q: saved run profiles could not be loaded and changes to them will not be saved (%v); %s", owner.Name, err, loadRemedy(err)))
 		}
 		warnings = append(warnings, store.Warnings...)
 
 		det := NewDetector(m.fs, root)
 		det.SetScope(scope)
 		detected := det.DetectAll()
-		warnings = append(warnings, det.Warnings...)
 
 		// Drop profileState entries whose profile no longer exists (saved or
 		// detected), so recency for deleted profiles does not accumulate.
@@ -131,7 +130,7 @@ func (m *ProjectRunProfileManager) Load() error {
 			valid[p.ID] = true
 		}
 		if err := store.PruneState(valid); err != nil {
-			warnings = append(warnings, fmt.Sprintf("workspace %q: could not prune stale profile state: %v", owner.ID, err))
+			warnings = append(warnings, fmt.Sprintf("workspace %q: could not prune stale profile state: %v", owner.Name, err))
 		}
 
 		units[relDir] = &storeUnit{
@@ -166,14 +165,28 @@ func (m *ProjectRunProfileManager) Load() error {
 	return nil
 }
 
-// Warnings returns a copy of the non-fatal issues recorded by the last Load
-// (e.g. an unreadable workspace store, or a migration that could not be written
-// back). The combined list is otherwise complete and usable.
+// Warnings returns the non-fatal issues currently known: store issues recorded
+// by the last Load (e.g. an unreadable workspace store, or a migration that
+// could not be written back) followed by each workspace detector's warnings from
+// its latest detection. The combined list is otherwise complete and usable.
 func (m *ProjectRunProfileManager) Warnings() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.warningsLocked()
+}
+
+// warningsLocked returns a fresh slice: the last Load's store warnings, then each
+// unit's current detector warnings in display order. Detector warnings are read
+// live because HandleFileChange and ReDetect re-run detection (which resets them)
+// without a Load. The caller holds m.mu (read or write).
+func (m *ProjectRunProfileManager) warningsLocked() []string {
 	out := make([]string, len(m.warnings))
 	copy(out, m.warnings)
+	for _, relDir := range m.order {
+		if u := m.units[relDir]; u != nil {
+			out = append(out, u.detector.Warnings...)
+		}
+	}
 	return out
 }
 
@@ -494,11 +507,17 @@ type RunProfilesSnapshot struct {
 	Profiles       []RunProfile              `json:"profiles"`
 	ProfileState   map[string]ProfileUIState `json:"profileState"`
 	WorkspaceEpoch uint64                    `json:"workspaceEpoch"`
+	// LoadWarnings are the store-related load issues from the last Load (a
+	// profiles file that could not be read, a migration that could not be
+	// written back, a run-recency sidecar problem, a failed prune), shown in the
+	// panel with Reload. Detector issues are logged, not shown.
+	LoadWarnings []string `json:"loadWarnings"`
 }
 
 // Snapshot returns the merged profile list and the union of every unit's
 // per-profile UI state. IDs are workspace-scoped and globally unique (Phase 1),
-// so a flat merged map is unambiguous.
+// so a flat merged map is unambiguous. It also carries LoadWarnings, the last
+// Load's store-related issues (never nil, so it marshals as an empty array).
 func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -517,7 +536,8 @@ func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	if merged == nil {
 		merged = []RunProfile{}
 	}
-	return RunProfilesSnapshot{Profiles: merged, ProfileState: state}
+	loadWarnings := append([]string{}, m.warnings...)
+	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: loadWarnings}
 }
 
 // AdoptProfile marks a profile (by ID) as adopted into the owning workspace's working set.

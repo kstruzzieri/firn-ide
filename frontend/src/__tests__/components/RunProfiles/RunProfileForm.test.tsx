@@ -313,7 +313,8 @@ it('restores the original profile if the save fails after delete during reassign
 // #359: a refused write (unreadable run-profiles.json) must reach the user with
 // the backend's remedy, not only the log.
 it('shows a rejected save inline and keeps the form open', async () => {
-  const refusal = 'run profile changes are not saved (fix or remove it, then restart Firn)';
+  const refusal =
+    'run profile changes are not saved, to preserve a profiles file that could not be loaded (parsing profiles file /repo/.firn/run-profiles.json: invalid character); Fix or remove the file, then choose Reload in the Run Profiles panel';
   (SaveRunProfile as jest.Mock).mockRejectedValue(new Error(refusal));
   useIDEStore.getState().openRunProfileForm({ mode: 'create' });
   render(<RunProfileForm state={{ mode: 'create' }} />);

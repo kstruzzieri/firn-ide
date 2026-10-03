@@ -35,7 +35,9 @@ export interface RunProfileUIState {
 export interface RunProfilesSnapshot {
   profiles: RunProfile[];
   profileState: Record<string, RunProfileUIState>;
-  workspaceEpoch: number;
+  /** Absent when the payload carried no positive epoch. */
+  workspaceEpoch?: number;
+  loadWarnings: string[];
 }
 
 export interface ValidationError {

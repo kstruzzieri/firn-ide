@@ -1,13 +1,35 @@
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile, RunProfileUIState } from '../../types/runProfile';
 import type { RunOutput } from '../../types/runOutput';
+import { cssRule } from '../helpers/cssRule';
 
 const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+// ReloadRunProfiles resolves the snapshot it also emitted; loadWarnings tells the
+// panel whether a load problem remains.
+const reloadSnapshot = (loadWarnings: string[]) => ({
+  profiles: [],
+  profileState: {},
+  workspaceEpoch: 0,
+  loadWarnings,
+});
+const mockReloadRunProfiles = jest.fn<Promise<unknown>, []>(() =>
+  Promise.resolve(reloadSnapshot([]))
+);
+// A promise the test settles by hand, to hold a reload in flight.
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (id: string) => mockStartProfile(id),
@@ -18,6 +40,7 @@ jest.mock('../../wails/bindings', () => ({
   SetActiveVariant: jest.fn(() => Promise.resolve()),
   AdoptRunProfile: jest.fn(() => Promise.resolve()),
   UnadoptRunProfile: jest.fn(() => Promise.resolve()),
+  ReloadRunProfiles: () => mockReloadRunProfiles(),
 }));
 
 const WS = 'frontend';
@@ -111,6 +134,8 @@ beforeEach(() => {
     restartingProfileIds: [],
     isLoadingProfiles: false,
     profilesError: null,
+    profilesLoadWarnings: [],
+    profilesReloading: false,
     toast: null,
   });
   // Form state persists across tests in the singleton store; reset it so a
@@ -462,6 +487,376 @@ describe('RunProfiles panel — empty state', () => {
     render(<RunProfiles />);
 
     expect(screen.getByText(/No profiles detected\./i)).toBeInTheDocument();
+  });
+});
+
+describe('RunProfiles panel — load warnings notice', () => {
+  it('shows the load warnings in the status region and Reload re-reads in place without reopening the workspace', async () => {
+    const user = userEvent.setup();
+    useIDEStore.setState({
+      profilesLoadWarnings: ['Saved profiles could not be loaded'],
+      runEventsPaused: false,
+    });
+    const before = useIDEStore.getState().profilesReloadNonce;
+
+    render(<RunProfiles />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Saved profiles could not be loaded');
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(mockReloadRunProfiles).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Run profiles reloaded',
+        type: 'info',
+      })
+    );
+    // A clean reload unmounts the button once the snapshot lands, so focus
+    // moves to the status region first rather than falling to the document.
+    expect(document.activeElement).toBe(screen.getByRole('status'));
+    // The full load path (nonce bump) pauses run events and resets live run
+    // state; Reload must leave both alone.
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before);
+    expect(useIDEStore.getState().runEventsPaused).toBe(false);
+  });
+
+  it('does not change the warning live region while Reload starts and finishes', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+    const region = screen.getByRole('status');
+    expect(region).toHaveTextContent('Saved profiles could not be loaded');
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+
+    try {
+      await user.click(screen.getByRole('button', { name: 'Reload' }));
+      expect(screen.getByRole('button', { name: 'Reloading…' })).toBeInTheDocument();
+
+      await act(async () => {
+        // Reload emits a fresh snapshot even when the warning is unchanged.
+        useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+        pending.resolve(reloadSnapshot(['Saved profiles could not be loaded']));
+      });
+
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBe(region);
+      expect(region).toHaveTextContent('Saved profiles could not be loaded');
+      expect(mutations.length).toBe(0);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it('ignores a second Reload click while the first is still in flight', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    const toasts: unknown[] = [];
+    const unsubscribe = useIDEStore.subscribe((state, prev) => {
+      if (state.toast && state.toast !== prev.toast) toasts.push(state.toast);
+    });
+
+    try {
+      const { unmount } = render(<RunProfiles />);
+      const reload = screen.getByRole('button', { name: 'Reload' });
+
+      await user.click(reload);
+      await user.click(reload);
+
+      expect(mockReloadRunProfiles).toHaveBeenCalledTimes(1);
+      expect(reload).toHaveAttribute('aria-disabled', 'true');
+      expect(reload).toHaveAccessibleName('Reloading…');
+      expect(useIDEStore.getState().profilesReloading).toBe(true);
+
+      // The in-flight flag lives in the store, so collapsing and re-expanding
+      // the panel mid-reload neither resets it nor allows a second call.
+      unmount();
+      render(<RunProfiles />);
+      const remounted = screen.getByRole('button', { name: 'Reloading…' });
+      expect(remounted).toHaveAttribute('aria-disabled', 'true');
+      await user.click(remounted);
+      expect(mockReloadRunProfiles).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        pending.resolve(reloadSnapshot([]));
+      });
+
+      await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+      expect(remounted).toHaveAttribute('aria-disabled', 'false');
+      expect(remounted).toHaveAccessibleName('Reload');
+      expect(toasts).toEqual([{ message: 'Run profiles reloaded', type: 'info' }]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  // The runprofiles:changed event and the call result arrive in either order.
+  it('moves focus to the status region when the clean snapshot lands before the reload result', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    // The event applies the clean snapshot first, unmounting the focused button.
+    act(() => {
+      useIDEStore.setState({ profilesLoadWarnings: [] });
+    });
+    expect(screen.queryByRole('button', { name: /Reload/ })).toBeNull();
+
+    await act(async () => {
+      pending.resolve(reloadSnapshot([]));
+    });
+
+    await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+    expect(document.activeElement).toBe(screen.getByRole('status'));
+  });
+
+  it('moves focus to the remounted status region after a clean Reload', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    const { unmount } = render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    unmount();
+    render(<RunProfiles />);
+
+    await act(async () => {
+      pending.resolve(reloadSnapshot([]));
+    });
+
+    await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+    expect(document.activeElement).toBe(screen.getByRole('status'));
+  });
+
+  it('leaves focus alone after a clean Reload when the user has moved on', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    const elsewhere = screen.getByRole('button', { name: 'New profile' });
+    elsewhere.focus();
+
+    await act(async () => {
+      pending.resolve(reloadSnapshot([]));
+    });
+
+    await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('says a load problem remains when Reload still cannot read the file', async () => {
+    const user = userEvent.setup();
+    mockReloadRunProfiles.mockResolvedValueOnce(reloadSnapshot(['still broken']));
+    useIDEStore.setState({ profilesLoadWarnings: ['still broken'] });
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Run profiles reloaded, but a problem with the saved profiles remains',
+        type: 'error',
+      })
+    );
+    // The runprofiles:changed event, not the handler, applies the snapshot.
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['still broken']);
+  });
+
+  it('reports a failed Reload in an error toast and still leaves the reload nonce alone', async () => {
+    const user = userEvent.setup();
+    mockReloadRunProfiles.mockRejectedValueOnce(new Error('disk gone'));
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    const before = useIDEStore.getState().profilesReloadNonce;
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Could not reload run profiles: disk gone',
+        type: 'error',
+      })
+    );
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before);
+  });
+
+  it('keeps an empty status region and no Reload button when there are no warnings', () => {
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+
+    render(<RunProfiles />);
+
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('keeps the status region in the tree while loading and after a hard load error', () => {
+    useIDEStore.setState({ isLoadingProfiles: true });
+    const { unmount } = render(<RunProfiles />);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    unmount();
+
+    useIDEStore.setState({
+      isLoadingProfiles: false,
+      profilesError: 'boom',
+      profilesLoadWarnings: [],
+    });
+    render(<RunProfiles />);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('leaves the live region itself unstyled so it stays in the accessibility tree while empty', () => {
+    // display: none on an empty region removes it from the accessibility tree,
+    // so a screen reader sees the region and its content appear in one step and
+    // may not announce it. The notice wrapper is styled only with warnings;
+    // jsdom resolves no module CSS, so the stylesheet is read too.
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+    const { unmount } = render(<RunProfiles />);
+    expect(screen.getByRole('status')).not.toHaveAttribute('class');
+    unmount();
+
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    render(<RunProfiles />);
+    expect(screen.getByRole('status').parentElement).toHaveClass('loadNotice');
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(css).not.toMatch(/\.loadNotice:empty/);
+  });
+
+  it('keeps the status region and Reload mounted while the profile form replaces the list', () => {
+    // Saving from the form is exactly what the load refusal blocks, so the
+    // notice must not unmount when the form takes the list's place.
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    useIDEStore.getState().openRunProfileForm({ mode: 'create' });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Saved profiles could not be loaded');
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+  });
+
+  it('keeps an empty status region in the tree while the profile form is open without warnings', () => {
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+    useIDEStore.getState().openRunProfileForm({ mode: 'create' });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('wraps long paths in a warning instead of overflowing the sidebar', () => {
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(cssRule(css, '.loadNoticeText')).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+
+  it('scrolls long or many warnings in a capped box and keeps Reload visible below it', () => {
+    useIDEStore.setState({ profilesLoadWarnings: ['first warning', 'second warning'] });
+
+    render(<RunProfiles />);
+
+    const messages = screen.getByText('first warning').parentElement;
+    expect(messages).toHaveClass('loadNoticeMessages');
+    expect(messages).toContainElement(screen.getByText('second warning'));
+    expect(messages).not.toContainElement(screen.getByRole('button', { name: 'Reload' }));
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    const rule = cssRule(css, '.loadNoticeMessages');
+    expect(rule).toMatch(/max-height:\s*\S+/);
+    expect(rule).toMatch(/overflow-y:\s*auto/);
+  });
+
+  it('puts the capped message scroller in the tab order so the keyboard can scroll it', () => {
+    // WebKit does not make an overflow container keyboard-scrollable unless it
+    // is focusable.
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+
+    const group = screen.getByRole('group', { name: 'Run profile load problems' });
+    expect(group).toHaveClass('loadNoticeMessages');
+    expect(group.tabIndex).toBe(0);
+    expect(screen.getByRole('status')).not.toHaveAttribute('class');
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(cssRule(css, '.loadNoticeMessages:focus-visible')).toMatch(
+      /outline:\s*2px solid var\(--focus-ring\)/
+    );
+  });
+
+  it('hides warnings left over from the previous load while profiles are loading', () => {
+    useIDEStore.setState({ profilesLoadWarnings: ['stale'], isLoadingProfiles: true });
+
+    render(<RunProfiles />);
+
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('sizes Reload and Retry for their labels with the shared textButton modifier', () => {
+    // Both buttons reuse createButton, a fixed 22px icon square, so each also
+    // carries textButton. jsdom resolves no module CSS: the guard below reads
+    // the stylesheet. A bare `.textButton` has the same specificity as
+    // `.createButton` and loses to its width and font size whenever it is
+    // declared first, so the override is scoped under `.panelBody`, the one
+    // ancestor both buttons share (Reload sits beside the status region above the
+    // list, Retry inside it).
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    const { unmount } = render(<RunProfiles />);
+    const reload = screen.getByRole('button', { name: 'Reload' });
+    expect(reload).toHaveClass('createButton', 'textButton');
+    expect(reload.closest('.panelBody')).not.toBeNull();
+    unmount();
+
+    useIDEStore.setState({ profilesError: 'boom', profilesLoadWarnings: [] });
+    render(<RunProfiles />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toHaveClass('createButton', 'textButton');
+    expect(retry.closest('.panelBody')).not.toBeNull();
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(cssRule(css, '.panelBody .textButton')).toMatch(/width:\s*auto/);
+  });
+
+  it('still offers Retry when loading failed outright, and Retry takes the full load path', async () => {
+    const user = userEvent.setup();
+    useIDEStore.setState({ profilesError: 'boom', profilesLoadWarnings: ['stale'] });
+    const before = useIDEStore.getState().profilesReloadNonce;
+
+    render(<RunProfiles />);
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before + 1);
+    expect(mockReloadRunProfiles).not.toHaveBeenCalled();
   });
 });
 

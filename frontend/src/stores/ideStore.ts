@@ -225,8 +225,12 @@ interface IDEState {
   runProfileForm: FormState;
   isLoadingProfiles: boolean;
   profilesError: string | null;
+  /** Non-fatal load issues from the last run-profiles snapshot (empty when clean). */
+  profilesLoadWarnings: string[];
   /** Bumped to re-run the run-profile loader after a failed load. */
   profilesReloadNonce: number;
+  /** True while the panel's in-place Reload is in flight; kept here so it survives a remount. */
+  profilesReloading: boolean;
   // Header selector: session-only single Cmd+R target. Not persisted; the
   // effective target re-resolves from recency on launch (see resolveEffectiveRunTarget).
   selectedProfileId: string | null;
@@ -352,8 +356,9 @@ interface IDEActions {
   setRunProfilesSnapshot: (
     profiles: RunProfile[],
     profileState: Record<string, RunProfileUIState>,
-    workspaceEpoch?: number,
-    historySnapshot?: runhistory.Snapshot
+    workspaceEpoch: number | undefined,
+    historySnapshot: runhistory.Snapshot | undefined,
+    loadWarnings: string[]
   ) => void;
   setSelectedProfile: (id: string | null) => void;
   adoptProfileLocal: (id: string) => void;
@@ -361,6 +366,7 @@ interface IDEActions {
   setProfilesLoading: (loading: boolean) => void;
   setProfilesError: (error: string | null) => void;
   reloadRunProfiles: () => void;
+  setProfilesReloading: (reloading: boolean) => void;
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
   openRunProfileForm: (state: Exclude<FormState, null>) => void;
@@ -995,7 +1001,9 @@ export const useIDEStore = create<IDEStore>()(
       runProfileForm: null,
       isLoadingProfiles: false,
       profilesError: null,
+      profilesLoadWarnings: [],
       profilesReloadNonce: 0,
+      profilesReloading: false,
       selectedProfileId: null,
       runOutputs: {},
       runInstanceIdsByProfile: {},
@@ -1448,7 +1456,13 @@ export const useIDEStore = create<IDEStore>()(
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Run Profile actions
-      setRunProfilesSnapshot: (runProfiles, runProfileState, workspaceEpoch, historySnapshot) =>
+      setRunProfilesSnapshot: (
+        runProfiles,
+        runProfileState,
+        workspaceEpoch,
+        historySnapshot,
+        loadWarnings
+      ) =>
         set(
           (state) => {
             const reset = state.runEventsPaused ? emptyWorkspaceRunState() : {};
@@ -1461,6 +1475,7 @@ export const useIDEStore = create<IDEStore>()(
               runProfiles,
               runProfileState,
               profilesError: null,
+              profilesLoadWarnings: loadWarnings,
               isLoadingProfiles: false,
               workspaceEpoch:
                 workspaceEpoch != null && workspaceEpoch > 0
@@ -1515,6 +1530,7 @@ export const useIDEStore = create<IDEStore>()(
         set(
           (state) => ({
             profilesError,
+            profilesLoadWarnings: [],
             isLoadingProfiles: false,
             ...(state.runEventsPaused
               ? { runProfiles: [], runProfileState: {}, ...emptyWorkspaceRunState() }
@@ -1534,6 +1550,9 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'reloadRunProfiles'
         ),
+
+      setProfilesReloading: (profilesReloading) =>
+        set({ profilesReloading }, false, 'setProfilesReloading'),
 
       openRunProfileForm: (state) => set({ runProfileForm: state }, false, 'openRunProfileForm'),
       closeRunProfileForm: () => set({ runProfileForm: null }, false, 'closeRunProfileForm'),
@@ -2832,6 +2851,7 @@ export const useSavedProfiles = () =>
   useIDEStore(useShallow((state) => state.runProfiles.filter((p) => p.source === 'user')));
 export const useIsLoadingProfiles = () => useIDEStore((state) => state.isLoadingProfiles);
 export const useProfilesError = () => useIDEStore((state) => state.profilesError);
+export const useProfilesLoadWarnings = () => useIDEStore((state) => state.profilesLoadWarnings);
 export const useRecentWorkspaces = () => useIDEStore((state) => state.recentWorkspaces);
 export const useRunOutputs = () => useIDEStore((state) => state.runOutputs);
 export const useRunCompounds = () => useIDEStore((state) => state.runCompounds);

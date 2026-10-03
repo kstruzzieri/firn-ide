@@ -873,14 +873,21 @@ func (a *App) handleWatchEvent(event watcher.FileEvent) {
 		return
 	}
 
-	changed := a.profileManager.HandleFileChange(event.Path)
+	m := a.profileManager
+	changed := m.HandleFileChange(event.Path)
 	var snap runprofile.RunProfilesSnapshot
 	if changed {
-		snap = a.runProfilesSnapshot(a.profileManager)
+		snap = a.runProfilesSnapshot(m)
 	}
 	a.profileMu.RUnlock()
 
 	if changed {
+		// Detector warnings never reach the panel, so log them here to leave a
+		// trace of a config file that stopped parsing. Store warnings repeat by
+		// design; config-file changes are debounced and rare.
+		for _, w := range m.Warnings() {
+			log.Printf("run profiles: %s", w)
+		}
 		a.emit("runprofiles:changed", snap)
 	}
 }
@@ -1075,13 +1082,45 @@ func (a *App) GetRunProfilesSnapshot() runprofile.RunProfilesSnapshot {
 	a.profileMu.RLock()
 	defer a.profileMu.RUnlock()
 	if a.profileManager == nil {
-		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}}
+		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}, LoadWarnings: []string{}}
 		if a.executor != nil {
 			snap.WorkspaceEpoch = a.executor.CurrentEpoch()
 		}
 		return snap
 	}
 	return a.runProfilesSnapshot(a.profileManager)
+}
+
+// ReloadRunProfiles re-reads saved and detected run profiles for the open
+// workspace in place (#367): the panel's Reload action after an unreadable
+// .firn/run-profiles.json was fixed. It is not a workspace open: running
+// processes, the executor epoch and language servers are untouched. A
+// successful Load clears the store's write latch (#359); the emitted snapshot
+// carries the remaining load warnings, empty when the load was clean. The same
+// snapshot is returned so the caller can tell whether a load problem remains.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ReloadRunProfiles() (runprofile.RunProfilesSnapshot, error) {
+	a.profileMu.Lock() // write lock: no pin/adopt may land between Load's file read and its swap
+	m := a.profileManager
+	if m == nil {
+		a.profileMu.Unlock()
+		return runprofile.RunProfilesSnapshot{}, fmt.Errorf("no workspace loaded")
+	}
+	load := m.Load
+	if a.loadRunProfilesFn != nil {
+		load = func() error { return a.loadRunProfilesFn(m) }
+	}
+	if err := load(); err != nil {
+		a.profileMu.Unlock()
+		return runprofile.RunProfilesSnapshot{}, err
+	}
+	snap := a.runProfilesSnapshot(m)
+	a.profileMu.Unlock()
+	for _, w := range m.Warnings() {
+		log.Printf("run profiles: %s", w)
+	}
+	a.emit("runprofiles:changed", snap)
+	return snap, nil
 }
 
 // AdoptRunProfile adds a profile to its workspace working set and emits an update.

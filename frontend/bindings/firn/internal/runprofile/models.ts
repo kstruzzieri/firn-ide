@@ -193,6 +193,14 @@ export class RunProfilesSnapshot {
     "profileState": { [_ in string]?: ProfileUIState };
     "workspaceEpoch": number;
 
+    /**
+     * LoadWarnings are the store-related load issues from the last Load (a
+     * profiles file that could not be read, a migration that could not be
+     * written back, a run-recency sidecar problem, a failed prune), shown in the
+     * panel with Reload. Detector issues are logged, not shown.
+     */
+    "loadWarnings": string[];
+
     /** Creates a new RunProfilesSnapshot instance. */
     constructor($$source: Partial<RunProfilesSnapshot> = {}) {
         if (!("profiles" in $$source)) {
@@ -204,6 +212,9 @@ export class RunProfilesSnapshot {
         if (!("workspaceEpoch" in $$source)) {
             this["workspaceEpoch"] = 0;
         }
+        if (!("loadWarnings" in $$source)) {
+            this["loadWarnings"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -214,12 +225,16 @@ export class RunProfilesSnapshot {
     static createFrom($$source: any = {}): RunProfilesSnapshot {
         const $$createField0_0 = $$createType7;
         const $$createField1_0 = $$createType9;
+        const $$createField3_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("profiles" in $$parsedSource) {
             $$parsedSource["profiles"] = $$createField0_0($$parsedSource["profiles"]);
         }
         if ("profileState" in $$parsedSource) {
             $$parsedSource["profileState"] = $$createField1_0($$parsedSource["profileState"]);
+        }
+        if ("loadWarnings" in $$parsedSource) {
+            $$parsedSource["loadWarnings"] = $$createField3_0($$parsedSource["loadWarnings"]);
         }
         return new RunProfilesSnapshot($$parsedSource as Partial<RunProfilesSnapshot>);
     }

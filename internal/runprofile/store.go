@@ -153,20 +153,26 @@ func (s *Store) latchLoadErr(err error) error {
 	return err
 }
 
-// loadRefusal explains why writeProfilesLocked will not write: the file, the
-// reason (the wrapped load error names both) and the remedy. Run profiles are
-// reloaded only by LoadRunProfiles, which the frontend calls when a folder is
-// opened (and from Retry after a hard load failure), so that is the recovery
-// step the message names.
-func loadRefusal(err error) error {
-	remedy := "fix or remove it"
+// loadRemedy is the single source of the recovery wording shared by the write
+// refusal and the load warning: a sentence-case clause naming the step that
+// fixes the file and the Reload that makes Firn read it again.
+func loadRemedy(err error) string {
 	switch {
 	case errors.Is(err, errNewerProfilesVersion):
-		remedy = "open the workspace with the newer Firn that wrote it, or remove the file"
+		return "Remove the file and choose Reload in the Run Profiles panel, or open the workspace with the newer Firn that wrote it"
 	case errors.Is(err, fs.ErrPermission):
-		remedy = "restore read access to the file and its .firn directory"
+		return "Restore read access to the file and its .firn directory, then choose Reload in the Run Profiles panel"
 	}
-	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s, then restart Firn, or open another folder and reopen this one, to reload run profiles): %w", remedy, err)
+	return "Fix or remove the file, then choose Reload in the Run Profiles panel"
+}
+
+// loadRefusal explains why writeProfilesLocked will not write: the file, the
+// reason (the wrapped load error names both) and the remedy. Run profiles are
+// reloaded in place by App.ReloadRunProfiles, which the Run Profiles panel's
+// Reload action calls while the last load carried warnings, and on folder open
+// by LoadRunProfiles, so that is the recovery step the message names.
+func loadRefusal(err error) error {
+	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%w); %s", err, loadRemedy(err))
 }
 
 // loadRecencyLocked merges run recency from the sidecar into s.state. If the

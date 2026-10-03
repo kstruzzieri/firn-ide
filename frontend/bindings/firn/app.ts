@@ -897,6 +897,22 @@ export function ReloadGolemSettings(): $CancellablePromise<ai$0.SettingsReloadRe
 }
 
 /**
+ * ReloadRunProfiles re-reads saved and detected run profiles for the open
+ * workspace in place (#367): the panel's Reload action after an unreadable
+ * .firn/run-profiles.json was fixed. It is not a workspace open: running
+ * processes, the executor epoch and language servers are untouched. A
+ * successful Load clears the store's write latch (#359); the emitted snapshot
+ * carries the remaining load warnings, empty when the load was clean. The same
+ * snapshot is returned so the caller can tell whether a load problem remains.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function ReloadRunProfiles(): $CancellablePromise<runprofile$0.RunProfilesSnapshot> {
+    return $Call.ByID(533287427).then(($result: any) => {
+        return $$createType16($result);
+    });
+}
+
+/**
  * ResetGolemConversation deletes the backend conversation behind identity so
  * its next turn starts fresh (New chat). It refuses while that conversation
  * has a run starting, running, canceling, or waiting on consent.
