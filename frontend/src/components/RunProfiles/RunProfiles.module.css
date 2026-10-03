@@ -26,6 +26,35 @@
   color: var(--status-error);
 }
 
+/* Non-fatal load warnings; the region stays mounted for the live-region announcement. */
+.loadNotice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  border-left: 2px solid var(--status-warning);
+}
+
+.loadNotice:empty {
+  display: none;
+}
+
+.loadNoticeText {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* createButton is a fixed 22px square, too narrow for a word. */
+.loadNoticeButton {
+  width: auto;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 /* Empty state */
 .empty {
   display: flex;

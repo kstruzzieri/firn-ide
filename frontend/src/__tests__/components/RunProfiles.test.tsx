@@ -111,6 +111,7 @@ beforeEach(() => {
     restartingProfileIds: [],
     isLoadingProfiles: false,
     profilesError: null,
+    profilesLoadWarnings: [],
     toast: null,
   });
   // Form state persists across tests in the singleton store; reset it so a
@@ -462,6 +463,46 @@ describe('RunProfiles panel — empty state', () => {
     render(<RunProfiles />);
 
     expect(screen.getByText(/No profiles detected\./i)).toBeInTheDocument();
+  });
+});
+
+describe('RunProfiles panel — load warnings notice', () => {
+  it('shows the load warnings in the status region and Reload bumps the reload nonce', async () => {
+    const user = userEvent.setup();
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    const before = useIDEStore.getState().profilesReloadNonce;
+
+    render(<RunProfiles />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Saved profiles could not be loaded');
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(useIDEStore.getState().profilesReloadNonce).toBe(before + 1);
+  });
+
+  it('keeps an empty status region and no Reload button when there are no warnings', () => {
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+
+    render(<RunProfiles />);
+
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('hides warnings left over from the previous load while profiles are loading', () => {
+    useIDEStore.setState({ profilesLoadWarnings: ['stale'], isLoadingProfiles: true });
+
+    render(<RunProfiles />);
+
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('still offers Retry when loading failed outright', () => {
+    useIDEStore.setState({ profilesError: 'boom', profilesLoadWarnings: ['stale'] });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 });
 

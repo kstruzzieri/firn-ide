@@ -8,6 +8,7 @@ import {
   useRunProfiles,
   useIsLoadingProfiles,
   useProfilesError,
+  useProfilesLoadWarnings,
   useIDEStore,
   useRunProfileState,
   useRunProfileForm,
@@ -35,6 +36,7 @@ export function RunProfiles() {
   const profiles = useRunProfiles();
   const isLoading = useIsLoadingProfiles();
   const error = useProfilesError();
+  const loadWarnings = useProfilesLoadWarnings();
   const reloadRunProfiles = useIDEStore((s) => s.reloadRunProfiles);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
@@ -323,6 +325,27 @@ export function RunProfiles() {
         <RunProfileForm state={runProfileForm} />
       ) : (
         <div className={styles.list}>
+          {/* Always mounted so a screen reader announces the content when it appears;
+              the store keeps the previous load's warnings until the next snapshot, so
+              nothing renders while loading. :empty hides the region. */}
+          <div className={styles.loadNotice} role="status" aria-live="polite" aria-atomic="true">
+            {!isLoading && loadWarnings.length > 0 && (
+              <>
+                {loadWarnings.map((warning, i) => (
+                  <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
+                    {warning}
+                  </p>
+                ))}
+                <button
+                  type="button"
+                  className={`${styles.createButton} ${styles.loadNoticeButton}`}
+                  onClick={reloadRunProfiles}
+                >
+                  Reload
+                </button>
+              </>
+            )}
+          </div>
           {isLoading ? (
             <div className={styles.empty}>
               <p>Loading profiles...</p>

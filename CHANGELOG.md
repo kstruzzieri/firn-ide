@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order they were made, and changing the Python interpreter updates the saved
   session in one step instead of writing back the copy it read a moment
   earlier. (#401)
+- The Run Profiles panel now shows a notice when `.firn/run-profiles.json`
+  could not be loaded, naming the file, the reason and the remedy, with a Reload
+  action. Reload reads the file again and, once it loads, lifts the refusal of
+  run profile changes from #359 without a restart or reopening the folder. The
+  refusal's remedy now names that Reload instead of a restart. (#366, #367)
 
 ## [0.13.0] - 2026-10-02
 
