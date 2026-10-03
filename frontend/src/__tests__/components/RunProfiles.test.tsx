@@ -11,7 +11,17 @@ import { cssRule } from '../helpers/cssRule';
 const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
-const mockReloadRunProfiles = jest.fn<Promise<void>, []>(() => Promise.resolve());
+// ReloadRunProfiles resolves the snapshot it also emitted; loadWarnings tells the
+// panel whether a load problem remains.
+const reloadSnapshot = (loadWarnings: string[]) => ({
+  profiles: [],
+  profileState: {},
+  workspaceEpoch: 0,
+  loadWarnings,
+});
+const mockReloadRunProfiles = jest.fn<Promise<unknown>, []>(() =>
+  Promise.resolve(reloadSnapshot([]))
+);
 
 jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (id: string) => mockStartProfile(id),
@@ -496,6 +506,24 @@ describe('RunProfiles panel — load warnings notice', () => {
     // state; Reload must leave both alone.
     expect(useIDEStore.getState().profilesReloadNonce).toBe(before);
     expect(useIDEStore.getState().runEventsPaused).toBe(false);
+  });
+
+  it('says a load problem remains when Reload still cannot read the file', async () => {
+    const user = userEvent.setup();
+    mockReloadRunProfiles.mockResolvedValueOnce(reloadSnapshot(['still broken']));
+    useIDEStore.setState({ profilesLoadWarnings: ['still broken'] });
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() =>
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Run profiles reloaded, but a load problem remains; see the Run Profiles panel',
+        type: 'info',
+      })
+    );
+    // The runprofiles:changed event, not the handler, applies the snapshot.
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['still broken']);
   });
 
   it('reports a failed Reload in an error toast and still leaves the reload nonce alone', async () => {

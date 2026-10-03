@@ -97,7 +97,7 @@ export function normalizeProfileState(raw: unknown): Record<string, RunProfileUI
   return out;
 }
 
-function normalizeSnapshot(raw: unknown): {
+export function normalizeSnapshot(raw: unknown): {
   profiles: RunProfile[];
   profileState: Record<string, RunProfileUIState>;
   workspaceEpoch?: number;

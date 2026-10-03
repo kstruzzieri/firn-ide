@@ -75,7 +75,8 @@ func TestReloadRunProfilesClearsLatchAndEmitsCleanSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := app.ReloadRunProfiles(); err != nil {
+	snap, err := app.ReloadRunProfiles()
+	if err != nil {
 		t.Fatalf("ReloadRunProfiles: %v", err)
 	}
 	if len(got.events) != 1 || got.events[0] != "runprofiles:changed" || len(got.snaps) != 1 {
@@ -83,6 +84,13 @@ func TestReloadRunProfilesClearsLatchAndEmitsCleanSnapshot(t *testing.T) {
 	}
 	if w := got.snaps[0].LoadWarnings; w == nil || len(w) != 0 {
 		t.Fatalf("a clean reload must emit an empty, non-nil warning list, got %#v", w)
+	}
+	// The caller learns the outcome from the return value: the same clean snapshot.
+	if w := snap.LoadWarnings; w == nil || len(w) != 0 {
+		t.Fatalf("a clean reload must return an empty, non-nil warning list, got %#v", w)
+	}
+	if len(snap.Profiles) != len(got.snaps[0].Profiles) {
+		t.Fatalf("returned snapshot has %d profiles, emitted one has %d", len(snap.Profiles), len(got.snaps[0].Profiles))
 	}
 
 	res, err := app.SaveRunProfile(reloadUserProfile(app))
@@ -107,9 +115,12 @@ func TestReloadRunProfilesWithoutWorkspaceErrors(t *testing.T) {
 	var events []string
 	app.emitFn = func(event string, _ any) { events = append(events, event) }
 
-	err := app.ReloadRunProfiles()
+	snap, err := app.ReloadRunProfiles()
 	if err == nil || !strings.Contains(err.Error(), "no workspace loaded") {
 		t.Fatalf("want a no workspace loaded error, got %v", err)
+	}
+	if len(snap.Profiles) != 0 || snap.LoadWarnings != nil {
+		t.Fatalf("a refused reload must return the zero snapshot, got %+v", snap)
 	}
 	if len(events) != 0 {
 		t.Fatalf("a refused reload must emit nothing, got %v", events)
@@ -126,11 +137,16 @@ func TestReloadRunProfilesWhileFileStillBrokenReEmitsWarningAndKeepsLatch(t *tes
 		t.Fatal(err)
 	}
 
-	if err := app.ReloadRunProfiles(); err != nil {
+	snap, err := app.ReloadRunProfiles()
+	if err != nil {
 		t.Fatalf("ReloadRunProfiles: %v", err)
 	}
 	if len(got.snaps) != 1 || len(got.snaps[0].LoadWarnings) != 1 {
 		t.Fatalf("want one snapshot carrying the one warning again, got %+v", got.snaps)
+	}
+	// The return value tells the caller a load problem remains, naming the file.
+	if len(snap.LoadWarnings) != 1 || !strings.Contains(snap.LoadWarnings[0], path) {
+		t.Fatalf("want the returned snapshot to carry one warning naming %s, got %q", path, snap.LoadWarnings)
 	}
 
 	_, err = app.SaveRunProfile(reloadUserProfile(app))

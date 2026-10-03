@@ -902,11 +902,14 @@ export function ReloadGolemSettings(): $CancellablePromise<ai$0.SettingsReloadRe
  * .firn/run-profiles.json was fixed. It is not a workspace open: running
  * processes, the executor epoch and language servers are untouched. A
  * successful Load clears the store's write latch (#359); the emitted snapshot
- * carries the remaining load warnings, empty when the load was clean.
+ * carries the remaining load warnings, empty when the load was clean. The same
+ * snapshot is returned so the caller can tell whether a load problem remains.
  * This is exposed to the frontend via Wails bindings.
  */
-export function ReloadRunProfiles(): $CancellablePromise<void> {
-    return $Call.ByID(533287427);
+export function ReloadRunProfiles(): $CancellablePromise<runprofile$0.RunProfilesSnapshot> {
+    return $Call.ByID(533287427).then(($result: any) => {
+        return $$createType16($result);
+    });
 }
 
 /**

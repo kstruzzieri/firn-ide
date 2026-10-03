@@ -5,6 +5,7 @@ import { RunProfileCard } from './RunProfileCard';
 import { RunProfileForm } from './RunProfileForm';
 import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';
 import { ReloadRunProfiles } from '../../wails/bindings';
+import { normalizeSnapshot } from '../../hooks/useRunProfiles';
 import {
   useRunProfiles,
   useIsLoadingProfiles,
@@ -299,11 +300,17 @@ export function RunProfiles() {
 
   // Re-reads the saved profiles in place. Unlike Retry, this is not a workspace
   // open: running profiles and language servers must survive it, so it skips the
-  // full load path. The backend emits the snapshot, which updates the warnings.
+  // full load path. The runprofiles:changed event applies the snapshot to the
+  // store; the returned copy is only read to tell whether a load problem remains.
   const handleReload = async () => {
     try {
-      await ReloadRunProfiles();
-      showToast('Run profiles reloaded', 'info');
+      const { loadWarnings: remaining } = normalizeSnapshot(await ReloadRunProfiles());
+      showToast(
+        remaining.length > 0
+          ? 'Run profiles reloaded, but a load problem remains; see the Run Profiles panel'
+          : 'Run profiles reloaded',
+        'info'
+      );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       showToast(`Could not reload run profiles: ${message}`, 'error');
