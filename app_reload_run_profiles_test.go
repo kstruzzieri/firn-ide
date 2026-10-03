@@ -6,6 +6,7 @@ import (
 	"errors"
 	"firn/internal/filesystem"
 	"firn/internal/runprofile"
+	"firn/internal/watcher"
 	"log"
 	"os"
 	"path/filepath"
@@ -259,5 +260,34 @@ func TestReloadRunProfilesLoadErrorReturnsErrorAndEmitsNothing(t *testing.T) {
 	}
 	if len(got.events) != 0 {
 		t.Fatalf("a failed reload must emit nothing, got %v", got.events)
+	}
+}
+
+// Detector warnings never reach the panel, so a watcher re-detection logs them
+// to leave a trace of a config file that stopped parsing.
+func TestHandleWatchEventLogsDetectorWarnings(t *testing.T) {
+	root := t.TempDir()
+	pkg := filepath.Join(root, "package.json")
+	if err := os.WriteFile(pkg, []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.osFS = filesystem.NewOS()
+	app.emitFn = func(string, any) {}
+	if err := app.LoadRunProfiles(root); err != nil {
+		t.Fatalf("LoadRunProfiles: %v", err)
+	}
+	if err := os.WriteFile(pkg, []byte("{ not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+	app.handleWatchEvent(watcher.FileEvent{Path: pkg, Type: watcher.EventModified})
+
+	if want := "run profiles: failed to parse package.json"; !strings.Contains(logs.String(), want) {
+		t.Fatalf("want the re-detection to log %q, got %q", want, logs.String())
 	}
 }

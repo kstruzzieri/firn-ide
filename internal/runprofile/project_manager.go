@@ -130,7 +130,7 @@ func (m *ProjectRunProfileManager) Load() error {
 			valid[p.ID] = true
 		}
 		if err := store.PruneState(valid); err != nil {
-			warnings = append(warnings, fmt.Sprintf("workspace %q: could not prune stale profile state: %v", owner.ID, err))
+			warnings = append(warnings, fmt.Sprintf("workspace %q: could not prune stale profile state: %v", owner.Name, err))
 		}
 
 		units[relDir] = &storeUnit{

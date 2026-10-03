@@ -564,6 +564,49 @@ describe('RunProfiles panel — load warnings notice', () => {
     }
   });
 
+  // The runprofiles:changed event and the call result arrive in either order.
+  it('moves focus to the status region when the clean snapshot lands before the reload result', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    // The event applies the clean snapshot first, unmounting the focused button.
+    act(() => {
+      useIDEStore.setState({ profilesLoadWarnings: [] });
+    });
+    expect(screen.queryByRole('button', { name: /Reload/ })).toBeNull();
+
+    await act(async () => {
+      pending.resolve(reloadSnapshot([]));
+    });
+
+    await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+    expect(document.activeElement).toBe(screen.getByRole('status'));
+  });
+
+  it('moves focus to the remounted status region after a clean Reload', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    mockReloadRunProfiles.mockReturnValueOnce(pending.promise);
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    const { unmount } = render(<RunProfiles />);
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    unmount();
+    render(<RunProfiles />);
+
+    await act(async () => {
+      pending.resolve(reloadSnapshot([]));
+    });
+
+    await waitFor(() => expect(useIDEStore.getState().profilesReloading).toBe(false));
+    expect(document.activeElement).toBe(screen.getByRole('status'));
+  });
+
   it('leaves focus alone after a clean Reload when the user has moved on', async () => {
     const user = userEvent.setup();
     const pending = deferred<unknown>();
@@ -593,7 +636,7 @@ describe('RunProfiles panel — load warnings notice', () => {
 
     await waitFor(() =>
       expect(useIDEStore.getState().toast).toEqual({
-        message: 'Run profiles reloaded, but a profiles file still cannot be loaded',
+        message: 'Run profiles reloaded, but a problem with the saved profiles remains',
         type: 'error',
       })
     );

@@ -873,14 +873,21 @@ func (a *App) handleWatchEvent(event watcher.FileEvent) {
 		return
 	}
 
-	changed := a.profileManager.HandleFileChange(event.Path)
+	m := a.profileManager
+	changed := m.HandleFileChange(event.Path)
 	var snap runprofile.RunProfilesSnapshot
 	if changed {
-		snap = a.runProfilesSnapshot(a.profileManager)
+		snap = a.runProfilesSnapshot(m)
 	}
 	a.profileMu.RUnlock()
 
 	if changed {
+		// Detector warnings never reach the panel, so log them here to leave a
+		// trace of a config file that stopped parsing. Store warnings repeat by
+		// design; config-file changes are debounced and rare.
+		for _, w := range m.Warnings() {
+			log.Printf("run profiles: %s", w)
+		}
 		a.emit("runprofiles:changed", snap)
 	}
 }

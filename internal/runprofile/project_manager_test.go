@@ -3,6 +3,7 @@ package runprofile
 import (
 	"encoding/json"
 	"firn/internal/filesystem"
+	"fmt"
 	"io/fs"
 	"reflect"
 	"strings"
@@ -373,6 +374,37 @@ func TestProjectManagerWarningsPickUpNewDetectorWarningAfterRedetect(t *testing.
 	}
 	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
 		t.Errorf("snapshot carries a detector warning: %q", got)
+	}
+}
+
+// A prune that cannot rewrite the recency sidecar is a store-related issue: it
+// reaches the snapshot and names the workspace by its display name.
+func TestProjectManagerPruneFailureWarningNamesWorkspace(t *testing.T) {
+	files := monorepoFixture()
+	stale, err := json.Marshal(RecencyFile{Version: recencyFileVersion, Recency: map[string]int64{"gone": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["/repo/frontend/.firn/run-recency.json"] = stale
+	fsys := newProjectTestFS(files)
+	fsys.WriteFileFunc = func(string, []byte, fs.FileMode) error { return fs.ErrPermission }
+	pm := NewProjectManager(fsys, "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	var name string
+	for _, p := range pm.GetAllProfiles() {
+		if p.WorkspaceID == "frontend" {
+			name = p.WorkspaceName
+			break
+		}
+	}
+	if name == "" || name == "frontend" {
+		t.Fatalf("fixture must give the frontend workspace a display name distinct from its ID, got %q", name)
+	}
+	want := fmt.Sprintf("workspace %q: could not prune stale profile state: ", name)
+	if got := pm.Snapshot().LoadWarnings; len(got) != 1 || !strings.HasPrefix(got[0], want) {
+		t.Fatalf("want one prune warning starting with %q, got %q", want, got)
 	}
 }
 

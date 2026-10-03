@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
@@ -42,7 +42,6 @@ export function RunProfiles() {
   const reloadRunProfiles = useIDEStore((s) => s.reloadRunProfiles);
   const reloading = useIDEStore((s) => s.profilesReloading);
   const setProfilesReloading = useIDEStore((s) => s.setProfilesReloading);
-  const statusRef = useRef<HTMLDivElement>(null);
   const showToast = useIDEStore((s) => s.showToast);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
@@ -313,11 +312,17 @@ export function RunProfiles() {
     try {
       const { loadWarnings: remaining } = normalizeSnapshot(await ReloadRunProfiles());
       if (remaining.length > 0) {
-        showToast('Run profiles reloaded, but a profiles file still cannot be loaded', 'error');
+        showToast('Run profiles reloaded, but a problem with the saved profiles remains', 'error');
       } else {
-        // The button unmounts once the clean snapshot lands; keep its focus in
-        // the panel instead of letting it fall to the document.
-        if (statusRef.current?.contains(document.activeElement)) statusRef.current.focus();
+        // The button unmounts once the clean snapshot lands, which may happen
+        // before this result arrives, and a remount mid-reload replaces the
+        // region; so look the region up now and take over focus unless the user
+        // has moved elsewhere.
+        const region = document.querySelector<HTMLElement>('[data-run-profiles-status]');
+        const active = document.activeElement;
+        if (region && (!active || active === document.body || region.contains(active))) {
+          region.focus();
+        }
         showToast('Run profiles reloaded', 'info');
       }
     } catch (err: unknown) {
@@ -360,7 +365,13 @@ export function RunProfiles() {
             until the next snapshot, so nothing renders while loading. The region is
             unstyled: display: none on an empty one would drop it from the
             accessibility tree. */}
-        <div ref={statusRef} role="status" aria-live="polite" aria-atomic="true" tabIndex={-1}>
+        <div
+          data-run-profiles-status=""
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          tabIndex={-1}
+        >
           {!isLoading && loadWarnings.length > 0 && (
             <div className={styles.loadNotice}>
               <div className={styles.loadNoticeMessages}>
