@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"firn/internal/runprofile"
 	"log"
 	"os"
@@ -524,5 +525,19 @@ func TestOpenFolderDialogWithoutHostReturnsError(t *testing.T) {
 	}
 	if path != "" {
 		t.Errorf("OpenFolderDialog() path = %q, want empty", path)
+	}
+}
+
+// With no workspace loaded the snapshot is hand-built; its JSON must still carry
+// an empty loadWarnings array, never null, so the frontend reads [] not null.
+func TestGetRunProfilesSnapshotWithoutWorkspaceMarshalsEmptyLoadWarnings(t *testing.T) {
+	app := NewApp()
+
+	data, err := json.Marshal(app.GetRunProfilesSnapshot())
+	if err != nil {
+		t.Fatalf("json.Marshal(snapshot): %v", err)
+	}
+	if !strings.Contains(string(data), `"loadWarnings":[]`) {
+		t.Errorf("snapshot JSON = %s, want it to contain \"loadWarnings\":[]", data)
 	}
 }

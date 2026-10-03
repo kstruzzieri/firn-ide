@@ -501,7 +501,9 @@ type RunProfilesSnapshot struct {
 
 // Snapshot returns the merged profile list and the union of every unit's
 // per-profile UI state. IDs are workspace-scoped and globally unique (Phase 1),
-// so a flat merged map is unambiguous.
+// so a flat merged map is unambiguous. It also carries LoadWarnings, a copy of
+// the non-fatal issues recorded by the last Load (never nil, so it marshals as
+// an empty array).
 func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

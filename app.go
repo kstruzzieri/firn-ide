@@ -1075,7 +1075,7 @@ func (a *App) GetRunProfilesSnapshot() runprofile.RunProfilesSnapshot {
 	a.profileMu.RLock()
 	defer a.profileMu.RUnlock()
 	if a.profileManager == nil {
-		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}}
+		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}, LoadWarnings: []string{}}
 		if a.executor != nil {
 			snap.WorkspaceEpoch = a.executor.CurrentEpoch()
 		}
