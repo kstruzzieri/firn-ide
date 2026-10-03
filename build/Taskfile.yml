@@ -127,3 +127,17 @@ tasks:
         product_name="$(printf '%s' "$product_name" | sed 's/[[:space:]]*$//;s/^[[:space:]]*//')"
         test -n "$product_name" || { echo "productName not found in config.yml" >&2; exit 1; }
         wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir . -productdescription "$product_name"
+      # Wails hardcodes macOS 12 in both templates. Reapply Firn's floor
+      # after every refresh; fail if an upstream template changes the field.
+      - |
+        node -e '
+          const { readFileSync, writeFileSync } = require("node:fs");
+          for (const file of ["darwin/Info.plist", "darwin/Info.dev.plist"]) {
+            const plist = readFileSync(file, "utf8");
+            const field = /(<key>LSMinimumSystemVersion<\/key>\s*<string>)[^<]*(<\/string>)/g;
+            if (plist.match(field)?.length !== 1) {
+              throw new Error(file + ": expected one LSMinimumSystemVersion string");
+            }
+            writeFileSync(file, plist.replace(field, (_, key, end) => key + "14.0.0" + end));
+          }
+        '

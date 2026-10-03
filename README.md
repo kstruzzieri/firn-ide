@@ -52,7 +52,7 @@ Prefer to do it by hand? Download the latest build for your platform from the [R
 
 > **Preview builds are unsigned**, so macOS and Windows warn on first launch. The per-platform steps below get you past it.
 
-### macOS (12 Monterey or later)
+### macOS (14 Sonoma or later)
 
 1. Download `Firn-macos-arm64.zip` (Apple Silicon) or `Firn-macos-amd64.zip` (Intel).
 2. Unzip and move `Firn.app` to `/Applications`.

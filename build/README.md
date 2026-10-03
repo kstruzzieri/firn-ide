@@ -62,6 +62,11 @@ upstream template maps `windows/info.json`'s `FileDescription` to
 `info.description`, but Windows renders that field as the executable's display
 name. `info.description` keeps its real sentence for every other consumer.
 
+The task also reapplies Firn's macOS 14 floor to both plists after Wails
+generates them; the upstream templates still declare macOS 12. It fails if
+either plist no longer contains exactly one `LSMinimumSystemVersion` string.
+Use the task above so this post-processing runs on every refresh.
+
 Icons are regenerated from `appicon.png` alone:
 
 ```sh
