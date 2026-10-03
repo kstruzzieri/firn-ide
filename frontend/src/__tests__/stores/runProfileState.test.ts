@@ -35,3 +35,26 @@ test('unadoptProfileLocal keeps an entry that has a lastRunAt, clearing adopted'
   useIDEStore.getState().unadoptProfileLocal('a');
   expect(useIDEStore.getState().runProfileState.a).toEqual({ adopted: false, lastRunAt: 1234 });
 });
+
+describe('profilesLoadWarnings', () => {
+  beforeEach(() => {
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+  });
+
+  test('setRunProfilesSnapshot stores the snapshot load warnings', () => {
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, ['w1']);
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['w1']);
+  });
+
+  test('a following clean snapshot clears the warnings', () => {
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, ['w1']);
+    useIDEStore.getState().setRunProfilesSnapshot([], {});
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual([]);
+  });
+
+  test('setProfilesError clears the warnings', () => {
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, ['w1']);
+    useIDEStore.getState().setProfilesError('boom');
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual([]);
+  });
+});

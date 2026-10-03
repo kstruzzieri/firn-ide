@@ -391,4 +391,48 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().runEventsPaused).toBe(false);
     expect(useIDEStore.getState().runProfiles).toEqual(sampleProfiles);
   });
+
+  it('keeps only non-empty string load warnings from the initial snapshot', async () => {
+    mockGetRunProfilesSnapshot.mockResolvedValueOnce({
+      profiles: [],
+      profileState: {},
+      loadWarnings: ['w1', 7, ''],
+    });
+
+    renderHook(() => useRunProfilesLoader('/workspace'));
+    await waitFor(() => expect(useIDEStore.getState().isLoadingProfiles).toBe(false));
+
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['w1']);
+  });
+
+  it('applies load warnings from a runprofiles:changed snapshot and clears them when absent', async () => {
+    let eventCallback: (snap: unknown) => void = () => {};
+    mockEventsOn.mockImplementationOnce((_event: string, cb: (snap: unknown) => void) => {
+      eventCallback = cb;
+      return jest.fn();
+    });
+    mockGetRunProfilesSnapshot.mockResolvedValueOnce({
+      profiles: sampleProfiles,
+      profileState: {},
+      workspaceEpoch: 1,
+    });
+
+    renderHook(() => useRunProfilesLoader('/workspace'));
+    await waitFor(() => expect(useIDEStore.getState().runEventsPaused).toBe(false));
+
+    act(() => {
+      eventCallback({
+        profiles: sampleProfiles,
+        profileState: {},
+        workspaceEpoch: 1,
+        loadWarnings: ['w2'],
+      });
+    });
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['w2']);
+
+    act(() => {
+      eventCallback({ profiles: sampleProfiles, profileState: {}, workspaceEpoch: 1 });
+    });
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual([]);
+  });
 });

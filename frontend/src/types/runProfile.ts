@@ -36,6 +36,7 @@ export interface RunProfilesSnapshot {
   profiles: RunProfile[];
   profileState: Record<string, RunProfileUIState>;
   workspaceEpoch: number;
+  loadWarnings: string[];
 }
 
 export interface ValidationError {
