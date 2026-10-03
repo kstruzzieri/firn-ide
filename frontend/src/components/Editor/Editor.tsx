@@ -84,6 +84,13 @@ export function Editor() {
   // and its overflow tracking has to follow the element that is actually there.
   const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null);
   const tabOverflow = useTabStripOverflow(tabBar);
+  // A pointer held down on the strip: a press focuses its target too, and
+  // revealing on that focus would scroll the target out from under the pointer
+  // before mouseup, so the click (a close, say) would miss it.
+  const tabPressRef = useRef(false);
+  const releaseTabPress = () => {
+    tabPressRef.current = false;
+  };
   const restoreFocusAfterCloseRef = useRef(false);
   const [mergeFinalizing, setMergeFinalizing] = useState(false);
 
@@ -359,12 +366,17 @@ export function Editor() {
           className={styles.tabBar}
           role="tablist"
           aria-label="Open editors"
+          onPointerDown={() => {
+            tabPressRef.current = true;
+          }}
+          onPointerUp={releaseTabPress}
+          onPointerCancel={releaseTabPress}
+          onPointerLeave={releaseTabPress}
           onFocus={(event) => {
-            // Keyboard focus lands on a tab's target (arrow keys) or its close
-            // button (Tab); either way, reveal the tab holding it. Not a mouse
-            // press, which focuses too: scrolling before mouseup would move the
-            // click off its target, and the click's own activation reveals.
-            if (!event.target.matches(':focus-visible')) return;
+            // Focus lands on a tab's target (arrow keys, a restore after a
+            // close) or its close button (Tab); reveal the tab holding it. A
+            // pressed tab is revealed by its click's activation instead.
+            if (tabPressRef.current) return;
             const tab = event.target.parentElement;
             if (tab) revealTab(event.currentTarget, tab);
           }}

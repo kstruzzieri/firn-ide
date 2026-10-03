@@ -900,20 +900,32 @@ describe('Editor tab strip overflow (#406)', () => {
       // file1's start is hidden but its close button is in view.
       place(tabBox('file1.ts'), -100, 50);
       const close = closeButton('file1.ts');
-      // A pointer focus is not :focus-visible (jsdom alone cannot tell).
-      jest.spyOn(close, 'matches').mockImplementation((selector) => selector !== ':focus-visible');
       scrollTo.mockClear();
 
-      // Scrolling here would move the button out from under the pointer before
-      // mouseup, and the click would miss it.
-      fireEvent.mouseDown(close);
+      // A press focuses the button; scrolling then would move it out from
+      // under the pointer before mouseup, and the click would miss it.
+      fireEvent.pointerDown(close);
       act(() => {
         close.focus();
       });
       expect(scrollTo).not.toHaveBeenCalled();
+      fireEvent.pointerUp(close);
 
       fireEvent.click(close);
       expect(useIDEStore.getState().openFiles.map((f) => f.id)).toEqual(['f0', 'f2']);
+    });
+
+    it('reveals keyboard focus again once the pointer is released', () => {
+      renderWithFiles(3);
+      layOutTabs();
+      const first = screen.getByRole('tab', { name: /file0\.ts/ });
+      fireEvent.pointerDown(first);
+      fireEvent.pointerUp(first);
+      scrollTo.mockClear();
+
+      fireEvent.keyDown(first, { key: 'End' });
+
+      expect(stripScrolledTo()).toBe(458 - (300 - CONTROL));
     });
 
     it('shows the start of a tab wider than the room between the controls', () => {
