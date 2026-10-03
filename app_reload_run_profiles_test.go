@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"firn/internal/filesystem"
 	"firn/internal/runprofile"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Issue #367: the Run Profiles panel's Reload action re-reads the profiles in
@@ -137,6 +141,11 @@ func TestReloadRunProfilesWhileFileStillBrokenReEmitsWarningAndKeepsLatch(t *tes
 		t.Fatal(err)
 	}
 
+	var logs bytes.Buffer
+	previousLog := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+
 	snap, err := app.ReloadRunProfiles()
 	if err != nil {
 		t.Fatalf("ReloadRunProfiles: %v", err)
@@ -147,6 +156,10 @@ func TestReloadRunProfilesWhileFileStillBrokenReEmitsWarningAndKeepsLatch(t *tes
 	// The return value tells the caller a load problem remains, naming the file.
 	if len(snap.LoadWarnings) != 1 || !strings.Contains(snap.LoadWarnings[0], path) {
 		t.Fatalf("want the returned snapshot to carry one warning naming %s, got %q", path, snap.LoadWarnings)
+	}
+	// Reload logs what is still wrong, as a folder open does.
+	if want := "run profiles: " + snap.LoadWarnings[0]; !strings.Contains(logs.String(), want) {
+		t.Fatalf("want the reload to log %q, got %q", want, logs.String())
 	}
 
 	_, err = app.SaveRunProfile(reloadUserProfile(app))
@@ -159,5 +172,92 @@ func TestReloadRunProfilesWhileFileStillBrokenReEmitsWarningAndKeepsLatch(t *tes
 	}
 	if string(after) != string(before) {
 		t.Fatalf("the broken file was rewritten:\n%s", after)
+	}
+}
+
+// Reload is not a workspace open: the executor epoch and a running process
+// survive it, even when it lifts the write latch.
+func TestReloadRunProfilesKeepsExecutorEpochAndRunningProcess(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".firn"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".firn", "run-profiles.json")
+	valid := `{"version": 3, "profiles": [{"id": "sleeper", "name": "Sleeper", "type": "single", "source": "user", "command": "sleep 30"}]}`
+	if err := os.WriteFile(path, []byte(valid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.osFS = filesystem.NewOS()
+	executor := runprofile.NewExecutor(nil, nil)
+	t.Cleanup(func() { executor.StopAll(2 * time.Second) }) //nolint:errcheck
+	app.executor = executor
+	app.emitFn = func(string, any) {}
+	if err := app.LoadRunProfiles(root); err != nil {
+		t.Fatalf("LoadRunProfiles: %v", err)
+	}
+	epoch := executor.CurrentEpoch()
+	if err := app.StartRunProfile("sleeper"); err != nil {
+		t.Fatalf("StartRunProfile: %v", err)
+	}
+	running := executor.GetStatus("sleeper")
+	if running.State != runprofile.RunStateRunning {
+		t.Fatalf("sleeper state = %q, want running", running.State)
+	}
+
+	// Break the file and reopen the same folder, which keeps runs, to latch writes.
+	if err := os.WriteFile(path, []byte(valid+"\n>>>>>>> feature/branch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.LoadRunProfiles(root); err != nil {
+		t.Fatalf("LoadRunProfiles (broken): %v", err)
+	}
+	if w := app.GetRunProfilesSnapshot().LoadWarnings; len(w) != 1 {
+		t.Fatalf("want one load warning before the reload, got %q", w)
+	}
+	if err := os.WriteFile(path, []byte(valid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := app.ReloadRunProfiles()
+	if err != nil {
+		t.Fatalf("ReloadRunProfiles: %v", err)
+	}
+	if len(snap.LoadWarnings) != 0 {
+		t.Fatalf("want a clean reload, got %q", snap.LoadWarnings)
+	}
+	if snap.WorkspaceEpoch != epoch {
+		t.Fatalf("snapshot epoch = %d, want %d", snap.WorkspaceEpoch, epoch)
+	}
+	if got := executor.CurrentEpoch(); got != epoch {
+		t.Fatalf("executor epoch = %d after reload, want %d", got, epoch)
+	}
+	after := executor.GetStatus("sleeper")
+	if after.State != runprofile.RunStateRunning || after.RunInstanceID != running.RunInstanceID {
+		t.Fatalf("after reload sleeper = %+v, want the same run %q still running", after, running.RunInstanceID)
+	}
+	if err := app.StopRunProfile("sleeper"); err != nil {
+		t.Fatalf("StopRunProfile: %v", err)
+	}
+}
+
+// ProjectRunProfileManager.Load fails only when the repo's workspaces cannot be
+// enumerated, which the real filesystem never reports (detection skips what it
+// cannot read), so the load is failed through the test seam.
+func TestReloadRunProfilesLoadErrorReturnsErrorAndEmitsNothing(t *testing.T) {
+	app, _, got := reloadApp(t)
+	loadErr := errors.New("workspace unavailable")
+	app.loadRunProfilesFn = func(*runprofile.ProjectRunProfileManager) error { return loadErr }
+
+	snap, err := app.ReloadRunProfiles()
+	if !errors.Is(err, loadErr) {
+		t.Fatalf("ReloadRunProfiles error = %v, want %v", err, loadErr)
+	}
+	if len(snap.Profiles) != 0 || snap.LoadWarnings != nil {
+		t.Fatalf("a failed reload must return the zero snapshot, got %+v", snap)
+	}
+	if len(got.events) != 0 {
+		t.Fatalf("a failed reload must emit nothing, got %v", got.events)
 	}
 }

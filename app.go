@@ -1099,11 +1099,18 @@ func (a *App) ReloadRunProfiles() (runprofile.RunProfilesSnapshot, error) {
 		a.profileMu.Unlock()
 		return runprofile.RunProfilesSnapshot{}, fmt.Errorf("no workspace loaded")
 	}
-	err := m.Load()
+	load := m.Load
+	if a.loadRunProfilesFn != nil {
+		load = func() error { return a.loadRunProfilesFn(m) }
+	}
+	if err := load(); err != nil {
+		a.profileMu.Unlock()
+		return runprofile.RunProfilesSnapshot{}, err
+	}
 	snap := a.runProfilesSnapshot(m)
 	a.profileMu.Unlock()
-	if err != nil {
-		return runprofile.RunProfilesSnapshot{}, err
+	for _, w := range m.Warnings() {
+		log.Printf("run profiles: %s", w)
 	}
 	a.emit("runprofiles:changed", snap)
 	return snap, nil
