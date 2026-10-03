@@ -500,16 +500,30 @@ describe('RunProfiles panel — load warnings notice', () => {
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
-  it('widens the Reload button with a selector that out-specifies createButton', () => {
-    // jsdom resolves no module CSS. A bare `.loadNoticeButton` has the same
-    // specificity as `.createButton` and, declared earlier, loses to its fixed
-    // 22px width and 15px font, so the override must be nested under `.loadNotice`.
+  it('sizes Reload and Retry for their labels with the shared textButton modifier', () => {
+    // Both buttons reuse createButton, a fixed 22px icon square, so each also
+    // carries textButton. jsdom resolves no module CSS: the guard below reads
+    // the stylesheet. A bare `.textButton` has the same specificity as
+    // `.createButton` and loses to its width and font size whenever it is
+    // declared first, so the override must be scoped under `.list`.
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+    const { unmount } = render(<RunProfiles />);
+    expect(screen.getByRole('button', { name: 'Reload' })).toHaveClass(
+      'createButton',
+      'textButton'
+    );
+    unmount();
+
+    useIDEStore.setState({ profilesError: 'boom', profilesLoadWarnings: [] });
+    render(<RunProfiles />);
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveClass('createButton', 'textButton');
+
     const css = readFileSync(
       resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
       'utf8'
     );
-    expect(cssRule(css, '.loadNotice .loadNoticeButton')).toMatch(/width:\s*auto/);
-    expect(css).not.toMatch(/^\.loadNoticeButton\s*\{/m);
+    expect(cssRule(css, '.list .textButton')).toMatch(/width:\s*auto/);
+    expect(css).not.toMatch(/^\.textButton\s*\{/m);
   });
 
   it('still offers Retry when loading failed outright', () => {

@@ -338,7 +338,7 @@ export function RunProfiles() {
                 ))}
                 <button
                   type="button"
-                  className={`${styles.createButton} ${styles.loadNoticeButton}`}
+                  className={`${styles.createButton} ${styles.textButton}`}
                   onClick={reloadRunProfiles}
                 >
                   Reload
@@ -353,7 +353,11 @@ export function RunProfiles() {
           ) : error ? (
             <div className={styles.empty}>
               <p className={styles.errorText}>{error}</p>
-              <button type="button" className={styles.createButton} onClick={reloadRunProfiles}>
+              <button
+                type="button"
+                className={`${styles.createButton} ${styles.textButton}`}
+                onClick={reloadRunProfiles}
+              >
                 Retry
               </button>
             </div>

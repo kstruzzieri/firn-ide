@@ -48,14 +48,6 @@
   color: var(--text-secondary);
 }
 
-/* createButton is a fixed 22px square, too narrow for a word. Nested under
-   .loadNotice so it out-specifies .createButton, which is declared later. */
-.loadNotice .loadNoticeButton {
-  width: auto;
-  padding: 0 8px;
-  font-size: 11px;
-}
-
 /* Empty state */
 .empty {
   display: flex;
@@ -170,6 +162,13 @@ details.group > summary {
 }
 .createButton:hover {
   color: #cfcfcf;
+}
+/* createButton is a fixed 22px icon square, too narrow for a word. Scoped under
+   .list so this beats .createButton whatever the source order. */
+.list .textButton {
+  width: auto;
+  padding: 0 8px;
+  font-size: 11px;
 }
 .hiddenRow {
   display: flex;
