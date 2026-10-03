@@ -111,7 +111,7 @@ func (m *ProjectRunProfileManager) Load() error {
 		if err != nil {
 			// Degrade, don't fail the whole repo: keep the unit so its detected
 			// profiles still surface, and record why its saved profiles are gone.
-			warnings = append(warnings, fmt.Sprintf("workspace %q: could not load saved profiles: %v", owner.ID, err))
+			warnings = append(warnings, fmt.Sprintf("workspace %q: saved run profiles could not be loaded and changes to them will not be saved (%s): %v", owner.ID, loadRemedy(err), err))
 		}
 		warnings = append(warnings, store.Warnings...)
 
@@ -494,6 +494,9 @@ type RunProfilesSnapshot struct {
 	Profiles       []RunProfile              `json:"profiles"`
 	ProfileState   map[string]ProfileUIState `json:"profileState"`
 	WorkspaceEpoch uint64                    `json:"workspaceEpoch"`
+	// LoadWarnings are the non-fatal issues from the last Load (for example a
+	// profiles file that could not be read), shown in the panel with Reload.
+	LoadWarnings []string `json:"loadWarnings"`
 }
 
 // Snapshot returns the merged profile list and the union of every unit's
@@ -517,7 +520,7 @@ func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	if merged == nil {
 		merged = []RunProfile{}
 	}
-	return RunProfilesSnapshot{Profiles: merged, ProfileState: state}
+	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: append([]string{}, m.warnings...)}
 }
 
 // AdoptProfile marks a profile (by ID) as adopted into the owning workspace's working set.

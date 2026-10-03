@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"firn/internal/filesystem"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -338,6 +339,10 @@ func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
 	// The failure is surfaced as a warning, not swallowed.
 	if len(pm.Warnings()) == 0 {
 		t.Error("expected a warning for the corrupt frontend store")
+	}
+	// The snapshot hydrates the panel with the same warnings.
+	if got, want := pm.Snapshot().LoadWarnings, pm.Warnings(); !reflect.DeepEqual(got, want) {
+		t.Errorf("snapshot load warnings = %q, want %q", got, want)
 	}
 }
 

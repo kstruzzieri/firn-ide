@@ -153,12 +153,10 @@ func (s *Store) latchLoadErr(err error) error {
 	return err
 }
 
-// loadRefusal explains why writeProfilesLocked will not write: the file, the
-// reason (the wrapped load error names both) and the remedy. Run profiles are
-// reloaded only by LoadRunProfiles, which the frontend calls when a folder is
-// opened (and from Retry after a hard load failure), so that is the recovery
-// step the message names.
-func loadRefusal(err error) error {
+// loadRemedy is the single source of the recovery wording shared by the write
+// refusal and the load warning: the step that fixes the file, then the Reload
+// that makes Firn read it again.
+func loadRemedy(err error) string {
 	remedy := "fix or remove it"
 	switch {
 	case errors.Is(err, errNewerProfilesVersion):
@@ -166,7 +164,16 @@ func loadRefusal(err error) error {
 	case errors.Is(err, fs.ErrPermission):
 		remedy = "restore read access to the file and its .firn directory"
 	}
-	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s, then restart Firn, or open another folder and reopen this one, to reload run profiles): %w", remedy, err)
+	return remedy + ", then choose Reload in the Run Profiles panel"
+}
+
+// loadRefusal explains why writeProfilesLocked will not write: the file, the
+// reason (the wrapped load error names both) and the remedy. Run profiles are
+// reloaded by LoadRunProfiles, which the frontend calls when a folder is opened
+// and from the Run Profiles panel's Reload action (shown while the last load
+// carried warnings), so that is the recovery step the message names.
+func loadRefusal(err error) error {
+	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s): %w", loadRemedy(err), err)
 }
 
 // loadRecencyLocked merges run recency from the sidecar into s.state. If the
