@@ -17,25 +17,108 @@
    Tab Bar
 ═══════════════════════════════════════════════════════════════ */
 
+.tabStrip {
+  /* Width of the scroll controls overlaying the strip's edges (#406). The
+     strip's scroll padding and the clipped-tab check in Editor.tsx read it. */
+  --tab-scroll-control-width: 28px;
+  position: relative;
+  flex-shrink: 0;
+}
+
 .tabBar {
   display: flex;
   align-items: flex-end;
-  gap: 0;
-  padding: 6px 8px 0;
+  padding-top: 6px;
   background: var(--surface-tab-bar);
-  flex-shrink: 0;
   min-height: 38px;
   /* overflow-x: auto forces overflow-y to compute to auto too (CSS spec), which
      showed a stray vertical scrollbar when tabs slightly exceed the bar height.
-     Pin the cross axis hidden and fully suppress the (still-scrollable) x-bar. */
+     Pin the cross axis hidden and fully suppress the (still-scrollable) x-bar;
+     the edge controls below stand in for it. */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  border-bottom: none;
+  /* Lets native focus scrolling stop clear of the edge controls where the
+     engine honours it; the editor's own reveal does not depend on it. */
+  scroll-padding-inline: var(--tab-scroll-control-width);
 }
 
 .tabBar::-webkit-scrollbar {
   display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tabBar {
+    scroll-behavior: smooth;
+  }
+}
+
+/* The tabs' own box: it resizes whenever a tab is added, removed or relabelled,
+   which the strip itself (sized by the panel) does not. */
+.tabRow {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  padding: 0 8px;
+}
+
+/* Shown only while tabs are hidden on that side. Opaque, so a tab cut off at
+   the edge sits under the control, and faded on the inner side as the cue that
+   the strip continues. */
+.tabScroll {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--tab-scroll-control-width);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: var(--surface-tab-bar);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tabScroll::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  pointer-events: none;
+}
+
+.tabScroll:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.tabScroll svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tabScrollLeft {
+  left: 0;
+}
+
+.tabScrollLeft::before {
+  left: 100%;
+  background: linear-gradient(to right, var(--surface-tab-bar), transparent);
+}
+
+.tabScrollLeft svg {
+  transform: scaleX(-1);
+}
+
+.tabScrollRight {
+  right: 0;
+}
+
+.tabScrollRight::before {
+  right: 100%;
+  background: linear-gradient(to left, var(--surface-tab-bar), transparent);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -157,6 +240,15 @@
   width: 12px;
   height: 12px;
   color: var(--text-muted);
+}
+
+/* An edge cutting through the close button's `×` leaves a `>` that reads as a
+   scroll arrow (#406), so a button not fully in view is hidden at once (no
+   fade). Not visibility: it stays a tab stop, and focusing it reveals its tab. */
+.tab .tabClose[data-clipped] {
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════

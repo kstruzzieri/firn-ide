@@ -16,6 +16,9 @@ import { useIDEStore } from '../stores/ideStore';
 function revealFiles(): void {
   const state = useIDEStore.getState();
   if (!state.isRestoringWorkspace) state.revealCenterPanel('files');
+  // The tab strip scrolls, so the same intent also brings the tab into view
+  // (#406). Unconditional: scrolling the strip never changes the saved layout.
+  state.requestEditorTabReveal();
 }
 
 /**
