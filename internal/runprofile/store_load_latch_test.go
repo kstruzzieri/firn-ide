@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"firn/internal/filesystem"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -92,9 +93,9 @@ type latchCorruption struct {
 func latchCorruptions() []latchCorruption {
 	valid := []byte(strings.Replace(latchSavedProfiles, "%d", "3", 1))
 	return []latchCorruption{
-		{"conflict marker", append(append([]byte{}, valid...), []byte(">>>>>>> feature/branch\n")...), false, "fix or remove it"},
+		{"conflict marker", append(append([]byte{}, valid...), []byte(">>>>>>> feature/branch\n")...), false, "Fix or remove the file"},
 		{"version 4", []byte(strings.Replace(latchSavedProfiles, "%d", "4", 1)), false, "newer Firn"},
-		{"unreadable", valid, true, "restore read access"},
+		{"unreadable", valid, true, "Restore read access"},
 	}
 }
 
@@ -194,10 +195,25 @@ func TestIssue366SnapshotCarriesLoadWarningUntilReload(t *testing.T) {
 	if len(snap.LoadWarnings) != 1 {
 		t.Fatalf("want exactly one load warning, got %q", snap.LoadWarnings)
 	}
-	for _, want := range []string{path, "fix or remove it", "Reload in the Run Profiles panel"} {
+	for _, want := range []string{path, "Fix or remove the file", "Reload in the Run Profiles panel"} {
 		if !strings.Contains(snap.LoadWarnings[0], want) {
 			t.Errorf("load warning %q does not name %q", snap.LoadWarnings[0], want)
 		}
+	}
+	// The warning names the workspace by its display name, then the reason,
+	// then the remedy as its own clause.
+	var name string
+	for _, p := range m.GetAllProfiles() {
+		if p.Source == ProfileSourceDetected {
+			name = p.WorkspaceName
+			break
+		}
+	}
+	if prefix := fmt.Sprintf("workspace %q: ", name); name == "" || !strings.HasPrefix(snap.LoadWarnings[0], prefix) {
+		t.Errorf("load warning %q does not start with %q", snap.LoadWarnings[0], prefix)
+	}
+	if suffix := "); Fix or remove the file, then choose Reload in the Run Profiles panel"; !strings.HasSuffix(snap.LoadWarnings[0], suffix) {
+		t.Errorf("load warning %q does not end with %q", snap.LoadWarnings[0], suffix)
 	}
 
 	if err := os.WriteFile(path, []byte(valid), 0o644); err != nil {

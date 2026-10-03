@@ -170,7 +170,8 @@ describe('RunProfileCard adopt control', () => {
 // the backend's remedy, not only the log.
 describe('RunProfileCard pin failure', () => {
   it('shows the backend refusal in an error toast when PinRunProfile rejects', async () => {
-    const refusal = 'run profile changes are not saved (fix or remove it, then restart Firn)';
+    const refusal =
+      'run profile changes are not saved, to preserve a profiles file that could not be loaded (parsing profiles file /repo/.firn/run-profiles.json: invalid character); Fix or remove the file, then choose Reload in the Run Profiles panel';
     mockPinRunProfile.mockRejectedValueOnce(new Error(refusal));
 
     render(<RunProfileCard profile={detectedProfile} {...baseProps} />);

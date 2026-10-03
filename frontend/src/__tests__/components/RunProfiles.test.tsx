@@ -557,8 +557,8 @@ describe('RunProfiles panel — load warnings notice', () => {
 
     await waitFor(() =>
       expect(useIDEStore.getState().toast).toEqual({
-        message: 'Run profiles reloaded, but a load problem remains; see the Run Profiles panel',
-        type: 'info',
+        message: 'Run profiles reloaded, but a profiles file still cannot be loaded',
+        type: 'error',
       })
     );
     // The runprofiles:changed event, not the handler, applies the snapshot.

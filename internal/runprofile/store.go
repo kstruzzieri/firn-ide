@@ -154,17 +154,16 @@ func (s *Store) latchLoadErr(err error) error {
 }
 
 // loadRemedy is the single source of the recovery wording shared by the write
-// refusal and the load warning: the step that fixes the file, then the Reload
-// that makes Firn read it again.
+// refusal and the load warning: a sentence-case clause naming the step that
+// fixes the file and the Reload that makes Firn read it again.
 func loadRemedy(err error) string {
-	remedy := "fix or remove it"
 	switch {
 	case errors.Is(err, errNewerProfilesVersion):
-		remedy = "open the workspace with the newer Firn that wrote it, or remove the file"
+		return "Remove the file and choose Reload in the Run Profiles panel, or open the workspace with the newer Firn that wrote it"
 	case errors.Is(err, fs.ErrPermission):
-		remedy = "restore read access to the file and its .firn directory"
+		return "Restore read access to the file and its .firn directory, then choose Reload in the Run Profiles panel"
 	}
-	return remedy + ", then choose Reload in the Run Profiles panel"
+	return "Fix or remove the file, then choose Reload in the Run Profiles panel"
 }
 
 // loadRefusal explains why writeProfilesLocked will not write: the file, the
@@ -173,7 +172,7 @@ func loadRemedy(err error) string {
 // Reload action calls while the last load carried warnings, and on folder open
 // by LoadRunProfiles, so that is the recovery step the message names.
 func loadRefusal(err error) error {
-	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%s): %w", loadRemedy(err), err)
+	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%w); %s", err, loadRemedy(err))
 }
 
 // loadRecencyLocked merges run recency from the sidecar into s.state. If the

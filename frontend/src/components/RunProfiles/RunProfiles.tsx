@@ -309,12 +309,11 @@ export function RunProfiles() {
     setReloading(true);
     try {
       const { loadWarnings: remaining } = normalizeSnapshot(await ReloadRunProfiles());
-      showToast(
-        remaining.length > 0
-          ? 'Run profiles reloaded, but a load problem remains; see the Run Profiles panel'
-          : 'Run profiles reloaded',
-        'info'
-      );
+      if (remaining.length > 0) {
+        showToast('Run profiles reloaded, but a profiles file still cannot be loaded', 'error');
+      } else {
+        showToast('Run profiles reloaded', 'info');
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       showToast(`Could not reload run profiles: ${message}`, 'error');

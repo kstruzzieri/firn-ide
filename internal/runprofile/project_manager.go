@@ -111,7 +111,7 @@ func (m *ProjectRunProfileManager) Load() error {
 		if err != nil {
 			// Degrade, don't fail the whole repo: keep the unit so its detected
 			// profiles still surface, and record why its saved profiles are gone.
-			warnings = append(warnings, fmt.Sprintf("workspace %q: saved run profiles could not be loaded and changes to them will not be saved (%s): %v", owner.ID, loadRemedy(err), err))
+			warnings = append(warnings, fmt.Sprintf("workspace %q: saved run profiles could not be loaded and changes to them will not be saved (%v); %s", owner.Name, err, loadRemedy(err)))
 		}
 		warnings = append(warnings, store.Warnings...)
 
