@@ -323,9 +323,9 @@ func hasWarningContaining(warnings []string, substr string) bool {
 	return false
 }
 
-// Detector warnings follow re-detection: fixing a broken package.json and
-// letting the watcher re-detect must drop its warning without a Reload.
-func TestProjectManagerSnapshotDropsDetectorWarningAfterRedetect(t *testing.T) {
+// Detector warnings follow re-detection in Warnings() (logged), and never reach
+// the snapshot: the panel notice carries store-related load issues only.
+func TestProjectManagerWarningsDropDetectorWarningAfterRedetect(t *testing.T) {
 	files := monorepoFixture()
 	valid := files["/repo/frontend/package.json"]
 	files["/repo/frontend/package.json"] = []byte("{ not valid json")
@@ -333,25 +333,28 @@ func TestProjectManagerSnapshotDropsDetectorWarningAfterRedetect(t *testing.T) {
 	if err := pm.Load(); err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if !hasWarningContaining(pm.Snapshot().LoadWarnings, "package.json") {
-		t.Fatalf("expected a package.json warning after Load, got %q", pm.Snapshot().LoadWarnings)
+	if got := pm.Warnings(); !hasWarningContaining(got, "package.json") {
+		t.Fatalf("expected a package.json warning in Warnings() after Load, got %q", got)
+	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot carries a detector warning: %q", got)
 	}
 
 	files["/repo/frontend/package.json"] = valid
 	if !pm.HandleFileChange("/repo/frontend/package.json") {
 		t.Fatal("expected HandleFileChange to report a config change")
 	}
-	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
-		t.Errorf("snapshot still carries the stale package.json warning: %q", got)
-	}
 	if got := pm.Warnings(); hasWarningContaining(got, "package.json") {
 		t.Errorf("Warnings() still carries the stale package.json warning: %q", got)
 	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot carries a detector warning: %q", got)
+	}
 }
 
-// The reverse: a file that breaks after Load surfaces its warning on the next
-// re-detection, again without a Reload.
-func TestProjectManagerSnapshotPicksUpNewDetectorWarningAfterRedetect(t *testing.T) {
+// The reverse: a file that breaks after Load surfaces its warning in Warnings()
+// on the next re-detection, again without a Reload, and still not in the snapshot.
+func TestProjectManagerWarningsPickUpNewDetectorWarningAfterRedetect(t *testing.T) {
 	files := monorepoFixture()
 	pm := NewProjectManager(newProjectTestFS(files), "/repo")
 	if err := pm.Load(); err != nil {
@@ -365,11 +368,11 @@ func TestProjectManagerSnapshotPicksUpNewDetectorWarningAfterRedetect(t *testing
 	if !pm.HandleFileChange("/repo/frontend/package.json") {
 		t.Fatal("expected HandleFileChange to report a config change")
 	}
-	if got := pm.Snapshot().LoadWarnings; !hasWarningContaining(got, "package.json") {
-		t.Errorf("snapshot is missing the new package.json warning: %q", got)
-	}
 	if got := pm.Warnings(); !hasWarningContaining(got, "package.json") {
 		t.Errorf("Warnings() is missing the new package.json warning: %q", got)
+	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot carries a detector warning: %q", got)
 	}
 }
 

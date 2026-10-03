@@ -507,17 +507,17 @@ type RunProfilesSnapshot struct {
 	Profiles       []RunProfile              `json:"profiles"`
 	ProfileState   map[string]ProfileUIState `json:"profileState"`
 	WorkspaceEpoch uint64                    `json:"workspaceEpoch"`
-	// LoadWarnings are the current non-fatal issues: store issues from the last
-	// Load (for example a profiles file that could not be read) plus detector
-	// warnings from the latest detection, which re-detection refreshes without a
-	// Load. Shown in the panel with Reload.
+	// LoadWarnings are the store-related load issues from the last Load (a
+	// profiles file that could not be read, a migration that could not be
+	// written back, a run-recency sidecar problem, a failed prune), shown in the
+	// panel with Reload. Detector issues are logged, not shown.
 	LoadWarnings []string `json:"loadWarnings"`
 }
 
 // Snapshot returns the merged profile list and the union of every unit's
 // per-profile UI state. IDs are workspace-scoped and globally unique (Phase 1),
-// so a flat merged map is unambiguous. It also carries LoadWarnings, the current
-// non-fatal issues (never nil, so it marshals as an empty array).
+// so a flat merged map is unambiguous. It also carries LoadWarnings, the last
+// Load's store-related issues (never nil, so it marshals as an empty array).
 func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -536,7 +536,8 @@ func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	if merged == nil {
 		merged = []RunProfile{}
 	}
-	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: m.warningsLocked()}
+	loadWarnings := append([]string{}, m.warnings...)
+	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: loadWarnings}
 }
 
 // AdoptProfile marks a profile (by ID) as adopted into the owning workspace's working set.
