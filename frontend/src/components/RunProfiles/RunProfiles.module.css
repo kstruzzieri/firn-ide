@@ -55,6 +55,12 @@
   overflow-y: auto;
 }
 
+/* Inset so the ring is not clipped by the notice's edge. */
+.loadNoticeMessages:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .loadNoticeText {
   margin: 0;
   font-size: 11px;

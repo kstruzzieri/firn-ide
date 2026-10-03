@@ -757,6 +757,27 @@ describe('RunProfiles panel — load warnings notice', () => {
     expect(rule).toMatch(/overflow-y:\s*auto/);
   });
 
+  it('puts the capped message scroller in the tab order so the keyboard can scroll it', () => {
+    // WebKit does not make an overflow container keyboard-scrollable unless it
+    // is focusable.
+    useIDEStore.setState({ profilesLoadWarnings: ['Saved profiles could not be loaded'] });
+
+    render(<RunProfiles />);
+
+    const group = screen.getByRole('group', { name: 'Run profile load problems' });
+    expect(group).toHaveClass('loadNoticeMessages');
+    expect(group.tabIndex).toBe(0);
+    expect(screen.getByRole('status')).not.toHaveAttribute('class');
+
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(cssRule(css, '.loadNoticeMessages:focus-visible')).toMatch(
+      /outline:\s*2px solid var\(--focus-ring\)/
+    );
+  });
+
   it('hides warnings left over from the previous load while profiles are loading', () => {
     useIDEStore.setState({ profilesLoadWarnings: ['stale'], isLoadingProfiles: true });
 

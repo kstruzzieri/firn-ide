@@ -374,7 +374,14 @@ export function RunProfiles() {
         >
           {!isLoading && loadWarnings.length > 0 && (
             <div className={styles.loadNotice}>
-              <div className={styles.loadNoticeMessages}>
+              {/* Focusable so the keyboard can scroll it: WebKit does not make an
+                  overflow container keyboard-scrollable otherwise. */}
+              <div
+                className={styles.loadNoticeMessages}
+                tabIndex={0}
+                role="group"
+                aria-label="Run profile load problems"
+              >
                 {loadWarnings.map((warning, i) => (
                   <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
                     {warning}

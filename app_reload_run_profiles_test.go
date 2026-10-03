@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -179,6 +180,9 @@ func TestReloadRunProfilesWhileFileStillBrokenReEmitsWarningAndKeepsLatch(t *tes
 // Reload is not a workspace open: the executor epoch and a running process
 // survive it, even when it lifts the write latch.
 func TestReloadRunProfilesKeepsExecutorEpochAndRunningProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep is not a standalone executable on Windows")
+	}
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".firn"), 0o755); err != nil {
 		t.Fatal(err)
