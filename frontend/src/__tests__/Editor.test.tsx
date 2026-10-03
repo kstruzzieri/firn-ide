@@ -903,13 +903,17 @@ describe('Editor tab strip overflow (#406)', () => {
       scrollTo.mockClear();
 
       // A press focuses the button; scrolling then would move it out from
-      // under the pointer before mouseup, and the click would miss it.
+      // under the pointer before mouseup, and the click would miss it. A tap
+      // is the hard case: pointerup comes before the compatibility mousedown
+      // that focuses.
       fireEvent.pointerDown(close);
+      fireEvent.pointerUp(close);
+      fireEvent.mouseDown(close);
       act(() => {
         close.focus();
       });
       expect(scrollTo).not.toHaveBeenCalled();
-      fireEvent.pointerUp(close);
+      fireEvent.mouseUp(close);
 
       fireEvent.click(close);
       expect(useIDEStore.getState().openFiles.map((f) => f.id)).toEqual(['f0', 'f2']);
@@ -919,8 +923,8 @@ describe('Editor tab strip overflow (#406)', () => {
       renderWithFiles(3);
       layOutTabs();
       const first = screen.getByRole('tab', { name: /file0\.ts/ });
-      fireEvent.pointerDown(first);
-      fireEvent.pointerUp(first);
+      fireEvent.mouseDown(first);
+      fireEvent.mouseUp(first);
       scrollTo.mockClear();
 
       fireEvent.keyDown(first, { key: 'End' });

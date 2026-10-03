@@ -84,9 +84,12 @@ export function Editor() {
   // and its overflow tracking has to follow the element that is actually there.
   const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null);
   const tabOverflow = useTabStripOverflow(tabBar);
-  // A pointer held down on the strip: a press focuses its target too, and
-  // revealing on that focus would scroll the target out from under the pointer
-  // before mouseup, so the click (a close, say) would miss it.
+  // A press held down on the strip: it focuses its target too, and revealing on
+  // that focus would scroll the target out from under the pointer before
+  // mouseup, so the click (a close, say) would miss it. Mouse events rather
+  // than pointer events, because a tap's pointerup comes before the
+  // compatibility mousedown that focuses; mouse, touch and pen all end in
+  // mouseup after the focus.
   const tabPressRef = useRef(false);
   const releaseTabPress = () => {
     tabPressRef.current = false;
@@ -366,12 +369,11 @@ export function Editor() {
           className={styles.tabBar}
           role="tablist"
           aria-label="Open editors"
-          onPointerDown={() => {
+          onMouseDown={() => {
             tabPressRef.current = true;
           }}
-          onPointerUp={releaseTabPress}
-          onPointerCancel={releaseTabPress}
-          onPointerLeave={releaseTabPress}
+          onMouseUp={releaseTabPress}
+          onMouseLeave={releaseTabPress}
           onFocus={(event) => {
             // Focus lands on a tab's target (arrow keys, a restore after a
             // close) or its close button (Tab); reveal the tab holding it. A
