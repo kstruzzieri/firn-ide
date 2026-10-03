@@ -566,6 +566,47 @@ describe('Lint Workflow', () => {
   });
 });
 
+describe('Frontend dependency install', () => {
+  // `wails3 dev` (build/config.yml dev_mode) runs the Vite dev server and
+  // `wails3 build` as separate processes, each with its own task graph, and
+  // both depend on install:frontend:deps. Only an install the task itself
+  // recognises as done keeps them from each running `npm ci`, and two
+  // concurrent runs delete node_modules under each other.
+  const installTask = () =>
+    parse(readFileSync(resolve(rootDir, 'build/Taskfile.yml'), 'utf-8')).tasks[
+      'install:frontend:deps'
+    ];
+
+  it('should treat an install against the current lockfile as up to date in every process', () => {
+    const install = installTask();
+    // The task runner never counts a directory under `generates` as present,
+    // so `generates: [node_modules]` reinstalled on every invocation.
+    expect(install.generates).toBeUndefined();
+    // Checksums for `sources` are stored per include namespace (common:,
+    // darwin:common:, ...), so a process reaching the task through another
+    // include would still reinstall. A status check is shared by all of them.
+    expect(install.sources).toBeUndefined();
+    // A stamp the task writes only after `npm ci` succeeds (npm ci deletes
+    // node_modules first, so a failed install leaves none), newer than both
+    // manifests. npm's own node_modules/.package-lock.json is no proof: a
+    // lockfile-only update rewrites it without installing anything.
+    expect(install.status).toEqual([
+      'test -f node_modules/.npm-ci-stamp && test node_modules/.npm-ci-stamp -nt package.json && test node_modules/.npm-ci-stamp -nt package-lock.json',
+    ]);
+    expect(install.dir).toBe('frontend');
+    expect(install.cmds).toEqual(['npm ci', ': > node_modules/.npm-ci-stamp']);
+  });
+
+  it('should install before the dev server and the build start', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf-8'));
+    const executes: { cmd: string; type: string }[] = config.dev_mode.executes;
+    expect(executes[0]).toEqual({
+      cmd: 'wails3 task common:install:frontend:deps',
+      type: 'blocking',
+    });
+  });
+});
+
 describe('Changelog', () => {
   it('should have CHANGELOG.md', () => {
     expect(existsSync(resolve(rootDir, 'CHANGELOG.md'))).toBe(true);

@@ -17,11 +17,18 @@ tasks:
     summary: Install frontend dependencies
     run: once
     dir: frontend
-    sources:
-      - package.json
-      - package-lock.json
-    generates:
-      - node_modules
+    # Up to date while the stamp the last successful `npm ci` left (below) is
+    # newer than both manifests; `npm ci` deletes node_modules first, so a
+    # failed install leaves no stamp. Not npm's own
+    # node_modules/.package-lock.json: a lockfile-only update rewrites it
+    # without installing anything. Not sources/generates: the task runner never
+    # counts a directory under generates as present, so `generates:
+    # [node_modules]` reinstalled on every call, and sources checksums are kept
+    # per include namespace (common:, darwin:common:, ...), so a process
+    # reaching this task through another include would still reinstall.
+    # `wails3 dev` relies on the later processes skipping (see build/config.yml).
+    status:
+      - test -f node_modules/.npm-ci-stamp && test node_modules/.npm-ci-stamp -nt package.json && test node_modules/.npm-ci-stamp -nt package-lock.json
     preconditions:
       - sh: npm version
         msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
@@ -30,6 +37,9 @@ tasks:
       # package-lock.json and must never rewrite the lockfile. CI runs the same
       # command, so a local build cannot drift from a release build.
       - npm ci
+      # The task's own shell handles the redirect, so no `touch` binary is
+      # needed on Windows.
+      - ': > node_modules/.npm-ci-stamp'
 
   build:frontend:
     label: build:frontend (DEV={{.DEV}})

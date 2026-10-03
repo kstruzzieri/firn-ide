@@ -71,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   go unscanned. Nothing ran it before, which is why it went unnoticed that
   v0.12.0 was built with go1.25.0 rather than a patched 1.25 release (#372). It
   is not a required check. (#376)
+- Every `wails3 task` call that needed the frontend's dependencies ran
+  `npm ci` again, because the install step never recognised an install that
+  had already happened. `wails3 dev` runs the dev server and the build as
+  separate processes, so both reinstalled at once, each deleting
+  `node_modules` under the other, and the run could fail with a corrupted
+  install. The step now skips while its last successful `npm ci` is newer than
+  both `package.json` and `package-lock.json`, so `wails3 dev` installs once
+  and local builds stop reinstalling on every run.
 
 ## [0.13.0] - 2026-10-02
 
