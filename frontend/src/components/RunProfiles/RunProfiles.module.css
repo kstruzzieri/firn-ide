@@ -1,3 +1,11 @@
+/* Holds the status region above whichever view is showing (list or form), so the
+   load notice stays mounted when the form replaces the list. */
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .list {
   padding: 8px;
   height: 100%;
@@ -33,7 +41,7 @@
   align-items: flex-start;
   gap: 6px;
   padding: 8px;
-  margin-bottom: 8px;
+  margin: 8px 8px 0;
   border-left: 2px solid var(--status-warning);
 }
 
@@ -162,8 +170,9 @@ details.group > summary {
   color: #cfcfcf;
 }
 /* createButton is a fixed 22px icon square, too narrow for a word. Scoped under
-   .list so this beats .createButton whatever the source order. */
-.list .textButton {
+   .panelBody (an ancestor of both the Reload and Retry buttons) so this beats
+   .createButton whatever the source order. */
+.panelBody .textButton {
   width: auto;
   padding: 0 8px;
   font-size: 11px;

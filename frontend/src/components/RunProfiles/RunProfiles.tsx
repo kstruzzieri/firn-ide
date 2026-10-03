@@ -302,7 +302,11 @@ export function RunProfiles() {
   // open: running profiles and language servers must survive it, so it skips the
   // full load path. The runprofiles:changed event applies the snapshot to the
   // store; the returned copy is only read to tell whether a load problem remains.
+  // A click while a reload is in flight is ignored, so a double click shows one toast.
+  const [reloading, setReloading] = useState(false);
   const handleReload = async () => {
+    if (reloading) return;
+    setReloading(true);
     try {
       const { loadWarnings: remaining } = normalizeSnapshot(await ReloadRunProfiles());
       showToast(
@@ -314,6 +318,8 @@ export function RunProfiles() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       showToast(`Could not reload run profiles: ${message}`, 'error');
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -343,82 +349,86 @@ export function RunProfiles() {
         )
       }
     >
-      {runProfileForm ? (
-        <RunProfileForm state={runProfileForm} />
-      ) : (
-        <div className={styles.list}>
-          {/* Always mounted so a screen reader announces the content when it appears;
-              the store keeps the previous load's warnings until the next snapshot, so
-              nothing renders while loading. The region is unstyled: display: none on
-              an empty one would drop it from the accessibility tree. */}
-          <div role="status" aria-live="polite" aria-atomic="true">
-            {!isLoading && loadWarnings.length > 0 && (
-              <div className={styles.loadNotice}>
-                {loadWarnings.map((warning, i) => (
-                  <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
-                    {warning}
-                  </p>
-                ))}
-                <button
-                  type="button"
-                  className={`${styles.createButton} ${styles.textButton}`}
-                  onClick={handleReload}
-                >
-                  Reload
-                </button>
-              </div>
-            )}
-          </div>
-          {isLoading ? (
-            <div className={styles.empty}>
-              <p>Loading profiles...</p>
-            </div>
-          ) : error ? (
-            <div className={styles.empty}>
-              <p className={styles.errorText}>{error}</p>
+      <div className={styles.panelBody}>
+        {/* Always mounted, in the form view too, so a screen reader announces the
+            content when it appears; the store keeps the previous load's warnings
+            until the next snapshot, so nothing renders while loading. The region is
+            unstyled: display: none on an empty one would drop it from the
+            accessibility tree. */}
+        <div role="status" aria-live="polite" aria-atomic="true">
+          {!isLoading && loadWarnings.length > 0 && (
+            <div className={styles.loadNotice}>
+              {loadWarnings.map((warning, i) => (
+                <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
+                  {warning}
+                </p>
+              ))}
               <button
                 type="button"
                 className={`${styles.createButton} ${styles.textButton}`}
-                onClick={reloadRunProfiles}
+                onClick={handleReload}
+                disabled={reloading}
               >
-                Retry
+                Reload
               </button>
             </div>
-          ) : isViewEmpty ? (
-            <RunProfilesEmpty />
-          ) : viewMode === 'project' ? (
-            grouped.workspaceGroups.map((wg) => {
-              const counts = groupCounts(wg);
-              const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
-              return (
-                <div
-                  key={wg.workspaceId}
-                  className={styles.workspaceGroup}
-                  style={
-                    { ['--region-accent' as string]: accentVar(accent) } as React.CSSProperties
-                  }
-                >
-                  <div className={styles.workspaceHeader}>
-                    <span
-                      className={styles.workspaceDot}
-                      style={{ background: accentVar(accent) }}
-                    />
-                    <span className={styles.workspaceName}>{wg.workspaceName}</span>
-                    {counts.running > 0 && (
-                      <span className={styles.runningCount}>● {counts.running} running</span>
-                    )}
-                    <span className={styles.groupTotal}>· {counts.total}</span>
-                  </div>
-                  {wg.sections.map((s) => renderSection(s, true))}
-                </div>
-              );
-            })
-          ) : (
-            grouped.sections.map((s) => renderSection(s, false))
           )}
-          <HiddenSection profiles={hideableProfiles} hiddenProfileIds={hiddenProfileIds} />
         </div>
-      )}
+        {runProfileForm ? (
+          <RunProfileForm state={runProfileForm} />
+        ) : (
+          <div className={styles.list}>
+            {isLoading ? (
+              <div className={styles.empty}>
+                <p>Loading profiles...</p>
+              </div>
+            ) : error ? (
+              <div className={styles.empty}>
+                <p className={styles.errorText}>{error}</p>
+                <button
+                  type="button"
+                  className={`${styles.createButton} ${styles.textButton}`}
+                  onClick={reloadRunProfiles}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : isViewEmpty ? (
+              <RunProfilesEmpty />
+            ) : viewMode === 'project' ? (
+              grouped.workspaceGroups.map((wg) => {
+                const counts = groupCounts(wg);
+                const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
+                return (
+                  <div
+                    key={wg.workspaceId}
+                    className={styles.workspaceGroup}
+                    style={
+                      { ['--region-accent' as string]: accentVar(accent) } as React.CSSProperties
+                    }
+                  >
+                    <div className={styles.workspaceHeader}>
+                      <span
+                        className={styles.workspaceDot}
+                        style={{ background: accentVar(accent) }}
+                      />
+                      <span className={styles.workspaceName}>{wg.workspaceName}</span>
+                      {counts.running > 0 && (
+                        <span className={styles.runningCount}>● {counts.running} running</span>
+                      )}
+                      <span className={styles.groupTotal}>· {counts.total}</span>
+                    </div>
+                    {wg.sections.map((s) => renderSection(s, true))}
+                  </div>
+                );
+              })
+            ) : (
+              grouped.sections.map((s) => renderSection(s, false))
+            )}
+            <HiddenSection profiles={hideableProfiles} hiddenProfileIds={hiddenProfileIds} />
+          </div>
+        )}
+      </div>
     </Panel>
   );
 }
