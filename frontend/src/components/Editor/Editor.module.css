@@ -38,7 +38,8 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  /* A tab scrolled into view stops clear of the control over that edge. */
+  /* Lets native focus scrolling stop clear of the edge controls where the
+     engine honours it; the editor's own reveal does not depend on it. */
   scroll-padding-inline: var(--tab-scroll-control-width);
 }
 
@@ -242,9 +243,12 @@
 }
 
 /* An edge cutting through the close button's `×` leaves a `>` that reads as a
-   scroll arrow (#406); a tab not fully in view shows no close button at all. */
-.tab[data-clipped] .tabClose {
-  visibility: hidden;
+   scroll arrow (#406), so a button not fully in view is hidden at once (no
+   fade). Not visibility: it stays a tab stop, and focusing it reveals its tab. */
+.tab .tabClose[data-clipped] {
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════

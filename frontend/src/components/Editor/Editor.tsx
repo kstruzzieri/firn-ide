@@ -260,15 +260,16 @@ export function Editor() {
   // #309, generalized by #406: the strip scrolls, so the selected tab of any
   // kind is brought into view whenever the selection changes (a close, a diff
   // opened from the Git panel) and on every activation intent, which bumps the
-  // nonce even when it re-selects the tab already selected.
+  // nonce even when it re-selects the tab already selected. A merge queue
+  // handing off to its next file selects whatever tab is left for a moment;
+  // following it would swing the strip away and back for every queued file.
   useEffect(() => {
-    if (!selectedTabId) return;
+    if (!tabBar || !selectedTabId || mergeAdvancePending) return;
     // The tab's whole box, not just its role="tab" target, so its close button
     // comes into view too.
-    document
-      .getElementById(selectedTabId)
-      ?.parentElement?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  }, [selectedTabId, tabRevealNonce]);
+    const tab = document.getElementById(selectedTabId)?.parentElement;
+    if (tab) revealTab(tabBar, tab);
+  }, [tabBar, selectedTabId, tabRevealNonce, mergeAdvancePending]);
 
   // A page is the strip less the two controls overlaying its edges, so what sat
   // under the control clicked ends up just inside the control opposite.
@@ -353,7 +354,18 @@ export function Editor() {
         {queueAnnouncement}
       </div>
       <div className={styles.tabStrip}>
-        <div ref={setTabBar} className={styles.tabBar} role="tablist" aria-label="Open editors">
+        <div
+          ref={setTabBar}
+          className={styles.tabBar}
+          role="tablist"
+          aria-label="Open editors"
+          onFocus={(event) => {
+            // Focus lands on a tab's target (arrow keys) or its close button
+            // (Tab); either way, reveal the tab holding it.
+            const tab = event.target.parentElement;
+            if (tab) revealTab(event.currentTarget, tab);
+          }}
+        >
           <div className={styles.tabRow}>
             {openFiles.map((file) => {
               // A focused diff tab owns the active state, so the file tab it was
@@ -597,11 +609,33 @@ export function Editor() {
   );
 }
 
+/** Width of the scroll controls overlaying the strip's edges; the stylesheet owns it. */
+function edgeControlWidth(strip: Element): number {
+  return parseFloat(getComputedStyle(strip).getPropertyValue('--tab-scroll-control-width')) || 0;
+}
+
+/**
+ * Scroll the strip, and only the strip, until `tab` is fully in view clear of
+ * the edge controls; a tab wider than that room shows its start. Not
+ * scrollIntoView: WebKit before its 2026 fix (bug 290096) counts the strip's
+ * scroll-padding as visible, which leaves a "revealed" tab under a control.
+ */
+function revealTab(strip: HTMLElement, tab: Element) {
+  const control = edgeControlWidth(strip);
+  const view = strip.getBoundingClientRect();
+  const box = tab.getBoundingClientRect();
+  const before = box.left - (view.left + control);
+  const after = box.right - (view.right - control);
+  const delta = before < 0 ? before : after > 0 ? Math.min(after, before) : 0;
+  // Absolute, not scrollBy: a reveal arriving mid-scroll still lands on the tab.
+  if (delta !== 0) strip.scrollTo({ left: strip.scrollLeft + delta });
+}
+
 /**
  * #406: which sides of the tab strip hide tabs, for its edge controls. Also
- * marks every tab not fully in view with `data-clipped`: its close button is an
+ * marks every close button not fully in view with `data-clipped`: it is an
  * `×`, and an edge cutting through one leaves a `>` that reads as a scroll
- * arrow, so the stylesheet hides a clipped tab's close button outright.
+ * arrow, so the stylesheet hides a clipped close button outright.
  *
  * Event-driven only (no polling): a scroll, a resize of the strip, and a resize
  * of the row holding the tabs, which is how a tab being added, removed or
@@ -615,28 +649,28 @@ function useTabStripOverflow(strip: HTMLDivElement | null) {
   useLayoutEffect(() => {
     const row = strip?.firstElementChild;
     if (!strip || !row) return undefined;
-    // The controls overlay the strip's edges, so a tab under one is clipped too.
-    // The stylesheet owns their width.
-    const controlWidth =
-      parseFloat(getComputedStyle(strip).getPropertyValue('--tab-scroll-control-width')) || 0;
-
     const update = () => {
       // 1px of slack: scroll offsets are fractional on scaled displays.
       const left = strip.scrollLeft > 1;
       const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
       setOverflow((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
 
+      // The controls overlay the strip's edges, so a button under one is
+      // clipped too.
+      const control = edgeControlWidth(strip);
       const view = strip.getBoundingClientRect();
-      const start = view.left + (left ? controlWidth : 0);
-      const end = view.right - (right ? controlWidth : 0);
-      const tabs = Array.from(row.children);
-      // Measure every tab before marking any, so the marks cannot force a
-      // layout per tab.
-      const clipped = tabs.map((tab) => {
-        const box = tab.getBoundingClientRect();
+      const start = view.left + (left ? control : 0);
+      const end = view.right - (right ? control : 0);
+      // Each tab's one button is its close button. Measure them all before
+      // marking any, so the marks cannot force a layout per button.
+      const closeButtons = Array.from(row.querySelectorAll('button'));
+      const clipped = closeButtons.map((button) => {
+        const box = button.getBoundingClientRect();
         return box.left < start - 1 || box.right > end + 1;
       });
-      tabs.forEach((tab, index) => tab.toggleAttribute('data-clipped', clipped[index]));
+      closeButtons.forEach((button, index) =>
+        button.toggleAttribute('data-clipped', clipped[index])
+      );
     };
 
     update();
