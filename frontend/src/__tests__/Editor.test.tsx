@@ -652,6 +652,7 @@ describe('Editor tab strip overflow (#406)', () => {
   });
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
   /** Where the strip was last asked to scroll, if it was. */
   const stripScrolledTo = () =>
@@ -914,17 +915,20 @@ describe('Editor tab strip overflow (#406)', () => {
       });
       expect(scrollTo).not.toHaveBeenCalled();
       fireEvent.mouseUp(close);
-
       fireEvent.click(close);
       expect(useIDEStore.getState().openFiles.map((f) => f.id)).toEqual(['f0', 'f2']);
     });
 
-    it('reveals keyboard focus again once the pointer is released', () => {
+    it('shields only the focus a press causes, even when its mouseup never arrives', () => {
+      jest.useFakeTimers();
       renderWithFiles(3);
       layOutTabs();
       const first = screen.getByRole('tab', { name: /file0\.ts/ });
+      // A context menu or a drag can swallow the mouseup.
       fireEvent.mouseDown(first);
-      fireEvent.mouseUp(first);
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
       scrollTo.mockClear();
 
       fireEvent.keyDown(first, { key: 'End' });
