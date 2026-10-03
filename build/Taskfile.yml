@@ -17,11 +17,23 @@ tasks:
     summary: Install frontend dependencies
     run: once
     dir: frontend
-    sources:
-      - package.json
-      - package-lock.json
-    generates:
-      - node_modules
+    # Up to date while the stamp the last successful `npm ci` left (below) is
+    # newer than both manifests and names the platform Node runs on now;
+    # `npm ci` deletes node_modules first, so a failed install leaves no stamp.
+    # The platform matters because npm installs native optional packages
+    # (@esbuild/*, @rollup/rollup-*) for process.platform and process.arch, so
+    # a checkout reused under another OS or architecture must reinstall. Not
+    # npm's own
+    # node_modules/.package-lock.json: a lockfile-only update rewrites it
+    # without installing anything. Not sources/generates: the task runner never
+    # counts a directory under generates as present, so `generates:
+    # [node_modules]` reinstalled on every call, and sources checksums are kept
+    # per include namespace (common:, darwin:common:, ...), so a process
+    # reaching this task through another include would still reinstall.
+    # `wails3 dev` relies on the later processes skipping (see build/config.yml).
+    status:
+      - test -f node_modules/.npm-ci-stamp && test node_modules/.npm-ci-stamp -nt package.json && test node_modules/.npm-ci-stamp -nt package-lock.json
+      - node -e "process.exit(Number(require('fs').readFileSync('node_modules/.npm-ci-stamp', 'utf8') !== process.platform + '-' + process.arch))"
     preconditions:
       - sh: npm version
         msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
@@ -30,6 +42,9 @@ tasks:
       # package-lock.json and must never rewrite the lockfile. CI runs the same
       # command, so a local build cannot drift from a release build.
       - npm ci
+      # Written by Node, which every platform here has, rather than a shell
+      # tool that Windows may lack.
+      - node -e "require('fs').writeFileSync('node_modules/.npm-ci-stamp', process.platform + '-' + process.arch)"
 
   build:frontend:
     label: build:frontend (DEV={{.DEV}})
