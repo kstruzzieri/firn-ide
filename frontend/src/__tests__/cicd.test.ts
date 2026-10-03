@@ -147,6 +147,7 @@ describe('CI Workflow', () => {
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
     const expectedSetupGoSteps: Record<string, number> = {
       'build.yml': 1,
+      'govulncheck.yml': 1,
       'lint.yml': 1,
       'release.yml': 3,
       'test.yml': 2,
@@ -216,6 +217,68 @@ describe('CI Workflow', () => {
       goVersion,
       later: true,
     });
+  });
+
+  // #376: the guard above cannot tell whether that toolchain is patched;
+  // govulncheck can. It scans a build rather than the source: Wails calls
+  // bound methods through reflection, which a source scan cannot follow, so
+  // code the frontend reaches only through a binding would go unscanned. The
+  // build uses the release tags, so the scan sees what ships. `go install m@v`
+  // picks a Go at least as new as both m's `go` line and the toolchain line of
+  // the go.mod in the directory it runs in, so the install runs at the
+  // repository root, and from a pinned release, so a new govulncheck cannot
+  // change the result unannounced. Only the text output exits non-zero on
+  // findings, and no condition, trigger change or continue-on-error may skip
+  // the scan or let the job pass with findings.
+  it('should scan a release-tagged build with a pinned govulncheck', () => {
+    const content = readFileSync(resolve(workflowsDir, 'govulncheck.yml'), 'utf-8');
+    type Step = {
+      run?: string;
+      if?: unknown;
+      'working-directory'?: string;
+      'continue-on-error'?: unknown;
+    };
+    type Defaults = { run?: { 'working-directory'?: string } };
+    const workflow = parse(content) as {
+      defaults?: Defaults;
+      jobs?: Record<
+        string,
+        { defaults?: Defaults; if?: unknown; 'continue-on-error'?: unknown; steps?: Step[] }
+      >;
+    };
+    const job = workflow.jobs?.govulncheck;
+    const steps = job?.steps ?? [];
+    const runs = steps.map((step) => step.run?.trim());
+    const directories = [
+      workflow.defaults?.run?.['working-directory'],
+      job?.defaults?.run?.['working-directory'],
+      ...steps.map((step) => step['working-directory']),
+    ].filter((directory) => directory !== undefined);
+    const gates = [job, ...steps].filter(
+      (entry) => entry?.if !== undefined || entry?.['continue-on-error'] !== undefined
+    );
+
+    expect(workflowEvents(content)).toEqual({
+      push: { branches: ['develop'] },
+      pull_request: { paths: ['**.go', 'go.mod', 'go.sum', '.github/workflows/govulncheck.yml'] },
+      schedule: [{ cron: '23 7 * * *' }],
+      workflow_dispatch: null,
+    });
+    expect(runs.find((run) => run?.includes('cmd/govulncheck@'))).toMatch(
+      /^go install golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+$/
+    );
+    expect(runs).toEqual(
+      expect.arrayContaining([
+        'go build -tags production,gtk3 -o "$RUNNER_TEMP/firn" .',
+        'govulncheck -mode binary "$RUNNER_TEMP/firn"',
+      ])
+    );
+    expect({ directories, gates }).toEqual({ directories: [], gates: [] });
+
+    // The release tags the build above copies.
+    const linuxTaskfile = readFileSync(resolve(rootDir, 'build/linux/Taskfile.yml'), 'utf-8');
+    expect(linuxTaskfile).toContain('{{else}}-tags production{{');
+    expect(linuxTaskfile).toContain("EXTRA_TAGS: 'gtk3{{");
   });
 
   it('should pin workflow wails3 installs to the module version', () => {
@@ -378,14 +441,17 @@ describe('CI Workflow', () => {
     // A loop that only asserts inside its body passes vacuously if nothing
     // ever matches, so both counts are exact censuses rather than floors.
     //
-    // Seven Go-compiling Linux steps: test.yml backend-tests (two `go test`
-    // steps), lint.yml golangci-lint, the `go install ... cmd/wails3` and
-    // `wails3 task linux:build` steps in build.yml, and the same two in
-    // release.yml's build-linux job.
-    expect(matchedSteps).toBe(7);
-    // Four jobs sit on the WebKit2GTK floor: build.yml build, test.yml
-    // backend-tests, lint.yml golangci-lint, release.yml build-linux.
-    expect(gtkFloorJobs).toBe(4);
+    // Eight Linux steps that compile the app or the Wails CLI: test.yml
+    // backend-tests (two `go test` steps), lint.yml golangci-lint, the
+    // `go install ... cmd/wails3` and `wails3 task linux:build` steps in
+    // build.yml, the same two in release.yml's build-linux job, and
+    // govulncheck.yml's `go build`. govulncheck.yml's `go install` of the
+    // scanner compiles Go too, but no app code, so it needs no tag.
+    expect(matchedSteps).toBe(8);
+    // Five jobs sit on the WebKit2GTK floor: build.yml build, test.yml
+    // backend-tests, lint.yml golangci-lint, release.yml build-linux,
+    // govulncheck.yml govulncheck.
+    expect(gtkFloorJobs).toBe(5);
   });
 
   // generate:bindings runs with -clean=true, so a Go-facing API or exported

@@ -59,6 +59,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reopening the folder. The refusal's remedy now names that Reload instead of a
   restart. (#366, #367)
 
+### Build and CI
+
+- CI runs `govulncheck` on a Linux build of the app made with the release build
+  tags: daily, on pushes to `develop`, and on pull requests that change Go
+  code, `go.mod` or `go.sum`. It reports known
+  vulnerabilities in the Go standard library or a dependency whose code is
+  linked into the app. It scans the build rather than the source because Wails
+  calls bound methods through reflection, which a source scan cannot follow, so
+  code reached only through a binding, such as the LSP server download, would
+  go unscanned. Nothing ran it before, which is why it went unnoticed that
+  v0.12.0 was built with go1.25.0 rather than a patched 1.25 release (#372). It
+  is not a required check. (#376)
+
 ## [0.13.0] - 2026-10-02
 
 Feature release covering the narrow-pane redesign of the Golem configuration
