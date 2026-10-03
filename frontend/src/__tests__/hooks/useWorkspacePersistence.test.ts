@@ -40,10 +40,12 @@ jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 
-const mockEnsurePathLoaded = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockEnsurePathLoaded = jest.fn<Promise<void>, [string, { force?: boolean }?]>(() =>
+  Promise.resolve()
+);
 
 jest.mock('../../hooks/useEnsurePathLoaded', () => ({
-  ensurePathLoaded: (...args: [string]) => mockEnsurePathLoaded(...args),
+  ensurePathLoaded: (...args: [string, { force?: boolean }?]) => mockEnsurePathLoaded(...args),
   __resetEnsurePathLoaded: jest.fn(),
   useEnsurePathLoaded: jest.fn(() => mockEnsurePathLoaded),
 }));
@@ -535,6 +537,106 @@ describe('useWorkspacePersistence', () => {
     );
 
     expect(useIDEStore.getState().isLoadingTree).toBe(false);
+  });
+
+  it('does not paint a persisted treeSnapshot over a root read that landed mid-restore (#256)', async () => {
+    // The explorer's fresh ReadDirectoryShallow and LoadWorkspaceState race on
+    // open. When the fresh root lands first, the stale snapshot must not win.
+    let resolveLoad!: (state: unknown) => void;
+    mockLoadWorkspaceState.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      })
+    );
+    const stale = filesystem.FileEntry.createFrom({
+      name: 'old',
+      path: '/ws/old',
+      isDir: true,
+      size: 0,
+      modTime: new Date().toISOString(),
+    });
+    const fresh = [
+      stale,
+      filesystem.FileEntry.createFrom({
+        name: 'created-while-closed',
+        path: '/ws/created-while-closed',
+        isDir: true,
+        size: 0,
+        modTime: new Date().toISOString(),
+      }),
+    ];
+
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: true,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/ws'));
+
+    // Fresh root read lands while the saved state is still loading.
+    act(() => {
+      useIDEStore.getState().mergeChildren('/ws', fresh);
+    });
+
+    await act(async () => {
+      resolveLoad({
+        workspacePath: '/ws',
+        workspaceName: 'ws',
+        layout: null,
+        editor: { activeFilePath: '', openFiles: [] },
+        explorer: { expandedPaths: [], rootExpanded: true, treeSnapshot: [stale] },
+        activeSidebar: 'explorer',
+        hiddenProfileIds: [],
+      });
+    });
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual([
+      '/ws/old',
+      '/ws/created-while-closed',
+    ]);
+    // The stale snapshot must not poison the in-memory cache either.
+    expect(getCachedWorkspaceTree('/ws')).not.toEqual([stale]);
+  });
+
+  it('re-reads expanded paths from disk even when the snapshot already holds their children (#256)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/ws',
+      workspaceName: 'ws',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: ['/ws/src'],
+        rootExpanded: true,
+        treeSnapshot: [
+          filesystem.FileEntry.createFrom({
+            name: 'src',
+            path: '/ws/src',
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+            children: [],
+          }),
+        ],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    // A snapshot-loaded subtree is a display hint, not disk truth: the hydrate
+    // must bypass ensurePathLoaded's already-loaded short-circuit.
+    expect(mockEnsurePathLoaded).toHaveBeenCalledWith('/ws/src', { force: true });
   });
 
   it('hydrates expanded paths in ancestor-first order on restore', async () => {
@@ -1380,7 +1482,9 @@ describe('useWorkspacePersistence', () => {
       });
       await mountRestoring();
 
-      await waitFor(() => expect(mockEnsurePathLoaded).toHaveBeenCalledWith('/workspace/w/src'));
+      await waitFor(() =>
+        expect(mockEnsurePathLoaded).toHaveBeenCalledWith('/workspace/w/src', { force: true })
+      );
       blur();
       await settle();
       expect(mockSaveWorkspaceState).not.toHaveBeenCalled();

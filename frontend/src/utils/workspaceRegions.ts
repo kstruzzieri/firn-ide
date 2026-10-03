@@ -30,6 +30,22 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
   return null;
 }
 
+/**
+ * The subset of `paths` under `root`, ancestor-first (root itself first), so a
+ * caller hydrating them in order always has each parent loaded before its child.
+ */
+export function pathsUnderRootAncestorFirst(root: string, paths: Iterable<string>): string[] {
+  return Array.from(paths)
+    .map((path) => ({ path, rel: relativePathFromRoot(path, root) }))
+    .filter((item): item is { path: string; rel: string } => item.rel !== null)
+    .sort((a, b) => depth(a.rel) - depth(b.rel))
+    .map((item) => item.path);
+}
+
+function depth(rel: string): number {
+  return rel === '' ? 0 : rel.split('/').length;
+}
+
 function orderedWorkspaces(workspaces: workspace.WorkspaceDef[]): workspace.WorkspaceDef[] {
   return workspaces
     .filter((candidate) => candidate.id !== 'project')

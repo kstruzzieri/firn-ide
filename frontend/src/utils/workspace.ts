@@ -1,6 +1,8 @@
-import { useIDEStore } from '../stores/ideStore';
+import { useIDEStore, type WorkspaceInfo } from '../stores/ideStore';
 import { WindowSetTitle } from '../wails/runtime';
+import { ensurePathLoaded } from '../hooks/useEnsurePathLoaded';
 import { getCachedWorkspaceTree } from './workspaceTreeCache';
+import { pathsUnderRootAncestorFirst } from './workspaceRegions';
 
 const MAX_RECENT = 10;
 
@@ -18,8 +20,13 @@ export function openWorkspaceByPath(folderPath: string) {
 
   const store = useIDEStore.getState();
 
-  // Skip if already on this workspace
-  if (store.workspace?.path === folderPath) return;
+  // Already on this workspace: a reopen is a tree-only refresh. A full open
+  // would pause run events and reset run state for no reason, but doing
+  // nothing leaves a tree that went stale while the project was closed (#256).
+  if (store.workspace?.path === folderPath) {
+    void refreshTreeFromDisk(store.workspace, store.expandedPaths);
+    return;
+  }
 
   const separator = folderPath.includes('\\') ? '\\' : '/';
   const folderName = folderPath.split(separator).pop() || folderPath;
@@ -66,6 +73,22 @@ export function openWorkspaceByPath(folderPath: string) {
       `Failed to open workspace: ${err instanceof Error ? err.message : 'Unknown error'}`,
       'error'
     );
+  }
+}
+
+/**
+ * Re-reads the root and every expanded directory of `workspace` from disk,
+ * ancestor-first. Stops if the workspace changes underneath it; each read's
+ * own failure handling (dirty marker + toast) lives in ensurePathLoaded.
+ */
+async function refreshTreeFromDisk(
+  workspace: WorkspaceInfo,
+  expandedPaths: Iterable<string>
+): Promise<void> {
+  const paths = pathsUnderRootAncestorFirst(workspace.path, [workspace.path, ...expandedPaths]);
+  for (const path of paths) {
+    if (useIDEStore.getState().workspace !== workspace) return;
+    await ensurePathLoaded(path, { force: true });
   }
 }
 

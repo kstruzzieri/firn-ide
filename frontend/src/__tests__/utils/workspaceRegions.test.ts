@@ -1,4 +1,5 @@
 import {
+  pathsUnderRootAncestorFirst,
   createWorkspacePathResolver,
   getInfraFileAccent,
   relativePathFromRoot,
@@ -195,5 +196,15 @@ describe('createRegionAccentResolver', () => {
   it('returns null for paths outside the repo root', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
     expect(resolve(entry('/Users/me/other/App.tsx'))).toBeNull();
+  });
+});
+
+describe('pathsUnderRootAncestorFirst', () => {
+  it('orders the root before its descendants, shallow before deep, and drops outsiders', () => {
+    expect(pathsUnderRootAncestorFirst('/ws', ['/ws/a/b', '/ws/a', '/other/x', '/ws'])).toEqual([
+      '/ws',
+      '/ws/a',
+      '/ws/a/b',
+    ]);
   });
 });

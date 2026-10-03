@@ -2,7 +2,65 @@ jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 
-import { shortenPath } from '../../utils/workspace';
+jest.mock('../../wails/bindings', () => ({ ReadDirectoryShallow: jest.fn() }));
+
+import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
+import { useIDEStore, type FileEntry } from '../../stores/ideStore';
+import { ReadDirectoryShallow } from '../../wails/bindings';
+import { __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import { act } from 'react';
+
+const mockRead = ReadDirectoryShallow as jest.Mock;
+const dir = (path: string, children?: FileEntry[]): FileEntry =>
+  ({
+    name: path.split('/').pop()!,
+    path,
+    isDir: true,
+    size: 0,
+    modTime: '',
+    children,
+  }) as FileEntry;
+
+describe('openWorkspaceByPath on the already-active path (#256)', () => {
+  beforeEach(() => {
+    __resetEnsurePathLoaded();
+    mockRead.mockReset();
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [dir('/ws/src', [dir('/ws/src/a')])],
+      expandedPaths: new Set(['/ws/src']),
+      loadingPaths: new Set(),
+      dirtyPaths: new Set(),
+      recentWorkspacesVersion: 7,
+    });
+  });
+
+  it('re-reads the root and expanded dirs from disk without reopening the workspace', async () => {
+    const workspaceBefore = useIDEStore.getState().workspace;
+    mockRead.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === '/ws'
+          ? [dir('/ws/src'), dir('/ws/created-while-closed')]
+          : [dir('/ws/src/a'), dir('/ws/src/b')]
+      )
+    );
+
+    await act(async () => {
+      openWorkspaceByPath('/ws');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockRead.mock.calls.map((c) => c[0])).toEqual(['/ws', '/ws/src']);
+    const state = useIDEStore.getState();
+    expect(state.directoryTree.map((e) => e.path)).toEqual(['/ws/src', '/ws/created-while-closed']);
+    expect(state.directoryTree[0].children?.map((e) => e.path)).toEqual(['/ws/src/a', '/ws/src/b']);
+    // Tree-only: no workspace switch, no run-state reset, no recent-list bump.
+    expect(state.workspace).toBe(workspaceBefore);
+    expect(state.recentWorkspacesVersion).toBe(7);
+  });
+});
 
 describe('shortenPath', () => {
   it('should shorten /Users/<name>/... paths', () => {

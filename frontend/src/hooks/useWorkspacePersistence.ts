@@ -11,7 +11,7 @@ import { EventsOn } from '../wails/runtime';
 import type { workspace, filesystem } from '../wails/bindings';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
-import { relativePathFromRoot } from '../utils/workspaceRegions';
+import { pathsUnderRootAncestorFirst, relativePathFromRoot } from '../utils/workspaceRegions';
 import { normalizeCenterLayout } from '../utils/centerLayout';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
 import { ensurePathLoaded } from './useEnsurePathLoaded';
@@ -152,6 +152,10 @@ async function restoreWorkspaceState(
       store.setDirectoryTree(cachedTree);
     }
 
+    // The explorer's fresh root read (useDirectoryTree) races this load. If it
+    // lands first, the saved snapshot below is older than what is on screen and
+    // must not be painted over it (#256).
+    const treeBeforeLoad = useIDEStore.getState().directoryTree;
     const state = await LoadWorkspaceState(workspacePath);
     if (signal.aborted) return;
     const reported = reportedSaveFailures.get(workspacePath);
@@ -238,23 +242,25 @@ async function restoreWorkspaceState(
       // it here self-heals that state — fetchTree then repopulates correctly.
       if (
         state.explorer.treeSnapshot &&
+        useIDEStore.getState().directoryTree === treeBeforeLoad &&
         treeSnapshotBelongsTo(state.explorer.treeSnapshot, workspacePath)
       ) {
         setCachedWorkspaceTree(workspacePath, state.explorer.treeSnapshot);
         store.setDirectoryTree(state.explorer.treeSnapshot);
       }
 
-      // Hydrate each persisted expanded path so restored subtrees are fresh,
-      // not reliant on the (optional) treeSnapshot for correctness.
-      // ponytail: ancestor-first ensures parent nodes exist before children are merged.
-      const expanded = state.explorer.expandedPaths ?? [];
-      const underRoot = expanded
-        .map((path) => ({ path, rel: relativePathFromRoot(path, workspacePath) }))
-        .filter((item): item is { path: string; rel: string } => item.rel !== null)
-        .sort((a, b) => a.rel.split('/').length - b.rel.split('/').length);
-      for (const { path } of underRoot) {
+      // Re-read each persisted expanded path from disk. A snapshot (or the
+      // in-memory cache) already holds their children, so without `force` the
+      // already-loaded short-circuit would keep a subtree saved before the
+      // project was closed (#256). Ancestor-first so parents exist before
+      // children are merged.
+      const expanded = pathsUnderRootAncestorFirst(
+        workspacePath,
+        state.explorer.expandedPaths ?? []
+      );
+      for (const path of expanded) {
         if (signal.aborted) return;
-        await ensurePathLoaded(path);
+        await ensurePathLoaded(path, { force: true });
       }
     }
 
