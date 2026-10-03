@@ -1,9 +1,12 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { act, render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile, RunProfileUIState } from '../../types/runProfile';
 import type { RunOutput } from '../../types/runOutput';
+import { cssRule } from '../helpers/cssRule';
 
 const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
@@ -495,6 +498,18 @@ describe('RunProfiles panel — load warnings notice', () => {
 
     expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('widens the Reload button with a selector that out-specifies createButton', () => {
+    // jsdom resolves no module CSS. A bare `.loadNoticeButton` has the same
+    // specificity as `.createButton` and, declared earlier, loses to its fixed
+    // 22px width and 15px font, so the override must be nested under `.loadNotice`.
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    expect(cssRule(css, '.loadNotice .loadNoticeButton')).toMatch(/width:\s*auto/);
+    expect(css).not.toMatch(/^\.loadNoticeButton\s*\{/m);
   });
 
   it('still offers Retry when loading failed outright', () => {

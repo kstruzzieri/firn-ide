@@ -48,8 +48,9 @@
   color: var(--text-secondary);
 }
 
-/* createButton is a fixed 22px square, too narrow for a word. */
-.loadNoticeButton {
+/* createButton is a fixed 22px square, too narrow for a word. Nested under
+   .loadNotice so it out-specifies .createButton, which is declared later. */
+.loadNotice .loadNoticeButton {
   width: auto;
   padding: 0 8px;
   font-size: 11px;
