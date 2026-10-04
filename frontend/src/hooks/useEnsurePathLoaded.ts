@@ -97,8 +97,10 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
  * short-circuiting as already loaded. Then the root, each expanded path and
  * their ancestors are force-read level by level (parents before children; one
  * level's reads run concurrently). A path a fresh parent no longer lists as a
- * directory is skipped, not read: it is gone or a file now, which is not a
- * load failure to toast about. `stop` ends the walk early (the workspace
+ * directory is skipped, not read, and dropped from expandedPaths: it is gone
+ * or a file now, which is not a load failure to toast about and not worth
+ * re-checking on every open. A parent whose own read failed keeps a stale
+ * listing, so nothing is dropped beneath it. `stop` ends the walk early (the workspace
  * changed, the restore was aborted). A read that fails leaves its row marked
  * unreadable and dirty through ensurePathLoaded; since the dirs were just
  * marked dirty, that counts as a retry and does not toast.
@@ -114,16 +116,41 @@ export async function reconcileTreeWithDisk(
   }
   for (const level of treeLoadLevels(root, expandedPaths)) {
     if (stop()) return;
-    const tree = useIDEStore.getState().directoryTree;
-    const present = level.filter(
-      (path) => pathsReferToSameFile(path, root) || findEntryByPath(tree, path)?.isDir === true
-    );
+    const { directoryTree: tree, dirtyPaths } = useIDEStore.getState();
+    const present: string[] = [];
+    const gone: string[] = [];
+    for (const path of level) {
+      if (pathsReferToSameFile(path, root) || findEntryByPath(tree, path)?.isDir === true) {
+        present.push(path);
+      } else if (!isDirty(dirtyPaths, parentPath(path))) {
+        gone.push(path);
+      }
+    }
+    if (gone.length > 0) forgetExpanded(gone);
     await Promise.all(present.map((path) => ensurePathLoaded(path, { force: true })));
     // The root is dirty after its own read (it failed, or a watcher event on a
     // collapsed root arrived mid-walk): nothing beneath it can be checked
     // against a fresh parent, so stop rather than read against stale ones.
     if (useIDEStore.getState().dirtyPaths.has(root)) return;
   }
+}
+
+function parentPath(path: string): string {
+  return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
+}
+
+function isDirty(dirtyPaths: Set<string>, path: string): boolean {
+  for (const dirty of dirtyPaths) if (pathsReferToSameFile(dirty, path)) return true;
+  return false;
+}
+
+function forgetExpanded(gone: string[]): void {
+  useIDEStore.setState((s) => {
+    const kept = [...s.expandedPaths].filter(
+      (path) => !gone.some((g) => pathsReferToSameFile(g, path))
+    );
+    return kept.length === s.expandedPaths.size ? {} : { expandedPaths: new Set(kept) };
+  });
 }
 
 function loadedDirectoryPaths(nodes: FileEntry[]): string[] {

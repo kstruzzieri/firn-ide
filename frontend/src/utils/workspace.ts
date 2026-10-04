@@ -2,6 +2,7 @@ import { useIDEStore } from '../stores/ideStore';
 import { WindowSetTitle } from '../wails/runtime';
 import { reconcileTreeWithDisk } from '../hooks/useEnsurePathLoaded';
 import { getCachedWorkspaceTree } from './workspaceTreeCache';
+import { relativePathFromRoot } from './workspaceRegions';
 
 const MAX_RECENT = 10;
 
@@ -20,14 +21,16 @@ export function openWorkspaceByPath(folderPath: string) {
 
   const store = useIDEStore.getState();
 
-  // Already on this workspace: a reopen is a tree-only refresh. A full open
-  // would pause run events and reset run state for no reason, but doing
-  // nothing leaves whatever the watcher missed on screen indefinitely (#256).
-  if (store.workspace?.path === folderPath) {
+  // Already on this workspace (same directory, whatever the trailing slash or
+  // drive-letter case): a reopen is a tree-only refresh under the active path.
+  // A full open would pause run events and reset run state for no reason, but
+  // doing nothing leaves whatever the watcher missed on screen indefinitely (#256).
+  const active = store.workspace;
+  if (active && relativePathFromRoot(folderPath, active.path) === '') {
     void reconcileTreeWithDisk(
-      folderPath,
+      active.path,
       store.expandedPaths,
-      () => useIDEStore.getState().workspace?.path !== folderPath
+      () => useIDEStore.getState().workspace?.path !== active.path
     );
     return;
   }

@@ -65,6 +65,37 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     expect(state.recentWorkspacesVersion).toBe(7);
   });
 
+  it('treats a trailing slash as the same path and reconciles under the active root', async () => {
+    const workspaceBefore = useIDEStore.getState().workspace;
+    mockRead.mockResolvedValue([]);
+
+    act(() => {
+      openWorkspaceByPath('/ws/');
+    });
+    await waitFor(() => expect(mockRead).toHaveBeenCalledWith('/ws', '/ws'));
+
+    expect(useIDEStore.getState().workspace).toBe(workspaceBefore);
+    expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
+  });
+
+  it('treats a drive-letter case difference as the same path on Windows', async () => {
+    const workspace = { name: 'ws', path: 'C:\\ws' };
+    useIDEStore.setState({
+      workspace,
+      directoryTree: [],
+      expandedPaths: new Set(),
+    });
+    mockRead.mockResolvedValue([]);
+
+    act(() => {
+      openWorkspaceByPath('c:\\ws');
+    });
+    await waitFor(() => expect(mockRead).toHaveBeenCalledWith('C:\\ws', 'C:\\ws'));
+
+    expect(useIDEStore.getState().workspace).toBe(workspace);
+    expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
+  });
+
   it('marks loaded-but-collapsed dirs dirty instead of reading them', async () => {
     useIDEStore.setState({
       directoryTree: [dir('/ws/src', [dir('/ws/src/a')]), dir('/ws/lib', [dir('/ws/lib/x')])],

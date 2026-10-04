@@ -1,4 +1,8 @@
-import { ensurePathLoaded, __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import {
+  ensurePathLoaded,
+  reconcileTreeWithDisk,
+  __resetEnsurePathLoaded,
+} from '../../hooks/useEnsurePathLoaded';
 import { useIDEStore } from '../../stores/ideStore';
 import { ReadDirectoryShallow } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
@@ -248,4 +252,32 @@ it('keeps a failed root refresh explicit without annotating its children', async
   expect(state.dirtyPaths.has('/r')).toBe(true);
   expect(state.treeError).toBeNull();
   expect(state.toast).toEqual({ message: 'Failed to load r', type: 'error' });
+});
+
+describe('reconcileTreeWithDisk pruning (#256)', () => {
+  it('drops an expanded path its freshly read parent no longer lists as a directory', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a'), dir('/r/gone', [])],
+      expandedPaths: new Set(['/r/a', '/r/gone', '/r/a/deep']),
+    });
+    mockRead.mockImplementation((path: string) =>
+      Promise.resolve(path === '/r' ? [dir('/r/a')] : path === '/r/a' ? [dir('/r/a/deep')] : [])
+    );
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/a/deep']);
+  });
+
+  it('keeps expanded paths when the parent read failed, since its listing is not fresh', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a')],
+      expandedPaths: new Set(['/r/a', '/r/maybe']),
+    });
+    mockRead.mockRejectedValue(new Error('open /r: permission denied'));
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/maybe']);
+  });
 });
