@@ -1,15 +1,15 @@
-import { useIDEStore, type WorkspaceInfo } from '../stores/ideStore';
+import { useIDEStore } from '../stores/ideStore';
 import { WindowSetTitle } from '../wails/runtime';
-import { ensurePathLoaded } from '../hooks/useEnsurePathLoaded';
+import { reconcileTreeWithDisk } from '../hooks/useEnsurePathLoaded';
 import { getCachedWorkspaceTree } from './workspaceTreeCache';
-import { pathsUnderRootAncestorFirst } from './workspaceRegions';
 
 const MAX_RECENT = 10;
 
 /**
  * Opens a workspace by its absolute path. Handles clearing stale tree,
  * setting workspace state, updating the window title, and optimistically
- * updating the recent workspaces list.
+ * updating the recent workspaces list. Reselecting the already-open path
+ * only reconciles the explorer tree with disk.
  *
  * Shared by both the native dialog flow and recent-project clicks.
  */
@@ -24,7 +24,11 @@ export function openWorkspaceByPath(folderPath: string) {
   // would pause run events and reset run state for no reason, but doing
   // nothing leaves a tree that went stale while the project was closed (#256).
   if (store.workspace?.path === folderPath) {
-    void refreshTreeFromDisk(store.workspace, store.expandedPaths);
+    void reconcileTreeWithDisk(
+      folderPath,
+      store.expandedPaths,
+      () => useIDEStore.getState().workspace?.path !== folderPath
+    );
     return;
   }
 
@@ -73,22 +77,6 @@ export function openWorkspaceByPath(folderPath: string) {
       `Failed to open workspace: ${err instanceof Error ? err.message : 'Unknown error'}`,
       'error'
     );
-  }
-}
-
-/**
- * Re-reads the root and every expanded directory of `workspace` from disk,
- * ancestor-first. Stops if the workspace changes underneath it; each read's
- * own failure handling (dirty marker + toast) lives in ensurePathLoaded.
- */
-async function refreshTreeFromDisk(
-  workspace: WorkspaceInfo,
-  expandedPaths: Iterable<string>
-): Promise<void> {
-  const paths = pathsUnderRootAncestorFirst(workspace.path, [workspace.path, ...expandedPaths]);
-  for (const path of paths) {
-    if (useIDEStore.getState().workspace !== workspace) return;
-    await ensurePathLoaded(path, { force: true });
   }
 }
 

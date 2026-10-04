@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The file tree now matches the disk when a project is opened. A directory
+  created while the project was closed was missing until a later filesystem
+  event; the saved explorer snapshot could be painted over the fresh root
+  read, and subtrees it carried counted as already loaded. Opening re-reads
+  the root and every expanded directory, treats the rest of the snapshot as
+  stale until expanded, and reselecting the already-open project does the same
+  tree-only refresh. (#256)
 - New chat in the Golem panel now also clears the conversation Firn keeps for
   the model, docked or undocked. Before, it cleared only the view: the next turn
   still sent the cleared prompts and answers to the model, and a long session

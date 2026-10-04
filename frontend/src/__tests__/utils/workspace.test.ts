@@ -9,6 +9,7 @@ import { useIDEStore, type FileEntry } from '../../stores/ideStore';
 import { ReadDirectoryShallow } from '../../wails/bindings';
 import { __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
 import { act } from 'react';
+import { waitFor } from '@testing-library/react';
 
 const mockRead = ReadDirectoryShallow as jest.Mock;
 const dir = (path: string, children?: FileEntry[]): FileEntry =>
@@ -45,12 +46,15 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
       )
     );
 
-    await act(async () => {
+    act(() => {
       openWorkspaceByPath('/ws');
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
     });
+    await waitFor(() =>
+      expect(useIDEStore.getState().directoryTree[0]?.children?.map((e) => e.path)).toEqual([
+        '/ws/src/a',
+        '/ws/src/b',
+      ])
+    );
 
     expect(mockRead.mock.calls.map((c) => c[0])).toEqual(['/ws', '/ws/src']);
     const state = useIDEStore.getState();
@@ -59,6 +63,25 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     // Tree-only: no workspace switch, no run-state reset, no recent-list bump.
     expect(state.workspace).toBe(workspaceBefore);
     expect(state.recentWorkspacesVersion).toBe(7);
+  });
+
+  it('marks loaded-but-collapsed dirs dirty instead of reading them', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/ws/src', [dir('/ws/src/a')]), dir('/ws/lib', [dir('/ws/lib/x')])],
+      expandedPaths: new Set(['/ws/src']),
+    });
+    mockRead.mockImplementation((path: string) =>
+      Promise.resolve(path === '/ws' ? [dir('/ws/src'), dir('/ws/lib')] : [dir(`${path}/a`)])
+    );
+
+    act(() => {
+      openWorkspaceByPath('/ws');
+    });
+    await waitFor(() => expect(mockRead).toHaveBeenCalledWith('/ws/src', '/ws'));
+    await waitFor(() => expect(useIDEStore.getState().dirtyPaths.has('/ws/src')).toBe(false));
+
+    expect(mockRead).not.toHaveBeenCalledWith('/ws/lib', '/ws');
+    expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
   });
 });
 

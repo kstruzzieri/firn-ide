@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
 import { ReadDirectoryShallow } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
-import type { WorkspaceInfo } from '../stores/ideStore';
+import type { WorkspaceInfo, FileEntry } from '../stores/ideStore';
 import { pathsReferToSameFile, getFileNameFromPath } from '../utils/lspUri';
 import { findEntryByPath } from '../utils/findEntryByPath';
+import { treeLoadLevels } from '../utils/workspaceRegions';
 
 interface InFlightLoad {
   workspace: WorkspaceInfo;
@@ -87,6 +88,48 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
 
   inFlight.set(path, { workspace, promise });
   return promise;
+}
+
+/**
+ * Reconciles the explorer tree of `root` with disk (#256). A persisted snapshot
+ * or the in-memory cache is a display hint, not disk truth, so first every
+ * loaded directory is marked dirty: the next expand re-reads it instead of
+ * short-circuiting as already loaded. Then the root, each expanded path and
+ * their ancestors are force-read level by level (parents before children; one
+ * level's reads run concurrently). A path a fresh parent no longer lists is
+ * skipped, not read: it is gone, which is not a load failure to toast about.
+ * `stop` ends the walk early (the workspace changed, the restore was aborted).
+ * Read failures are handled by ensurePathLoaded (dirty marker + toast).
+ */
+export async function reconcileTreeWithDisk(
+  root: string,
+  expandedPaths: Iterable<string>,
+  stop: () => boolean = () => false
+): Promise<void> {
+  const stale = loadedDirectoryPaths(useIDEStore.getState().directoryTree);
+  if (stale.length > 0) {
+    useIDEStore.setState((s) => ({ dirtyPaths: new Set([...s.dirtyPaths, ...stale]) }));
+  }
+  for (const level of treeLoadLevels(root, expandedPaths)) {
+    if (stop()) return;
+    const tree = useIDEStore.getState().directoryTree;
+    const present = level.filter(
+      (path) => pathsReferToSameFile(path, root) || findEntryByPath(tree, path) !== null
+    );
+    await Promise.all(present.map((path) => ensurePathLoaded(path, { force: true })));
+    // The root read failed: nothing beneath it can be read against a fresh parent.
+    if (useIDEStore.getState().dirtyPaths.has(root)) return;
+  }
+}
+
+function loadedDirectoryPaths(nodes: FileEntry[]): string[] {
+  const out: string[] = [];
+  for (const node of nodes) {
+    if (!node.isDir || node.children === undefined) continue;
+    out.push(node.path);
+    out.push(...loadedDirectoryPaths(node.children));
+  }
+  return out;
 }
 
 export function useEnsurePathLoaded(): typeof ensurePathLoaded {

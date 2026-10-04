@@ -1,14 +1,18 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useIDEStore } from '../../stores/ideStore';
 import { filesystem, runhistory } from '../../wails/bindings';
 
 // Mock Wails bindings
 const mockOpenFolderDialog = jest.fn();
+const mockReadDirectoryShallow = jest.fn((_path: string, _root: string) =>
+  Promise.resolve([] as filesystem.FileEntry[])
+);
 jest.mock('../../wails/bindings', () => {
   const actual = jest.requireActual('../../wails/bindings');
   return {
     ...actual,
     OpenFolderDialog: (...args: unknown[]) => mockOpenFolderDialog(...args),
+    ReadDirectoryShallow: (path: string, root: string) => mockReadDirectoryShallow(path, root),
   };
 });
 
@@ -324,15 +328,22 @@ describe('openWorkspaceByPath', () => {
     expect(mockWindowSetTitle).not.toHaveBeenCalled();
   });
 
-  it('should skip if already on the same workspace', () => {
+  it('refreshes the tree from disk instead of reopening when already on the same workspace', async () => {
+    mockReadDirectoryShallow.mockResolvedValue([]);
     useIDEStore.setState({
       workspace: { name: 'my-app', path: '/Users/test/my-app' },
     });
 
     openWorkspaceByPath('/Users/test/my-app');
 
-    // WindowSetTitle should not be called again
+    // Tree-only: no title change, no workspace switch, but the root is re-read (#256).
     expect(mockWindowSetTitle).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(mockReadDirectoryShallow).toHaveBeenCalledWith(
+        '/Users/test/my-app',
+        '/Users/test/my-app'
+      )
+    );
   });
 
   it('should optimistically update the recent workspaces list', () => {

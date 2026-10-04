@@ -31,19 +31,33 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
 }
 
 /**
- * The subset of `paths` under `root`, ancestor-first (root itself first), so a
- * caller hydrating them in order always has each parent loaded before its child.
+ * The directory levels to (re)load so every path in `paths` is reachable from
+ * `root`: the root first, then each path's ancestors under the root and the
+ * paths themselves, grouped by depth. Reading one level at a time keeps every
+ * parent loaded before its children get merged. Paths outside the root are
+ * dropped; duplicates (case-insensitive on drive-letter paths) collapse into
+ * the first spelling seen. Ancestors are spelled with the separators of the
+ * path they came from, so they match what the backend reports for the tree.
  */
-export function pathsUnderRootAncestorFirst(root: string, paths: Iterable<string>): string[] {
-  return Array.from(paths)
-    .map((path) => ({ path, rel: relativePathFromRoot(path, root) }))
-    .filter((item): item is { path: string; rel: string } => item.rel !== null)
-    .sort((a, b) => depth(a.rel) - depth(b.rel))
-    .map((item) => item.path);
-}
-
-function depth(rel: string): number {
-  return rel === '' ? 0 : rel.split('/').length;
+export function treeLoadLevels(root: string, paths: Iterable<string>): string[][] {
+  const levels: string[][] = [[root]];
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const rel = relativePathFromRoot(path, root);
+    if (!rel) continue;
+    const abs = path.replace(/[\\/]+$/, '');
+    const separator = abs.includes('\\') ? '\\' : '/';
+    const parts = abs.split(/[\\/]/);
+    const depth = rel.split('/').length;
+    for (let level = 1; level <= depth; level++) {
+      const ancestor = parts.slice(0, parts.length - (depth - level)).join(separator);
+      const key = normalizePathForComparison(ancestor);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      (levels[level] ??= []).push(ancestor);
+    }
+  }
+  return levels.filter((level) => level.length > 0);
 }
 
 function orderedWorkspaces(workspaces: workspace.WorkspaceDef[]): workspace.WorkspaceDef[] {

@@ -1119,7 +1119,12 @@ export const useIDEStore = create<IDEStore>()(
             const normalized = children ?? [];
             const root = state.workspace?.path;
             if (root && pathsReferToSameFile(path, root)) {
-              return { directoryTree: preserveLoadedChildren(state.directoryTree, normalized) };
+              // A root listing just arrived, so the root is readable: an error
+              // panel left by an earlier failed root read is stale.
+              return {
+                directoryTree: preserveLoadedChildren(state.directoryTree, normalized),
+                treeError: null,
+              };
             }
             const existing = findEntryByPath(state.directoryTree, path);
             const merged = preserveLoadedChildren(existing?.children, normalized);

@@ -1,5 +1,5 @@
 import {
-  pathsUnderRootAncestorFirst,
+  treeLoadLevels,
   createWorkspacePathResolver,
   getInfraFileAccent,
   relativePathFromRoot,
@@ -199,12 +199,21 @@ describe('createRegionAccentResolver', () => {
   });
 });
 
-describe('pathsUnderRootAncestorFirst', () => {
-  it('orders the root before its descendants, shallow before deep, and drops outsiders', () => {
-    expect(pathsUnderRootAncestorFirst('/ws', ['/ws/a/b', '/ws/a', '/other/x', '/ws'])).toEqual([
-      '/ws',
-      '/ws/a',
-      '/ws/a/b',
+describe('treeLoadLevels', () => {
+  it('starts at the root, adds missing ancestors, groups by depth and drops outsiders', () => {
+    expect(treeLoadLevels('/ws', ['/ws/a/b/c', '/ws/x', '/other/y', '/ws'])).toEqual([
+      ['/ws'],
+      ['/ws/a', '/ws/x'],
+      ['/ws/a/b'],
+      ['/ws/a/b/c'],
+    ]);
+  });
+
+  it('builds Windows ancestors with the separators it was given and dedupes by case', () => {
+    expect(treeLoadLevels('C:\\repo', ['C:\\repo\\a\\b', 'c:\\repo\\a', 'D:\\other\\x'])).toEqual([
+      ['C:\\repo'],
+      ['C:\\repo\\a'],
+      ['C:\\repo\\a\\b'],
     ]);
   });
 });
