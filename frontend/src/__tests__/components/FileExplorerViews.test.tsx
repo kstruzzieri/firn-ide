@@ -269,6 +269,44 @@ describe('FileExplorer views', () => {
     restoreVirtualLayout();
   });
 
+  it('re-reads a dirty scoped root even when it is collapsed and shows as empty (#256)', async () => {
+    // isRootExpanded is shared across views; a root collapsed in Project View
+    // plus a cached-empty scope renders the empty state, which has no toggle to
+    // expand. The reload must not wait for an expand that cannot happen.
+    const restoreVirtualLayout = installVirtualLayout(400);
+    seed('frontend', {
+      directoryTree: [
+        {
+          name: 'frontend',
+          path: `${root}/frontend`,
+          isDir: true,
+          children: [] as FileEntry[],
+        } as FileEntry,
+      ],
+      expandedPaths: new Set(),
+      isRootExpanded: false,
+      dirtyPaths: new Set([`${root}/frontend`]),
+    });
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) =>
+      Promise.resolve(
+        path === `${root}/frontend`
+          ? [{ name: 'New.tsx', path: `${root}/frontend/New.tsx`, isDir: false } as FileEntry]
+          : []
+      )
+    );
+
+    render(<FileExplorer />);
+
+    await waitFor(() =>
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/frontend`, root)
+    );
+    await waitFor(() =>
+      expect(useIDEStore.getState().dirtyPaths.has(`${root}/frontend`)).toBe(false)
+    );
+
+    restoreVirtualLayout();
+  });
+
   it('renders an unreadable scoped workspace on its synthetic root row', () => {
     const restoreVirtualLayout = installVirtualLayout(400);
     try {
