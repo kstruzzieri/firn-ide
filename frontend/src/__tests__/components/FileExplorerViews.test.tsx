@@ -74,6 +74,7 @@ function seed(
     isRootExpanded: true,
     isLoadingTree: false,
     treeError: null,
+    dirtyPaths: new Set(),
     ...extra,
   });
 }

@@ -170,11 +170,12 @@ export function FileExplorer() {
   // Workspace-View root reload: the scope dir is this view's visible root via
   // isRootExpanded, so it need not be in expandedPaths, and a disk reconcile
   // (open, same-path reopen) or a watcher event on a hidden dir only marks it
-  // dirty. Nothing else re-reads it, so the explorer reloads its own root (#256).
+  // dirty. Nothing else re-reads it, so the explorer reloads its own root while
+  // its children are showing; a collapsed root is read when it is expanded (#256).
   useEffect(() => {
-    if (mode !== 'workspace' || scopedError || !rootDirty || !rootPath) return;
+    if (mode !== 'workspace' || scopedError || !rootDirty || !rootPath || !isRootExpanded) return;
     void ensurePathLoaded(rootPath);
-  }, [mode, scopedError, rootDirty, rootPath, ensurePathLoaded]);
+  }, [mode, scopedError, rootDirty, rootPath, isRootExpanded, ensurePathLoaded]);
 
   const { openFolder } = useOpenFolder();
   const { refetch } = useFetchDirectoryTree();

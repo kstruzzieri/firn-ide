@@ -824,6 +824,23 @@ describe('useWorkspacePersistence', () => {
     expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
   });
 
+  it('still distrusts a painted cached tree when there is no saved state (#256)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce(null);
+    setCachedWorkspaceTree('/ws', [entry('/ws/lib', true, [entry('/ws/lib/old.ts', false)])]);
+    disk = { '/ws': [entry('/ws/lib')] };
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws', '/ws');
+    expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
+  });
+
   it('stops the reconcile below a root that failed to read (#256)', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({
       workspacePath: '/ws',

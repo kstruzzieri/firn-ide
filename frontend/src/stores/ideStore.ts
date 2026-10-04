@@ -167,6 +167,9 @@ interface IDEState {
 
   // File Explorer
   directoryTree: filesystem.FileEntry[];
+  // Bumped whenever a root listing read from disk is merged. Lets a root reader
+  // tell "another reader filled the root" from a snapshot or cache paint.
+  rootListingRevision: number;
   expandedPaths: Set<string>;
   loadingPaths: Set<string>;
   dirtyPaths: Set<string>;
@@ -987,6 +990,7 @@ export const useIDEStore = create<IDEStore>()(
       activeWorkspaceId: 'project',
       lastFocusedWorkspaceId: null,
       directoryTree: [],
+      rootListingRevision: 0,
       isLoadingTree: false,
       treeError: null,
       ...createDefaultWorkspaceSessionState(),
@@ -1123,6 +1127,7 @@ export const useIDEStore = create<IDEStore>()(
               // panel left by an earlier failed root read is stale.
               return {
                 directoryTree: preserveLoadedChildren(state.directoryTree, normalized),
+                rootListingRevision: state.rootListingRevision + 1,
                 treeError: null,
               };
             }

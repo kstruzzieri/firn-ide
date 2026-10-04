@@ -165,7 +165,11 @@ async function restoreWorkspaceState(
       // painted above (a same-session switch-back whose save never landed), and
       // it is as stale as any snapshot (#256).
       if (cachedTree !== undefined) {
-        await reconcileTreeWithDisk(workspacePath, [], () => signal.aborted);
+        await reconcileTreeWithDisk(
+          workspacePath,
+          useIDEStore.getState().expandedPaths,
+          () => signal.aborted
+        );
       }
       return;
     }
@@ -349,9 +353,15 @@ async function restoreWorkspaceState(
           'error'
         );
       // The cached tree painted before the load is still on screen and still
-      // stale (#256). reconcileTreeWithDisk never rejects.
+      // stale (#256). The live expandedPaths are right whether the load itself
+      // threw (the session reset emptied them) or a later restore step did
+      // (they were restored). reconcileTreeWithDisk never rejects.
       if (cachedTree !== undefined) {
-        await reconcileTreeWithDisk(workspacePath, [], () => signal.aborted);
+        await reconcileTreeWithDisk(
+          workspacePath,
+          useIDEStore.getState().expandedPaths,
+          () => signal.aborted
+        );
       }
     }
   } finally {

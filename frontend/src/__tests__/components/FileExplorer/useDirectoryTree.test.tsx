@@ -264,6 +264,34 @@ describe('useDirectoryTree', () => {
     expect(state.toast).toEqual({ message: 'Failed to refresh file tree', type: 'error' });
   });
 
+  it('still raises the error panel when a stale snapshot was painted during a failed uncached read (#256)', async () => {
+    // The restore painted last session's snapshot while this read was pending.
+    // A snapshot is not a root listing: the failure must not be downgraded to
+    // a toast, or the stale tree passes for live content.
+    let reject!: (reason: unknown) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReturnValue(
+      new Promise((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      })
+    );
+
+    renderHook(() => useDirectoryTree());
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/workspace', '/workspace');
+    });
+
+    act(() => {
+      useIDEStore.getState().setDirectoryTree([file('/workspace/last-session.ts')]);
+    });
+    await act(async () => {
+      reject(new Error('open /workspace: no such file or directory'));
+      await Promise.resolve();
+    });
+
+    expect(useIDEStore.getState().treeError).toBe('Failed to read directory');
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
   it('drops a root failure after the workspace closes', async () => {
     let reject!: (reason: unknown) => void;
     (ReadDirectoryShallow as jest.Mock).mockReturnValue(
