@@ -249,8 +249,9 @@ describe('useDirectoryTree', () => {
     });
 
     const fresh = [file('/workspace/fresh.ts')];
-    act(() => {
-      useIDEStore.getState().mergeChildren('/workspace', fresh);
+    (ReadDirectoryShallow as jest.Mock).mockResolvedValueOnce(fresh);
+    await act(async () => {
+      await ensurePathLoaded('/workspace', { force: true });
     });
     await act(async () => {
       reject(new Error('read timed out'));
@@ -262,6 +263,39 @@ describe('useDirectoryTree', () => {
     expect(state.directoryTree).toEqual(fresh);
     expect(state.isLoadingTree).toBe(false);
     expect(state.toast).toEqual({ message: 'Failed to refresh file tree', type: 'error' });
+  });
+
+  it('drops an older root listing that resolves after a newer reader merged (#256)', async () => {
+    // Same-path reopen while the initial read is pending: the reopen's read
+    // starts later and lands first. The initial read's listing predates it and
+    // must not remove what the newer listing added.
+    let resolveOld!: (entries: FileEntry[]) => void;
+    (ReadDirectoryShallow as jest.Mock)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        })
+      )
+      .mockResolvedValueOnce([file('/workspace/old.ts'), file('/workspace/added-later.ts')]);
+
+    renderHook(() => useDirectoryTree());
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/workspace', '/workspace');
+    });
+
+    await act(async () => {
+      await ensurePathLoaded('/workspace', { force: true });
+    });
+    await act(async () => {
+      resolveOld([file('/workspace/old.ts')]);
+      await Promise.resolve();
+    });
+
+    expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual([
+      '/workspace/old.ts',
+      '/workspace/added-later.ts',
+    ]);
+    expect(useIDEStore.getState().isLoadingTree).toBe(false);
   });
 
   it('still raises the error panel when a stale snapshot was painted during a failed uncached read (#256)', async () => {

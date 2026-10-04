@@ -13,9 +13,48 @@ interface InFlightLoad {
 
 const inFlight = new Map<string, InFlightLoad>();
 
-/** TEST-ONLY: clear the in-flight cache between tests. */
+// Root listings come from two readers: useDirectoryTree (skeleton and error
+// panel) and ensurePathLoaded (watcher, restore reconcile, same-path reopen).
+// Their reads can overlap, and the one that started later holds the newer
+// listing whichever resolves first. Tickets order reads by start so an older
+// listing never overwrites a newer one, and a failed read can tell whether a
+// listing was merged while it was in flight (#256).
+let nextRootTicket = 0;
+let newestMergedRootTicket = 0;
+let rootMerges = 0;
+
+export interface RootRead {
+  ticket: number;
+  mergesAtStart: number;
+}
+
+/** Call before issuing a root ReadDirectoryShallow. */
+export function beginRootRead(): RootRead {
+  return { ticket: ++nextRootTicket, mergesAtStart: rootMerges };
+}
+
+/**
+ * Call on a successful root read, before merging. False means a read that
+ * started later has already merged: drop this listing.
+ */
+export function commitRootRead(read: RootRead): boolean {
+  if (read.ticket < newestMergedRootTicket) return false;
+  newestMergedRootTicket = read.ticket;
+  rootMerges += 1;
+  return true;
+}
+
+/** True if any root listing was merged after this read started. */
+export function rootMergedSince(read: RootRead): boolean {
+  return rootMerges !== read.mergesAtStart;
+}
+
+/** TEST-ONLY: clear the in-flight cache and root read ordering between tests. */
 export function __resetEnsurePathLoaded(): void {
   inFlight.clear();
+  nextRootTicket = 0;
+  newestMergedRootTicket = 0;
+  rootMerges = 0;
 }
 
 interface EnsureOpts {
@@ -60,11 +99,13 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
   const existedBefore = isRoot || Boolean(findEntryByPath(store.directoryTree, path));
 
   useIDEStore.getState().addLoadingPath(path);
+  const rootRead = isRoot ? beginRootRead() : null;
   const promise = Promise.resolve()
     .then(() => ReadDirectoryShallow(path, root))
     .then((children) => {
       const after = useIDEStore.getState();
       if (after.workspace !== workspace) return; // stale workspace — drop
+      if (rootRead && !commitRootRead(rootRead)) return; // a newer root listing already merged
       after.mergeChildren(path, children);
       after.clearDirty(path);
     })

@@ -1,6 +1,8 @@
 import {
   ensurePathLoaded,
   reconcileTreeWithDisk,
+  beginRootRead,
+  commitRootRead,
   __resetEnsurePathLoaded,
 } from '../../hooks/useEnsurePathLoaded';
 import { useIDEStore } from '../../stores/ideStore';
@@ -300,5 +302,27 @@ describe('reconcileTreeWithDisk pruning (#256)', () => {
     await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
 
     expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/maybe']);
+  });
+});
+
+describe('root read ordering (#256)', () => {
+  it('drops an older root listing that resolves after a newer one merged', async () => {
+    let resolveOld!: (v: unknown) => void;
+    mockRead.mockReturnValue(
+      new Promise((r) => {
+        resolveOld = r;
+      })
+    );
+
+    const old = ensurePathLoaded('/r', { force: true });
+    // The other reader (useDirectoryTree) starts later and lands first: it
+    // takes a ticket, commits it and merges its listing.
+    const newer = beginRootRead();
+    expect(commitRootRead(newer)).toBe(true);
+    useIDEStore.getState().mergeChildren('/r', [dir('/r/a'), dir('/r/b')]);
+    resolveOld([dir('/r/a')]);
+    await old;
+
+    expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual(['/r/a', '/r/b']);
   });
 });
