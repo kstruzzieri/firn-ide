@@ -231,6 +231,39 @@ describe('useDirectoryTree', () => {
     expect(useIDEStore.getState().isLoadingTree).toBe(false);
   });
 
+  it('keeps a root filled by another reader when a stale uncached read fails (#256)', async () => {
+    // Same-path reopen: ensurePathLoaded refreshed the root while this hook's
+    // initial uncached read was still pending, and that older read then fails.
+    // Its failure is about a listing that was superseded, so it must not raise
+    // the error panel over the fresh tree.
+    let reject!: (reason: unknown) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReturnValue(
+      new Promise((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      })
+    );
+
+    renderHook(() => useDirectoryTree());
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/workspace', '/workspace');
+    });
+
+    const fresh = [file('/workspace/fresh.ts')];
+    act(() => {
+      useIDEStore.getState().mergeChildren('/workspace', fresh);
+    });
+    await act(async () => {
+      reject(new Error('read timed out'));
+      await Promise.resolve();
+    });
+
+    const state = useIDEStore.getState();
+    expect(state.treeError).toBeNull();
+    expect(state.directoryTree).toEqual(fresh);
+    expect(state.isLoadingTree).toBe(false);
+    expect(state.toast).toEqual({ message: 'Failed to refresh file tree', type: 'error' });
+  });
+
   it('drops a root failure after the workspace closes', async () => {
     let reject!: (reason: unknown) => void;
     (ReadDirectoryShallow as jest.Mock).mockReturnValue(

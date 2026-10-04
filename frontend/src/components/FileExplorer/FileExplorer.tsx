@@ -55,6 +55,7 @@ export function FileExplorer() {
   const gitStatusByPath = useGitStatusByPath();
 
   const ensurePathLoaded = useEnsurePathLoaded();
+  const rootDirty = useIDEStore((state) => state.dirtyPaths.has(rootPath));
   const toggleExpanded = useIDEStore((state) => state.toggleExpanded);
   const toggleRootExpanded = useIDEStore((state) => state.toggleRootExpanded);
   const setSelectedPath = useIDEStore((state) => state.setSelectedPath);
@@ -165,6 +166,15 @@ export function FileExplorer() {
     // scopedError triggers hydration when scope node is missing; workspace identity
     // invalidates a same-path close/reopen while rootPath handles ordinary switches.
   }, [mode, scopedError, rootPath, ensurePathLoaded, workspace]);
+
+  // Workspace-View root reload: the scope dir is this view's visible root via
+  // isRootExpanded, so it need not be in expandedPaths, and a disk reconcile
+  // (open, same-path reopen) or a watcher event on a hidden dir only marks it
+  // dirty. Nothing else re-reads it, so the explorer reloads its own root (#256).
+  useEffect(() => {
+    if (mode !== 'workspace' || scopedError || !rootDirty || !rootPath) return;
+    void ensurePathLoaded(rootPath);
+  }, [mode, scopedError, rootDirty, rootPath, ensurePathLoaded]);
 
   const { openFolder } = useOpenFolder();
   const { refetch } = useFetchDirectoryTree();

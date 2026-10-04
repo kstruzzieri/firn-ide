@@ -41,6 +41,11 @@ export function useDirectoryTree() {
       setTreeLoading(true);
     }
 
+    // ensurePathLoaded reads the root too (a same-path reopen, the restore's
+    // disk reconcile). If one of those filled the tree while this read was in
+    // flight, this read's failure is about a listing that was superseded: it
+    // must not raise the error panel over the fresh tree (#256).
+    const treeBefore = useIDEStore.getState().directoryTree;
     try {
       const entries = await ReadDirectoryShallow(workspace.path, workspace.path);
       const state = useIDEStore.getState();
@@ -50,7 +55,7 @@ export function useDirectoryTree() {
     } catch {
       const state = useIDEStore.getState();
       if (requestIdRef.current !== requestId || state.workspace !== workspace) return;
-      if (hasCachedTree) {
+      if (hasCachedTree || state.directoryTree !== treeBefore) {
         state.markDirty(workspace.path);
         state.showToast('Failed to refresh file tree', 'error');
         return;
