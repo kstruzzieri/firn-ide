@@ -592,6 +592,14 @@ describe('useWorkspacePersistence', () => {
       useIDEStore.getState().mergeChildren('/ws', fresh);
     });
 
+    // Hold the reconcile's own root read so the guard, not that read, is what
+    // keeps the stale snapshot off the screen.
+    let resolveRoot!: (entries: filesystem.FileEntry[]) => void;
+    mockReadDirectoryShallow.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRoot = resolve;
+      })
+    );
     await act(async () => {
       resolveLoad({
         workspacePath: '/ws',
@@ -603,8 +611,16 @@ describe('useWorkspacePersistence', () => {
         hiddenProfileIds: [],
       });
     });
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await waitFor(() => expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws', '/ws'));
+    expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual([
+      '/ws/old',
+      '/ws/created-while-closed',
+    ]);
 
+    await act(async () => {
+      resolveRoot(fresh);
+    });
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
     expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual([
       '/ws/old',
       '/ws/created-while-closed',
@@ -791,6 +807,78 @@ describe('useWorkspacePersistence', () => {
     expect(useIDEStore.getState().toast).toBeNull();
   });
 
+  it('still distrusts a painted cached tree when the saved state fails to load (#256)', async () => {
+    mockLoadWorkspaceState.mockRejectedValueOnce(new Error('state file corrupt'));
+    setCachedWorkspaceTree('/ws', [entry('/ws/lib', true, [entry('/ws/lib/old.ts', false)])]);
+    disk = { '/ws': [entry('/ws/lib')] };
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws', '/ws');
+    expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
+  });
+
+  it('stops the reconcile below a root that failed to read (#256)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/ws',
+      workspaceName: 'ws',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: ['/ws/src'],
+        rootExpanded: true,
+        treeSnapshot: [entry('/ws/src', true, [])],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+    mockReadDirectoryShallow.mockRejectedValue(new Error('open /ws: permission denied'));
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    // Nothing beneath an unreadable root can be checked against a fresh parent.
+    expect(readPaths()).toEqual(['/ws']);
+    expect(useIDEStore.getState().dirtyPaths.has('/ws')).toBe(true);
+  });
+
+  it('does not read an expanded path that is now a file (#256)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/ws',
+      workspaceName: 'ws',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      // build/ was an expanded directory; it is a file now.
+      explorer: { expandedPaths: ['/ws/build'], rootExpanded: true },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+    disk = { '/ws': [entry('/ws/build', false)] };
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+    expect(readPaths()).not.toContain('/ws/build');
+    expect(useIDEStore.getState().toast).toBeNull();
+    expect(useIDEStore.getState().directoryTree[0].unreadable).toBeFalsy();
+  });
+
   it('hydrates expanded paths in ancestor-first order on restore', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({
       workspacePath: '/r',
@@ -952,8 +1040,9 @@ describe('useWorkspacePersistence', () => {
     });
 
     // Workspace A is open with its tree cached (as the save subscription would
-    // have done while A was active).
+    // have done while A was active); the disk agrees with it.
     setCachedWorkspaceTree('/workspace/A', [treeA]);
+    disk = { '/workspace/A': [treeA] };
     useIDEStore.setState({
       workspace: { name: 'A', path: '/workspace/A' },
       directoryTree: [treeA],

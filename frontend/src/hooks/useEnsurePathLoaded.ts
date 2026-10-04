@@ -96,10 +96,12 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
  * loaded directory is marked dirty: the next expand re-reads it instead of
  * short-circuiting as already loaded. Then the root, each expanded path and
  * their ancestors are force-read level by level (parents before children; one
- * level's reads run concurrently). A path a fresh parent no longer lists is
- * skipped, not read: it is gone, which is not a load failure to toast about.
- * `stop` ends the walk early (the workspace changed, the restore was aborted).
- * Read failures are handled by ensurePathLoaded (dirty marker + toast).
+ * level's reads run concurrently). A path a fresh parent no longer lists as a
+ * directory is skipped, not read: it is gone or a file now, which is not a
+ * load failure to toast about. `stop` ends the walk early (the workspace
+ * changed, the restore was aborted). A read that fails leaves its row marked
+ * unreadable and dirty through ensurePathLoaded; since the dirs were just
+ * marked dirty, that counts as a retry and does not toast.
  */
 export async function reconcileTreeWithDisk(
   root: string,
@@ -114,10 +116,12 @@ export async function reconcileTreeWithDisk(
     if (stop()) return;
     const tree = useIDEStore.getState().directoryTree;
     const present = level.filter(
-      (path) => pathsReferToSameFile(path, root) || findEntryByPath(tree, path) !== null
+      (path) => pathsReferToSameFile(path, root) || findEntryByPath(tree, path)?.isDir === true
     );
     await Promise.all(present.map((path) => ensurePathLoaded(path, { force: true })));
-    // The root read failed: nothing beneath it can be read against a fresh parent.
+    // The root is dirty after its own read (it failed, or a watcher event on a
+    // collapsed root arrived mid-walk): nothing beneath it can be checked
+    // against a fresh parent, so stop rather than read against stale ones.
     if (useIDEStore.getState().dirtyPaths.has(root)) return;
   }
 }

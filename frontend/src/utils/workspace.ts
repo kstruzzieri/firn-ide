@@ -22,7 +22,7 @@ export function openWorkspaceByPath(folderPath: string) {
 
   // Already on this workspace: a reopen is a tree-only refresh. A full open
   // would pause run events and reset run state for no reason, but doing
-  // nothing leaves a tree that went stale while the project was closed (#256).
+  // nothing leaves whatever the watcher missed on screen indefinitely (#256).
   if (store.workspace?.path === folderPath) {
     void reconcileTreeWithDisk(
       folderPath,

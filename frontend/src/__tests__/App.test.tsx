@@ -9,6 +9,7 @@ import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
+import { clearWorkspaceTreeCache } from '../utils/workspaceTreeCache';
 import { useSearchStore } from '../stores/searchStore';
 import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
 import { __resetEnsurePathLoaded } from '../hooks/useEnsurePathLoaded';
@@ -154,6 +155,9 @@ describe('App Component', () => {
     mockReadFile.mockReset();
     mockUseFileWatcher.mockReset();
     __resetEnsurePathLoaded();
+    // The tree cache is module-level: a tree cached by an earlier test would
+    // make the restore reconcile this test's workspace with disk.
+    clearWorkspaceTreeCache();
     mockDidOpen.mockClear();
     mockDidChange.mockClear();
     mockDidSave.mockClear();

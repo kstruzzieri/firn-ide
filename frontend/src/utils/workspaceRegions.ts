@@ -57,7 +57,8 @@ export function treeLoadLevels(root: string, paths: Iterable<string>): string[][
       (levels[level] ??= []).push(ancestor);
     }
   }
-  return levels.filter((level) => level.length > 0);
+  // No holes: a path at depth d pushes every level 1..d on its way down.
+  return levels;
 }
 
 function orderedWorkspaces(workspaces: workspace.WorkspaceDef[]): workspace.WorkspaceDef[] {

@@ -142,9 +142,8 @@ async function restoreWorkspaceState(
   const store = useIDEStore.getState();
   store.setRestoringWorkspace(true);
 
+  const cachedTree = getCachedWorkspaceTree(workspacePath);
   try {
-    const cachedTree = getCachedWorkspaceTree(workspacePath);
-
     // Reset workspace-scoped state before applying saved values.
     store.resetWorkspaceSession();
 
@@ -161,7 +160,15 @@ async function restoreWorkspaceState(
     if (signal.aborted) return;
     const reported = reportedSaveFailures.get(workspacePath);
     if (reported !== undefined) reported.rearmed = true;
-    if (!state) return; // first time opening, use defaults
+    if (!state) {
+      // First time opening, use defaults. A cached tree may still have been
+      // painted above (a same-session switch-back whose save never landed), and
+      // it is as stale as any snapshot (#256).
+      if (cachedTree !== undefined) {
+        await reconcileTreeWithDisk(workspacePath, [], () => signal.aborted);
+      }
+      return;
+    }
 
     // Restore layout
     if (state.layout) {
@@ -248,12 +255,13 @@ async function restoreWorkspaceState(
         live.treeError === null &&
         treeSnapshotBelongsTo(state.explorer.treeSnapshot, workspacePath)
       ) {
-        setCachedWorkspaceTree(workspacePath, state.explorer.treeSnapshot);
+        // The subscription below caches it as the tree changes.
         store.setDirectoryTree(state.explorer.treeSnapshot);
       }
 
       // Whatever was just painted (snapshot or cache) was saved before the
-      // project was closed. Re-read what is visible and distrust the rest (#256).
+      // project was closed. Re-read the root, the expanded paths and the
+      // ancestors that lead to them, and distrust the rest (#256).
       await reconcileTreeWithDisk(
         workspacePath,
         state.explorer.expandedPaths ?? [],
@@ -340,6 +348,11 @@ async function restoreWorkspaceState(
           `Failed to restore workspace session: ${err instanceof Error ? err.message : String(err)}`,
           'error'
         );
+      // The cached tree painted before the load is still on screen and still
+      // stale (#256). reconcileTreeWithDisk never rejects.
+      if (cachedTree !== undefined) {
+        await reconcileTreeWithDisk(workspacePath, [], () => signal.aborted);
+      }
     }
   } finally {
     if (!signal.aborted) {
