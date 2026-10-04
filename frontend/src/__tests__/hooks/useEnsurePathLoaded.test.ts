@@ -257,6 +257,43 @@ it('keeps a failed root refresh explicit without annotating its children', async
 });
 
 describe('reconcileTreeWithDisk pruning (#256)', () => {
+  it('refreshes a POSIX directory containing a literal backslash', async () => {
+    const path = '/r/a\\b';
+    useIDEStore.setState({
+      directoryTree: [dir(path, [])],
+      expandedPaths: new Set([path]),
+    });
+    mockRead.mockImplementation((requested: string) => {
+      if (requested === '/r') return Promise.resolve([dir(path)]);
+      if (requested === path) return Promise.resolve([dir('/r/a\\b/fresh')]);
+      return Promise.reject(new Error(`Unexpected directory: ${requested}`));
+    });
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    const state = useIDEStore.getState();
+    expect(state.directoryTree[0].children?.map((child) => child.path)).toEqual(['/r/a\\b/fresh']);
+    expect(state.directoryTree[0].unreadable).toBe(false);
+    expect(state.dirtyPaths.has(path)).toBe(false);
+    expect(state.toast).toBeNull();
+  });
+
+  it.each(['/r/gone\\dir', '/r/trailing\\'])(
+    'forgets a removed POSIX directory with a literal backslash: %s',
+    async (path) => {
+      useIDEStore.setState({
+        directoryTree: [dir(path, [])],
+        expandedPaths: new Set([path]),
+      });
+      mockRead.mockResolvedValue([]);
+
+      await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+      expect(useIDEStore.getState().expandedPaths.size).toBe(0);
+      expect(useIDEStore.getState().toast).toBeNull();
+    }
+  );
+
   it('drops an expanded path its freshly read parent no longer lists as a directory', async () => {
     useIDEStore.setState({
       directoryTree: [dir('/r/a'), dir('/r/gone', [])],

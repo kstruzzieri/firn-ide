@@ -5,6 +5,7 @@ import type { workspace } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
 import { ReadDirectoryShallow } from '../../wails/bindings';
 import { __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import { openWorkspaceByPath } from '../../utils/workspace';
 import { installVirtualLayout } from '../helpers/virtualTree';
 
 // Mock Wails bindings (pulled in transitively via layout/IDEShell and useDirectoryTree)
@@ -267,6 +268,51 @@ describe('FileExplorer views', () => {
     expect(useIDEStore.getState().dirtyPaths.has(`${root}/frontend`)).toBe(false);
 
     restoreVirtualLayout();
+  });
+
+  it('retries a failed visible workspace root when its project is reselected (#256)', async () => {
+    const restoreVirtualLayout = installVirtualLayout(400);
+    try {
+      const scope = { name: 'frontend', path: `${root}/frontend`, isDir: true } as FileEntry;
+      const recoveredChild = {
+        name: 'Recovered.tsx',
+        path: `${root}/frontend/Recovered.tsx`,
+        isDir: false,
+      } as FileEntry;
+      seed('frontend', {
+        directoryTree: [{ ...scope, children: [] }],
+        expandedPaths: new Set(),
+        dirtyPaths: new Set([scope.path]),
+        loadingPaths: new Set(),
+      });
+      let scopeAvailable = false;
+      (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) => {
+        if (path === root) return Promise.resolve([scope]);
+        if (path === scope.path && scopeAvailable) return Promise.resolve([recoveredChild]);
+        return Promise.reject(new Error('temporary read failure'));
+      });
+
+      render(<FileExplorer />);
+      await waitFor(() => {
+        expect(useIDEStore.getState().directoryTree[0].unreadable).toBe(true);
+        expect(useIDEStore.getState().loadingPaths.size).toBe(0);
+      });
+      expect(useIDEStore.getState().dirtyPaths.has(scope.path)).toBe(true);
+
+      scopeAvailable = true;
+      act(() => {
+        openWorkspaceByPath(root);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('treeitem', { name: 'Recovered.tsx' })).toBeInTheDocument();
+      });
+      expect(useIDEStore.getState().directoryTree[0].unreadable).toBe(false);
+      expect(useIDEStore.getState().dirtyPaths.has(scope.path)).toBe(false);
+      expect(useIDEStore.getState().expandedPaths.size).toBe(0);
+    } finally {
+      restoreVirtualLayout();
+    }
   });
 
   it('re-reads a dirty scoped root even when it is collapsed and shows as empty (#256)', async () => {

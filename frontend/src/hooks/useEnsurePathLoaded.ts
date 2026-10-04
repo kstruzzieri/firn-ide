@@ -167,7 +167,7 @@ export async function reconcileTreeWithDisk(
     for (const path of level) {
       if (pathsReferToSameFile(path, root) || findEntryByPath(tree, path)?.isDir === true) {
         present.push(path);
-      } else if (fresh.some((f) => pathsReferToSameFile(f, parentPath(path)))) {
+      } else if (fresh.some((f) => pathsReferToSameFile(f, parentPath(path, root)))) {
         gone.push(path);
       }
     }
@@ -182,8 +182,11 @@ export async function reconcileTreeWithDisk(
   }
 }
 
-function parentPath(path: string): string {
-  return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
+function parentPath(path: string, root: string): string {
+  // Use the root's path syntax: a backslash in a POSIX name is not a boundary.
+  return /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root)
+    ? path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')
+    : path.replace(/\/+$/, '').replace(/\/[^/]*$/, '');
 }
 
 function forgetExpanded(gone: string[]): void {

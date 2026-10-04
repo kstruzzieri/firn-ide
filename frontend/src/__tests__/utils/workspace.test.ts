@@ -7,6 +7,7 @@ jest.mock('../../wails/bindings', () => ({ ReadDirectoryShallow: jest.fn() }));
 import { openWorkspaceByPath, shortenPath } from '../../utils/workspace';
 import { useIDEStore, type FileEntry } from '../../stores/ideStore';
 import { ReadDirectoryShallow } from '../../wails/bindings';
+import type { workspace } from '../../wails/bindings';
 import { __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
 import { act } from 'react';
 import { waitFor } from '@testing-library/react';
@@ -28,6 +29,8 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     mockRead.mockReset();
     useIDEStore.setState({
       workspace: { name: 'ws', path: '/ws' },
+      workspaces: [],
+      activeWorkspaceId: 'project',
       directoryTree: [dir('/ws/src', [dir('/ws/src/a')])],
       expandedPaths: new Set(['/ws/src']),
       loadingPaths: new Set(),
@@ -114,6 +117,41 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     expect(mockRead).not.toHaveBeenCalledWith('/ws/lib', '/ws');
     expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
   });
+
+  it.each([
+    ['/ws', '/ws/frontend', '/ws/frontend/go'],
+    ['/ws\\', '/ws\\/frontend', '/ws\\/frontend/go'],
+    ['C:\\ws', 'C:\\ws\\frontend', 'C:\\ws\\frontend\\go'],
+    ['\\\\server\\ws', '\\\\server\\ws\\frontend', '\\\\server\\ws\\frontend\\go'],
+  ])(
+    'loads the active nested workspace under %s without expanding it',
+    async (root, parent, scope) => {
+      const child = { name: 'main.go', path: `${scope}/main.go`, isDir: false } as FileEntry;
+      useIDEStore.setState({
+        workspace: { name: 'ws', path: root },
+        workspaces: [
+          { id: 'go', name: 'Go', relDir: 'frontend/go', type: 'go', accent: 'go' },
+        ] as workspace.WorkspaceDef[],
+        activeWorkspaceId: 'go',
+        directoryTree: [dir(parent)],
+        expandedPaths: new Set(),
+      });
+      mockRead.mockImplementation((path: string) => {
+        if (path === root) return Promise.resolve([dir(parent)]);
+        if (path === parent) return Promise.resolve([dir(scope)]);
+        if (path === scope) return Promise.resolve([child]);
+        return Promise.reject(new Error(`Unexpected directory: ${path}`));
+      });
+
+      act(() => {
+        openWorkspaceByPath(root);
+      });
+      await waitFor(() => {
+        expect(useIDEStore.getState().directoryTree[0]?.children?.[0]?.children).toEqual([child]);
+      });
+      expect(useIDEStore.getState().expandedPaths.size).toBe(0);
+    }
+  );
 });
 
 describe('shortenPath', () => {

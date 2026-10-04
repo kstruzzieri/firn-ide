@@ -38,20 +38,25 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
  * dropped; duplicates (case-insensitive on drive-letter paths) collapse into
  * the first spelling seen. Ancestors are spelled with the separators of the
  * path they came from, so they match what the backend reports for the tree.
+ * Only Windows roots treat backslashes as separators; POSIX names retain them.
  */
 export function treeLoadLevels(root: string, paths: Iterable<string>): string[][] {
   const levels: string[][] = [[root]];
   const seen = new Set<string>();
+  const windows = /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root);
+  const compare = (path: string) => (windows ? normalizePathForComparison(path) : path);
+  const rootKey = compare(root).replace(/\/+$/, '');
   for (const path of paths) {
-    const rel = relativePathFromRoot(path, root);
-    if (!rel) continue;
-    const abs = path.replace(/[\\/]+$/, '');
-    const separator = abs.includes('\\') ? '\\' : '/';
-    const parts = abs.split(/[\\/]/);
+    const pathKey = compare(path).replace(/\/+$/, '');
+    if (!pathKey.startsWith(`${rootKey}/`)) continue;
+    const rel = pathKey.slice(rootKey.length + 1);
+    const abs = path.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+    const separator = windows && abs.includes('\\') ? '\\' : '/';
+    const parts = windows ? abs.split(/[\\/]/) : abs.split('/');
     const depth = rel.split('/').length;
     for (let level = 1; level <= depth; level++) {
       const ancestor = parts.slice(0, parts.length - (depth - level)).join(separator);
-      const key = normalizePathForComparison(ancestor);
+      const key = compare(ancestor);
       if (seen.has(key)) continue;
       seen.add(key);
       (levels[level] ??= []).push(ancestor);

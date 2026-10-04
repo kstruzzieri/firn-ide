@@ -27,9 +27,19 @@ export function openWorkspaceByPath(folderPath: string) {
   // doing nothing leaves whatever the watcher missed on screen indefinitely (#256).
   const active = store.workspace;
   if (active && relativePathFromRoot(folderPath, active.path) === '') {
+    const visiblePaths = new Set(store.expandedPaths);
+    const scope = store.workspaces.find((w) => w.id === store.activeWorkspaceId);
+    if (scope?.id !== 'project' && scope?.relDir) {
+      // Workspace View's root need not be expanded. Include it explicitly so
+      // reselecting also retries a failed read whose dirty flag is already set.
+      const windows = /^[a-z]:[\\/]|^\\\\|^\/\//i.test(active.path);
+      const separator = windows && active.path.includes('\\') ? '\\' : '/';
+      const root = active.path.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+      visiblePaths.add(`${root}${separator}${scope.relDir.split('/').join(separator)}`);
+    }
     void reconcileTreeWithDisk(
       active.path,
-      store.expandedPaths,
+      visiblePaths,
       () => useIDEStore.getState().workspace?.path !== active.path
     );
     return;

@@ -200,6 +200,19 @@ describe('createRegionAccentResolver', () => {
 });
 
 describe('treeLoadLevels', () => {
+  it('preserves literal POSIX backslashes without inventing or merging ancestors', () => {
+    expect(treeLoadLevels('/ws', ['/ws/a\\b/c', '/ws/a/b', '/ws/tail\\'])).toEqual([
+      ['/ws'],
+      ['/ws/a\\b', '/ws/a', '/ws/tail\\'],
+      ['/ws/a\\b/c', '/ws/a/b'],
+    ]);
+    expect(treeLoadLevels('/ws\\repo', ['/ws\\repo/src/sub'])).toEqual([
+      ['/ws\\repo'],
+      ['/ws\\repo/src'],
+      ['/ws\\repo/src/sub'],
+    ]);
+  });
+
   it('starts at the root, adds missing ancestors, groups by depth and drops outsiders', () => {
     expect(treeLoadLevels('/ws', ['/ws/a/b/c', '/ws/x', '/other/y', '/ws'])).toEqual([
       ['/ws'],
@@ -214,6 +227,14 @@ describe('treeLoadLevels', () => {
       ['C:\\repo'],
       ['C:\\repo\\a'],
       ['C:\\repo\\a\\b'],
+    ]);
+  });
+
+  it('accepts forward-slash UNC roots with native Windows descendants', () => {
+    expect(treeLoadLevels('//server/share', ['\\\\server\\share\\src\\inner'])).toEqual([
+      ['//server/share'],
+      ['\\\\server\\share\\src'],
+      ['\\\\server\\share\\src\\inner'],
     ]);
   });
 });
