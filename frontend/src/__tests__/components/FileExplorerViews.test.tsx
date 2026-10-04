@@ -5,6 +5,7 @@ import type { workspace } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
 import { ReadDirectoryShallow } from '../../wails/bindings';
 import { __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import { openWorkspaceByPath } from '../../utils/workspace';
 import { installVirtualLayout } from '../helpers/virtualTree';
 
 // Mock Wails bindings (pulled in transitively via layout/IDEShell and useDirectoryTree)
@@ -74,6 +75,7 @@ function seed(
     isRootExpanded: true,
     isLoadingTree: false,
     treeError: null,
+    dirtyPaths: new Set(),
     ...extra,
   });
 }
@@ -224,6 +226,129 @@ describe('FileExplorer views', () => {
       expect(screen.queryByText(/no files in workspace/i)).not.toBeInTheDocument();
       expect(screen.getByText('App.tsx')).toBeInTheDocument();
     });
+
+    restoreVirtualLayout();
+  });
+
+  it('re-reads a dirty scoped root instead of trusting its cached children (#256)', async () => {
+    // The scope dir is the visible root in Workspace View, driven by isRootExpanded,
+    // not expandedPaths. A disk reconcile marks it dirty but only reads what is in
+    // expandedPaths, so the explorer must reload its own dirty root.
+    const restoreVirtualLayout = installVirtualLayout(400);
+    const staleTree: FileEntry[] = [
+      {
+        name: 'frontend',
+        path: `${root}/frontend`,
+        isDir: true,
+        children: [
+          { name: 'Old.tsx', path: `${root}/frontend/Old.tsx`, isDir: false } as FileEntry,
+        ],
+      } as FileEntry,
+    ];
+    seed('frontend', {
+      directoryTree: staleTree,
+      expandedPaths: new Set(),
+      dirtyPaths: new Set([`${root}/frontend`]),
+    });
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) =>
+      Promise.resolve(
+        path === `${root}/frontend`
+          ? [{ name: 'New.tsx', path: `${root}/frontend/New.tsx`, isDir: false } as FileEntry]
+          : []
+      )
+    );
+
+    render(<FileExplorer />);
+
+    await waitFor(() => {
+      expect(screen.getByText('New.tsx')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Old.tsx')).not.toBeInTheDocument();
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/frontend`, root);
+    expect(useIDEStore.getState().dirtyPaths.has(`${root}/frontend`)).toBe(false);
+
+    restoreVirtualLayout();
+  });
+
+  it('retries a failed visible workspace root when its project is reselected (#256)', async () => {
+    const restoreVirtualLayout = installVirtualLayout(400);
+    try {
+      const scope = { name: 'frontend', path: `${root}/frontend`, isDir: true } as FileEntry;
+      const recoveredChild = {
+        name: 'Recovered.tsx',
+        path: `${root}/frontend/Recovered.tsx`,
+        isDir: false,
+      } as FileEntry;
+      seed('frontend', {
+        directoryTree: [{ ...scope, children: [] }],
+        expandedPaths: new Set(),
+        dirtyPaths: new Set([scope.path]),
+        loadingPaths: new Set(),
+      });
+      let scopeAvailable = false;
+      (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) => {
+        if (path === root) return Promise.resolve([scope]);
+        if (path === scope.path && scopeAvailable) return Promise.resolve([recoveredChild]);
+        return Promise.reject(new Error('temporary read failure'));
+      });
+
+      render(<FileExplorer />);
+      await waitFor(() => {
+        expect(useIDEStore.getState().directoryTree[0].unreadable).toBe(true);
+        expect(useIDEStore.getState().loadingPaths.size).toBe(0);
+      });
+      expect(useIDEStore.getState().dirtyPaths.has(scope.path)).toBe(true);
+
+      scopeAvailable = true;
+      act(() => {
+        openWorkspaceByPath(root);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('treeitem', { name: 'Recovered.tsx' })).toBeInTheDocument();
+      });
+      expect(useIDEStore.getState().directoryTree[0].unreadable).toBe(false);
+      expect(useIDEStore.getState().dirtyPaths.has(scope.path)).toBe(false);
+      expect(useIDEStore.getState().expandedPaths.size).toBe(0);
+    } finally {
+      restoreVirtualLayout();
+    }
+  });
+
+  it('re-reads a dirty scoped root even when it is collapsed and shows as empty (#256)', async () => {
+    // isRootExpanded is shared across views; a root collapsed in Project View
+    // plus a cached-empty scope renders the empty state, which has no toggle to
+    // expand. The reload must not wait for an expand that cannot happen.
+    const restoreVirtualLayout = installVirtualLayout(400);
+    seed('frontend', {
+      directoryTree: [
+        {
+          name: 'frontend',
+          path: `${root}/frontend`,
+          isDir: true,
+          children: [] as FileEntry[],
+        } as FileEntry,
+      ],
+      expandedPaths: new Set(),
+      isRootExpanded: false,
+      dirtyPaths: new Set([`${root}/frontend`]),
+    });
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) =>
+      Promise.resolve(
+        path === `${root}/frontend`
+          ? [{ name: 'New.tsx', path: `${root}/frontend/New.tsx`, isDir: false } as FileEntry]
+          : []
+      )
+    );
+
+    render(<FileExplorer />);
+
+    await waitFor(() =>
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith(`${root}/frontend`, root)
+    );
+    await waitFor(() =>
+      expect(useIDEStore.getState().dirtyPaths.has(`${root}/frontend`)).toBe(false)
+    );
 
     restoreVirtualLayout();
   });

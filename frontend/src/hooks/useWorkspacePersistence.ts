@@ -14,7 +14,7 @@ import { pathsReferToSameFile } from '../utils/lspUri';
 import { relativePathFromRoot } from '../utils/workspaceRegions';
 import { normalizeCenterLayout } from '../utils/centerLayout';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
-import { ensurePathLoaded } from './useEnsurePathLoaded';
+import { reconcileTreeWithDisk } from './useEnsurePathLoaded';
 import { drainRunHistoryForClose } from './useRunOutput';
 
 const SAVE_DEBOUNCE_MS = 2000;
@@ -142,9 +142,8 @@ async function restoreWorkspaceState(
   const store = useIDEStore.getState();
   store.setRestoringWorkspace(true);
 
+  const cachedTree = getCachedWorkspaceTree(workspacePath);
   try {
-    const cachedTree = getCachedWorkspaceTree(workspacePath);
-
     // Reset workspace-scoped state before applying saved values.
     store.resetWorkspaceSession();
 
@@ -152,11 +151,28 @@ async function restoreWorkspaceState(
       store.setDirectoryTree(cachedTree);
     }
 
+    // The explorer's fresh root read (useDirectoryTree) races this load. If it
+    // lands first, the saved snapshot below is older than what is on screen and
+    // must not be painted over it; if it failed, painting the snapshot would
+    // hide the error behind a stale listing (#256).
+    const treeBeforeLoad = useIDEStore.getState().directoryTree;
     const state = await LoadWorkspaceState(workspacePath);
     if (signal.aborted) return;
     const reported = reportedSaveFailures.get(workspacePath);
     if (reported !== undefined) reported.rearmed = true;
-    if (!state) return; // first time opening, use defaults
+    if (!state) {
+      // First time opening, use defaults. A cached tree may still have been
+      // painted above (a same-session switch-back whose save never landed), and
+      // it is as stale as any snapshot (#256).
+      if (cachedTree !== undefined) {
+        await reconcileTreeWithDisk(
+          workspacePath,
+          useIDEStore.getState().expandedPaths,
+          () => signal.aborted
+        );
+      }
+      return;
+    }
 
     // Restore layout
     if (state.layout) {
@@ -236,26 +252,25 @@ async function restoreWorkspaceState(
       // Only apply a snapshot that actually belongs to this workspace. A
       // foreign snapshot is disk pollution from a prior buggy switch; ignoring
       // it here self-heals that state — fetchTree then repopulates correctly.
+      const live = useIDEStore.getState();
       if (
         state.explorer.treeSnapshot &&
+        live.directoryTree === treeBeforeLoad &&
+        live.treeError === null &&
         treeSnapshotBelongsTo(state.explorer.treeSnapshot, workspacePath)
       ) {
-        setCachedWorkspaceTree(workspacePath, state.explorer.treeSnapshot);
+        // The subscription below caches it as the tree changes.
         store.setDirectoryTree(state.explorer.treeSnapshot);
       }
 
-      // Hydrate each persisted expanded path so restored subtrees are fresh,
-      // not reliant on the (optional) treeSnapshot for correctness.
-      // ponytail: ancestor-first ensures parent nodes exist before children are merged.
-      const expanded = state.explorer.expandedPaths ?? [];
-      const underRoot = expanded
-        .map((path) => ({ path, rel: relativePathFromRoot(path, workspacePath) }))
-        .filter((item): item is { path: string; rel: string } => item.rel !== null)
-        .sort((a, b) => a.rel.split('/').length - b.rel.split('/').length);
-      for (const { path } of underRoot) {
-        if (signal.aborted) return;
-        await ensurePathLoaded(path);
-      }
+      // Whatever was just painted (snapshot or cache) was saved before the
+      // project was closed. Re-read the root, the expanded paths and the
+      // ancestors that lead to them, and distrust the rest (#256).
+      await reconcileTreeWithDisk(
+        workspacePath,
+        state.explorer.expandedPaths ?? [],
+        () => signal.aborted
+      );
     }
 
     if (signal.aborted) return;
@@ -337,6 +352,17 @@ async function restoreWorkspaceState(
           `Failed to restore workspace session: ${err instanceof Error ? err.message : String(err)}`,
           'error'
         );
+      // The cached tree painted before the load is still on screen and still
+      // stale (#256). The live expandedPaths are right whether the load itself
+      // threw (the session reset emptied them) or a later restore step did
+      // (they were restored). reconcileTreeWithDisk never rejects.
+      if (cachedTree !== undefined) {
+        await reconcileTreeWithDisk(
+          workspacePath,
+          useIDEStore.getState().expandedPaths,
+          () => signal.aborted
+        );
+      }
     }
   } finally {
     if (!signal.aborted) {
@@ -504,12 +530,16 @@ export function useWorkspacePersistence(
     if (!workspace) return;
 
     const unsubscribe = useIDEStore.subscribe((state, prevState) => {
-      if (state.isRestoringWorkspace) return;
       if (state.workspace?.path !== prevState.workspace?.path) return;
 
+      // Also during a restore: the fresh reads that reconcile the tree with
+      // disk land while isRestoringWorkspace is set, and the switch-away flush
+      // serializes this cache as the path's snapshot (#256).
       if (state.workspace?.path && state.directoryTree !== prevState.directoryTree) {
         setCachedWorkspaceTree(state.workspace.path, state.directoryTree);
       }
+
+      if (state.isRestoringWorkspace) return;
 
       const treeChanged = state.directoryTree !== prevState.directoryTree;
       const shouldSaveTree = treeChanged;

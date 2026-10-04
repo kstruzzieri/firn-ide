@@ -1,4 +1,10 @@
-import { ensurePathLoaded, __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import {
+  ensurePathLoaded,
+  reconcileTreeWithDisk,
+  beginRootRead,
+  commitRootRead,
+  __resetEnsurePathLoaded,
+} from '../../hooks/useEnsurePathLoaded';
 import { useIDEStore } from '../../stores/ideStore';
 import { ReadDirectoryShallow } from '../../wails/bindings';
 import type { FileEntry } from '../../stores/ideStore';
@@ -248,4 +254,112 @@ it('keeps a failed root refresh explicit without annotating its children', async
   expect(state.dirtyPaths.has('/r')).toBe(true);
   expect(state.treeError).toBeNull();
   expect(state.toast).toEqual({ message: 'Failed to load r', type: 'error' });
+});
+
+describe('reconcileTreeWithDisk pruning (#256)', () => {
+  it('refreshes a POSIX directory containing a literal backslash', async () => {
+    const path = '/r/a\\b';
+    useIDEStore.setState({
+      directoryTree: [dir(path, [])],
+      expandedPaths: new Set([path]),
+    });
+    mockRead.mockImplementation((requested: string) => {
+      if (requested === '/r') return Promise.resolve([dir(path)]);
+      if (requested === path) return Promise.resolve([dir('/r/a\\b/fresh')]);
+      return Promise.reject(new Error(`Unexpected directory: ${requested}`));
+    });
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    const state = useIDEStore.getState();
+    expect(state.directoryTree[0].children?.map((child) => child.path)).toEqual(['/r/a\\b/fresh']);
+    expect(state.directoryTree[0].unreadable).toBe(false);
+    expect(state.dirtyPaths.has(path)).toBe(false);
+    expect(state.toast).toBeNull();
+  });
+
+  it.each(['/r/gone\\dir', '/r/trailing\\'])(
+    'forgets a removed POSIX directory with a literal backslash: %s',
+    async (path) => {
+      useIDEStore.setState({
+        directoryTree: [dir(path, [])],
+        expandedPaths: new Set([path]),
+      });
+      mockRead.mockResolvedValue([]);
+
+      await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+      expect(useIDEStore.getState().expandedPaths.size).toBe(0);
+      expect(useIDEStore.getState().toast).toBeNull();
+    }
+  );
+
+  it('drops an expanded path its freshly read parent no longer lists as a directory', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a'), dir('/r/gone', [])],
+      expandedPaths: new Set(['/r/a', '/r/gone', '/r/a/deep']),
+    });
+    mockRead.mockImplementation((path: string) =>
+      Promise.resolve(path === '/r' ? [dir('/r/a')] : path === '/r/a' ? [dir('/r/a/deep')] : [])
+    );
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/a/deep']);
+  });
+
+  it('keeps every descendant of a parent whose read failed, not just its children', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a')],
+      expandedPaths: new Set(['/r/a', '/r/a/b', '/r/a/b/c']),
+    });
+    mockRead.mockImplementation((path: string) =>
+      path === '/r'
+        ? Promise.resolve([dir('/r/a')])
+        : Promise.reject(new Error(`open ${path}: EIO`))
+    );
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    // /r/a/b was never read, so /r/a/b/c has no fresh parent listing to be judged by.
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual([
+      '/r/a',
+      '/r/a/b',
+      '/r/a/b/c',
+    ]);
+  });
+
+  it('keeps expanded paths when the parent read failed, since its listing is not fresh', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a')],
+      expandedPaths: new Set(['/r/a', '/r/maybe']),
+    });
+    mockRead.mockRejectedValue(new Error('open /r: permission denied'));
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/maybe']);
+  });
+});
+
+describe('root read ordering (#256)', () => {
+  it('drops an older root listing that resolves after a newer one merged', async () => {
+    let resolveOld!: (v: unknown) => void;
+    mockRead.mockReturnValue(
+      new Promise((r) => {
+        resolveOld = r;
+      })
+    );
+
+    const old = ensurePathLoaded('/r', { force: true });
+    // The other reader (useDirectoryTree) starts later and lands first: it
+    // takes a ticket, commits it and merges its listing.
+    const newer = beginRootRead();
+    expect(commitRootRead(newer)).toBe(true);
+    useIDEStore.getState().mergeChildren('/r', [dir('/r/a'), dir('/r/b')]);
+    resolveOld([dir('/r/a')]);
+    await old;
+
+    expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual(['/r/a', '/r/b']);
+  });
 });

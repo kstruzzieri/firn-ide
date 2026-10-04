@@ -13,6 +13,7 @@
 import { act, render } from '@testing-library/react';
 import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
+import { clearWorkspaceTreeCache } from '../utils/workspaceTreeCache';
 import type { FileEntry } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from '../stores/gitStore';
@@ -140,6 +141,9 @@ describe('App — surgical watcher reconcile', () => {
     jest.useFakeTimers();
     jest.clearAllMocks();
     __resetEnsurePathLoaded();
+    // The tree cache is module-level: a tree cached by an earlier test would
+    // make the restore reconcile this test's workspace with disk.
+    clearWorkspaceTreeCache();
     resetLSPDocumentSyncState();
 
     // Default: ReadDirectoryShallow succeeds with empty result
@@ -485,6 +489,9 @@ describe('App — merge session revalidation signals', () => {
     jest.useFakeTimers();
     jest.clearAllMocks();
     __resetEnsurePathLoaded();
+    // The tree cache is module-level: a tree cached by an earlier test would
+    // make the restore reconcile this test's workspace with disk.
+    clearWorkspaceTreeCache();
     resetLSPDocumentSyncState();
     (ReadDirectoryShallow as jest.Mock).mockResolvedValue([]);
     useIDEStore.setState({
