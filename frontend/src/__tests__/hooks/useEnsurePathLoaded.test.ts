@@ -269,6 +269,27 @@ describe('reconcileTreeWithDisk pruning (#256)', () => {
     expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/a/deep']);
   });
 
+  it('keeps every descendant of a parent whose read failed, not just its children', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a')],
+      expandedPaths: new Set(['/r/a', '/r/a/b', '/r/a/b/c']),
+    });
+    mockRead.mockImplementation((path: string) =>
+      path === '/r'
+        ? Promise.resolve([dir('/r/a')])
+        : Promise.reject(new Error(`open ${path}: EIO`))
+    );
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    // /r/a/b was never read, so /r/a/b/c has no fresh parent listing to be judged by.
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual([
+      '/r/a',
+      '/r/a/b',
+      '/r/a/b/c',
+    ]);
+  });
+
   it('keeps expanded paths when the parent read failed, since its listing is not fresh', async () => {
     useIDEStore.setState({
       directoryTree: [dir('/r/a')],

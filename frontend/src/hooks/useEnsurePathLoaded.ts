@@ -99,8 +99,9 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
  * level's reads run concurrently). A path a fresh parent no longer lists as a
  * directory is skipped, not read, and dropped from expandedPaths: it is gone
  * or a file now, which is not a load failure to toast about and not worth
- * re-checking on every open. A parent whose own read failed keeps a stale
- * listing, so nothing is dropped beneath it. `stop` ends the walk early (the workspace
+ * re-checking on every open. Only a parent this walk read successfully counts
+ * as fresh: nothing is dropped beneath a parent whose read failed or that was
+ * never reached. `stop` ends the walk early (the workspace
  * changed, the restore was aborted). A read that fails leaves its row marked
  * unreadable and dirty through ensurePathLoaded; since the dirs were just
  * marked dirty, that counts as a retry and does not toast.
@@ -114,20 +115,25 @@ export async function reconcileTreeWithDisk(
   if (stale.length > 0) {
     useIDEStore.setState((s) => ({ dirtyPaths: new Set([...s.dirtyPaths, ...stale]) }));
   }
+  // Paths this walk has read successfully: the only listings fresh enough to
+  // judge a child by.
+  const fresh: string[] = [];
   for (const level of treeLoadLevels(root, expandedPaths)) {
     if (stop()) return;
-    const { directoryTree: tree, dirtyPaths } = useIDEStore.getState();
+    const tree = useIDEStore.getState().directoryTree;
     const present: string[] = [];
     const gone: string[] = [];
     for (const path of level) {
       if (pathsReferToSameFile(path, root) || findEntryByPath(tree, path)?.isDir === true) {
         present.push(path);
-      } else if (!isDirty(dirtyPaths, parentPath(path))) {
+      } else if (fresh.some((f) => pathsReferToSameFile(f, parentPath(path)))) {
         gone.push(path);
       }
     }
     if (gone.length > 0) forgetExpanded(gone);
     await Promise.all(present.map((path) => ensurePathLoaded(path, { force: true })));
+    const { dirtyPaths } = useIDEStore.getState();
+    for (const path of present) if (!dirtyPaths.has(path)) fresh.push(path);
     // The root is dirty after its own read (it failed, or a watcher event on a
     // collapsed root arrived mid-walk): nothing beneath it can be checked
     // against a fresh parent, so stop rather than read against stale ones.
@@ -137,11 +143,6 @@ export async function reconcileTreeWithDisk(
 
 function parentPath(path: string): string {
   return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
-}
-
-function isDirty(dirtyPaths: Set<string>, path: string): boolean {
-  for (const dirty of dirtyPaths) if (pathsReferToSameFile(dirty, path)) return true;
-  return false;
 }
 
 function forgetExpanded(gone: string[]): void {
