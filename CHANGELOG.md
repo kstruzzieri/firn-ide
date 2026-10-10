@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Collapsing the bottom panel no longer clears the terminal. Each session's
+  scrollback, scroll position and shell-integration markers are kept while the
+  panel is collapsed, output printed meanwhile appears on expand, and the
+  terminal is released only when its session is closed. A session hidden behind
+  another tab or panel is no longer resized to a few columns, which had made the
+  shell reflow and redraw its prompt. (#275)
 - A Golem conversation cleared by New chat can no longer be overwritten by a
   save that began before the reset. The session store now keeps each
   conversation's highest revision across the reset and recreates the

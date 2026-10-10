@@ -35,7 +35,7 @@ import { getVisualState } from '../../utils/visualState';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { createShellIntegration } from './shellIntegration';
+import { createShellIntegration, type ShellIntegration } from './shellIntegration';
 import { XTERM_OPTIONS } from './xtermConfig';
 import { CreateTerminal, WriteTerminal, CloseTerminal, ResizeTerminal } from '../../wails/bindings';
 import { EventsOn } from '../../wails/runtime';
@@ -96,13 +96,79 @@ function attachSessionListener(sessionId: string, onData: (data: string) => void
   }
 }
 
-function detachSessionListener(sessionId: string) {
-  outputListeners.delete(sessionId);
-}
-
 function cleanupSessionBuffers(sessionId: string) {
   outputBuffers.delete(sessionId);
   outputListeners.delete(sessionId);
+}
+
+interface RetainedTerminal {
+  term: XTerm;
+  fitAddon: FitAddon;
+  shellIntegration: ShellIntegration;
+}
+
+// Each session's xterm lives here rather than in TerminalContent: IDEShell
+// unmounts the whole bottom panel on collapse, and disposing the xterm there
+// threw away its scrollback (#275). An xterm is disposed only when its session
+// leaves the store, whichever action removes it.
+const retainedTerminals = new Map<string, RetainedTerminal>();
+let pruningRetainedTerminals = false;
+
+function ensureRetainedTerminalPruning() {
+  if (pruningRetainedTerminals) return;
+  pruningRetainedTerminals = true;
+  useIDEStore.subscribe((state, prev) => {
+    if (state.terminalSessions === prev.terminalSessions) return;
+    for (const [sessionId, retained] of retainedTerminals) {
+      if (state.terminalSessions.some((session) => session.id === sessionId)) continue;
+      outputListeners.delete(sessionId);
+      retained.shellIntegration.dispose();
+      retained.term.dispose();
+      retainedTerminals.delete(sessionId);
+    }
+  });
+}
+
+function acquireTerminal(sessionId: string, container: HTMLElement) {
+  const retained = retainedTerminals.get(sessionId);
+  if (retained) {
+    // open() on an opened xterm is a no-op, so move its element by hand.
+    if (retained.term.element) container.appendChild(retained.term.element);
+    fitToContainer(sessionId);
+    return;
+  }
+
+  const term = new XTerm(XTERM_OPTIONS);
+  const fitAddon = new FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+  // Register the OSC 133 handler before replaying buffered output, so early
+  // shell-integration sequences (prompt/exit markers) are parsed, not printed.
+  const shellIntegration = createShellIntegration(term, SHELL_INTEGRATION_COLORS);
+  retainedTerminals.set(sessionId, { term, fitAddon, shellIntegration });
+  ensureRetainedTerminalPruning();
+  // Size before the replay below, so early output lays out at the real width.
+  fitToContainer(sessionId);
+  // Output keeps flowing into the xterm while the panel is collapsed.
+  attachSessionListener(sessionId, (data: string) => {
+    term.write(data);
+  });
+  term.onData((data) => {
+    void WriteTerminal(sessionId, data);
+  });
+}
+
+// A container outside the layout (display: none on it or an ancestor) has no
+// size to fit to, and FitAddon would then shrink the xterm and, through
+// ResizeTerminal, the PTY to a sliver that reflows the shell (#275).
+function fitToContainer(sessionId: string) {
+  const retained = retainedTerminals.get(sessionId);
+  const container = retained?.term.element?.parentElement;
+  if (!retained || !container || container.clientWidth === 0 || container.clientHeight === 0) {
+    return;
+  }
+  retained.fitAddon.fit();
+  void ResizeTerminal(sessionId, retained.term.rows, retained.term.cols);
 }
 
 function getNextTerminalTitle(sessions: Array<{ title: string }>) {
@@ -850,69 +916,23 @@ interface TerminalContentProps {
 
 function TerminalContent({ sessionId, isVisible, tabId, panelId }: TerminalContentProps) {
   const containerDiv = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
-    if (!containerDiv.current) return;
-
-    const term = new XTerm(XTERM_OPTIONS);
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(containerDiv.current);
-    fitAddon.fit();
-
-    termRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    // Register the OSC 133 handler before replaying buffered output, so early
-    // shell-integration sequences (prompt/exit markers) are parsed, not printed.
-    const shellIntegration = createShellIntegration(term, SHELL_INTEGRATION_COLORS);
-
-    // Attach to the buffered output system - replays any early output automatically
-    attachSessionListener(sessionId, (data: string) => {
-      term.write(data);
-    });
-
-    // Send correct dimensions to PTY
-    void ResizeTerminal(sessionId, term.rows, term.cols);
-
-    term.onData((data) => {
-      void WriteTerminal(sessionId, data);
-    });
-
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      void ResizeTerminal(sessionId, term.rows, term.cols);
-    });
-    resizeObserver.observe(containerDiv.current);
-
-    return () => {
-      // Detach listener — output will be buffered until remount (e.g., panel un-collapse).
-      // We intentionally do NOT close the backend PTY here because TerminalContent unmounts
-      // when the bottom panel collapses, and users expect their sessions to persist.
-      // Backend sessions are only closed via explicit close button/context menu actions.
-      detachSessionListener(sessionId);
-      resizeObserver.disconnect();
-      shellIntegration.dispose();
-      term.dispose();
-      termRef.current = null;
-      fitAddonRef.current = null;
-    };
+    const container = containerDiv.current;
+    if (!container) return;
+    acquireTerminal(sessionId, container);
+    const resizeObserver = new ResizeObserver(() => fitToContainer(sessionId));
+    resizeObserver.observe(container);
+    // The xterm and the backend PTY both outlive this unmount (panel collapse);
+    // closing the session is what ends them.
+    return () => resizeObserver.disconnect();
   }, [sessionId]);
 
   // Refit when visibility changes (tab switch)
   useEffect(() => {
-    if (isVisible && fitAddonRef.current && termRef.current) {
-      // Delay fit slightly so the container has its correct dimensions
-      requestAnimationFrame(() => {
-        fitAddonRef.current?.fit();
-        if (termRef.current) {
-          void ResizeTerminal(sessionId, termRef.current.rows, termRef.current.cols);
-        }
-      });
-    }
+    if (!isVisible) return;
+    // Delay fit slightly so the container has its correct dimensions
+    requestAnimationFrame(() => fitToContainer(sessionId));
   }, [isVisible, sessionId]);
 
   return (
