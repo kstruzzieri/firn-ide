@@ -2,7 +2,7 @@ module firn
 
 go 1.25.0
 
-toolchain go1.25.14
+toolchain go1.27.2
 
 require (
 	github.com/creack/pty v1.1.24
