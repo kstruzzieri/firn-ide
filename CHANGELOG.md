@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal is released only when its session is closed. A session hidden behind
   another tab or panel is no longer resized to a few columns, which had made the
   shell reflow and redraw its prompt. (#275)
+- Screen readers now announce the Golem configuration notices: the result of
+  Apply, Confirm and Cancel, the answer to Check destinations, and the busy
+  notice after Refresh. Each notice appeared together with its own status
+  region, which assistive technology does not reliably announce. Each is now
+  announced as its result lands, through one region that is always present, so
+  a result that repeats the one before it, such as Busy after Retry or after a
+  second Refresh, is announced again, and a notice that only stays on screen is
+  not. The model filter's match count is announced just after the route editor
+  opens and whenever it changes. (#314)
 - Cmd+[ and Cmd+] in the editor now go back and forward through
   go-to-definition history on macOS, as Alt+Left and Alt+Right now do on
   Windows and Linux. The editor's own bindings for the same keys ran first, so
