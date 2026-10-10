@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Collapsing the bottom panel no longer clears the terminal. Each session's
+  scrollback, scroll position and shell-integration markers are kept while the
+  panel is collapsed, output printed meanwhile appears on expand, and the
+  terminal is released only when its session is closed. A session hidden behind
+  another tab or panel is no longer resized to a few columns, which had made the
+  shell reflow and redraw its prompt. (#275)
 - Screen readers now announce the Golem configuration notices: the result of
   Apply, Confirm and Cancel, the answer to Check destinations, and the busy
   notice after Refresh. Each notice appeared together with its own status
