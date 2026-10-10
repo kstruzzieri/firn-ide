@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. golangci-lint moves from v2.11.4 to v2.14.0 in CI, the first
   release that reads the export data Go 1.27.2 emits, and the build Taskfiles'
   hint for obfuscated builds names garble v0.18.0, the release built for Go
-  1.27. (#373)
+  1.27. The generated TypeScript bindings now type `json.RawMessage` through
+  the `encoding/json/jsontext` package Go 1.27 introduces; the shape is still
+  `any`. (#373)
 - Firn declares macOS 14 (Sonoma) as its floor. Both Info.plists, the darwin
   deployment target and C compiler minimum, and the README's install section
   now say 14, and tests keep them in lockstep, including after build-asset
