@@ -58,7 +58,8 @@ go test -tags gtk3 ./...
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "pre-push: golangci-lint not installed — skipping Go lint."
-  echo "  Install it (CI uses it; pushing unlinted Go risks a red PR):"
+  echo "  Install it (CI uses it; pushing unlinted Go risks a red PR). It must"
+  echo "  read the export data of go.mod's toolchain: v2.14.0 or newer for go1.27.2."
   echo "    brew install golangci-lint"
   exit 0
 fi
