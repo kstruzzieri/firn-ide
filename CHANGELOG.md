@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cmd+[ and Cmd+] in the editor now go back and forward through
+  go-to-definition history on macOS, as Alt+Left and Alt+Right now do on
+  Windows and Linux. The editor's own bindings for the same keys ran first, so
+  in an editable file the keys dedented and indented, or moved the cursor over
+  the previous or next syntax element, instead of navigating. With no history
+  in that direction they still do. (#279)
 - A Golem conversation cleared by New chat can no longer be overwritten by a
   save that began before the reset. The session store now keeps each
   conversation's highest revision across the reset and recreates the
