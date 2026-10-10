@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   ModelBand,
@@ -576,9 +576,22 @@ describe('ModelBand announcements', () => {
   it('announces how many models the filter left', async () => {
     renderBand();
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('2 models match this filter');
+    // #314: text mounted together with its live region is not announced
+    // reliably, so the region starts empty and the first count arrives after it.
+    expect(status).toBeEmptyDOMElement();
+    await waitFor(() => expect(status).toHaveTextContent('2 models match this filter'));
 
     await userEvent.type(screen.getByLabelText('Filter models'), 'mini');
+    expect(status).toHaveTextContent('1 model matches this filter');
+  });
+
+  it('updates the count when the models change', async () => {
+    const { rerender, props } = renderBand();
+    const status = screen.getByRole('status');
+    await waitFor(() => expect(status).toHaveTextContent('2 models match this filter'));
+
+    rerender(<ModelBand {...props} models={[model()]} />);
+
     expect(status).toHaveTextContent('1 model matches this filter');
   });
 });
@@ -1523,6 +1536,8 @@ describe('ModelBand card popup timing', () => {
       shortfalls: () => [],
       models: [model({ modelName: 'gemma4:31b' })],
     });
+    // Let the band's first match count land (#314), so the only timer left is the hover's.
+    act(() => jest.runOnlyPendingTimers());
     await user.hover(screen.getByRole('option', { name: /gemma4:31b/ }));
     act(() => jest.advanceTimersByTime(50));
     expect(jest.getTimerCount()).toBe(1); // the 160 ms open is pending — this fixture schedules nothing else

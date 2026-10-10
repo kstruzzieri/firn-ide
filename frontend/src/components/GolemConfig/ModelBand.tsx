@@ -51,6 +51,9 @@ import {
   type ManualModel,
 } from './routeEdit';
 
+/** How long the match count waits after the band mounts before it is first set (#314). */
+const COUNT_ANNOUNCE_DELAY_MS = 100;
+
 /** Capability arrays cross the transport in CAPABILITY_NAMES order or not at all. */
 export const canonicalCaps = (caps: Iterable<CapabilityName>): CapabilityName[] => {
   const wanted = new Set(caps);
@@ -270,6 +273,17 @@ export function ModelBand({
   onManual,
 }: ModelBandProps) {
   const [query, setQuery] = useState('');
+  /**
+   * #314: the count region mounts with the band, and a live region speaks only
+   * text that arrives after it is in the accessibility tree. An effect after the
+   * click that opened the editor can still run in that same task, so the first
+   * count waits a beat; every later change updates a region that already exists.
+   */
+  const [countLive, setCountLive] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCountLive(true), COUNT_ANNOUNCE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
   const [active, setActive] = useState(0);
   const [showHidden, setShowHidden] = useState(false);
   /**
@@ -1025,7 +1039,9 @@ export function ModelBand({
       />
 
       <span className={styles.srOnly} role="status" aria-live="polite">
-        {`${matches.length} model${matches.length === 1 ? ' matches' : 's match'} this filter`}
+        {countLive
+          ? `${matches.length} model${matches.length === 1 ? ' matches' : 's match'} this filter`
+          : ''}
       </span>
 
       {matches.length === 0 && !declaring && (

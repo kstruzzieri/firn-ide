@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Screen readers now announce the Golem configuration notices: the result of
+  Apply, Confirm and Cancel, the answer to Check destinations, and the busy
+  notice after Refresh. Each notice appeared together with its own status
+  region, which assistive technology does not reliably announce. Each is now
+  announced as its result lands, through one region that is always present, so
+  a result that repeats the one before it, such as Busy after Retry or after a
+  second Refresh, is announced again, and a notice that only stays on screen is
+  not. The model filter's match count is announced just after the route editor
+  opens and whenever it changes. (#314)
 - A Golem conversation cleared by New chat can no longer be overwritten by a
   save that began before the reset. The session store now keeps each
   conversation's highest revision across the reset and recreates the

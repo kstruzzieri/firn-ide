@@ -168,6 +168,8 @@ const CANCEL_FAILED =
 const BUSY_NOTICE =
   'Golem is busy — a run or pending consent prompt owns the idle barrier. Nothing was written; retry when idle.';
 const LIMITED_NOTICE = 'This configuration cannot be written. Nothing was applied.';
+const REFRESH_BUSY =
+  'Golem is busy — a run or pending consent prompt is active. Showing the configuration currently in effect; refresh when idle.';
 /** §5.2 fixed copy for the outcome-unknown recovery state. */
 const OUTCOME_UNKNOWN = 'The Apply result is unknown. Refresh before making more changes.';
 const BUILD_REFUSED = `${copy('invalid_argument')} Review the changes waiting for Apply, then try again.`;
@@ -366,6 +368,21 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   /** The grant-only action's own line. It never speaks about the draft. */
   const [grantNotice, setGrantNotice] = useState('');
   /**
+   * #314: the notices below are announced as their results land, through one
+   * live region that is always in the tree. Each announcement renders as a new
+   * node, so a result that repeats the last one (Busy, Retry, Busy) is still an
+   * addition to the region, and a notice that only stays on screen is never
+   * announced twice.
+   */
+  const [announcement, setAnnouncement] = useState({ seq: 0, text: '' });
+  const announce = useCallback((text: string) => {
+    if (text !== '') setAnnouncement((current) => ({ seq: current.seq + 1, text }));
+  }, []);
+  const showGrantNotice = (text: string): void => {
+    setGrantNotice(text);
+    announce(text);
+  };
+  /**
    * True while a profile Save (or its collider acquisition) is in flight.
    * Deliberately separate from `sending`: a Save runs OUTSIDE the
    * `beginOperation` gate — it never touches the draft — so it disables the
@@ -426,33 +443,37 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setSending(false);
   };
 
-  const load = useCallback(async (explicit: boolean): Promise<boolean> => {
-    const gen = ++generation.current;
-    setSourceLoading(false);
-    setFocusRequest(null);
-    setInFlight(true);
-    try {
-      const result = parseSettingsReloadResult(await ReloadGolemSettings());
-      if (gen !== generation.current) return false; // superseded or unmounted
-      setPhase({
-        kind: 'ready',
-        projection: result.projection,
-        // A busy reload on open silently shows the effective snapshot; only the
-        // explicit Refresh action surfaces the notice.
-        busyNotice: explicit && result.busy,
-      });
-      // The draft targets whichever revision the document is on now — including
-      // after a conflict, where adopting it is the whole point of the reload.
-      setDraft((current) => setTargetRevision(current, result.projection.revision));
-      return !result.busy;
-    } catch (err) {
-      if (gen !== generation.current) return false;
-      setPhase({ kind: 'error', message: boundedGolemMessage(err) });
-      return false;
-    } finally {
-      if (gen === generation.current) setInFlight(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (explicit: boolean): Promise<boolean> => {
+      const gen = ++generation.current;
+      setSourceLoading(false);
+      setFocusRequest(null);
+      setInFlight(true);
+      try {
+        const result = parseSettingsReloadResult(await ReloadGolemSettings());
+        if (gen !== generation.current) return false; // superseded or unmounted
+        setPhase({
+          kind: 'ready',
+          projection: result.projection,
+          // A busy reload on open silently shows the effective snapshot; only the
+          // explicit Refresh action surfaces the notice.
+          busyNotice: explicit && result.busy,
+        });
+        if (explicit && result.busy) announce(REFRESH_BUSY);
+        // The draft targets whichever revision the document is on now — including
+        // after a conflict, where adopting it is the whole point of the reload.
+        setDraft((current) => setTargetRevision(current, result.projection.revision));
+        return !result.busy;
+      } catch (err) {
+        if (gen !== generation.current) return false;
+        setPhase({ kind: 'error', message: boundedGolemMessage(err) });
+        return false;
+      } finally {
+        if (gen === generation.current) setInFlight(false);
+      }
+    },
+    [announce]
+  );
 
   useEffect(() => {
     void load(false);
@@ -543,6 +564,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       resetCards();
     }
     setOutcome({ ...NO_OUTCOME, ...next });
+    announce(next.notice ?? '');
     // The grant-only flow never reaches settle, but its own leftover notice
     // must not linger beside a settings-apply outcome that landed after it.
     setGrantNotice('');
@@ -642,6 +664,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         return true;
       } catch {
         setOutcome((current) => ({ ...current, notice: CANCEL_FAILED }));
+        announce(CANCEL_FAILED);
         return false;
       } finally {
         endOperation();
@@ -1039,6 +1062,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     } catch {
       // A drafting bug the transport refuses: a local refusal, never a call.
       setOutcome({ ...NO_OUTCOME, notice: BUILD_REFUSED });
+      announce(BUILD_REFUSED);
       return;
     }
     pendingRequestRef.current = request;
@@ -1066,7 +1090,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const dismissGrants = async (notice: string): Promise<void> => {
     if (!(await cancelChallenge())) return;
     setOutcome(NO_OUTCOME);
-    setGrantNotice(notice);
+    showGrantNotice(notice);
   };
 
   /** One grant RPC. Every landing is a `setOutcome`, never a `settle`. */
@@ -1085,13 +1109,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         // Busy consumed nothing: the token stays retryable, so the prompt stays
         // up and its own Confirm is the retry. Every other status spent it.
         if (status !== 'busy') setOutcome(NO_OUTCOME);
-        setGrantNotice(GRANT_NOTICE[status]);
+        showGrantNotice(GRANT_NOTICE[status]);
       } catch (err) {
         // The approval outcome is unknown; preserve the draft and best-effort
         // cancel any known challenge.
         if (token !== null) void CancelGolemSettingsApply(token).catch(() => undefined);
         setOutcome(NO_OUTCOME);
-        setGrantNotice(boundedGolemMessage(err));
+        showGrantNotice(boundedGolemMessage(err));
       } finally {
         endOperation();
       }
@@ -1207,6 +1231,19 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // -------------------------------------------------------------------------
 
   const recovery = outcome.unknown;
+  /**
+   * An announcement is retired as soon as its notice leaves the screen, so it
+   * cannot be read back later, and a notice that returns without a new result
+   * (a failed reload recovering under a standing outcome) is not announced again.
+   */
+  const visibleNotices = [
+    grantNotice,
+    phase.kind === 'ready' && phase.busyNotice ? REFRESH_BUSY : '',
+    projection ? outcome.notice : '',
+  ];
+  if (announcement.text !== '' && !visibleNotices.includes(announcement.text)) {
+    setAnnouncement({ seq: announcement.seq, text: '' });
+  }
   /**
    * §4.6a: while challenged, the only enabled draft actions are Confirm,
    * Cancel, and the cancel-then-transition paths (Discard, Refresh, source
@@ -1602,7 +1639,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         </header>
 
         {grantNotice !== '' && (
-          <p className={styles.notice} role="status" data-testid="golem-grant-notice">
+          <p className={styles.notice} data-testid="golem-grant-notice">
             {grantNotice}
           </p>
         )}
@@ -1611,6 +1648,16 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           {projection
             ? `Configuration ${STATE_LABEL[projection.state]}. Source ${ORIGIN_LABEL[projection.sourceOrigin]}.`
             : ''}
+        </div>
+
+        <div
+          className={styles.srOnly}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="golem-config-notice-announcement"
+        >
+          {announcement.text !== '' && <span key={announcement.seq}>{announcement.text}</span>}
         </div>
 
         {phase.kind === 'loading' && <p className={styles.loading}>Loading configuration…</p>}
@@ -1632,9 +1679,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         {projection && body && (
           <div className={styles.body}>
             {phase.kind === 'ready' && phase.busyNotice && (
-              <p className={styles.notice} data-tone="info" role="status">
-                Golem is busy — a run or pending consent prompt is active. Showing the configuration
-                currently in effect; refresh when idle.
+              <p className={styles.notice} data-tone="info">
+                {REFRESH_BUSY}
               </p>
             )}
 
@@ -1965,11 +2011,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            {outcome.notice !== '' && (
-              <p className={styles.notice} role="status">
-                {outcome.notice}
-              </p>
-            )}
+            {outcome.notice !== '' && <p className={styles.notice}>{outcome.notice}</p>}
 
             {outcome.busy && (
               <div className={styles.panelActions}>
