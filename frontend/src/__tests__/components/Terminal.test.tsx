@@ -13,9 +13,10 @@ import { useConflictProjectionSync } from '../../hooks/useProblemsProjection';
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
-import { git, runhistory } from '../../wails/bindings';
+import { git, ResizeTerminal, runhistory } from '../../wails/bindings';
 import { EventsOn } from '../../wails/runtime';
 import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
@@ -1388,5 +1389,109 @@ describe('Terminal — git signal on focus exit', () => {
     fireEvent.focusOut(panel, { relatedTarget: inside });
 
     expect(scheduleRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('Terminal — a session outlives the bottom panel (#275)', () => {
+  beforeEach(() => {
+    mockCreateTerminal.mockReset();
+    mockCloseTerminal.mockReset();
+    mockCloseTerminal.mockResolvedValue(undefined);
+    mockCreateTerminal.mockResolvedValueOnce('term-1');
+    jest.mocked(ResizeTerminal).mockClear();
+    useIDEStore.setState({
+      activeTerminalTab: 'terminal',
+      terminalSessions: [],
+      activeTerminalSessionId: null,
+      toast: null,
+    });
+  });
+
+  const realResizeObserver = global.ResizeObserver;
+  afterEach(() => {
+    global.ResizeObserver = realResizeObserver;
+    jest.restoreAllMocks();
+  });
+
+  const outputHandler = () => {
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    if (!registration) throw new Error('terminal:output listener not registered');
+    return registration[1] as (evt: { termId: string; data: string }) => void;
+  };
+
+  it('reuses the xterm, routes detached output and re-attaches its element on expand', async () => {
+    const open = jest.spyOn(XTerm.prototype, 'open');
+    const dispose = jest.spyOn(XTerm.prototype, 'dispose');
+    const write = jest.spyOn(XTerm.prototype, 'write');
+
+    // IDEShell renders no <Terminal /> at all while the bottom panel is collapsed.
+    const expanded = render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    const term = open.mock.contexts[0] as XTerm;
+    const xtermElement = term.element;
+    expect(xtermElement).toBeDefined();
+
+    expanded.unmount();
+    act(() => outputHandler()({ termId: 'term-1', data: 'printed while collapsed' }));
+    render(<Terminal />);
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenLastCalledWith('printed while collapsed');
+    expect(write.mock.contexts.at(-1)).toBe(term);
+    expect(document.getElementById('terminal-session-panel-term-1')).toContainElement(
+      xtermElement as HTMLElement
+    );
+  });
+
+  it('disposes the xterm when its session is closed', async () => {
+    const open = jest.spyOn(XTerm.prototype, 'open');
+    const dispose = jest.spyOn(XTerm.prototype, 'dispose');
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Close Terminal 1'));
+
+    await waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+    expect(dispose.mock.contexts[0]).toBe(open.mock.contexts[0]);
+  });
+
+  it('neither fits nor resizes the PTY while the session container has no size', async () => {
+    const observed: Array<{ target: Element; callback: () => void }> = [];
+    global.ResizeObserver = jest.fn(
+      (callback: ResizeObserverCallback) =>
+        ({
+          observe: (target: Element) =>
+            observed.push({ target, callback: () => callback([], {} as ResizeObserver) }),
+          unobserve: jest.fn(),
+          disconnect: jest.fn(),
+        }) as unknown as ResizeObserver
+    ) as unknown as typeof ResizeObserver;
+    const fit = jest.spyOn(FitAddon.prototype, 'fit');
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    const panel = document.getElementById('terminal-session-panel-term-1')!;
+    const observer = observed.find(({ target }) => target === panel);
+    expect(observer).toBeDefined();
+    fit.mockClear();
+    jest.mocked(ResizeTerminal).mockClear();
+
+    // jsdom lays nothing out, so the panel measures 0x0 — as it does under display: none.
+    observer!.callback();
+
+    expect(fit).not.toHaveBeenCalled();
+    expect(ResizeTerminal).not.toHaveBeenCalled();
+
+    Object.defineProperty(panel, 'clientWidth', { configurable: true, value: 640 });
+    Object.defineProperty(panel, 'clientHeight', { configurable: true, value: 320 });
+    observer!.callback();
+
+    expect(fit).toHaveBeenCalledTimes(1);
+    expect(ResizeTerminal).toHaveBeenCalledWith('term-1', 24, 80);
   });
 });

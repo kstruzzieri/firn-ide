@@ -70,7 +70,8 @@ import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { AbilityChips } from './AbilityChips';
 import styles from './GolemConfig.module.css';
-import { ModelBand, canonicalCaps } from './ModelBand';
+import { ModelBand } from './ModelBand';
+import { canonicalCaps } from './modelRows';
 import {
   abilitiesLine,
   THINK_LABEL,

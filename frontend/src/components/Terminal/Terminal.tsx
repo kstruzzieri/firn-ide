@@ -32,13 +32,14 @@ import {
 import { RunOutputPanel } from '../RunOutput';
 import { ALL_PROFILES_ID, historyIdFromSelection, historySelectionId } from '../../types/runOutput';
 import { getVisualState } from '../../utils/visualState';
-import { Terminal as XTerm } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { createShellIntegration } from './shellIntegration';
-import { XTERM_OPTIONS } from './xtermConfig';
-import { CreateTerminal, WriteTerminal, CloseTerminal, ResizeTerminal } from '../../wails/bindings';
-import { EventsOn } from '../../wails/runtime';
+import {
+  acquireTerminal,
+  cleanupSessionBuffers,
+  ensureGlobalOutputListener,
+  fitToContainer,
+} from './terminalRegistry';
+import { CreateTerminal, CloseTerminal } from '../../wails/bindings';
 
 const TERMINAL_TABS: Array<{
   id: TerminalTab;
@@ -49,69 +50,6 @@ const TERMINAL_TABS: Array<{
   { id: 'problems', icon: AlertCircleIcon, label: 'Problems' },
   { id: 'terminal', icon: TerminalIcon, label: 'Terminal' },
 ];
-
-// Gutter marker / separator colors for shell-integration decorations.
-const SHELL_INTEGRATION_COLORS = {
-  fail: '#F87171', // red-400 — failed command
-  ok: '#334155', // slate-700 — succeeded command (neutral)
-  separator: 'rgba(148, 163, 184, 0.18)', // slate-400 @ low alpha
-};
-
-// Buffers terminal output per session until TerminalContent mounts and attaches.
-// This prevents losing early output (shell prompt, rc output) that the backend
-// emits before the React component has subscribed.
-const outputBuffers = new Map<string, string[]>();
-const outputListeners = new Map<string, (data: string) => void>();
-// Sessions the user closed. The shell's final bytes can still arrive after the
-// close (the backend reads the PTY until EOF), and with no listener left to
-// drain them a buffer would sit under an ID the backend never reuses. An ID
-// not yet in the store is not here, so pre-attach output still buffers.
-// ponytail: one short ID per closed session for the app's lifetime; a backend
-// exit event would let this shrink.
-const closedSessionIds = new Set<string>();
-
-let globalOutputCleanup: (() => void) | null = null;
-
-function ensureGlobalOutputListener() {
-  if (globalOutputCleanup) return;
-  globalOutputCleanup = EventsOn('terminal:output', (evt: { termId: string; data: string }) => {
-    if (!evt?.termId) return;
-    const listener = outputListeners.get(evt.termId);
-    if (listener) {
-      listener(evt.data ?? '');
-    } else if (!closedSessionIds.has(evt.termId)) {
-      // Buffer output until a listener attaches
-      let buf = outputBuffers.get(evt.termId);
-      if (!buf) {
-        buf = [];
-        outputBuffers.set(evt.termId, buf);
-      }
-      buf.push(evt.data ?? '');
-    }
-  });
-}
-
-function attachSessionListener(sessionId: string, onData: (data: string) => void) {
-  outputListeners.set(sessionId, onData);
-  // Replay any buffered output
-  const buf = outputBuffers.get(sessionId);
-  if (buf) {
-    for (const chunk of buf) {
-      onData(chunk);
-    }
-    outputBuffers.delete(sessionId);
-  }
-}
-
-function detachSessionListener(sessionId: string) {
-  outputListeners.delete(sessionId);
-}
-
-function cleanupSessionBuffers(sessionId: string) {
-  closedSessionIds.add(sessionId);
-  outputBuffers.delete(sessionId);
-  outputListeners.delete(sessionId);
-}
 
 function getNextTerminalTitle(sessions: Array<{ title: string }>) {
   const usedNumbers = new Set<number>();
@@ -858,69 +796,23 @@ interface TerminalContentProps {
 
 function TerminalContent({ sessionId, isVisible, tabId, panelId }: TerminalContentProps) {
   const containerDiv = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
-    if (!containerDiv.current) return;
-
-    const term = new XTerm(XTERM_OPTIONS);
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(containerDiv.current);
-    fitAddon.fit();
-
-    termRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    // Register the OSC 133 handler before replaying buffered output, so early
-    // shell-integration sequences (prompt/exit markers) are parsed, not printed.
-    const shellIntegration = createShellIntegration(term, SHELL_INTEGRATION_COLORS);
-
-    // Attach to the buffered output system - replays any early output automatically
-    attachSessionListener(sessionId, (data: string) => {
-      term.write(data);
-    });
-
-    // Send correct dimensions to PTY
-    void ResizeTerminal(sessionId, term.rows, term.cols);
-
-    term.onData((data) => {
-      void WriteTerminal(sessionId, data);
-    });
-
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      void ResizeTerminal(sessionId, term.rows, term.cols);
-    });
-    resizeObserver.observe(containerDiv.current);
-
-    return () => {
-      // Detach listener — output will be buffered until remount (e.g., panel un-collapse).
-      // We intentionally do NOT close the backend PTY here because TerminalContent unmounts
-      // when the bottom panel collapses, and users expect their sessions to persist.
-      // Backend sessions are only closed via explicit close button/context menu actions.
-      detachSessionListener(sessionId);
-      resizeObserver.disconnect();
-      shellIntegration.dispose();
-      term.dispose();
-      termRef.current = null;
-      fitAddonRef.current = null;
-    };
+    const container = containerDiv.current;
+    if (!container) return;
+    acquireTerminal(sessionId, container);
+    const resizeObserver = new ResizeObserver(() => fitToContainer(sessionId));
+    resizeObserver.observe(container);
+    // The xterm and the backend PTY both outlive this unmount (panel collapse);
+    // closing the session is what ends them.
+    return () => resizeObserver.disconnect();
   }, [sessionId]);
 
   // Refit when visibility changes (tab switch)
   useEffect(() => {
-    if (isVisible && fitAddonRef.current && termRef.current) {
-      // Delay fit slightly so the container has its correct dimensions
-      requestAnimationFrame(() => {
-        fitAddonRef.current?.fit();
-        if (termRef.current) {
-          void ResizeTerminal(sessionId, termRef.current.rows, termRef.current.cols);
-        }
-      });
-    }
+    if (!isVisible) return;
+    // Delay fit slightly so the container has its correct dimensions
+    requestAnimationFrame(() => fitToContainer(sessionId));
   }, [isVisible, sessionId]);
 
   return (
