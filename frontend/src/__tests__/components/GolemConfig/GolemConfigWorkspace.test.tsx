@@ -875,10 +875,42 @@ describe('GolemConfigWorkspace', () => {
     resolve(readyProjection, true);
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByTestId('provider-row-llama-swap');
+    const announcement = screen.getByTestId('golem-config-notice-announcement');
     expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument();
+    expect(announcement).toBeEmptyDOMElement();
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(await screen.findByText(/Golem is busy/)).toHaveAttribute('role', 'status');
+    // #314: the visible line mounts together with its text, which a live region
+    // would not speak, so the region that already existed carries it instead.
+    const notice = await screen.findByText(/Golem is busy/, { selector: 'p' });
+    expect(notice).not.toHaveAttribute('role');
+    expect(announcement).toHaveAttribute('role', 'status');
+    expect(announcement).toHaveTextContent(notice.textContent ?? '');
+  });
+
+  it('announces a repeated busy Refresh again and nothing once Golem is idle (#314)', async () => {
+    resolve(readyProjection, true);
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('provider-row-llama-swap');
+    const announcement = screen.getByTestId('golem-config-notice-announcement');
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+
+    await userEvent.click(refresh);
+    await waitFor(() => expect(announcement).toHaveTextContent(/Golem is busy/));
+    const first = announcement.firstElementChild;
+
+    // The same words again are a new node in the region, which is what a
+    // screen reader speaks; an unchanged text node would be silent.
+    await waitFor(() => expect(refresh).toBeEnabled());
+    await userEvent.click(refresh);
+    await waitFor(() => expect(announcement.firstElementChild).not.toBe(first));
+    expect(announcement).toHaveTextContent(/Golem is busy/);
+
+    resolve(readyProjection, false);
+    await waitFor(() => expect(refresh).toBeEnabled());
+    await userEvent.click(refresh);
+    await waitFor(() => expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument());
+    expect(announcement).toBeEmptyDOMElement();
   });
 
   it('announces the state verdict in a live region', async () => {
