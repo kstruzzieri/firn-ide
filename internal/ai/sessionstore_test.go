@@ -15,11 +15,13 @@ import (
 	"github.com/kstruzzieri/go-llm/conversation"
 )
 
-func mustSave(t *testing.T, s *MemorySessionStore, conv conversation.Conversation) {
+func mustSave(t *testing.T, s *MemorySessionStore, conv conversation.Conversation) int64 {
 	t.Helper()
-	if err := s.Save(context.Background(), conv); err != nil {
+	revision, err := s.Save(context.Background(), conv)
+	if err != nil {
 		t.Fatalf("Save(%q): %v", conv.ID, err)
 	}
+	return revision
 }
 
 func convOfSize(id string, contentBytes int) conversation.Conversation {
@@ -38,7 +40,7 @@ func TestMemorySessionStoreLoadMissingIsNotFound(t *testing.T) {
 
 func TestMemorySessionStoreRequiresConversationID(t *testing.T) {
 	s := NewMemorySessionStore()
-	if err := s.Save(context.Background(), conversation.Conversation{}); err == nil {
+	if _, err := s.Save(context.Background(), conversation.Conversation{}); err == nil {
 		t.Fatal("Save with empty ID succeeded, want error")
 	}
 }
@@ -130,13 +132,13 @@ func TestMemorySessionStoreRefusesOversizedSnapshot(t *testing.T) {
 	prior := append([]byte(nil), s.snaps["a"]...)
 	priorTotal := s.total
 
-	if err := s.Save(context.Background(), convOfSize("a", SessionSnapshotLimit)); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Save(context.Background(), convOfSize("a", SessionSnapshotLimit)); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("oversized Save = %v, want ErrSessionLimit", err)
 	}
 	if s.total != priorTotal || !bytes.Equal(s.snaps["a"], prior) {
 		t.Fatal("rejected oversized replacement disturbed prior snapshot or accounting")
 	}
-	if err := s.Save(context.Background(), convOfSize("fresh", SessionSnapshotLimit)); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Save(context.Background(), convOfSize("fresh", SessionSnapshotLimit)); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("oversized fresh Save = %v, want ErrSessionLimit", err)
 	}
 	if _, ok := s.snaps["fresh"]; ok {
@@ -158,7 +160,7 @@ func TestMemorySessionStoreRefusesWhenTotalWouldExceed(t *testing.T) {
 	overflow := SessionStoreLimit - s.total + (4 << 10) // content guaranteeing next > limit
 
 	// Total refusal for a new ID: nothing stored, nothing evicted.
-	if err := s.Save(context.Background(), convOfSize("new", overflow)); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Save(context.Background(), convOfSize("new", overflow)); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("overflowing Save(new) = %v, want ErrSessionLimit", err)
 	}
 	if _, ok := s.snaps["new"]; ok || s.total != priorTotal {
@@ -176,7 +178,7 @@ func TestMemorySessionStoreRefusesWhenTotalWouldExceed(t *testing.T) {
 	// attributable to the store cap, not a CAS conflict.
 	overflowSmall := convOfSize("small", overflow)
 	overflowSmall.Revision = 1
-	if err := s.Save(context.Background(), overflowSmall); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Save(context.Background(), overflowSmall); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("overflowing Save(small) = %v, want ErrSessionLimit", err)
 	}
 	if s.total != priorTotal || !bytes.Equal(s.snaps["small"], priorSmall) {
@@ -194,7 +196,7 @@ func TestMemorySessionStoreRefusesWhenTotalWouldExceed(t *testing.T) {
 	// total-cap Save had advanced the ledger past what was actually
 	// committed, every future Save at the true current revision would wrongly
 	// conflict forever.
-	if err := s.Save(context.Background(), conversation.Conversation{
+	if _, err := s.Save(context.Background(), conversation.Conversation{
 		ID: "small", Revision: loaded.Revision,
 		Messages: []conversation.Message{{Role: "user", Content: "still writable"}},
 	}); err != nil {
@@ -220,7 +222,7 @@ func TestMemorySessionStoreExactLimitBoundaries(t *testing.T) {
 	if got := len(s.snaps["solo"]); got != SessionSnapshotLimit {
 		t.Fatalf("snapshot bytes = %d, want exactly %d", got, SessionSnapshotLimit)
 	}
-	if err := s.Save(context.Background(), convOfSize("solo", exact+1)); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Save(context.Background(), convOfSize("solo", exact+1)); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("Save(snapshot limit+1) = %v, want ErrSessionLimit", err)
 	}
 	if len(s.snaps["solo"]) != SessionSnapshotLimit {
@@ -243,7 +245,7 @@ func TestMemorySessionStoreExactLimitBoundaries(t *testing.T) {
 	// store cap, not a CAS conflict.
 	overflowM00 := convOfSize("m-00", (1<<20)-overhead("m-00")+1)
 	overflowM00.Revision = 1
-	if err := s.Save(context.Background(), overflowM00); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Save(context.Background(), overflowM00); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("Save(total limit+1) = %v, want ErrSessionLimit", err)
 	}
 	if s.total != SessionStoreLimit || len(s.snaps["m-00"]) != 1<<20 {
@@ -261,7 +263,7 @@ func TestMemorySessionStoreExactLimitBoundaries(t *testing.T) {
 	if loaded.Revision != 1 {
 		t.Fatalf("m-00 revision after refusal = %d, want 1", loaded.Revision)
 	}
-	if err := s.Save(context.Background(), *loaded); err != nil {
+	if _, err := s.Save(context.Background(), *loaded); err != nil {
 		t.Fatalf("Save after refused +1 replacement = %v, want success (ledger must match what was actually stored)", err)
 	}
 }
@@ -271,7 +273,7 @@ func TestMemorySessionStoreHonorsCancellation(t *testing.T) {
 	mustSave(t, s, convOfSize("a", 10))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := s.Save(ctx, convOfSize("b", 10)); !errors.Is(err, context.Canceled) {
+	if _, err := s.Save(ctx, convOfSize("b", 10)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Save(canceled) = %v, want context.Canceled", err)
 	}
 	if _, ok := s.snaps["b"]; ok {
@@ -308,7 +310,7 @@ func TestMemorySessionStoreConcurrentLoadSave(t *testing.T) {
 				}
 				conv := convOfSize(id, 64)
 				conv.Revision = revision
-				err := s.Save(context.Background(), conv)
+				_, err := s.Save(context.Background(), conv)
 				if err == nil {
 					atomic.AddInt64(&wins[idx], 1)
 					continue
@@ -379,7 +381,7 @@ func TestMemorySessionStoreCASCreateAndUpdateRevisions(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		before, _ = json.Marshal(loaded)
-		if err := s.Save(ctx, *loaded); err != nil {
+		if _, err := s.Save(ctx, *loaded); err != nil {
 			t.Fatalf("Save(revision %d): %v", loaded.Revision, err)
 		}
 		after, _ = json.Marshal(loaded)
@@ -483,7 +485,7 @@ func TestMemorySessionStoreCASConflictsPreserveState(t *testing.T) {
 				Title:    "loser",
 				Messages: []conversation.Message{{Role: "user", Content: "losertoken"}},
 			}
-			err := s.Save(context.Background(), candidate)
+			_, err := s.Save(context.Background(), candidate)
 			var conflict *conversation.ConflictError
 			if !errors.Is(err, conversation.ErrConflict) || !errors.As(err, &conflict) {
 				t.Fatalf("Save error = %v, want wrapped typed conflict", err)
@@ -517,7 +519,7 @@ func TestMemorySessionStoreCASRevisionLimits(t *testing.T) {
 			priorSnap := append([]byte(nil), s.snaps[id]...)
 			priorTotal := s.total
 			priorRev, hadRev := s.revs[id]
-			err := s.Save(ctx, conversation.Conversation{ID: id, Revision: revision, Title: "invalid"})
+			_, err := s.Save(ctx, conversation.Conversation{ID: id, Revision: revision, Title: "invalid"})
 			if err == nil || errors.Is(err, conversation.ErrConflict) {
 				t.Fatalf("Save(%q, %d) = %v, want non-conflict validation error", id, revision, err)
 			}
@@ -552,7 +554,7 @@ func TestMemorySessionStoreCASRevisionLimits(t *testing.T) {
 	if loaded.Revision != math.MaxInt64-1 {
 		t.Fatalf("forced revision = %d, want %d", loaded.Revision, int64(math.MaxInt64-1))
 	}
-	if err := s.Save(ctx, *loaded); err != nil {
+	if _, err := s.Save(ctx, *loaded); err != nil {
 		t.Fatalf("Save(max-minus-one) = %v", err)
 	}
 	loaded, err = s.Load(ctx, "cas")
@@ -566,7 +568,7 @@ func TestMemorySessionStoreCASRevisionLimits(t *testing.T) {
 	priorSnap := append([]byte(nil), s.snaps["cas"]...)
 	priorTotal := s.total
 	priorRev := s.revs["cas"]
-	if err := s.Save(ctx, *loaded); err == nil || errors.Is(err, conversation.ErrConflict) {
+	if _, err := s.Save(ctx, *loaded); err == nil || errors.Is(err, conversation.ErrConflict) {
 		t.Fatalf("Save(max) = %v, want non-conflict validation error", err)
 	}
 	if s.total != priorTotal || !bytes.Equal(s.snaps["cas"], priorSnap) {
@@ -603,7 +605,7 @@ func TestMemorySessionStoreRecreatedIDStartsAboveDeletedRevisions(t *testing.T) 
 		t.Fatalf("recreated revision = %d, want 3 (above both deleted revisions)", recreated.Revision)
 	}
 
-	err = s.Save(ctx, *stale)
+	_, err = s.Save(ctx, *stale)
 	var conflict *conversation.ConflictError
 	if !errors.As(err, &conflict) || conflict.ExpectedRevision != 1 {
 		t.Fatalf("stale Save after recreate = %v, want ConflictError at revision 1", err)
@@ -631,7 +633,7 @@ func TestMemorySessionStoreRecreateRefusedAtExhaustedFloor(t *testing.T) {
 	s.revs["x"] = math.MaxInt64
 	s.mu.Unlock()
 
-	err := s.Save(context.Background(), conversation.Conversation{ID: "x", Title: "too late"})
+	_, err := s.Save(context.Background(), conversation.Conversation{ID: "x", Title: "too late"})
 	if err == nil || errors.Is(err, conversation.ErrConflict) {
 		t.Fatalf("Save at exhausted floor = %v, want non-conflict error", err)
 	}
@@ -640,5 +642,94 @@ func TestMemorySessionStoreRecreateRefusedAtExhaustedFloor(t *testing.T) {
 	}
 	if got := s.revs["x"]; got != math.MaxInt64 {
 		t.Fatalf("refused recreate changed the floor: revs[x] = %d", got)
+	}
+}
+
+// TestMemorySessionStoreSaveReturnsCommittedRevision pins go-llm v0.5.0's
+// SessionStore.Save result (#418): Save returns the revision it committed,
+// which Load then reads back, and never writes it into the caller's value. The
+// returned revision is what a caller assigns; revision zero means create and
+// does not predict it, so a recreate after Delete returns floor plus one.
+func TestMemorySessionStoreSaveReturnsCommittedRevision(t *testing.T) {
+	s := NewMemorySessionStore()
+	ctx := context.Background()
+	conv := conversation.Conversation{ID: "rev", Title: "first"}
+	for _, want := range []int64{1, 2, 3} {
+		got, err := s.Save(ctx, conv)
+		if err != nil {
+			t.Fatalf("Save(revision %d): %v", conv.Revision, err)
+		}
+		if got != want {
+			t.Fatalf("Save(revision %d) returned %d, want %d", conv.Revision, got, want)
+		}
+		if conv.Revision != want-1 {
+			t.Fatalf("Save changed the caller's revision to %d", conv.Revision)
+		}
+		loaded, err := s.Load(ctx, "rev")
+		if err != nil || loaded.Revision != got {
+			t.Fatalf("Load after Save = %+v, %v; want revision %d", loaded, err, got)
+		}
+		conv.Revision = got
+	}
+
+	s.Delete("rev")
+	got, err := s.Save(ctx, conversation.Conversation{ID: "rev", Title: "recreated"})
+	if err != nil || got != 4 {
+		t.Fatalf("recreate Save = %d, %v; want 4 (floor 3 plus one)", got, err)
+	}
+}
+
+// TestMemorySessionStoreRefusalsReturnRevisionZero pins the other half of the
+// v0.5.0 Save result: every error returns revision zero, so a caller can never
+// adopt a revision from a save that did not commit.
+func TestMemorySessionStoreRefusalsReturnRevisionZero(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name  string
+		ctx   context.Context
+		setup func(t *testing.T, s *MemorySessionStore)
+		conv  conversation.Conversation
+	}{
+		{"cancelled context", cancelled, nil, conversation.Conversation{ID: "a"}},
+		{"empty ID", nil, nil, conversation.Conversation{}},
+		{"negative revision", nil, nil, conversation.Conversation{ID: "a", Revision: -1}},
+		{"max revision", nil, nil, conversation.Conversation{ID: "a", Revision: math.MaxInt64}},
+		{"duplicate create", nil, func(t *testing.T, s *MemorySessionStore) {
+			mustSave(t, s, conversation.Conversation{ID: "a"})
+		}, conversation.Conversation{ID: "a"}},
+		{"stale update", nil, func(t *testing.T, s *MemorySessionStore) {
+			mustSave(t, s, conversation.Conversation{ID: "a"})
+			mustSave(t, s, conversation.Conversation{ID: "a", Revision: 1})
+		}, conversation.Conversation{ID: "a", Revision: 1}},
+		{"oversized snapshot", nil, nil, convOfSize("a", SessionSnapshotLimit)},
+		{"store total", nil, func(t *testing.T, s *MemorySessionStore) {
+			for i := 0; i < SessionStoreLimit/SessionSnapshotLimit; i++ {
+				mustSave(t, s, convOfSize(fmt.Sprintf("pad-%d", i), SessionSnapshotLimit-1024))
+			}
+		}, convOfSize("a", SessionSnapshotLimit-1024)},
+		{"exhausted floor", nil, func(t *testing.T, s *MemorySessionStore) {
+			s.mu.Lock()
+			s.revs["a"] = math.MaxInt64
+			s.mu.Unlock()
+		}, conversation.Conversation{ID: "a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewMemorySessionStore()
+			if tc.setup != nil {
+				tc.setup(t, s)
+			}
+			ctx := tc.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			got, err := s.Save(ctx, tc.conv)
+			if err == nil {
+				t.Fatal("Save succeeded, want a refusal")
+			}
+			if got != 0 {
+				t.Fatalf("refused Save returned revision %d, want 0", got)
+			}
+		})
 	}
 }

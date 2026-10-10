@@ -57,7 +57,7 @@ firn-ide/
 
 - **Framework**: Wails (Go backend + React frontend via system WebView)
 - **Frontend**: React 19 + Vite + TypeScript
-- **Backend**: Go 1.25+
+- **Backend**: Go 1.27+
 - **State**: Zustand
 - **Editor**: CodeMirror 6
 - **Terminal**: xterm.js + PTY

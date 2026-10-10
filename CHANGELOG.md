@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Golem runs on go-llm v0.5.0, and building Firn needs Go 1.27 or later: the
+  module's `go` line moves from 1.25.0 to 1.27.0, which go-llm v0.5.0 requires.
+  Through go-llm, Golem's `search` tool skips credential files such as `.env`,
+  `.netrc` and anything under `.ssh` or `.aws`; commit message generation dials
+  127.0.0.1, then ::1, for a `localhost` endpoint, so a hosts-file entry can no
+  longer redirect it; and on macOS and Linux a workspace read fails with `path
+  changed during access` when the path it was allowed no longer reaches the
+  same file.
+  The `go` line also gives Firn Go 1.27's default runtime settings in place of
+  the 1.25 compatibility ones. One users may notice: when Firn is started with
+  `SSL_CERT_FILE` or `SSL_CERT_DIR` set, for example from a terminal, those
+  files now replace the system certificate store on macOS and Windows for
+  Firn's own HTTPS requests. (#418)
 - Every build, test, lint and release job now runs on Go 1.27.2, the
   `toolchain` line in `go.mod`. Go 1.25 left security support when Go 1.27
   shipped, and `govulncheck` reports ten standard-library vulnerabilities in

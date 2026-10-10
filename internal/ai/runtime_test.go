@@ -1003,7 +1003,7 @@ func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
 	ctx := context.Background()
 	const threadID = "thread-conflict"
 	store := NewMemorySessionStore()
-	if err := store.Save(ctx, conversation.Conversation{
+	if _, err := store.Save(ctx, conversation.Conversation{
 		ID:       threadID,
 		Messages: []conversation.Message{{Role: "user", Content: "seed"}},
 	}); err != nil {
@@ -1013,7 +1013,7 @@ func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
 	wrapped := &conflictOnLoadStore{
 		MemorySessionStore: store,
 		win: func(ctx context.Context) error {
-			return store.Save(ctx, conversation.Conversation{
+			_, err := store.Save(ctx, conversation.Conversation{
 				ID:       threadID,
 				Revision: 1,
 				Messages: []conversation.Message{
@@ -1021,6 +1021,7 @@ func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
 					{Role: "assistant", Content: "winning answer"},
 				},
 			})
+			return err
 		},
 	}
 

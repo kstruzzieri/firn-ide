@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Wails-3-DF0000?logo=wails&logoColor=white" alt="Wails">
@@ -150,7 +150,7 @@ mutating edits (#261).
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Go 1.25+ (layered package structure) |
+| Backend | Go 1.27+ (layered package structure) |
 | Frontend | React 19 + Vite + TypeScript |
 | State | Zustand |
 | Editor | CodeMirror 6 |
@@ -351,7 +351,7 @@ firn-ide/
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.27+
 - Node.js 18+
 - Wails CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16` (on Linux, install `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` first, then add `-tags gtk3` to that install command, matching CI)
 - Linux only: `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` (the Linux build compiles with the `gtk3` tag against WebKit2GTK 4.1)

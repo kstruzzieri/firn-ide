@@ -1,6 +1,6 @@
 module firn
 
-go 1.25.0
+go 1.27.0
 
 toolchain go1.27.2
 
@@ -8,7 +8,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/kstruzzieri/go-llm v0.3.0
+	github.com/kstruzzieri/go-llm v0.5.0
 	github.com/wailsapp/wails/v3 v3.0.0-beta.16
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
