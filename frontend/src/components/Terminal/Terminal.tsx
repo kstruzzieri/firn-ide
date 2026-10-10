@@ -62,6 +62,13 @@ const SHELL_INTEGRATION_COLORS = {
 // emits before the React component has subscribed.
 const outputBuffers = new Map<string, string[]>();
 const outputListeners = new Map<string, (data: string) => void>();
+// Sessions the user closed. The shell's final bytes can still arrive after the
+// close (the backend reads the PTY until EOF), and with no listener left to
+// drain them a buffer would sit under an ID the backend never reuses. An ID
+// not yet in the store is not here, so pre-attach output still buffers.
+// ponytail: one short ID per closed session for the app's lifetime; a backend
+// exit event would let this shrink.
+const closedSessionIds = new Set<string>();
 
 let globalOutputCleanup: (() => void) | null = null;
 
@@ -72,7 +79,7 @@ function ensureGlobalOutputListener() {
     const listener = outputListeners.get(evt.termId);
     if (listener) {
       listener(evt.data ?? '');
-    } else {
+    } else if (!closedSessionIds.has(evt.termId)) {
       // Buffer output until a listener attaches
       let buf = outputBuffers.get(evt.termId);
       if (!buf) {
@@ -101,6 +108,7 @@ function detachSessionListener(sessionId: string) {
 }
 
 function cleanupSessionBuffers(sessionId: string) {
+  closedSessionIds.add(sessionId);
   outputBuffers.delete(sessionId);
   outputListeners.delete(sessionId);
 }

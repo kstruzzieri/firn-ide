@@ -234,6 +234,72 @@ describe('Terminal component', () => {
     expect(mockCreateTerminal).toHaveBeenCalledTimes(2);
   });
 
+  it('retains no output a closed session emits while its shell exits', async () => {
+    // The backend reuses no IDs, so a buffer kept for a closed one is never
+    // drained. Reusing 'term-1' here makes any retained bytes observable: the
+    // next session to attach under that ID would replay them.
+    mockCreateTerminal.mockReset();
+    mockCreateTerminal.mockResolvedValue('term-1');
+
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    const handler = registration![1] as (evt: { termId: string; data: string }) => void;
+
+    fireEvent.click(screen.getByLabelText('Close Terminal 1'));
+    await waitFor(() => {
+      expect(screen.queryByText('Terminal 1')).not.toBeInTheDocument();
+    });
+
+    // The shell's final bytes land after the frontend dropped its session.
+    act(() => {
+      handler({ termId: 'term-1', data: 'logout\r\n' });
+    });
+
+    const writeSpy = jest.spyOn(XTerm.prototype, 'write');
+    writeSpy.mockClear();
+
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    expect(writeSpy).not.toHaveBeenCalledWith('logout\r\n');
+    writeSpy.mockRestore();
+  });
+
+  it('replays output a new shell emits before its session reaches the store', async () => {
+    // The PTY can print its first prompt before CreateTerminal resolves. A
+    // fresh ID: the output registry is module state shared across this file.
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset();
+    mockCreateTerminal.mockReturnValueOnce(spawn.promise);
+
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    const handler = registration![1] as (evt: { termId: string; data: string }) => void;
+    act(() => {
+      handler({ termId: 'term-early', data: 'first prompt $ ' });
+    });
+
+    const writeSpy = jest.spyOn(XTerm.prototype, 'write');
+    writeSpy.mockClear();
+
+    await act(async () => {
+      spawn.resolve('term-early');
+    });
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    expect(writeSpy).toHaveBeenCalledWith('first prompt $ ');
+    writeSpy.mockRestore();
+  });
+
   it('surfaces a failed spawn and lets the user retry with +', async () => {
     mockCreateTerminal.mockReset();
     mockCreateTerminal.mockRejectedValueOnce(new Error('pty unavailable'));
