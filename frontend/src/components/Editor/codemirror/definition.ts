@@ -16,7 +16,7 @@ import {
   type DecorationSet,
   EditorView,
 } from '@codemirror/view';
-import { StateField, StateEffect } from '@codemirror/state';
+import { Prec, StateField, StateEffect } from '@codemirror/state';
 import { LSPDefinition } from '../../../wails/bindings';
 import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
@@ -210,5 +210,9 @@ export function definitionExtensions(filePath: string) {
     },
   });
 
-  return [keymap.of(bindings), underlineField, modifierHandlers];
+  // defaultKeymap binds the same keys (Mod-[ / Mod-] to indentLess / indentMore,
+  // Alt-Arrow to cursorSyntaxLeft / Right), and at equal precedence the earlier
+  // keymap wins. Prec.high runs these first; with no history they return false,
+  // so the editor command still runs (#279).
+  return [Prec.high(keymap.of(bindings)), underlineField, modifierHandlers];
 }
