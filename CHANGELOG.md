@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Golem conversation cleared by New chat can no longer be overwritten by a
+  save that began before the reset. The session store now keeps each
+  conversation's highest revision across the reset and recreates the
+  conversation above it, so the stale save is refused as a conflict instead of
+  replacing the new conversation, as go-llm's session store contract requires.
+  (#418)
 - The file tree now matches the disk when a project is opened. A directory
   created while the project was closed was missing until a later filesystem
   event; the saved explorer snapshot could be painted over the fresh root

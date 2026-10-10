@@ -397,10 +397,10 @@ func TestMemorySessionStoreCASCreateAndUpdateRevisions(t *testing.T) {
 }
 
 // TestMemorySessionStoreDelete pins the store's one reclamation path (#361):
-// Delete drops the snapshot and its revision together and returns its bytes to
-// the store budget, an absent ID changes no stored state but still advances its
-// generation, and a deleted ID is recreated by a revision-0 save exactly as if
-// it had never been stored.
+// Delete drops the snapshot and returns its bytes to the store budget but keeps
+// the ID's highest committed revision as its floor (#418), an absent ID changes
+// no stored state but still advances its generation, and a deleted ID is
+// recreated by a revision-0 save at the floor plus one.
 func TestMemorySessionStoreDelete(t *testing.T) {
 	s := NewMemorySessionStore()
 	ctx := context.Background()
@@ -412,8 +412,8 @@ func TestMemorySessionStoreDelete(t *testing.T) {
 	if _, err := s.Load(ctx, "a"); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("Load(deleted) = %v, want conversation.ErrNotFound", err)
 	}
-	if _, ok := s.revs["a"]; ok {
-		t.Fatal("Delete left the deleted ID in the revision ledger")
+	if got := s.revs["a"]; got != 1 {
+		t.Fatalf("Delete changed the deleted ID's revision floor: revs[a] = %d, want 1", got)
 	}
 	if s.total != kept {
 		t.Fatalf("total after Delete = %d, want %d (only b's bytes)", s.total, kept)
@@ -424,7 +424,7 @@ func TestMemorySessionStoreDelete(t *testing.T) {
 	// failed before saving must still start a new opencode session.
 	s.Delete("a")
 	s.Delete("never-stored")
-	if s.total != kept || len(s.snaps) != 1 || len(s.revs) != 1 {
+	if s.total != kept || len(s.snaps) != 1 || len(s.revs) != 2 {
 		t.Fatalf("absent Delete changed the store: total = %d, snaps = %d, revs = %d", s.total, len(s.snaps), len(s.revs))
 	}
 	if got := s.Generation("never-stored"); got != 1 {
@@ -436,8 +436,8 @@ func TestMemorySessionStoreDelete(t *testing.T) {
 
 	mustSave(t, s, convOfSize("a", 10))
 	loaded, err := s.Load(ctx, "a")
-	if err != nil || loaded.Revision != 1 {
-		t.Fatalf("recreated Load = %+v, %v; want revision 1", loaded, err)
+	if err != nil || loaded.Revision != 2 {
+		t.Fatalf("recreated Load = %+v, %v; want revision 2 (floor 1 plus one)", loaded, err)
 	}
 	if s.total != kept+len(s.snaps["a"]) {
 		t.Fatalf("total after recreate = %d, want %d", s.total, kept+len(s.snaps["a"]))
@@ -574,5 +574,71 @@ func TestMemorySessionStoreCASRevisionLimits(t *testing.T) {
 	}
 	if got := s.revs["cas"]; got != priorRev {
 		t.Fatalf("Save(max) changed the revision ledger: revs[cas] = %d, want %d", got, priorRev)
+	}
+}
+
+// TestMemorySessionStoreRecreatedIDStartsAboveDeletedRevisions pins the
+// go-llm v0.5.0 SessionStore rule that a recreated ID receives a revision
+// greater than every revision its deleted snapshots held (#418): a writer that
+// loaded the conversation before New chat deleted it can no longer overwrite
+// the recreated one just because the revisions line up again.
+func TestMemorySessionStoreRecreatedIDStartsAboveDeletedRevisions(t *testing.T) {
+	s := NewMemorySessionStore()
+	ctx := context.Background()
+	mustSave(t, s, conversation.Conversation{ID: "a", Title: "first life"})
+	stale, err := s.Load(ctx, "a")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	stale.Title = "stale writer"
+	mustSave(t, s, conversation.Conversation{ID: "a", Revision: 1, Title: "first life, second save"})
+
+	s.Delete("a")
+	mustSave(t, s, conversation.Conversation{ID: "a", Title: "second life"})
+	recreated, err := s.Load(ctx, "a")
+	if err != nil {
+		t.Fatalf("Load(recreated): %v", err)
+	}
+	if recreated.Revision != 3 {
+		t.Fatalf("recreated revision = %d, want 3 (above both deleted revisions)", recreated.Revision)
+	}
+
+	err = s.Save(ctx, *stale)
+	var conflict *conversation.ConflictError
+	if !errors.As(err, &conflict) || conflict.ExpectedRevision != 1 {
+		t.Fatalf("stale Save after recreate = %v, want ConflictError at revision 1", err)
+	}
+	got, err := s.Load(ctx, "a")
+	if err != nil || got.Title != "second life" || got.Revision != 3 {
+		t.Fatalf("recreated snapshot after stale Save = %+v, %v; want title %q at revision 3", got, err, "second life")
+	}
+
+	// A second deletion keeps climbing: the floor never shrinks.
+	s.Delete("a")
+	mustSave(t, s, conversation.Conversation{ID: "a", Title: "third life"})
+	if got, err := s.Load(ctx, "a"); err != nil || got.Revision != 4 {
+		t.Fatalf("third-life revision = %+v, %v; want 4", got, err)
+	}
+}
+
+// TestMemorySessionStoreRecreateRefusedAtExhaustedFloor mirrors go-llm's
+// exhausted creation floor: when an ID's highest committed revision was
+// math.MaxInt64, recreating it is refused as a plain error, not a conflict, and
+// nothing is stored.
+func TestMemorySessionStoreRecreateRefusedAtExhaustedFloor(t *testing.T) {
+	s := NewMemorySessionStore()
+	s.mu.Lock()
+	s.revs["x"] = math.MaxInt64
+	s.mu.Unlock()
+
+	err := s.Save(context.Background(), conversation.Conversation{ID: "x", Title: "too late"})
+	if err == nil || errors.Is(err, conversation.ErrConflict) {
+		t.Fatalf("Save at exhausted floor = %v, want non-conflict error", err)
+	}
+	if _, ok := s.snaps["x"]; ok || s.total != 0 {
+		t.Fatalf("refused recreate stored a snapshot: snaps[x] present=%v, total=%d", ok, s.total)
+	}
+	if got := s.revs["x"]; got != math.MaxInt64 {
+		t.Fatalf("refused recreate changed the floor: revs[x] = %d", got)
 	}
 }

@@ -3090,8 +3090,8 @@ func TestServiceResetConversationRecoversSnapshotLockout(t *testing.T) {
 		t.Fatalf("turn after reset ended %q, want run.finished", typ)
 	}
 	saved, err := h.svc.sessions.Load(context.Background(), id.ConversationID)
-	if err != nil || saved.Revision != 1 {
-		t.Fatalf("snapshot after reset = %+v, %v; want a fresh revision-1 thread", saved, err)
+	if err != nil || saved.Revision != 2 {
+		t.Fatalf("snapshot after reset = %+v, %v; want a fresh thread at revision 2, above the deleted revision 1 (#418)", saved, err)
 	}
 }
 
