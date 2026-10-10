@@ -2,11 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {
-  ModelBand,
-  buildModelRows,
-  type ModelBandProps,
-} from '../../../components/GolemConfig/ModelBand';
+import { ModelBand, type ModelBandProps } from '../../../components/GolemConfig/ModelBand';
+import { buildModelRows } from '../../../components/GolemConfig/modelRows';
 import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../../../types/golem';
 import { floorShortfalls } from '../../../types/golemConfig';
 
