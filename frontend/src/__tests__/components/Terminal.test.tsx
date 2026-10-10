@@ -1355,7 +1355,7 @@ describe('Terminal — a session outlives the bottom panel (#275)', () => {
     return registration[1] as (evt: { termId: string; data: string }) => void;
   };
 
-  it('keeps the xterm and its scrollback across a collapse and re-attaches it on expand', async () => {
+  it('reuses the xterm, routes detached output and re-attaches its element on expand', async () => {
     const open = jest.spyOn(XTerm.prototype, 'open');
     const dispose = jest.spyOn(XTerm.prototype, 'dispose');
     const write = jest.spyOn(XTerm.prototype, 'write');
