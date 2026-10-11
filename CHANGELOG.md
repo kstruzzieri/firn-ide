@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Golem runs on go-llm v0.5.0, and building Firn needs Go 1.27 or later: the
   module's `go` line moves from 1.25.0 to 1.27.0, which go-llm v0.5.0 requires.
   Through go-llm, Golem's `search` tool skips credential files such as `.env`,
-  `.netrc` and anything under `.ssh` or `.aws`; commit message generation dials
+  `.netrc` and anything under `.ssh` or `.aws`, and Golem chat installs
+  go-llm's default tool guards, so `read_file` refuses those files before
+  Firn's own deny rules run and the refused read shows no tool row in the
+  chat; commit message generation dials
   127.0.0.1, then ::1, for a `localhost` endpoint, so a hosts-file entry can no
   longer redirect it; and on macOS and Linux a workspace read fails with `path
   changed during access` when the path it was allowed no longer reaches the

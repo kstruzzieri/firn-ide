@@ -690,7 +690,14 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 	if observations[4] != "public readme content" {
 		t.Fatalf("allowed read = %q, want the README content", observations[4])
 	}
-	for _, i := range []int{2, 3, 5, 6, 8, 9} {
+	// .env and .git/config are go-llm credential paths, refused before the
+	// guard runs; the rest are Firn's own floor and ai-kit.yaml rules.
+	for _, i := range []int{2, 3} {
+		if observations[i] != credentialBlock {
+			t.Fatalf("observation %d = %q, want the credential invariant block", i, observations[i])
+		}
+	}
+	for _, i := range []int{5, 6, 8, 9} {
 		if observations[i] != "path denied by workspace policy" {
 			t.Fatalf("observation %d = %q, want the fixed sanitized denial", i, observations[i])
 		}
@@ -713,6 +720,95 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&backend.unexpected); got != 0 {
 		t.Fatalf("unexpected provider calls = %d", got)
+	}
+}
+
+// credentialBlock is go-llm's observation for a read_file call its default
+// credential invariant refuses. The call never reaches the tool, so it is
+// refused before Firn's ScopeGuard sees it.
+const credentialBlock = "tool call blocked by interceptor invariants (credential_path)"
+
+// go-llm's read_file credential invariant holds on its own, below Firn's
+// deny floor: the guard here is nil, so only the installed interceptor can
+// refuse these reads (golem.Options.Orchestrator documents that a supplied
+// orchestrator gets none unless the embedder installs them).
+func TestGolemRuntimeInvariantsRefuseCredentialReadsWithoutGuard(t *testing.T) {
+	const leakPrefix = "NEVER-LEAK"
+	root := canonicalTempDir(t)
+	files := map[string]string{
+		"README.md":               "public readme content",
+		".netrc":                  leakPrefix + "-NETRC",
+		".aws/config":             leakPrefix + "-AWS",
+		"nested/.ssh/known_hosts": leakPrefix + "-SSH",
+		".env.local":              leakPrefix + "-ENV",
+	}
+	for rel, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The allowed read sits mid-script: a block counts toward go-llm's cap of
+	// three consecutive tool errors, which would end the run early.
+	reads := []string{".netrc", ".aws/config", "README.md", "nested/.ssh/known_hosts", ".env.local"}
+	const allowed = 2
+	var steps []provider.ChatResponse
+	for i, rel := range reads {
+		steps = append(steps, scriptedToolCall(fmt.Sprintf("c%d", i), "read_file", `{"path":"`+rel+`"}`))
+	}
+	steps = append(steps, provider.ChatResponse{Content: "done"})
+	backend := &scriptedProvider{name: "hosted", steps: steps}
+	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), nil,
+		NewMemorySessionStore(), backend, nil, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	result, err := runner.Run(context.Background(), golem.Turn{
+		RunID:    "run-invariants",
+		Message:  "read the credentials",
+		Approver: approveAll{},
+	}, collectSink(new([]golem.Event)))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Answer != "done" {
+		t.Fatalf("Answer = %q, want the full script to finish", result.Answer)
+	}
+
+	reqs := backend.recorded()
+	var observations []string
+	for _, msg := range reqs[len(reqs)-1].Messages {
+		if msg.Role == "tool" {
+			observations = append(observations, msg.Content)
+		}
+	}
+	if len(observations) != len(reads) {
+		t.Fatalf("tool observations = %d, want %d:\n%q", len(observations), len(reads), observations)
+	}
+	for i, rel := range reads {
+		want := credentialBlock
+		if i == allowed {
+			want = "public readme content"
+		}
+		if got := unfenceToolResult(t, observations[i]); got != want {
+			t.Fatalf("read_file %s observation = %q, want %q", rel, got, want)
+		}
+	}
+	for i, req := range reqs {
+		for _, msg := range req.Messages {
+			if strings.Contains(msg.Content, leakPrefix) {
+				t.Fatalf("model request %d leaks credential content: %q", i, msg.Content)
+			}
+		}
 	}
 }
 
