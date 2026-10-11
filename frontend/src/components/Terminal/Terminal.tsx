@@ -168,12 +168,18 @@ export function Terminal() {
     try {
       // Register global listener before creating the PTY so early output is buffered
       ensureGlobalOutputListener();
+      const focusAtRequest = document.activeElement;
       // Start the shell in the loaded workspace root (not the app process's
       // cwd, which under wails dev is the firn checkout itself).
       const id = await CreateTerminal(useIDEStore.getState().workspace?.path ?? '');
       const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
+      // Focus the new shell only if the panel is still open and focus has not
+      // moved while it started; a late request would land on a later expand or
+      // pull the user's typing out of the editor (#276).
+      const stillWanted =
+        newSessionButtonRef.current !== null && document.activeElement === focusAtRequest;
       addSession({ id, title });
-      focusTerminal(id);
+      if (stillWanted) focusTerminal(id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? 'Unknown error');
       showToast(`Failed to create terminal: ${message}`, 'error');

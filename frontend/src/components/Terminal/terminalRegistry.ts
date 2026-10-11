@@ -105,8 +105,11 @@ function ensureRetainedTerminalPruning() {
 export function acquireTerminal(sessionId: string, container: HTMLElement) {
   const retained = retainedTerminals.get(sessionId);
   if (retained) {
-    // open() on an opened xterm is a no-op, so move its element by hand.
-    if (retained.term.element) container.appendChild(retained.term.element);
+    // open() on an opened xterm is a no-op, so move its element by hand. Not
+    // within the same container: StrictMode replays this on mount, and the
+    // move would blur the input a new session just focused (#276).
+    const element = retained.term.element;
+    if (element && element.parentElement !== container) container.appendChild(element);
     fitToContainer(sessionId);
     return;
   }

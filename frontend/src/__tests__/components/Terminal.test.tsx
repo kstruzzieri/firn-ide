@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import {
   act,
   createEvent,
@@ -843,8 +844,8 @@ describe('Terminal component', () => {
 
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(rename).not.toHaveFocus();
-    // Reverse order reaches the last tab stop before the menu: the session's
-    // xterm input, as in the app.
+    // Reverse order reaches the last tab stop before the menu in document
+    // order: the session's xterm input.
     const destination = shift
       ? screen.getByRole('textbox', { name: 'Terminal input' })
       : within(screen.getByRole('tablist', { name: 'Terminal panels' })).getByRole('tab', {
@@ -1520,12 +1521,49 @@ describe('Terminal — a session the user opens takes keyboard focus (#276)', ()
     ['the empty-state prompt', () => screen.getByRole('button', { name: /No terminal sessions/ })],
   ])('focuses the shell of a session opened from %s', async (_, trigger) => {
     const user = userEvent.setup();
-    render(<Terminal />);
+    // The app mounts under StrictMode, which replays the panel's mount effect.
+    render(
+      <StrictMode>
+        <Terminal />
+      </StrictMode>
+    );
 
     await user.click(trigger());
 
     expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
     expect(shellInput('term-1')).toHaveFocus();
+  });
+
+  // WebKit does not focus a button on click, so focus stays where it was;
+  // fireEvent.click models that.
+  it('does not focus a shell whose panel collapsed while it was starting', async () => {
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset().mockReturnValueOnce(spawn.promise);
+    const expanded = render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expanded.unmount();
+
+    await act(async () => spawn.resolve('term-1'));
+    render(<Terminal />);
+
+    expect(shellInput('term-1')).not.toBeNull();
+    expect(shellInput('term-1')).not.toHaveFocus();
+  });
+
+  it('does not take focus back from where the user moved it while the shell started', async () => {
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset().mockReturnValueOnce(spawn.promise);
+    const editor = document.createElement('button');
+    document.body.appendChild(editor);
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    editor.focus();
+
+    await act(async () => spawn.resolve('term-1'));
+
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    expect(editor).toHaveFocus();
+    editor.remove();
   });
 
   it('leaves focus alone when a session tab is activated or the panel remounts', async () => {
