@@ -120,6 +120,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cut off at the edge no longer shows half of its close button, which read as
   a `>` scroll arrow but closed the tab. (#406)
 
+### Security
+
+- Golem's file tools now refuse more credential files by path: `.netrc`,
+  `_netrc`, `.npmrc` and `.pypirc` at any depth, anything under a `.ssh`,
+  `.gnupg`, `.aws` or `.kube` directory (go-llm v0.5.0's credential set),
+  `.docker/config.json`, and Terraform state (`*.tfstate`, `*.tfstate.backup`).
+  Firn's deny floor already covered `.env` files, private key file names and
+  names containing `credential` or `secret`, but not these, so a chat run
+  could open a project's `.npmrc` auth token or an `.aws/config` session token
+  with `read_file` and send it to the configured model. `read_file` now
+  refuses them, listings and globs leave them out, and search skips them, as
+  for the rest of the floor; a repository's `ai-kit.yaml` cannot re-allow
+  them. (#430)
+
 ### Build and CI
 
 - CI runs `govulncheck` on a Linux build of the app made with the release build

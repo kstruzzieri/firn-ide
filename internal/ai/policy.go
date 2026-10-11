@@ -81,6 +81,25 @@ var firnSensitiveFloor = []string{
 	"**/*credential*/**",
 	"**/*secret*",
 	"**/*secret*/**",
+	// go-llm v0.5.0's credential set (agent/interceptor IsCredentialPath),
+	// which its read_file invariant refuses and its search skips. v0.3.0's
+	// invariant covers only .env and the four directories, and its search
+	// skips none. Firn builds its own orchestrator without go-llm's
+	// interceptors, so the floor carries the set. A trailing "**" also
+	// matches zero segments: "**/.ssh/**" denies the directory itself.
+	"**/.netrc",
+	"**/_netrc",
+	"**/.npmrc",
+	"**/.pypirc",
+	"**/.ssh/**",
+	"**/.gnupg/**",
+	"**/.aws/**",
+	"**/.kube/**",
+	// Beyond go-llm's set: registry auths and Terraform state hold secrets in
+	// plain text.
+	"**/.docker/config.json",
+	"**/*.tfstate",
+	"**/*.tfstate.backup",
 	".git",
 	".git/**",
 	"**/.git",

@@ -46,6 +46,33 @@ var floorProbes = []string{
 	".agent",
 	".agent/receipts/x",
 	"sub/.agent/y",
+	// The credential set go-llm's read_file invariant and search skip
+	// (agent/interceptor IsCredentialPath): files at any depth, and anything
+	// at or below the credential directories.
+	".netrc",
+	"home/.netrc",
+	"_netrc",
+	".npmrc",
+	"web/.npmrc",
+	".pypirc",
+	".ssh",
+	".ssh/config",
+	"home/.ssh/known_hosts",
+	".gnupg",
+	".gnupg/pubring.kbx",
+	".aws",
+	".aws/config",
+	"infra/.aws/sso/cache/token.json",
+	".kube",
+	".kube/config",
+	"ops/.kube/cache/discovery.json",
+	"Web/.NPMRC", // case-insensitive volumes open .npmrc under any case
+	// Beyond go-llm's set: registry auths and Terraform state hold secrets in
+	// plain text.
+	".docker/config.json",
+	"home/.docker/config.json",
+	"terraform.tfstate",
+	"infra/terraform.tfstate.backup",
 }
 
 // allowedProbes are ordinary source paths that must stay reachable.
@@ -56,6 +83,17 @@ var allowedProbes = []string{
 	"frontend/src/app.tsx",
 	"environment.go",
 	"keys.go",
+	// Look-alikes of the credential set: only the dot-names are credentials.
+	"netrc.go",
+	"npmrc/README.md",
+	"ssh/known_hosts.go",
+	"aws/config.go",
+	"kube/deploy.yaml",
+	"docs/.sshrc.md",
+	"docker/config.json",
+	".docker/daemon.json",
+	"docs/tfstate.md",
+	"infra/main.tf",
 }
 
 func newPolicyRepo(t *testing.T) string {
@@ -709,6 +747,7 @@ func TestScopePolicyWatches(t *testing.T) {
 func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 	const credMarker = "ZZCREDMARKERA"
 	const secMarker = "ZZSECMARKERB"
+	const plainMarker = "ZZPLAINMARKERC"
 
 	t.Run("standardCheckout", func(t *testing.T) {
 		repo := newPolicyRepo(t)
@@ -722,6 +761,19 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			"nested/.env.local":        "KEY=" + secMarker + "\n",
 			"my-credentials.json":      "{\"cred\":\"" + secMarker + "\"}\n",
 			"id_dsa":                   secMarker + "\n",
+			".netrc":                   "machine example.com login u password " + credMarker + "\n",
+			"web/.npmrc":               "//registry.npmjs.org/:_authToken=" + credMarker + "\n",
+			".pypirc":                  "[pypi]\npassword = " + credMarker + "\n",
+			".aws/config":              "[default]\naws_session_token = " + credMarker + "\n",
+			".kube/config":             "users:\n- user:\n    token: " + credMarker + "\n",
+			".ssh/config":              "Host x\n  IdentityFile ~/.ssh/" + credMarker + "\n",
+			".gnupg/gpg.conf":          "default-key " + credMarker + "\n",
+			"_netrc":                   "machine example.com password " + credMarker + "\n",
+			".docker/config.json":      "{\"auths\":{\"r.example\":{\"auth\":\"" + credMarker + "\"}}}\n",
+			"infra/terraform.tfstate":  "{\"db_password\":\"" + credMarker + "\"}\n",
+			"web/app.js":               "// " + plainMarker + "\n",
+			".docker/daemon.json":      "{}\n",
+			"infra/main.tf":            "terraform {}\n",
 		}
 		for rel, content := range files {
 			writeFile(t, filepath.Join(repo, filepath.FromSlash(rel)), content)
@@ -732,6 +784,8 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		for _, denied := range []string{
 			".git/config", "secrets/token.txt", ".agent/receipts/x",
 			".firn/golem-consent.json", "nested/.env.local", "my-credentials.json", "id_dsa",
+			".netrc", "web/.npmrc", ".pypirc", ".aws/config", ".kube/config", ".ssh/config", ".gnupg/gpg.conf",
+			"_netrc", ".docker/config.json", "infra/terraform.tfstate",
 		} {
 			res := invokeTool(t, tools["read_file"], `{"path":"`+denied+`"}`)
 			if !res.IsError || res.Content != scopeDeniedMsg {
@@ -742,7 +796,7 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			t.Errorf("read_file(main.go) = %+v, want content", res)
 		}
 
-		for _, dir := range []string{".git", "secrets", ".agent", ".firn"} {
+		for _, dir := range []string{".git", "secrets", ".agent", ".firn", ".aws", ".kube", ".ssh", ".gnupg"} {
 			if res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
 				t.Errorf("list(%q) = %+v, want scope denial", dir, res)
 			}
@@ -755,7 +809,20 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		if globAll.IsError || !strings.Contains(globAll.Content, "main.go") {
 			t.Fatalf("glob(**) = %+v, want main.go visible", globAll)
 		}
-		for _, hidden := range []string{".git", "secrets", ".agent", ".firn", ".env.local", "credentials", "id_dsa"} {
+		// A nested credential file would show only in its own directory's
+		// listing; each has an ordinary sibling that must stay listed.
+		for dir, pair := range map[string][2]string{
+			"web":     {"app.js", ".npmrc"},
+			".docker": {"daemon.json", "config.json"},
+			"infra":   {"main.tf", "terraform.tfstate"},
+		} {
+			res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`)
+			if res.IsError || !strings.Contains(res.Content, pair[0]) || strings.Contains(res.Content, pair[1]) {
+				t.Errorf("list(%s) = %+v, want %s without %s", dir, res, pair[0], pair[1])
+			}
+		}
+		for _, hidden := range []string{".git", "secrets", ".agent", ".firn", ".env.local", "credentials", "id_dsa",
+			".netrc", "_netrc", ".npmrc", ".pypirc", ".aws", ".kube", ".ssh", ".gnupg", "config.json", "tfstate"} {
 			if strings.Contains(listRoot.Content, hidden) {
 				t.Errorf("list(.) exposes %q: %q", hidden, listRoot.Content)
 			}
@@ -767,6 +834,9 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			if res := invokeTool(t, tools["search"], `{"pattern":"`+pattern+`"}`); res.Content != "no matches" {
 				t.Errorf("search(%q) = %q, want no matches", pattern, res.Content)
 			}
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); !strings.Contains(res.Content, "web/app.js") {
+			t.Errorf("search(%q) = %q, want the web/app.js match", plainMarker, res.Content)
 		}
 	})
 
