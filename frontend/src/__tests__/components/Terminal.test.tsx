@@ -732,7 +732,7 @@ describe('Terminal component', () => {
     expect(closeSpace.defaultPrevented).toBe(false);
 
     fireEvent.doubleClick(tab);
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('textbox', { name: /^Rename / });
     fireEvent.change(input, { target: { value: 'Renamed session' } });
     fireEvent.doubleClick(input);
     expect(input).toHaveValue('Renamed session');
@@ -748,7 +748,7 @@ describe('Terminal component', () => {
 
     fireEvent.keyDown(input, { key: 'Escape' });
     await waitFor(() => expect(tab).toHaveFocus());
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /^Rename / })).not.toBeInTheDocument();
     expect(useIDEStore.getState().terminalSessions[0].title).toBe('Terminal 1');
   });
 
@@ -765,7 +765,7 @@ describe('Terminal component', () => {
       { name: /Terminal 1/ }
     );
     fireEvent.doubleClick(tab);
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('textbox', { name: /^Rename / });
     fireEvent.change(input, { target: { value: 'Committed session' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
@@ -843,8 +843,10 @@ describe('Terminal component', () => {
 
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(rename).not.toHaveFocus();
+    // Reverse order reaches the last tab stop before the menu: the session's
+    // xterm input, as in the app.
     const destination = shift
-      ? screen.getByRole('tabpanel', { name: 'Terminal' })
+      ? screen.getByRole('textbox', { name: 'Terminal input' })
       : within(screen.getByRole('tablist', { name: 'Terminal panels' })).getByRole('tab', {
           name: 'Terminal',
         });
@@ -914,7 +916,7 @@ describe('Terminal component', () => {
     const first = within(sessionList).getByRole('tab', { name: /Terminal 1/ });
     fireEvent.keyDown(first, { key: 'F10', shiftKey: true });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('textbox', { name: /^Rename / });
     fireEvent.change(input, { target: { value: 'Discard me' } });
     fireEvent.keyDown(input, { key: 'Escape' });
     await waitFor(() => expect(first).toHaveFocus());
@@ -1493,5 +1495,60 @@ describe('Terminal — a session outlives the bottom panel (#275)', () => {
 
     expect(fit).toHaveBeenCalledTimes(1);
     expect(ResizeTerminal).toHaveBeenCalledWith('term-1', 24, 80);
+  });
+});
+
+describe('Terminal — a session the user opens takes keyboard focus (#276)', () => {
+  beforeEach(() => {
+    mockCreateTerminal.mockReset();
+    mockCloseTerminal.mockReset();
+    mockCloseTerminal.mockResolvedValue(undefined);
+    mockCreateTerminal.mockResolvedValueOnce('term-1').mockResolvedValueOnce('term-2');
+    useIDEStore.setState({
+      activeTerminalTab: 'terminal',
+      terminalSessions: [],
+      activeTerminalSessionId: null,
+      toast: null,
+    });
+  });
+
+  const shellInput = (sessionId: string) =>
+    document.querySelector(`#terminal-session-panel-${sessionId} .xterm-helper-textarea`);
+
+  it.each([
+    ['the + button', () => screen.getByLabelText('New terminal session')],
+    ['the empty-state prompt', () => screen.getByRole('button', { name: /No terminal sessions/ })],
+  ])('focuses the shell of a session opened from %s', async (_, trigger) => {
+    const user = userEvent.setup();
+    render(<Terminal />);
+
+    await user.click(trigger());
+
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    expect(shellInput('term-1')).toHaveFocus();
+  });
+
+  it('leaves focus alone when a session tab is activated or the panel remounts', async () => {
+    const user = userEvent.setup();
+    const editor = document.createElement('button');
+    document.body.appendChild(editor);
+    const expanded = render(<Terminal />);
+    await user.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 2')).toBeInTheDocument();
+
+    // The session tablist activates manually; focus stays on the tab.
+    const tabOne = screen.getByRole('tab', { name: /Terminal 1/ });
+    await user.click(tabOne);
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-1');
+    expect(tabOne).toHaveFocus();
+
+    // Re-expanding the bottom panel while the user works elsewhere.
+    editor.focus();
+    expanded.unmount();
+    render(<Terminal />);
+    expect(editor).toHaveFocus();
+    editor.remove();
   });
 });

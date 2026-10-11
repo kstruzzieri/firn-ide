@@ -38,6 +38,7 @@ import {
   cleanupSessionBuffers,
   ensureGlobalOutputListener,
   fitToContainer,
+  focusTerminal,
 } from './terminalRegistry';
 import { CreateTerminal, CloseTerminal } from '../../wails/bindings';
 
@@ -172,6 +173,7 @@ export function Terminal() {
       const id = await CreateTerminal(useIDEStore.getState().workspace?.path ?? '');
       const title = getNextTerminalTitle(useIDEStore.getState().terminalSessions);
       addSession({ id, title });
+      focusTerminal(id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? 'Unknown error');
       showToast(`Failed to create terminal: ${message}`, 'error');

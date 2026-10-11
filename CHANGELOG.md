@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that changes on New chat and when Firn restarts and cannot be traced back to
   the repository path. Every other OpenAI-compatible endpoint, local or remote,
   receives no session header. (#306)
+- A terminal session opened with + or from the empty terminal panel now takes
+  keyboard focus, so typing reaches its shell without clicking into it first.
+  Switching session tabs and re-expanding the bottom panel leave focus where it
+  was. (#276)
 
 ### Fixed
 

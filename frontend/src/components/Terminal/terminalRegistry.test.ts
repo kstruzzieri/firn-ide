@@ -84,3 +84,23 @@ it('preserves real scrollback, viewport and OSC markers while detached, until se
   expect(element.isConnected).toBe(false);
   expect(nextContainer).toBeEmptyDOMElement();
 });
+
+it('focuses a shell whether focus is requested before or after its xterm opens (#276)', async () => {
+  jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  const { acquireTerminal, focusTerminal } = await import('./terminalRegistry');
+  const open = (sessionId: string) => {
+    useIDEStore.getState().addTerminalSession({ id: sessionId, title: sessionId });
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    acquireTerminal(sessionId, container);
+    return container.querySelector('.xterm-helper-textarea');
+  };
+
+  focusTerminal('focus-requested-first');
+  expect(open('focus-requested-first')).toHaveFocus();
+
+  const input = open('focus-requested-later');
+  expect(input).not.toHaveFocus();
+  focusTerminal('focus-requested-later');
+  expect(input).toHaveFocus();
+});
