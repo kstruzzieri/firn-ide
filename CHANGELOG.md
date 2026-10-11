@@ -132,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `read_file` and send it to the configured model. `read_file` now
   refuses them, listings and globs leave them out, and search skips them, as
   for the rest of the floor; a repository's `ai-kit.yaml` cannot re-allow
-  them. (#430)
+  them. Floor checks also cover equivalent Unicode filenames on macOS
+  filesystems, without changing manifest glob matching. (#430)
 
 ### Build and CI
 

@@ -287,6 +287,36 @@ func TestScopePolicySeparatorAndCaseNoBypass(t *testing.T) {
 	}
 }
 
+func TestScopePolicyUnicodeCredentialAliases(t *testing.T) {
+	p := LoadScopePolicy(filesystem.NewOS(), newPolicyRepo(t))
+	g := p.Guard("")
+	for _, probe := range []string{
+		".ſſh/config", ".awſ/config", ".docker/conﬁg.json",
+		".a\u200cws/config",     // HFS+ ignores this format character.
+		".\u200c./ordinary.txt", // Alias folding must not introduce traversal.
+	} {
+		mustDeny(t, g, probe)
+	}
+	for _, prefix := range []string{".awſ", ".a\u200cws", ".\u200c."} {
+		mustDeny(t, p.Guard(prefix), "config")
+		mustDeny(t, p.Guard("workspace", prefix), "config")
+	}
+	for _, probe := range []string{"Straße.md", "src/éclair.go", ".docker/conﬁg-guide.md", "docs/\u200creadme.md"} {
+		mustAllow(t, g, probe)
+	}
+}
+
+func TestScopePolicyUnicodeManifestGlobsKeepRuneSemantics(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - '[ß].txt'\n  - '?.dat'\n")
+	g := LoadScopePolicy(filesystem.NewOS(), repo).Guard("")
+	// Folding ß to ss would change both the character class and ? width.
+	mustDeny(t, g, "ß.txt")
+	mustDeny(t, g, "ß.dat")
+	mustAllow(t, g, "ss.txt")
+	mustAllow(t, g, "ss.dat")
+}
+
 func TestScopePolicyRejectedRules(t *testing.T) {
 	repo := newPolicyRepo(t)
 	writeManifest(t, repo, "ai-kit.yaml",
@@ -837,6 +867,70 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		}
 		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); !strings.Contains(res.Content, "web/app.js") {
 			t.Errorf("search(%q) = %q, want the web/app.js match", plainMarker, res.Content)
+		}
+	})
+
+	t.Run("unicodeCredentialAliases", func(t *testing.T) {
+		repo := newPolicyRepo(t)
+		aliases := []struct{ disk, ascii string }{
+			{".ſſh/config", ".ssh/config"},
+			{".awſ/config", ".aws/config"},
+			{".docker/conﬁg.json", ".docker/config.json"},
+		}
+		for _, alias := range aliases {
+			writeFile(t, filepath.Join(repo, alias.disk), credMarker+"\n")
+		}
+		writeFile(t, filepath.Join(repo, "main.go"), "// "+plainMarker+"\n")
+		writeFile(t, filepath.Join(repo, ".docker/daemon.json"), "{}\n")
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		tools := newScopedTools(t, repo, p.Guard(""))
+
+		for _, alias := range aliases {
+			if res := invokeTool(t, tools["read_file"], `{"path":"`+alias.disk+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
+				t.Errorf("read_file(%q) = %+v, want scope denial", alias.disk, res)
+			}
+			t.Run(alias.ascii, func(t *testing.T) {
+				disk, err := os.Stat(filepath.Join(repo, alias.disk))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ascii, err := os.Stat(filepath.Join(repo, alias.ascii))
+				if err != nil || !os.SameFile(disk, ascii) {
+					t.Skip("filesystem does not resolve the ASCII and Unicode names to the same file")
+				}
+				if res := invokeTool(t, tools["read_file"], `{"path":"`+alias.ascii+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
+					t.Errorf("read_file(%q) = %+v, want scope denial for the Unicode disk name", alias.ascii, res)
+				}
+			})
+		}
+		if res := invokeTool(t, tools["read_file"], `{"path":"main.go"}`); res.IsError || !strings.Contains(res.Content, plainMarker) {
+			t.Errorf("read_file(main.go) = %+v, want ordinary content", res)
+		}
+		for dir, visible := range map[string]string{".": "main.go", ".docker": "daemon.json"} {
+			res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`)
+			if res.IsError || !strings.Contains(res.Content, visible) {
+				t.Errorf("list(%q) = %+v, want %s visible", dir, res, visible)
+			}
+			for _, hidden := range []string{".ſſh", ".awſ", "conﬁg.json"} {
+				if strings.Contains(res.Content, hidden) {
+					t.Errorf("list(%q) exposes %q: %q", dir, hidden, res.Content)
+				}
+			}
+		}
+		glob := invokeTool(t, tools["glob"], `{"pattern":"**"}`)
+		if glob.IsError || !strings.Contains(glob.Content, "main.go") || !strings.Contains(glob.Content, ".docker/daemon.json") {
+			t.Errorf("glob(**) = %+v, want ordinary files visible", glob)
+		}
+		for _, alias := range aliases {
+			if strings.Contains(glob.Content, alias.disk) {
+				t.Errorf("glob(**) exposes %q: %q", alias.disk, glob.Content)
+			}
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+credMarker+`"}`); res.IsError || res.Content != "no matches" {
+			t.Errorf("search(credential marker) = %+v, want no matches", res)
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); res.IsError || !strings.Contains(res.Content, "main.go") {
+			t.Errorf("search(ordinary marker) = %+v, want main.go", res)
 		}
 	})
 

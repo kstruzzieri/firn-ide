@@ -114,6 +114,17 @@ var firnSensitiveFloor = []string{
 	"**/.agent/**",
 }
 
+// go-llm v0.5.0's APFS/HFS+ aliases; ToLower alone misses these spellings.
+var floorPathAliases = strings.NewReplacer(
+	"\u017F", "s", "\u212A", "k", "\u00DF", "ss", "\u1E9E", "ss",
+	"\uFB00", "ff", "\uFB01", "fi", "\uFB02", "fl", "\uFB03", "ffi", "\uFB04", "ffl",
+	"\uFB05", "st", "\uFB06", "st",
+	"\u200C", "", "\u200D", "", "\u200E", "", "\u200F", "",
+	"\u202A", "", "\u202B", "", "\u202C", "", "\u202D", "", "\u202E", "",
+	"\u206A", "", "\u206B", "", "\u206C", "", "\u206D", "", "\u206E", "", "\u206F", "",
+	"\uFEFF", "",
+)
+
 var floorPatterns = func() [][]string {
 	pats := make([][]string, len(firnSensitiveFloor))
 	for i, rule := range firnSensitiveFloor {
@@ -405,8 +416,19 @@ func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string) error
 		}
 	}
 	for _, segs := range candidates {
+		// Keep manifest glob rune counts intact; aliases only widen the immutable floor.
+		joined := strings.Join(segs, "/")
+		folded := floorPathAliases.Replace(joined)
+		foldedSegs := segs
+		if folded != joined {
+			var ok bool
+			foldedSegs, ok = candidateSegments(nil, folded)
+			if !ok {
+				return errPolicyDenied
+			}
+		}
 		for _, pat := range floorPatterns {
-			if matchPattern(pat, segs) {
+			if matchPattern(pat, segs) || (folded != joined && matchPattern(pat, foldedSegs)) {
 				return errPolicyDenied
 			}
 		}
