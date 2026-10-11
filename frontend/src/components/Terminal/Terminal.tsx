@@ -177,7 +177,9 @@ export function Terminal() {
       // moved while it started; a late request would land on a later expand or
       // pull the user's typing out of the editor (#276).
       const stillWanted =
-        newSessionButtonRef.current !== null && document.activeElement === focusAtRequest;
+        newSessionButtonRef.current !== null &&
+        document.hasFocus() &&
+        document.activeElement === focusAtRequest;
       addSession({ id, title });
       if (stillWanted) focusTerminal(id);
     } catch (err) {

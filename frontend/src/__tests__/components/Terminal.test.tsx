@@ -1501,6 +1501,8 @@ describe('Terminal — a session outlives the bottom panel (#275)', () => {
 
 describe('Terminal — a session the user opens takes keyboard focus (#276)', () => {
   beforeEach(() => {
+    // jsdom cannot model OS window focus, including WebKit's unfocused button clicks.
+    jest.spyOn(document, 'hasFocus').mockReturnValue(true);
     mockCreateTerminal.mockReset();
     mockCloseTerminal.mockReset();
     mockCloseTerminal.mockResolvedValue(undefined);
@@ -1511,6 +1513,10 @@ describe('Terminal — a session the user opens takes keyboard focus (#276)', ()
       activeTerminalSessionId: null,
       toast: null,
     });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   const shellInput = (sessionId: string) =>
@@ -1564,6 +1570,28 @@ describe('Terminal — a session the user opens takes keyboard focus (#276)', ()
     expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
     expect(editor).toHaveFocus();
     editor.remove();
+  });
+
+  it('does not focus a shell while the app window is unfocused', async () => {
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset().mockReturnValueOnce(spawn.promise);
+    const user = userEvent.setup();
+    render(<Terminal />);
+    const trigger = screen.getByLabelText('New terminal session');
+    await user.click(trigger);
+    expect(trigger).toHaveFocus();
+
+    // Switching apps leaves activeElement intact.
+    jest.mocked(document.hasFocus).mockReturnValue(false);
+    await act(async () => spawn.resolve('term-1'));
+
+    expect(shellInput('term-1')).not.toBeNull();
+    expect(shellInput('term-1')).not.toHaveFocus();
+    expect(trigger).toHaveFocus();
+
+    jest.mocked(document.hasFocus).mockReturnValue(true);
+    fireEvent.focus(window);
+    expect(trigger).toHaveFocus();
   });
 
   it('leaves focus alone when a session tab is activated or the panel remounts', async () => {

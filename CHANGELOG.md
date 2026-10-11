@@ -42,8 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receives no session header. (#306)
 - A terminal session opened with + or from the empty terminal panel now takes
   keyboard focus, so typing reaches its shell without clicking into it first.
-  Switching session tabs, re-expanding the bottom panel, and moving focus or
-  collapsing the panel while the shell starts leave focus where it was. (#276)
+  Switching session tabs, re-expanding the bottom panel, and moving focus,
+  switching apps, or collapsing the panel while the shell starts leave focus
+  where it was. (#276)
 
 ### Fixed
 
