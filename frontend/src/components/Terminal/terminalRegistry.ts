@@ -82,6 +82,10 @@ interface RetainedTerminal {
 // in the store, so it is disposed when the session leaves terminalSessions.
 const retainedTerminals = new Map<string, RetainedTerminal>();
 let pruningRetainedTerminals = false;
+// Sessions whose xterm takes keyboard focus once it opens: only one the user
+// just created, never one remounted by a panel expand or shown by a tab switch
+// (#276).
+const pendingFocus = new Set<string>();
 
 function ensureRetainedTerminalPruning() {
   if (pruningRetainedTerminals) return;
@@ -101,8 +105,11 @@ function ensureRetainedTerminalPruning() {
 export function acquireTerminal(sessionId: string, container: HTMLElement) {
   const retained = retainedTerminals.get(sessionId);
   if (retained) {
-    // open() on an opened xterm is a no-op, so move its element by hand.
-    if (retained.term.element) container.appendChild(retained.term.element);
+    // open() on an opened xterm is a no-op, so move its element by hand. Not
+    // within the same container: StrictMode replays this on mount, and the
+    // move would blur the input a new session just focused (#276).
+    const element = retained.term.element;
+    if (element && element.parentElement !== container) container.appendChild(element);
     fitToContainer(sessionId);
     return;
   }
@@ -125,6 +132,14 @@ export function acquireTerminal(sessionId: string, container: HTMLElement) {
   term.onData((data) => {
     void WriteTerminal(sessionId, data);
   });
+  if (pendingFocus.delete(sessionId)) term.focus();
+}
+
+// Focus a session's shell, now or as soon as its xterm opens.
+export function focusTerminal(sessionId: string) {
+  const retained = retainedTerminals.get(sessionId);
+  if (retained) retained.term.focus();
+  else pendingFocus.add(sessionId);
 }
 
 // A container outside the layout (display: none on it or an ancestor) has no
