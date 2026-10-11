@@ -632,7 +632,7 @@ describe('event reduction', () => {
     const errors = conv().transcript.filter((entry) => entry.kind === 'error');
     expect(errors).toHaveLength(1);
     expect(errors[0].text).toBe(
-      'Golem stopped after 2 tool calls: it reached its tool-call limit. It did not answer.'
+      'Golem stopped: it reached its tool-call limit. It did not answer.'
     );
     expect(errors[0].runId).toBe(RUN_A);
     expect(conv().runs[RUN_A].phase).toBe('done');
@@ -653,8 +653,21 @@ describe('event reduction', () => {
 
     const errors = conv().transcript.filter((entry) => entry.kind === 'error');
     expect(errors.map((entry) => entry.text)).toEqual([
-      `Golem stopped after 1 tool call: ${cause}. It did not answer.`,
+      `Golem stopped: ${cause}. It did not answer.`,
     ]);
+  });
+
+  // A call go-llm's guards block is never invoked, so it emits no tool events:
+  // three blocked reads end the run with no tool row at all. The notice must
+  // not count rows and claim the run made no calls.
+  it('names the tool-error cap without counting rows when every call was blocked', () => {
+    send({ seq: 1, type: 'run.finished', payload: { stopReason: 'tool_error_cap_reached' } });
+
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .map((e) => e.text)
+    ).toEqual(['Golem stopped: too many tool calls failed. It did not answer.']);
   });
 
   it('keeps a partial answer and still says the run stopped early', () => {
@@ -672,7 +685,7 @@ describe('event reduction', () => {
         .transcript.filter((e) => e.kind === 'error')
         .map((e) => e.text)
     ).toEqual([
-      'Golem stopped after 1 tool call: it reached its tool-call limit. The answer above may be incomplete.',
+      'Golem stopped: it reached its tool-call limit. The answer above may be incomplete.',
     ]);
   });
 
@@ -684,7 +697,7 @@ describe('event reduction', () => {
         .transcript.filter((e) => e.kind === 'error')
         .map((e) => e.text)
     ).toEqual([
-      'Golem stopped after 0 tool calls: it stopped early (moon_phase_wrong). It did not answer.',
+      'Golem stopped: it gave an unrecognized stop reason (moon_phase_wrong). It did not answer.',
     ]);
   });
 
@@ -715,7 +728,7 @@ describe('event reduction', () => {
           .transcript.filter((e) => e.kind === 'error')
           .map((e) => e.text)
       ).toEqual([
-        `Golem stopped after 0 tool calls: it stopped early (${stopReason}). It did not answer.`,
+        `Golem stopped: it gave an unrecognized stop reason (${stopReason}). It did not answer.`,
       ]);
     }
   );

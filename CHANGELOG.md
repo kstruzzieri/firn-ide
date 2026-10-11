@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.netrc` and anything under `.ssh` or `.aws`, and Golem chat installs
   go-llm's default tool guards, so `read_file` refuses those files before
   Firn's own deny rules run and the refused read shows no tool row in the
-  chat; commit message generation dials
-  127.0.0.1, then ::1, for a `localhost` endpoint, so a hosts-file entry can no
-  longer redirect it; and on macOS and Linux a workspace read fails with `path
+  chat. A run that stops at a cap now says why without a count of its tool
+  calls ("Golem stopped: too many tool calls failed."), since a refused call
+  has no row to count. Commit message generation dials 127.0.0.1, then ::1,
+  for a `localhost` endpoint, so a hosts-file entry can no longer redirect it;
+  and on macOS and Linux a workspace read fails with `path
   changed during access` when the path it was allowed no longer reaches the
   same file.
   The `go` line also gives Firn Go 1.27's default runtime settings in place of
