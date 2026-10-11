@@ -46,6 +46,33 @@ var floorProbes = []string{
 	".agent",
 	".agent/receipts/x",
 	"sub/.agent/y",
+	// The credential set go-llm's read_file invariant and search skip
+	// (agent/interceptor IsCredentialPath): files at any depth, and anything
+	// at or below the credential directories.
+	".netrc",
+	"home/.netrc",
+	"_netrc",
+	".npmrc",
+	"web/.npmrc",
+	".pypirc",
+	".ssh",
+	".ssh/config",
+	"home/.ssh/known_hosts",
+	".gnupg",
+	".gnupg/pubring.kbx",
+	".aws",
+	".aws/config",
+	"infra/.aws/sso/cache/token.json",
+	".kube",
+	".kube/config",
+	"ops/.kube/cache/discovery.json",
+	"Web/.NPMRC", // case-insensitive volumes open .npmrc under any case
+	// Beyond go-llm's set: registry auths and Terraform state hold secrets in
+	// plain text.
+	".docker/config.json",
+	"home/.docker/config.json",
+	"terraform.tfstate",
+	"infra/terraform.tfstate.backup",
 }
 
 // allowedProbes are ordinary source paths that must stay reachable.
@@ -56,6 +83,17 @@ var allowedProbes = []string{
 	"frontend/src/app.tsx",
 	"environment.go",
 	"keys.go",
+	// Look-alikes of the credential set: only the dot-names are credentials.
+	"netrc.go",
+	"npmrc/README.md",
+	"ssh/known_hosts.go",
+	"aws/config.go",
+	"kube/deploy.yaml",
+	"docs/.sshrc.md",
+	"docker/config.json",
+	".docker/daemon.json",
+	"docs/tfstate.md",
+	"infra/main.tf",
 }
 
 func newPolicyRepo(t *testing.T) string {
@@ -247,6 +285,36 @@ func TestScopePolicySeparatorAndCaseNoBypass(t *testing.T) {
 	for _, probe := range allowedProbes {
 		mustAllow(t, g, probe)
 	}
+}
+
+func TestScopePolicyUnicodeCredentialAliases(t *testing.T) {
+	p := LoadScopePolicy(filesystem.NewOS(), newPolicyRepo(t))
+	g := p.Guard("")
+	for _, probe := range []string{
+		".ſſh/config", ".awſ/config", ".docker/conﬁg.json",
+		".a\u200cws/config",     // HFS+ ignores this format character.
+		".\u200c./ordinary.txt", // Alias folding must not introduce traversal.
+	} {
+		mustDeny(t, g, probe)
+	}
+	for _, prefix := range []string{".awſ", ".a\u200cws", ".\u200c."} {
+		mustDeny(t, p.Guard(prefix), "config")
+		mustDeny(t, p.Guard("workspace", prefix), "config")
+	}
+	for _, probe := range []string{"Straße.md", "src/éclair.go", ".docker/conﬁg-guide.md", "docs/\u200creadme.md"} {
+		mustAllow(t, g, probe)
+	}
+}
+
+func TestScopePolicyUnicodeManifestGlobsKeepRuneSemantics(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - '[ß].txt'\n  - '?.dat'\n")
+	g := LoadScopePolicy(filesystem.NewOS(), repo).Guard("")
+	// Folding ß to ss would change both the character class and ? width.
+	mustDeny(t, g, "ß.txt")
+	mustDeny(t, g, "ß.dat")
+	mustAllow(t, g, "ss.txt")
+	mustAllow(t, g, "ss.dat")
 }
 
 func TestScopePolicyRejectedRules(t *testing.T) {
@@ -709,6 +777,7 @@ func TestScopePolicyWatches(t *testing.T) {
 func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 	const credMarker = "ZZCREDMARKERA"
 	const secMarker = "ZZSECMARKERB"
+	const plainMarker = "ZZPLAINMARKERC"
 
 	t.Run("standardCheckout", func(t *testing.T) {
 		repo := newPolicyRepo(t)
@@ -722,6 +791,19 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			"nested/.env.local":        "KEY=" + secMarker + "\n",
 			"my-credentials.json":      "{\"cred\":\"" + secMarker + "\"}\n",
 			"id_dsa":                   secMarker + "\n",
+			".netrc":                   "machine example.com login u password " + credMarker + "\n",
+			"web/.npmrc":               "//registry.npmjs.org/:_authToken=" + credMarker + "\n",
+			".pypirc":                  "[pypi]\npassword = " + credMarker + "\n",
+			".aws/config":              "[default]\naws_session_token = " + credMarker + "\n",
+			".kube/config":             "users:\n- user:\n    token: " + credMarker + "\n",
+			".ssh/config":              "Host x\n  IdentityFile ~/.ssh/" + credMarker + "\n",
+			".gnupg/gpg.conf":          "default-key " + credMarker + "\n",
+			"_netrc":                   "machine example.com password " + credMarker + "\n",
+			".docker/config.json":      "{\"auths\":{\"r.example\":{\"auth\":\"" + credMarker + "\"}}}\n",
+			"infra/terraform.tfstate":  "{\"db_password\":\"" + credMarker + "\"}\n",
+			"web/app.js":               "// " + plainMarker + "\n",
+			".docker/daemon.json":      "{}\n",
+			"infra/main.tf":            "terraform {}\n",
 		}
 		for rel, content := range files {
 			writeFile(t, filepath.Join(repo, filepath.FromSlash(rel)), content)
@@ -732,6 +814,8 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		for _, denied := range []string{
 			".git/config", "secrets/token.txt", ".agent/receipts/x",
 			".firn/golem-consent.json", "nested/.env.local", "my-credentials.json", "id_dsa",
+			".netrc", "web/.npmrc", ".pypirc", ".aws/config", ".kube/config", ".ssh/config", ".gnupg/gpg.conf",
+			"_netrc", ".docker/config.json", "infra/terraform.tfstate",
 		} {
 			res := invokeTool(t, tools["read_file"], `{"path":"`+denied+`"}`)
 			if !res.IsError || res.Content != scopeDeniedMsg {
@@ -742,7 +826,7 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			t.Errorf("read_file(main.go) = %+v, want content", res)
 		}
 
-		for _, dir := range []string{".git", "secrets", ".agent", ".firn"} {
+		for _, dir := range []string{".git", "secrets", ".agent", ".firn", ".aws", ".kube", ".ssh", ".gnupg"} {
 			if res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
 				t.Errorf("list(%q) = %+v, want scope denial", dir, res)
 			}
@@ -755,7 +839,20 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		if globAll.IsError || !strings.Contains(globAll.Content, "main.go") {
 			t.Fatalf("glob(**) = %+v, want main.go visible", globAll)
 		}
-		for _, hidden := range []string{".git", "secrets", ".agent", ".firn", ".env.local", "credentials", "id_dsa"} {
+		// A nested credential file would show only in its own directory's
+		// listing; each has an ordinary sibling that must stay listed.
+		for dir, pair := range map[string][2]string{
+			"web":     {"app.js", ".npmrc"},
+			".docker": {"daemon.json", "config.json"},
+			"infra":   {"main.tf", "terraform.tfstate"},
+		} {
+			res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`)
+			if res.IsError || !strings.Contains(res.Content, pair[0]) || strings.Contains(res.Content, pair[1]) {
+				t.Errorf("list(%s) = %+v, want %s without %s", dir, res, pair[0], pair[1])
+			}
+		}
+		for _, hidden := range []string{".git", "secrets", ".agent", ".firn", ".env.local", "credentials", "id_dsa",
+			".netrc", "_netrc", ".npmrc", ".pypirc", ".aws", ".kube", ".ssh", ".gnupg", "config.json", "tfstate"} {
 			if strings.Contains(listRoot.Content, hidden) {
 				t.Errorf("list(.) exposes %q: %q", hidden, listRoot.Content)
 			}
@@ -767,6 +864,73 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			if res := invokeTool(t, tools["search"], `{"pattern":"`+pattern+`"}`); res.Content != "no matches" {
 				t.Errorf("search(%q) = %q, want no matches", pattern, res.Content)
 			}
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); !strings.Contains(res.Content, "web/app.js") {
+			t.Errorf("search(%q) = %q, want the web/app.js match", plainMarker, res.Content)
+		}
+	})
+
+	t.Run("unicodeCredentialAliases", func(t *testing.T) {
+		repo := newPolicyRepo(t)
+		aliases := []struct{ disk, ascii string }{
+			{".ſſh/config", ".ssh/config"},
+			{".awſ/config", ".aws/config"},
+			{".docker/conﬁg.json", ".docker/config.json"},
+		}
+		for _, alias := range aliases {
+			writeFile(t, filepath.Join(repo, alias.disk), credMarker+"\n")
+		}
+		writeFile(t, filepath.Join(repo, "main.go"), "// "+plainMarker+"\n")
+		writeFile(t, filepath.Join(repo, ".docker/daemon.json"), "{}\n")
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		tools := newScopedTools(t, repo, p.Guard(""))
+
+		for _, alias := range aliases {
+			if res := invokeTool(t, tools["read_file"], `{"path":"`+alias.disk+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
+				t.Errorf("read_file(%q) = %+v, want scope denial", alias.disk, res)
+			}
+			t.Run(alias.ascii, func(t *testing.T) {
+				disk, err := os.Stat(filepath.Join(repo, alias.disk))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ascii, err := os.Stat(filepath.Join(repo, alias.ascii))
+				if err != nil || !os.SameFile(disk, ascii) {
+					t.Skip("filesystem does not resolve the ASCII and Unicode names to the same file")
+				}
+				if res := invokeTool(t, tools["read_file"], `{"path":"`+alias.ascii+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
+					t.Errorf("read_file(%q) = %+v, want scope denial for the Unicode disk name", alias.ascii, res)
+				}
+			})
+		}
+		if res := invokeTool(t, tools["read_file"], `{"path":"main.go"}`); res.IsError || !strings.Contains(res.Content, plainMarker) {
+			t.Errorf("read_file(main.go) = %+v, want ordinary content", res)
+		}
+		for dir, visible := range map[string]string{".": "main.go", ".docker": "daemon.json"} {
+			res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`)
+			if res.IsError || !strings.Contains(res.Content, visible) {
+				t.Errorf("list(%q) = %+v, want %s visible", dir, res, visible)
+			}
+			for _, hidden := range []string{".ſſh", ".awſ", "conﬁg.json"} {
+				if strings.Contains(res.Content, hidden) {
+					t.Errorf("list(%q) exposes %q: %q", dir, hidden, res.Content)
+				}
+			}
+		}
+		glob := invokeTool(t, tools["glob"], `{"pattern":"**"}`)
+		if glob.IsError || !strings.Contains(glob.Content, "main.go") || !strings.Contains(glob.Content, ".docker/daemon.json") {
+			t.Errorf("glob(**) = %+v, want ordinary files visible", glob)
+		}
+		for _, alias := range aliases {
+			if strings.Contains(glob.Content, alias.disk) {
+				t.Errorf("glob(**) exposes %q: %q", alias.disk, glob.Content)
+			}
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+credMarker+`"}`); res.IsError || res.Content != "no matches" {
+			t.Errorf("search(credential marker) = %+v, want no matches", res)
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); res.IsError || !strings.Contains(res.Content, "main.go") {
+			t.Errorf("search(ordinary marker) = %+v, want main.go", res)
 		}
 	})
 
