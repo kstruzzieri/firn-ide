@@ -53,9 +53,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that changes on New chat and when Firn restarts and cannot be traced back to
   the repository path. Every other OpenAI-compatible endpoint, local or remote,
   receives no session header. (#306)
+- A terminal session opened with + or from the empty terminal panel now takes
+  keyboard focus, so typing reaches its shell without clicking into it first.
+  Switching session tabs, re-expanding the bottom panel, and moving focus,
+  switching apps, or collapsing the panel while the shell starts leave focus
+  where it was. (#276)
 
 ### Fixed
 
+- Collapsing the bottom panel no longer clears the terminal. Each session's
+  scrollback, scroll position and shell-integration markers are kept while the
+  panel is collapsed, output printed meanwhile appears on expand, and the
+  terminal is released only when its session is closed. A session hidden behind
+  another tab or panel is no longer resized to a few columns, which had made the
+  shell reflow and redraw its prompt. (#275)
+- Screen readers now announce the Golem configuration notices: the result of
+  Apply, Confirm and Cancel, the answer to Check destinations, and the busy
+  notice after Refresh. Each notice appeared together with its own status
+  region, which assistive technology does not reliably announce. Each is now
+  announced as its result lands, through one region that is always present, so
+  a result that repeats the one before it, such as Busy after Retry or after a
+  second Refresh, is announced again, and a notice that only stays on screen is
+  not. The model filter's match count is announced just after the route editor
+  opens and whenever it changes. (#314)
+- Cmd+[ and Cmd+] in the editor now go back and forward through
+  go-to-definition history on macOS, as Alt+Left and Alt+Right now do on
+  Windows and Linux. The editor's own bindings for the same keys ran first, so
+  in an editable file the keys dedented and indented, or moved the cursor over
+  the previous or next syntax element, instead of navigating. With no history
+  in that direction they still do. (#279)
 - A Golem conversation cleared by New chat can no longer be overwritten by a
   save that began before the reset. The session store now keeps each
   conversation's highest revision across the reset and recreates the

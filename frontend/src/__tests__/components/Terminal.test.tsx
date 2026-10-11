@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import {
   act,
   createEvent,
@@ -13,9 +14,10 @@ import { useConflictProjectionSync } from '../../hooks/useProblemsProjection';
 import { useIDEStore } from '../../stores/ideStore';
 import { useGitStore, type MergeSession } from '../../stores/gitStore';
 import { useLSPStore, type LSPDiagnostic } from '../../stores/lspStore';
-import { git, runhistory } from '../../wails/bindings';
+import { git, ResizeTerminal, runhistory } from '../../wails/bindings';
 import { EventsOn } from '../../wails/runtime';
 import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 
 const mockCreateTerminal = jest.fn();
 const mockCloseTerminal = jest.fn();
@@ -232,6 +234,72 @@ describe('Terminal component', () => {
     expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
     expect(screen.queryByText('Terminal 2')).not.toBeInTheDocument();
     expect(mockCreateTerminal).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains no output a closed session emits while its shell exits', async () => {
+    // The backend reuses no IDs, so a buffer kept for a closed one is never
+    // drained. Reusing 'term-1' here makes any retained bytes observable: the
+    // next session to attach under that ID would replay them.
+    mockCreateTerminal.mockReset();
+    mockCreateTerminal.mockResolvedValue('term-1');
+
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    const handler = registration![1] as (evt: { termId: string; data: string }) => void;
+
+    fireEvent.click(screen.getByLabelText('Close Terminal 1'));
+    await waitFor(() => {
+      expect(screen.queryByText('Terminal 1')).not.toBeInTheDocument();
+    });
+
+    // The shell's final bytes land after the frontend dropped its session.
+    act(() => {
+      handler({ termId: 'term-1', data: 'logout\r\n' });
+    });
+
+    const writeSpy = jest.spyOn(XTerm.prototype, 'write');
+    writeSpy.mockClear();
+
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    expect(writeSpy).not.toHaveBeenCalledWith('logout\r\n');
+    writeSpy.mockRestore();
+  });
+
+  it('replays output a new shell emits before its session reaches the store', async () => {
+    // The PTY can print its first prompt before CreateTerminal resolves. A
+    // fresh ID: the output registry is module state shared across this file.
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset();
+    mockCreateTerminal.mockReturnValueOnce(spawn.promise);
+
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    const handler = registration![1] as (evt: { termId: string; data: string }) => void;
+    act(() => {
+      handler({ termId: 'term-early', data: 'first prompt $ ' });
+    });
+
+    const writeSpy = jest.spyOn(XTerm.prototype, 'write');
+    writeSpy.mockClear();
+
+    await act(async () => {
+      spawn.resolve('term-early');
+    });
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    expect(writeSpy).toHaveBeenCalledWith('first prompt $ ');
+    writeSpy.mockRestore();
   });
 
   it('surfaces a failed spawn and lets the user retry with +', async () => {
@@ -665,7 +733,7 @@ describe('Terminal component', () => {
     expect(closeSpace.defaultPrevented).toBe(false);
 
     fireEvent.doubleClick(tab);
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('textbox', { name: /^Rename / });
     fireEvent.change(input, { target: { value: 'Renamed session' } });
     fireEvent.doubleClick(input);
     expect(input).toHaveValue('Renamed session');
@@ -681,7 +749,7 @@ describe('Terminal component', () => {
 
     fireEvent.keyDown(input, { key: 'Escape' });
     await waitFor(() => expect(tab).toHaveFocus());
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /^Rename / })).not.toBeInTheDocument();
     expect(useIDEStore.getState().terminalSessions[0].title).toBe('Terminal 1');
   });
 
@@ -698,7 +766,7 @@ describe('Terminal component', () => {
       { name: /Terminal 1/ }
     );
     fireEvent.doubleClick(tab);
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('textbox', { name: /^Rename / });
     fireEvent.change(input, { target: { value: 'Committed session' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
@@ -776,8 +844,10 @@ describe('Terminal component', () => {
 
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(rename).not.toHaveFocus();
+    // Reverse order reaches the last tab stop before the menu in document
+    // order: the session's xterm input.
     const destination = shift
-      ? screen.getByRole('tabpanel', { name: 'Terminal' })
+      ? screen.getByRole('textbox', { name: 'Terminal input' })
       : within(screen.getByRole('tablist', { name: 'Terminal panels' })).getByRole('tab', {
           name: 'Terminal',
         });
@@ -847,7 +917,7 @@ describe('Terminal component', () => {
     const first = within(sessionList).getByRole('tab', { name: /Terminal 1/ });
     fireEvent.keyDown(first, { key: 'F10', shiftKey: true });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('textbox', { name: /^Rename / });
     fireEvent.change(input, { target: { value: 'Discard me' } });
     fireEvent.keyDown(input, { key: 'Escape' });
     await waitFor(() => expect(first).toHaveFocus());
@@ -1322,5 +1392,229 @@ describe('Terminal — git signal on focus exit', () => {
     fireEvent.focusOut(panel, { relatedTarget: inside });
 
     expect(scheduleRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('Terminal — a session outlives the bottom panel (#275)', () => {
+  beforeEach(() => {
+    mockCreateTerminal.mockReset();
+    mockCloseTerminal.mockReset();
+    mockCloseTerminal.mockResolvedValue(undefined);
+    mockCreateTerminal.mockResolvedValueOnce('term-1');
+    jest.mocked(ResizeTerminal).mockClear();
+    useIDEStore.setState({
+      activeTerminalTab: 'terminal',
+      terminalSessions: [],
+      activeTerminalSessionId: null,
+      toast: null,
+    });
+  });
+
+  const realResizeObserver = global.ResizeObserver;
+  afterEach(() => {
+    global.ResizeObserver = realResizeObserver;
+    jest.restoreAllMocks();
+  });
+
+  const outputHandler = () => {
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    if (!registration) throw new Error('terminal:output listener not registered');
+    return registration[1] as (evt: { termId: string; data: string }) => void;
+  };
+
+  it('reuses the xterm, routes detached output and re-attaches its element on expand', async () => {
+    const open = jest.spyOn(XTerm.prototype, 'open');
+    const dispose = jest.spyOn(XTerm.prototype, 'dispose');
+    const write = jest.spyOn(XTerm.prototype, 'write');
+
+    // IDEShell renders no <Terminal /> at all while the bottom panel is collapsed.
+    const expanded = render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    const term = open.mock.contexts[0] as XTerm;
+    const xtermElement = term.element;
+    expect(xtermElement).toBeDefined();
+
+    expanded.unmount();
+    act(() => outputHandler()({ termId: 'term-1', data: 'printed while collapsed' }));
+    render(<Terminal />);
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenLastCalledWith('printed while collapsed');
+    expect(write.mock.contexts.at(-1)).toBe(term);
+    expect(document.getElementById('terminal-session-panel-term-1')).toContainElement(
+      xtermElement as HTMLElement
+    );
+  });
+
+  it('disposes the xterm when its session is closed', async () => {
+    const open = jest.spyOn(XTerm.prototype, 'open');
+    const dispose = jest.spyOn(XTerm.prototype, 'dispose');
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Close Terminal 1'));
+
+    await waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+    expect(dispose.mock.contexts[0]).toBe(open.mock.contexts[0]);
+  });
+
+  it('neither fits nor resizes the PTY while the session container has no size', async () => {
+    const observed: Array<{ target: Element; callback: () => void }> = [];
+    global.ResizeObserver = jest.fn(
+      (callback: ResizeObserverCallback) =>
+        ({
+          observe: (target: Element) =>
+            observed.push({ target, callback: () => callback([], {} as ResizeObserver) }),
+          unobserve: jest.fn(),
+          disconnect: jest.fn(),
+        }) as unknown as ResizeObserver
+    ) as unknown as typeof ResizeObserver;
+    const fit = jest.spyOn(FitAddon.prototype, 'fit');
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    const panel = document.getElementById('terminal-session-panel-term-1')!;
+    const observer = observed.find(({ target }) => target === panel);
+    expect(observer).toBeDefined();
+    fit.mockClear();
+    jest.mocked(ResizeTerminal).mockClear();
+
+    // jsdom lays nothing out, so the panel measures 0x0 — as it does under display: none.
+    observer!.callback();
+
+    expect(fit).not.toHaveBeenCalled();
+    expect(ResizeTerminal).not.toHaveBeenCalled();
+
+    Object.defineProperty(panel, 'clientWidth', { configurable: true, value: 640 });
+    Object.defineProperty(panel, 'clientHeight', { configurable: true, value: 320 });
+    observer!.callback();
+
+    expect(fit).toHaveBeenCalledTimes(1);
+    expect(ResizeTerminal).toHaveBeenCalledWith('term-1', 24, 80);
+  });
+});
+
+describe('Terminal — a session the user opens takes keyboard focus (#276)', () => {
+  beforeEach(() => {
+    // jsdom cannot model OS window focus, including WebKit's unfocused button clicks.
+    jest.spyOn(document, 'hasFocus').mockReturnValue(true);
+    mockCreateTerminal.mockReset();
+    mockCloseTerminal.mockReset();
+    mockCloseTerminal.mockResolvedValue(undefined);
+    mockCreateTerminal.mockResolvedValueOnce('term-1').mockResolvedValueOnce('term-2');
+    useIDEStore.setState({
+      activeTerminalTab: 'terminal',
+      terminalSessions: [],
+      activeTerminalSessionId: null,
+      toast: null,
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const shellInput = (sessionId: string) =>
+    document.querySelector(`#terminal-session-panel-${sessionId} .xterm-helper-textarea`);
+
+  it.each([
+    ['the + button', () => screen.getByLabelText('New terminal session')],
+    ['the empty-state prompt', () => screen.getByRole('button', { name: /No terminal sessions/ })],
+  ])('focuses the shell of a session opened from %s', async (_, trigger) => {
+    const user = userEvent.setup();
+    // The app mounts under StrictMode, which replays the panel's mount effect.
+    render(
+      <StrictMode>
+        <Terminal />
+      </StrictMode>
+    );
+
+    await user.click(trigger());
+
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    expect(shellInput('term-1')).toHaveFocus();
+  });
+
+  // WebKit does not focus a button on click, so focus stays where it was;
+  // fireEvent.click models that.
+  it('does not focus a shell whose panel collapsed while it was starting', async () => {
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset().mockReturnValueOnce(spawn.promise);
+    const expanded = render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    expanded.unmount();
+
+    await act(async () => spawn.resolve('term-1'));
+    render(<Terminal />);
+
+    expect(shellInput('term-1')).not.toBeNull();
+    expect(shellInput('term-1')).not.toHaveFocus();
+  });
+
+  it('does not take focus back from where the user moved it while the shell started', async () => {
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset().mockReturnValueOnce(spawn.promise);
+    const editor = document.createElement('button');
+    document.body.appendChild(editor);
+    render(<Terminal />);
+    fireEvent.click(screen.getByLabelText('New terminal session'));
+    editor.focus();
+
+    await act(async () => spawn.resolve('term-1'));
+
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    expect(editor).toHaveFocus();
+    editor.remove();
+  });
+
+  it('does not focus a shell while the app window is unfocused', async () => {
+    const spawn = deferred<string>();
+    mockCreateTerminal.mockReset().mockReturnValueOnce(spawn.promise);
+    const user = userEvent.setup();
+    render(<Terminal />);
+    const trigger = screen.getByLabelText('New terminal session');
+    await user.click(trigger);
+    expect(trigger).toHaveFocus();
+
+    // Switching apps leaves activeElement intact.
+    jest.mocked(document.hasFocus).mockReturnValue(false);
+    await act(async () => spawn.resolve('term-1'));
+
+    expect(shellInput('term-1')).not.toBeNull();
+    expect(shellInput('term-1')).not.toHaveFocus();
+    expect(trigger).toHaveFocus();
+
+    jest.mocked(document.hasFocus).mockReturnValue(true);
+    fireEvent.focus(window);
+    expect(trigger).toHaveFocus();
+  });
+
+  it('leaves focus alone when a session tab is activated or the panel remounts', async () => {
+    const user = userEvent.setup();
+    const editor = document.createElement('button');
+    document.body.appendChild(editor);
+    const expanded = render(<Terminal />);
+    await user.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 1')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('New terminal session'));
+    expect(await screen.findByText('Terminal 2')).toBeInTheDocument();
+
+    // The session tablist activates manually; focus stays on the tab.
+    const tabOne = screen.getByRole('tab', { name: /Terminal 1/ });
+    await user.click(tabOne);
+    expect(useIDEStore.getState().activeTerminalSessionId).toBe('term-1');
+    expect(tabOne).toHaveFocus();
+
+    // Re-expanding the bottom panel while the user works elsewhere.
+    editor.focus();
+    expanded.unmount();
+    render(<Terminal />);
+    expect(editor).toHaveFocus();
+    editor.remove();
   });
 });
