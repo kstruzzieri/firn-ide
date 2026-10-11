@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Python interpreter chosen for a workspace now survives a restart. Every
+  workspace session save (after an edit, on blur, hide or quit) rewrote the
+  saved state without it, so the next start fell back to the detected
+  interpreter. The code was the same in v0.12.0 and v0.13.0. (#392)
 - Collapsing the bottom panel no longer clears the terminal. Each session's
   scrollback, scroll position and shell-integration markers are kept while the
   panel is collapsed, output printed meanwhile appears on expand, and the

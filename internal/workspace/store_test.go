@@ -538,29 +538,61 @@ func TestSaveLoad_ActiveWorkspaceID(t *testing.T) {
 	}
 }
 
-func TestState_LSPOverride_roundTrip(t *testing.T) {
-	store := NewStore(newMockFS(), testWorkspaceBaseDir)
-	state := State{
-		WorkspacePath: "/ws",
-		WorkspaceName: "ws",
-		LSP: LSPState{
-			InterpreterOverride: "/ws/.venv/bin/python",
-			ServerPathOverride:  map[string]string{"python": "/usr/local/bin/pyright"},
-		},
+// A session save carries no lsp block (the frontend never sends one), so it
+// must keep the one on disk rather than drop it: before #392 every debounced,
+// blur or quit save erased the interpreter override.
+func TestSessionSaveKeepsTheStoredLSPBlock(t *testing.T) {
+	mockFS := newMockFS()
+	seeded := testState("/ws", "ws")
+	seeded.LSP = LSPState{
+		InterpreterOverride: "/ws/.venv/bin/python",
+		ServerPathOverride:  map[string]string{"python": "/usr/local/bin/pyright"},
 	}
+	data, err := json.Marshal(StateFile{Version: 1, State: seeded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, pathToID("/ws")+".json"), data, 0o600)
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
-	if err := store.Save(state); err != nil {
-		t.Fatalf("Save returned error: %v", err)
+	session := testState("/ws", "ws")
+	session.Editor.ActiveFilePath = "/ws/next.go"
+	if err := store.Save(session); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
 	loaded, err := store.Load("/ws")
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Editor.ActiveFilePath != "/ws/next.go" {
+		t.Errorf("ActiveFilePath = %q, want the saved session's /ws/next.go", loaded.Editor.ActiveFilePath)
 	}
 	if loaded.LSP.InterpreterOverride != "/ws/.venv/bin/python" {
 		t.Errorf("InterpreterOverride = %q, want %q", loaded.LSP.InterpreterOverride, "/ws/.venv/bin/python")
 	}
 	if loaded.LSP.ServerPathOverride["python"] != "/usr/local/bin/pyright" {
 		t.Errorf("ServerPathOverride[python] = %q, want %q", loaded.LSP.ServerPathOverride["python"], "/usr/local/bin/pyright")
+	}
+}
+
+// SetLSPInterpreter owns the lsp block. A session save that does carry one
+// (a stale copy from an earlier Load) must not overwrite a newer override.
+func TestSessionSaveCannotWriteTheLSPBlock(t *testing.T) {
+	store := NewStore(newMockFS(), testWorkspaceBaseDir)
+	if err := store.SetLSPInterpreter("/ws", "/ws/.venv/bin/python"); err != nil {
+		t.Fatalf("SetLSPInterpreter: %v", err)
+	}
+	stale := testState("/ws", "ws")
+	stale.LSP.InterpreterOverride = "/usr/bin/python3"
+	if err := store.Save(stale); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := store.Load("/ws")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.LSP.InterpreterOverride != "/ws/.venv/bin/python" {
+		t.Errorf("InterpreterOverride = %q, want SetLSPInterpreter's /ws/.venv/bin/python", loaded.LSP.InterpreterOverride)
 	}
 }
 
