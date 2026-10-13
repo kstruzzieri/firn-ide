@@ -33,17 +33,17 @@ Each workspace has independent layout state, scoped language servers (only the a
 **Quick install** (macOS and Linux) — downloads the latest release and installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.13.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.14.0/install.sh | sh
 ```
 
 Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
 
 ```bash
 # preview the resolved download URL and target dir without installing
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.13.0/install.sh | FIRN_DRY_RUN=1 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.14.0/install.sh | FIRN_DRY_RUN=1 sh
 
 # pin a specific release instead of the latest
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.13.0/install.sh | FIRN_VERSION=v0.13.0 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.14.0/install.sh | FIRN_VERSION=v0.14.0 sh
 ```
 
 Windows users: use the manual zip below.
@@ -398,7 +398,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.13.0` is live. The narrow-pane redesign of the Golem configuration workspace with named configuration profiles (#263, #308, #312), a visible outcome for every Golem chat run (#303), a context budget sized from the model's declared window (#304), fixes for three ways saved data could be lost (an unreadable workspace state file or run-profiles file being overwritten, and a workspace session being overwritten while it restores; #290, #359, #360), and repairs to the merge confirmation dialogs and to stylesheet design-token references have all shipped since v0.12.0.
+`v0.14.0` is live. Golem on go-llm v0.3.0, with tool results marked as untrusted data and a New chat that also clears the conversation the model sees (#306, #361), terminal scrollback kept across a bottom-panel collapse and keyboard focus for a new session (#275, #276), Cmd+[ and Cmd+] for definition history and an editor tab strip that shows its hidden tabs (#279, #406), a file tree that matches the disk on open (#256), workspace session saves that keep their order and the Python interpreter override (#401, #392), a Run Profiles notice and Reload for a file that could not be loaded (#366, #367), Golem configuration notices announced to screen readers (#314), a wider set of credential files Golem refuses to read (#430), and a declared macOS 14 floor (#316) have all shipped since v0.13.0.
 
 Active tracks:
 
