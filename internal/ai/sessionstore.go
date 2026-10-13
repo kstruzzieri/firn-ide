@@ -81,21 +81,24 @@ func (s *MemorySessionStore) Load(ctx context.Context, id string) (*conversation
 // Save implements golem.SessionStore's compare-and-swap contract: revision 0
 // creates only when the ID is absent, committing one above the highest
 // revision the ID ever held (1 for a never-stored ID); a positive revision
-// replaces only that exact stored revision, committing revision+1. A failed CAS returns a
+// replaces only that exact stored revision, committing revision+1. It returns
+// the committed revision, which the caller adopts; revision 0 means create and
+// does not predict it (go-llm v0.5.0, #418). A failed CAS returns a
 // *conversation.ConflictError carrying the submitted revision; negative and
 // math.MaxInt64 revisions are refused as a plain (non-conflict) error. conv is
-// taken by value, so incrementing its local revision here never mutates the
-// caller's copy. Every refusal — invalid revision, conflict, or either size
-// cap — leaves the prior snapshot, revision, and byte total untouched.
-func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Conversation) error {
+// taken by value, so setting its local revision here never mutates the
+// caller's copy. Every refusal — cancellation, invalid revision, conflict, or
+// either size cap — returns revision 0 and leaves the prior snapshot,
+// revision, and byte total untouched.
+func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Conversation) (int64, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	if conv.ID == "" {
-		return errors.New("session snapshot has no conversation ID")
+		return 0, errors.New("session snapshot has no conversation ID")
 	}
 	if conv.Revision < 0 || conv.Revision == math.MaxInt64 {
-		return fmt.Errorf("session snapshot %q: invalid revision %d", conv.ID, conv.Revision)
+		return 0, fmt.Errorf("session snapshot %q: invalid revision %d", conv.ID, conv.Revision)
 	}
 	expected := conv.Revision
 	s.mu.Lock()
@@ -109,26 +112,26 @@ func (s *MemorySessionStore) Save(ctx context.Context, conv conversation.Convers
 	conv.Revision = floor + 1
 	raw, err := json.Marshal(conv)
 	if err != nil {
-		return fmt.Errorf("encode session snapshot: %w", err)
+		return 0, fmt.Errorf("encode session snapshot: %w", err)
 	}
 	if len(raw) > SessionSnapshotLimit {
-		return fmt.Errorf("%w: snapshot exceeds %d bytes", ErrSessionLimit, SessionSnapshotLimit)
+		return 0, fmt.Errorf("%w: snapshot exceeds %d bytes", ErrSessionLimit, SessionSnapshotLimit)
 	}
 	_, exists := s.snaps[conv.ID]
 	if (expected == 0 && exists) || (expected > 0 && (!exists || floor != expected)) {
-		return &conversation.ConflictError{ID: conv.ID, ExpectedRevision: expected}
+		return 0, &conversation.ConflictError{ID: conv.ID, ExpectedRevision: expected}
 	}
 	if floor == math.MaxInt64 {
-		return fmt.Errorf("session snapshot %q: revision exhausted", conv.ID)
+		return 0, fmt.Errorf("session snapshot %q: revision exhausted", conv.ID)
 	}
 	next := s.total - len(s.snaps[conv.ID]) + len(raw)
 	if next > SessionStoreLimit {
-		return fmt.Errorf("%w: store would exceed %d bytes", ErrSessionLimit, SessionStoreLimit)
+		return 0, fmt.Errorf("%w: store would exceed %d bytes", ErrSessionLimit, SessionStoreLimit)
 	}
 	s.snaps[conv.ID] = raw
 	s.revs[conv.ID] = conv.Revision
 	s.total = next
-	return nil
+	return conv.Revision, nil
 }
 
 // Delete drops id's snapshot, returns its bytes to the store budget, and

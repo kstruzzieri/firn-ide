@@ -579,19 +579,18 @@ function doneRunNotice(
   runId: string,
   stopReason?: string
 ): DoneRunNotice | null {
-  let toolCalls = 0;
-  let answered = false;
-  for (const entry of conversation.transcript) {
-    if (entry.runId !== runId) continue;
-    if (entry.kind === 'tool') toolCalls += 1;
-    else if (entry.kind === 'assistant' && entry.text.trim() !== '') answered = true;
-  }
+  const answered = conversation.transcript.some(
+    (entry) => entry.runId === runId && entry.kind === 'assistant' && entry.text.trim() !== ''
+  );
   if (stopReason !== undefined && stopReason !== COMPLETED_STOP_REASON) {
+    // No call count: a call an interceptor blocks or the approver denies is
+    // never invoked, so it has no tool row to count, and the terminal event
+    // carries no count of its own.
     const cause =
-      STOP_REASON_CAUSE.get(stopReason) ?? `it stopped early (${boundedMessage(stopReason)})`;
-    const calls = `${toolCalls} tool call${toolCalls === 1 ? '' : 's'}`;
+      STOP_REASON_CAUSE.get(stopReason) ??
+      `it gave an unrecognized stop reason (${boundedMessage(stopReason)})`;
     const tail = answered ? 'The answer above may be incomplete.' : 'It did not answer.';
-    return { text: `Golem stopped after ${calls}: ${cause}. ${tail}`, answered };
+    return { text: `Golem stopped: ${cause}. ${tail}`, answered };
   }
   return answered ? null : { text: NO_ANSWER_ERROR, answered: false };
 }

@@ -3169,7 +3169,7 @@ func TestServiceRebindSessionRestoreAndChallengeInvalidation(t *testing.T) {
 		h.factory.makeRun = func(idx int, _ string, _ providerTarget, sessions golem.SessionStore) func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error) {
 			if idx == 0 {
 				return func(runCtx context.Context, turn golem.Turn, _ golem.EventSink) (agent.Result, error) {
-					if err := sessions.Save(runCtx, conversation.Conversation{ID: turn.ThreadID}); err != nil {
+					if _, err := sessions.Save(runCtx, conversation.Conversation{ID: turn.ThreadID}); err != nil {
 						t.Errorf("Save snapshot: %v", err)
 					}
 					select {
@@ -4100,7 +4100,8 @@ func TestServiceProcessResetSemantics(t *testing.T) {
 	f1.mu.Lock()
 	f1.makeRun = func(_ int, _ string, _ providerTarget, sessions golem.SessionStore) func(context.Context, golem.Turn, golem.EventSink) (agent.Result, error) {
 		return func(runCtx context.Context, turn golem.Turn, _ golem.EventSink) (agent.Result, error) {
-			return agent.Result{}, sessions.Save(runCtx, conversation.Conversation{ID: turn.ThreadID})
+			_, err := sessions.Save(runCtx, conversation.Conversation{ID: turn.ThreadID})
+			return agent.Result{}, err
 		}
 	}
 	f1.mu.Unlock()

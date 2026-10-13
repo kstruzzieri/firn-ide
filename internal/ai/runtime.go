@@ -12,6 +12,7 @@ import (
 	"net/url"
 
 	"github.com/kstruzzieri/go-llm/agent"
+	"github.com/kstruzzieri/go-llm/agent/interceptor"
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/ollama"
@@ -138,9 +139,19 @@ func newGolemRunner(
 	transport *http.Transport,
 	tuning golemTuning,
 ) (Runner, error) {
+	// golem.New installs no tool guards on an orchestrator the embedder
+	// supplies, so install the Golem CLI's always-on set here. Of Firn's
+	// read-only tools only read_file has a default invariant (the credential
+	// paths, which also back up firnSensitiveFloor); Egress and
+	// ChildScopeDenials have no exec or dispatch tool to inspect yet.
+	invariants, err := interceptor.NewInvariants(interceptor.DefaultInvariants())
+	if err != nil {
+		return nil, err
+	}
 	orchestrator := agent.New(
 		&fixedModelCaller{backend: backend, target: target, generation: sessions.Generation},
 		agent.ContextManager{},
+		agent.WithInterceptors(invariants, interceptor.Egress{}, interceptor.ChildScopeDenials{}),
 	)
 	// Without a budget the assembler works against go-llm's 8192-token default,
 	// which evicts a turn's own tool results on any real repo question: the run
