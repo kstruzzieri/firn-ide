@@ -47,8 +47,8 @@ binaries are built with Go 1.27.2.
   save that began before the reset. The session store now keeps each
   conversation's highest revision across the reset and recreates the
   conversation above it, so the stale save is refused as a conflict instead of
-  replacing the new conversation, as go-llm's session store contract requires.
-  (#418)
+  replacing the new conversation, as go-llm v0.5.0's session store contract
+  requires; Firn still runs go-llm v0.3.0. (#418)
 
 ### Editor
 
@@ -103,7 +103,8 @@ binaries are built with Go 1.27.2.
 - The Python interpreter chosen for a workspace now survives a restart. Every
   workspace session save (after an edit, on blur, hide or quit) rewrote the
   saved state without it, so the next start fell back to the detected
-  interpreter. This affected both v0.12.0 and v0.13.0. (#392)
+  interpreter. This affected every release since the interpreter picker shipped
+  in v0.9.0. (#392)
 
 ### Git
 
@@ -117,15 +118,16 @@ binaries are built with Go 1.27.2.
 
 ### Run Profiles
 
-- The Run Profiles panel now shows a notice when `.firn/run-profiles.json`
-  could not be loaded, naming the file, the reason and the remedy, with a Reload
+- The Run Profiles panel now shows a notice when `.firn/run-profiles.json` could
+  not be loaded, naming the file, the reason and the remedy, with a Reload
   action. The same notice reports a migrated profiles file that could not be
   written back and a run-recency sidecar (`.firn/run-recency.json`) that could
   not be read or migrated. Reload re-reads the saved profiles in place, leaving
   running profiles and language servers untouched, and once the file loads it
   lifts the refusal of run profile changes from #359 without a restart or
   reopening the folder. The refusal's remedy now names that Reload instead of a
-  restart. (#366, #367)
+  restart. The Retry button shown when the panel cannot load run profiles is now
+  sized to its label instead of clipped. (#366, #367)
 
 ### Accessibility
 
@@ -155,16 +157,17 @@ binaries are built with Go 1.27.2.
 
 - Golem's file tools now refuse more credential files by path: `.netrc`,
   `_netrc`, `.npmrc` and `.pypirc` at any depth, anything under a `.ssh`,
-  `.gnupg`, `.aws` or `.kube` directory (go-llm v0.5.0's credential set),
+  `.gnupg`, `.aws` or `.kube` directory (the set go-llm v0.5.0 refuses, which
+  Firn, still on go-llm v0.3.0, now carries in its own floor),
   `.docker/config.json`, and Terraform state (`*.tfstate`, `*.tfstate.backup`).
   Firn's deny floor already covered `.env` files, private key file names and
-  names containing `credential` or `secret`, but not these, so a chat run
-  could open a project's `.npmrc` auth token or an `.aws/config` session token
-  with `read_file` and send it to the configured model. `read_file` now
-  refuses them, listings and globs leave them out, and search skips them, as
-  for the rest of the floor; a repository's `ai-kit.yaml` cannot re-allow
-  them. Floor checks also cover equivalent Unicode filenames on macOS
-  filesystems, without changing manifest glob matching. (#430)
+  names containing `credential` or `secret`, but not these, so a chat run could
+  open a project's `.npmrc` auth token or an `.aws/config` session token with
+  `read_file` and send it to the configured model. `read_file` now refuses them,
+  listings and globs leave them out, and search skips them, as for the rest of
+  the floor; a repository's `ai-kit.yaml` cannot re-allow them. Floor checks
+  also cover equivalent Unicode filenames on macOS filesystems, without changing
+  manifest glob matching. (#430)
 
 ### Build and CI
 
@@ -210,8 +213,9 @@ binaries are built with Go 1.27.2.
   `.firn/run-profiles.json` changed on disk, so a branch checkout or merge that
   rewrites the file is overwritten by the next Save, Pin, Adopt or Delete. The
   lost version can be recovered from Git (#397).
-- Closing the Save profile popover while a save is in flight drops its result,
-  failures included, so a failed save can look like it succeeded (#396).
+- In the Golem configuration view, closing the Save as profile popover while a
+  save is in flight drops its result, failures included, so a failed save can
+  look like it succeeded (#396).
 - The Golem chat's live region reads the newest error in the whole transcript,
   so it can re-announce an earlier run's error after a later run answers, and
   it skips a repeated one (#395).
