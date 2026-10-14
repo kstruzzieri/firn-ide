@@ -99,6 +99,41 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
   });
 
+  // On macOS and Linux a backslash is an ordinary filename character, so
+  // `/tmp/a\b` is a different folder from `/tmp/a/b` and opening it must
+  // switch projects, as v0.13.0's exact comparison did.
+  it('opens a POSIX folder whose name holds a backslash instead of refreshing its slash twin', () => {
+    useIDEStore.setState({
+      workspace: { name: 'b', path: '/tmp/a/b' },
+      directoryTree: [],
+      expandedPaths: new Set(),
+    });
+    mockRead.mockResolvedValue([]);
+
+    act(() => {
+      openWorkspaceByPath('/tmp/a\\b');
+    });
+
+    expect(useIDEStore.getState().workspace?.path).toBe('/tmp/a\\b');
+    // The backslash is part of the name, not a separator.
+    expect(useIDEStore.getState().workspace?.name).toBe('a\\b');
+    expect(useIDEStore.getState().recentWorkspacesVersion).toBe(8);
+  });
+
+  it('treats a Windows path spelled with forward slashes as the same path', async () => {
+    const workspace = { name: 'ws', path: 'C:\\ws' };
+    useIDEStore.setState({ workspace, directoryTree: [], expandedPaths: new Set() });
+    mockRead.mockResolvedValue([]);
+
+    act(() => {
+      openWorkspaceByPath('C:/ws');
+    });
+    await waitFor(() => expect(mockRead).toHaveBeenCalledWith('C:\\ws', 'C:\\ws'));
+
+    expect(useIDEStore.getState().workspace).toBe(workspace);
+    expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
+  });
+
   it('marks loaded-but-collapsed dirs dirty instead of reading them', async () => {
     useIDEStore.setState({
       directoryTree: [dir('/ws/src', [dir('/ws/src/a')]), dir('/ws/lib', [dir('/ws/lib/x')])],

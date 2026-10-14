@@ -49,6 +49,7 @@ jest.mock('../../wails/runtime', () => ({
 
 import { filesystem } from '../../wails/bindings';
 import { ensurePathLoaded, __resetEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import * as ensurePathLoadedModule from '../../hooks/useEnsurePathLoaded';
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 import { trackRunHistoryClear } from '../../hooks/useRunOutput';
 import { openWorkspaceByPath } from '../../utils/workspace';
@@ -63,8 +64,29 @@ const entry = (path: string, isDir = true, children?: filesystem.FileEntry[]) =>
     ...(children === undefined ? {} : { children }),
   }) as filesystem.FileEntry;
 
+// The restore starts its tree refresh without awaiting it (#256), so a test
+// that asserts the refreshed tree waits for the refreshes that restore
+// started, not for the restore alone, which can finish first.
+const realReconcile = ensurePathLoadedModule.reconcileTreeWithDisk;
+let treeRefreshes: Promise<void>[] = [];
+jest
+  .spyOn(ensurePathLoadedModule, 'reconcileTreeWithDisk')
+  .mockImplementation((...args: Parameters<typeof realReconcile>) => {
+    const refresh = realReconcile(...args);
+    treeRefreshes.push(refresh);
+    return refresh;
+  });
+
+const restoreAndRefreshSettled = async () => {
+  await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+  await act(async () => {
+    await Promise.all(treeRefreshes);
+  });
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
+  treeRefreshes = [];
   __resetEnsurePathLoaded();
   disk = {};
   mockReadDirectoryShallow.mockImplementation((path: string) => Promise.resolve(disk[path] ?? []));
@@ -620,7 +642,7 @@ describe('useWorkspacePersistence', () => {
     await act(async () => {
       resolveRoot(fresh);
     });
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
     expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual([
       '/ws/old',
       '/ws/created-while-closed',
@@ -661,7 +683,7 @@ describe('useWorkspacePersistence', () => {
         hiddenProfileIds: [],
       });
     });
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     // A stale listing painted over the error would hide the failure.
     expect(useIDEStore.getState().directoryTree).toEqual([]);
@@ -701,7 +723,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     // A snapshot-loaded subtree is a display hint, not disk truth: the hydrate
     // must bypass ensurePathLoaded's already-loaded short-circuit.
@@ -734,7 +756,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     // Collapsed: not read on open (nothing visible to refresh) but no longer
     // trusted, so the next expand reads disk instead of short-circuiting.
@@ -773,7 +795,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     const calls = readPaths();
     expect(calls.indexOf('/ws')).toBeLessThan(calls.indexOf('/ws/src'));
@@ -801,7 +823,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     expect(readPaths()).not.toContain('/ws/gone');
     expect(useIDEStore.getState().toast).toBeNull();
@@ -818,7 +840,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws', '/ws');
     expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
@@ -835,7 +857,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws', '/ws');
     expect(useIDEStore.getState().dirtyPaths.has('/ws/lib')).toBe(true);
@@ -863,11 +885,85 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     // Nothing beneath an unreadable root can be checked against a fresh parent.
     expect(readPaths()).toEqual(['/ws']);
     expect(useIDEStore.getState().dirtyPaths.has('/ws')).toBe(true);
+  });
+
+  // A disk read that has not answered (a hung network or FUSE mount) must not
+  // hold the restore: tabs reopen and session saves resume while the tree
+  // refresh is still waiting, and the refreshed listing lands when it does.
+  // v0.13.0 trusted a snapshot-loaded dir and read nothing for it, so its tabs
+  // reopened at once.
+  it('reopens tabs and resumes saves while an expanded dir read is still out (#256)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/ws',
+      workspaceName: 'ws',
+      layout: null,
+      editor: {
+        activeFilePath: '/ws/a.ts',
+        openFiles: [{ path: '/ws/a.ts', scrollTop: 0, cursorLine: 0, cursorColumn: 0 }],
+      },
+      explorer: {
+        expandedPaths: ['/ws/mnt'],
+        rootExpanded: true,
+        treeSnapshot: [entry('/ws/mnt', true, [entry('/ws/mnt/old')])],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+    let answerMnt!: (entries: filesystem.FileEntry[]) => void;
+    const mntRead = new Promise<filesystem.FileEntry[]>((resolve) => {
+      answerMnt = resolve;
+    });
+    mockReadDirectoryShallow.mockImplementation((path: string) =>
+      path === '/ws/mnt' ? mntRead : Promise.resolve(disk[path] ?? [])
+    );
+    disk = { '/ws': [entry('/ws/mnt')] };
+    mockReadFile.mockResolvedValue({
+      content: 'a',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      size: 1,
+      isBinary: false,
+    });
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws/mnt', '/ws'));
+
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    expect(useIDEStore.getState().openFiles.map((f) => f.path)).toEqual(['/ws/a.ts']);
+
+    // Saves resume with the read still out, carrying the restored tab.
+    act(() => void window.dispatchEvent(new Event('blur')));
+    await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalled());
+    const saved = lastSavedWorkspaceState as {
+      workspacePath: string;
+      editor: { openFiles: { path: string }[] };
+    };
+    expect(saved.workspacePath).toBe('/ws');
+    expect(saved.editor.openFiles.map((f) => f.path)).toEqual(['/ws/a.ts']);
+
+    // The refresh is still running and lands the fresh listing when the read
+    // answers. (treeRefreshes recording it proves the waits above are real.)
+    expect(treeRefreshes).toHaveLength(1);
+    expect(useIDEStore.getState().directoryTree[0].children?.map((e) => e.path)).toEqual([
+      '/ws/mnt/old',
+    ]);
+    await act(async () => {
+      answerMnt([entry('/ws/mnt/new')]);
+      await Promise.all(treeRefreshes);
+    });
+    expect(useIDEStore.getState().directoryTree[0].children?.map((e) => e.path)).toEqual([
+      '/ws/mnt/new',
+    ]);
   });
 
   it('does not read an expanded path that is now a file (#256)', async () => {
@@ -889,7 +985,7 @@ describe('useWorkspacePersistence', () => {
     });
 
     renderHook(() => useWorkspacePersistence());
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     expect(readPaths()).not.toContain('/ws/build');
     expect(useIDEStore.getState().toast).toBeNull();
@@ -921,7 +1017,7 @@ describe('useWorkspacePersistence', () => {
     renderHook(() => useWorkspacePersistence());
 
     await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/r'));
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     const calls = readPaths();
     expect(calls).toContain('/r/a');
@@ -955,7 +1051,7 @@ describe('useWorkspacePersistence', () => {
     renderHook(() => useWorkspacePersistence());
 
     await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/r'));
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     const calls = readPaths();
     expect(calls).toContain('/r/a');
@@ -986,7 +1082,7 @@ describe('useWorkspacePersistence', () => {
     renderHook(() => useWorkspacePersistence());
 
     await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('C:\\repo'));
-    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    await restoreAndRefreshSettled();
 
     const calls = readPaths();
     expect(calls).toContain('C:\\repo\\a');
