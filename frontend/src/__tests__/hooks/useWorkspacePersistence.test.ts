@@ -870,6 +870,51 @@ describe('useWorkspacePersistence', () => {
     expect(useIDEStore.getState().dirtyPaths.has('/ws')).toBe(true);
   });
 
+  // A disk read that never answers (a hung network or FUSE mount) must not
+  // hold the restore: tabs reopen and session saves resume while the tree
+  // refresh is still waiting. v0.13.0 trusted a snapshot-loaded dir and read
+  // nothing for it, so its tabs reopened at once.
+  it('reopens tabs and finishes restoring while an expanded dir read never answers (#256)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/ws',
+      workspaceName: 'ws',
+      layout: null,
+      editor: {
+        activeFilePath: '/ws/a.ts',
+        openFiles: [{ path: '/ws/a.ts', scrollTop: 0, cursorLine: 0, cursorColumn: 0 }],
+      },
+      explorer: {
+        expandedPaths: ['/ws/mnt'],
+        rootExpanded: true,
+        treeSnapshot: [entry('/ws/mnt', true, [entry('/ws/mnt/old')])],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+    mockReadDirectoryShallow.mockImplementation((path: string) =>
+      path === '/ws/mnt' ? new Promise(() => {}) : Promise.resolve(disk[path] ?? [])
+    );
+    disk = { '/ws': [entry('/ws/mnt')] };
+    mockReadFile.mockResolvedValue({
+      content: 'a',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      size: 1,
+      isBinary: false,
+    });
+    useIDEStore.setState({
+      workspace: { name: 'ws', path: '/ws' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+
+    renderHook(() => useWorkspacePersistence());
+    await waitFor(() => expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/ws/mnt', '/ws'));
+
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    expect(useIDEStore.getState().openFiles.map((f) => f.path)).toEqual(['/ws/a.ts']);
+  });
+
   it('does not read an expanded path that is now a file (#256)', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({
       workspacePath: '/ws',
