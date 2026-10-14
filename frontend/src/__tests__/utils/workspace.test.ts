@@ -115,6 +115,8 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     });
 
     expect(useIDEStore.getState().workspace?.path).toBe('/tmp/a\\b');
+    // The backslash is part of the name, not a separator.
+    expect(useIDEStore.getState().workspace?.name).toBe('a\\b');
     expect(useIDEStore.getState().recentWorkspacesVersion).toBe(8);
   });
 

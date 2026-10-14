@@ -59,7 +59,8 @@ export function openWorkspaceByPath(folderPath: string) {
     return;
   }
 
-  const separator = folderPath.includes('\\') ? '\\' : '/';
+  // Only a Windows path separates on `\`; on macOS and Linux it is part of a name.
+  const separator = WINDOWS_PATH.test(folderPath) && folderPath.includes('\\') ? '\\' : '/';
   const folderName = folderPath.split(separator).pop() || folderPath;
   const cachedTree = getCachedWorkspaceTree(folderPath);
 
