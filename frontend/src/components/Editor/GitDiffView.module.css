@@ -127,6 +127,35 @@
   height: 100%;
 }
 
+/* A pane's own horizontal scrollbar sits below its last line (the contract
+ * above), out of sight; .hScroll pins a replacement under the view (#448). */
+.mergeHost :global(.cm-mergeViewEditor .cm-scroller)::-webkit-scrollbar {
+  display: none;
+}
+
+/* One proxy per pane, split like the panes. pinnedScrollbar.ts widens a
+ * proxy's track only while its pane overflows, so the browser draws a bar
+ * only then; otherwise the row is just the track's 1px. */
+.hScroll {
+  display: flex;
+  flex: none;
+}
+
+.hScrollPane {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.hScrollPane:first-child {
+  flex: 0 0 var(--diff-left, 50%);
+}
+
+.hScrollTrack {
+  height: 1px;
+}
+
 /* Resizable split: the package defaults both panes to flex 1/0; driving the
  * left pane from --diff-left keeps the right pane absorbing the remainder. */
 .mergeHost :global(.cm-mergeViewEditor:first-child) {

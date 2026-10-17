@@ -66,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A side of the side-by-side diff whose lines are wider than it now shows its
+  horizontal scrollbar at the bottom of the diff view. The scrollbar used to
+  sit below the file's last line, out of sight on any file taller than the
+  view, so a long line could only be scrolled into view with a sideways
+  trackpad swipe or Shift+wheel. Each side's scrollbar follows the column
+  divider and appears only while that side overflows. Long lines still do not
+  wrap, which keeps the two sides aligned. (#448)
 - Collapsing the bottom panel no longer clears the terminal. Each session's
   scrollback, scroll position and shell-integration markers are kept while the
   panel is collapsed, output printed meanwhile appears on expand, and the

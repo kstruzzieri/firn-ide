@@ -94,6 +94,9 @@ jest.mock('../../../components/Editor/codemirror', () => ({
   gitGutterExtension: jest.fn(() => 'GIT_GUTTER'),
   setGitBaseline: { of: jest.fn((v: unknown) => ({ __baseline: v })) },
 }));
+jest.mock('../../../components/Editor/codemirror/pinnedScrollbar', () => ({
+  pinnedScrollbar: (proxy: HTMLElement) => ({ __pinned: proxy }),
+}));
 const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureOpen(...args),
@@ -479,6 +482,30 @@ describe('GitDiffView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /previous difference/i }));
     expect(goToPreviousChunkMock).toHaveBeenCalled();
+  });
+
+  it('pins a horizontal scrollbar under each pane (#448)', () => {
+    render(<GitDiffView session={base} />);
+    const row = screen.getByTestId('diff-hscroll');
+    const [left, right] = Array.from(row.children);
+    const config = mergeViewMock.mock.calls[0][0] as unknown as {
+      a: { extensions: unknown[] };
+      b: { extensions: unknown[] };
+    };
+    const pinnedTo = (extensions: unknown[]) =>
+      (
+        extensions.find((e) => (e as { __pinned?: Element } | null)?.__pinned) as {
+          __pinned: Element;
+        }
+      )?.__pinned;
+
+    expect(row.children).toHaveLength(2);
+    expect(pinnedTo(config.a.extensions)).toBe(left);
+    expect(pinnedTo(config.b.extensions)).toBe(right);
+    // Presentation only: mirrors of the panes' own scrolling, not a new stop.
+    expect(row).toHaveAttribute('aria-hidden', 'true');
+    expect(left).toHaveAttribute('tabindex', '-1');
+    expect(right).toHaveAttribute('tabindex', '-1');
   });
 
   it('renders a draggable column divider that updates the split ratio', () => {
