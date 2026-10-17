@@ -95,7 +95,8 @@ jest.mock('../../../components/Editor/codemirror', () => ({
   setGitBaseline: { of: jest.fn((v: unknown) => ({ __baseline: v })) },
 }));
 jest.mock('../../../components/Editor/codemirror/pinnedScrollbar', () => ({
-  pinnedScrollbar: (proxy: HTMLElement) => ({ __pinned: proxy }),
+  createScrollGroup: () => ({ __group: true }),
+  pinnedScrollbar: (proxy: HTMLElement, group?: unknown) => ({ __pinned: proxy, group }),
 }));
 const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
@@ -484,7 +485,7 @@ describe('GitDiffView', () => {
     expect(goToPreviousChunkMock).toHaveBeenCalled();
   });
 
-  it('pins a horizontal scrollbar under each pane (#448)', () => {
+  it('pins a horizontal scrollbar under each pane, scrolling the panes together (#448)', () => {
     render(<GitDiffView session={base} />);
     const row = screen.getByTestId('diff-hscroll');
     const [left, right] = Array.from(row.children);
@@ -492,16 +493,18 @@ describe('GitDiffView', () => {
       a: { extensions: unknown[] };
       b: { extensions: unknown[] };
     };
-    const pinnedTo = (extensions: unknown[]) =>
-      (
-        extensions.find((e) => (e as { __pinned?: Element } | null)?.__pinned) as {
-          __pinned: Element;
-        }
-      )?.__pinned;
+    type Pinned = { __pinned: Element; group?: unknown };
+    const pinned = (extensions: unknown[]) =>
+      extensions.find((e) => (e as Partial<Pinned> | null)?.__pinned) as Pinned | undefined;
+    const a = pinned(config.a.extensions);
+    const b = pinned(config.b.extensions);
 
     expect(row.children).toHaveLength(2);
-    expect(pinnedTo(config.a.extensions)).toBe(left);
-    expect(pinnedTo(config.b.extensions)).toBe(right);
+    expect(a?.__pinned).toBe(left);
+    expect(b?.__pinned).toBe(right);
+    // One shared group: moving either pane sideways moves the other.
+    expect(a?.group).toEqual({ __group: true });
+    expect(b?.group).toBe(a?.group);
     // Presentation only: mirrors of the panes' own scrolling, not a new stop.
     expect(row).toHaveAttribute('aria-hidden', 'true');
     expect(left).toHaveAttribute('tabindex', '-1');

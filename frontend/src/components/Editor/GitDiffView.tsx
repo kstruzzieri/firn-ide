@@ -10,7 +10,7 @@ import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { buildTheme, gitGutterExtension, loadLanguageSupport, setGitBaseline } from './codemirror';
 import { hunkStagingGutter } from './codemirror/hunkStagingGutter';
 import { isWorkingTreeEditable, workingTreeEditListener } from './codemirror/editableWorkingTree';
-import { pinnedScrollbar } from './codemirror/pinnedScrollbar';
+import { createScrollGroup, pinnedScrollbar } from './codemirror/pinnedScrollbar';
 import { reconcileDoc } from './codemirror/reconcileDoc';
 import styles from './GitDiffView.module.css';
 
@@ -169,9 +169,11 @@ export function GitDiffView({
     // widgets sized from measured line heights, and wrapped lines re-measure
     // as pane widths settle — producing sudden mid-scroll jumps and blank
     // regions. Long lines scroll horizontally inside their pane instead, with
-    // the pane's scrollbar pinned under the view (#448).
+    // the pane's scrollbar pinned under the view and the two panes scrolling
+    // sideways together (#448).
+    const scrollGroup = createScrollGroup();
     const pinned = (proxy: HTMLElement | null): Extension[] =>
-      proxy ? [pinnedScrollbar(proxy)] : [];
+      proxy ? [pinnedScrollbar(proxy, scrollGroup)] : [];
     const base: Extension[] = [
       lineNumbers(),
       // JetBrains diff-navigation keys.
