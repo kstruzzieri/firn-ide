@@ -66,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The welcome screen's shortcut hints now match what the keys do. It listed
+  Cmd+K for a Quick Search that Firn does not have, so pressing it did
+  nothing, and called Cmd+O Open File, though Cmd+O opens a folder. It now
+  lists Open Folder (Cmd+O), Command Palette (Cmd+Shift+P) and Search in
+  Workspace (Cmd+Shift+F), each Ctrl on Windows and Linux. (#454)
 - A side of the side-by-side diff whose lines are wider than it now shows its
   horizontal scrollbar at the bottom of the diff view. The scrollbar used to
   sit below the file's last line, out of sight on any file taller than the
