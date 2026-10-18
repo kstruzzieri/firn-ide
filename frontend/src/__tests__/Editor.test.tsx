@@ -172,13 +172,16 @@ describe('Editor Welcome Screen', () => {
     const mac = platform.isMac();
     for (const { label, shortcut } of hints) {
       // formatShortcut renders "⌘⇧F" on macOS and "Ctrl+Shift+F" elsewhere.
+      // Every modifier comes from the hint itself, so a hint that drops one
+      // presses a different chord and goes unhandled.
+      const primary = mac ? shortcut.includes('⌘') : shortcut.includes('Ctrl+');
       const shift = /⇧|Shift\+/.test(shortcut);
       const key = shortcut.replace(/⌘|⇧|⌥|Ctrl\+|Shift\+|Alt\+/g, '');
       expect(key).toHaveLength(1);
       const event = new KeyboardEvent('keydown', {
         key: shift ? key.toUpperCase() : key.toLowerCase(),
-        metaKey: mac,
-        ctrlKey: !mac,
+        metaKey: mac && primary,
+        ctrlKey: !mac && primary,
         shiftKey: shift,
         altKey: /⌥|Alt\+/.test(shortcut),
         bubbles: true,
