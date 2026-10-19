@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, renderHook, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { cssRule } from './helpers/cssRule';
 import { useIDEStore } from '../stores/ideStore';
 import { useGitStore, type DiffSession, type MergeSession } from '../stores/gitStore';
@@ -23,6 +23,8 @@ jest.mock('../wails/runtime', () => ({
   // imports above — while `mockWindowSetTitle` is still in its temporal dead
   // zone. Every other suite in this repo already spells its mocks this way.
   WindowSetTitle: (...args: unknown[]) => mockWindowSetTitle(...args),
+  // useKeyboardShortcuts listens for the native navigate:back/forward menu events.
+  EventsOn: jest.fn(() => jest.fn()),
 }));
 
 // The real CodeMirrorEditor drags the full CM6 + LSP extension graph into
@@ -64,6 +66,7 @@ jest.mock('../components/GolemConfig/GolemConfigWorkspace', () => {
 });
 
 import { Editor } from '../components/Editor';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import * as platform from '../utils/platform';
 
 beforeEach(() => {
@@ -140,9 +143,56 @@ const configTab = () => screen.getByRole('tab', { name: 'Golem Configuration' })
 describe('Editor Welcome Screen', () => {
   it('should show keyboard shortcuts when no files are open', () => {
     render(<Editor />);
-    expect(screen.getByText('Open File')).toBeInTheDocument();
+    expect(screen.getByText('Open Folder')).toBeInTheDocument();
     expect(screen.getByText('Command Palette')).toBeInTheDocument();
-    expect(screen.getByText('Quick Search')).toBeInTheDocument();
+    expect(screen.getByText('Search in Workspace')).toBeInTheDocument();
+  });
+
+  // The hints are literal text beside the global handler, so read each one off
+  // the screen, press it, and check the handler both takes it and does what the
+  // label says (#454: a Cmd+K hint stood for a feature that never existed).
+  it('hints only shortcuts the global handler takes, each doing what its label says', () => {
+    const openFolder = jest.fn();
+    const openCommandPalette = jest.fn();
+    useIDEStore.setState({ activeSidebarView: 'explorer' });
+    const { container } = render(<Editor />);
+    renderHook(() => useKeyboardShortcuts(openFolder, openCommandPalette, false));
+
+    const effects: Record<string, () => void> = {
+      'Open Folder': () => expect(openFolder).toHaveBeenCalledTimes(1),
+      'Command Palette': () => expect(openCommandPalette).toHaveBeenCalledTimes(1),
+      'Search in Workspace': () => expect(useIDEStore.getState().activeSidebarView).toBe('search'),
+    };
+    const hints = Array.from(container.querySelectorAll('kbd')).map((kbd) => ({
+      label: kbd.previousElementSibling?.textContent ?? '',
+      shortcut: kbd.textContent ?? '',
+    }));
+    expect(hints.map((h) => h.label).sort()).toEqual(Object.keys(effects).sort());
+
+    const mac = platform.isMac();
+    for (const { label, shortcut } of hints) {
+      // formatShortcut renders "⌘⇧F" on macOS and "Ctrl+Shift+F" elsewhere.
+      // Every modifier comes from the hint itself, so a hint that drops one
+      // presses a different chord and goes unhandled.
+      const primary = mac ? shortcut.includes('⌘') : shortcut.includes('Ctrl+');
+      const shift = /⇧|Shift\+/.test(shortcut);
+      const key = shortcut.replace(/⌘|⇧|⌥|Ctrl\+|Shift\+|Alt\+/g, '');
+      expect(key).toHaveLength(1);
+      const event = new KeyboardEvent('keydown', {
+        key: shift ? key.toUpperCase() : key.toLowerCase(),
+        metaKey: mac && primary,
+        ctrlKey: !mac && primary,
+        shiftKey: shift,
+        altKey: /⌥|Alt\+/.test(shortcut),
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        window.dispatchEvent(event);
+      });
+      expect({ label, handled: event.defaultPrevented }).toEqual({ label, handled: true });
+      effects[label]();
+    }
   });
 
   it('should show recent projects section when recent workspaces exist', () => {
@@ -323,13 +373,13 @@ describe('Editor Welcome Screen', () => {
 
   it('shows the welcome screen only while no editor surface — configuration included — is open', () => {
     render(<Editor />);
-    expect(screen.getByText('Open File')).toBeInTheDocument();
+    expect(screen.getByText('Open Folder')).toBeInTheDocument();
 
     act(() => {
       focusConfigTab();
     });
 
-    expect(screen.queryByText('Open File')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open Folder')).not.toBeInTheDocument();
     expect(screen.getByTestId('golem-config-mock')).toBeVisible();
   });
 

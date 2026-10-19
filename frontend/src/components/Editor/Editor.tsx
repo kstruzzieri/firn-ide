@@ -310,7 +310,7 @@ export function Editor() {
           <img src={firnLogo} alt="Firn IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
             <div className={styles.shortcutItem}>
-              <span className={styles.shortcutLabel}>Open File</span>
+              <span className={styles.shortcutLabel}>Open Folder</span>
               <kbd>{formatShortcut('\u2318O')}</kbd>
             </div>
             <div className={styles.shortcutItem}>
@@ -318,8 +318,8 @@ export function Editor() {
               <kbd>{formatShortcut('\u2318\u21e7P')}</kbd>
             </div>
             <div className={styles.shortcutItem}>
-              <span className={styles.shortcutLabel}>Quick Search</span>
-              <kbd>{formatShortcut('\u2318K')}</kbd>
+              <span className={styles.shortcutLabel}>Search in Workspace</span>
+              <kbd>{formatShortcut('\u2318\u21e7F')}</kbd>
             </div>
           </div>
           {recentProjects.length > 0 && (
