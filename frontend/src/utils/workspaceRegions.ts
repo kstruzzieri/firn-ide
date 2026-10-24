@@ -1,6 +1,15 @@
-import { isWindowsPathSyntax, normalizePathForComparison } from './lspUri';
+import { normalizePathForComparison } from './lspUri';
 import type { WorkspaceAccent, FileEntry } from '../stores/ideStore';
 import type { workspace } from '../wails/bindings';
+
+/**
+ * True when `root` is spelled as a Windows path: a drive letter (`C:\`, `c:/`)
+ * or a UNC share (`\\server\share`, `//server/share`). Only these read a
+ * backslash as a separator; on macOS and Linux it is an ordinary name character.
+ */
+export function isWindowsPathSyntax(root: string): boolean {
+  return /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root);
+}
 
 /**
  * Repo-relative, forward-slash path for `absPath` under `repoRoot`.

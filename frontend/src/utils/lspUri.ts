@@ -101,25 +101,13 @@ export function fileURIToPath(uri: string): string | null {
 }
 
 /**
- * True when `path` is spelled as a Windows path: a drive letter (`C:\`, `c:/`)
- * or a UNC share (`\\server\share`, `//server/share`). Only these read a
- * backslash as a separator; on macOS and Linux it is an ordinary name character.
- */
-export function isWindowsPathSyntax(path: string): boolean {
-  return /^[a-z]:[\\/]|^\\\\|^\/\//i.test(path);
-}
-
-/**
  * Normalizes a local path for cross-platform equality checks.
  * Drive-letter paths (Windows-origin) are fully lowercased since NTFS is
- * case-insensitive. Backslashes are converted to forward slashes in Windows
- * paths (and the `/c:/` form of a file URI) only: in a POSIX path a backslash
- * is part of a name, so `/ws/a\b` and `/ws/a/b` stay different (#447).
+ * case-insensitive. Backslashes are always converted to forward slashes.
  * Non-drive paths on macOS/Linux are left case-sensitive.
  */
 export function normalizePathForComparison(path: string): string {
   if (!path) return path;
-  if (!isWindowsPathSyntax(path) && !/^\/[A-Za-z]:[\\/]/.test(path)) return path;
 
   const normalized = normalizeWindowsDrivePath(path);
   // Drive-letter paths are always Windows-origin and should be compared

@@ -1185,6 +1185,49 @@ describe('useWorkspacePersistence', () => {
     expect(getCachedWorkspaceTree('/workspace/firn')).toBe(useIDEStore.getState().directoryTree);
   });
 
+  it('ignores a treeSnapshot from the folder a/b for a POSIX project in a\\b (#447)', async () => {
+    mockLoadWorkspaceState.mockResolvedValueOnce({
+      workspacePath: '/workspace/a\\b',
+      workspaceName: 'a\\b',
+      layout: null,
+      editor: { activeFilePath: '', openFiles: [] },
+      explorer: {
+        expandedPaths: [],
+        rootExpanded: true,
+        treeSnapshot: [
+          filesystem.FileEntry.createFrom({
+            name: 'src',
+            path: '/workspace/a/b/src',
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+          }),
+        ],
+      },
+      activeSidebar: 'explorer',
+      hiddenProfileIds: [],
+    });
+
+    useIDEStore.setState({
+      workspace: { name: 'a\\b', path: '/workspace/a\\b' },
+      directoryTree: [],
+      isLoadingTree: false,
+    });
+    // The disk reconcile replaces whatever was painted, so watch every tree shown.
+    const shown: string[] = [];
+    const unsubscribe = useIDEStore.subscribe((s) =>
+      s.directoryTree.forEach((e) => shown.push(e.path))
+    );
+
+    renderHook(() => useWorkspacePersistence());
+
+    await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/a\\b'));
+    await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    unsubscribe();
+
+    expect(shown).not.toContain('/workspace/a/b/src');
+  });
+
   it('ignores a treeSnapshot whose top-level entries are nested descendants', async () => {
     mockLoadWorkspaceState.mockResolvedValueOnce({
       workspacePath: '/repo',

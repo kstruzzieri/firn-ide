@@ -2,9 +2,9 @@ import { useCallback } from 'react';
 import { ReadDirectoryShallow } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import type { WorkspaceInfo, FileEntry } from '../stores/ideStore';
-import { pathsReferToSameFile, getFileNameFromPath, isWindowsPathSyntax } from '../utils/lspUri';
+import { pathsReferToSameFile, getFileNameFromPath } from '../utils/lspUri';
 import { findEntryByPath } from '../utils/findEntryByPath';
-import { treeLoadLevels } from '../utils/workspaceRegions';
+import { isWindowsPathSyntax, treeLoadLevels } from '../utils/workspaceRegions';
 
 interface InFlightLoad {
   workspace: WorkspaceInfo;
