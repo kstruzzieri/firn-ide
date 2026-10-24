@@ -34,4 +34,22 @@ describe('isDirVisible', () => {
   it('false for path outside root', () => {
     expect(isDirVisible('/other/x', base)).toBe(false);
   });
+  it('handles a Windows drive root (#447)', () => {
+    expect(
+      isDirVisible('C:\\src\\a\\b', {
+        rootPath: 'C:\\',
+        isRootExpanded: true,
+        expandedPaths: new Set<string>(['C:\\src', 'C:\\src\\a']),
+      })
+    ).toBe(true);
+  });
+  it('reads a backslash in a POSIX root as part of its name (#447)', () => {
+    expect(
+      isDirVisible('/me/a\\b/src/x', {
+        rootPath: '/me/a\\b',
+        isRootExpanded: true,
+        expandedPaths: new Set<string>(['/me/a\\b/src']),
+      })
+    ).toBe(true);
+  });
 });

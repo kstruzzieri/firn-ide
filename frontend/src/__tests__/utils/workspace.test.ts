@@ -99,6 +99,24 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
   });
 
+  it('treats c:/ over an open drive root C:\\ as a tree-only refresh (#447)', async () => {
+    const workspace = { name: 'C:', path: 'C:\\' };
+    useIDEStore.setState({
+      workspace,
+      directoryTree: [],
+      expandedPaths: new Set(),
+    });
+    mockRead.mockResolvedValue([]);
+
+    act(() => {
+      openWorkspaceByPath('c:/');
+    });
+    await waitFor(() => expect(mockRead).toHaveBeenCalledWith('C:\\', 'C:\\'));
+
+    expect(useIDEStore.getState().workspace).toBe(workspace);
+    expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
+  });
+
   it('marks loaded-but-collapsed dirs dirty instead of reading them', async () => {
     useIDEStore.setState({
       directoryTree: [dir('/ws/src', [dir('/ws/src/a')]), dir('/ws/lib', [dir('/ws/lib/x')])],

@@ -473,6 +473,36 @@ describe('FileExplorer views', () => {
     });
   });
 
+  it('hydrates a nested workspace under a Windows drive root C:\\ (#447)', async () => {
+    const nestedDefs = [
+      defs[0],
+      { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'go' },
+    ] as workspace.WorkspaceDef[];
+    seed('go', {
+      workspace: { name: 'C:', path: 'C:\\' },
+      workspaces: nestedDefs,
+      directoryTree: [],
+      dirtyPaths: new Set(),
+      toast: null,
+    });
+    const dirAt = (path: string) =>
+      ({ name: path.split('\\').pop(), path, isDir: true, size: 0, modTime: '' }) as FileEntry;
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) => {
+      if (path === 'C:\\') return Promise.resolve([dirAt('C:\\backend')]);
+      if (path === 'C:\\backend') return Promise.resolve([dirAt('C:\\backend\\go')]);
+      if (path === 'C:\\backend\\go') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unexpected directory: ${path}`));
+    });
+
+    render(<FileExplorer />);
+
+    await waitFor(() => {
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('C:\\backend\\go', 'C:\\');
+    });
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('C:\\backend', 'C:\\');
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
   it('stops scoped hydration when a same-path workspace is reopened', async () => {
     let resolveBackend!: (entries: FileEntry[]) => void;
     const nestedDefs = [

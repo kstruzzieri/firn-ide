@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { ReadDirectoryShallow } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import type { WorkspaceInfo, FileEntry } from '../stores/ideStore';
-import { pathsReferToSameFile, getFileNameFromPath } from '../utils/lspUri';
+import { pathsReferToSameFile, getFileNameFromPath, isWindowsPathSyntax } from '../utils/lspUri';
 import { findEntryByPath } from '../utils/findEntryByPath';
 import { treeLoadLevels } from '../utils/workspaceRegions';
 
@@ -184,7 +184,7 @@ export async function reconcileTreeWithDisk(
 
 function parentPath(path: string, root: string): string {
   // Use the root's path syntax: a backslash in a POSIX name is not a boundary.
-  return /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root)
+  return isWindowsPathSyntax(root)
     ? path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')
     : path.replace(/\/+$/, '').replace(/\/[^/]*$/, '');
 }

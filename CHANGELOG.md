@@ -66,6 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Paths are now read in the project root's syntax: a backslash separates
+  folders only under a Windows root, and a drive root keeps its slash. With a
+  Windows drive root (`C:\`) open as the project, every file under it counted
+  as outside the project, so the tree never revealed the active file, applied
+  its saved snapshot or loaded a Workspace View under it, no file mapped to a
+  Workspace View, and reselecting the project as `c:/` reopened it in full
+  instead of refreshing the tree. On macOS and Linux, where a backslash is an
+  ordinary filename character, a folder named `a\b` was read as `a/b`:
+  revealing `a\b/readme.txt` in the tree showed "Failed to load a", the twin
+  folder `a/b` counted as the same path, and a project whose own folder name
+  held a backslash could not reveal or show its expanded folders. (#447)
 - The welcome screen's shortcut hints now match what the keys do. It listed
   Cmd+K for a Quick Search that Firn does not have, so pressing it did
   nothing, and called Cmd+O Open File, though Cmd+O opens a folder. It now

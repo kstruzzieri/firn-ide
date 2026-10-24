@@ -101,6 +101,13 @@ describe('canonicalizeFileURI', () => {
 describe('path helpers', () => {
   it('matches equivalent Windows paths regardless of slash style', () => {
     expect(pathsReferToSameFile('C:\\Users\\dev\\test.ts', 'c:/Users/dev/test.ts')).toBe(true);
+    expect(pathsReferToSameFile('C:\\x', 'c:/x')).toBe(true);
+    expect(pathsReferToSameFile('\\\\server\\share\\x', '//server/share/x')).toBe(true);
+  });
+
+  it('keeps a POSIX backslash as a name character, not a separator (#447)', () => {
+    expect(pathsReferToSameFile('/Users/me/ws/a\\b', '/Users/me/ws/a/b')).toBe(false);
+    expect(pathsReferToSameFile('/Users/me/ws/a\\b', '/Users/me/ws/a\\b')).toBe(true);
   });
 
   it('matches diagnostics URI paths against editor paths for Windows drive case differences', () => {

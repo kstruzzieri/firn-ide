@@ -2,6 +2,7 @@ import {
   treeLoadLevels,
   createWorkspacePathResolver,
   getInfraFileAccent,
+  pathUnderRoot,
   relativePathFromRoot,
 } from '../../utils/workspaceRegions';
 
@@ -37,6 +38,52 @@ describe('relativePathFromRoot', () => {
   it('returns null for empty inputs', () => {
     expect(relativePathFromRoot('', root)).toBeNull();
     expect(relativePathFromRoot(root, '')).toBeNull();
+  });
+
+  it.each([
+    ['C:\\src\\a.ts', 'src/a.ts'],
+    ['c:\\src\\a.ts', 'src/a.ts'],
+    ['c:/', ''],
+    ['C:/', ''],
+  ])('resolves %s under the drive root C:\\ (#447)', (absPath, expected) => {
+    expect(relativePathFromRoot(absPath, 'C:\\')).toBe(expected);
+  });
+
+  it.each([
+    ['C:\\ws\\a.ts', 'C:\\ws', 'a.ts'],
+    ['\\\\server\\share\\src\\a.ts', '\\\\server\\share\\', 'src/a.ts'],
+    ['//server/share/src/a.ts', '\\\\server\\share', 'src/a.ts'],
+  ])('keeps the Windows reading of %s under %s', (absPath, windowsRoot, expected) => {
+    expect(relativePathFromRoot(absPath, windowsRoot)).toBe(expected);
+  });
+
+  it.each([
+    ['/Users/me/ws/a\\b/readme.txt', '/Users/me/ws', 'a\\b/readme.txt'],
+    ['/Users/me/ws/a\\b', '/Users/me/ws', 'a\\b'],
+    ['/Users/me/a/b/readme.txt', '/Users/me/a\\b', null],
+    ['/Users/me/a\\b/src/x.ts', '/Users/me/a\\b', 'src/x.ts'],
+    ['/Users/me/ws/src/x.ts', '/Users/me/ws', 'src/x.ts'],
+  ])(
+    'reads %s under the POSIX root %s with backslashes as name characters (#447)',
+    (absPath, posixRoot, expected) => {
+      expect(relativePathFromRoot(absPath, posixRoot)).toBe(expected);
+    }
+  );
+});
+
+describe('pathUnderRoot', () => {
+  it.each([
+    ['/r', 'a/b', '/r/a/b'],
+    ['/r/', 'a', '/r/a'],
+    ['/', 'a', '/a'],
+    ['/Users/me/a\\b', 'src/x', '/Users/me/a\\b/src/x'],
+    ['C:\\', 'src/a', 'C:\\src\\a'],
+    ['C:\\ws\\', 'src', 'C:\\ws\\src'],
+    ['C:/ws', 'src/a', 'C:/ws/src/a'],
+    ['\\\\server\\share\\', 'src', '\\\\server\\share\\src'],
+    ['C:\\', '', 'C:\\'],
+  ])('spells %s + %s in the root syntax as %s', (root, relPath, expected) => {
+    expect(pathUnderRoot(root, relPath)).toBe(expected);
   });
 });
 

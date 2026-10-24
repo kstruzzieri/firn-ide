@@ -24,7 +24,7 @@ import { flattenVisibleTree } from '../../utils/flattenTree';
 import type { FlatRow } from '../../utils/flattenTree';
 import { useTreeKeyboardNav } from './useTreeKeyboardNav';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
-import { relativePathFromRoot } from '../../utils/workspaceRegions';
+import { pathUnderRoot, relativePathFromRoot } from '../../utils/workspaceRegions';
 import { useGitStatusByPath } from '../../stores/gitStore';
 import { normalizeFsPath } from '../../utils/paths';
 import { accentVar } from '../../utils/accent';
@@ -86,13 +86,11 @@ export function FileExplorer() {
     if (!ws || !relPath) return;
 
     const rel = relPath.split('/');
-    const sep = ws.path.includes('\\') ? '\\' : '/';
 
     void (async () => {
-      let cursor = ws.path;
       const toExpand: string[] = [];
-      for (let i = 0; i < rel.length - 1; i++) {
-        cursor += sep + rel[i];
+      for (let i = 1; i < rel.length; i++) {
+        const cursor = pathUnderRoot(ws.path, rel.slice(0, i).join('/'));
         await ensurePathLoaded(cursor);
         const afterLoad = useIDEStore.getState();
         if (revealGenRef.current !== gen || afterLoad.workspace !== ws) return;
@@ -142,10 +140,10 @@ export function FileExplorer() {
     hydratingForRef.current = relDir;
     let cancelled = false;
     setScopeHydrating(true);
-    const sep = ws.path.includes('\\') ? '\\' : '/';
+    const segments = relDir.split('/');
     void (async () => {
-      let cursor = ws.path;
-      for (const seg of relDir.split('/')) {
+      for (let depth = 0; depth < segments.length; depth++) {
+        const cursor = pathUnderRoot(ws.path, segments.slice(0, depth).join('/'));
         await ensurePathLoaded(cursor);
         const state = useIDEStore.getState();
         if (cancelled || state.workspace !== ws) return;
@@ -153,9 +151,8 @@ export function FileExplorer() {
           setScopeHydrating(false);
           return;
         }
-        cursor += sep + seg;
       }
-      await ensurePathLoaded(cursor);
+      await ensurePathLoaded(pathUnderRoot(ws.path, relDir));
       if (cancelled || useIDEStore.getState().workspace !== ws) return;
       setScopeHydrating(false);
     })();
