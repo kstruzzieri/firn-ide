@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-10-20
+## [0.14.0] - 2026-10-25
 
 Defect release. Golem moves to go-llm v0.3.0, which marks tool results as
 untrusted data, and New chat now also clears the conversation the model sees.
