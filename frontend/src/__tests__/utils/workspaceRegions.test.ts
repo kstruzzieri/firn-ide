@@ -53,6 +53,10 @@ describe('relativePathFromRoot', () => {
     ['C:\\ws\\a.ts', 'C:\\ws', 'a.ts'],
     ['\\\\server\\share\\src\\a.ts', '\\\\server\\share\\', 'src/a.ts'],
     ['//server/share/src/a.ts', '\\\\server\\share', 'src/a.ts'],
+    // İ lowercases to two UTF-16 units, so the comparison form is longer.
+    ['C:\\ws\\İ\\a.ts', 'C:\\ws', 'İ/a.ts'],
+    ['C:\\İ\\a.ts', 'C:\\İ', 'a.ts'],
+    ['/C:/ws/src/a.ts', 'C:\\ws', 'src/a.ts'],
   ])('keeps the Windows reading of %s under %s', (absPath, windowsRoot, expected) => {
     expect(relativePathFromRoot(absPath, windowsRoot)).toBe(expected);
   });

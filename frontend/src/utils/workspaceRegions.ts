@@ -33,10 +33,12 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
 
   if (cmpPath === cmpRoot) return '';
   if (!cmpPath.startsWith(cmpRoot + '/')) return null;
-  // Normalizing changes only case, separators and a URI's leading slash, so
-  // the original path's tail past the root has the same length.
+  // Take the original path's segments past the root, counted rather than
+  // measured: lowercasing can lengthen a name (İ) and normalizing drops a
+  // URI-form path's leading slash, but neither adds or removes a separator.
+  const depth = cmpPath.split('/').length - cmpRoot.split('/').length;
   const path = trim(windows ? absPath.replace(/\\/g, '/') : absPath);
-  return path.slice(path.length - (cmpPath.length - cmpRoot.length - 1));
+  return path.split('/').slice(-depth).join('/');
 }
 
 /**
