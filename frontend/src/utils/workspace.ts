@@ -2,7 +2,7 @@ import { useIDEStore } from '../stores/ideStore';
 import { WindowSetTitle } from '../wails/runtime';
 import { reconcileTreeWithDisk } from '../hooks/useEnsurePathLoaded';
 import { getCachedWorkspaceTree } from './workspaceTreeCache';
-import { relativePathFromRoot } from './workspaceRegions';
+import { pathUnderRoot, relativePathFromRoot } from './workspaceRegions';
 
 const MAX_RECENT = 10;
 
@@ -32,10 +32,7 @@ export function openWorkspaceByPath(folderPath: string) {
     if (scope?.id !== 'project' && scope?.relDir) {
       // Workspace View's root need not be expanded. Include it explicitly so
       // reselecting also retries a failed read whose dirty flag is already set.
-      const windows = /^[a-z]:[\\/]|^\\\\|^\/\//i.test(active.path);
-      const separator = windows && active.path.includes('\\') ? '\\' : '/';
-      const root = active.path.replace(windows ? /[\\/]+$/ : /\/+$/, '');
-      visiblePaths.add(`${root}${separator}${scope.relDir.split('/').join(separator)}`);
+      visiblePaths.add(pathUnderRoot(active.path, scope.relDir));
     }
     void reconcileTreeWithDisk(
       active.path,
