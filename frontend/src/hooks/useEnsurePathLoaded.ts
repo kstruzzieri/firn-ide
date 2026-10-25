@@ -2,9 +2,9 @@ import { useCallback } from 'react';
 import { ReadDirectoryShallow } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import type { WorkspaceInfo, FileEntry } from '../stores/ideStore';
-import { pathsReferToSameFile, getFileNameFromPath } from '../utils/lspUri';
+import { getFileNameFromPath } from '../utils/lspUri';
 import { findEntryByPath } from '../utils/findEntryByPath';
-import { isWindowsPathSyntax, treeLoadLevels } from '../utils/workspaceRegions';
+import { isWindowsPathSyntax, treeLoadLevels, treePathKey } from '../utils/workspaceRegions';
 
 interface InFlightLoad {
   workspace: WorkspaceInfo;
@@ -78,7 +78,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
   const workspace = store.workspace;
   if (!workspace) return Promise.resolve();
   const root = workspace.path;
-  const isRoot = pathsReferToSameFile(path, root);
+  const isRoot = samePath(path, root);
 
   if (!opts.force) {
     const node = isRoot
@@ -165,9 +165,9 @@ export async function reconcileTreeWithDisk(
     const present: string[] = [];
     const gone: string[] = [];
     for (const path of level) {
-      if (pathsReferToSameFile(path, root) || findEntryByPath(tree, path)?.isDir === true) {
+      if (samePath(path, root) || findEntryByPath(tree, path)?.isDir === true) {
         present.push(path);
-      } else if (fresh.some((f) => pathsReferToSameFile(f, parentPath(path, root)))) {
+      } else if (fresh.some((f) => samePath(f, parentPath(path, root)))) {
         gone.push(path);
       }
     }
@@ -191,9 +191,7 @@ function parentPath(path: string, root: string): string {
 
 function forgetExpanded(gone: string[]): void {
   useIDEStore.setState((s) => {
-    const kept = [...s.expandedPaths].filter(
-      (path) => !gone.some((g) => pathsReferToSameFile(g, path))
-    );
+    const kept = [...s.expandedPaths].filter((path) => !gone.some((g) => samePath(g, path)));
     return kept.length === s.expandedPaths.size ? {} : { expandedPaths: new Set(kept) };
   });
 }
@@ -212,4 +210,9 @@ export function useEnsurePathLoaded(): typeof ensurePathLoaded {
   // ponytail: stable ref — ensurePathLoaded is module-level, deps intentionally empty
 
   return useCallback((path: string, opts?: EnsureOpts) => ensurePathLoaded(path, opts), []);
+}
+
+// Tree paths compare like findEntryByPath: a POSIX `a\b` is not its twin `a/b`.
+function samePath(a: string, b: string): boolean {
+  return treePathKey(a) === treePathKey(b);
 }
