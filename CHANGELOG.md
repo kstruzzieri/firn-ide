@@ -18,7 +18,7 @@ session saves that could land out of order or erase the Python interpreter
 override, and a Run Profiles panel that said nothing when its file could not be
 loaded. Golem configuration notices now reach screen readers, Golem refuses a
 wider set of credential files, Firn declares macOS 14 as its floor, and release
-binaries are built with Go 1.27.2.
+binaries are built with Go 1.27.3.
 
 ### Golem
 
@@ -171,7 +171,7 @@ binaries are built with Go 1.27.2.
 
 ### Build and CI
 
-- Every build, test, lint and release job now runs on Go 1.27.2, the
+- Every build, test, lint and release job now runs on Go 1.27.3, the
   `toolchain` line in `go.mod`. Go 1.25 left security support when Go 1.27
   shipped, and `govulncheck` reports ten standard-library vulnerabilities in
   the go1.25.14 release binaries (net/http, net/textproto, crypto/tls) that are
@@ -181,7 +181,8 @@ binaries are built with Go 1.27.2.
   hint for obfuscated builds names garble v0.18.0, the release built for Go
   1.27. The generated TypeScript bindings now type `json.RawMessage` through
   the `encoding/json/jsontext` package Go 1.27 introduces; the shape is still
-  `any`. (#373)
+  `any`. (#373) Go 1.27.3 also fixes GO-2026-6809 in `crypto/x509`,
+  distrusting compromised intermediate certificates.
 - CI runs `govulncheck` on a Linux build of the app made with the release build
   tags: daily, on pushes to `develop`, and on pull requests that change Go
   code, `go.mod` or `go.sum`. It reports known
