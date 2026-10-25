@@ -1,5 +1,5 @@
 import type { FileEntry } from '../stores/ideStore';
-import { normalizePathForComparison } from './lspUri';
+import { treePathKey } from './workspaceRegions';
 
 /** Returns the FileEntry at absolute `path`, or null. Prunes by path prefix. */
 export function findEntryByPath(nodes: FileEntry[], path: string): FileEntry | null {
@@ -14,8 +14,8 @@ export function findEntryByPath(nodes: FileEntry[], path: string): FileEntry | n
 }
 
 function isAncestorPath(ancestor: string, descendant: string): boolean {
-  const normalizedAncestor = normalizePathForComparison(ancestor);
-  const normalizedDescendant = normalizePathForComparison(descendant);
+  const normalizedAncestor = treePathKey(ancestor);
+  const normalizedDescendant = treePathKey(descendant);
   return (
     normalizedDescendant === normalizedAncestor ||
     normalizedDescendant.startsWith(`${normalizedAncestor}/`)
@@ -23,5 +23,5 @@ function isAncestorPath(ancestor: string, descendant: string): boolean {
 }
 
 function samePath(a: string, b: string): boolean {
-  return normalizePathForComparison(a) === normalizePathForComparison(b);
+  return treePathKey(a) === treePathKey(b);
 }

@@ -12,6 +12,15 @@ export function isWindowsPathSyntax(root: string): boolean {
 }
 
 /**
+ * The form tree lookups compare `path` in: a Windows path through
+ * normalizePathForComparison (either separator, drive-letter case), any other
+ * path as it is, so a POSIX folder `a\b` is not its twin `a/b` (#447).
+ */
+export function treePathKey(path: string): string {
+  return isWindowsPathSyntax(path) ? normalizePathForComparison(path) : path;
+}
+
+/**
  * Repo-relative, forward-slash path for `absPath` under `repoRoot`.
  * Returns '' for the repo root itself, and null for paths outside the root.
  *
@@ -26,7 +35,8 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
   if (!absPath || !repoRoot) return null;
 
   const windows = isWindowsPathSyntax(repoRoot);
-  const trim = (p: string): string => p.replace(/\/+$/, '');
+  // Repeated separators count as one; a leading pair (a UNC prefix) stays.
+  const trim = (p: string): string => p.replace(/([^/])\/{2,}/g, '$1/').replace(/\/+$/, '');
   const compare = (p: string): string => trim(windows ? normalizePathForComparison(p) : p);
   const cmpPath = compare(absPath);
   const cmpRoot = compare(repoRoot);

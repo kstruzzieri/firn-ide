@@ -1,5 +1,5 @@
 import type { FileEntry } from '../stores/ideStore';
-import { normalizePathForComparison } from './lspUri';
+import { treePathKey } from './workspaceRegions';
 
 /**
  * Returns a new tree where the node at `targetPath` has its unreadable state
@@ -38,8 +38,8 @@ export function replaceChildrenAt(
 
 /** True if `ancestor` is a path-prefix segment-boundary parent of `descendant`. */
 function isAncestorPath(ancestor: string, descendant: string): boolean {
-  const normalizedAncestor = normalizePathForComparison(ancestor);
-  const normalizedDescendant = normalizePathForComparison(descendant);
+  const normalizedAncestor = treePathKey(ancestor);
+  const normalizedDescendant = treePathKey(descendant);
   return (
     normalizedDescendant === normalizedAncestor ||
     normalizedDescendant.startsWith(`${normalizedAncestor}/`)
@@ -47,5 +47,5 @@ function isAncestorPath(ancestor: string, descendant: string): boolean {
 }
 
 function samePath(a: string, b: string): boolean {
-  return normalizePathForComparison(a) === normalizePathForComparison(b);
+  return treePathKey(a) === treePathKey(b);
 }

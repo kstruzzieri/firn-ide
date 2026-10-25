@@ -57,6 +57,10 @@ describe('relativePathFromRoot', () => {
     ['C:\\ws\\İ\\a.ts', 'C:\\ws', 'İ/a.ts'],
     ['C:\\İ\\a.ts', 'C:\\İ', 'a.ts'],
     ['/C:/ws/src/a.ts', 'C:\\ws', 'src/a.ts'],
+    // Repeated separators count as one; a UNC prefix keeps its two.
+    ['C:\\ws\\\\a.ts', 'C:\\ws', 'a.ts'],
+    ['C:\\\\src', 'C:\\', 'src'],
+    ['\\\\server\\share\\\\x', '\\\\server\\share', 'x'],
   ])('keeps the Windows reading of %s under %s', (absPath, windowsRoot, expected) => {
     expect(relativePathFromRoot(absPath, windowsRoot)).toBe(expected);
   });
@@ -67,6 +71,7 @@ describe('relativePathFromRoot', () => {
     ['/Users/me/a/b/readme.txt', '/Users/me/a\\b', null],
     ['/Users/me/a\\b/src/x.ts', '/Users/me/a\\b', 'src/x.ts'],
     ['/Users/me/ws/src/x.ts', '/Users/me/ws', 'src/x.ts'],
+    ['/Users/me/ws//src/x.ts', '/Users/me/ws', 'src/x.ts'],
   ])(
     'reads %s under the POSIX root %s with backslashes as name characters (#447)',
     (absPath, posixRoot, expected) => {
