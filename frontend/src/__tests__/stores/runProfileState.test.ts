@@ -7,9 +7,13 @@ beforeEach(() => {
 test('setRunProfilesSnapshot hydrates profiles and state', () => {
   useIDEStore
     .getState()
-    .setRunProfilesSnapshot([{ id: 'a', name: 'Dev', type: 'single', source: 'detected' }], {
-      a: { adopted: true, lastRunAt: 5 },
-    });
+    .setRunProfilesSnapshot(
+      [{ id: 'a', name: 'Dev', type: 'single', source: 'detected' }],
+      { a: { adopted: true, lastRunAt: 5 } },
+      undefined,
+      undefined,
+      []
+    );
   expect(useIDEStore.getState().runProfiles).toHaveLength(1);
   expect(useIDEStore.getState().runProfileState.a).toEqual({ adopted: true, lastRunAt: 5 });
 });
@@ -17,7 +21,13 @@ test('setRunProfilesSnapshot hydrates profiles and state', () => {
 test('adoptProfileLocal sets adopted; unadopt of a stateless entry removes the key', () => {
   useIDEStore
     .getState()
-    .setRunProfilesSnapshot([{ id: 'a', name: 'Dev', type: 'single', source: 'detected' }], {});
+    .setRunProfilesSnapshot(
+      [{ id: 'a', name: 'Dev', type: 'single', source: 'detected' }],
+      {},
+      undefined,
+      undefined,
+      []
+    );
   useIDEStore.getState().adoptProfileLocal('a');
   expect(useIDEStore.getState().runProfileState.a.adopted).toBe(true);
   // No lastRunAt → unadopt mirrors the backend by dropping the entry entirely.
@@ -29,9 +39,36 @@ test('adoptProfileLocal sets adopted; unadopt of a stateless entry removes the k
 test('unadoptProfileLocal keeps an entry that has a lastRunAt, clearing adopted', () => {
   useIDEStore
     .getState()
-    .setRunProfilesSnapshot([{ id: 'a', name: 'Dev', type: 'single', source: 'detected' }], {
-      a: { adopted: true, lastRunAt: 1234 },
-    });
+    .setRunProfilesSnapshot(
+      [{ id: 'a', name: 'Dev', type: 'single', source: 'detected' }],
+      { a: { adopted: true, lastRunAt: 1234 } },
+      undefined,
+      undefined,
+      []
+    );
   useIDEStore.getState().unadoptProfileLocal('a');
   expect(useIDEStore.getState().runProfileState.a).toEqual({ adopted: false, lastRunAt: 1234 });
+});
+
+describe('profilesLoadWarnings', () => {
+  beforeEach(() => {
+    useIDEStore.setState({ profilesLoadWarnings: [] });
+  });
+
+  test('setRunProfilesSnapshot stores the snapshot load warnings', () => {
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, ['w1']);
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['w1']);
+  });
+
+  test('a following clean snapshot clears the warnings', () => {
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, ['w1']);
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, []);
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual([]);
+  });
+
+  test('setProfilesError clears the warnings', () => {
+    useIDEStore.getState().setRunProfilesSnapshot([], {}, undefined, undefined, ['w1']);
+    useIDEStore.getState().setProfilesError('boom');
+    expect(useIDEStore.getState().profilesLoadWarnings).toEqual([]);
+  });
 });

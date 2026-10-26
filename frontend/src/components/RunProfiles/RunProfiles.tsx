@@ -4,10 +4,13 @@ import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
 import { RunProfileForm } from './RunProfileForm';
 import { TreeViewToggle } from '../FileExplorer/TreeViewToggle';
+import { ReloadRunProfiles } from '../../wails/bindings';
+import { normalizeSnapshot } from '../../hooks/useRunProfiles';
 import {
   useRunProfiles,
   useIsLoadingProfiles,
   useProfilesError,
+  useProfilesLoadWarnings,
   useIDEStore,
   useRunProfileState,
   useRunProfileForm,
@@ -35,7 +38,11 @@ export function RunProfiles() {
   const profiles = useRunProfiles();
   const isLoading = useIsLoadingProfiles();
   const error = useProfilesError();
+  const loadWarnings = useProfilesLoadWarnings();
   const reloadRunProfiles = useIDEStore((s) => s.reloadRunProfiles);
+  const reloading = useIDEStore((s) => s.profilesReloading);
+  const setProfilesReloading = useIDEStore((s) => s.setProfilesReloading);
+  const showToast = useIDEStore((s) => s.showToast);
   const runOutputs = useIDEStore((s) => s.runOutputs);
   const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
   const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
@@ -293,11 +300,48 @@ export function RunProfiles() {
     </>
   );
 
+  // Re-reads the saved profiles in place. Unlike Retry, this is not a workspace
+  // open: running profiles and language servers must survive it, so it skips the
+  // full load path. The runprofiles:changed event applies the snapshot to the
+  // store; the returned copy is only read to tell whether a load problem remains.
+  // A click while a reload is in flight is ignored, so a double click shows one
+  // toast. The flag lives in the store, so a remount mid-reload keeps it.
+  const handleReload = async () => {
+    if (useIDEStore.getState().profilesReloading) return;
+    setProfilesReloading(true);
+    try {
+      const { loadWarnings: remaining } = normalizeSnapshot(await ReloadRunProfiles());
+      if (remaining.length > 0) {
+        showToast('Run profiles reloaded, but a problem with the saved profiles remains', 'error');
+      } else {
+        // The button unmounts once the clean snapshot lands, which may happen
+        // before this result arrives, and a remount mid-reload replaces the
+        // region; so look the region up now and take over focus unless the user
+        // has moved outside the notice (which also contains the Reload button).
+        const region = document.querySelector<HTMLElement>('[data-run-profiles-status]');
+        const active = document.activeElement;
+        if (
+          region &&
+          (!active || active === document.body || region.parentElement?.contains(active))
+        ) {
+          region.focus();
+        }
+        showToast('Run profiles reloaded', 'info');
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Could not reload run profiles: ${message}`, 'error');
+    } finally {
+      setProfilesReloading(false);
+    }
+  };
+
   // View-aware "nothing to show" gate. The active workspace may have zero
   // profiles while other workspaces have some, so we can't gate on the global
   // visible list — that left Workspace View blank. Gate on the rendered set.
   const isViewEmpty =
     viewMode === 'project' ? grouped.workspaceGroups.length === 0 : grouped.sections.length === 0;
+  const showLoadNotice = !isLoading && loadWarnings.length > 0;
 
   return (
     <Panel
@@ -319,56 +363,102 @@ export function RunProfiles() {
         )
       }
     >
-      {runProfileForm ? (
-        <RunProfileForm state={runProfileForm} />
-      ) : (
-        <div className={styles.list}>
-          {isLoading ? (
-            <div className={styles.empty}>
-              <p>Loading profiles...</p>
-            </div>
-          ) : error ? (
-            <div className={styles.empty}>
-              <p className={styles.errorText}>{error}</p>
-              <button type="button" className={styles.createButton} onClick={reloadRunProfiles}>
-                Retry
-              </button>
-            </div>
-          ) : isViewEmpty ? (
-            <RunProfilesEmpty />
-          ) : viewMode === 'project' ? (
-            grouped.workspaceGroups.map((wg) => {
-              const counts = groupCounts(wg);
-              const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
-              return (
-                <div
-                  key={wg.workspaceId}
-                  className={styles.workspaceGroup}
-                  style={
-                    { ['--region-accent' as string]: accentVar(accent) } as React.CSSProperties
-                  }
-                >
-                  <div className={styles.workspaceHeader}>
-                    <span
-                      className={styles.workspaceDot}
-                      style={{ background: accentVar(accent) }}
-                    />
-                    <span className={styles.workspaceName}>{wg.workspaceName}</span>
-                    {counts.running > 0 && (
-                      <span className={styles.runningCount}>● {counts.running} running</span>
-                    )}
-                    <span className={styles.groupTotal}>· {counts.total}</span>
-                  </div>
-                  {wg.sections.map((s) => renderSection(s, true))}
-                </div>
-              );
-            })
-          ) : (
-            grouped.sections.map((s) => renderSection(s, false))
+      <div className={styles.panelBody}>
+        <div className={showLoadNotice ? styles.loadNotice : undefined}>
+          {/* Always mounted and unstyled, in the form view too, so warnings are
+              announced when they appear. Hide stale warnings while loading, but
+              keep the empty region in the accessibility tree. Reload is a sibling
+              so its changing label never re-announces unchanged warnings. */}
+          <div
+            data-run-profiles-status=""
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            tabIndex={-1}
+          >
+            {/* Focusable so the keyboard can scroll it: WebKit does not make an
+                overflow container keyboard-scrollable otherwise. */}
+            {showLoadNotice && (
+              <div
+                className={styles.loadNoticeMessages}
+                tabIndex={0}
+                role="group"
+                aria-label="Run profile load problems"
+              >
+                {loadWarnings.map((warning, i) => (
+                  <p key={`${i}:${warning}`} className={styles.loadNoticeText}>
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+          {showLoadNotice && (
+            <button
+              type="button"
+              className={`${styles.createButton} ${styles.textButton}`}
+              onClick={handleReload}
+              aria-disabled={reloading}
+            >
+              {reloading ? 'Reloading…' : 'Reload'}
+            </button>
           )}
-          <HiddenSection profiles={hideableProfiles} hiddenProfileIds={hiddenProfileIds} />
         </div>
-      )}
+        {runProfileForm ? (
+          <RunProfileForm state={runProfileForm} />
+        ) : (
+          <div className={styles.list}>
+            {isLoading ? (
+              <div className={styles.empty}>
+                <p>Loading profiles...</p>
+              </div>
+            ) : error ? (
+              <div className={styles.empty}>
+                <p className={styles.errorText}>{error}</p>
+                <button
+                  type="button"
+                  className={`${styles.createButton} ${styles.textButton}`}
+                  onClick={reloadRunProfiles}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : isViewEmpty ? (
+              <RunProfilesEmpty />
+            ) : viewMode === 'project' ? (
+              grouped.workspaceGroups.map((wg) => {
+                const counts = groupCounts(wg);
+                const accent = workspaces.find((w) => w.id === wg.workspaceId)?.accent;
+                return (
+                  <div
+                    key={wg.workspaceId}
+                    className={styles.workspaceGroup}
+                    style={
+                      { ['--region-accent' as string]: accentVar(accent) } as React.CSSProperties
+                    }
+                  >
+                    <div className={styles.workspaceHeader}>
+                      <span
+                        className={styles.workspaceDot}
+                        style={{ background: accentVar(accent) }}
+                      />
+                      <span className={styles.workspaceName}>{wg.workspaceName}</span>
+                      {counts.running > 0 && (
+                        <span className={styles.runningCount}>● {counts.running} running</span>
+                      )}
+                      <span className={styles.groupTotal}>· {counts.total}</span>
+                    </div>
+                    {wg.sections.map((s) => renderSection(s, true))}
+                  </div>
+                );
+              })
+            ) : (
+              grouped.sections.map((s) => renderSection(s, false))
+            )}
+            <HiddenSection profiles={hideableProfiles} hiddenProfileIds={hiddenProfileIds} />
+          </div>
+        )}
+      </div>
     </Panel>
   );
 }

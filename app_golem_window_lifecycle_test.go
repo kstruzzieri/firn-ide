@@ -494,6 +494,20 @@ func (h *golemHarness) modeEvents() []GolemWindowState {
 	return out
 }
 
+// closedTransitions counts the published closed states. The retirement
+// observer commits closed under the lock but publishes it only after it has
+// unlocked and saved, so a phase that already reads closed does not mean the
+// event has landed: wait on this, never on phase(), before counting.
+func (h *golemHarness) closedTransitions() int {
+	closed := 0
+	for _, state := range h.modeEvents() {
+		if state.Phase == golemPhaseClosed {
+			closed++
+		}
+	}
+	return closed
+}
+
 // relayed is every envelope delivered to any window: main's first, then each
 // satellite's in creation order. Per-window delivery is asserted through
 // fakeNative.received.
@@ -1139,13 +1153,10 @@ func TestBootstrapTimeoutAndAbort(t *testing.T) {
 		if h.phase() != golemPhaseClosed || h.mode() != appstate.ModeDocked {
 			t.Fatalf("phase/mode = %s/%s, want closed/docked", h.phase(), h.mode())
 		}
-		closed := 0
-		for _, state := range h.modeEvents() {
-			if state.Phase == golemPhaseClosed {
-				closed++
-			}
-		}
-		if closed != 1 {
+		// The observer's emit is the last step any path in this attempt takes,
+		// so once it lands nothing else is in flight to add a second one.
+		waitForGolem(t, func() bool { return h.closedTransitions() >= 1 })
+		if closed := h.closedTransitions(); closed != 1 {
 			t.Fatalf("emitted %d closed transitions, want 1", closed)
 		}
 	})
@@ -1290,14 +1301,10 @@ func TestCloseCompletionAndReopen(t *testing.T) {
 			t.Fatalf("mode = %s, want docked", h.mode())
 		}
 		waitForGolem(t, func() bool { return h.savedMode() == appstate.ModeDocked })
-		// Exactly one closed transition.
-		closed := 0
-		for _, state := range h.modeEvents() {
-			if state.Phase == golemPhaseClosed {
-				closed++
-			}
-		}
-		if closed != 1 {
+		// Exactly one closed transition. The observer publishes it after the
+		// save above, so it is waited for rather than read.
+		waitForGolem(t, func() bool { return h.closedTransitions() >= 1 })
+		if closed := h.closedTransitions(); closed != 1 {
 			t.Fatalf("emitted %d closed transitions, want 1", closed)
 		}
 		// Reopening now creates a second window; the old hook must not consume
@@ -2329,7 +2336,8 @@ func TestGolemStateCarriesFailureReasons(t *testing.T) {
 			t.Fatalf("after the bootstrap deadline: phase=%s reason=%q, want closing/\"bootstrap deadline expired\"", got.Phase, got.Reason)
 		}
 		h.retire(satellite.id)
-		waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+		// Waited on the published state: the observer emits closed after unlocking.
+		waitForGolem(t, func() bool { return h.lastModeEvent().Phase == golemPhaseClosed })
 		if got := h.lastModeEvent(); got.Phase != golemPhaseClosed || got.Reason != "bootstrap deadline expired" {
 			t.Fatalf("closed after the deadline: phase=%s reason=%q, want the deadline text kept", got.Phase, got.Reason)
 		}
@@ -2416,7 +2424,7 @@ func TestGolemStateCarriesFailureReasons(t *testing.T) {
 				retrying.Phase, retrying.Reason, retrying.StateRevision, stalled.StateRevision)
 		}
 		h.retire(satellite.id)
-		waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+		waitForGolem(t, func() bool { return h.lastModeEvent().Phase == golemPhaseClosed })
 		if got := h.lastModeEvent(); got.Phase != golemPhaseClosed || got.Reason != "" {
 			t.Fatalf("after the retry: phase=%s reason=%q, want closed with no reason", got.Phase, got.Reason)
 		}

@@ -26,19 +26,18 @@ export interface ViewStore {
    */
   frozen: boolean;
   /**
-   * Conversations whose Send or Clear is waiting on an acknowledgement. A
-   * member keeps its composer locked even when the rest of the window is live,
-   * because an unconfirmed action must not be issued twice.
+   * Conversations whose Send or Clear is waiting on an acknowledgement. Both
+   * lock the composer; Clear also locks queue edits because it discards them.
    */
-  pendingComposers: ReadonlySet<string>;
+  pendingComposers: ReadonlyMap<string, 'send' | 'clear'>;
   /** The last failure this window could not hide, or null. */
   error: string | null;
   /** A failed projection stays blocking until a newer complete view arrives. */
   projectionError: string | null;
 }
 
-/** Shared empty membership, so an idle window never allocates a Set. */
-export const NO_PENDING_COMPOSERS: ReadonlySet<string> = new Set<string>();
+/** Shared empty membership, so an idle window never allocates a Map. */
+export const NO_PENDING_COMPOSERS: ViewStore['pendingComposers'] = new Map();
 
 export const useViewStore = create<ViewStore>()(
   devtools(

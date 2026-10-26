@@ -110,6 +110,8 @@ interface Owner {
   /** One promise per handoff, so a repeated `closing` snapshot cannot restart it. */
   handoffs: Map<number, Promise<void>>;
   queueEdits: Map<string, QueueEdit>;
+  /** Composer focus requests raised here, painted on top of main's revision. */
+  focusRequests: number;
 }
 
 let active: Owner | null = null;
@@ -131,12 +133,12 @@ function report(own: Owner | null, value: unknown): void {
   useViewStore.setState({ error: boundedGolemMessage(value) }, false, 'golem/error');
 }
 
-function setPending(own: Owner, conversationId: string, pending: boolean): void {
+function setPending(own: Owner, conversationId: string, pending: 'send' | 'clear' | null): void {
   if (own.cancelled || own !== active) return;
   const current = useViewStore.getState().pendingComposers;
-  if (current.has(conversationId) === pending) return;
-  const next = new Set(current);
-  if (pending) next.add(conversationId);
+  if (current.get(conversationId) === (pending ?? undefined)) return;
+  const next = new Map(current);
+  if (pending) next.set(conversationId, pending);
   else next.delete(conversationId);
   useViewStore.setState(
     { pendingComposers: next.size === 0 ? NO_PENDING_COMPOSERS : next },
@@ -194,7 +196,15 @@ function dropSettledEdits(own: Owner, view: GolemView): void {
 
 function paintView(own: Owner): void {
   if (own.cancelled || own !== active || own.rawView === null) return;
-  useViewStore.setState({ view: withQueueEdits(own.rawView, own.queueEdits) }, false, 'golem/view');
+  const view = withQueueEdits(own.rawView, own.queueEdits);
+  // Main's revision only counts up and so do this window's requests, so the
+  // sum changes exactly when either side asks and a later view never walks it
+  // back (GolemSurface focuses on a *changed* revision).
+  const painted =
+    own.focusRequests === 0
+      ? view
+      : { ...view, composerFocusRevision: view.composerFocusRevision + own.focusRequests };
+  useViewStore.setState({ view: painted }, false, 'golem/view');
 }
 
 // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -287,7 +297,7 @@ function onAdmission(own: Owner, action: GolemViewAction, ack: GolemAck): void {
     // Only on acceptance, and only this conversation: a refusal keeps what the
     // user typed, and a conversation selected since then is untouched.
     if (ack.ok) useDraftStore.getState().clear(action.conversationId);
-    setPending(own, action.conversationId, false);
+    setPending(own, action.conversationId, null);
   }
   if (action.type === 'updateQueued') {
     const edit = own.queueEdits.get(action.queueId);
@@ -299,6 +309,13 @@ function onAdmission(own: Owner, action: GolemViewAction, ack: GolemAck): void {
   }
   if (!ack.ok) {
     useViewStore.setState({ error: ack.reason ?? UNEXPLAINED_REFUSAL }, false, 'golem/refused');
+    // New chat disabled itself for the reset, dropping the focus it held. An
+    // accepted clear re-arms the composer from main; a refusal must too, as the
+    // docked adapter's does, and this window has no store of its own to ask.
+    if (action.type === 'clear') {
+      own.focusRequests += 1;
+      paintView(own);
+    }
     return;
   }
   // An accepted action is proof the relay works; a stale banner would only lie.
@@ -523,6 +540,7 @@ export function startGolemSatellite(): () => void {
     rawView: null,
     handoffs: new Map(),
     queueEdits: new Map(),
+    focusRequests: 0,
   };
   active = own;
   useViewStore.setState(
@@ -579,11 +597,11 @@ function dispatch(action: GolemViewAction, lockId?: string): Promise<GolemAck> {
   if (lockId === undefined) return own.core.send(action);
   // The lock goes on before the action is enqueued, so a second Send cannot
   // slip in behind an unacknowledged one.
-  setPending(own, lockId, true);
+  setPending(own, lockId, action.type === 'clear' ? 'clear' : 'send');
   return own.core.send(action).catch((error: unknown) => {
     // A definitive refusal never reached the queue, so the lock comes off with
     // it. An *uncertain* outcome never rejects, and keeps both id and lock.
-    setPending(own, lockId, false);
+    setPending(own, lockId, null);
     throw error;
   });
 }

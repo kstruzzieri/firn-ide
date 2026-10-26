@@ -31,6 +31,12 @@ it('mergeChildren on the root path replaces directoryTree', () => {
   expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual(['/r/new']);
 });
 
+it('mergeChildren on the root path clears a stale root read error', () => {
+  useIDEStore.setState({ treeError: 'Failed to read directory' });
+  useIDEStore.getState().mergeChildren('/r', [dir('/r/new')]);
+  expect(useIDEStore.getState().treeError).toBeNull();
+});
+
 it('loading + dirty mutators are immutable sets', () => {
   const s = useIDEStore.getState();
   const before = s.loadingPaths;

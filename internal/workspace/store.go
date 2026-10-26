@@ -50,11 +50,29 @@ func NewStore(fsys filesystem.FileSystem, baseDir string) *Store {
 	}
 }
 
-// Save persists workspace state to disk. It sets LastOpened automatically.
+// Save persists the session the frontend sends. It sets LastOpened
+// automatically. The lsp block is not part of that session: SetLSPInterpreter
+// owns it, so Save keeps whatever the file holds and ignores any lsp the
+// state carries (#392). It reads the file on every call, as SetLSPInterpreter
+// does, so a file it cannot read is refused rather than rewritten without its
+// override (#290).
 func (s *Store) Save(state State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	state.LSP = LSPState{}
+	if strings.TrimSpace(s.baseDir) != "" && state.WorkspacePath != "" {
+		id := pathToID(state.WorkspacePath)
+		// A read failure latches writeBlocked, so saveLocked refuses below.
+		if sf, err := s.readLocked(id, filepath.Join(s.baseDir, id+".json")); err == nil && sf != nil {
+			state.LSP = sf.State.LSP
+		}
+	}
+	return s.saveLocked(state)
+}
 
+// saveLocked is Save under s.mu, shared with SetLSPInterpreter so both refuse
+// and write the same way.
+func (s *Store) saveLocked(state State) error {
 	if strings.TrimSpace(s.baseDir) == "" {
 		return fmt.Errorf("home directory unavailable: workspace storage is disabled")
 	}
@@ -118,6 +136,32 @@ func (s *Store) Save(state State) error {
 	}
 
 	return nil
+}
+
+// SetLSPInterpreter sets (or, with an empty path, clears) a workspace's
+// interpreter override on the state file in one step under the store's lock,
+// leaving the rest of the saved session as it is. A Load followed by a Save
+// would let a session save land between them and be overwritten with the
+// older session the Load read (#401). An unreadable file refuses the update
+// exactly as Save refuses (#290).
+func (s *Store) SetLSPInterpreter(workspacePath, interpreterPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if strings.TrimSpace(s.baseDir) == "" {
+		return fmt.Errorf("home directory unavailable: workspace storage is disabled")
+	}
+	id := pathToID(workspacePath)
+	sf, err := s.readLocked(id, filepath.Join(s.baseDir, id+".json"))
+	if err != nil {
+		return err
+	}
+	state := State{WorkspacePath: workspacePath}
+	if sf != nil {
+		state = sf.State
+	}
+	state.LSP.InterpreterOverride = interpreterPath
+	return s.saveLocked(state)
 }
 
 // Load reads saved state for a workspace path.

@@ -120,7 +120,7 @@ func TestProjectProfileInfosSanitizesAndBounds(t *testing.T) {
 
 func newProfilesTestService(t *testing.T) *Service {
 	t.Helper()
-	svc := NewService(t.Context(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), nil)
+	svc := NewService(t.Context(), filesystem.NewOS(), filepath.Join(t.TempDir(), "consent", "grants.json"), nil, "")
 	t.Cleanup(func() { _ = svc.Close(t.Context()) })
 	return svc
 }

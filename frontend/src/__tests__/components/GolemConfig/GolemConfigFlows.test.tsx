@@ -348,7 +348,7 @@ describe('Apply bar', () => {
     expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
 
     await clickApply();
-    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
     expect(document.body).toHaveFocus();
   });
@@ -385,7 +385,7 @@ describe('Apply bar', () => {
     await clickApply();
 
     expect(ApplyGolemSettings).not.toHaveBeenCalled();
-    expect(await screen.findByText(/A staged change is invalid/)).toBeVisible();
+    expect(await screen.findByText(/A staged change is invalid/, { selector: 'p' })).toBeVisible();
   });
 });
 
@@ -405,7 +405,9 @@ describe('terminal apply results', () => {
     await stageKey();
     await clickApply();
 
-    const notice = await screen.findByText(/Nothing was written; retry when idle/);
+    const notice = await screen.findByText(/Nothing was written; retry when idle/, {
+      selector: 'p',
+    });
     const page = notice.closest(`[class*='body']`) as HTMLElement;
     const order = (el: Element | null) =>
       [...page.children].findIndex((child) => child === el || child.contains(el as Node));
@@ -434,7 +436,7 @@ describe('terminal apply results', () => {
       keys: { hosted: KEY },
     });
 
-    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
     expect(screen.getByText(`rev ${movedRevision.slice(0, 12)}`)).toBeInTheDocument();
   });
@@ -449,7 +451,9 @@ describe('terminal apply results', () => {
     await stageKey();
     await clickApply();
 
-    expect(await screen.findByText(/could not confirm the write reached disk/)).toBeVisible();
+    expect(
+      await screen.findByText(/could not confirm the write reached disk/, { selector: 'p' })
+    ).toBeVisible();
   });
 
   it('keeps every non-key change for review after a conflict and drops the keys', async () => {
@@ -460,7 +464,9 @@ describe('terminal apply results', () => {
     await clickApply();
 
     expect(
-      await screen.findByText('Destination approval saved; configuration not applied.')
+      await screen.findByText('Destination approval saved; configuration not applied.', {
+        selector: 'p',
+      })
     ).toBeVisible();
     const row = screen.getByTestId('provider-row-hosted');
     expect(within(row).getByText('Needs review')).toBeInTheDocument();
@@ -733,7 +739,9 @@ describe('terminal apply results', () => {
       within(row.parentElement!).getByText('This provider is still used by a model.')
     ).toBeVisible();
     expect(
-      screen.getByText('Destination approval may have been saved; configuration was not applied.')
+      screen.getByText('Destination approval may have been saved; configuration was not applied.', {
+        selector: 'p',
+      })
     ).toBeVisible();
     // Nothing was written: the endpoint stays staged, the key does not.
     expect(within(row).getByText('Modified')).toBeInTheDocument();
@@ -778,7 +786,9 @@ describe('terminal apply results', () => {
     await stageKey();
     await clickApply();
 
-    expect(await screen.findByText(/This configuration cannot be written/)).toBeVisible();
+    expect(
+      await screen.findByText(/This configuration cannot be written/, { selector: 'p' })
+    ).toBeVisible();
     const row = screen.getByTestId('provider-row-hosted');
     expect(within(row).queryByText('Key staged')).not.toBeInTheDocument();
   });
@@ -819,7 +829,7 @@ describe('nonterminal apply results', () => {
         keys: { hosted: KEY },
       },
     });
-    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
   });
 
   // §5.2: Busy is the only nonterminal confirmation result, and it "leaves the
@@ -833,7 +843,9 @@ describe('nonterminal apply results', () => {
     await clickApply();
     await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
 
-    expect(await screen.findByText(/Nothing was written; retry when idle/)).toBeVisible();
+    expect(
+      await screen.findByText(/Nothing was written; retry when idle/, { selector: 'p' })
+    ).toBeVisible();
     // The consent panel is still standing on the same destination.
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeEnabled();
@@ -879,7 +891,7 @@ describe('nonterminal apply results', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText(/approval request expired/)).toBeVisible();
+    expect(screen.getByText(/approval request expired/, { selector: 'p' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
   });
@@ -909,7 +921,7 @@ describe('nonterminal apply results', () => {
       projection: { ...readyProjection, revision: movedRevision },
     });
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(lastApply()).toEqual((ApplyGolemSettings as jest.Mock).mock.calls[0][0]);
     expect(screen.getByRole('button', { name: 'Edit provider hosted' })).toBeEnabled();
   });
@@ -920,7 +932,9 @@ describe('nonterminal apply results', () => {
     await stageKey();
     await clickApply();
 
-    expect(await screen.findByText(/Nothing was written; retry when idle/)).toBeVisible();
+    expect(
+      await screen.findByText(/Nothing was written; retry when idle/, { selector: 'p' })
+    ).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(2));
     expect(lastApply()).toEqual((ApplyGolemSettings as jest.Mock).mock.calls[0][0]);
@@ -970,7 +984,7 @@ describe('nonterminal apply results', () => {
     await stageKey();
     await clickApply();
 
-    expect(await screen.findByText(/approval request expired/)).toBeVisible();
+    expect(await screen.findByText(/approval request expired/, { selector: 'p' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
     const row = screen.getByTestId('provider-row-hosted');
     expect(within(row).getByText('Modified')).toBeInTheDocument();
@@ -992,7 +1006,9 @@ describe('nonterminal apply results', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel approval' }));
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('challenge-token-1'));
-    expect(await screen.findByText(/approval request was cancelled/)).toBeVisible();
+    expect(
+      await screen.findByText(/approval request was cancelled/, { selector: 'p' })
+    ).toBeVisible();
     const row = screen.getByTestId('provider-row-hosted');
     expect(within(row).getByText('Modified')).toBeInTheDocument();
     expect(within(row).queryByText('Key staged')).not.toBeInTheDocument();
@@ -1068,7 +1084,7 @@ describe('nonterminal apply results', () => {
     await screen.findByRole('button', { name: 'Confirm destination' });
 
     await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
-    expect(await screen.findByText(/could not be cancelled/)).toBeVisible();
+    expect(await screen.findByText(/could not be cancelled/, { selector: 'p' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeInTheDocument();
     expect(screen.getByTestId('golem-config-draft')).toBeInTheDocument();
   });
@@ -1081,8 +1097,12 @@ describe('nonterminal apply results', () => {
     await clickApply();
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
 
-    expect(await screen.findByText(/could not be cancelled/)).toBeVisible();
+    expect(await screen.findByText(/could not be cancelled/, { selector: 'p' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeInTheDocument();
+    // #314: the failure is announced, not only shown.
+    expect(screen.getByTestId('golem-config-notice-announcement')).toHaveTextContent(
+      /could not be cancelled/
+    );
   });
 });
 
@@ -1175,7 +1195,7 @@ describe('grant-only destination approval', () => {
     await waitFor(() =>
       expect(ConfirmGolemDestinationGrants).toHaveBeenCalledWith('grant-token-1')
     );
-    expect(await screen.findByText(/Destinations approved/)).toBeVisible();
+    expect(await screen.findByText(/Destinations approved/, { selector: 'p' })).toBeVisible();
     expect(
       screen.queryByRole('button', { name: 'Approve 2 destinations' })
     ).not.toBeInTheDocument();
@@ -1204,13 +1224,15 @@ describe('grant-only destination approval', () => {
 
     await approve();
     await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
-    expect(await screen.findByText(/Destinations approved/)).toBeVisible();
+    expect(await screen.findByText(/Destinations approved/, { selector: 'p' })).toBeVisible();
     staged();
 
     await approve();
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
-    expect(await screen.findByText(/approval request was cancelled/)).toBeVisible();
+    expect(
+      await screen.findByText(/approval request was cancelled/, { selector: 'p' })
+    ).toBeVisible();
     staged();
 
     // A prompt left standing past its deadline: no timer fires (nothing to
@@ -1221,7 +1243,7 @@ describe('grant-only destination approval', () => {
     });
     await approve();
     await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
-    expect(await screen.findByText(/approval request expired/)).toBeVisible();
+    expect(await screen.findByText(/approval request expired/, { selector: 'p' })).toBeVisible();
     expect(ConfirmGolemDestinationGrants).toHaveBeenCalledTimes(1); // never the lapsed token
     staged();
 
@@ -1252,7 +1274,7 @@ describe('grant-only destination approval', () => {
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
     expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1');
     expect(ConfirmGolemDestinationGrants).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Nothing was approved/)).toBeVisible();
+    expect(await screen.findByText(/Nothing was approved/, { selector: 'p' })).toBeVisible();
     expect(
       within(screen.getByTestId('provider-row-hosted')).getByText('Key staged')
     ).toBeInTheDocument();
@@ -1296,7 +1318,9 @@ describe('grant-only destination approval', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
 
     expect(
-      await screen.findByText(/configuration changed while this approval was open/)
+      await screen.findByText(/configuration changed while this approval was open/, {
+        selector: 'p',
+      })
     ).toBeVisible();
     expect(
       screen.queryByRole('button', { name: 'Approve 2 destinations' })
@@ -1307,7 +1331,7 @@ describe('grant-only destination approval', () => {
     // And it prepares afresh rather than reusing the spent challenge.
     prepareReturns({ status: 'none' });
     await userEvent.click(action);
-    expect(await screen.findByText(/Nothing to approve/)).toBeVisible();
+    expect(await screen.findByText(/Nothing to approve/, { selector: 'p' })).toBeVisible();
     expect(PrepareGolemDestinationGrants).toHaveBeenCalledTimes(2);
   });
 
@@ -1326,7 +1350,7 @@ describe('grant-only destination approval', () => {
     await mountWorkspace();
     await approve();
 
-    expect(await screen.findByText(copy)).toBeVisible();
+    expect(await screen.findByText(copy, { selector: 'p' })).toBeVisible();
     expect(
       screen.queryByRole('button', { name: 'Approve 2 destinations' })
     ).not.toBeInTheDocument();
@@ -1440,7 +1464,7 @@ describe('grant-only destination approval', () => {
     });
     await clickApply();
 
-    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(screen.queryByTestId('golem-grant-notice')).not.toBeInTheDocument();
   });
 });
@@ -1448,6 +1472,122 @@ describe('grant-only destination approval', () => {
 // ---------------------------------------------------------------------------
 // Outcome-unknown recovery
 // ---------------------------------------------------------------------------
+
+describe('notice announcements (#314)', () => {
+  // A live region announces text that arrives after it exists. Each visible
+  // notice mounts together with its text, so one region that is always there
+  // carries the announcement.
+  const announcement = () => screen.getByTestId('golem-config-notice-announcement');
+
+  it('announces an Apply outcome through the region that was already there', async () => {
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+    const region = announcement();
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).toBeEmptyDOMElement();
+
+    await stageKey();
+    await clickApply();
+
+    await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+    expect(screen.getByText('Configuration applied.', { selector: 'p' })).not.toHaveAttribute(
+      'role'
+    );
+  });
+
+  it('announces a grant notice through the same region', async () => {
+    (PrepareGolemDestinationGrants as jest.Mock).mockRejectedValue('service unavailable');
+    await mountWorkspace();
+    const region = announcement();
+    expect(region).toBeEmptyDOMElement();
+
+    await approve();
+
+    const notice = await screen.findByTestId('golem-grant-notice');
+    expect(notice).not.toHaveAttribute('role');
+    expect(region).toHaveTextContent(notice.textContent ?? '');
+  });
+
+  it('announces a repeated busy result again', async () => {
+    applyReturns({ status: 'busy' });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    const region = announcement();
+    await waitFor(() => expect(region).toHaveTextContent(/Nothing was written; retry when idle/));
+    const first = region.firstElementChild;
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // A new node, not the old text node left in place, so it is spoken again.
+    await waitFor(() => expect(region.firstElementChild).not.toBe(first));
+    expect(region).toHaveTextContent(/Nothing was written; retry when idle/);
+  });
+
+  it('announces a repeated local refusal again', async () => {
+    jest.spyOn(golemConfig, 'buildApplyRequest').mockImplementation(() => {
+      throw new GolemContractError();
+    });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    const region = announcement();
+    await waitFor(() => expect(region).toHaveTextContent(/A staged change is invalid/));
+    const first = region.firstElementChild;
+
+    await clickApply();
+
+    await waitFor(() => expect(region.firstElementChild).not.toBe(first));
+    expect(region).toHaveTextContent(/A staged change is invalid/);
+  });
+
+  it('does not announce an old outcome again when a failed reload recovers', async () => {
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    const region = announcement();
+    await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+
+    (ReloadGolemSettings as jest.Mock).mockRejectedValueOnce('no service');
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(region).toBeEmptyDOMElement();
+
+    reload({ ...readyProjection, revision: movedRevision });
+    await userEvent.click(retry);
+    await screen.findByText('Configuration applied.', { selector: 'p' });
+
+    // The notice is back on screen, but no new Apply ran, so nothing is announced.
+    expect(region).toBeEmptyDOMElement();
+  });
+
+  it('does not announce a standing outcome again when a later Refresh lands', async () => {
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    const region = announcement();
+    await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+    const applied = region.firstElementChild;
+
+    reload({ ...readyProjection, revision: movedRevision });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
+
+    expect(screen.getByText('Configuration applied.', { selector: 'p' })).toBeVisible();
+    expect(region.firstElementChild).toBe(applied);
+  });
+});
 
 describe('outcome-unknown recovery', () => {
   it('disables every write and offers only Recover state after a lost Apply', async () => {
@@ -1693,7 +1833,7 @@ describe('unsaved-work transitions', () => {
       })
     );
     await expect(pending).resolves.toBe(false);
-    expect(await screen.findByText(/could not be cancelled/)).toBeVisible();
+    expect(await screen.findByText(/could not be cancelled/, { selector: 'p' })).toBeVisible();
   });
 
   it('reports no unsaved work once the surface is gone', async () => {
@@ -2019,7 +2159,7 @@ describe('bootstrap through the Source picker', () => {
       keys: {},
     });
 
-    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(JSON.parse(window.localStorage.getItem(ACTIVE_PROFILE_KEY) ?? 'null')).toEqual({
       version: 1,
       profileId: 'curated/local',

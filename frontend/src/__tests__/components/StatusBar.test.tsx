@@ -401,7 +401,7 @@ describe('StatusBar Golem segment', () => {
     ['completed', '', 'Attention'],
     ['step_cap_reached', 'Partial answer', 'Idle'],
     ['completed', 'Answer', 'Idle'],
-  ])('reports %s with %j from an adopted run as %s', (stopReason, text, label) => {
+  ])('reports %s with %j from an adopted run as %s', async (stopReason, text, label) => {
     render(<StatusBar />);
     hydrateGolem({
       activeRuns: [golemRun('frontend', 'conv-frontend', 'run-1', 'running', 'Frontend')],
@@ -429,8 +429,8 @@ describe('StatusBar Golem segment', () => {
     expect(conversation.lastFailedTurn).toBeNull();
     expect(golemSegment()).toHaveTextContent(`Golem: ${label}`);
 
-    act(() => {
-      useGolemStore.getState().clearConversation('conv-frontend');
+    await act(async () => {
+      await useGolemStore.getState().clearConversation('conv-frontend');
     });
     expect(golemSegment()).toHaveTextContent('Golem: Idle');
   });

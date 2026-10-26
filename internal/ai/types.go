@@ -169,6 +169,8 @@ func SanitizeError(err error) PublicError {
 		return PublicError{Code: "request_rejected", Message: "The Golem request is invalid or stale."}
 	case errors.Is(err, ErrWorkspaceUnavailable):
 		return PublicError{Code: "workspace_unavailable", Message: "The Golem workspace is unavailable."}
+	case errors.Is(err, ErrConversationBusy):
+		return PublicError{Code: "conversation_busy", Message: "Golem is still busy with this conversation. Try again when it finishes."}
 	case errors.Is(err, ErrAssistantOutputLimit):
 		return PublicError{Code: "output_limit", Message: "The Golem reply exceeded the output limit."}
 	case errors.Is(err, ErrRunFailed):

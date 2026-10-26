@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"log"
 	"sort"
 	"strings"
 
@@ -13,7 +14,9 @@ import (
 // orchestrator and the commit generator sets DisableCompression, so no
 // summarize route exists; planning is routed only by cmd/golem. Both
 // exclusions are pinned by behavior (F7) and the admission-parity corpus
-// (F15): if either reddens after a pin bump, re-decide spec D7.
+// (F15): if either reddens after a pin bump, re-decide spec D7. The one
+// exception to being a pure derivation: dropping a hop below also logs the
+// provider key, never the endpoint (it may carry userinfo credentials).
 
 // ReachableHop names how the agent route reaches a destination. Recommend
 // marks upstream's recommendation route — Defaults["agent"] absent, every
@@ -52,7 +55,7 @@ func renderHop(h ReachableHop) string {
 // single hop (unknown provider, uncanonicalizable endpoint) contributes
 // nothing here — upstream's planner would refuse to admit the whole route on
 // that same failure, while Firn only drops the hop from this read-only
-// listing.
+// listing (logging the provider key so the gap stays visible).
 func reachableDestinations(cfg *config.Config) []ReachableDestination {
 	if cfg == nil {
 		return nil
@@ -61,10 +64,15 @@ func reachableDestinations(cfg *config.Config) []ReachableDestination {
 	add := func(providerName, modelName string, hop ReachableHop) {
 		prov := cfg.Provider(providerName)
 		if prov == nil {
+			log.Printf("ai: reachable hop dropped: provider %q is not configured", providerName)
 			return
 		}
 		endpoint, local, err := NormalizeEndpoint(prov.BaseURL)
 		if err != nil {
+			// Never log prov.BaseURL: it may carry userinfo credentials or a
+			// query string. NormalizeEndpoint's error strings never include
+			// the raw input either (see its doc comment), so this is safe.
+			log.Printf("ai: reachable hop dropped: provider %q: %v", providerName, err)
 			return
 		}
 		classification := "remote"

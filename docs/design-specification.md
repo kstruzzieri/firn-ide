@@ -862,6 +862,12 @@ Contents adapt to workspace type (Python workspace shows Python files first, etc
 - Background: `#1C2128`
 - Active tab: Editor background color (`#1E2228`) with accent left border
 - Tab shows: File icon, filename, close button on hover
+- Overflow: the strip scrolls with its scrollbar hidden. While tabs are hidden
+  past an edge, a chevron scroll button sits over that edge, fading into the
+  strip, and it disappears once that side is fully scrolled. A close button not
+  fully in view is hidden (it stays a tab stop), so a clipped `×` cannot read as
+  a scroll arrow. Activating or focusing any tab scrolls it fully into view,
+  clear of the buttons.
 
 ### Editor
 

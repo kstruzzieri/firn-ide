@@ -147,6 +147,7 @@ describe('CI Workflow', () => {
     const workflowFiles = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file));
     const expectedSetupGoSteps: Record<string, number> = {
       'build.yml': 1,
+      'govulncheck.yml': 1,
       'lint.yml': 1,
       'release.yml': 3,
       'test.yml': 2,
@@ -216,6 +217,68 @@ describe('CI Workflow', () => {
       goVersion,
       later: true,
     });
+  });
+
+  // #376: the guard above cannot tell whether that toolchain is patched;
+  // govulncheck can. It scans a build rather than the source: Wails calls
+  // bound methods through reflection, which a source scan cannot follow, so
+  // code the frontend reaches only through a binding would go unscanned. The
+  // build uses the release tags, so the scan sees what ships. `go install m@v`
+  // picks a Go at least as new as both m's `go` line and the toolchain line of
+  // the go.mod in the directory it runs in, so the install runs at the
+  // repository root, and from a pinned release, so a new govulncheck cannot
+  // change the result unannounced. Only the text output exits non-zero on
+  // findings, and no condition, trigger change or continue-on-error may skip
+  // the scan or let the job pass with findings.
+  it('should scan a release-tagged build with a pinned govulncheck', () => {
+    const content = readFileSync(resolve(workflowsDir, 'govulncheck.yml'), 'utf-8');
+    type Step = {
+      run?: string;
+      if?: unknown;
+      'working-directory'?: string;
+      'continue-on-error'?: unknown;
+    };
+    type Defaults = { run?: { 'working-directory'?: string } };
+    const workflow = parse(content) as {
+      defaults?: Defaults;
+      jobs?: Record<
+        string,
+        { defaults?: Defaults; if?: unknown; 'continue-on-error'?: unknown; steps?: Step[] }
+      >;
+    };
+    const job = workflow.jobs?.govulncheck;
+    const steps = job?.steps ?? [];
+    const runs = steps.map((step) => step.run?.trim());
+    const directories = [
+      workflow.defaults?.run?.['working-directory'],
+      job?.defaults?.run?.['working-directory'],
+      ...steps.map((step) => step['working-directory']),
+    ].filter((directory) => directory !== undefined);
+    const gates = [job, ...steps].filter(
+      (entry) => entry?.if !== undefined || entry?.['continue-on-error'] !== undefined
+    );
+
+    expect(workflowEvents(content)).toEqual({
+      push: { branches: ['develop'] },
+      pull_request: { paths: ['**.go', 'go.mod', 'go.sum', '.github/workflows/govulncheck.yml'] },
+      schedule: [{ cron: '23 7 * * *' }],
+      workflow_dispatch: null,
+    });
+    expect(runs.find((run) => run?.includes('cmd/govulncheck@'))).toMatch(
+      /^go install golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+$/
+    );
+    expect(runs).toEqual(
+      expect.arrayContaining([
+        'go build -tags production,gtk3 -o "$RUNNER_TEMP/firn" .',
+        'govulncheck -mode binary "$RUNNER_TEMP/firn"',
+      ])
+    );
+    expect({ directories, gates }).toEqual({ directories: [], gates: [] });
+
+    // The release tags the build above copies.
+    const linuxTaskfile = readFileSync(resolve(rootDir, 'build/linux/Taskfile.yml'), 'utf-8');
+    expect(linuxTaskfile).toContain('{{else}}-tags production{{');
+    expect(linuxTaskfile).toContain("EXTRA_TAGS: 'gtk3{{");
   });
 
   it('should pin workflow wails3 installs to the module version', () => {
@@ -378,14 +441,17 @@ describe('CI Workflow', () => {
     // A loop that only asserts inside its body passes vacuously if nothing
     // ever matches, so both counts are exact censuses rather than floors.
     //
-    // Seven Go-compiling Linux steps: test.yml backend-tests (two `go test`
-    // steps), lint.yml golangci-lint, the `go install ... cmd/wails3` and
-    // `wails3 task linux:build` steps in build.yml, and the same two in
-    // release.yml's build-linux job.
-    expect(matchedSteps).toBe(7);
-    // Four jobs sit on the WebKit2GTK floor: build.yml build, test.yml
-    // backend-tests, lint.yml golangci-lint, release.yml build-linux.
-    expect(gtkFloorJobs).toBe(4);
+    // Eight Linux steps that compile the app or the Wails CLI: test.yml
+    // backend-tests (two `go test` steps), lint.yml golangci-lint, the
+    // `go install ... cmd/wails3` and `wails3 task linux:build` steps in
+    // build.yml, the same two in release.yml's build-linux job, and
+    // govulncheck.yml's `go build`. govulncheck.yml's `go install` of the
+    // scanner compiles Go too, but no app code, so it needs no tag.
+    expect(matchedSteps).toBe(8);
+    // Five jobs sit on the WebKit2GTK floor: build.yml build, test.yml
+    // backend-tests, lint.yml golangci-lint, release.yml build-linux,
+    // govulncheck.yml govulncheck.
+    expect(gtkFloorJobs).toBe(5);
   });
 
   // generate:bindings runs with -clean=true, so a Go-facing API or exported
@@ -411,6 +477,26 @@ describe('CI Workflow', () => {
     });
 
     expect(driftCheck).toBeDefined();
+  });
+
+  // #286 item 4: testutil.ListenNonLoopback skips its callers (the F15
+  // admission-parity corpus and its siblings) when the host has no
+  // non-loopback IPv4 interface. A CI runner that silently lacks one would
+  // let those REMOTE-classification paths quietly stop being covered, so the
+  // job turns that skip into a hard failure via job-level env -- covering
+  // both the -v run and the coverage run without adding a step, so the
+  // Go-step census above stays unchanged.
+  it('should require CI to fail rather than silently skip non-loopback admission tests', () => {
+    const content = readFileSync(resolve(workflowsDir, 'test.yml'), 'utf-8');
+    const workflow = parse(content) as {
+      jobs?: Record<string, { env?: Record<string, string> }>;
+    };
+
+    expect(workflow.jobs?.['backend-tests']?.env?.FIRN_REQUIRE_NONLOOPBACK).toBe('1');
+    // The workflow pins the name; the helper must read that same name, or a
+    // rename on either side silently brings the skip back.
+    const helper = readFileSync(resolve(rootDir, 'internal/testutil/nonloopback.go'), 'utf-8');
+    expect(helper).toContain('os.Getenv("FIRN_REQUIRE_NONLOOPBACK") == "1"');
   });
 });
 
@@ -477,6 +563,56 @@ describe('Lint Workflow', () => {
   it('should run golangci-lint', () => {
     const lintYml = readFileSync(resolve(workflowsDir, 'lint.yml'), 'utf-8');
     expect(lintYml).toMatch(/golangci-lint/i);
+  });
+});
+
+describe('Frontend dependency install', () => {
+  // `wails3 dev` (build/config.yml dev_mode) runs the Vite dev server and
+  // `wails3 build` as separate processes, each with its own task graph, and
+  // both depend on install:frontend:deps. Only an install the task itself
+  // recognises as done keeps them from each running `npm ci`, and two
+  // concurrent runs delete node_modules under each other.
+  const installTask = () =>
+    parse(readFileSync(resolve(rootDir, 'build/Taskfile.yml'), 'utf-8')).tasks[
+      'install:frontend:deps'
+    ];
+
+  it('should treat an install against the current lockfile as up to date in every process', () => {
+    const install = installTask();
+    // The task runner never counts a directory under `generates` as present,
+    // so `generates: [node_modules]` reinstalled on every invocation.
+    expect(install.generates).toBeUndefined();
+    // Checksums for `sources` are stored per include namespace (common:,
+    // darwin:common:, ...), so a process reaching the task through another
+    // include would still reinstall. A status check is shared by all of them.
+    expect(install.sources).toBeUndefined();
+    // A stamp the task writes only after `npm ci` succeeds (npm ci deletes
+    // node_modules first, so a failed install leaves none), newer than both
+    // manifests. npm's own node_modules/.package-lock.json is no proof: a
+    // lockfile-only update rewrites it without installing anything.
+    // The stamp also holds the platform Node reported at install time, since
+    // npm ci picks native optional packages (@esbuild/*, @rollup/rollup-*) by
+    // process.platform and process.arch: the same checkout reused under
+    // another OS or architecture must reinstall.
+    const platform = "process.platform + '-' + process.arch";
+    expect(install.status).toEqual([
+      'test -f node_modules/.npm-ci-stamp && test node_modules/.npm-ci-stamp -nt package.json && test node_modules/.npm-ci-stamp -nt package-lock.json',
+      `node -e "process.exit(Number(require('fs').readFileSync('node_modules/.npm-ci-stamp', 'utf8') !== ${platform}))"`,
+    ]);
+    expect(install.dir).toBe('frontend');
+    expect(install.cmds).toEqual([
+      'npm ci',
+      `node -e "require('fs').writeFileSync('node_modules/.npm-ci-stamp', ${platform})"`,
+    ]);
+  });
+
+  it('should install before the dev server and the build start', () => {
+    const config = parse(readFileSync(resolve(rootDir, 'build/config.yml'), 'utf-8'));
+    const executes: { cmd: string; type: string }[] = config.dev_mode.executes;
+    expect(executes[0]).toEqual({
+      cmd: 'wails3 task common:install:frontend:deps',
+      type: 'blocking',
+    });
   });
 });
 

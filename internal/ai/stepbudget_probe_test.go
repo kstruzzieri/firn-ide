@@ -224,7 +224,7 @@ func TestStepBudgetProbe(t *testing.T) {
 		}
 	}
 
-	backend, transport, err := buildProvider(target)
+	backend, transport, err := buildProvider(target, "")
 	if err != nil {
 		t.Fatalf("buildProvider: %v", err)
 	}

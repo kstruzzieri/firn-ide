@@ -19,6 +19,7 @@ import {
   parseRunStatus,
   parseTurnAdmission,
   toCancelRequest,
+  toConversationIdentity,
   toStatusRequest,
   toTurnRequest,
 } from '../../types/golem';
@@ -31,6 +32,7 @@ const mockGetWorkspaceInfo = jest.fn();
 const mockGetGolemStatus = jest.fn();
 const mockRunGolemTurn = jest.fn();
 const mockCancelGolemRun = jest.fn();
+const mockResetGolemConversation = jest.fn();
 
 jest.mock('../../wails/bindings', () => {
   const actual = jest.requireActual('../../wails/bindings');
@@ -40,6 +42,7 @@ jest.mock('../../wails/bindings', () => {
     GetGolemStatus: (...args: unknown[]) => mockGetGolemStatus(...args),
     RunGolemTurn: (...args: unknown[]) => mockRunGolemTurn(...args),
     CancelGolemRun: (...args: unknown[]) => mockCancelGolemRun(...args),
+    ResetGolemConversation: (...args: unknown[]) => mockResetGolemConversation(...args),
   };
 });
 
@@ -190,6 +193,7 @@ beforeEach(() => {
     })
   );
   mockCancelGolemRun.mockResolvedValue(true);
+  mockResetGolemConversation.mockResolvedValue(undefined);
   mockGetGolemStatus.mockResolvedValue(statusPayload());
   mockGetWorkspaceInfo.mockResolvedValue({ name: '', path: '', repoKey: '', repoEpoch: EPOCH });
 });
@@ -451,6 +455,17 @@ describe('boundary validators', () => {
     ]);
 
     expect(toCancelRequest(runIdentity(RUN_A))).toBeInstanceOf(ai.RunIdentity);
+
+    // A RunIdentity is structurally a ConversationIdentity plus runId; the
+    // reset must not carry it onto the wire.
+    const resetRequest = toConversationIdentity(runIdentity(RUN_A));
+    expect(resetRequest).toBeInstanceOf(ai.ConversationIdentity);
+    expect(Object.keys(resetRequest).sort()).toEqual([
+      'conversationId',
+      'repoEpoch',
+      'workspaceId',
+    ]);
+    expect({ ...resetRequest }).toEqual(identity);
   });
 
   // #273 adversarial fix wave (M3): a QueuedTurn is structurally a TurnDraft
@@ -2519,7 +2534,7 @@ describe('clearConversation', () => {
     expect(store().lastFailureConversationId).toBe(CONV);
     const focusRevision = store().composerFocusRevision;
 
-    expect(store().clearConversation(CONV)).toEqual({ ok: true });
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
     const after = conv();
 
     // Copy-on-write: a brand-new conversation object so every subscriber re-renders.
@@ -2557,7 +2572,7 @@ describe('clearConversation', () => {
       runToConversation: { ...state.runToConversation, [RUN_B]: OTHER_CONV, [RUN_C]: CONV },
     }));
 
-    store().clearConversation(CONV);
+    await store().clearConversation(CONV);
 
     expect(store().runToConversation[RUN_A]).toBeUndefined();
     expect(store().runToConversation[RUN_C]).toBeUndefined();
@@ -2573,7 +2588,7 @@ describe('clearConversation', () => {
     useGolemStore.setState({ lastFailureConversationId: OTHER_CONV });
     const failureRevision = store().failureRevision;
 
-    store().clearConversation(CONV);
+    await store().clearConversation(CONV);
 
     expect(store().lastFailureConversationId).toBe(OTHER_CONV);
     expect(store().failureRevision).toBe(failureRevision);
@@ -2588,14 +2603,20 @@ describe('clearConversation', () => {
     store().submitTurn(CONV, 'second');
     await flush();
     store().invalidateBinding();
+    // Reopened, but not yet available: the staged turns stay held, and the
+    // conversation belongs to the current epoch again, so the backend can own
+    // the reset.
+    const rebound = { ...identity, repoEpoch: EPOCH + 1 };
+    store().hydrateStatus(parseGolemStatus(statusPayload({ identity: rebound, available: false })));
 
     // Idle (no live run, no pending consent) but still carrying staged turns.
     expect(conv().activeRunId).toBeNull();
     expect(conv().pendingConsentTurn).toBeNull();
     expect(conv().queuedTurns.length).toBeGreaterThan(0);
 
-    store().clearConversation(CONV);
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
 
+    expect({ ...mockResetGolemConversation.mock.calls[0][0] }).toEqual(rebound);
     expect(conv().queuedTurns).toEqual([]);
     expect(conv().transcript).toEqual([]);
   });
@@ -2609,7 +2630,7 @@ describe('clearConversation', () => {
     expect(conv().activeRunId).toBe(RUN_A);
 
     const before = conv();
-    store().clearConversation(CONV);
+    await store().clearConversation(CONV);
 
     // Same reference and content intact: the guard refused it.
     expect(conv()).toBe(before);
@@ -2628,17 +2649,299 @@ describe('clearConversation', () => {
     expect(conv().pendingConsentTurn).not.toBeNull();
 
     const before = conv();
-    store().clearConversation(CONV);
+    await store().clearConversation(CONV);
 
     expect(conv()).toBe(before);
     expect(conv().pendingConsentTurn).not.toBeNull();
   });
 
-  it('does nothing for an unknown conversation', () => {
+  it('does nothing for an unknown conversation', async () => {
     hydrateReady();
     const before = store().conversations;
-    expect(store().clearConversation('conv-nope')).toMatchObject({ ok: false });
+    expect(await store().clearConversation('conv-nope')).toMatchObject({ ok: false });
     expect(store().conversations).toBe(before);
+    expect(mockResetGolemConversation).not.toHaveBeenCalled();
+  });
+
+  // ── #361: the backend conversation is reset first ──────────────────────────
+
+  /** An idle conversation with a transcript, a failed run and a Retry. */
+  const idleWithHistory = async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'first');
+    await flush();
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
+    );
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().lastFailedTurn).not.toBeNull();
+  };
+
+  it('resets the backend conversation by its exact identity before clearing the view', async () => {
+    await idleWithHistory();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    const before = conv();
+
+    const cleared = store().clearConversation(CONV);
+
+    expect(mockResetGolemConversation).toHaveBeenCalledTimes(1);
+    const sent = mockResetGolemConversation.mock.calls[0][0] as ai.ConversationIdentity;
+    expect(sent).toBeInstanceOf(ai.ConversationIdentity);
+    expect(Object.keys(sent).sort()).toEqual(['conversationId', 'repoEpoch', 'workspaceId']);
+    expect({ ...sent }).toEqual(identity);
+    // Nothing is cleared until the backend has dropped its history.
+    expect(conv().transcript).toEqual(before.transcript);
+    expect(conv().lastFailedTurn).toEqual(before.lastFailedTurn);
+
+    reset.resolve(undefined);
+    expect(await cleared).toEqual({ ok: true });
+    expect(conv().transcript).toEqual([]);
+    expect(conv().lastFailedTurn).toBeNull();
+  });
+
+  it('keeps the whole view and names the refusal when the backend reset fails', async () => {
+    await idleWithHistory();
+    mockResetGolemConversation.mockRejectedValue(
+      new Error('The Golem request is invalid or stale.')
+    );
+    const before = conv();
+    const runs = store().runToConversation;
+
+    expect(await store().clearConversation(CONV)).toEqual({
+      ok: false,
+      reason: 'The Golem request is invalid or stale.',
+    });
+    expect(conv()).toEqual(before);
+    expect(store().runToConversation).toEqual(runs);
+  });
+
+  it('never leaves a conversation locked when a store update throws mid-reset', async () => {
+    await idleWithHistory();
+    let thrown = false;
+    const unsubscribe = useGolemStore.subscribe((state) => {
+      if (!thrown && state.conversations[CONV]?.resetting === 'pending') {
+        thrown = true;
+        throw new Error('subscriber failed');
+      }
+    });
+    try {
+      await expect(store().clearConversation(CONV)).rejects.toThrow('subscriber failed');
+    } finally {
+      unsubscribe();
+    }
+    // Otherwise Send, Retry, New chat and undock refuse until restart.
+    expect(conv().resetting).toBeUndefined();
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
+  });
+
+  it('starts no turn in the conversation while its reset is in flight', async () => {
+    await idleWithHistory();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    uuidQueue = [RUN_B];
+
+    const cleared = store().clearConversation(CONV);
+    // No run exists: the refusal names the reset, not a run.
+    const busy = {
+      ok: false,
+      reason: 'Golem is still starting a new chat. Try again in a moment.',
+    };
+    // A turn admitted now would reach a backend conversation about to be
+    // deleted, and its prompt would then be wiped from the view.
+    expect(store().submitTurn(CONV, 'too soon')).toEqual(busy);
+    expect(store().retryLastFailed(CONV)).toEqual(busy);
+    expect(await store().clearConversation(CONV)).toEqual(busy);
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect(mockResetGolemConversation).toHaveBeenCalledTimes(1);
+
+    reset.resolve(undefined);
+    expect(await cleared).toEqual({ ok: true });
+    // Released: the next message goes out normally.
+    expect(store().submitTurn(CONV, 'fresh')).toEqual({ ok: true });
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(2);
+    await flush();
+  });
+
+  /** Idle and bound, but with a turn staged behind a not-yet-available rebind. */
+  const idleWithStagedTurn = async () => {
+    hydrateReady({ destination: remoteDestination, needsConsent: true });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(needsConsentAdmission(RUN_A));
+    store().submitTurn(CONV, 'first');
+    await flush();
+    store().invalidateBinding();
+    const rebound = { ...identity, repoEpoch: EPOCH + 1 };
+    store().hydrateStatus(parseGolemStatus(statusPayload({ identity: rebound, available: false })));
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().queuedTurns.map((turn) => turn.message)).toEqual(['first']);
+    mockRunGolemTurn.mockClear();
+  };
+
+  /** The unbind/rebind that re-arms a staged turn and dispatches it. */
+  const rebindAvailable = () => {
+    store().invalidateBinding();
+    store().hydrateStatus(
+      parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 2 } }))
+    );
+  };
+
+  it.each(['edit', 'remove'] as const)(
+    'refuses a queue %s until a reset settles',
+    async (action) => {
+      await idleWithStagedTurn();
+      const reset = deferred<undefined>();
+      mockResetGolemConversation.mockReturnValue(reset.promise);
+      const queued = conv().queuedTurns[0];
+      const changeQueue = () =>
+        action === 'edit'
+          ? store().updateQueuedTurn(CONV, queued.queueId, 'edited')
+          : store().removeQueuedTurn(CONV, queued.queueId);
+
+      const cleared = store().clearConversation(CONV);
+      expect(changeQueue()).toEqual({
+        ok: false,
+        reason: 'Golem is still starting a new chat. Try again in a moment.',
+      });
+      expect(conv().queuedTurns).toEqual([queued]);
+
+      reset.reject(new Error('Reset refused'));
+      await cleared;
+      expect(changeQueue()).toEqual({ ok: true });
+      expect(conv().queuedTurns.map((turn) => turn.message)).toEqual(
+        action === 'edit' ? ['edited'] : []
+      );
+    }
+  );
+
+  it('never dispatches a queued turn that a rebind re-arms while the reset is in flight', async () => {
+    await idleWithStagedTurn();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    uuidQueue = [RUN_B];
+
+    const cleared = store().clearConversation(CONV);
+    rebindAvailable();
+    await flush();
+    // The backend is about to delete this conversation: dispatching the old
+    // queued prompt now would start the "fresh" chat with it.
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+
+    reset.resolve(undefined);
+    expect(await cleared).toEqual({ ok: true });
+    await flush();
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(conv().queuedTurns).toEqual([]);
+  });
+
+  it('dispatches the held queued turn once a reset that was in flight is refused', async () => {
+    await idleWithStagedTurn();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    uuidQueue = [RUN_B];
+
+    const cleared = store().clearConversation(CONV);
+    rebindAvailable();
+    await flush();
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+
+    reset.reject(new Error('The Golem request is invalid or stale.'));
+    expect(await cleared).toMatchObject({ ok: false });
+    await flush();
+    // The view stays, so the turn the rebind re-armed goes out after all.
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).message).toBe('first');
+  });
+
+  it('still sends the held turn when a store update throws while the refusal releases it', async () => {
+    await idleWithStagedTurn();
+    const reset = deferred<undefined>();
+    mockResetGolemConversation.mockReturnValue(reset.promise);
+    uuidQueue = [RUN_B];
+    const cleared = store().clearConversation(CONV);
+    rebindAvailable();
+    await flush();
+    expect(conv().resetting).toBe('held');
+
+    // The release commits the dispatch (an admitting run) before subscribers
+    // run; one failing must not leave that run waiting on a request never sent.
+    let thrown = false;
+    const unsubscribe = useGolemStore.subscribe((state) => {
+      if (!thrown && state.conversations[CONV]?.resetting === undefined) {
+        thrown = true;
+        throw new Error('subscriber failed');
+      }
+    });
+    try {
+      reset.reject(new Error('The Golem request is invalid or stale.'));
+      await expect(cleared).rejects.toThrow('subscriber failed');
+    } finally {
+      unsubscribe();
+    }
+    await flush();
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).message).toBe('first');
+  });
+
+  it('leaves a queued turn it never held where it was when the reset is refused', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A, RUN_B];
+    const gate = deferred<unknown>();
+    mockRunGolemTurn.mockReturnValueOnce(gate.promise);
+    store().submitTurn(CONV, 'first');
+    store().submitTurn(CONV, 'second');
+    await flush();
+    gate.reject('The Golem request is invalid or stale.');
+    await flush();
+    // A rejected admission deliberately leaves the queue undrained.
+    expect(conv().activeRunId).toBeNull();
+    expect(conv().queuedTurns).toMatchObject([{ message: 'second', state: 'queued' }]);
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    mockResetGolemConversation.mockRejectedValue(
+      new Error('The Golem request is invalid or stale.')
+    );
+
+    expect(await store().clearConversation(CONV)).toMatchObject({ ok: false });
+    await flush();
+
+    // The refused reset kept the queue; it must not also send it into the
+    // history the user was trying to clear.
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect(conv().queuedTurns).toMatchObject([{ message: 'second', state: 'queued' }]);
+  });
+
+  it('refuses New chat on a conversation from a retired epoch until it is reopened', async () => {
+    await idleWithHistory();
+    // Switching repositories retires this binding's epoch. The conversation
+    // stays on screen (its ID excludes the epoch, so the backend keeps its
+    // history for the reopen) but nothing can reset it from here.
+    store().invalidateBinding();
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          identity: { repoEpoch: EPOCH + 1, workspaceId: OTHER_WS, conversationId: OTHER_CONV },
+          workspaceLabel: 'Backend',
+        })
+      )
+    );
+    const before = conv();
+
+    expect(await store().clearConversation(CONV)).toEqual({
+      ok: false,
+      reason: 'This workspace is no longer open.',
+    });
+    expect(mockResetGolemConversation).not.toHaveBeenCalled();
+    expect(conv()).toBe(before);
+
+    // Reopening re-hydrates the same conversation ID under a new epoch, and
+    // New chat then resets it for real.
+    const reopened = { ...identity, repoEpoch: EPOCH + 2 };
+    store().invalidateBinding();
+    store().hydrateStatus(parseGolemStatus(statusPayload({ identity: reopened })));
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
+    expect({ ...mockResetGolemConversation.mock.calls[0][0] }).toEqual(reopened);
+    expect(conv().transcript).toEqual([]);
   });
 });
 
@@ -2713,22 +3016,22 @@ describe('admission results', () => {
     mockRunGolemTurn.mockReturnValueOnce(admitting.promise);
     store().submitTurn(CONV, 'first');
 
-    expect(store().clearConversation(CONV)).toMatchObject({ ok: false });
+    expect(await store().clearConversation(CONV)).toMatchObject({ ok: false });
     expect(conv().transcript).not.toEqual([]);
 
     admitting.resolve(admissionPayload(RUN_A));
     await flush();
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
-    expect(store().clearConversation(CONV)).toEqual({ ok: true });
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
     expect(conv().transcript).toEqual([]);
   });
 
-  it('accepts Clear on an idle conversation whose only content is its host draft', () => {
+  it('accepts Clear on an idle conversation whose only content is its host draft', async () => {
     hydrateReady();
     // The store holds no composer text at all now, so an empty conversation is
     // still clearable: only its host knows whether there is a draft to drop.
     expect(conv().transcript).toEqual([]);
-    expect(store().clearConversation(CONV)).toEqual({ ok: true });
+    expect(await store().clearConversation(CONV)).toEqual({ ok: true });
   });
 
   it('refuses a queue edit or removal for a dispatched or unknown id', async () => {

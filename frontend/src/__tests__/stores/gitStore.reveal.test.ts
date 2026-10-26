@@ -72,6 +72,18 @@ describe('openDiff reveal (#271 §6.3)', () => {
     expect(useIDEStore.getState().centerReveal).toBe('files');
   });
 
+  it('asks the editor to reveal its tab on a focused open, not on a background refresh (#406)', async () => {
+    const nonce = () => useIDEStore.getState().editorTabRevealNonce;
+    const start = nonce();
+
+    await useGitStore.getState().openDiff(change, 'unstaged');
+    await useGitStore.getState().openDiff(change, 'unstaged');
+    expect(nonce()).toBe(start + 2);
+
+    await useGitStore.getState().openDiff(change, 'unstaged', { focus: false });
+    expect(nonce()).toBe(start + 2);
+  });
+
   it('leaves a railed Files column alone for a background refresh', async () => {
     railFiles();
     await useGitStore.getState().openDiff(change, 'unstaged', { focus: false });

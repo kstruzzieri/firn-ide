@@ -30,6 +30,42 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
   return null;
 }
 
+/**
+ * The directory levels to (re)load so every path in `paths` is reachable from
+ * `root`: the root first, then each path's ancestors under the root and the
+ * paths themselves, grouped by depth. Reading one level at a time keeps every
+ * parent loaded before its children get merged. Paths outside the root are
+ * dropped; duplicates (case-insensitive on drive-letter paths) collapse into
+ * the first spelling seen. Ancestors are spelled with the separators of the
+ * path they came from, so they match what the backend reports for the tree.
+ * Only Windows roots treat backslashes as separators; POSIX names retain them.
+ */
+export function treeLoadLevels(root: string, paths: Iterable<string>): string[][] {
+  const levels: string[][] = [[root]];
+  const seen = new Set<string>();
+  const windows = /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root);
+  const compare = (path: string) => (windows ? normalizePathForComparison(path) : path);
+  const rootKey = compare(root).replace(/\/+$/, '');
+  for (const path of paths) {
+    const pathKey = compare(path).replace(/\/+$/, '');
+    if (!pathKey.startsWith(`${rootKey}/`)) continue;
+    const rel = pathKey.slice(rootKey.length + 1);
+    const abs = path.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+    const separator = windows && abs.includes('\\') ? '\\' : '/';
+    const parts = windows ? abs.split(/[\\/]/) : abs.split('/');
+    const depth = rel.split('/').length;
+    for (let level = 1; level <= depth; level++) {
+      const ancestor = parts.slice(0, parts.length - (depth - level)).join(separator);
+      const key = compare(ancestor);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      (levels[level] ??= []).push(ancestor);
+    }
+  }
+  // No holes: a path at depth d pushes every level 1..d on its way down.
+  return levels;
+}
+
 function orderedWorkspaces(workspaces: workspace.WorkspaceDef[]): workspace.WorkspaceDef[] {
   return workspaces
     .filter((candidate) => candidate.id !== 'project')

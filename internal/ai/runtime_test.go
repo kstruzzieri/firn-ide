@@ -1,7 +1,12 @@
 package ai
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +26,7 @@ import (
 
 	"firn/internal/filesystem"
 	"github.com/kstruzzieri/go-llm/config"
+	"github.com/kstruzzieri/go-llm/conversation"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -32,6 +39,12 @@ import (
 type scriptedProvider struct {
 	name string
 	err  error // non-nil: every ChatStream fails with this raw error
+	// ctxErrFirst takes the shape of go-llm's Ollama provider when a canceled
+	// context cuts a stream off mid-reply (chunks received, no final done
+	// chunk): ChatStream reports the wrapped context error ahead of the
+	// callback error that canceled it. Unset, the callback error is returned
+	// first, the openai-compat shape.
+	ctxErrFirst bool
 
 	mu         sync.Mutex
 	requests   []provider.ChatRequest
@@ -67,7 +80,7 @@ func (p *scriptedProvider) Embed(context.Context, provider.EmbedRequest) (*provi
 	return nil, p.unexpectedCall("Embed")
 }
 
-func (p *scriptedProvider) ChatStream(_ context.Context, req provider.ChatRequest, fn func(provider.ChatResponse) error) error {
+func (p *scriptedProvider) ChatStream(ctx context.Context, req provider.ChatRequest, fn func(provider.ChatResponse) error) error {
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
 	if p.err != nil {
@@ -85,7 +98,11 @@ func (p *scriptedProvider) ChatStream(_ context.Context, req provider.ChatReques
 	if step.Content != "" {
 		half := len(step.Content) / 2
 		for _, chunk := range []string{step.Content[:half], step.Content[half:]} {
-			if err := fn(provider.ChatResponse{Model: req.Model, Provider: p.name, Content: chunk}); err != nil {
+			err := fn(provider.ChatResponse{Model: req.Model, Provider: p.name, Content: chunk})
+			if p.ctxErrFirst && ctx.Err() != nil {
+				return fmt.Errorf("provider: ollama: chat stream: %w", ctx.Err())
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -239,6 +256,229 @@ func TestFixedModelCallerReturnsRawProviderError(t *testing.T) {
 	}
 }
 
+// TestFixedModelCallerSendsXOpencodeSessionOnlyToOpencode pins which
+// destinations receive the x-opencode-session header (#306 D1). golem fills
+// every model call's SessionID with the thread id, and go-llm's openai-compat
+// client sends any non-empty SessionID as that header to whatever endpoint it
+// dials. Only opencode itself -- https, host exactly opencode.ai, default
+// port -- may receive one, and only as a per-process blinded value, never the
+// thread id. Endpoints go through NormalizeEndpoint first, so the policy is
+// pinned against the canonical form the runner actually holds.
+func TestFixedModelCallerSendsXOpencodeSessionOnlyToOpencode(t *testing.T) {
+	threadA := ConversationID("repo-key-a", "project")
+	threadB := ConversationID("repo-key-b", "project")
+	blinded := regexp.MustCompile(`^firn-[0-9a-f]{64}$`)
+
+	target := func(t *testing.T, key, format, raw string) providerTarget {
+		t.Helper()
+		endpoint, _, err := NormalizeEndpoint(raw)
+		if err != nil {
+			t.Fatalf("NormalizeEndpoint: %v", err)
+		}
+		tgt := testTarget(key, "big-coder")
+		tgt.apiFormat = format
+		tgt.destination.Endpoint = endpoint
+		return tgt
+	}
+	// sessionIDs runs one turn per thread on a single runner and returns the
+	// SessionID each model call handed the concrete provider.
+	sessionIDs := func(t *testing.T, tgt providerTarget, threads ...string) []string {
+		t.Helper()
+		steps := make([]provider.ChatResponse, len(threads))
+		for i := range steps {
+			steps[i] = provider.ChatResponse{Content: "done"}
+		}
+		backend := &scriptedProvider{name: tgt.destination.Provider, steps: steps}
+		runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), tgt, nil,
+			NewMemorySessionStore(), backend, nil, golemTuning{})
+		if err != nil {
+			t.Fatalf("newGolemRunner: %v", err)
+		}
+		t.Cleanup(func() { _ = runner.Close() })
+		var events []golem.Event
+		for i, thread := range threads {
+			turn := golem.Turn{ThreadID: thread, RunID: fmt.Sprintf("run-%d", i), Message: "hi"}
+			if _, err := runner.Run(context.Background(), turn, collectSink(&events)); err != nil {
+				t.Fatalf("Run(thread %q): %v", thread, err)
+			}
+		}
+		var ids []string
+		for _, req := range backend.recorded() {
+			ids = append(ids, req.SessionID)
+		}
+		if len(ids) != len(threads) {
+			t.Fatalf("model calls = %d, want one per turn (%d)", len(ids), len(threads))
+		}
+		return ids
+	}
+
+	var first string
+	for _, raw := range []string{"https://opencode.ai/zen/v1", "HTTPS://OpenCode.AI:443/zen/v1/"} {
+		t.Run("opencode "+raw, func(t *testing.T) {
+			ids := sessionIDs(t, target(t, "zen", "openai-compat", raw), threadA, threadA, threadB, "")
+			a, again, b, stateless := ids[0], ids[1], ids[2], ids[3]
+			if !blinded.MatchString(a) || !blinded.MatchString(b) {
+				t.Fatalf("session ids = %q, %q, want firn- plus 64 hex digits", a, b)
+			}
+			if strings.Contains(a, strings.TrimPrefix(threadA, "golem-")) || strings.Contains(b, strings.TrimPrefix(threadB, "golem-")) {
+				t.Fatalf("session ids %q, %q carry the raw thread id", a, b)
+			}
+			if again != a {
+				t.Fatalf("second turn of one thread sent %q, first sent %q: want one stable id per thread", again, a)
+			}
+			if b == a {
+				t.Fatalf("two threads share session id %q", a)
+			}
+			if stateless != "" {
+				t.Fatalf("turn without a thread id sent %q, want no session id", stateless)
+			}
+			if first == "" {
+				first = a
+			} else if a != first {
+				t.Fatalf("spelling %q sent %q, canonical spelling sent %q", raw, a, first)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, key, format, endpoint string }{
+		{"plain http to opencode", "zen", "openai-compat", "http://opencode.ai/zen/v1"},
+		{"loopback llama.cpp", "llama", "openai-compat", "http://127.0.0.1:8080"},
+		{"third-party https", "openrouter", "openai-compat", "https://openrouter.ai/api/v1"},
+		{"ollama format at opencode", "zen", "ollama", "https://opencode.ai/zen"},
+		{"non-default port", "zen", "openai-compat", "https://opencode.ai:8443/zen/v1"},
+		{"trailing-dot host", "zen", "openai-compat", "https://opencode.ai./zen/v1"},
+		{"subdomain", "zen", "openai-compat", "https://api.opencode.ai/zen/v1"},
+		{"provider named opencode on another host", "opencode", "openai-compat", "https://llm.example.com/v1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if ids := sessionIDs(t, target(t, tc.key, tc.format, tc.endpoint), threadA); ids[0] != "" {
+				t.Fatalf("SessionID = %q, want none sent to %s", ids[0], tc.endpoint)
+			}
+		})
+	}
+}
+
+// TestSessionHeaderIDFormula pins the exact x-opencode-session value (#306):
+// "firn-" + hex(HMAC-SHA256(sessionHeaderKey, threadID || 0x00 || generation
+// as 8 big-endian bytes)), under a 32-byte key that is not all zero. An unkeyed
+// hash, a zero key, or a value that ignores the generation fails here. The
+// generation is read when the request is made, so one runner sends a new value
+// after the store drops the thread.
+func TestSessionHeaderIDFormula(t *testing.T) {
+	if len(sessionHeaderKey) != 32 || bytes.Equal(sessionHeaderKey, make([]byte, 32)) {
+		t.Fatalf("sessionHeaderKey = %d bytes %x, want 32 random bytes", len(sessionHeaderKey), sessionHeaderKey)
+	}
+	endpoint, _, err := NormalizeEndpoint("https://opencode.ai/zen/v1")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	tgt := testTarget("zen", "big-coder")
+	tgt.apiFormat = "openai-compat"
+	tgt.destination.Endpoint = endpoint
+	store := NewMemorySessionStore()
+	backend := &scriptedProvider{name: "zen", steps: []provider.ChatResponse{{Content: "one"}, {Content: "two"}}}
+	runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), tgt, nil, store, backend, nil, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+
+	thread := ConversationID("repo-key-a", "project")
+	var events []golem.Event
+	for i := range 2 {
+		if i == 1 {
+			store.Delete(thread)
+		}
+		turn := golem.Turn{ThreadID: thread, RunID: fmt.Sprintf("run-%d", i), Message: "hi"}
+		if _, err := runner.Run(context.Background(), turn, collectSink(&events)); err != nil {
+			t.Fatalf("Run %d: %v", i, err)
+		}
+	}
+	want := func(generation uint64) string {
+		mac := hmac.New(sha256.New, sessionHeaderKey)
+		mac.Write([]byte(thread))
+		mac.Write([]byte{0})
+		mac.Write(binary.BigEndian.AppendUint64(nil, generation))
+		return "firn-" + hex.EncodeToString(mac.Sum(nil))
+	}
+	reqs := backend.recorded()
+	if len(reqs) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(reqs))
+	}
+	for gen, req := range reqs {
+		if w := want(uint64(gen)); req.SessionID != w {
+			t.Fatalf("generation %d SessionID = %q, want %q", gen, req.SessionID, w)
+		}
+	}
+}
+
+// TestSessionHeaderIDFormula checks the SessionID the runner hands the
+// provider. This checks the wire: go-llm's openai-compat client must put that
+// blinded value in the x-opencode-session header of the real request to
+// opencode, never the raw thread id. The transport dials an in-process TLS
+// server while the request URL stays https://opencode.ai.
+func TestOpencodeSessionHeaderReachesTheWireBlinded(t *testing.T) {
+	headers := make(chan http.Header, 4)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			headers <- r.Header.Clone()
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"model":"big-coder","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"model":"big-coder","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	endpoint, _, err := NormalizeEndpoint("https://opencode.ai/zen/v1")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	tgt := testTarget("zen", "big-coder")
+	tgt.apiFormat = "openai-compat"
+	tgt.destination.Endpoint = endpoint
+	tgt.destination.Classification = "remote"
+	backend, transport, err := buildProvider(tgt, "Firn/test")
+	if err != nil {
+		t.Fatalf("buildProvider: %v", err)
+	}
+	// Every dial reaches the test server; its certificate is verified under
+	// the name it was issued for, since the request host stays opencode.ai.
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	transport.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	transport.TLSClientConfig.ServerName = "example.com"
+	runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), tgt, nil, NewMemorySessionStore(), backend, transport, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+
+	thread := ConversationID("repo-key-a", "project")
+	var events []golem.Event
+	if _, err := runner.Run(context.Background(), golem.Turn{ThreadID: thread, RunID: "run-0", Message: "hi"}, collectSink(&events)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	mac := hmac.New(sha256.New, sessionHeaderKey)
+	mac.Write([]byte(thread))
+	mac.Write([]byte{0})
+	mac.Write(binary.BigEndian.AppendUint64(nil, 0))
+	want := "firn-" + hex.EncodeToString(mac.Sum(nil))
+	select {
+	case h := <-headers:
+		if got := h.Get("X-Opencode-Session"); got != want {
+			t.Fatalf("x-opencode-session on the wire = %q, want the blinded %q", got, want)
+		}
+		if got := h.Get("User-Agent"); got != "Firn/test" {
+			t.Fatalf("User-Agent on the wire = %q, want Firn/test", got)
+		}
+	default:
+		t.Fatal("no chat request reached the opencode endpoint")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // B4.3 — runtime contracts
 // ---------------------------------------------------------------------------
@@ -274,6 +514,7 @@ func TestGolemRuntimePublicRunFailureMessage(t *testing.T) {
 		{"invalid_request", "The Golem request is invalid."},
 		{"provider_unavailable", "The model provider is unavailable."},
 		{"observer_failed", "The Golem run failed."},
+		{"session_conflict", "The Golem run failed."},
 		{"internal", "The Golem run failed."},
 		{"some_future_code", "The Golem run failed."},
 	}
@@ -424,7 +665,7 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 	var observations []string
 	for _, msg := range last.Messages {
 		if msg.Role == "tool" {
-			observations = append(observations, msg.Content)
+			observations = append(observations, unfenceToolResult(t, msg.Content))
 		}
 	}
 	if len(observations) != 10 {
@@ -601,7 +842,7 @@ func TestGolemRuntimeTransportIgnoresEnvProxy(t *testing.T) {
 	// fail on the reserved .invalid name) instead.
 	target := testTarget("hosted", "big-coder")
 	target.destination.Endpoint = "http://firn-proxy-canary.invalid:9"
-	backend, transport, err := buildProvider(target)
+	backend, transport, err := buildProvider(target, "")
 	if err != nil {
 		t.Fatalf("buildProvider: %v", err)
 	}
@@ -637,7 +878,7 @@ func TestGolemRuntimeTransportRefusesRedirects(t *testing.T) {
 		target := testTarget("hosted", "big-coder")
 		target.destination.Endpoint = local.URL
 		target.apiFormat = "openai-compat"
-		backend, transport, err := buildProvider(target)
+		backend, transport, err := buildProvider(target, "")
 		if err != nil {
 			t.Fatalf("buildProvider: %v", err)
 		}
@@ -660,7 +901,7 @@ func TestGolemRuntimeBuildProviderUsesConfiguredInstanceName(t *testing.T) {
 	for _, format := range []string{"ollama", "openai-compat"} {
 		target := testTarget("hosted", "big-coder")
 		target.apiFormat = format
-		backend, transport, err := buildProvider(target)
+		backend, transport, err := buildProvider(target, "")
 		if err != nil {
 			t.Fatalf("buildProvider(%s): %v", format, err)
 		}
@@ -671,7 +912,7 @@ func TestGolemRuntimeBuildProviderUsesConfiguredInstanceName(t *testing.T) {
 	}
 	target := testTarget("hosted", "big-coder")
 	target.apiFormat = "grpc-exotic"
-	if _, _, err := buildProvider(target); err == nil {
+	if _, _, err := buildProvider(target, ""); err == nil {
 		t.Fatal("buildProvider accepted an unsupported api format")
 	}
 }
@@ -695,7 +936,7 @@ func TestGolemRuntimeCloseClosesIdleConnections(t *testing.T) {
 	root := canonicalTempDir(t)
 	target := testTarget("hosted", "big-coder")
 	target.destination.Endpoint = backendSrv.URL
-	runner, err := NewGolemRunner(context.Background(), root, target, nil, NewMemorySessionStore())
+	runner, err := NewGolemRunner(context.Background(), root, target, nil, NewMemorySessionStore(), "")
 	if err != nil {
 		t.Fatalf("NewGolemRunner: %v", err)
 	}
@@ -724,5 +965,111 @@ func TestGolemRuntimeCloseClosesIdleConnections(t *testing.T) {
 	// (golem.Runtime.Close is idempotent; pin the wrapper too).
 	if err := runner.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #325 — session store revision CAS, end to end through the real runtime
+// ---------------------------------------------------------------------------
+
+// conflictOnLoadStore wraps a MemorySessionStore and, immediately after a
+// real Load succeeds, lets a competing writer win by saving over the same ID
+// before the caller's own turn reaches its own Save. This reproduces, end to
+// end, how a stale in-flight revision is refused under go-llm v0.3.0's CAS
+// contract even though this runtime never sees the winner's content.
+type conflictOnLoadStore struct {
+	*MemorySessionStore
+	win func(ctx context.Context) error
+}
+
+func (s *conflictOnLoadStore) Load(ctx context.Context, id string) (*conversation.Conversation, error) {
+	conv, err := s.MemorySessionStore.Load(ctx, id)
+	if err != nil {
+		return conv, err
+	}
+	if err := s.win(ctx); err != nil {
+		return nil, err
+	}
+	return conv, nil
+}
+
+// TestGolemRuntimeSessionConflictEndsRunFailed proves the runtime reacts to a
+// go-llm v0.3.0 CAS conflict on save exactly per contract: the run ends
+// run.failed with code session_conflict, the error Run returns satisfies
+// errors.Is(err, conversation.ErrConflict), and the store keeps the
+// competing winner's snapshot rather than this run's completed-but-unsaved
+// answer.
+func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
+	ctx := context.Background()
+	const threadID = "thread-conflict"
+	store := NewMemorySessionStore()
+	if err := store.Save(ctx, conversation.Conversation{
+		ID:       threadID,
+		Messages: []conversation.Message{{Role: "user", Content: "seed"}},
+	}); err != nil {
+		t.Fatalf("preload Save: %v", err)
+	}
+
+	wrapped := &conflictOnLoadStore{
+		MemorySessionStore: store,
+		win: func(ctx context.Context) error {
+			return store.Save(ctx, conversation.Conversation{
+				ID:       threadID,
+				Revision: 1,
+				Messages: []conversation.Message{
+					{Role: "user", Content: "seed"},
+					{Role: "assistant", Content: "winning answer"},
+				},
+			})
+		},
+	}
+
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{{Content: "losing answer"}}}
+	runner, err := newGolemRunner(context.Background(), canonicalTempDir(t), testTarget("hosted", "big-coder"), nil,
+		wrapped, backend, nil, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	defer func() { _ = runner.Close() }()
+
+	var events []golem.Event
+	result, err := runner.Run(ctx, golem.Turn{
+		ThreadID: threadID,
+		RunID:    "loser",
+		Message:  "losing question",
+		Approver: approveAll{},
+	}, collectSink(&events))
+
+	var conflict *conversation.ConflictError
+	if !errors.Is(err, golem.ErrSessionPersistence) || !errors.Is(err, conversation.ErrConflict) || !errors.As(err, &conflict) {
+		t.Fatalf("Run error = %v, want wrapped session-persistence revision conflict", err)
+	}
+	if conflict.ID != threadID || conflict.ExpectedRevision != 1 {
+		t.Fatalf("ConflictError = %+v, want ID %q and ExpectedRevision 1", conflict, threadID)
+	}
+	if result.Answer != "losing answer" {
+		t.Fatalf("Answer = %q, want the completed (unsaved) losing answer", result.Answer)
+	}
+
+	if len(events) == 0 || events[len(events)-1].Type != "run.failed" {
+		t.Fatalf("events = %s, want a terminal run.failed", marshalEvents(t, events))
+	}
+	var payload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(events[len(events)-1].Payload, &payload); err != nil {
+		t.Fatalf("decode run.failed payload: %v", err)
+	}
+	if payload.Code != "session_conflict" {
+		t.Fatalf("run.failed code = %q, want session_conflict", payload.Code)
+	}
+
+	winner, err := store.Load(ctx, threadID)
+	if err != nil {
+		t.Fatalf("Load after conflict: %v", err)
+	}
+	if winner.Revision != 2 || len(winner.Messages) != 2 || winner.Messages[1].Content != "winning answer" {
+		t.Fatalf("stored snapshot = %+v, want only the competing winner's turn at revision 2", winner)
 	}
 }

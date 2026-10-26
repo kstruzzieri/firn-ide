@@ -314,25 +314,106 @@ describe('release version consistency', () => {
     expect(name).toBe(config.info.productIdentifier);
   });
 
-  it('keeps the macOS deployment target in lockstep with the plist minimum system version', () => {
-    const darwinTasks = parse(
-      readFileSync(resolve(rootDir, 'build/darwin/Taskfile.yml'), 'utf8')
-    ) as { tasks: Record<string, { env?: Record<string, string> }> };
-    const target = darwinTasks.tasks['build:native'].env?.MACOSX_DEPLOYMENT_TARGET;
-    // The Taskfile carries the compiler's two-part form (12.0); the plists
-    // carry Apple's three-part form (12.0.0). Pad both to major.minor.patch
-    // so the comparison is on the version, not its spelling.
+  // #316: the declared floor is macOS 14 (Sonoma). Its system WebKit is
+  // Safari 17, above everything the frontend uses (`<dialog>` needs 15.4,
+  // container queries and subgrid 16, color-mix() 16.2, regex lookbehind
+  // 16.4) and above Vite's default build target (Safari 16), so the build
+  // cannot emit syntax the floor lacks. Raise this constant and every declaration below together.
+  describe('macOS floor', () => {
+    const FLOOR = '14.0';
+    // The Taskfile carries the compiler's two-part form (14.0), the plists
+    // Apple's three-part form (14.0.0) and the README the major alone. Pad
+    // each to major.minor.patch so the comparison is on the version, not its
+    // spelling.
     const normalise = (value: string) => `${value}.0.0`.split('.').slice(0, 3).join('.');
 
-    expect(target).toBeDefined();
-    for (const file of ['Info.plist', 'Info.dev.plist']) {
-      const plist = readFileSync(resolve(rootDir, 'build/darwin', file), 'utf8');
+    function refreshBuildAssets(dir: string, generatedPlist: string) {
+      const bin = join(dir, 'bin');
+      mkdirSync(bin);
+      mkdirSync(join(dir, 'darwin'));
+      writeFileSync(join(dir, 'config.yml'), readFileSync(resolve(rootDir, 'build/config.yml')));
+      writeFileSync(join(dir, 'generated.plist'), generatedPlist);
+      // Only Wails is stubbed: run the real task commands, including any
+      // post-processing, against the upstream generator's macOS 12 output.
+      writeExecutable(
+        join(bin, 'wails3'),
+        '#!/bin/sh\nset -e\ncp generated.plist darwin/Info.plist\ncp generated.plist darwin/Info.dev.plist\n'
+      );
+      const tasks = parse(readFileSync(resolve(rootDir, 'build/Taskfile.yml'), 'utf8'));
+      const { vars } = parse(readFileSync(resolve(rootDir, 'Taskfile.yml'), 'utf8'));
+      const command = (tasks.tasks['update:build-assets'].cmds as string[])
+        .join('\n')
+        .replaceAll('{{.APP_NAME}}', vars.APP_NAME);
+      return spawnSync('sh', ['-ec', command], {
+        cwd: dir,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+    }
+
+    it('reapplies the floor to both plists after build-asset regeneration', () => {
+      withTempDir((dir) => {
+        const generated = readFileSync(resolve(rootDir, 'build/darwin/Info.plist'), 'utf8').replace(
+          /(<key>LSMinimumSystemVersion<\/key>\s*<string>)[^<]*/,
+          '$112.0.0'
+        );
+        const result = refreshBuildAssets(dir, generated);
+
+        expect(result.stderr).toBe('');
+        expect(result.status).toBe(0);
+        for (const file of ['Info.plist', 'Info.dev.plist']) {
+          const plist = readFileSync(join(dir, 'darwin', file), 'utf8');
+          expect(plistValue(plist, 'LSMinimumSystemVersion')).toBe(normalise(FLOOR));
+          expect(plist).toBe(
+            generated.replace('<string>12.0.0</string>', `<string>${normalise(FLOOR)}</string>`)
+          );
+        }
+      });
+    });
+
+    it('fails regeneration if a plist no longer has a minimum system version', () => {
+      withTempDir((dir) => {
+        const result = refreshBuildAssets(dir, '<plist><dict></dict></plist>');
+
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain('LSMinimumSystemVersion');
+      });
+    });
+
+    it.each(['Info.plist', 'Info.dev.plist'])(
+      'declares the floor as the %s minimum system version',
+      (file) => {
+        const plist = readFileSync(resolve(rootDir, 'build/darwin', file), 'utf8');
+
+        expect(normalise(plistValue(plist, 'LSMinimumSystemVersion') ?? '')).toBe(normalise(FLOOR));
+      }
+    );
+
+    it('declares the floor as the deployment target and the C compiler minimum', () => {
+      const darwinTasks = parse(
+        readFileSync(resolve(rootDir, 'build/darwin/Taskfile.yml'), 'utf8')
+      ) as { tasks: Record<string, { env?: Record<string, string> }> };
+      const env = darwinTasks.tasks['build:native'].env ?? {};
+      const versionMin = (flags: string | undefined) =>
+        flags?.match(/-mmacosx-version-min=(\S+)/)?.[1];
 
       expect({
-        file,
-        minimumSystemVersion: normalise(plistValue(plist, 'LSMinimumSystemVersion') ?? ''),
-      }).toEqual({ file, minimumSystemVersion: normalise(String(target)) });
-    }
+        deploymentTarget: normalise(String(env.MACOSX_DEPLOYMENT_TARGET)),
+        cflags: normalise(versionMin(env.CGO_CFLAGS) ?? ''),
+        ldflags: normalise(versionMin(env.CGO_LDFLAGS) ?? ''),
+      }).toEqual({
+        deploymentTarget: normalise(FLOOR),
+        cflags: normalise(FLOOR),
+        ldflags: normalise(FLOOR),
+      });
+    });
+
+    it('declares the floor in the README install section', () => {
+      const readme = readFileSync(resolve(rootDir, 'README.md'), 'utf8');
+      const heading = readme.match(/^### macOS \((\d+(?:\.\d+)*) [A-Z][a-z]+ or later\)$/m)?.[1];
+
+      expect(normalise(heading ?? '')).toBe(normalise(FLOOR));
+    });
   });
 });
 

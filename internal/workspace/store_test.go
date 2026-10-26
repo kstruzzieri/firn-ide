@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"firn/internal/filesystem"
@@ -538,29 +539,117 @@ func TestSaveLoad_ActiveWorkspaceID(t *testing.T) {
 	}
 }
 
-func TestState_LSPOverride_roundTrip(t *testing.T) {
-	store := NewStore(newMockFS(), testWorkspaceBaseDir)
-	state := State{
-		WorkspacePath: "/ws",
-		WorkspaceName: "ws",
-		LSP: LSPState{
-			InterpreterOverride: "/ws/.venv/bin/python",
-			ServerPathOverride:  map[string]string{"python": "/usr/local/bin/pyright"},
-		},
+// A session save carries no lsp block (the frontend never sends one), so it
+// must keep the one on disk rather than drop it: before #392 every debounced,
+// blur or quit save erased the interpreter override.
+func TestSessionSaveKeepsTheStoredLSPBlock(t *testing.T) {
+	mockFS := newMockFS()
+	seeded := testState("/ws", "ws")
+	seeded.LSP = LSPState{
+		InterpreterOverride: "/ws/.venv/bin/python",
+		ServerPathOverride:  map[string]string{"python": "/usr/local/bin/pyright"},
 	}
+	data, err := json.Marshal(StateFile{Version: 1, State: seeded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, pathToID("/ws")+".json"), data, 0o600)
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
-	if err := store.Save(state); err != nil {
-		t.Fatalf("Save returned error: %v", err)
+	session := testState("/ws", "ws")
+	session.Editor.ActiveFilePath = "/ws/next.go"
+	if err := store.Save(session); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
 	loaded, err := store.Load("/ws")
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Editor.ActiveFilePath != "/ws/next.go" {
+		t.Errorf("ActiveFilePath = %q, want the saved session's /ws/next.go", loaded.Editor.ActiveFilePath)
 	}
 	if loaded.LSP.InterpreterOverride != "/ws/.venv/bin/python" {
 		t.Errorf("InterpreterOverride = %q, want %q", loaded.LSP.InterpreterOverride, "/ws/.venv/bin/python")
 	}
 	if loaded.LSP.ServerPathOverride["python"] != "/usr/local/bin/pyright" {
 		t.Errorf("ServerPathOverride[python] = %q, want %q", loaded.LSP.ServerPathOverride["python"], "/usr/local/bin/pyright")
+	}
+}
+
+// SetLSPInterpreter owns the lsp block. A session save that does carry one
+// (a stale copy from an earlier Load) must not overwrite a newer override.
+func TestSessionSaveCannotWriteTheLSPBlock(t *testing.T) {
+	store := NewStore(newMockFS(), testWorkspaceBaseDir)
+	if err := store.SetLSPInterpreter("/ws", "/ws/.venv/bin/python"); err != nil {
+		t.Fatalf("SetLSPInterpreter: %v", err)
+	}
+	stale := testState("/ws", "ws")
+	stale.LSP.InterpreterOverride = "/usr/bin/python3"
+	if err := store.Save(stale); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := store.Load("/ws")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.LSP.InterpreterOverride != "/ws/.venv/bin/python" {
+		t.Errorf("InterpreterOverride = %q, want SetLSPInterpreter's /ws/.venv/bin/python", loaded.LSP.InterpreterOverride)
+	}
+}
+
+// A cleared override stays cleared: a session save still carrying the old
+// one cannot bring it back.
+func TestSessionSaveCannotResurrectAClearedOverride(t *testing.T) {
+	store := NewStore(newMockFS(), testWorkspaceBaseDir)
+	if err := store.SetLSPInterpreter("/ws", "/ws/.venv/bin/python"); err != nil {
+		t.Fatalf("SetLSPInterpreter: %v", err)
+	}
+	if err := store.SetLSPInterpreter("/ws", ""); err != nil {
+		t.Fatalf("SetLSPInterpreter clear: %v", err)
+	}
+	stale := testState("/ws", "ws")
+	stale.LSP.InterpreterOverride = "/ws/.venv/bin/python"
+	if err := store.Save(stale); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := store.Load("/ws")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.LSP.InterpreterOverride != "" {
+		t.Errorf("InterpreterOverride = %q, want the cleared override to stay empty", loaded.LSP.InterpreterOverride)
+	}
+}
+
+// Save now reads the file on every call (#392), so a file this session already
+// loaded and later finds unreadable is refused like one it never could read
+// (#290): its bytes stay as they are, and repairing it does not lift the
+// refusal before a restart, because the frontend may be running on state it
+// could not read back.
+func TestSessionSaveRefusesAFileThatBecameUnreadable(t *testing.T) {
+	mockFS := newMockFS()
+	store := NewStore(mockFS, testWorkspaceBaseDir)
+	if err := store.Save(testState("/ws", "ws")); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	path := filepath.Join(testWorkspaceBaseDir, pathToID("/ws")+".json")
+	good, err := mockFS.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	corrupt := []byte("{not json")
+	_ = mockFS.WriteFile(path, corrupt, 0o600)
+	if err := store.Save(testState("/ws", "ws")); err == nil || !strings.Contains(err.Error(), "workspace saving disabled") {
+		t.Fatalf("Save over a corrupt file = %v, want the saving-disabled refusal", err)
+	}
+	if got, _ := mockFS.ReadFile(path); !bytes.Equal(got, corrupt) {
+		t.Fatalf("refused Save changed the file to %q", got)
+	}
+
+	_ = mockFS.WriteFile(path, good, 0o600)
+	if err := store.Save(testState("/ws", "ws")); err == nil {
+		t.Fatal("Save after the repair succeeded, want the refusal latched until restart")
 	}
 }
 

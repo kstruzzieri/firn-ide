@@ -11,7 +11,7 @@ import {
 } from '../../golem/projection';
 import { useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
-import type { GolemActionResult } from '../../types/golem';
+import { boundedGolemMessage, type GolemActionResult } from '../../types/golem';
 import { focusConfigTab } from '../../utils/editorSurface';
 import golemIcon from '../../assets/branding/golem-icon.svg';
 import { PlusIcon, SettingsIcon } from '../icons';
@@ -103,6 +103,12 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
   const draft = useDraftStore((state) =>
     conversationId === null ? '' : (state.drafts[conversationId] ?? '')
   );
+  // New chat drops the draft only once the backend reset lands (#361), so the
+  // composer is locked until then: text typed meanwhile would be erased too.
+  const resetting = useGolemStore(
+    (state) =>
+      conversationId !== null && state.conversations[conversationId]?.resetting !== undefined
+  );
 
   // Not manually memoized: the React Compiler keeps this stable on its own, and
   // a hand-written useCallback over `conversationId` defeats its analysis.
@@ -114,9 +120,11 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
   /**
    * The docked adapter. Admission is synchronous here — the store is in this
    * window — so an accepted Send drops the draft in the same tick and a refused
-   * one keeps it and explains itself. (The satellite holds its lock open until
-   * the relay acknowledges instead, and must not run this clearing adapter: an
-   * uncertain relay failure has to keep both the draft and the action id.)
+   * one keeps it and explains itself. New chat is the exception: it answers
+   * once the backend reset has, with the composer locked in between. (The
+   * satellite holds its lock open until the relay acknowledges instead, and
+   * must not run this clearing adapter: an uncertain relay failure has to keep
+   * both the draft and the action id.)
    */
   const actions = useMemo<GolemSurfaceActions>(
     () => ({
@@ -126,9 +134,23 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
         else reportRefusal(result);
       },
       clear(id) {
-        const result = useGolemStore.getState().clearConversation(id);
-        if (result.ok) useDraftStore.getState().clear(id);
-        else reportRefusal(result);
+        const refused = (result: GolemActionResult) => {
+          reportRefusal(result);
+          // New chat disabled itself for the reset, dropping the focus it
+          // held. A clear re-arms the composer; a refusal must too, or a
+          // keyboard user is left on <body>.
+          useGolemStore.getState().requestComposerFocus();
+        };
+        void useGolemStore
+          .getState()
+          .clearConversation(id)
+          .then((result) => {
+            if (result.ok) useDraftStore.getState().clear(id);
+            else refused(result);
+          })
+          // A throw inside a store update rejects instead of refusing; it is
+          // still a refusal to the user, never an unhandled rejection.
+          .catch((error: unknown) => refused({ ok: false, reason: boundedGolemMessage(error) }));
       },
       allowAndSend: (id, runId, challengeId) =>
         reportRefusal(useGolemStore.getState().allowAndSend(id, runId, challengeId)),
@@ -162,7 +184,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
     conversation.transcript.length === 0 &&
     draft === '' &&
     conversation.queuedTurns.length === 0;
-  const canClear = conversation !== null && !frozen && !clearBusy && !clearEmpty;
+  const canClear = conversation !== null && !frozen && !resetting && !clearBusy && !clearEmpty;
   // Deliberately not gated on `bridgePhase`: a window is a place to put the
   // chat, and it opens with no repository bound at all (#271 §5.3).
   const canUndock = windowPhase === 'closed' && !frozen;
@@ -220,7 +242,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
                 title={clearBusy ? 'Finish or cancel the current run first' : 'New chat'}
                 disabled={!canClear}
                 onClick={() => {
-                  if (frozen || conversationId === null) return;
+                  if (frozen || resetting || conversationId === null) return;
                   actions.clear(conversationId);
                 }}
               >
@@ -270,9 +292,10 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
         onDraftChange={onDraftChange}
         actions={actions}
         frozen={frozen}
-        // Docked admission settles inside the handler, so this host never holds
-        // an unacknowledged dispatch open across a render.
-        composerPending={false}
+        // Docked admission settles inside the handler; only New chat holds the
+        // composer open across a render, while its backend reset is in flight.
+        composerPending={resetting}
+        resetting={resetting}
         focusRevision={view.composerFocusRevision}
         visible={visible}
       />

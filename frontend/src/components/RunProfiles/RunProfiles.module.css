@@ -1,3 +1,11 @@
+/* Holds the status region above whichever view is showing (list or form), so the
+   load notice stays mounted when the form replaces the list. */
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .list {
   padding: 8px;
   height: 100%;
@@ -24,6 +32,42 @@
 
 .errorText {
   color: var(--status-error);
+}
+
+/* Wraps the warning status region and its sibling Reload button. */
+.loadNotice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+  margin: 8px 8px 0;
+  border-left: 2px solid var(--status-warning);
+}
+
+/* Long or many warnings scroll here so they never squeeze the list away, and
+   the Reload button below stays visible. */
+.loadNoticeMessages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+/* Inset so the ring is not clipped by the notice's edge. */
+.loadNoticeMessages:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.loadNoticeText {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  /* Warnings carry absolute paths; break unbroken tokens instead of overflowing. */
+  overflow-wrap: anywhere;
 }
 
 /* Empty state */
@@ -140,6 +184,18 @@ details.group > summary {
 }
 .createButton:hover {
   color: #cfcfcf;
+}
+/* createButton is a fixed 22px icon square, too narrow for a word. Scoped under
+   .panelBody (an ancestor of both the Reload and Retry buttons) so this beats
+   .createButton whatever the source order. */
+.panelBody .textButton {
+  width: auto;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.panelBody .textButton[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
 }
 .hiddenRow {
   display: flex;

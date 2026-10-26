@@ -13,7 +13,7 @@ info:
   description: "A lightweight, workspace-focused IDE for macOS, Linux, and Windows"
   copyright: "(c) 2026, Keith Struzzieri"
   comments: "Firn IDE"
-  version: "0.13.0"
+  version: "0.14.0"
 
 # Dev mode configuration
 dev_mode:
@@ -42,8 +42,10 @@ dev_mode:
     # within one graph -- it does not stop two of these processes from both
     # depending on it and racing. Install blocking and first, so the `npm ci`
     # that `wails3 build`'s frontend step and the dev-server step both depend
-    # on runs exactly once (`npm ci` deletes node_modules before installing,
-    # so two concurrent runs corrupt each other). Only after that does the
+    # on runs exactly once: the task's status check then reports the install
+    # current to both later processes, which skip it (`npm ci` deletes
+    # node_modules before installing, so two concurrent runs corrupt each
+    # other). Only after that does the
     # frontend dev server start in the background, so it is already listening
     # on {{VITE_PORT}} by the time `run` launches: with the upstream order
     # (build first) a cold Vite start can outlast the app's dev-server wait

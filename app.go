@@ -208,7 +208,7 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
 	}
-	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit)
+	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit, firnUserAgent())
 	a.gitMsgGen.SetDestinationPolicySource(a.aiService.DestinationPolicy)
 }
 
@@ -633,6 +633,17 @@ func (a *App) CancelGolemRun(identity ai.RunIdentity) (bool, error) {
 	return canceled, nil
 }
 
+// ResetGolemConversation deletes the backend conversation behind identity so
+// its next turn starts fresh (New chat). It refuses while that conversation
+// has a run starting, running, canceling, or waiting on consent.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ResetGolemConversation(identity ai.ConversationIdentity) error {
+	if a.aiService == nil {
+		return a.golemError(errGolemUnavailable)
+	}
+	return a.golemError(a.aiService.ResetConversation(identity))
+}
+
 // GetGolemSettings returns the read-only settings projection of the current
 // effective Golem configuration. It carries no filesystem paths, raw JSON,
 // keys, or raw error text; diagnostics travel in-band as allowlisted codes.
@@ -862,14 +873,21 @@ func (a *App) handleWatchEvent(event watcher.FileEvent) {
 		return
 	}
 
-	changed := a.profileManager.HandleFileChange(event.Path)
+	m := a.profileManager
+	changed := m.HandleFileChange(event.Path)
 	var snap runprofile.RunProfilesSnapshot
 	if changed {
-		snap = a.runProfilesSnapshot(a.profileManager)
+		snap = a.runProfilesSnapshot(m)
 	}
 	a.profileMu.RUnlock()
 
 	if changed {
+		// Detector warnings never reach the panel, so log them here to leave a
+		// trace of a config file that stopped parsing. Store warnings repeat by
+		// design; config-file changes are debounced and rare.
+		for _, w := range m.Warnings() {
+			log.Printf("run profiles: %s", w)
+		}
 		a.emit("runprofiles:changed", snap)
 	}
 }
@@ -1064,13 +1082,45 @@ func (a *App) GetRunProfilesSnapshot() runprofile.RunProfilesSnapshot {
 	a.profileMu.RLock()
 	defer a.profileMu.RUnlock()
 	if a.profileManager == nil {
-		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}}
+		snap := runprofile.RunProfilesSnapshot{Profiles: []runprofile.RunProfile{}, ProfileState: map[string]runprofile.ProfileUIState{}, LoadWarnings: []string{}}
 		if a.executor != nil {
 			snap.WorkspaceEpoch = a.executor.CurrentEpoch()
 		}
 		return snap
 	}
 	return a.runProfilesSnapshot(a.profileManager)
+}
+
+// ReloadRunProfiles re-reads saved and detected run profiles for the open
+// workspace in place (#367): the panel's Reload action after an unreadable
+// .firn/run-profiles.json was fixed. It is not a workspace open: running
+// processes, the executor epoch and language servers are untouched. A
+// successful Load clears the store's write latch (#359); the emitted snapshot
+// carries the remaining load warnings, empty when the load was clean. The same
+// snapshot is returned so the caller can tell whether a load problem remains.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ReloadRunProfiles() (runprofile.RunProfilesSnapshot, error) {
+	a.profileMu.Lock() // write lock: no pin/adopt may land between Load's file read and its swap
+	m := a.profileManager
+	if m == nil {
+		a.profileMu.Unlock()
+		return runprofile.RunProfilesSnapshot{}, fmt.Errorf("no workspace loaded")
+	}
+	load := m.Load
+	if a.loadRunProfilesFn != nil {
+		load = func() error { return a.loadRunProfilesFn(m) }
+	}
+	if err := load(); err != nil {
+		a.profileMu.Unlock()
+		return runprofile.RunProfilesSnapshot{}, err
+	}
+	snap := a.runProfilesSnapshot(m)
+	a.profileMu.Unlock()
+	for _, w := range m.Warnings() {
+		log.Printf("run profiles: %s", w)
+	}
+	a.emit("runprofiles:changed", snap)
+	return snap, nil
 }
 
 // AdoptRunProfile adds a profile to its workspace working set and emits an update.
@@ -1688,15 +1738,9 @@ func (a *App) LSPRetryProvision(family, projectRoot string) error {
 // persistLSPInterpreter writes the interpreter override into the workspace's
 // persisted state (~/.firn/workspaces). interpreterPath=="" clears it.
 func (a *App) persistLSPInterpreter(workspacePath, interpreterPath string) error {
-	st, err := a.workspaceStore.Load(workspacePath)
-	if err != nil {
-		return err
-	}
-	if st == nil {
-		st = &workspace.State{WorkspacePath: workspacePath}
-	}
-	st.LSP.InterpreterOverride = interpreterPath
-	return a.workspaceStore.Save(*st)
+	// One locked read-modify-write in the store: a Load followed by a Save here
+	// would overwrite a session save that landed between them (#401).
+	return a.workspaceStore.SetLSPInterpreter(workspacePath, interpreterPath)
 }
 
 // --- Search bindings ---

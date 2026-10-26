@@ -9,6 +9,7 @@ import type {
   ProfileTag,
   ProfileType,
   RunProfile,
+  RunProfilesSnapshot,
   RunProfileUIState,
 } from '../types/runProfile';
 
@@ -97,11 +98,7 @@ export function normalizeProfileState(raw: unknown): Record<string, RunProfileUI
   return out;
 }
 
-function normalizeSnapshot(raw: unknown): {
-  profiles: RunProfile[];
-  profileState: Record<string, RunProfileUIState>;
-  workspaceEpoch?: number;
-} {
+export function normalizeSnapshot(raw: unknown): RunProfilesSnapshot {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
     profiles: normalizeRunProfiles(obj.profiles),
@@ -110,6 +107,9 @@ function normalizeSnapshot(raw: unknown): {
       typeof obj.workspaceEpoch === 'number' && obj.workspaceEpoch > 0
         ? obj.workspaceEpoch
         : undefined,
+    loadWarnings: Array.isArray(obj.loadWarnings)
+      ? obj.loadWarnings.filter((w): w is string => typeof w === 'string' && w !== '')
+      : [],
   };
 }
 
@@ -161,8 +161,9 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
           historyResult.status === 'fulfilled'
             ? (historyResult.value as runhistory.Snapshot)
             : undefined;
-        const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(profileSnapshot);
-        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch, history);
+        const { profiles, profileState, workspaceEpoch, loadWarnings } =
+          normalizeSnapshot(profileSnapshot);
+        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch, history, loadWarnings);
         if (historyResult.status === 'rejected') {
           const message =
             historyResult.reason instanceof Error
@@ -187,7 +188,7 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
     // be started separately (e.g., via useFileWatcher) for events to fire.
     const cleanup = EventsOn('runprofiles:changed', (snap: unknown) => {
       if (!cancelled) {
-        const { profiles, profileState, workspaceEpoch } = normalizeSnapshot(snap);
+        const { profiles, profileState, workspaceEpoch, loadWarnings } = normalizeSnapshot(snap);
         const state = useIDEStore.getState();
         if (state.runEventsPaused) return;
         if (workspaceEpoch == null && state.workspaceEpoch > 0) return;
@@ -198,7 +199,7 @@ export function useRunProfilesLoader(workspacePath: string | null | undefined): 
         ) {
           return;
         }
-        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch);
+        setRunProfilesSnapshot(profiles, profileState, workspaceEpoch, undefined, loadWarnings);
       }
     });
 

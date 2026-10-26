@@ -239,7 +239,8 @@ it('hydrates lazy archive summaries into capped completion history without touch
         useIDEStore.getState().runProfiles,
         useIDEStore.getState().runProfileState,
         7,
-        new runhistory.Snapshot({ version: 1, summaries })
+        new runhistory.Snapshot({ version: 1, summaries }),
+        []
       );
   });
   expect(historyState().runHistory.build).toEqual(historyBeforeRepeatedHydration);

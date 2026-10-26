@@ -3,7 +3,9 @@ package runprofile
 import (
 	"encoding/json"
 	"firn/internal/filesystem"
+	"fmt"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -312,6 +314,100 @@ func TestProjectManagerHandleFileChangeRoutesToDeepestWorkspace(t *testing.T) {
 	}
 }
 
+// hasWarningContaining reports whether any warning mentions substr.
+func hasWarningContaining(warnings []string, substr string) bool {
+	for _, w := range warnings {
+		if strings.Contains(w, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// Detector warnings follow re-detection in Warnings() (logged), and never reach
+// the snapshot: the panel notice carries store-related load issues only.
+func TestProjectManagerWarningsDropDetectorWarningAfterRedetect(t *testing.T) {
+	files := monorepoFixture()
+	valid := files["/repo/frontend/package.json"]
+	files["/repo/frontend/package.json"] = []byte("{ not valid json")
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got := pm.Warnings(); !hasWarningContaining(got, "package.json") {
+		t.Fatalf("expected a package.json warning in Warnings() after Load, got %q", got)
+	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot carries a detector warning: %q", got)
+	}
+
+	files["/repo/frontend/package.json"] = valid
+	if !pm.HandleFileChange("/repo/frontend/package.json") {
+		t.Fatal("expected HandleFileChange to report a config change")
+	}
+	if got := pm.Warnings(); hasWarningContaining(got, "package.json") {
+		t.Errorf("Warnings() still carries the stale package.json warning: %q", got)
+	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot carries a detector warning: %q", got)
+	}
+}
+
+// The reverse: a file that breaks after Load surfaces its warning in Warnings()
+// on the next re-detection, again without a Reload, and still not in the snapshot.
+func TestProjectManagerWarningsPickUpNewDetectorWarningAfterRedetect(t *testing.T) {
+	files := monorepoFixture()
+	pm := NewProjectManager(newProjectTestFS(files), "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got := pm.Snapshot().LoadWarnings; len(got) != 0 {
+		t.Fatalf("expected no warnings after a clean Load, got %q", got)
+	}
+
+	files["/repo/frontend/package.json"] = []byte("{ not valid json")
+	if !pm.HandleFileChange("/repo/frontend/package.json") {
+		t.Fatal("expected HandleFileChange to report a config change")
+	}
+	if got := pm.Warnings(); !hasWarningContaining(got, "package.json") {
+		t.Errorf("Warnings() is missing the new package.json warning: %q", got)
+	}
+	if got := pm.Snapshot().LoadWarnings; hasWarningContaining(got, "package.json") {
+		t.Errorf("snapshot carries a detector warning: %q", got)
+	}
+}
+
+// A prune that cannot rewrite the recency sidecar is a store-related issue: it
+// reaches the snapshot and names the workspace by its display name.
+func TestProjectManagerPruneFailureWarningNamesWorkspace(t *testing.T) {
+	files := monorepoFixture()
+	stale, err := json.Marshal(RecencyFile{Version: recencyFileVersion, Recency: map[string]int64{"gone": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["/repo/frontend/.firn/run-recency.json"] = stale
+	fsys := newProjectTestFS(files)
+	fsys.WriteFileFunc = func(string, []byte, fs.FileMode) error { return fs.ErrPermission }
+	pm := NewProjectManager(fsys, "/repo")
+	if err := pm.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	var name string
+	for _, p := range pm.GetAllProfiles() {
+		if p.WorkspaceID == "frontend" {
+			name = p.WorkspaceName
+			break
+		}
+	}
+	if name == "" || name == "frontend" {
+		t.Fatalf("fixture must give the frontend workspace a display name distinct from its ID, got %q", name)
+	}
+	want := fmt.Sprintf("workspace %q: could not prune stale profile state: ", name)
+	if got := pm.Snapshot().LoadWarnings; len(got) != 1 || !strings.HasPrefix(got[0], want) {
+		t.Fatalf("want one prune warning starting with %q, got %q", want, got)
+	}
+}
+
 func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
 	files := monorepoFixture()
 	// Corrupt the frontend workspace's saved-profile store with invalid JSON.
@@ -338,6 +434,10 @@ func TestProjectManagerDegradesOnCorruptWorkspaceStore(t *testing.T) {
 	// The failure is surfaced as a warning, not swallowed.
 	if len(pm.Warnings()) == 0 {
 		t.Error("expected a warning for the corrupt frontend store")
+	}
+	// The snapshot hydrates the panel with the same warnings.
+	if got, want := pm.Snapshot().LoadWarnings, pm.Warnings(); !reflect.DeepEqual(got, want) {
+		t.Errorf("snapshot load warnings = %q, want %q", got, want)
 	}
 }
 

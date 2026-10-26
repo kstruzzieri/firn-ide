@@ -1,13 +1,30 @@
 import { useIDEStore } from '../stores/ideStore';
 import { WindowSetTitle } from '../wails/runtime';
+import { reconcileTreeWithDisk } from '../hooks/useEnsurePathLoaded';
 import { getCachedWorkspaceTree } from './workspaceTreeCache';
+import { relativePathFromRoot } from './workspaceRegions';
 
 const MAX_RECENT = 10;
+
+/** A drive-letter or UNC path, where `\` and `/` both separate and case folds. */
+const WINDOWS_PATH = /^[a-z]:[\\/]|^\\\\|^\/\//i;
+
+/**
+ * Whether `candidate` names the same directory as `active`. Windows paths
+ * compare through relativePathFromRoot (either separator, drive-letter case);
+ * on macOS and Linux a backslash is an ordinary filename character, so
+ * `/tmp/a\b` is not `/tmp/a/b` and only trailing slashes are ignored.
+ */
+function isSameWorkspacePath(candidate: string, active: string): boolean {
+  if (WINDOWS_PATH.test(active)) return relativePathFromRoot(candidate, active) === '';
+  return candidate.replace(/\/+$/, '') === active.replace(/\/+$/, '');
+}
 
 /**
  * Opens a workspace by its absolute path. Handles clearing stale tree,
  * setting workspace state, updating the window title, and optimistically
- * updating the recent workspaces list.
+ * updating the recent workspaces list. Reselecting the already-open path
+ * only reconciles the explorer tree with disk.
  *
  * Shared by both the native dialog flow and recent-project clicks.
  */
@@ -18,10 +35,32 @@ export function openWorkspaceByPath(folderPath: string) {
 
   const store = useIDEStore.getState();
 
-  // Skip if already on this workspace
-  if (store.workspace?.path === folderPath) return;
+  // Already on this workspace (same directory, whatever the trailing slash or
+  // drive-letter case): a reopen is a tree-only refresh under the active path.
+  // A full open would pause run events and reset run state for no reason, but
+  // doing nothing leaves whatever the watcher missed on screen indefinitely (#256).
+  const active = store.workspace;
+  if (active && isSameWorkspacePath(folderPath, active.path)) {
+    const visiblePaths = new Set(store.expandedPaths);
+    const scope = store.workspaces.find((w) => w.id === store.activeWorkspaceId);
+    if (scope?.id !== 'project' && scope?.relDir) {
+      // Workspace View's root need not be expanded. Include it explicitly so
+      // reselecting also retries a failed read whose dirty flag is already set.
+      const windows = WINDOWS_PATH.test(active.path);
+      const separator = windows && active.path.includes('\\') ? '\\' : '/';
+      const root = active.path.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+      visiblePaths.add(`${root}${separator}${scope.relDir.split('/').join(separator)}`);
+    }
+    void reconcileTreeWithDisk(
+      active.path,
+      visiblePaths,
+      () => useIDEStore.getState().workspace?.path !== active.path
+    );
+    return;
+  }
 
-  const separator = folderPath.includes('\\') ? '\\' : '/';
+  // Only a Windows path separates on `\`; on macOS and Linux it is part of a name.
+  const separator = WINDOWS_PATH.test(folderPath) && folderPath.includes('\\') ? '\\' : '/';
   const folderName = folderPath.split(separator).pop() || folderPath;
   const cachedTree = getCachedWorkspaceTree(folderPath);
 

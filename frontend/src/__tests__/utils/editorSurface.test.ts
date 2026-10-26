@@ -42,4 +42,21 @@ describe('editorSurface reveal routing (#271 §6.3)', () => {
     expect(useGolemStore.getState().configTabFocused).toBe(false);
     expect(useIDEStore.getState().centerReveal).toBe('files');
   });
+
+  // #406: the tab strip scrolls, so every activation intent also asks the
+  // editor to bring the selected tab into view, even when it was already selected.
+  it('requests a tab reveal on every intent, but not from the passive sync', () => {
+    const nonce = () => useIDEStore.getState().editorTabRevealNonce;
+    const start = nonce();
+
+    focusEditorSurface('file');
+    focusEditorSurface('file');
+    expect(nonce()).toBe(start + 2);
+
+    focusConfigTab();
+    expect(nonce()).toBe(start + 3);
+
+    focusEditorSurface('file', { reveal: false });
+    expect(nonce()).toBe(start + 3);
+  });
 });

@@ -83,8 +83,13 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           # Pinned (with .golangci.yml version "2") so CI and the local
-          # .husky/pre-push hook run identical checks.
-          version: v2.11.4
+          # .husky/pre-push hook run identical checks. The pin moves with
+          # go.mod's toolchain line (#373): a golangci-lint release must be
+          # able to read the export data the pinned Go emits. v2.11.4 fails
+          # on go1.27 ("file requires newer Go version") and v2.13.2 fails on
+          # go1.27.2 ("export data version 5 is greater than maximum
+          # supported version 4"); v2.14.0 reads it.
+          version: v2.14.0
           # Skip the action's remote JSON-schema fetch for config validation:
           # that network call to golangci-lint.run times out intermittently and
           # fails otherwise-green runs. golangci-lint still errors on a genuinely

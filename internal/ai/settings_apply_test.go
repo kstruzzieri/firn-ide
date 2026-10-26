@@ -2659,7 +2659,7 @@ func newApplyHarnessWithConsent(t *testing.T, body, consentPath string) *applyHa
 	} else {
 		h.path = stageApplyTarget(t, body)
 	}
-	h.svc = NewService(context.Background(), filesystem.NewOS(), consentPath, h.rec.emit)
+	h.svc = NewService(context.Background(), filesystem.NewOS(), consentPath, h.rec.emit, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()

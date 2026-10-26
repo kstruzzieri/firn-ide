@@ -1,0 +1,82 @@
+name: Vulnerability Scan
+
+on:
+  push:
+    branches: [develop]
+  # Not a required check, so unlike test.yml, build.yml and lint.yml it may
+  # path-filter: only pull requests that change Go code, go.mod, go.sum or
+  # this workflow run it, including pull requests into a release branch. A
+  # vulnerability published upstream then surfaces on the next scheduled run,
+  # and on a pull request only if it changes one of those files.
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/govulncheck.yml'
+  # The vulnerability database changes without any push. Scheduled runs scan
+  # the default branch, develop.
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Scans a build of the app rather than its source. A source scan follows
+  # calls from main, but Wails calls bound methods through reflection, so code
+  # reached only through a binding (the LSP server download and unpack, the
+  # Golem runtime) is invisible to it. Binary mode checks every
+  # symbol linked into the build, so it also flags vulnerable code that is
+  # linked in but never called. Linux only: code built only for macOS or
+  # Windows is not scanned.
+  govulncheck:
+    name: govulncheck
+    # Pinned to 22.04: the image IS the WebKit2GTK 4.1 compatibility floor
+    # that the -tags gtk3 Linux build below targets.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Install Linux dependencies for Wails
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build frontend (required for go:embed)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      # The tags a release build uses (build/linux/Taskfile.yml): `production`
+      # swaps in Wails' release implementations, which the scan must see
+      # instead of the development ones.
+      - name: Build app
+        run: go build -tags production,gtk3 -o "$RUNNER_TEMP/firn" .
+
+      # Runs at the repository root on purpose: `go install m@v` picks a Go at
+      # least as new as both m's own `go` line (x/vuln v1.8.0 says 1.26.0) and
+      # the toolchain line of the go.mod it runs beside, so govulncheck is never
+      # older than the Go that built the app. Pinned so a new release cannot
+      # change the result unannounced.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+      - name: Run govulncheck
+        run: govulncheck -mode binary "$RUNNER_TEMP/firn"

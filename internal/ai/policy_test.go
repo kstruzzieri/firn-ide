@@ -46,6 +46,33 @@ var floorProbes = []string{
 	".agent",
 	".agent/receipts/x",
 	"sub/.agent/y",
+	// The credential set go-llm's read_file invariant and search skip
+	// (agent/interceptor IsCredentialPath): files at any depth, and anything
+	// at or below the credential directories.
+	".netrc",
+	"home/.netrc",
+	"_netrc",
+	".npmrc",
+	"web/.npmrc",
+	".pypirc",
+	".ssh",
+	".ssh/config",
+	"home/.ssh/known_hosts",
+	".gnupg",
+	".gnupg/pubring.kbx",
+	".aws",
+	".aws/config",
+	"infra/.aws/sso/cache/token.json",
+	".kube",
+	".kube/config",
+	"ops/.kube/cache/discovery.json",
+	"Web/.NPMRC", // case-insensitive volumes open .npmrc under any case
+	// Beyond go-llm's set: registry auths and Terraform state hold secrets in
+	// plain text.
+	".docker/config.json",
+	"home/.docker/config.json",
+	"terraform.tfstate",
+	"infra/terraform.tfstate.backup",
 }
 
 // allowedProbes are ordinary source paths that must stay reachable.
@@ -56,6 +83,17 @@ var allowedProbes = []string{
 	"frontend/src/app.tsx",
 	"environment.go",
 	"keys.go",
+	// Look-alikes of the credential set: only the dot-names are credentials.
+	"netrc.go",
+	"npmrc/README.md",
+	"ssh/known_hosts.go",
+	"aws/config.go",
+	"kube/deploy.yaml",
+	"docs/.sshrc.md",
+	"docker/config.json",
+	".docker/daemon.json",
+	"docs/tfstate.md",
+	"infra/main.tf",
 }
 
 func newPolicyRepo(t *testing.T) string {
@@ -249,6 +287,36 @@ func TestScopePolicySeparatorAndCaseNoBypass(t *testing.T) {
 	}
 }
 
+func TestScopePolicyUnicodeCredentialAliases(t *testing.T) {
+	p := LoadScopePolicy(filesystem.NewOS(), newPolicyRepo(t))
+	g := p.Guard("")
+	for _, probe := range []string{
+		".ſſh/config", ".awſ/config", ".docker/conﬁg.json",
+		".a\u200cws/config",     // HFS+ ignores this format character.
+		".\u200c./ordinary.txt", // Alias folding must not introduce traversal.
+	} {
+		mustDeny(t, g, probe)
+	}
+	for _, prefix := range []string{".awſ", ".a\u200cws", ".\u200c."} {
+		mustDeny(t, p.Guard(prefix), "config")
+		mustDeny(t, p.Guard("workspace", prefix), "config")
+	}
+	for _, probe := range []string{"Straße.md", "src/éclair.go", ".docker/conﬁg-guide.md", "docs/\u200creadme.md"} {
+		mustAllow(t, g, probe)
+	}
+}
+
+func TestScopePolicyUnicodeManifestGlobsKeepRuneSemantics(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - '[ß].txt'\n  - '?.dat'\n")
+	g := LoadScopePolicy(filesystem.NewOS(), repo).Guard("")
+	// Folding ß to ss would change both the character class and ? width.
+	mustDeny(t, g, "ß.txt")
+	mustDeny(t, g, "ß.dat")
+	mustAllow(t, g, "ss.txt")
+	mustAllow(t, g, "ss.dat")
+}
+
 func TestScopePolicyRejectedRules(t *testing.T) {
 	repo := newPolicyRepo(t)
 	writeManifest(t, repo, "ai-kit.yaml",
@@ -312,6 +380,152 @@ func TestScopePolicyReloadUpdatesIssuedGuard(t *testing.T) {
 	for _, probe := range floorProbes {
 		mustDeny(t, g, probe)
 	}
+}
+
+// Admission reloads under the binding gate's read lock (#379), so two
+// conversations can reload one policy at once. A reload must read and publish
+// as one step, or the reload that read first can publish last and restore the
+// rules the newer reload replaced.
+func TestScopePolicyReloadSerializesReadAndPublish(t *testing.T) {
+	repo := newPolicyRepo(t)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths: []\n")
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	p := LoadScopePolicy(fsys, repo)
+	fsys.blockPath = manifest
+
+	olderDone := make(chan struct{})
+	go func() { p.Reload(); close(olderDone) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the older reload to read the manifest")
+	}
+
+	writeFile(t, manifest, "sensitive_paths:\n  - vault/**\n")
+	newerDone := make(chan struct{})
+	go func() { p.Reload(); close(newerDone) }()
+
+	released := false
+	defer func() {
+		if !released {
+			close(fsys.release)
+		}
+	}()
+	select {
+	case <-newerDone:
+		t.Fatal("a newer reload published while an older manifest read was still in flight")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(fsys.release)
+	released = true
+	for name, done := range map[string]<-chan struct{}{"older": olderDone, "newer": newerDone} {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out waiting for the %s reload", name)
+		}
+	}
+	mustDeny(t, p.Guard(""), "vault/data.txt")
+}
+
+// A reload while the repository directory is absent finds no manifests, but
+// that is not the user removing them: the same directory can come back, and
+// its runners still accept it. Nothing is published, and guards deny until a
+// reload can read the directory again.
+func TestScopePolicyReloadKeepsRulesWhileTheRootIsAbsent(t *testing.T) {
+	repo := newPolicyRepo(t)
+	writeManifest(t, repo, "ai-kit.yaml", "sensitive_paths:\n  - private.txt\n")
+	p := LoadScopePolicy(filesystem.NewOS(), repo)
+	g := p.Guard("")
+	mustDeny(t, g, "private.txt")
+
+	away := filepath.Join(t.TempDir(), "away")
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	mustDeny(t, g, "private.txt")
+
+	// Nor does a file standing at the repository's path while it is away.
+	if err := os.Rename(repo, away); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "placeholder")
+	p.Reload()
+	if err := os.Remove(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(away, repo); err != nil {
+		t.Fatal(err)
+	}
+	mustDeny(t, g, "private.txt")
+
+	// A manifest actually removed from a present directory still clears them.
+	if err := os.Remove(filepath.Join(repo, "ai-kit.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	p.Reload()
+	mustAllow(t, g, "private.txt")
+}
+
+// A repository replaced while its manifests are being read must not have the
+// old directory's rules published for the new one. The reload stays pending
+// and every guard denies until a reload reads one directory start to finish.
+func TestScopePolicyReplacementDuringAReloadFailsClosedUntilReread(t *testing.T) {
+	repo := newPolicyRepo(t)
+	manifest := filepath.Join(repo, "ai-kit.yaml")
+	writeFile(t, manifest, "sensitive_paths: []\n")
+	fsys := &blockingReadFS{
+		FileSystem: filesystem.NewOS(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	p := LoadScopePolicy(fsys, repo)
+	g := p.Guard("")
+	mustAllow(t, g, "frontend/private.txt")
+	fsys.blockPath = manifest
+
+	done := make(chan struct{})
+	go func() { p.Reload(); close(done) }()
+	select {
+	case <-fsys.entered:
+	case <-time.After(10 * time.Second):
+		close(fsys.release)
+		t.Fatal("timed out waiting for the reload to read the manifest")
+	}
+	if err := os.Rename(repo, repo+"-old"); err != nil {
+		close(fsys.release)
+		t.Fatal(err)
+	}
+	writeFile(t, manifest, "sensitive_paths:\n  - frontend/private.txt\n")
+	close(fsys.release)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the reload")
+	}
+
+	if !p.ReloadPending() {
+		t.Fatal("a reload that straddled a replacement was not left pending")
+	}
+	mustDeny(t, g, "frontend/private.txt")
+	mustDeny(t, g, "main.go")
+
+	p.Reload()
+	if p.ReloadPending() {
+		t.Fatal("a clean reload left the policy pending")
+	}
+	mustDeny(t, g, "frontend/private.txt")
+	mustAllow(t, g, "main.go")
 }
 
 func TestScopePolicyProtectConfigSource(t *testing.T) {
@@ -563,6 +777,7 @@ func TestScopePolicyWatches(t *testing.T) {
 func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 	const credMarker = "ZZCREDMARKERA"
 	const secMarker = "ZZSECMARKERB"
+	const plainMarker = "ZZPLAINMARKERC"
 
 	t.Run("standardCheckout", func(t *testing.T) {
 		repo := newPolicyRepo(t)
@@ -576,6 +791,19 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			"nested/.env.local":        "KEY=" + secMarker + "\n",
 			"my-credentials.json":      "{\"cred\":\"" + secMarker + "\"}\n",
 			"id_dsa":                   secMarker + "\n",
+			".netrc":                   "machine example.com login u password " + credMarker + "\n",
+			"web/.npmrc":               "//registry.npmjs.org/:_authToken=" + credMarker + "\n",
+			".pypirc":                  "[pypi]\npassword = " + credMarker + "\n",
+			".aws/config":              "[default]\naws_session_token = " + credMarker + "\n",
+			".kube/config":             "users:\n- user:\n    token: " + credMarker + "\n",
+			".ssh/config":              "Host x\n  IdentityFile ~/.ssh/" + credMarker + "\n",
+			".gnupg/gpg.conf":          "default-key " + credMarker + "\n",
+			"_netrc":                   "machine example.com password " + credMarker + "\n",
+			".docker/config.json":      "{\"auths\":{\"r.example\":{\"auth\":\"" + credMarker + "\"}}}\n",
+			"infra/terraform.tfstate":  "{\"db_password\":\"" + credMarker + "\"}\n",
+			"web/app.js":               "// " + plainMarker + "\n",
+			".docker/daemon.json":      "{}\n",
+			"infra/main.tf":            "terraform {}\n",
 		}
 		for rel, content := range files {
 			writeFile(t, filepath.Join(repo, filepath.FromSlash(rel)), content)
@@ -586,6 +814,8 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		for _, denied := range []string{
 			".git/config", "secrets/token.txt", ".agent/receipts/x",
 			".firn/golem-consent.json", "nested/.env.local", "my-credentials.json", "id_dsa",
+			".netrc", "web/.npmrc", ".pypirc", ".aws/config", ".kube/config", ".ssh/config", ".gnupg/gpg.conf",
+			"_netrc", ".docker/config.json", "infra/terraform.tfstate",
 		} {
 			res := invokeTool(t, tools["read_file"], `{"path":"`+denied+`"}`)
 			if !res.IsError || res.Content != scopeDeniedMsg {
@@ -596,7 +826,7 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			t.Errorf("read_file(main.go) = %+v, want content", res)
 		}
 
-		for _, dir := range []string{".git", "secrets", ".agent", ".firn"} {
+		for _, dir := range []string{".git", "secrets", ".agent", ".firn", ".aws", ".kube", ".ssh", ".gnupg"} {
 			if res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
 				t.Errorf("list(%q) = %+v, want scope denial", dir, res)
 			}
@@ -609,7 +839,20 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 		if globAll.IsError || !strings.Contains(globAll.Content, "main.go") {
 			t.Fatalf("glob(**) = %+v, want main.go visible", globAll)
 		}
-		for _, hidden := range []string{".git", "secrets", ".agent", ".firn", ".env.local", "credentials", "id_dsa"} {
+		// A nested credential file would show only in its own directory's
+		// listing; each has an ordinary sibling that must stay listed.
+		for dir, pair := range map[string][2]string{
+			"web":     {"app.js", ".npmrc"},
+			".docker": {"daemon.json", "config.json"},
+			"infra":   {"main.tf", "terraform.tfstate"},
+		} {
+			res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`)
+			if res.IsError || !strings.Contains(res.Content, pair[0]) || strings.Contains(res.Content, pair[1]) {
+				t.Errorf("list(%s) = %+v, want %s without %s", dir, res, pair[0], pair[1])
+			}
+		}
+		for _, hidden := range []string{".git", "secrets", ".agent", ".firn", ".env.local", "credentials", "id_dsa",
+			".netrc", "_netrc", ".npmrc", ".pypirc", ".aws", ".kube", ".ssh", ".gnupg", "config.json", "tfstate"} {
 			if strings.Contains(listRoot.Content, hidden) {
 				t.Errorf("list(.) exposes %q: %q", hidden, listRoot.Content)
 			}
@@ -621,6 +864,73 @@ func TestScopePolicyFourToolsHideGitAndSensitiveFixtures(t *testing.T) {
 			if res := invokeTool(t, tools["search"], `{"pattern":"`+pattern+`"}`); res.Content != "no matches" {
 				t.Errorf("search(%q) = %q, want no matches", pattern, res.Content)
 			}
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); !strings.Contains(res.Content, "web/app.js") {
+			t.Errorf("search(%q) = %q, want the web/app.js match", plainMarker, res.Content)
+		}
+	})
+
+	t.Run("unicodeCredentialAliases", func(t *testing.T) {
+		repo := newPolicyRepo(t)
+		aliases := []struct{ disk, ascii string }{
+			{".ſſh/config", ".ssh/config"},
+			{".awſ/config", ".aws/config"},
+			{".docker/conﬁg.json", ".docker/config.json"},
+		}
+		for _, alias := range aliases {
+			writeFile(t, filepath.Join(repo, alias.disk), credMarker+"\n")
+		}
+		writeFile(t, filepath.Join(repo, "main.go"), "// "+plainMarker+"\n")
+		writeFile(t, filepath.Join(repo, ".docker/daemon.json"), "{}\n")
+		p := LoadScopePolicy(filesystem.NewOS(), repo)
+		tools := newScopedTools(t, repo, p.Guard(""))
+
+		for _, alias := range aliases {
+			if res := invokeTool(t, tools["read_file"], `{"path":"`+alias.disk+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
+				t.Errorf("read_file(%q) = %+v, want scope denial", alias.disk, res)
+			}
+			t.Run(alias.ascii, func(t *testing.T) {
+				disk, err := os.Stat(filepath.Join(repo, alias.disk))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ascii, err := os.Stat(filepath.Join(repo, alias.ascii))
+				if err != nil || !os.SameFile(disk, ascii) {
+					t.Skip("filesystem does not resolve the ASCII and Unicode names to the same file")
+				}
+				if res := invokeTool(t, tools["read_file"], `{"path":"`+alias.ascii+`"}`); !res.IsError || res.Content != scopeDeniedMsg {
+					t.Errorf("read_file(%q) = %+v, want scope denial for the Unicode disk name", alias.ascii, res)
+				}
+			})
+		}
+		if res := invokeTool(t, tools["read_file"], `{"path":"main.go"}`); res.IsError || !strings.Contains(res.Content, plainMarker) {
+			t.Errorf("read_file(main.go) = %+v, want ordinary content", res)
+		}
+		for dir, visible := range map[string]string{".": "main.go", ".docker": "daemon.json"} {
+			res := invokeTool(t, tools["list"], `{"path":"`+dir+`"}`)
+			if res.IsError || !strings.Contains(res.Content, visible) {
+				t.Errorf("list(%q) = %+v, want %s visible", dir, res, visible)
+			}
+			for _, hidden := range []string{".ſſh", ".awſ", "conﬁg.json"} {
+				if strings.Contains(res.Content, hidden) {
+					t.Errorf("list(%q) exposes %q: %q", dir, hidden, res.Content)
+				}
+			}
+		}
+		glob := invokeTool(t, tools["glob"], `{"pattern":"**"}`)
+		if glob.IsError || !strings.Contains(glob.Content, "main.go") || !strings.Contains(glob.Content, ".docker/daemon.json") {
+			t.Errorf("glob(**) = %+v, want ordinary files visible", glob)
+		}
+		for _, alias := range aliases {
+			if strings.Contains(glob.Content, alias.disk) {
+				t.Errorf("glob(**) exposes %q: %q", alias.disk, glob.Content)
+			}
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+credMarker+`"}`); res.IsError || res.Content != "no matches" {
+			t.Errorf("search(credential marker) = %+v, want no matches", res)
+		}
+		if res := invokeTool(t, tools["search"], `{"pattern":"`+plainMarker+`"}`); res.IsError || !strings.Contains(res.Content, "main.go") {
+			t.Errorf("search(ordinary marker) = %+v, want main.go", res)
 		}
 	})
 

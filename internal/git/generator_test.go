@@ -147,6 +147,33 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 	}
 }
 
+// The commit-message path never submits a thread id, so go-llm has no
+// session id to send and no destination -- opencode included -- receives an
+// x-opencode-session header from it (#306). It does not pass through the chat
+// runner's destination policy, so this pins the absence where it is decided.
+func TestMessageGenerator_Generate_SendsNoOpencodeSessionHeader(t *testing.T) {
+	headers := make(chan http.Header, 4)
+	gittest.Start(t, "", func(w http.ResponseWriter, r *http.Request) {
+		headers <- r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"chore: no session\"},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	if _, err := NewMessageGenerator().Generate(context.Background(), t.TempDir(), "+change\n"); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(headers) == 0 {
+		t.Fatal("no chat request reached the provider")
+	}
+	for len(headers) > 0 {
+		if got, ok := (<-headers)["X-Opencode-Session"]; ok {
+			t.Fatalf("x-opencode-session = %q, want the header absent", got)
+		}
+	}
+}
+
 func TestMessageGenerator_Generate_DoesNotSendToolReadResultsToProvider(t *testing.T) {
 	const secret = "firn-provider-boundary-secret"
 	root := t.TempDir()
@@ -342,12 +369,17 @@ func TestDestinationDeniedMessageIsScrubbedAndBounded(t *testing.T) {
 		t.Fatalf("scrub failed: %q %v", msg, ok)
 	}
 
-	long := strings.Repeat("中", 400)
+	// baseline measures the fixed-prose length with a purpose that scrubs to
+	// empty (a lone Cf rune, not the "" input -- that takes the "unknown
+	// purpose" fallback instead), so the cap's contribution below is derived
+	// rather than a hand-computed magic number.
+	baseline, _ := destinationDeniedMessage(&provider.DestinationDeniedError{Provider: "p", Purpose: "\u200b"})
+	want := utf8.RuneCountInString(baseline) + deniedFieldCap
+
+	long := strings.Repeat("中", 2*deniedFieldCap)
 	msg, _ = destinationDeniedMessage(&provider.DestinationDeniedError{Provider: "p", Purpose: long})
-	// Fixed prefix: "destination " (12) + "provider p" (10) + " is not consented for " (22) = 44 runes.
-	// With 256-rune cap on each field, total = 44 + 256 = 300 runes.
-	if utf8.RuneCountInString(msg) != 300 || !utf8.ValidString(msg) {
-		t.Fatalf("truncation not rune-safe/bounded: got %d runes (want 300), valid=%v", utf8.RuneCountInString(msg), utf8.ValidString(msg))
+	if utf8.RuneCountInString(msg) != want || !utf8.ValidString(msg) {
+		t.Fatalf("truncation not rune-safe/bounded: got %d runes (want %d), valid=%v", utf8.RuneCountInString(msg), want, utf8.ValidString(msg))
 	}
 
 	wrapped := fmt.Errorf("commit message generation blocked: %s: %w", msg, provider.ErrDestinationDenied)

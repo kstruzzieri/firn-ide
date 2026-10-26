@@ -7,6 +7,230 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-25
+
+Defect release. Golem moves to go-llm v0.3.0, which marks tool results as
+untrusted data, and New chat now also clears the conversation the model sees.
+It fixes a terminal that lost its scrollback when the bottom panel collapsed,
+Cmd+[ and Cmd+] in the editor, an editor tab strip that hid tabs without saying
+so, a file tree that missed changes made while a project was closed, workspace
+session saves that could land out of order or erase the Python interpreter
+override, and a Run Profiles panel that said nothing when its file could not be
+loaded. Golem configuration notices now reach screen readers, Golem refuses a
+wider set of credential files, Firn declares macOS 14 as its floor, and release
+binaries are built with Go 1.27.3.
+
+### Golem
+
+- Golem runs on go-llm v0.3.0. Tool results now reach the model inside a fenced
+  block marked as untrusted data, and every run appends a short tool trust
+  contract to the system prompt, so text a tool returns from a file is marked as
+  data rather than instructions. (#306)
+- Golem chat's requests to OpenAI-compatible endpoints identify themselves as
+  `Firn/<version>`; commit-message generation keeps go-llm's default. opencode
+  (`https://opencode.ai`) now receives the `x-opencode-session` header it uses
+  for routing and prompt caching, carrying an opaque value per conversation
+  that changes on New chat and when Firn restarts and cannot be traced back to
+  the repository path. Every other OpenAI-compatible endpoint, local or remote,
+  receives no session header. (#306)
+- New chat in the Golem panel now also clears the conversation Firn keeps for
+  the model, docked or undocked. Before, it cleared only the view: the next turn
+  still sent the cleared prompts and answers to the model, and a long session
+  eventually passed the conversation size limit, after which most turns failed
+  until Firn restarted. New chat now recovers from that state. It is unavailable
+  while a reply is running, and if the reset is refused the conversation and the
+  draft stay as they were. Queue editing is disabled while the reset is pending,
+  so newly entered text cannot be erased by its completion. New chat on a
+  conversation from a workspace that is no longer open is refused until the
+  workspace is open again. (#361)
+- A Golem conversation cleared by New chat can no longer be overwritten by a
+  save that began before the reset. The session store now keeps each
+  conversation's highest revision across the reset and recreates the
+  conversation above it, so the stale save is refused as a conflict instead of
+  replacing the new conversation, as go-llm v0.5.0's session store contract
+  requires; Firn still runs go-llm v0.3.0. (#418)
+
+### Editor
+
+- Cmd+[ and Cmd+] in the editor now go back and forward through
+  go-to-definition history on macOS, as Alt+Left and Alt+Right now do on
+  Windows and Linux. The editor's own bindings for the same keys ran first, so
+  in an editable file the keys dedented and indented, or moved the cursor over
+  the previous or next syntax element, instead of navigating. With no history
+  in that direction they still do. (#279)
+- When the editor's tabs no longer fit the panel, a scroll button now appears
+  at each edge that hides tabs and disappears once that side is fully
+  scrolled, so every open tab can be reached with a mouse alone. Before, the
+  strip scrolled only by a sideways trackpad swipe or Shift+wheel, with nothing
+  on screen to say tabs were hidden. Activating any tab, from a click, the
+  explorer, a search result, the command palette, the keyboard or the Git panel,
+  now scrolls it fully into view, not just the Golem Configuration tab. A tab
+  cut off at the edge no longer shows half of its close button, which read as
+  a `>` scroll arrow but closed the tab. (#406)
+
+### Terminal
+
+- Collapsing the bottom panel no longer clears the terminal. Each session's
+  scrollback, scroll position and shell-integration markers are kept while the
+  panel is collapsed, output printed meanwhile appears on expand, and the
+  terminal is released only when its session is closed. A session hidden behind
+  another tab or panel is no longer resized to a few columns, which had made the
+  shell reflow and redraw its prompt. (#275)
+- A terminal session opened with + or from the empty terminal panel now takes
+  keyboard focus, so typing reaches its shell without clicking into it first.
+  Switching session tabs, re-expanding the bottom panel, and moving focus,
+  switching apps, or collapsing the panel while the shell starts leave focus
+  where it was. (#276)
+
+### Workspace
+
+- The file tree now matches the disk when a project is opened. A directory
+  created while the project was closed was missing until a later filesystem
+  event; the saved explorer snapshot could be painted over the fresh root
+  read, and subtrees it carried counted as already loaded. Opening re-reads
+  the root and every expanded directory, treats the rest of the snapshot as
+  stale until expanded, and reselecting the already-open project does the same
+  tree-only refresh, including retrying a failed Workspace View root. Tree
+  reconciliation preserves literal backslashes in macOS/Linux directory names.
+  (#256)
+- Workspace session saves that queued behind one still in progress were sent
+  together and could land in any order, so an older snapshot of the session
+  (open tabs, cursors, layout) could overwrite a newer one, most likely after
+  switching quickly between workspaces. Saves now go out one at a time, in the
+  order they were made, and changing the Python interpreter updates the saved
+  session in one step instead of writing back the copy it read a moment
+  earlier. (#401)
+- The Python interpreter chosen for a workspace now survives a restart. Every
+  workspace session save (after an edit, on blur, hide or quit) rewrote the
+  saved state without it, so the next start fell back to the detected
+  interpreter. This affected every release since the interpreter picker shipped
+  in v0.9.0. (#392)
+
+### Git
+
+- On Windows, Firn's Git commands now drop the Git variables that redirect a
+  command to another repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`
+  and the rest of Git's repository-local set) whatever their letter case.
+  Windows treats environment names case-insensitively, so a `git_dir`
+  inherited from the environment Firn was started in reached Git as
+  `GIT_DIR`. On macOS and Linux a lowercase `git_dir` is a different variable
+  and still passes through. (#369)
+
+### Run Profiles
+
+- The Run Profiles panel now shows a notice when `.firn/run-profiles.json` could
+  not be loaded, naming the file, the reason and the remedy, with a Reload
+  action. The same notice reports a migrated profiles file that could not be
+  written back and a run-recency sidecar (`.firn/run-recency.json`) that could
+  not be read or migrated. Reload re-reads the saved profiles in place, leaving
+  running profiles and language servers untouched, and once the file loads it
+  lifts the refusal of run profile changes from #359 without a restart or
+  reopening the folder. The refusal's remedy now names that Reload instead of a
+  restart. The Retry button shown when the panel cannot load run profiles is now
+  sized to its label instead of clipped. (#366, #367)
+
+### Accessibility
+
+- Screen readers now announce the Golem configuration notices: the result of
+  Apply, Confirm and Cancel, the answer to Check destinations, and the busy
+  notice after Refresh. Each notice appeared together with its own status
+  region, which assistive technology does not reliably announce. Each is now
+  announced as its result lands, through one region that is always present, so
+  a result that repeats the one before it, such as Busy after Retry or after a
+  second Refresh, is announced again, and a notice that only stays on screen is
+  not. The model filter's match count is announced just after the route editor
+  opens and whenever it changes. (#314)
+
+### Platform
+
+- Firn declares macOS 14 (Sonoma) as its floor. Both Info.plists, the darwin
+  deployment target and C compiler minimum, and the README's install section now
+  say 14, and tests keep them in lockstep, including after build-asset
+  regeneration. The 12.0 that v0.13.0 declared was below what the frontend
+  needs: `<dialog>` arrived in Safari 15.4, container queries and subgrid in 16,
+  `color-mix()` in 16.2 and regex lookbehind in 16.4, while Sonoma's system
+  WebKit is Safari 17. The frontend build keeps Vite's default Safari 16 target,
+  which stays below the floor. Ventura left Apple's security-update window in
+  September 2025. (#316)
+
+### Security
+
+- Golem's file tools now refuse more credential files by path: `.netrc`,
+  `_netrc`, `.npmrc` and `.pypirc` at any depth, anything under a `.ssh`,
+  `.gnupg`, `.aws` or `.kube` directory (the set go-llm v0.5.0 refuses, which
+  Firn, still on go-llm v0.3.0, now carries in its own floor),
+  `.docker/config.json`, and Terraform state (`*.tfstate`, `*.tfstate.backup`).
+  Firn's deny floor already covered `.env` files, private key file names and
+  names containing `credential` or `secret`, but not these, so a chat run could
+  open a project's `.npmrc` auth token or an `.aws/config` session token with
+  `read_file` and send it to the configured model. `read_file` now refuses them,
+  listings and globs leave them out, and search skips them, as for the rest of
+  the floor; a repository's `ai-kit.yaml` cannot re-allow them. Floor checks
+  also cover equivalent Unicode filenames on macOS filesystems, without changing
+  manifest glob matching. (#430)
+
+### Build and CI
+
+- Every build, test, lint and release job now runs on Go 1.27.3, the
+  `toolchain` line in `go.mod`. Go 1.25 left security support when Go 1.27
+  shipped, and `govulncheck` reports ten standard-library vulnerabilities in
+  the go1.25.14 release binaries (net/http, net/textproto, crypto/tls) that are
+  fixed only from go1.26.9 on. The module's `go 1.25.0` language version is
+  unchanged. golangci-lint moves from v2.11.4 to v2.14.0 in CI, the first
+  release that reads the export data Go 1.27.2 emits, and the build Taskfiles'
+  hint for obfuscated builds names garble v0.18.0, the release built for Go
+  1.27. The generated TypeScript bindings now type `json.RawMessage` through
+  the `encoding/json/jsontext` package Go 1.27 introduces; the shape is still
+  `any`. (#373) Go 1.27.3 also fixes GO-2026-6809 in `crypto/x509`,
+  distrusting compromised intermediate certificates.
+- CI runs `govulncheck` on a Linux build of the app made with the release build
+  tags: daily, on pushes to `develop`, and on pull requests that change Go
+  code, `go.mod` or `go.sum`. It reports known
+  vulnerabilities in the Go standard library or a dependency whose code is
+  linked into the app. It scans the build rather than the source because Wails
+  calls bound methods through reflection, which a source scan cannot follow, so
+  code reached only through a binding, such as the LSP server download, would
+  go unscanned. Nothing ran it before, which is why it went unnoticed that
+  v0.12.0 was built with go1.25.0 rather than a patched 1.25 release (#372). It
+  is not a required check. (#376)
+- Every `wails3 task` call that needed the frontend's dependencies ran
+  `npm ci` again, because the install step never recognised an install that
+  had already happened. `wails3 dev` runs the dev server and the build as
+  separate processes, so both reinstalled at once, each deleting
+  `node_modules` under the other, and the run could fail with a corrupted
+  install. The step now skips while its last successful `npm ci` is newer than
+  both `package.json` and `package-lock.json` and ran on the same OS and CPU
+  architecture, so `wails3 dev` installs once and local builds stop
+  reinstalling on every run. (#414)
+
+### Known limitations
+
+- Commit message generation sends the staged diff (up to 48 KiB) to the model
+  without the deny rules Golem chat applies, so the content of a staged `.env`,
+  key or credentials file can reach the prompt, and can leave the machine when
+  the request goes to an approved remote destination on the agent route
+  (#384).
+- The run-profile store writes its profiles without checking whether
+  `.firn/run-profiles.json` changed on disk, so a branch checkout or merge that
+  rewrites the file is overwritten by the next Save, Pin, Adopt or Delete. The
+  lost version can be recovered from Git (#397).
+- In the Golem configuration view, closing the Save as profile popover while a
+  save is in flight drops its result, failures included, so a failed save can
+  look like it succeeded (#396).
+- The Golem chat's live region reads the newest error in the whole transcript,
+  so it can re-announce an earlier run's error after a later run answers, and
+  it skips a repeated one (#395).
+- In a terminal session, Tab and Shift+Tab go to the shell, so only Cmd
+  shortcuts such as Cmd+Shift+P move focus out; the terminal input does not
+  name its session, and tabbing out of the session menu can drop focus to the
+  page (#429).
+- The destination approval row names one model, but an approval covers every
+  model on that endpoint, and it reads `Reached by agent` without saying when
+  the endpoint is reached only through the agent's fallbacks (#355).
+- Golem's deny floor matches paths by name, so on Windows a trailing dot or
+  space, an alternate data stream suffix or a short (8.3) name, and on any
+  platform a hard link, can reach a denied file (#431).
+
 ## [0.13.0] - 2026-10-02
 
 Feature release covering the narrow-pane redesign of the Golem configuration
@@ -472,7 +696,8 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...v0.11.0

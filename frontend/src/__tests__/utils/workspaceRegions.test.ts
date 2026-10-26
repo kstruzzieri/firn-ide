@@ -1,4 +1,5 @@
 import {
+  treeLoadLevels,
   createWorkspacePathResolver,
   getInfraFileAccent,
   relativePathFromRoot,
@@ -195,5 +196,45 @@ describe('createRegionAccentResolver', () => {
   it('returns null for paths outside the repo root', () => {
     const resolve = createRegionAccentResolver(root, workspaces);
     expect(resolve(entry('/Users/me/other/App.tsx'))).toBeNull();
+  });
+});
+
+describe('treeLoadLevels', () => {
+  it('preserves literal POSIX backslashes without inventing or merging ancestors', () => {
+    expect(treeLoadLevels('/ws', ['/ws/a\\b/c', '/ws/a/b', '/ws/tail\\'])).toEqual([
+      ['/ws'],
+      ['/ws/a\\b', '/ws/a', '/ws/tail\\'],
+      ['/ws/a\\b/c', '/ws/a/b'],
+    ]);
+    expect(treeLoadLevels('/ws\\repo', ['/ws\\repo/src/sub'])).toEqual([
+      ['/ws\\repo'],
+      ['/ws\\repo/src'],
+      ['/ws\\repo/src/sub'],
+    ]);
+  });
+
+  it('starts at the root, adds missing ancestors, groups by depth and drops outsiders', () => {
+    expect(treeLoadLevels('/ws', ['/ws/a/b/c', '/ws/x', '/other/y', '/ws'])).toEqual([
+      ['/ws'],
+      ['/ws/a', '/ws/x'],
+      ['/ws/a/b'],
+      ['/ws/a/b/c'],
+    ]);
+  });
+
+  it('builds Windows ancestors with the separators it was given and dedupes by case', () => {
+    expect(treeLoadLevels('C:\\repo', ['C:\\repo\\a\\b', 'c:\\repo\\a', 'D:\\other\\x'])).toEqual([
+      ['C:\\repo'],
+      ['C:\\repo\\a'],
+      ['C:\\repo\\a\\b'],
+    ]);
+  });
+
+  it('accepts forward-slash UNC roots with native Windows descendants', () => {
+    expect(treeLoadLevels('//server/share', ['\\\\server\\share\\src\\inner'])).toEqual([
+      ['//server/share'],
+      ['\\\\server\\share\\src'],
+      ['\\\\server\\share\\src\\inner'],
+    ]);
   });
 });

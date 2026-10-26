@@ -114,6 +114,53 @@ func isolatedPlanningParityConfig(remoteA, _, remoteC string) string {
 	}`, remoteA, remoteC)
 }
 
+// #286 item 1 parity sibling: a provider whose base URL carries a query is
+// exactly the shape reachableDestinations silently drops (F15's own log
+// counterpart lives in reachable_test.go). golem.New must reject the SAME
+// config with the config-error sentinel, not the policy-denial one -- proof
+// that dropping the hop from the read-only listing does not paper over a
+// real admission failure. Materialize validates every configured provider up
+// front (even ones off the active route), so this needs no listener and the
+// query-carrying provider being B (on the active fallback chain here) versus
+// off-route makes no difference; it never skips.
+func TestGolemNewRejectsQueryCarryingBaseURLAsInvalidNotDenied(t *testing.T) {
+	path := writeParityConfig(t, transitiveFallbacksParityConfig(
+		"http://firn-parity-a.invalid",
+		"http://firn-parity-b.invalid/v1?tenant=x",
+		"",
+	))
+	doc, err := config.LoadDocument(path)
+	if err != nil {
+		t.Fatalf("LoadDocument: %v", err)
+	}
+	derived := reachableDestinations(doc.Config())
+	if len(derived) != 1 || derived[0].Destination.Provider != "A" {
+		t.Fatalf("want derived set exactly {A} (B's query-carrying endpoint dropped), got %+v", derived)
+	}
+
+	grant, err := provider.NewDestination(derived[0].Destination.Provider, derived[0].Destination.Endpoint)
+	if err != nil {
+		t.Fatalf("NewDestination(A): %v", err)
+	}
+
+	rt, err := golem.New(context.Background(), golem.Options{
+		Root:               t.TempDir(),
+		ConfigPath:         path,
+		MaxSteps:           1,
+		DisableCompression: true,
+		DestinationPolicy:  provider.NewDestinationPolicy(grant),
+	})
+	if rt != nil {
+		_ = rt.Close()
+	}
+	if !errors.Is(err, provider.ErrDestinationInvalid) {
+		t.Fatalf("want errors.Is(err, ErrDestinationInvalid), got %v", err)
+	}
+	if errors.Is(err, provider.ErrDestinationDenied) {
+		t.Fatalf("must not be the denial sentinel (this is a config error, not a policy decision): %v", err)
+	}
+}
+
 // F15: the D7 mirror (reachableDestinations) is honest against real golem
 // admission. Denial half is pre-I/O (.invalid endpoints are fine — gate.Install
 // runs before any provider is constructed). Admission half runs RefreshModels
@@ -197,8 +244,9 @@ func TestReachableSetMatchesGolemAdmission(t *testing.T) {
 			}
 
 			// --- Admission half ------------------------------------------------
-			// One non-loopback listener per derived remote (skips the whole
-			// subtest when the host has none — testutil.ListenNonLoopback).
+			// One non-loopback listener per derived remote. A host without one
+			// skips the subtest locally and fails it in CI, where
+			// FIRN_REQUIRE_NONLOOPBACK=1 (testutil.ListenNonLoopback).
 			listeners := map[string]string{}
 			for _, d := range derived {
 				ln, baseURL := testutil.ListenNonLoopback(t)

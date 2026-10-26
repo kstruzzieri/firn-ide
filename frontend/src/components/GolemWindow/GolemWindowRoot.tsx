@@ -124,6 +124,7 @@ export function GolemWindowRoot() {
   const visible = windowState?.phase === 'ready';
   const canRetry = !retryChangesNothing(windowState);
   const composerPending = conversationId !== null && pendingComposers.has(conversationId);
+  const resetting = conversationId !== null && pendingComposers.get(conversationId) === 'clear';
 
   const clearBusy =
     conversation !== null &&
@@ -256,6 +257,7 @@ export function GolemWindowRoot() {
             actions={actions}
             frozen={frozen}
             composerPending={composerPending}
+            resetting={resetting}
             focusRevision={view.composerFocusRevision}
             visible={visible}
           />
