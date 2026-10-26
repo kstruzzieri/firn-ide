@@ -48,16 +48,42 @@ This section supersedes the archived delivery narrative below for current priori
 
 ### Repository health
 
-- `v0.13.0` is live from `main` at `009059d` (PR #390, 2026-10-02). The release workflow, Build, Tests, and Lint passed. macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published, all built with go1.25.14 (#372).
-- Releases now run on a three-week train, each with a contract in [`docs/releases/`](releases/README.md): `v0.13.0` shipped 2026-10-02, three days after its planned 2026-09-29 (its contract records why), and `v0.14.0` ships 2026-10-20 and `v0.15.0` 2026-11-10. A patch release is cut only for a regression or data loss.
+- `v0.14.0` is live from `main` at `3c821ec` (PR #464, 2026-10-25). The release workflow, Build, Tests, and Lint passed. macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published, all built with go1.27.3 (#465).
+- Releases now run on a three-week train, each with a contract in [`docs/releases/`](releases/README.md): `v0.14.0` shipped 2026-10-25, five days after its planned 2026-10-20 (its contract records why), and `v0.15.0` ships 2026-11-10. A patch release is cut only for a regression or data loss.
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
-- Release documentation and install examples now target `v0.13.0`.
+- Release documentation and install examples now target `v0.14.0`.
 - PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs now pin `wails3` to the module's `v3.0.0-beta.16`; cross-platform PR verification remains a future release-engineering improvement. #373 (PR #420, 2026-10-10) moved the `toolchain` line to go1.27.2 after Go 1.25 left security support; the `go 1.25.0` directive stays, golangci-lint is pinned at v2.14.0 (the first release that reads go1.27.2 export data), the Taskfiles name garble v0.18.0 for obfuscated builds, and the generated bindings were regenerated (Go 1.27 routes `json.RawMessage` through `encoding/json/jsontext`).
 - #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
 - The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — and the Phase 3 confidence layer added #240-#242, rather than any observed regression. Treat those as scoped enhancements, not defects.
 
 ### Latest delivery wave
+
+**v0.14.0 (2026-10-25)** shipped what `develop` held at the 2026-10-13 freeze,
+plus the post-freeze fixes its [contract](releases/v0.14.0.md) admitted:
+
+1. **Golem runtime:** go-llm v0.3.0, which marks tool results as untrusted
+   data, with Firn sending `x-opencode-session` only to opencode (#306); New
+   chat also clears the conversation the model sees (#361), and a cleared
+   conversation can no longer be overwritten (#418). Golem refuses more
+   credential files (#430).
+2. **Editor and terminal:** Cmd+[ and Cmd+] (#279), scroll buttons for an
+   overflowing tab strip (#406), terminal scrollback kept across a
+   bottom-panel collapse (#275), and a new terminal session takes focus
+   (#276).
+3. **Workspace state:** the file tree matches the disk when a project opens
+   (#256), session saves land in order (#401) and keep the Python
+   interpreter (#392), and the Run Profiles panel says when its file cannot
+   be loaded and offers Reload (#366, #367). PR #440 fixed two regressions
+   from #415 that the release review found after the freeze.
+4. **Accessibility:** the Golem configuration notices reach screen readers
+   (#314).
+5. **Platform and build:** macOS 14 is the floor (#316); on Windows, Firn's
+   Git commands drop the variables that redirect Git to another repository,
+   whatever their letter case (#369); release builds moved to go1.27.2 (#373)
+   and then go1.27.3 (#465); CI runs `govulncheck` (#376); and `wails3 task`
+   reinstalls the frontend's dependencies only when its package files, OS or
+   CPU architecture change (#414).
 
 **v0.13.0 (2026-10-02)** shipped what `develop` held at the 2026-09-25 freeze,
 plus the post-freeze fixes its [contract](releases/v0.13.0.md) admitted:
