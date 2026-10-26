@@ -63,10 +63,10 @@ This section supersedes the archived delivery narrative below for current priori
 plus the post-freeze fixes its [contract](releases/v0.14.0.md) admitted:
 
 1. **Golem runtime:** go-llm v0.3.0, which marks tool results as untrusted
-   data and sends `x-opencode-session` only to opencode (#306); New chat also
-   clears the conversation the model sees (#361), and a cleared conversation
-   can no longer be overwritten (#418). Golem refuses more credential files
-   (#430).
+   data, with Firn sending `x-opencode-session` only to opencode (#306); New
+   chat also clears the conversation the model sees (#361), and a cleared
+   conversation can no longer be overwritten (#418). Golem refuses more
+   credential files (#430).
 2. **Editor and terminal:** Cmd+[ and Cmd+] (#279), scroll buttons for an
    overflowing tab strip (#406), terminal scrollback kept across a
    bottom-panel collapse (#275), and a new terminal session takes focus
@@ -78,9 +78,12 @@ plus the post-freeze fixes its [contract](releases/v0.14.0.md) admitted:
    from #415 that the release review found after the freeze.
 4. **Accessibility:** the Golem configuration notices reach screen readers
    (#314).
-5. **Platform and toolchain:** macOS 14 is the floor (#316), release builds
-   moved to go1.27.2 (#373) and then go1.27.3 (#465), and CI runs
-   `govulncheck` (#376).
+5. **Platform and build:** macOS 14 is the floor (#316); on Windows, Firn's
+   Git commands drop the variables that redirect Git to another repository,
+   whatever their letter case (#369); release builds moved to go1.27.2 (#373)
+   and then go1.27.3 (#465); CI runs `govulncheck` (#376); and `wails3 task`
+   reinstalls the frontend's dependencies only when its package files change
+   (#414).
 
 **v0.13.0 (2026-10-02)** shipped what `develop` held at the 2026-09-25 freeze,
 plus the post-freeze fixes its [contract](releases/v0.13.0.md) admitted:
