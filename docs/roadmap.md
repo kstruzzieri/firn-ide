@@ -82,8 +82,8 @@ plus the post-freeze fixes its [contract](releases/v0.14.0.md) admitted:
    Git commands drop the variables that redirect Git to another repository,
    whatever their letter case (#369); release builds moved to go1.27.2 (#373)
    and then go1.27.3 (#465); CI runs `govulncheck` (#376); and `wails3 task`
-   reinstalls the frontend's dependencies only when its package files change
-   (#414).
+   reinstalls the frontend's dependencies only when its package files, OS or
+   CPU architecture change (#414).
 
 **v0.13.0 (2026-10-02)** shipped what `develop` held at the 2026-09-25 freeze,
 plus the post-freeze fixes its [contract](releases/v0.13.0.md) admitted:
