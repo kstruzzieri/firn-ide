@@ -6,6 +6,20 @@ import { pathUnderRoot, relativePathFromRoot } from './workspaceRegions';
 
 const MAX_RECENT = 10;
 
+/** A drive-letter or UNC path, where `\` and `/` both separate and case folds. */
+const WINDOWS_PATH = /^[a-z]:[\\/]|^\\\\|^\/\//i;
+
+/**
+ * Whether `candidate` names the same directory as `active`. Windows paths
+ * compare through relativePathFromRoot (either separator, drive-letter case);
+ * on macOS and Linux a backslash is an ordinary filename character, so
+ * `/tmp/a\b` is not `/tmp/a/b` and only trailing slashes are ignored.
+ */
+function isSameWorkspacePath(candidate: string, active: string): boolean {
+  if (WINDOWS_PATH.test(active)) return relativePathFromRoot(candidate, active) === '';
+  return candidate.replace(/\/+$/, '') === active.replace(/\/+$/, '');
+}
+
 /**
  * Opens a workspace by its absolute path. Handles clearing stale tree,
  * setting workspace state, updating the window title, and optimistically
@@ -26,7 +40,7 @@ export function openWorkspaceByPath(folderPath: string) {
   // A full open would pause run events and reset run state for no reason, but
   // doing nothing leaves whatever the watcher missed on screen indefinitely (#256).
   const active = store.workspace;
-  if (active && relativePathFromRoot(folderPath, active.path) === '') {
+  if (active && isSameWorkspacePath(folderPath, active.path)) {
     const visiblePaths = new Set(store.expandedPaths);
     const scope = store.workspaces.find((w) => w.id === store.activeWorkspaceId);
     if (scope?.id !== 'project' && scope?.relDir) {
@@ -42,7 +56,8 @@ export function openWorkspaceByPath(folderPath: string) {
     return;
   }
 
-  const separator = folderPath.includes('\\') ? '\\' : '/';
+  // Only a Windows path separates on `\`; on macOS and Linux it is part of a name.
+  const separator = WINDOWS_PATH.test(folderPath) && folderPath.includes('\\') ? '\\' : '/';
   const folderName = folderPath.split(separator).pop() || folderPath;
   const cachedTree = getCachedWorkspaceTree(folderPath);
 

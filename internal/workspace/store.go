@@ -50,10 +50,23 @@ func NewStore(fsys filesystem.FileSystem, baseDir string) *Store {
 	}
 }
 
-// Save persists workspace state to disk. It sets LastOpened automatically.
+// Save persists the session the frontend sends. It sets LastOpened
+// automatically. The lsp block is not part of that session: SetLSPInterpreter
+// owns it, so Save keeps whatever the file holds and ignores any lsp the
+// state carries (#392). It reads the file on every call, as SetLSPInterpreter
+// does, so a file it cannot read is refused rather than rewritten without its
+// override (#290).
 func (s *Store) Save(state State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	state.LSP = LSPState{}
+	if strings.TrimSpace(s.baseDir) != "" && state.WorkspacePath != "" {
+		id := pathToID(state.WorkspacePath)
+		// A read failure latches writeBlocked, so saveLocked refuses below.
+		if sf, err := s.readLocked(id, filepath.Join(s.baseDir, id+".json")); err == nil && sf != nil {
+			state.LSP = sf.State.LSP
+		}
+	}
 	return s.saveLocked(state)
 }
 

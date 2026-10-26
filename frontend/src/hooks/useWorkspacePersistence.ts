@@ -163,9 +163,10 @@ async function restoreWorkspaceState(
     if (!state) {
       // First time opening, use defaults. A cached tree may still have been
       // painted above (a same-session switch-back whose save never landed), and
-      // it is as stale as any snapshot (#256).
+      // it is as stale as any snapshot (#256). Not awaited, like the refresh
+      // below: a read that never answers must not hold the restore.
       if (cachedTree !== undefined) {
-        await reconcileTreeWithDisk(
+        void reconcileTreeWithDisk(
           workspacePath,
           useIDEStore.getState().expandedPaths,
           () => signal.aborted
@@ -265,8 +266,12 @@ async function restoreWorkspaceState(
 
       // Whatever was just painted (snapshot or cache) was saved before the
       // project was closed. Re-read the root, the expanded paths and the
-      // ancestors that lead to them, and distrust the rest (#256).
-      await reconcileTreeWithDisk(
+      // ancestors that lead to them, and distrust the rest (#256). Not
+      // awaited: the painted tree is already on screen, and a read that never
+      // answers (a hung network or FUSE mount) would otherwise hold the tabs
+      // and every session save behind it. The refresh stops on its own when
+      // this restore is aborted.
+      void reconcileTreeWithDisk(
         workspacePath,
         state.explorer.expandedPaths ?? [],
         () => signal.aborted
@@ -355,9 +360,10 @@ async function restoreWorkspaceState(
       // The cached tree painted before the load is still on screen and still
       // stale (#256). The live expandedPaths are right whether the load itself
       // threw (the session reset emptied them) or a later restore step did
-      // (they were restored). reconcileTreeWithDisk never rejects.
+      // (they were restored). reconcileTreeWithDisk never rejects, and is not
+      // awaited for the same reason as above.
       if (cachedTree !== undefined) {
-        await reconcileTreeWithDisk(
+        void reconcileTreeWithDisk(
           workspacePath,
           useIDEStore.getState().expandedPaths,
           () => signal.aborted
