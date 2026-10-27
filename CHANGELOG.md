@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of a role name no row carries (`embed-m`, or a generated `analysis-m`).
   Firn checks the same roles and capabilities Golem does before each change
   is applied, so the refusal arrives with the use case as its subject. (#338)
+- Golem Configuration accepts narrowing a model's capabilities for one route
+  while another route on the same role moves to a different model, in one
+  Apply. Keeping `chat` on a shared model without tool_call while `agent`
+  moves off it was refused twice over: the route editor said agent needs
+  tool_call and kept Done disabled, and Apply refused it for agent as well,
+  though agent's new model has tool_call and every requirement holds once the
+  change is applied. Apply now binds a moved route to the role it creates for
+  it before any capability override runs, and the editor checks the override
+  against the routes that stay on the model, which are still checked and
+  named. (#474)
 - The route editor in Golem Configuration now refuses, before Apply, a route
   joining a model whose capabilities another route already fixes explicitly
   when the exposure ticked here differs from that set. Golem rejected such a
