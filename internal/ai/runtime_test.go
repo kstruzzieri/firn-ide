@@ -16,7 +16,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -995,21 +994,37 @@ func TestGolemRuntimeTransportRefusesRedirects(t *testing.T) {
 	}
 }
 
-// newOllamaChatServer serves one streamed ollama chat answer on ln and counts
-// the requests it receives; the caller starts it, with or without TLS.
-func newOllamaChatServer(t *testing.T, ln net.Listener, hits *int32) *httptest.Server {
+// chatServer serves one streamed ollama chat answer per request and records
+// the Host each request named; the caller starts it, with or without TLS.
+type chatServer struct {
+	*httptest.Server
+	mu    sync.Mutex
+	hosts []string
+}
+
+func newOllamaChatServer(t *testing.T, ln net.Listener) *chatServer {
 	t.Helper()
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(hits, 1)
+	cs := &chatServer{}
+	cs.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cs.mu.Lock()
+		cs.hosts = append(cs.hosts, r.Host)
+		cs.mu.Unlock()
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		_, _ = io.WriteString(w, `{"model":"big-coder","message":{"role":"assistant","content":"done"},"done":false}`+"\n")
 		_, _ = io.WriteString(w, `{"model":"big-coder","message":{"role":"assistant","content":""},"done":true}`+"\n")
 	}))
-	_ = srv.Listener.Close()
-	srv.Listener = ln
-	t.Cleanup(srv.Close)
-	return srv
+	_ = cs.Listener.Close()
+	cs.Listener = ln
+	t.Cleanup(cs.Close)
+	return cs
+}
+
+// requestHosts is the Host of every request served so far.
+func (cs *chatServer) requestHosts() []string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return slices.Clone(cs.hosts)
 }
 
 // standInDialer refuses the refused IP literals, dials every other literal as
@@ -1082,15 +1097,17 @@ func TestGolemRuntimeTransportDialsLoopbackForLocalhost(t *testing.T) {
 			if err != nil {
 				t.Skipf("no %s loopback listener: %v", tc.name, err)
 			}
-			var hits, decoyHits int32
-			newOllamaChatServer(t, ln, &hits).Start()
+			var decoyHits int32
+			srv := newOllamaChatServer(t, ln)
+			srv.Start()
 			decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&decoyHits, 1)
 				w.WriteHeader(http.StatusOK)
 			}))
 			t.Cleanup(decoy.Close)
 
-			endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("http://localhost:%d", ln.Addr().(*net.TCPAddr).Port))
+			port := ln.Addr().(*net.TCPAddr).Port
+			endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("http://localhost:%d", port))
 			if err != nil || !local {
 				t.Fatalf("NormalizeEndpoint = %q local=%v err=%v", endpoint, local, err)
 			}
@@ -1109,8 +1126,8 @@ func TestGolemRuntimeTransportDialsLoopbackForLocalhost(t *testing.T) {
 			if chatErr != nil {
 				t.Fatalf("Chat: %v", chatErr)
 			}
-			if got := atomic.LoadInt32(&hits); got != 1 {
-				t.Fatalf("loopback listener received %d request(s), want 1", got)
+			if got, want := srv.requestHosts(), []string{fmt.Sprintf("localhost:%d", port)}; !slices.Equal(got, want) {
+				t.Fatalf("loopback listener saw Host %q, want %q: one request that still names localhost", got, want)
 			}
 		})
 	}
@@ -1142,8 +1159,8 @@ func TestGolemRuntimeTransportDialsLoopbackForHTTPSLocalhost(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Listen: %v", err)
 			}
-			var hits, hookUsed int32
-			srv := newOllamaChatServer(t, ln, &hits)
+			var hookUsed int32
+			srv := newOllamaChatServer(t, ln)
 			srv.StartTLS()
 
 			port := ln.Addr().(*net.TCPAddr).Port
@@ -1172,11 +1189,11 @@ func TestGolemRuntimeTransportDialsLoopbackForHTTPSLocalhost(t *testing.T) {
 			if chatErr != nil {
 				t.Fatalf("Chat: %v", chatErr)
 			}
-			if want := []string{fmt.Sprintf("127.0.0.1:%d", port)}; !reflect.DeepEqual(rec.seen(), want) {
-				t.Fatalf("base dialer saw %q, want %q", rec.seen(), want)
+			if got, want := rec.seen(), []string{fmt.Sprintf("127.0.0.1:%d", port)}; !slices.Equal(got, want) {
+				t.Fatalf("base dialer saw %q, want %q", got, want)
 			}
-			if got := atomic.LoadInt32(&hits); got != 1 {
-				t.Fatalf("loopback listener received %d request(s), want 1", got)
+			if got, want := srv.requestHosts(), []string{fmt.Sprintf("localhost:%d", port)}; !slices.Equal(got, want) {
+				t.Fatalf("loopback listener saw Host %q, want %q: one request that still names localhost", got, want)
 			}
 		})
 	}
@@ -1189,8 +1206,8 @@ func TestGolemRuntimeTransportKeepsOrdinaryDialForOtherHosts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	var hits int32
-	newOllamaChatServer(t, ln, &hits).Start()
+	srv := newOllamaChatServer(t, ln)
+	srv.Start()
 	rec := &dialRecorder{next: standInDialer(ln.Addr().String())}
 	base := &http.Transport{DialContext: rec.dial}
 
@@ -1210,11 +1227,12 @@ func TestGolemRuntimeTransportKeepsOrdinaryDialForOtherHosts(t *testing.T) {
 	if err := chatOnce(t, backend); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
-	if got := atomic.LoadInt32(&hits); got != 1 {
-		t.Fatalf("listener received %d request(s), want 1", got)
+	name := fmt.Sprintf("firn-backend.test:%d", port)
+	if got, want := srv.requestHosts(), []string{name}; !slices.Equal(got, want) {
+		t.Fatalf("listener saw Host %q, want %q", got, want)
 	}
-	if want := []string{fmt.Sprintf("firn-backend.test:%d", port)}; !reflect.DeepEqual(rec.seen(), want) {
-		t.Fatalf("base dialer saw %q, want %q: a non-localhost name keeps the ordinary dial", rec.seen(), want)
+	if got, want := rec.seen(), []string{name}; !slices.Equal(got, want) {
+		t.Fatalf("base dialer saw %q, want %q: a non-localhost name keeps the ordinary dial", got, want)
 	}
 }
 
@@ -1232,7 +1250,7 @@ func TestLoopbackDialContextStopsWhenContextEnds(t *testing.T) {
 	if _, err := dial(ctx, "tcp", "localhost:11434"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("dial error = %v, want context.Canceled", err)
 	}
-	if want := []string{"127.0.0.1:11434"}; !reflect.DeepEqual(dialed, want) {
+	if want := []string{"127.0.0.1:11434"}; !slices.Equal(dialed, want) {
 		t.Fatalf("dialed %q, want %q", dialed, want)
 	}
 }

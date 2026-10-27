@@ -272,7 +272,9 @@ var localhostIPs = []string{"127.0.0.1", "::1"}
 // dialLoopback does, since a loopback connect is normally refused or accepted
 // at once. The ceiling: a dropped SYN (a packet filter, a full accept queue)
 // holds the ::1 attempt until the base dialer gives up, 30 seconds for
-// http.DefaultTransport's, within the request's own timeout. Race the
+// http.DefaultTransport's. http.Transport detaches a dial from its request,
+// so a request whose timeout is shorter fails at that timeout while the dial
+// goes on to ::1 and pools the connection for the next request. Race the
 // attempts the way dialLoopback does if that ever bites.
 func loopbackDialContext(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
 	if dial == nil {
@@ -293,8 +295,10 @@ func loopbackDialContext(dial func(context.Context, string, string) (net.Conn, e
 				return conn, nil
 			}
 			errs = append(errs, err)
+			// http.Transport dials on a context its request cannot cancel;
+			// CloseIdleConnections, which golemRunner.Close calls, ends it.
 			if ctx.Err() != nil {
-				break // the request is canceled or out of time: no later attempt can connect
+				break // the dial was abandoned: no later attempt can deliver
 			}
 		}
 		return nil, errors.Join(errs...)
