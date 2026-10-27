@@ -1586,7 +1586,7 @@ export const retargetOf = (
  * route moves, never retargeted, so it never leaves its selector. Read from
  * the projection's `fallbacks` (a role listing itself cannot leave either).
  */
-const isFallbackTarget = (base: DraftBaseProjection, role: string): boolean =>
+export const isFallbackTarget = (base: DraftBaseProjection, role: string): boolean =>
   base.models.some((model) => model.fallbacks?.includes(role) === true);
 
 interface SelectorGroup {

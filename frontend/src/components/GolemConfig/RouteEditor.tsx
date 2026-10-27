@@ -47,6 +47,7 @@ import {
   changeStableID,
   floorShortfalls,
   governedUseCasesOf,
+  isFallbackTarget,
   leavingRoutes,
   modelFactsOf,
   overridesSelector,
@@ -636,10 +637,14 @@ export function RouteEditor({
       // A same-selector retarget replaces the old lock — SetRoleModel rewrites
       // the role with the coalesced capabilities and Think — for every
       // mutation of the group that runs after it.
+      // [#311] Not when any role lists the sibling as a fallback: the backend
+      // FORKS it then (`fallbacks[role]`), so its explicit set stays on the
+      // selector and the join still meets it.
       if (
         rewrite !== undefined &&
         rewrite.modelFacts.provider === sibling.provider &&
         rewrite.modelFacts.model === sibling.modelName &&
+        !isFallbackTarget(base, sibling.role) &&
         !sameModelFacts(sibling, rewrite.modelFacts) &&
         base.routes.some(
           (route) => route.useCase === rewrite.useCase && route.role === sibling.role

@@ -2133,6 +2133,47 @@ describe('RouteEditor', () => {
     expect(onStage).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the applied lock when the earlier same-selector retarget forks a fallback-referenced owner', async () => {
+    // Like "uses the rewritten override after an earlier same-selector
+    // retarget", but idle-role (routed by nothing) lists owner-role as a
+    // fallback: the backend FORKS owner-role (fallbacks[role]) instead of
+    // rewriting it, so its explicit set stays on the selector and the join
+    // still meets it. The projection's `fallbacks` make that visible.
+    const owner = gpt5Owner({ role: 'owner-role', routedUseCases: ['analysis'] });
+    const idle = model({
+      role: 'idle-role',
+      modelName: 'idle-model',
+      routedUseCases: [],
+      removable: true,
+      fallbacks: ['owner-role'],
+    });
+    const rewrite: RouteChange = {
+      kind: 'route',
+      useCase: 'analysis',
+      modelFacts: { provider: owner.provider, model: owner.modelName, type: 'moe' },
+      capabilityFacts: { caps: [...OWNED, 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: [...OWNED, 'thinking'],
+      thinkMode: '',
+      confirmUnknown: true,
+    };
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'analysis', role: 'owner-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [model(), owner, idle],
+      draft: draftWith(rewrite),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText(/^thinking/)).toBeChecked();
+    expect(screen.getByText(/already exposes/)).toHaveTextContent(
+      'analysis already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it('unlocks the selector when its only owner leaves, though a deriving sibling stays', async () => {
     // The owner (agent-role) is retargeted away before this join; spare-role
     // stays but only DERIVES its set — its exposure still shows the folded
